@@ -4,26 +4,27 @@ import { motion } from "framer-motion";
 import { useMemo } from "react";
 
 export default function PhoneMockup() {
-  // Generate data streams with consistent values
+  // Generate data streams with consistent values - aligned with phone width
+  // Phone is 280px centered in 340px container = 9% to 91% range
   const dataStreams = useMemo(() => {
-    return [...Array(14)].map((_, i) => ({
+    return [...Array(10)].map((_, i) => ({
       isCyan: i % 3 !== 0,
-      baseOpacity: 0.15 + (i % 5) * 0.05,
-      height: 80 + (i % 7) * 30,
-      left: 3 + i * 7,
+      baseOpacity: 0.2 + (i % 4) * 0.05,
+      height: 100 + (i % 5) * 40,
+      left: 12 + i * 7.5, // 12% to 87% - within phone bounds
       duration: 2.5 + (i % 4) * 0.5,
-      delay: (i % 6) * 0.3,
+      delay: (i % 5) * 0.25,
     }));
   }, []);
 
-  // Floating particles
+  // Floating particles - within phone bounds (12% to 88%)
   const particles = useMemo(() => {
-    return [...Array(10)].map((_, i) => ({
-      left: 8 + (i * 9) % 84,
-      top: 15 + (i * 13) % 70,
+    return [...Array(8)].map((_, i) => ({
+      left: 15 + (i * 10) % 70,
+      top: 20 + (i * 12) % 55,
       isCyan: i % 2 === 0,
       duration: 3 + (i % 3),
-      delay: (i % 5) * 0.5,
+      delay: (i % 4) * 0.4,
     }));
   }, []);
 
