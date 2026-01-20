@@ -4,7 +4,7 @@ import { PublicKey } from '@solana/web3.js';
  * Stream program ID on devnet
  */
 export const STREAM_PROGRAM_ID_DEVNET = new PublicKey(
-  '46i1Li5pMumVSB4YBF9DmQTCibe5x9DrNFEiqdfsZSf8'
+  '2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs'
 );
 
 /**

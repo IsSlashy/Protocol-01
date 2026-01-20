@@ -1,3 +1,7 @@
+[toolchain]
+anchor_version = "0.29.0"
+solana_version = "1.18.17"
+
 [features]
 seeds = false
 skip-lint = false
@@ -5,7 +9,7 @@ skip-lint = false
 [programs.devnet]
 specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
 p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
-p01_stream = "46i1Li5pMumVSB4YBF9DmQTCibe5x9DrNFEiqdfsZSf8"
+p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
 
 [registry]
 url = "https://api.apr.dev"
