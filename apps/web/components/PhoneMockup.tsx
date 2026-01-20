@@ -105,27 +105,36 @@ export default function PhoneMockup() {
         }}
       />
 
-      {/* === DATA STREAMS (vertical light bars that rise) === */}
-      <div className="absolute inset-0 -z-5 overflow-hidden pointer-events-none">
+      {/* === DATA STREAMS (vertical light bars BEHIND the phone) === */}
+      <div
+        className="absolute -z-5 overflow-hidden pointer-events-none"
+        style={{
+          left: '30px', // Phone starts at 30px (centered in 340px container)
+          width: '280px', // Phone width
+          top: '50px',
+          bottom: '70px', // Match phone vertical bounds
+        }}
+      >
         {dataStreams.map((stream, i) => (
           <motion.div
             key={i}
-            className="absolute bottom-0"
+            className="absolute"
             style={{
-              left: `${stream.left}%`,
-              width: i % 4 === 0 ? '3px' : '2px',
+              left: `${5 + i * 10}%`, // Spread within phone width
+              bottom: '0',
+              width: i % 3 === 0 ? '3px' : '2px',
               height: `${stream.height}px`,
               background: `linear-gradient(to top,
-                ${stream.isCyan ? 'rgba(57, 197, 187, 0.7)' : 'rgba(255, 119, 168, 0.6)'} 0%,
-                ${stream.isCyan ? 'rgba(57, 197, 187, 0.25)' : 'rgba(255, 119, 168, 0.2)'} 40%,
+                ${stream.isCyan ? 'rgba(57, 197, 187, 0.6)' : 'rgba(255, 119, 168, 0.5)'} 0%,
+                ${stream.isCyan ? 'rgba(57, 197, 187, 0.2)' : 'rgba(255, 119, 168, 0.15)'} 50%,
                 transparent 100%
               )`,
               filter: 'blur(1px)',
               borderRadius: '2px',
             }}
             animate={{
-              height: [`${stream.height}px`, `${stream.height + 60}px`, `${stream.height}px`],
-              opacity: [stream.baseOpacity, stream.baseOpacity + 0.2, stream.baseOpacity],
+              height: [`${stream.height}px`, `${stream.height + 80}px`, `${stream.height}px`],
+              opacity: [stream.baseOpacity, stream.baseOpacity + 0.25, stream.baseOpacity],
             }}
             transition={{
               duration: stream.duration,
@@ -137,8 +146,16 @@ export default function PhoneMockup() {
         ))}
       </div>
 
-      {/* === FLOATING PARTICLES (subtle dots) === */}
-      <div className="absolute inset-0 -z-5 pointer-events-none">
+      {/* === FLOATING PARTICLES (subtle dots) BEHIND the phone === */}
+      <div
+        className="absolute -z-5 pointer-events-none"
+        style={{
+          left: '30px',
+          width: '280px',
+          top: '50px',
+          height: '530px',
+        }}
+      >
         {particles.map((p, i) => (
           <motion.div
             key={i}
@@ -147,12 +164,12 @@ export default function PhoneMockup() {
               left: `${p.left}%`,
               top: `${p.top}%`,
               backgroundColor: p.isCyan ? '#39c5bb' : '#ff77a8',
-              boxShadow: `0 0 8px ${p.isCyan ? 'rgba(57, 197, 187, 0.6)' : 'rgba(255, 119, 168, 0.5)'}`,
+              boxShadow: `0 0 10px ${p.isCyan ? 'rgba(57, 197, 187, 0.7)' : 'rgba(255, 119, 168, 0.6)'}`,
             }}
             animate={{
-              y: [0, -25, 0],
-              opacity: [0.25, 0.7, 0.25],
-              scale: [1, 1.4, 1],
+              y: [0, -20, 0],
+              opacity: [0.3, 0.8, 0.3],
+              scale: [1, 1.5, 1],
             }}
             transition={{
               duration: p.duration,
