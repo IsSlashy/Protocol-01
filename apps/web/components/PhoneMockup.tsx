@@ -1,35 +1,47 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { useMemo } from "react";
 
 export default function PhoneMockup() {
-  // Floating particles configuration
-  const floatingParticles = [
-    { symbol: '+', x: '-8%', y: '20%', color: 'rgba(57, 197, 187, 0.5)' },
-    { symbol: '◇', x: '108%', y: '30%', color: 'rgba(255, 119, 168, 0.4)' },
-    { symbol: '+', x: '-5%', y: '65%', color: 'rgba(57, 197, 187, 0.4)' },
-    { symbol: '◇', x: '105%', y: '55%', color: 'rgba(255, 119, 168, 0.5)' },
-    { symbol: '○', x: '15%', y: '-5%', color: 'rgba(57, 197, 187, 0.3)' },
-    { symbol: '+', x: '85%', y: '105%', color: 'rgba(255, 119, 168, 0.4)' },
-    { symbol: '◆', x: '-10%', y: '45%', color: 'rgba(0, 255, 229, 0.3)' },
-    { symbol: '□', x: '110%', y: '75%', color: 'rgba(57, 197, 187, 0.3)' },
-  ];
+  // Generate data streams with consistent values
+  const dataStreams = useMemo(() => {
+    return [...Array(14)].map((_, i) => ({
+      isCyan: i % 3 !== 0,
+      baseOpacity: 0.15 + (i % 5) * 0.05,
+      height: 80 + (i % 7) * 30,
+      left: 3 + i * 7,
+      duration: 2.5 + (i % 4) * 0.5,
+      delay: (i % 6) * 0.3,
+    }));
+  }, []);
+
+  // Floating particles
+  const particles = useMemo(() => {
+    return [...Array(10)].map((_, i) => ({
+      left: 8 + (i * 9) % 84,
+      top: 15 + (i * 13) % 70,
+      isCyan: i % 2 === 0,
+      duration: 3 + (i % 3),
+      delay: (i % 5) * 0.5,
+    }));
+  }, []);
 
   return (
-    <div className="relative w-[320px] h-[680px]">
+    <div className="relative w-[340px] h-[700px]">
 
-      {/* === NEON GLOW EFFECTS (behind phone) === */}
+      {/* === NEON GLOW BACKGROUND (diffuse, no borders) === */}
 
-      {/* Main cyan glow - bottom left */}
+      {/* Main cyan glow - bottom center (like light reflecting up) */}
       <motion.div
-        className="absolute -inset-20 -z-10"
+        className="absolute -bottom-40 left-1/2 -translate-x-1/2 w-[450px] h-[350px] -z-10"
         style={{
-          background: 'radial-gradient(ellipse at 20% 80%, #39c5bb 0%, transparent 50%)',
-          filter: 'blur(80px)',
+          background: 'radial-gradient(ellipse 70% 60% at center, rgba(57, 197, 187, 0.45) 0%, rgba(57, 197, 187, 0.15) 35%, transparent 65%)',
+          filter: 'blur(50px)',
         }}
         animate={{
-          opacity: [0.4, 0.6, 0.4],
-          scale: [1, 1.05, 1],
+          opacity: [0.6, 0.85, 0.6],
+          scale: [1, 1.08, 1],
         }}
         transition={{
           duration: 4,
@@ -38,240 +50,200 @@ export default function PhoneMockup() {
         }}
       />
 
-      {/* Pink glow - top right */}
+      {/* Pink/Magenta glow - right side */}
       <motion.div
-        className="absolute -inset-20 -z-10"
+        className="absolute -right-24 top-[20%] w-[280px] h-[450px] -z-10"
         style={{
-          background: 'radial-gradient(ellipse at 85% 15%, #ff77a8 0%, transparent 50%)',
-          filter: 'blur(80px)',
+          background: 'radial-gradient(ellipse 60% 70% at center, rgba(255, 119, 168, 0.4) 0%, rgba(255, 119, 168, 0.1) 40%, transparent 65%)',
+          filter: 'blur(70px)',
         }}
         animate={{
-          opacity: [0.3, 0.5, 0.3],
-          scale: [1, 1.08, 1],
+          opacity: [0.5, 0.7, 0.5],
+          x: [0, 15, 0],
         }}
         transition={{
           duration: 5,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
+      />
+
+      {/* Subtle pink glow - left side */}
+      <motion.div
+        className="absolute -left-20 top-[30%] w-[220px] h-[320px] -z-10"
+        style={{
+          background: 'radial-gradient(ellipse at center, rgba(255, 119, 168, 0.25) 0%, transparent 55%)',
+          filter: 'blur(55px)',
+        }}
+        animate={{
+          opacity: [0.35, 0.55, 0.35],
+        }}
+        transition={{
+          duration: 6,
           repeat: Infinity,
           ease: 'easeInOut',
           delay: 1,
         }}
       />
 
-      {/* Bright cyan accent glow */}
+      {/* Bright cyan accent - top */}
       <motion.div
-        className="absolute -inset-16 -z-10"
+        className="absolute -top-20 left-1/2 -translate-x-1/2 w-[300px] h-[200px] -z-10"
         style={{
-          background: 'radial-gradient(ellipse at 50% 100%, #00ffe5 0%, transparent 40%)',
-          filter: 'blur(60px)',
+          background: 'radial-gradient(ellipse at center, rgba(0, 255, 229, 0.15) 0%, transparent 50%)',
+          filter: 'blur(40px)',
         }}
         animate={{
-          opacity: [0.15, 0.25, 0.15],
+          opacity: [0.2, 0.35, 0.2],
         }}
         transition={{
-          duration: 3,
+          duration: 5,
           repeat: Infinity,
           ease: 'easeInOut',
-          delay: 0.5,
+          delay: 2,
         }}
       />
 
-      {/* === LIGHT RAYS / STREAKS === */}
+      {/* === DATA STREAMS (vertical light bars that rise) === */}
       <div className="absolute inset-0 -z-5 overflow-hidden pointer-events-none">
-        {[...Array(8)].map((_, i) => (
+        {dataStreams.map((stream, i) => (
           <motion.div
             key={i}
-            className="absolute"
+            className="absolute bottom-0"
             style={{
-              left: `${8 + i * 12}%`,
-              width: '2px',
-              height: '180%',
-              top: '-40%',
-              background: `linear-gradient(to bottom,
-                transparent 0%,
-                ${i % 2 === 0 ? 'rgba(57, 197, 187, 0.5)' : 'rgba(255, 119, 168, 0.4)'} 50%,
+              left: `${stream.left}%`,
+              width: i % 4 === 0 ? '3px' : '2px',
+              height: `${stream.height}px`,
+              background: `linear-gradient(to top,
+                ${stream.isCyan ? 'rgba(57, 197, 187, 0.7)' : 'rgba(255, 119, 168, 0.6)'} 0%,
+                ${stream.isCyan ? 'rgba(57, 197, 187, 0.25)' : 'rgba(255, 119, 168, 0.2)'} 40%,
                 transparent 100%
               )`,
               filter: 'blur(1px)',
+              borderRadius: '2px',
             }}
             animate={{
-              opacity: [0.1, 0.4, 0.1],
-              scaleY: [0.9, 1.1, 0.9],
+              height: [`${stream.height}px`, `${stream.height + 60}px`, `${stream.height}px`],
+              opacity: [stream.baseOpacity, stream.baseOpacity + 0.2, stream.baseOpacity],
             }}
             transition={{
-              duration: 2.5 + i * 0.3,
+              duration: stream.duration,
               repeat: Infinity,
               ease: 'easeInOut',
-              delay: i * 0.2,
+              delay: stream.delay,
             }}
           />
         ))}
       </div>
 
-      {/* === ANIMATED LIGHT BARS (vertical moving) === */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none -z-5">
-        {/* Left bar */}
-        <motion.div
-          className="absolute left-[10%] w-[1px] h-[50%]"
-          style={{
-            background: 'linear-gradient(to bottom, transparent 0%, #39c5bb 50%, transparent 100%)',
-            filter: 'blur(1px)',
-          }}
-          animate={{
-            y: ['-100%', '300%'],
-            opacity: [0, 0.6, 0],
-          }}
-          transition={{
-            duration: 3,
-            repeat: Infinity,
-            ease: 'linear',
-          }}
-        />
-
-        {/* Right bar */}
-        <motion.div
-          className="absolute right-[10%] w-[1px] h-[50%]"
-          style={{
-            background: 'linear-gradient(to bottom, transparent 0%, #ff77a8 50%, transparent 100%)',
-            filter: 'blur(1px)',
-          }}
-          animate={{
-            y: ['300%', '-100%'],
-            opacity: [0, 0.5, 0],
-          }}
-          transition={{
-            duration: 4,
-            repeat: Infinity,
-            ease: 'linear',
-            delay: 1.5,
-          }}
-        />
-
-        {/* Center bar */}
-        <motion.div
-          className="absolute left-[50%] w-[1px] h-[40%]"
-          style={{
-            background: 'linear-gradient(to bottom, transparent 0%, #00ffe5 50%, transparent 100%)',
-            filter: 'blur(2px)',
-          }}
-          animate={{
-            y: ['-50%', '250%'],
-            opacity: [0, 0.3, 0],
-          }}
-          transition={{
-            duration: 5,
-            repeat: Infinity,
-            ease: 'linear',
-            delay: 2,
-          }}
-        />
+      {/* === FLOATING PARTICLES (subtle dots) === */}
+      <div className="absolute inset-0 -z-5 pointer-events-none">
+        {particles.map((p, i) => (
+          <motion.div
+            key={i}
+            className="absolute w-1.5 h-1.5 rounded-full"
+            style={{
+              left: `${p.left}%`,
+              top: `${p.top}%`,
+              backgroundColor: p.isCyan ? '#39c5bb' : '#ff77a8',
+              boxShadow: `0 0 8px ${p.isCyan ? 'rgba(57, 197, 187, 0.6)' : 'rgba(255, 119, 168, 0.5)'}`,
+            }}
+            animate={{
+              y: [0, -25, 0],
+              opacity: [0.25, 0.7, 0.25],
+              scale: [1, 1.4, 1],
+            }}
+            transition={{
+              duration: p.duration,
+              repeat: Infinity,
+              delay: p.delay,
+              ease: 'easeInOut',
+            }}
+          />
+        ))}
       </div>
 
-      {/* === FLOATING PARTICLES === */}
-      {floatingParticles.map((p, i) => (
-        <motion.span
-          key={i}
-          className="absolute text-xl font-light select-none pointer-events-none"
-          style={{
-            left: p.x,
-            top: p.y,
-            color: p.color,
-            textShadow: `0 0 10px ${p.color}`,
-          }}
-          animate={{
-            y: [0, -20, 0],
-            x: [0, i % 2 === 0 ? 8 : -8, 0],
-            opacity: [0.3, 0.7, 0.3],
-            rotate: [0, i % 2 === 0 ? 15 : -15, 0],
-          }}
-          transition={{
-            duration: 4 + i * 0.5,
-            repeat: Infinity,
-            delay: i * 0.3,
-            ease: 'easeInOut',
-          }}
-        >
-          {p.symbol}
-        </motion.span>
-      ))}
-
-      {/* === PHONE WITH HOVER EFFECT === */}
+      {/* === PHONE MOCKUP === */}
       <motion.div
         className="relative z-10"
-        initial={{ opacity: 0, y: 40, rotateY: -10 }}
-        animate={{ opacity: 1, y: 0, rotateY: 0 }}
-        transition={{ duration: 0.8, ease: 'easeOut', delay: 0.3 }}
+        initial={{ opacity: 0, y: 50 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 1, ease: 'easeOut' }}
         whileHover={{
-          scale: 1.03,
-          rotateY: 5,
-          rotateX: -2,
-          transition: { type: 'spring', stiffness: 200, damping: 15 }
+          scale: 1.02,
+          y: -5,
+          transition: { type: 'spring', stiffness: 300, damping: 20 }
         }}
-        style={{ perspective: '1200px', transformStyle: 'preserve-3d' }}
       >
-        {/* Phone frame */}
+        {/* Phone frame - modern design, no ugly borders */}
         <div
-          className="relative w-[280px] h-[580px] bg-[#0a0a0c] rounded-[3rem] border-2 border-[#2a2a30] overflow-hidden mx-auto"
+          className="relative w-[280px] h-[580px] bg-[#0a0a0c] rounded-[50px] overflow-hidden mx-auto"
           style={{
             boxShadow: `
-              0 25px 60px rgba(0, 0, 0, 0.7),
-              0 0 40px rgba(57, 197, 187, 0.1),
-              inset 0 1px 0 rgba(255, 255, 255, 0.05)
+              0 0 0 1px rgba(255, 255, 255, 0.08),
+              0 30px 60px -15px rgba(0, 0, 0, 0.85),
+              0 0 80px -10px rgba(57, 197, 187, 0.25),
+              0 0 120px -20px rgba(255, 119, 168, 0.15)
             `,
           }}
         >
-          {/* Phone edge highlight - top */}
-          <div className="absolute top-0 left-8 right-8 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
-          {/* Notch */}
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 w-24 h-6 bg-black rounded-full z-20">
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-[#1a1a1a] border border-[#2a2a30]" />
+          {/* Dynamic Island / Notch */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 w-28 h-7 bg-black rounded-full z-20 flex items-center justify-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full bg-[#1a1a1e] border border-[#2a2a30]" />
+            <div className="w-14 h-3.5 rounded-full bg-[#1a1a1e]" />
           </div>
 
           {/* Screen content */}
-          <div className="absolute inset-3 top-10 rounded-[2.5rem] overflow-hidden bg-[#0a0a0c]">
+          <div className="absolute inset-[3px] top-2 bg-[#0a0a0c] rounded-[47px] overflow-hidden">
+
             {/* Status bar */}
-            <div className="flex justify-between items-center px-6 py-2 text-xs text-[#888892] font-mono">
+            <div className="pt-2 px-8 flex justify-between items-center text-white/70 text-xs font-medium">
               <span>9:41</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <div className="flex gap-0.5">
-                  <div className="w-1 h-2 bg-[#39c5bb] rounded-sm" />
-                  <div className="w-1 h-2 bg-[#39c5bb] rounded-sm" />
-                  <div className="w-1 h-2 bg-[#39c5bb] rounded-sm" />
-                  <div className="w-1 h-2 bg-[#39c5bb]/30 rounded-sm" />
+                  {[1, 2, 3, 4].map((_, i) => (
+                    <div key={i} className={`w-1 h-${i + 1} ${i < 3 ? 'bg-white/70' : 'bg-white/30'} rounded-sm`} style={{ height: `${4 + i * 2}px` }} />
+                  ))}
                 </div>
-                <div className="w-5 h-2.5 border border-[#39c5bb]/50 rounded-sm relative">
-                  <div className="absolute left-0.5 top-0.5 bottom-0.5 w-3 bg-[#39c5bb] rounded-sm" />
+                <div className="w-6 h-3 border border-white/50 rounded-sm relative ml-1">
+                  <div className="absolute inset-0.5 bg-[#39c5bb] rounded-sm" style={{ width: '70%' }} />
                 </div>
               </div>
             </div>
 
-            {/* App header */}
-            <div className="px-5 py-3">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-xl bg-[#151518] border border-[#39c5bb]/40 flex items-center justify-center">
-                  <span className="text-[#ff77a8] font-bold text-sm">P-01</span>
-                </div>
-                <div>
-                  <div className="text-white font-bold text-sm tracking-wide">PROTOCOL 01</div>
-                  <div className="text-[#39c5bb] text-xs font-mono flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#39c5bb] animate-pulse" />
-                    Connected
-                  </div>
-                </div>
+            {/* App Header */}
+            <div className="pt-8 px-5 pb-4 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-[#151518] border border-[#39c5bb]/30 flex items-center justify-center">
+                <span className="text-[#ff77a8] font-bold text-sm">P-01</span>
+              </div>
+              <div>
+                <p className="text-white font-semibold text-lg tracking-wide">PROTOCOL 01</p>
+                <p className="text-[#39c5bb] text-sm flex items-center gap-1.5">
+                  <motion.span
+                    className="w-2 h-2 rounded-full bg-[#39c5bb]"
+                    animate={{ opacity: [1, 0.4, 1] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                  />
+                  Connected
+                </p>
               </div>
             </div>
 
             {/* Balance card */}
-            <div className="mx-4 p-4 bg-gradient-to-br from-[#151518] to-[#0f0f12] rounded-2xl border border-[#2a2a30]">
-              <div className="text-[#888892] text-xs font-mono tracking-wider mb-1">STEALTH BALANCE</div>
-              <div className="text-3xl font-bold text-white mb-1">$12,847<span className="text-xl text-[#888892]">.00</span></div>
-              <div className="text-[#39c5bb] text-sm font-mono flex items-center gap-1">
-                <span className="text-[#00ffe5]">◆</span> 4.2847 SOL
-              </div>
+            <div className="mx-5 p-5 bg-gradient-to-br from-[#151518] to-[#101014] rounded-2xl border border-[#2a2a30]/60">
+              <p className="text-[#707078] text-xs tracking-[0.2em] mb-2 font-medium">STEALTH BALANCE</p>
+              <p className="text-white text-4xl font-bold tracking-tight">
+                $12,847<span className="text-2xl text-[#707078]">.00</span>
+              </p>
+              <p className="text-[#39c5bb] text-sm mt-2 flex items-center gap-1.5 font-medium">
+                <span className="text-[#00ffe5]">◆</span>
+                4.2847 SOL
+              </p>
             </div>
 
-            {/* Quick actions */}
-            <div className="flex justify-center gap-4 py-5 px-4">
+            {/* Action buttons */}
+            <div className="flex justify-center gap-4 py-5 px-5">
               {[
                 { icon: '↑', label: 'Send', color: '#39c5bb' },
                 { icon: '↓', label: 'Receive', color: '#39c5bb' },
@@ -280,165 +252,104 @@ export default function PhoneMockup() {
               ].map((action, i) => (
                 <div key={i} className="flex flex-col items-center gap-1.5">
                   <div
-                    className="w-12 h-12 rounded-xl flex items-center justify-center text-lg border transition-all"
+                    className="w-13 h-13 rounded-2xl flex items-center justify-center text-lg border transition-all"
                     style={{
-                      backgroundColor: `${action.color}15`,
-                      borderColor: `${action.color}40`,
+                      width: '52px',
+                      height: '52px',
+                      backgroundColor: `${action.color}12`,
+                      borderColor: `${action.color}35`,
                       color: action.color,
                     }}
                   >
                     {action.icon}
                   </div>
-                  <span className="text-[#888892] text-xs font-mono">{action.label}</span>
+                  <span className="text-[#707078] text-xs">{action.label}</span>
                 </div>
               ))}
             </div>
 
-            {/* Recent activity */}
-            <div className="px-4">
-              <div className="text-[#888892] text-xs font-mono tracking-wider mb-2">RECENT ACTIVITY</div>
+            {/* Recent Activity */}
+            <div className="px-5">
+              <p className="text-[#707078] text-xs tracking-[0.15em] mb-3 font-medium">RECENT ACTIVITY</p>
               <div className="space-y-2">
                 {[
                   { type: 'stealth', label: 'Stealth TX', amount: '-0.5 SOL', time: '2m ago', color: '#ff77a8' },
                   { type: 'received', label: 'Received', amount: '+1.2 SOL', time: '1h ago', color: '#39c5bb' },
                 ].map((tx, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 bg-[#151518]/80 rounded-xl border border-[#2a2a30]/50">
+                  <div key={i} className="flex justify-between items-center p-3.5 bg-[#151518]/90 rounded-xl border border-[#2a2a30]/40">
                     <div className="flex items-center gap-3">
                       <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-sm"
+                        className="w-9 h-9 rounded-xl flex items-center justify-center text-sm"
                         style={{
-                          backgroundColor: `${tx.color}20`,
+                          backgroundColor: `${tx.color}18`,
                           color: tx.color,
                         }}
                       >
-                        {tx.type === 'stealth' ? '◈' : '◆'}
+                        ◆
                       </div>
                       <div>
-                        <div className="text-white text-sm font-medium">{tx.label}</div>
-                        <div className="text-[#555560] text-xs">{tx.time}</div>
+                        <p className="text-white text-sm font-medium">{tx.label}</p>
+                        <p className="text-[#606068] text-xs">{tx.time}</p>
                       </div>
                     </div>
-                    <div className="text-sm font-mono" style={{ color: tx.color }}>
+                    <span className="text-sm font-medium" style={{ color: tx.color }}>
                       {tx.amount}
-                    </div>
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Bottom nav */}
-            <div className="absolute bottom-3 left-3 right-3 flex justify-around py-2.5 bg-[#151518]/90 backdrop-blur-sm rounded-2xl border border-[#2a2a30]/50">
-              {[
-                { icon: '⌂', active: true },
-                { icon: '◈', active: false },
-                { icon: '💬', active: false },
-                { icon: '⚙', active: false },
-              ].map((item, i) => (
-                <div
-                  key={i}
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center text-base transition-all ${
-                    item.active
-                      ? 'text-[#39c5bb] bg-[#39c5bb]/15'
-                      : 'text-[#555560]'
-                  }`}
-                >
-                  {item.icon}
-                </div>
-              ))}
+            <div className="absolute bottom-5 left-5 right-5">
+              <div className="flex justify-around items-center py-2.5 px-3 bg-[#151518]/95 rounded-2xl border border-[#2a2a30]/40 backdrop-blur-sm">
+                {[
+                  { icon: '⌂', active: true },
+                  { icon: '◈', active: false },
+                  { icon: '💬', active: false },
+                  { icon: '⚙', active: false },
+                ].map((item, i) => (
+                  <div
+                    key={i}
+                    className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${
+                      item.active
+                        ? 'text-[#39c5bb] bg-[#39c5bb]/15'
+                        : 'text-[#606068]'
+                    }`}
+                  >
+                    {item.icon}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Scanlines overlay */}
+            {/* Subtle scanlines */}
             <div
-              className="absolute inset-0 pointer-events-none opacity-20"
+              className="absolute inset-0 pointer-events-none opacity-[0.03]"
               style={{
-                background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.15) 2px, rgba(0,0,0,0.15) 4px)',
+                background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.5) 2px, rgba(255,255,255,0.5) 4px)',
               }}
             />
           </div>
 
-          {/* Glass reflection effect */}
+          {/* Glass reflection on phone */}
           <div
-            className="absolute inset-0 pointer-events-none"
+            className="absolute inset-0 rounded-[50px] pointer-events-none"
             style={{
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 40%, transparent 60%, rgba(255,255,255,0.02) 100%)',
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 40%)',
             }}
           />
-
-          {/* Phone edge glow */}
-          <div className="absolute inset-0 rounded-[3rem] pointer-events-none" style={{
-            boxShadow: 'inset 0 0 20px rgba(57, 197, 187, 0.05)',
-          }} />
         </div>
       </motion.div>
 
-      {/* === REFLECTION UNDER PHONE === */}
+      {/* === REFLECTION UNDER PHONE (subtle glow) === */}
       <div
-        className="absolute -bottom-8 left-1/2 -translate-x-1/2 w-[70%] h-20 pointer-events-none"
+        className="absolute -bottom-12 left-1/2 -translate-x-1/2 w-[220px] h-28 -z-10"
         style={{
-          background: 'linear-gradient(to bottom, rgba(57, 197, 187, 0.2), transparent)',
-          filter: 'blur(20px)',
-          transform: 'scaleY(0.3)',
-          opacity: 0.4,
-        }}
-      />
-
-      {/* Pink reflection accent */}
-      <div
-        className="absolute -bottom-6 left-[60%] w-[30%] h-12 pointer-events-none"
-        style={{
-          background: 'linear-gradient(to bottom, rgba(255, 119, 168, 0.15), transparent)',
+          background: 'radial-gradient(ellipse 80% 50% at center top, rgba(57, 197, 187, 0.2) 0%, transparent 60%)',
           filter: 'blur(15px)',
-          transform: 'scaleY(0.4)',
-          opacity: 0.3,
         }}
       />
-
-      {/* === CORNER ACCENTS === */}
-      <motion.div
-        className="absolute -top-3 -right-3 w-6 h-6 border-t-2 border-r-2 border-[#39c5bb]/60 pointer-events-none"
-        animate={{ opacity: [0.4, 0.8, 0.4] }}
-        transition={{ duration: 2, repeat: Infinity }}
-      />
-      <motion.div
-        className="absolute -bottom-3 -left-3 w-6 h-6 border-b-2 border-l-2 border-[#ff77a8]/60 pointer-events-none"
-        animate={{ opacity: [0.4, 0.8, 0.4] }}
-        transition={{ duration: 2, repeat: Infinity, delay: 1 }}
-      />
-      <motion.div
-        className="absolute -top-3 -left-3 w-4 h-4 border-t border-l border-[#00ffe5]/40 pointer-events-none"
-        animate={{ opacity: [0.3, 0.6, 0.3] }}
-        transition={{ duration: 3, repeat: Infinity, delay: 0.5 }}
-      />
-      <motion.div
-        className="absolute -bottom-3 -right-3 w-4 h-4 border-b border-r border-[#00ffe5]/40 pointer-events-none"
-        animate={{ opacity: [0.3, 0.6, 0.3] }}
-        transition={{ duration: 3, repeat: Infinity, delay: 1.5 }}
-      />
-
-      {/* === DATA STREAM EFFECT (side) === */}
-      <div className="absolute -right-16 top-1/4 font-mono text-[10px] text-[#39c5bb]/30 leading-tight pointer-events-none">
-        <motion.div
-          animate={{ opacity: [0.2, 0.5, 0.2] }}
-          transition={{ duration: 2, repeat: Infinity }}
-        >
-          01100101<br/>
-          11001010<br/>
-          00110011<br/>
-          10101010
-        </motion.div>
-      </div>
-
-      <div className="absolute -left-14 bottom-1/4 font-mono text-[10px] text-[#ff77a8]/30 leading-tight pointer-events-none">
-        <motion.div
-          animate={{ opacity: [0.2, 0.5, 0.2] }}
-          transition={{ duration: 2.5, repeat: Infinity, delay: 0.5 }}
-        >
-          P-01::TX<br/>
-          STEALTH<br/>
-          ACTIVE<br/>
-          ██████
-        </motion.div>
-      </div>
 
     </div>
   );
