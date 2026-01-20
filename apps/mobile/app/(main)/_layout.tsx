@@ -7,24 +7,59 @@ import * as Haptics from 'expo-haptics';
 import { Colors, FontFamily } from '../../constants/theme';
 import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
+import { useRealtimeSync } from '../../hooks/sync';
+import { registerForPushNotifications, setupNotificationListeners } from '../../services/notifications';
 
 export default function MainLayout() {
-  const { initialize, initialized } = useWalletStore();
+  const { initialize, initialized, wallet } = useWalletStore();
   const insets = useSafeAreaInsets();
 
   // Initialize security settings (applies screenshot blocking)
   useSecuritySettings();
+
+  // Real-time sync for subscriptions from extension
+  const { status: syncStatus } = useRealtimeSync({
+    onSubscriptionAdded: (stream) => {
+      console.log('[RealtimeSync] New subscription added:', stream.name);
+    },
+    onSyncComplete: (result) => {
+      console.log('[RealtimeSync] Sync complete:', result.newStreams, 'new streams');
+    },
+    onError: (error) => {
+      console.error('[RealtimeSync] Error:', error);
+    },
+  });
 
   // Calculate tab bar height based on safe area
   const TAB_BAR_HEIGHT = 60;
   const bottomPadding = Math.max(insets.bottom, 10);
   const totalHeight = TAB_BAR_HEIGHT + bottomPadding;
 
+  // Initialize wallet and notifications
   useEffect(() => {
     if (!initialized) {
       initialize();
     }
   }, [initialized, initialize]);
+
+  // Setup push notifications
+  useEffect(() => {
+    const setupNotifications = async () => {
+      await registerForPushNotifications();
+      const cleanup = setupNotificationListeners(
+        (notification) => {
+          console.log('[Notification] Received:', notification);
+        },
+        (response) => {
+          console.log('[Notification] Response:', response);
+          // Handle notification tap - navigate to streams
+        }
+      );
+      return cleanup;
+    };
+
+    setupNotifications();
+  }, []);
 
   const handleTabPress = () => {
     if (Platform.OS !== 'web') {

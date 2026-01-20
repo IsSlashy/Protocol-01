@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("P01WL1stxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+declare_id!("AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE");
 
 #[program]
 pub mod p01_whitelist {

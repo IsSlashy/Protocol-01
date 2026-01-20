@@ -25,11 +25,15 @@ import {
   Target,
   MessageCircle,
   CheckCircle2,
+  Link,
 } from 'lucide-react';
 import { cn, truncateAddress } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
+import { useWalletStore } from '@/shared/store/wallet';
 import { sendToBackground } from '@/shared/messaging';
 import type { SubscriptionInterval } from '@/shared/services/stream';
+import { publishSubscription } from '@/shared/services/onchain-sync';
+import { Keypair } from '@solana/web3.js';
 import {
   detectServiceFromOrigin,
   detectServiceFromName,
@@ -111,13 +115,16 @@ export default function ApproveSubscription() {
   const [showPrivacyOptions, setShowPrivacyOptions] = useState(true);
   const [request, setRequest] = useState<SubscriptionRequestData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
 
   // Privacy options (user can adjust)
   const [amountNoise, setAmountNoise] = useState(5);    // Default 5%
   const [timingNoise, setTimingNoise] = useState(2);    // Default 2h
   const [useStealthAddress, setUseStealthAddress] = useState(false);
+  const [syncToChain, setSyncToChain] = useState(true); // Default to sync on-chain
 
   const { addSubscription } = useSubscriptionsStore();
+  const { _keypair } = useWalletStore();
 
   // Load request from session storage
   useEffect(() => {
@@ -221,6 +228,21 @@ export default function ApproveSubscription() {
         origin,
         originIcon,
       });
+
+      // Publish to blockchain for cross-device sync (if enabled and wallet unlocked)
+      if (syncToChain && _keypair) {
+        setSyncStatus('syncing');
+        try {
+          const keypair = Keypair.fromSecretKey(_keypair.secretKey);
+          await publishSubscription(subscription, keypair, 'devnet');
+          setSyncStatus('synced');
+          console.log('[ApproveSubscription] Subscription synced to blockchain');
+        } catch (syncErr) {
+          console.warn('[ApproveSubscription] Failed to sync to chain:', syncErr);
+          setSyncStatus('error');
+          // Don't fail the whole operation, local subscription is still created
+        }
+      }
 
       // Notify background of approval
       await sendToBackground('APPROVE_REQUEST', {
@@ -499,6 +521,33 @@ export default function ApproveSubscription() {
                   />
                 </button>
               </div>
+
+              {/* On-Chain Sync */}
+              <div className="flex items-center justify-between py-2 border-t border-p01-border pt-3 mt-2">
+                <div className="flex items-center gap-2">
+                  <Link className="w-4 h-4 text-p01-cyan" />
+                  <div>
+                    <span className="text-xs text-p01-chrome">Sync to Blockchain</span>
+                    <p className="text-[10px] text-p01-chrome/40">
+                      Access on all devices with this wallet
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSyncToChain(!syncToChain)}
+                  className={cn(
+                    'w-10 h-5 rounded-full transition-colors relative',
+                    syncToChain ? 'bg-p01-cyan' : 'bg-p01-border'
+                  )}
+                >
+                  <div
+                    className={cn(
+                      'w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform',
+                      syncToChain ? 'translate-x-5' : 'translate-x-0.5'
+                    )}
+                  />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -538,6 +587,14 @@ export default function ApproveSubscription() {
                 <Shield className="w-4 h-4 text-purple-400 flex-shrink-0 mt-0.5" />
                 <span>
                   Privacy features will hide payment patterns
+                </span>
+              </li>
+            )}
+            {syncToChain && (
+              <li className="flex items-start gap-2 text-xs text-p01-chrome">
+                <Link className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
+                <span>
+                  Subscription synced on-chain for <strong className="text-white">mobile access</strong>
                 </span>
               </li>
             )}
@@ -624,12 +681,13 @@ export default function ApproveSubscription() {
           {isApproving ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Creating Subscription...
+              {syncStatus === 'syncing' ? 'Syncing to Blockchain...' : 'Creating Subscription...'}
             </>
           ) : (
             <>
               <Shield className="w-5 h-5" />
               Approve Subscription
+              {syncToChain && <Link className="w-4 h-4 ml-1" />}
             </>
           )}
         </button>

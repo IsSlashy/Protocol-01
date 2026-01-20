@@ -433,3 +433,95 @@ export function calculateDailyRate(stream: Stream): number {
   const DAY_MS = 24 * 60 * 60 * 1000;
   return (stream.amountPerPayment / intervalMs) * DAY_MS;
 }
+
+// ============ On-Chain Sync ============
+
+const LAST_SYNC_KEY = 'p01_streams_last_sync';
+
+/**
+ * Sync streams from blockchain
+ * Fetches subscriptions stored on-chain via memo program
+ */
+export async function syncFromBlockchain(walletAddress: string): Promise<{
+  newStreams: number;
+  updatedStreams: number;
+}> {
+  try {
+    console.log('[Streams] Starting blockchain sync...');
+
+    // Import the on-chain sync module
+    const { fetchSubscriptionsFromChain, mergeStreams } = await import('./onchainSync');
+
+    // Fetch from chain
+    const chainStreams = await fetchSubscriptionsFromChain(walletAddress);
+    console.log(`[Streams] Found ${chainStreams.length} subscriptions on-chain`);
+
+    if (chainStreams.length === 0) {
+      // No subscriptions on chain, save sync time and return
+      await AsyncStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+      return { newStreams: 0, updatedStreams: 0 };
+    }
+
+    // Load local streams
+    const localStreams = await loadStreams();
+
+    // Merge with local
+    const mergedStreams = mergeStreams(localStreams, chainStreams);
+
+    // Count changes
+    const existingIds = new Set(localStreams.map(s => s.id));
+    let newStreams = 0;
+    let updatedStreams = 0;
+
+    for (const stream of mergedStreams) {
+      if (!existingIds.has(stream.id)) {
+        newStreams++;
+      } else {
+        // Check if it was updated
+        const local = localStreams.find(s => s.id === stream.id);
+        if (local && local.status !== stream.status) {
+          updatedStreams++;
+        }
+      }
+    }
+
+    // Save merged streams
+    await saveStreams(mergedStreams);
+
+    // Save sync time
+    await AsyncStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+
+    console.log(`[Streams] Sync complete: ${newStreams} new, ${updatedStreams} updated`);
+    return { newStreams, updatedStreams };
+  } catch (error) {
+    console.error('[Streams] Blockchain sync failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Check if sync is needed (every 5 minutes)
+ */
+export async function shouldSyncFromChain(): Promise<boolean> {
+  try {
+    const lastSync = await AsyncStorage.getItem(LAST_SYNC_KEY);
+    if (!lastSync) return true;
+
+    const SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
+    return Date.now() - parseInt(lastSync, 10) > SYNC_INTERVAL;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Get last sync time
+ */
+export async function getLastSyncTime(): Promise<number | null> {
+  try {
+    const lastSync = await AsyncStorage.getItem(LAST_SYNC_KEY);
+    return lastSync ? parseInt(lastSync, 10) : null;
+  } catch {
+    return null;
+  }
+}

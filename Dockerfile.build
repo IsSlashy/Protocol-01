@@ -1,0 +1,35 @@
+# Dockerfile for building Solana/Anchor programs
+# Uses a frozen environment with compatible dependencies
+
+FROM rust:1.75-slim-bookworm
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    pkg-config \
+    libudev-dev \
+    build-essential \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Solana CLI 1.17.31 (last stable before edition 2024 issues)
+RUN curl -sSfL "https://release.solana.com/v1.17.31/install" | sh
+ENV PATH="/root/.local/share/solana/install/active_release/bin:$PATH"
+
+# Install Anchor CLI 0.29.0
+RUN cargo install --git https://github.com/coral-xyz/anchor --tag v0.29.0 anchor-cli --locked
+
+# Set working directory
+WORKDIR /workspace
+
+# Configure cargo to use sparse registry (faster and more stable)
+RUN mkdir -p /root/.cargo && \
+    echo '[net]' >> /root/.cargo/config.toml && \
+    echo 'git-fetch-with-cli = true' >> /root/.cargo/config.toml && \
+    echo '' >> /root/.cargo/config.toml && \
+    echo '[registries.crates-io]' >> /root/.cargo/config.toml && \
+    echo 'protocol = "sparse"' >> /root/.cargo/config.toml
+
+# Default command
+CMD ["anchor", "build"]

@@ -1,0 +1,36 @@
+# Cargo configuration for Solana/Anchor compatibility
+# Fixes edition 2024 dependency issues with older toolchains
+
+[resolver]
+# MSRV-aware resolver - fallback to older versions when newer ones
+# require a Rust version newer than the package's rust-version
+incompatible-rust-versions = "fallback"
+
+[net]
+# Use git CLI for fetching (more reliable on some systems)
+git-fetch-with-cli = true
+
+[registries.crates-io]
+# Use sparse registry protocol (faster and more stable)
+protocol = "sparse"
+
+[build]
+# Target for Solana BPF programs
+# Uncomment if building for Solana:
+# target = "sbf-solana-solana"
+
+[profile.release]
+# Optimizations for Solana programs
+opt-level = 3
+lto = true
+codegen-units = 1
+overflow-checks = true
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1
+
+# Environment variables for Solana builds
+[env]
+# Suppress edition 2024 warnings
+RUSTFLAGS = "-C target-cpu=sbfv2"

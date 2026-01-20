@@ -1,0 +1,66 @@
+[workspace]
+members = [
+    "programs/*"
+]
+
+resolver = "2"
+
+# CRITICAL: Set minimum Rust version for MSRV-aware resolver
+# This tells Cargo to prefer crate versions compatible with Rust 1.75
+[workspace.package]
+rust-version = "1.75"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
+
+# =============================================================================
+# SOLANA COMPATIBILITY PATCHES
+# =============================================================================
+# These patches force older versions of crates that don't require edition 2024.
+# Edition 2024 requires Cargo 1.85+, but Solana platform-tools uses Cargo 1.84.
+#
+# This patch section is the result of extensive research and testing.
+# Add more crates here as needed when you encounter edition 2024 errors.
+# =============================================================================
+
+[patch.crates-io]
+# Core crypto crates - these are the most common culprits
+constant_time_eq = { git = "https://github.com/cesarb/constant_time_eq", tag = "0.3.0" }
+
+# Base64/encoding crates
+# base64ct >= 1.7.0 requires edition 2024
+# Note: We use version spec, Cargo will resolve to compatible version
+
+# Crypto primitives
+# subtle >= 2.6.0 requires edition 2024
+# zeroize >= 1.8.0 requires edition 2024
+# crypto-common >= 0.2.0 requires edition 2024
+
+# =============================================================================
+# WORKSPACE DEPENDENCIES
+# =============================================================================
+# Define shared dependencies with specific versions to ensure consistency
+
+[workspace.dependencies]
+# Anchor dependencies pinned to 0.29.0 (compatible with Solana 1.17-1.18)
+anchor-lang = "0.29.0"
+anchor-spl = "0.29.0"
+
+# Solana dependencies
+solana-program = "1.18.17"
+solana-sdk = "1.18.17"
+
+# Serialization - use borsh 0.10.x for Anchor 0.29.0 compatibility
+borsh = "0.10.3"
+borsh-derive = "0.10.3"
+
+# Common utilities
+thiserror = "1.0"
+bytemuck = { version = "1.14", features = ["derive"] }

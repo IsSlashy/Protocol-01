@@ -39,11 +39,19 @@
         "ACCESS_COARSE_LOCATION"
       ]
     },
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#6366f1",
+      "sounds": ["./assets/notification-sound.wav"],
+      "androidMode": "default",
+      "androidCollapsedTitle": "Protocol 01"
+    },
     "web": {
       "bundler": "metro",
       "output": "static"
     },
     "plugins": [
+      "expo-notifications",
       "expo-router",
       "expo-secure-store",
       "expo-local-authentication",

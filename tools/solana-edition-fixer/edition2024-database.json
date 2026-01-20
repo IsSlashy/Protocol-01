@@ -1,0 +1,186 @@
+{
+  "version": "1.0.0",
+  "description": "Database of crates that have versions requiring Rust edition 2024",
+  "lastUpdated": "2025-01-20",
+  "notes": [
+    "Solana platform-tools v1.42-v1.52 use Cargo 1.84.x",
+    "Edition 2024 requires Cargo 1.85+",
+    "These max versions are the last compatible with edition 2021"
+  ],
+  "crates": {
+    "constant_time_eq": {
+      "maxCompatible": "0.3.1",
+      "firstIncompatible": "0.4.0",
+      "reason": "0.4.0+ requires edition 2024",
+      "usedBy": ["blake3", "argon2"]
+    },
+    "base64ct": {
+      "maxCompatible": "1.6.0",
+      "firstIncompatible": "1.7.0",
+      "reason": "1.7.0+ requires edition 2024",
+      "usedBy": ["pkcs8", "pem-rfc7468", "sec1", "spki"]
+    },
+    "subtle": {
+      "maxCompatible": "2.5.0",
+      "firstIncompatible": "2.6.0",
+      "reason": "2.6.0+ requires edition 2024",
+      "usedBy": ["curve25519-dalek", "ed25519-dalek", "crypto-common"]
+    },
+    "zeroize": {
+      "maxCompatible": "1.7.0",
+      "firstIncompatible": "1.8.0",
+      "reason": "1.8.0+ requires edition 2024",
+      "usedBy": ["curve25519-dalek", "ed25519-dalek", "elliptic-curve"]
+    },
+    "crypto-common": {
+      "maxCompatible": "0.1.6",
+      "firstIncompatible": "0.2.0",
+      "reason": "0.2.0+ requires edition 2024",
+      "usedBy": ["digest", "cipher", "aead"]
+    },
+    "password-hash": {
+      "maxCompatible": "0.5.0",
+      "firstIncompatible": "0.6.0",
+      "reason": "0.6.0+ requires edition 2024",
+      "usedBy": ["argon2", "pbkdf2"]
+    },
+    "digest": {
+      "maxCompatible": "0.10.7",
+      "firstIncompatible": "0.11.0",
+      "reason": "0.11.0+ requires edition 2024",
+      "usedBy": ["sha2", "sha3", "blake2"]
+    },
+    "cipher": {
+      "maxCompatible": "0.4.4",
+      "firstIncompatible": "0.5.0",
+      "reason": "0.5.0+ requires edition 2024",
+      "usedBy": ["aes", "chacha20"]
+    },
+    "aead": {
+      "maxCompatible": "0.5.2",
+      "firstIncompatible": "0.6.0",
+      "reason": "0.6.0+ requires edition 2024",
+      "usedBy": ["aes-gcm", "chacha20poly1305"]
+    },
+    "inout": {
+      "maxCompatible": "0.1.3",
+      "firstIncompatible": "0.2.0",
+      "reason": "0.2.0+ requires edition 2024",
+      "usedBy": ["cipher"]
+    },
+    "universal-hash": {
+      "maxCompatible": "0.5.1",
+      "firstIncompatible": "0.6.0",
+      "reason": "0.6.0+ requires edition 2024",
+      "usedBy": ["poly1305", "ghash"]
+    },
+    "signature": {
+      "maxCompatible": "2.2.0",
+      "firstIncompatible": "2.3.0",
+      "reason": "2.3.0+ requires edition 2024",
+      "usedBy": ["ed25519-dalek", "ecdsa"]
+    },
+    "elliptic-curve": {
+      "maxCompatible": "0.13.8",
+      "firstIncompatible": "0.14.0",
+      "reason": "0.14.0+ requires edition 2024",
+      "usedBy": ["k256", "p256", "p384"]
+    },
+    "sec1": {
+      "maxCompatible": "0.7.3",
+      "firstIncompatible": "0.8.0",
+      "reason": "0.8.0+ requires edition 2024",
+      "usedBy": ["elliptic-curve"]
+    },
+    "spki": {
+      "maxCompatible": "0.7.3",
+      "firstIncompatible": "0.8.0",
+      "reason": "0.8.0+ requires edition 2024",
+      "usedBy": ["pkcs8"]
+    },
+    "pkcs8": {
+      "maxCompatible": "0.10.2",
+      "firstIncompatible": "0.11.0",
+      "reason": "0.11.0+ requires edition 2024",
+      "usedBy": ["ed25519-dalek", "elliptic-curve"]
+    },
+    "der": {
+      "maxCompatible": "0.7.9",
+      "firstIncompatible": "0.8.0",
+      "reason": "0.8.0+ requires edition 2024",
+      "usedBy": ["pkcs8", "spki", "sec1"]
+    },
+    "pem-rfc7468": {
+      "maxCompatible": "0.7.0",
+      "firstIncompatible": "0.8.0",
+      "reason": "0.8.0+ requires edition 2024",
+      "usedBy": ["pkcs8"]
+    },
+    "blake3": {
+      "maxCompatible": "1.5.0",
+      "firstIncompatible": "1.6.0",
+      "reason": "1.6.0+ pulls constant_time_eq 0.4.x",
+      "usedBy": ["solana-program"]
+    },
+    "borsh": {
+      "maxCompatible": "1.5.0",
+      "firstIncompatible": "1.6.0",
+      "reason": "Newer versions may have edition issues",
+      "usedBy": ["anchor-lang"]
+    },
+    "borsh-derive": {
+      "maxCompatible": "1.5.0",
+      "firstIncompatible": "1.6.0",
+      "reason": "Newer versions may have edition issues",
+      "usedBy": ["borsh"]
+    },
+    "wit-bindgen": {
+      "maxCompatible": "0.24.0",
+      "firstIncompatible": "0.25.0",
+      "reason": "0.25.0+ requires edition 2024",
+      "usedBy": ["wasip2"]
+    },
+    "wit-component": {
+      "maxCompatible": "0.24.0",
+      "firstIncompatible": "0.25.0",
+      "reason": "0.25.0+ requires edition 2024",
+      "usedBy": ["wit-bindgen"]
+    },
+    "wasm-encoder": {
+      "maxCompatible": "0.41.0",
+      "firstIncompatible": "0.42.0",
+      "reason": "0.42.0+ requires edition 2024",
+      "usedBy": ["wit-component"]
+    },
+    "wasmparser": {
+      "maxCompatible": "0.121.0",
+      "firstIncompatible": "0.122.0",
+      "reason": "0.122.0+ requires edition 2024",
+      "usedBy": ["wasm-encoder"]
+    },
+    "wit-parser": {
+      "maxCompatible": "0.24.0",
+      "firstIncompatible": "0.25.0",
+      "reason": "0.25.0+ requires edition 2024",
+      "usedBy": ["wit-component"]
+    },
+    "yoke": {
+      "maxCompatible": "0.7.4",
+      "firstIncompatible": "0.8.0",
+      "reason": "0.8.0+ requires Rust 1.81+",
+      "usedBy": ["icu_*", "zerovec"]
+    },
+    "zerofrom": {
+      "maxCompatible": "0.1.4",
+      "firstIncompatible": "0.1.5",
+      "reason": "0.1.5+ requires edition 2024",
+      "usedBy": ["icu_*"]
+    },
+    "zerovec": {
+      "maxCompatible": "0.10.4",
+      "firstIncompatible": "0.11.0",
+      "reason": "0.11.0+ requires edition 2024",
+      "usedBy": ["icu_*"]
+    }
+  }
+}

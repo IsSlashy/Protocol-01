@@ -6,7 +6,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("SPEC1111111111111111111111111111111111111111");
+declare_id!("2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp");
 
 #[program]
 pub mod specter {

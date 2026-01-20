@@ -16,6 +16,7 @@ import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Card } from '../../../components/ui/Card';
 import { useStreamStore } from '../../../stores/streamStore';
+import { useWalletStore } from '../../../stores/walletStore';
 import { Stream, formatFrequency, calculateDailyRate } from '../../../services/solana/streams';
 
 const VIOLET = '#8b5cf6';
@@ -28,14 +29,18 @@ export default function StreamsDashboard() {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<TabType>('active');
 
+  const { publicKey } = useWalletStore();
   const {
     streams,
     stats,
     loading,
     refreshing,
+    syncing,
+    lastSyncTime,
     processingPayment,
     initialize,
     refresh,
+    syncFromChain,
     pauseStream,
     resumeStream,
     cancelStream,
@@ -44,12 +49,32 @@ export default function StreamsDashboard() {
   } = useStreamStore();
 
   useEffect(() => {
-    initialize();
-  }, []);
+    // Initialize with wallet address for on-chain sync
+    initialize(publicKey || undefined);
+  }, [publicKey]);
 
   const onRefresh = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await refresh();
+    // Pass wallet address to sync from blockchain
+    await refresh(publicKey || undefined);
+  };
+
+  const handleManualSync = async () => {
+    if (!publicKey) {
+      Alert.alert('No Wallet', 'Please connect a wallet to sync from blockchain.');
+      return;
+    }
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const result = await syncFromChain(publicKey);
+      if (result.newStreams > 0) {
+        Alert.alert('Sync Complete', `Found ${result.newStreams} new subscription(s) from blockchain.`);
+      } else {
+        Alert.alert('Sync Complete', 'No new subscriptions found on blockchain.');
+      }
+    } catch (error) {
+      Alert.alert('Sync Failed', 'Failed to sync from blockchain. Please try again.');
+    }
   };
 
   const activeStreams = streams.filter(
@@ -173,14 +198,38 @@ export default function StreamsDashboard() {
       >
         {/* Header */}
         <View className="px-6 py-4 flex-row items-center justify-between">
-          <Text className="text-white text-2xl font-bold">STREAMS</Text>
-          <Pressable
-            onPress={() => router.push('/(main)/(streams)/create')}
-            className="w-10 h-10 rounded-full items-center justify-center"
-            style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}
-          >
-            <Ionicons name="add" size={24} color={VIOLET} />
-          </Pressable>
+          <View className="flex-row items-center">
+            <Text className="text-white text-2xl font-bold">STREAMS</Text>
+            {syncing && (
+              <View className="ml-2 flex-row items-center">
+                <ActivityIndicator size="small" color={VIOLET} />
+                <Text className="text-gray-400 text-xs ml-1">Syncing...</Text>
+              </View>
+            )}
+          </View>
+          <View className="flex-row items-center gap-2">
+            {/* Sync from blockchain button */}
+            <Pressable
+              onPress={handleManualSync}
+              disabled={syncing}
+              className="w-10 h-10 rounded-full items-center justify-center"
+              style={{ backgroundColor: 'rgba(139, 92, 246, 0.1)' }}
+            >
+              <Ionicons
+                name="cloud-download-outline"
+                size={20}
+                color={syncing ? '#888' : VIOLET}
+              />
+            </Pressable>
+            {/* Create new stream button */}
+            <Pressable
+              onPress={() => router.push('/(main)/(streams)/create')}
+              className="w-10 h-10 rounded-full items-center justify-center"
+              style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}
+            >
+              <Ionicons name="add" size={24} color={VIOLET} />
+            </Pressable>
+          </View>
         </View>
 
         {/* Stats Card */}

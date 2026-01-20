@@ -208,6 +208,18 @@ export type {
 } from './bluetooth';
 
 // ============================================================================
+// Sync Hooks
+// ============================================================================
+export {
+  useRealtimeSync,
+} from './sync';
+
+export type {
+  UseRealtimeSyncOptions,
+  UseRealtimeSyncReturn,
+} from './sync';
+
+// ============================================================================
 // Font Loading
 // ============================================================================
 export { useLoadFonts } from './useLoadFonts';

@@ -3,6 +3,7 @@ name = "p01-stream"
 version = "0.1.0"
 description = "Protocol 01 Stream Payments - Recurring subscription payments on Solana"
 edition = "2021"
+rust-version = "1.75"
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -14,7 +15,9 @@ no-idl = []
 no-log-ix-name = []
 cpi = ["no-entrypoint"]
 default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = "0.32.0"
-anchor-spl = "0.32.0"
+anchor-lang = "0.29.0"
+anchor-spl = "0.29.0"
+
