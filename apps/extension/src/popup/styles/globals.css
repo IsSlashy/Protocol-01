@@ -1,0 +1,131 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Protocol 01 Colors - Same as mobile */
+  --p01-void: #0a0a0c;
+  --p01-dark: #0f0f12;
+  --p01-surface: #151518;
+  --p01-elevated: #1a1a1f;
+  --p01-border: #2a2a30;
+  --p01-border-hover: #3a3a40;
+
+  /* Primary */
+  --p01-cyan: #39c5bb;
+  --p01-cyan-dim: #2a9d95;
+  --p01-cyan-bright: #00ffe5;
+
+  /* Accents */
+  --p01-pink: #ff77a8;
+  --p01-pink-hot: #ff2d7a;
+  --p01-yellow: #ffcc00;
+  --p01-red: #ff3366;
+  --p01-chrome: #c0c0c8;
+
+  /* Fonts - Same as mobile */
+  --font-display: 'Orbitron', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 360px;
+  height: 600px;
+  overflow: hidden;
+  background-color: var(--p01-void);
+  color: #ffffff;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Headings use Orbitron */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Font utility classes */
+.font-display {
+  font-family: var(--font-display) !important;
+}
+
+.font-mono {
+  font-family: var(--font-mono) !important;
+}
+
+.font-body {
+  font-family: var(--font-body) !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--p01-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--p01-border);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #404040;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.3s ease-out;
+}
+
+/* Industrial panel */
+.panel-raw {
+  background: var(--p01-surface);
+  border: 1px solid var(--p01-border);
+}
+
+/* Cyber button */
+.btn-cyber {
+  position: relative;
+  background: var(--p01-cyan);
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.btn-cyber:hover {
+  background: var(--p01-cyan-dim);
+}
