@@ -238,10 +238,9 @@ export default function Hero() {
               transition={{ duration: 0.5, delay: 0.5 }}
               className="text-[#888892] text-base max-w-lg mt-8 mb-8 font-mono leading-relaxed"
             >
-              Anonymous Solana wallet with stealth addresses for private
-              transactions. Stream payments, encrypted messaging, and
-              zero-knowledge proofs.{" "}
-              <span className="text-[#39c5bb]">Complete financial privacy.</span>
+              Anonymous transactions. Private streams. Zero-knowledge
+              communications.{" "}
+              <span className="text-[#39c5bb]">Total invisibility.</span>
             </motion.p>
 
             {/* CTA Buttons - sharp edges, no soft shadows */}
@@ -251,10 +250,7 @@ export default function Hero() {
               transition={{ duration: 0.5, delay: 0.6 }}
               className="flex flex-wrap gap-4 mb-12"
             >
-              <a
-                href="#download"
-                className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors"
-              >
+              <button className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors">
                 <svg
                   className="w-5 h-5"
                   viewBox="0 0 24 24"
@@ -265,11 +261,8 @@ export default function Hero() {
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
                 Initialize Protocol
-              </a>
-              <a
-                href="#features"
-                className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors"
-              >
+              </button>
+              <button className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
                 <svg
                   className="w-5 h-5"
                   viewBox="0 0 24 24"
@@ -281,7 +274,7 @@ export default function Hero() {
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
                 Documentation
-              </a>
+              </button>
             </motion.div>
 
             {/* Stats Row - industrial style */}
@@ -292,9 +285,9 @@ export default function Hero() {
               className="grid grid-cols-3 gap-6"
             >
               {[
-                { value: "100%", label: "Private", color: "text-[#39c5bb]" },
-                { value: "ZK", label: "Proofs", color: "text-[#ff2d7a]" },
-                { value: "No", label: "KYC", color: "text-[#00ffe5]" },
+                { value: "0", label: "Data Leaks", color: "text-[#39c5bb]" },
+                { value: "100%", label: "Anonymous", color: "text-[#ff2d7a]" },
+                { value: "ZK", label: "Verified", color: "text-[#00ffe5]" },
               ].map((stat, index) => (
                 <div key={index} className="text-left">
                   <div

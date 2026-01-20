@@ -17,6 +17,7 @@ import { truncateAddress } from '@/shared/utils';
 import { useWalletStore } from '@/shared/store/wallet';
 import { approveRequest, rejectRequest } from '@/shared/messaging';
 import type { ApprovalRequest } from '@/shared/types';
+import nacl from 'tweetnacl';
 
 interface TransactionPayload {
   transaction?: string;
@@ -28,8 +29,27 @@ interface TransactionPayload {
   isMultiple?: boolean;
 }
 
+// Helper to convert base64 to Uint8Array
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+// Helper to convert Uint8Array to base64
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export default function ApproveTransaction() {
-  const { publicKey } = useWalletStore();
+  const { publicKey, _keypair } = useWalletStore();
   const [isApproving, setIsApproving] = useState(false);
   const [request, setRequest] = useState<ApprovalRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,13 +77,36 @@ export default function ApproveTransaction() {
     setError(null);
 
     try {
-      // TODO: Actual signing logic will be implemented here
-      // For now, we just approve the request and let the background handle it
-      await approveRequest(request.id, {
-        // In a real implementation, we would sign the transaction here
-        // and return the signed transaction data
-        approved: true,
-      });
+      const isMessageSign = request.type === 'signMessage';
+      const payload = request.payload as TransactionPayload;
+
+      // Handle message signing
+      if (isMessageSign && payload.message) {
+        if (!_keypair) {
+          throw new Error('Wallet is locked. Please unlock your wallet first.');
+        }
+
+        // Decode the message from base64
+        const messageBytes = base64ToUint8Array(payload.message);
+
+        // Sign the message using nacl detached signature
+        const signature = nacl.sign.detached(messageBytes, _keypair.secretKey);
+
+        // Convert signature to base64 for transport
+        const signatureBase64 = uint8ArrayToBase64(signature);
+
+        console.log('[ApproveTransaction] Message signed, signature length:', signature.length);
+
+        // Return the signature
+        await approveRequest(request.id, {
+          signature: signatureBase64,
+        });
+      } else {
+        // Handle transaction signing (TODO: implement full transaction signing)
+        await approveRequest(request.id, {
+          approved: true,
+        });
+      }
 
       await chrome.storage.session.remove('currentApproval');
       window.close();

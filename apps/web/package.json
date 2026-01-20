@@ -15,12 +15,14 @@
     "@solana/wallet-adapter-wallets": "^0.19.37",
     "@solana/wallet-standard-wallet-adapter-react": "^1.1.4",
     "@solana/web3.js": "^1.98.4",
+    "@vercel/kv": "^3.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.2.10",
     "lucide-react": "^0.378.0",
     "next": "^16.1.3",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "resend": "^6.8.0",
     "tailwind-merge": "^2.3.0"
   },
   "devDependencies": {

@@ -1,0 +1,19 @@
+[package]
+name = "p01-whitelist"
+version = "0.1.0"
+description = "Protocol 01 Developer Whitelist Program"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "p01_whitelist"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.30.1"

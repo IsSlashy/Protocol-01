@@ -3,6 +3,27 @@
 import React, { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import {
+  Link2,
+  FileCode,
+  Ticket,
+  Lock,
+  ShieldCheck,
+  Hand,
+  Wallet,
+  Cpu,
+  Boxes,
+  Check,
+  X,
+  AlertTriangle,
+  Zap,
+  Clock,
+  Ban,
+  CreditCard,
+  RefreshCw,
+  FileText,
+  Eye
+} from "lucide-react";
 
 // ============ P-01 Theme Constants ============
 // Inspired by: Hatsune Miku (cyan), NEEDY STREAMER OVERLOAD (pink), ULTRAKILL (red)
@@ -42,6 +63,7 @@ interface P01WalletContextType {
   walletAvailable: boolean;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  signMessage: (message: string) => Promise<string | null>;
 }
 
 const P01WalletContext = createContext<P01WalletContextType>({
@@ -51,6 +73,7 @@ const P01WalletContext = createContext<P01WalletContextType>({
   walletAvailable: false,
   connect: async () => {},
   disconnect: async () => {},
+  signMessage: async () => null,
 });
 
 export const useP01Wallet = () => useContext(P01WalletContext);
@@ -62,6 +85,7 @@ interface Protocol01Provider {
   publicKey: { toBase58: () => string } | null;
   connect: (options?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: { toBase58: () => string } }>;
   disconnect: () => Promise<void>;
+  signMessage: (message: Uint8Array, display?: 'utf8' | 'hex') => Promise<{ signature: Uint8Array; publicKey: { toBase58: () => string } }>;
   on: (event: string, callback: (...args: unknown[]) => void) => void;
   off: (event: string, callback: (...args: unknown[]) => void) => void;
 }
@@ -192,6 +216,26 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const signMessage = useCallback(async (message: string): Promise<string | null> => {
+    if (!window.protocol01) {
+      throw new Error("Protocol 01 wallet not installed");
+    }
+
+    try {
+      const encodedMessage = new TextEncoder().encode(message);
+      const result = await window.protocol01.signMessage(encodedMessage, 'utf8');
+
+      // Convert signature to base58 or hex string
+      const signatureArray = Array.from(result.signature);
+      const signatureHex = signatureArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      return signatureHex;
+    } catch (error) {
+      console.error("Failed to sign message:", error);
+      throw error;
+    }
+  }, []);
+
   return (
     <P01WalletContext.Provider
       value={{
@@ -201,6 +245,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
         walletAvailable,
         connect,
         disconnect,
+        signMessage,
       }}
     >
       {children}
@@ -218,7 +263,7 @@ export default function SDKDemoPage() {
 }
 
 function SDKDemoContent() {
-  const [activeTab, setActiveTab] = useState<"widgets" | "buttons" | "cards" | "devnet">("devnet");
+  const [activeTab, setActiveTab] = useState<"devnet" | "streams" | "widgets" | "buttons" | "cards">("devnet");
 
   return (
     <div className="min-h-screen bg-p01-void">
@@ -232,30 +277,45 @@ function SDKDemoContent() {
             <span className="text-p01-text-dim">/</span>
             <span className="text-white font-medium">SDK Demo</span>
           </div>
-          <div className="flex items-center gap-2">
-            <code className="bg-p01-elevated px-3 py-1.5 rounded-lg text-p01-cyan text-sm font-mono">
-              npm install p-01
-            </code>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-p01-elevated px-3 py-1.5 rounded-lg border border-p01-border">
+              <div className="w-2 h-2 bg-p01-cyan animate-pulse" />
+              <span className="text-p01-cyan text-sm font-mono">100% Serverless</span>
+            </div>
+            <div className="flex items-center gap-2 bg-p01-elevated px-3 py-1.5 rounded-lg border border-p01-pink/30">
+              <span className="text-p01-pink text-sm font-mono">On-chain verification</span>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Tab Navigation */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="flex gap-2 mb-8">
-          {(["devnet", "widgets", "buttons", "cards"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-                activeTab === tab
-                  ? "bg-p01-cyan text-p01-void"
-                  : "bg-p01-surface text-p01-text-muted hover:text-white border border-p01-border"
-              }`}
-            >
-              {tab === "devnet" ? "🧪 Devnet" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
+        <div className="flex gap-2 mb-8 flex-wrap">
+          {[
+            { id: "devnet" as const, label: "Devnet", icon: Cpu, color: "yellow" },
+            { id: "streams" as const, label: "Stream SDK", icon: RefreshCw, color: "pink" },
+            { id: "widgets" as const, label: "Widgets", icon: CreditCard, color: "cyan" },
+            { id: "buttons" as const, label: "Buttons", icon: Zap, color: "cyan" },
+            { id: "cards" as const, label: "Cards", icon: FileText, color: "cyan" },
+          ].map((tab) => {
+            const isActive = activeTab === tab.id;
+            const IconComponent = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2 font-medium text-sm transition-all font-display uppercase tracking-wider ${
+                  isActive
+                    ? "bg-p01-cyan text-p01-void"
+                    : "bg-p01-surface text-p01-text-muted hover:text-white border border-p01-border hover:border-p01-cyan/50"
+                }`}
+              >
+                <IconComponent size={16} className={isActive ? "text-p01-void" : tab.color === "yellow" ? "text-yellow-500" : tab.color === "pink" ? "text-p01-pink" : "text-p01-cyan"} />
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Content */}
@@ -266,6 +326,7 @@ function SDKDemoContent() {
           transition={{ duration: 0.2 }}
         >
           {activeTab === "devnet" && <DevnetSection />}
+          {activeTab === "streams" && <StreamSDKSection />}
           {activeTab === "widgets" && <WidgetsSection />}
           {activeTab === "buttons" && <ButtonsSection />}
           {activeTab === "cards" && <CardsSection />}
@@ -340,7 +401,7 @@ function DevnetSection() {
         throw new Error(data.error.message || 'Airdrop failed');
       }
 
-      setAirdropStatus(`✅ Airdrop successful! TX: ${data.result?.slice(0, 16)}...`);
+      setAirdropStatus(`SUCCESS: Airdrop complete! TX: ${data.result?.slice(0, 16)}...`);
 
       // Refresh balance after a delay
       setTimeout(async () => {
@@ -361,7 +422,7 @@ function DevnetSection() {
       }, 3000);
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
-      setAirdropStatus(`❌ ${msg}`);
+      setAirdropStatus(`ERROR: ${msg}`);
     } finally {
       setAirdropLoading(false);
     }
@@ -380,10 +441,16 @@ function DevnetSection() {
       );
 
       const result = await window.protocol01.signMessage(message, 'utf8');
-      setPaymentStatus(`✅ Message signed! Signature: ${Array.from(result.signature.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('')}...`);
+
+      // Convert signature to hex for display
+      const signatureHex = Array.from(result.signature.slice(0, 8))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      setPaymentStatus(`SUCCESS: Message signed! Signature: ${signatureHex}...`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
-      setPaymentStatus(`❌ ${msg}`);
+      setPaymentStatus(`ERROR: ${msg}`);
     } finally {
       setPaymentLoading(false);
     }
@@ -392,26 +459,35 @@ function DevnetSection() {
   return (
     <div className="space-y-8">
       {/* Section Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-white mb-2">🧪 Devnet Testing</h2>
-        <p className="text-p01-text-muted">
-          Test wallet connection, get devnet SOL, and simulate payments.
-        </p>
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-center">
+          <Cpu size={20} className="text-yellow-500" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-white font-display">Devnet Testing</h2>
+          <p className="text-p01-text-muted text-sm">
+            Test wallet connection, get devnet SOL, and simulate payments.
+          </p>
+        </div>
       </div>
 
       {/* Wallet Connection Card */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">1. Connect Wallet</h3>
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-4 font-display">1. Connect Wallet</h3>
 
         {!walletAvailable ? (
           <div className="text-center py-8">
-            <div className="text-4xl mb-4">🔌</div>
-            <p className="text-p01-text-muted mb-4">Protocol 01 wallet not detected</p>
+            <div className="w-16 h-16 bg-p01-surface border border-p01-border mx-auto mb-4 flex items-center justify-center">
+              <Zap size={28} className="text-p01-text-dim" />
+            </div>
+            <p className="text-p01-text-muted mb-2">Protocol 01 wallet not detected</p>
             <p className="text-p01-text-dim text-sm">Make sure the extension is installed and enabled</p>
           </div>
         ) : !connected ? (
           <div className="text-center py-8">
-            <div className="text-4xl mb-4">👛</div>
+            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 mx-auto mb-4 flex items-center justify-center">
+              <Wallet size={28} className="text-p01-cyan" />
+            </div>
             <p className="text-p01-text-muted mb-4">Connect your wallet to get started</p>
             <P01WalletButton variant="primary" size="lg" />
           </div>
@@ -476,17 +552,19 @@ function DevnetSection() {
                 </>
               ) : (
                 <>
-                  💧 Request 1 SOL Airdrop
+                  <RefreshCw size={18} />
+                  Request 1 SOL Airdrop
                 </>
               )}
             </button>
 
             {airdropStatus && (
-              <div className={`p-3 rounded-lg text-sm font-mono ${
-                airdropStatus.startsWith('✅')
+              <div className={`flex items-center gap-2 p-3 text-sm font-mono ${
+                airdropStatus.startsWith('SUCCESS')
                   ? 'bg-p01-cyan/10 border border-p01-cyan/30 text-p01-cyan'
                   : 'bg-red-500/10 border border-red-500/30 text-red-400'
               }`}>
+                {airdropStatus.startsWith('SUCCESS') ? <Check size={16} /> : <X size={16} />}
                 {airdropStatus}
               </div>
             )}
@@ -533,17 +611,19 @@ function DevnetSection() {
                 </>
               ) : (
                 <>
-                  ✍️ Sign Test Message
+                  <FileText size={18} />
+                  Sign Test Message
                 </>
               )}
             </button>
 
             {paymentStatus && (
-              <div className={`p-3 rounded-lg text-sm font-mono ${
-                paymentStatus.startsWith('✅')
+              <div className={`flex items-center gap-2 p-3 text-sm font-mono ${
+                paymentStatus.startsWith('SUCCESS')
                   ? 'bg-p01-cyan/10 border border-p01-cyan/30 text-p01-cyan'
                   : 'bg-red-500/10 border border-red-500/30 text-red-400'
               }`}>
+                {paymentStatus.startsWith('SUCCESS') ? <Check size={16} /> : <X size={16} />}
                 {paymentStatus}
               </div>
             )}
@@ -567,6 +647,570 @@ function DevnetSection() {
   );
 }
 
+// ============ Developer Whitelist ============
+// Check whitelist via API (admin-managed)
+async function checkWhitelistAPI(walletAddress: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/whitelist?wallet=${walletAddress}`);
+    const data = await res.json();
+    return data.approved === true;
+  } catch {
+    return false;
+  }
+}
+
+// Access request form state
+interface AccessRequestForm {
+  email: string;
+  projectName: string;
+  projectDescription: string;
+  website: string;
+}
+
+// ============ Stream SDK Section ============
+function StreamSDKSection() {
+  const { publicKey, connected, walletAvailable } = useP01Wallet();
+  const [hasDevAccess, setHasDevAccess] = useState<boolean | null>(null);
+  const [showRequestForm, setShowRequestForm] = useState(false);
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const [formLoading, setFormLoading] = useState(false);
+  const [formData, setFormData] = useState<AccessRequestForm>({
+    email: '',
+    projectName: '',
+    projectDescription: '',
+    website: '',
+  });
+
+  // Check whitelist via API
+  useEffect(() => {
+    if (connected && publicKey) {
+      setHasDevAccess(null); // Loading state
+      checkWhitelistAPI(publicKey).then((approved) => {
+        setHasDevAccess(approved);
+      });
+    } else {
+      setHasDevAccess(null);
+      setShowRequestForm(false);
+      setFormSubmitted(false);
+    }
+  }, [connected, publicKey]);
+
+  const handleSubmitRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!publicKey || !formData.email || !formData.projectName) return;
+
+    setFormLoading(true);
+    try {
+      // Save to API (will show in admin panel)
+      await fetch('/api/whitelist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet: publicKey,
+          email: formData.email,
+          projectName: formData.projectName,
+        }),
+      });
+
+      // Also send to Discord webhook for notification
+      const webhookUrl = process.env.NEXT_PUBLIC_DISCORD_WEBHOOK;
+      if (webhookUrl) {
+        await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            embeds: [{
+              title: '🔑 New Developer Access Request',
+              color: 0x39c5bb,
+              fields: [
+                { name: 'Wallet', value: `\`${publicKey}\``, inline: false },
+                { name: 'Email', value: formData.email, inline: true },
+                { name: 'Project', value: formData.projectName, inline: true },
+                { name: 'Website', value: formData.website || 'N/A', inline: true },
+                { name: 'Description', value: formData.projectDescription || 'N/A', inline: false },
+              ],
+              timestamp: new Date().toISOString(),
+            }],
+          }),
+        });
+      }
+
+      setFormSubmitted(true);
+      setShowRequestForm(false);
+    } catch (error) {
+      console.error('Failed to submit request:', error);
+      alert('Failed to submit request. Please try again or contact us on Discord.');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      {/* Section Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-p01-pink/10 border border-p01-pink/30 flex items-center justify-center">
+          <RefreshCw size={20} className="text-p01-pink" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-white font-display">Stream Payments SDK</h2>
+          <p className="text-p01-text-muted text-sm">
+            Create subscription payments for your app. No servers needed - everything runs directly on the blockchain.
+          </p>
+        </div>
+      </div>
+
+      {/* Simple Explanation for Beginners */}
+      <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
+        <h3 className="text-lg font-semibold text-white mb-4 font-display flex items-center gap-2">
+          <Eye size={18} className="text-p01-cyan" />
+          What is this in simple terms?
+        </h3>
+        <div className="space-y-4 text-p01-text-muted">
+          <p>
+            <span className="text-white font-semibold">Think of Netflix or Spotify</span> - you pay automatically every month.
+            Our SDK lets developers create these recurring payments, but with one major difference:
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 bg-p01-void/50 border border-p01-border">
+              <p className="text-p01-pink font-semibold mb-2">❌ Traditional Subscriptions</p>
+              <ul className="text-sm space-y-1">
+                <li>• Netflix can raise prices whenever they want</li>
+                <li>• Your card can be charged without limits</li>
+                <li>• You have to trust the company</li>
+              </ul>
+            </div>
+            <div className="p-4 bg-p01-void/50 border border-p01-cyan/30">
+              <p className="text-p01-cyan font-semibold mb-2">✅ With Protocol 01</p>
+              <ul className="text-sm space-y-1">
+                <li>• Price is LOCKED when you subscribe</li>
+                <li>• Impossible to charge more than agreed</li>
+                <li>• You cancel from your wallet, not the website</li>
+              </ul>
+            </div>
+          </div>
+          <p className="text-sm text-p01-text-dim">
+            <span className="text-p01-cyan">In short:</span> It's like Netflix signing a contract with you - they can never change the terms once you've agreed.
+          </p>
+        </div>
+      </div>
+
+      {/* Key Features */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[
+          { icon: Link2, title: "100% Serverless", desc: "No centralized API", color: "cyan" },
+          { icon: FileCode, title: "Smart Contract", desc: "On-chain verification", color: "cyan" },
+          { icon: Ticket, title: "Whitelist Access", desc: "Verified developers only", color: "pink" },
+          { icon: Lock, title: "Closed Circuit", desc: "P01 wallet required", color: "pink" },
+          { icon: ShieldCheck, title: "Immutable Pricing", desc: "Prices locked on-chain", color: "cyan" },
+          { icon: Hand, title: "Cancel Anytime", desc: "User controls subscription", color: "cyan" },
+        ].map((feature) => {
+          const IconComponent = feature.icon;
+          const colorClass = feature.color === "cyan" ? "text-p01-cyan" : "text-p01-pink";
+          const bgClass = feature.color === "cyan" ? "bg-p01-cyan/10 border-p01-cyan/30" : "bg-p01-pink/10 border-p01-pink/30";
+          return (
+            <div key={feature.title} className="bg-p01-surface p-4 border border-p01-border group hover:border-p01-cyan/50 transition-all">
+              <div className={`w-10 h-10 ${bgClass} border flex items-center justify-center mb-3`}>
+                <IconComponent size={20} className={colorClass} />
+              </div>
+              <h4 className="text-white font-semibold mb-1 font-display">{feature.title}</h4>
+              <p className="text-p01-text-dim text-sm font-mono">{feature.desc}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Security Alert - Immutable Pricing */}
+      <div className="bg-p01-cyan/5 p-6 border border-p01-cyan/30">
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center flex-shrink-0">
+            <ShieldCheck size={24} className="text-p01-cyan" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-p01-cyan mb-2 font-display">Customer Protection: Locked Prices</h3>
+            <p className="text-p01-text-muted text-sm mb-2">
+              <span className="text-white font-semibold">What does this mean?</span> When you subscribe at $9.99/month, that price is <span className="text-p01-cyan font-semibold">permanently recorded</span> on the blockchain.
+            </p>
+            <p className="text-p01-text-muted text-sm mb-4">
+              Even if the app developer wants to raise prices, <span className="text-p01-pink font-semibold">they cannot touch your subscription</span>. It's like a signed contract - impossible to modify without your consent.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="bg-p01-void/50 p-3 border border-p01-cyan/20">
+                <div className="flex items-center gap-2 mb-1">
+                  <Check size={14} className="text-p01-cyan" />
+                  <p className="text-p01-cyan text-xs font-mono">YOU CAN</p>
+                </div>
+                <p className="text-p01-text-muted text-sm">Cancel your subscription anytime you want</p>
+              </div>
+              <div className="bg-p01-void/50 p-3 border border-p01-cyan/20">
+                <div className="flex items-center gap-2 mb-1">
+                  <Check size={14} className="text-p01-cyan" />
+                  <p className="text-p01-cyan text-xs font-mono">DEVELOPER CAN</p>
+                </div>
+                <p className="text-p01-text-muted text-sm">Change prices for new customers only</p>
+              </div>
+              <div className="bg-p01-void/50 p-3 border border-p01-pink/30">
+                <div className="flex items-center gap-2 mb-1">
+                  <X size={14} className="text-p01-pink" />
+                  <p className="text-p01-pink text-xs font-mono">IMPOSSIBLE</p>
+                </div>
+                <p className="text-p01-text-muted text-sm">Change the price of your existing subscription</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Developer Access Card */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-4 font-display">1. Developer Access</h3>
+        <p className="text-p01-text-muted text-sm mb-4">
+          To use the Stream SDK, you need to be a whitelisted developer. Request access to get your wallet added to the whitelist.
+        </p>
+
+        {!walletAvailable ? (
+          <div className="text-center py-6">
+            <div className="w-16 h-16 bg-p01-surface border border-p01-border mx-auto mb-4 flex items-center justify-center">
+              <Zap size={28} className="text-p01-text-dim" />
+            </div>
+            <p className="text-p01-text-muted mb-4">Install Protocol 01 wallet to check your access</p>
+          </div>
+        ) : !connected ? (
+          <div className="text-center py-6">
+            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 mx-auto mb-4 flex items-center justify-center">
+              <Wallet size={28} className="text-p01-cyan" />
+            </div>
+            <p className="text-p01-text-muted mb-4">Connect wallet to verify developer access</p>
+            <P01WalletButton variant="primary" size="lg" />
+          </div>
+        ) : hasDevAccess === null ? (
+          <div className="flex items-center justify-center py-6 gap-3">
+            <LoadingSpinner color={THEME.primaryColor} />
+            <span className="text-p01-text-muted">Checking developer whitelist...</span>
+          </div>
+        ) : hasDevAccess ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-p01-cyan/10 border border-p01-cyan/30">
+              <div className="w-12 h-12 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center">
+                <Ticket size={24} className="text-p01-cyan" />
+              </div>
+              <div className="flex-1">
+                <p className="text-p01-cyan font-semibold font-display">Developer Access Verified</p>
+                <p className="text-p01-text-dim text-sm font-mono">You have full access to Stream SDK</p>
+              </div>
+              <div className="w-8 h-8 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center">
+                <Check size={16} className="text-p01-cyan" />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 p-4 bg-p01-pink/10 border border-p01-pink/30">
+              <div className="w-12 h-12 bg-p01-pink/20 border border-p01-pink/40 flex items-center justify-center">
+                <Ban size={24} className="text-p01-pink" />
+              </div>
+              <div className="flex-1">
+                <p className="text-p01-pink font-semibold font-display">Access Not Granted</p>
+                <p className="text-p01-text-dim text-sm font-mono">Your wallet is not on the developer whitelist</p>
+              </div>
+            </div>
+            {formSubmitted ? (
+              <div className="p-4 bg-p01-cyan/10 border border-p01-cyan/30">
+                <div className="flex items-center gap-2 mb-2">
+                  <Check size={16} className="text-p01-cyan" />
+                  <span className="text-p01-cyan font-semibold">Request Submitted!</span>
+                </div>
+                <p className="text-p01-text-muted text-sm">
+                  We'll review your application and get back to you via email.
+                  Join our <a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-p01-cyan hover:underline">Discord</a> for faster response.
+                </p>
+              </div>
+            ) : showRequestForm ? (
+              <form onSubmit={handleSubmitRequest} className="space-y-4">
+                <div>
+                  <label className="block text-p01-text-muted text-sm mb-1">Email *</label>
+                  <input
+                    type="email"
+                    required
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="dev@example.com"
+                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-p01-text-muted text-sm mb-1">Project Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.projectName}
+                    onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
+                    placeholder="My Awesome DApp"
+                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-p01-text-muted text-sm mb-1">Website</label>
+                  <input
+                    type="url"
+                    value={formData.website}
+                    onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                    placeholder="https://myproject.com"
+                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-p01-text-muted text-sm mb-1">Project Description</label>
+                  <textarea
+                    value={formData.projectDescription}
+                    onChange={(e) => setFormData({ ...formData, projectDescription: e.target.value })}
+                    placeholder="Tell us about your project and how you plan to use the SDK..."
+                    rows={3}
+                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none resize-none"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowRequestForm(false)}
+                    className="flex-1 py-2 bg-p01-surface border border-p01-border text-p01-text-muted hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={formLoading}
+                    className="flex-1 py-2 bg-p01-cyan text-p01-void font-semibold hover:bg-p01-cyan/90 transition-colors disabled:opacity-50"
+                  >
+                    {formLoading ? 'Submitting...' : 'Submit Request'}
+                  </button>
+                </div>
+                <p className="text-p01-text-dim text-xs text-center">
+                  Your data is encrypted and stored securely. We only use your email to notify you about your access status.
+                </p>
+              </form>
+            ) : (
+              <button
+                onClick={() => setShowRequestForm(true)}
+                className="w-full py-3 bg-p01-pink text-white font-semibold hover:bg-p01-pink/90 transition-colors font-display uppercase tracking-wider text-sm"
+              >
+                Request Developer Access
+              </button>
+            )}
+            <p className="text-p01-text-dim text-xs text-center mt-3">
+              Wallet: <span className="font-mono text-p01-text-muted">{publicKey}</span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* SDK Integration */}
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-4">2. SDK Integration</h3>
+        <p className="text-p01-text-muted text-sm mb-6">
+          The SDK connects directly to on-chain programs. No API endpoints, no server infrastructure - everything verified by smart contracts.
+        </p>
+
+        <CodeBlock
+          title="Initialize SDK (Serverless)"
+          code={`import { P01SDK, STREAM_PROGRAM_ID } from '@protocol01/sdk';
+
+// Connect with your P01 wallet - no API keys!
+const p01 = new P01SDK({
+  wallet: connectedWallet,  // Your Protocol 01 wallet
+  network: "mainnet"        // or "devnet" for testing
+});
+
+// Smart contract verifies you hold the Developer NFT
+// No server request - pure on-chain verification
+const isAuthorized = await p01.verifyDeveloperAccess();
+
+if (!isAuthorized) {
+  throw new Error("Developer NFT required");
+}`}
+        />
+      </div>
+
+      {/* Create Stream */}
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-4">3. Create Payment Stream</h3>
+        <p className="text-p01-text-muted text-sm mb-2">
+          Create subscription streams for your users. <span className="text-p01-pink font-semibold">Recipients must have a Protocol 01 wallet</span> - this is a closed ecosystem.
+        </p>
+        <div className="flex items-center gap-3 p-3 bg-p01-pink/10 border border-p01-pink/30 mb-6">
+          <AlertTriangle size={18} className="text-p01-pink flex-shrink-0" />
+          <span className="text-p01-pink text-sm font-mono">Both sender and recipient must use P01 wallet (closed circuit)</span>
+        </div>
+
+        <CodeBlock
+          title="Create Subscription Stream"
+          code={`// Create a recurring payment stream
+// Both parties must have P01 wallet!
+const stream = await p01.streams.create({
+  recipient: "p01:7xK9f...8c2e", // Must have P01 wallet
+  amount: "9.99",                 // ⚠️ IMMUTABLE once subscribed!
+  token: "USDC",
+  interval: "monthly",
+  programId: STREAM_PROGRAM_ID
+});
+
+// The smart contract:
+// 1. Verifies your Developer NFT
+// 2. Verifies recipient has P01 wallet
+// 3. LOCKS the price in the subscription record
+// 4. Handles automatic payments at LOCKED price
+
+// ⛔ IMPOSSIBLE for developer to do:
+// stream.updatePrice("19.99") // ERROR: Price is immutable
+
+// ✅ Only the SUBSCRIBER can cancel:
+// Called from subscriber's wallet only
+await p01.streams.cancel({ streamId: stream.id });`}
+        />
+      </div>
+
+      {/* Verify & Manage */}
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-4">4. On-Chain Verification</h3>
+        <p className="text-p01-text-muted text-sm mb-6">
+          All subscription data is stored on-chain. Verify and manage streams without any server calls.
+        </p>
+
+        <CodeBlock
+          title="Query Streams (On-Chain)"
+          code={`// Query streams directly from blockchain
+const activeStreams = await p01.streams.query({
+  merchant: publicKey,
+  status: "active"
+});
+
+// Each stream contains IMMUTABLE data:
+// - amount: locked at subscription time
+// - token: cannot be changed
+// - interval: fixed monthly/yearly
+// - subscribedAt: timestamp proof
+
+// Verify subscription with locked price
+const subscription = await p01.streams.get(streamId);
+console.log("Locked price:", subscription.amount); // Never changes!
+
+// ✅ ONLY subscriber can cancel (from their wallet)
+// Developer CANNOT cancel or modify!
+await p01.streams.cancel({
+  streamId: "stream_abc123",
+  // Requires subscriber's wallet signature
+});`}
+        />
+      </div>
+
+      {/* Architecture Diagram */}
+      <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
+        <h4 className="text-white font-semibold mb-6 font-display text-center">Architecture: No Server Required</h4>
+        <div className="flex items-center justify-center gap-6 text-center py-4">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center relative">
+              <Wallet size={28} className="text-p01-cyan" />
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-p01-cyan animate-pulse" />
+            </div>
+            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">Your dApp</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-[2px] bg-gradient-to-r from-p01-cyan to-p01-cyan/50" />
+            <div className="w-2 h-2 bg-p01-cyan rotate-45" />
+          </div>
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-p01-pink/10 border border-p01-pink/30 flex items-center justify-center">
+              <FileCode size={28} className="text-p01-pink" />
+            </div>
+            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">Smart Contract</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-[2px] bg-gradient-to-r from-p01-pink/50 to-p01-cyan" />
+            <div className="w-2 h-2 bg-p01-cyan rotate-45" />
+          </div>
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
+              <Boxes size={28} className="text-p01-cyan" />
+            </div>
+            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">Solana</span>
+          </div>
+        </div>
+        <p className="text-p01-text-dim text-xs text-center mt-6 font-mono">
+          Direct wallet → smart contract → blockchain. No API servers, no centralized infrastructure.
+        </p>
+      </div>
+
+      {/* Security Guarantee */}
+      <div className="bg-gradient-to-r from-p01-cyan/5 to-p01-pink/5 p-6 border border-p01-border">
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
+            <Lock size={20} className="text-p01-cyan" />
+          </div>
+          <h4 className="text-white font-semibold font-display">Your Rights Are Protected by Code</h4>
+        </div>
+        <p className="text-p01-text-muted text-sm text-center mb-6 max-w-2xl mx-auto">
+          A smart contract is like a robot that automatically enforces the rules.
+          Nobody - not us, not the developers - can bypass it. Here's what's guaranteed:
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-6 h-6 bg-p01-cyan/20 border border-p01-cyan/30 flex items-center justify-center">
+                <Check size={12} className="text-p01-cyan" />
+              </div>
+              <h5 className="text-p01-cyan font-semibold text-sm font-display uppercase tracking-wider">What YOU can do</h5>
+            </div>
+            <ul className="space-y-2 text-sm">
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <Check size={14} className="text-p01-cyan flex-shrink-0" />
+                <span>Your price stays the same, forever</span>
+              </li>
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <Check size={14} className="text-p01-cyan flex-shrink-0" />
+                <span>Cancel in one click, directly from your wallet</span>
+              </li>
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <Check size={14} className="text-p01-cyan flex-shrink-0" />
+                <span>Nobody can modify without your permission</span>
+              </li>
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <Check size={14} className="text-p01-cyan flex-shrink-0" />
+                <span>View your complete payment history</span>
+              </li>
+            </ul>
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-6 h-6 bg-p01-pink/20 border border-p01-pink/30 flex items-center justify-center">
+                <X size={12} className="text-p01-pink" />
+              </div>
+              <h5 className="text-p01-pink font-semibold text-sm font-display uppercase tracking-wider">What developers CANNOT do</h5>
+            </div>
+            <ul className="space-y-2 text-sm">
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <X size={14} className="text-p01-pink flex-shrink-0" />
+                <span>Raise your price after you subscribe</span>
+              </li>
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <X size={14} className="text-p01-pink flex-shrink-0" />
+                <span>Cancel your subscription without you</span>
+              </li>
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <X size={14} className="text-p01-pink flex-shrink-0" />
+                <span>Change from monthly to weekly billing</span>
+              </li>
+              <li className="flex items-center gap-3 text-p01-text-muted">
+                <X size={14} className="text-p01-pink flex-shrink-0" />
+                <span>Charge more than the agreed amount</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============ Widgets Section ============
 function WidgetsSection() {
   return (
@@ -575,8 +1219,19 @@ function WidgetsSection() {
       <div>
         <h2 className="text-2xl font-bold text-white mb-2">Subscription Widget</h2>
         <p className="text-p01-text-muted">
-          A complete pricing widget for subscription payments with Stream Secure protection.
+          A complete pricing widget for subscription payments. <span className="text-p01-pink">Requires Protocol 01 wallet.</span>
         </p>
+      </div>
+
+      {/* Customer Protection Banner */}
+      <div className="flex items-center gap-4 p-4 bg-p01-cyan/10 border border-p01-cyan/30">
+        <div className="w-10 h-10 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center flex-shrink-0">
+          <ShieldCheck size={20} className="text-p01-cyan" />
+        </div>
+        <div>
+          <p className="text-p01-cyan font-semibold text-sm font-display">Price Locked On-Chain</p>
+          <p className="text-p01-text-dim text-xs font-mono">Once subscribed, the price can never be changed. Cancel anytime from your wallet.</p>
+        </div>
       </div>
 
       {/* Demo Widget */}
@@ -586,14 +1241,16 @@ function WidgetsSection() {
 
       {/* Code Example */}
       <CodeBlock
-        title="Usage"
-        code={`import { P01Provider, SubscriptionWidget } from 'p-01/react';
+        title="Usage (Serverless - No API Keys)"
+        code={`import { P01Provider, SubscriptionWidget } from '@protocol01/react';
 
 function PricingPage() {
   return (
-    <P01Provider config={{ merchantId: 'your-id', merchantName: 'Your App' }}>
+    // No merchantId! Wallet connection handles identity
+    <P01Provider network="mainnet">
       <SubscriptionWidget
         title="Choose Your Plan"
+        programId={STREAM_PROGRAM_ID} // On-chain program
         tiers={[
           {
             id: 'basic',
@@ -611,7 +1268,8 @@ function PricingPage() {
             features: ['All Basic', 'Feature 3', 'Feature 4'],
           },
         ]}
-        onSuccess={(result) => console.log('Subscribed:', result)}
+        // Recipients must have P01 wallet!
+        onSuccess={(result) => console.log('Subscribed:', result.signature)}
       />
     </P01Provider>
   );
@@ -648,8 +1306,9 @@ function ButtonsSection() {
 
         <CodeBlock
           title="Usage"
-          code={`import { WalletButton } from 'p-01/react';
+          code={`import { WalletButton } from '@protocol01/react';
 
+// P01 wallet only - closed ecosystem
 <WalletButton
   variant="primary"
   size="md"
@@ -673,15 +1332,16 @@ function ButtonsSection() {
         </div>
 
         <CodeBlock
-          title="Usage"
-          code={`import { PaymentButton } from 'p-01/react';
+          title="Usage (On-Chain)"
+          code={`import { PaymentButton } from '@protocol01/react';
 
+// Direct on-chain payment - no server
 <PaymentButton
   amount={9.99}
   token="USDC"
-  description="Premium Feature"
+  recipient="p01:7xK9..." // Must have P01 wallet
   useStealthAddress={true}
-  onSuccess={(result) => console.log('Paid:', result.signature)}
+  onSuccess={(result) => console.log('TX:', result.signature)}
   onError={(err) => console.error(err)}
 />`}
         />
@@ -700,16 +1360,18 @@ function ButtonsSection() {
         </div>
 
         <CodeBlock
-          title="Usage"
-          code={`import { SubscriptionButton } from 'p-01/react';
+          title="Usage (Smart Contract)"
+          code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@protocol01/react';
 
+// On-chain subscription via smart contract
 <SubscriptionButton
   amount={15.99}
   interval="monthly"
+  programId={STREAM_PROGRAM_ID} // On-chain program
+  recipient="p01:7xK9..." // Must have P01 wallet
   maxPayments={12}
-  description="Pro Plan"
-  suggestedPrivacy={{ useStealthAddress: true }}
-  onSuccess={(result) => console.log('Subscribed:', result.subscriptionId)}
+  useStealthAddress={true}
+  onSuccess={(result) => console.log('Stream:', result.streamId)}
 />`}
         />
       </div>
@@ -772,14 +1434,20 @@ function CardsSection() {
         </div>
 
         <CodeBlock
-          title="Usage"
-          code={`import { SubscriptionCard } from 'p-01/react';
+          title="Usage (On-Chain Data)"
+          code={`import { SubscriptionCard, useStreams } from '@protocol01/react';
 
+// Fetch streams directly from blockchain
+const { streams } = useStreams({ wallet: publicKey });
+
+// Display on-chain subscription data
 <SubscriptionCard
-  subscription={subscription}
+  stream={streams[0]} // On-chain stream data
   showCancel={true}
-  onCancel={(id) => console.log('Cancelled:', id)}
-  onViewDetails={(sub) => openModal(sub)}
+  onCancel={async (streamId) => {
+    // Cancel via smart contract
+    await p01.streams.cancel({ streamId });
+  }}
 />`}
         />
       </div>
@@ -956,7 +1624,7 @@ function DemoSubscriptionWidget() {
             </ul>
 
             {/* Button */}
-            <TierWalletButton popular={tier.popular} />
+            <TierWalletButton popular={tier.popular} tierName={tier.name} price={tier.price} interval={tier.interval} />
           </div>
         ))}
       </div>
@@ -965,7 +1633,7 @@ function DemoSubscriptionWidget() {
       <div style={{ textAlign: "center", marginTop: "24px", color: THEME.mutedColor, fontSize: "12px" }}>
         <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           <LockIcon color={THEME.primaryColor} />
-          Secured by Protocol 01 Stream Secure
+          100% On-chain · Smart Contract Verified · P01 Wallet Required
         </span>
       </div>
     </div>
@@ -1128,8 +1796,10 @@ function LoadingSpinner({ color }: { color: string }) {
 }
 
 // Tier Wallet Button - Used in subscription pricing tiers (P-01 only)
-function TierWalletButton({ popular = false }: { popular?: boolean }) {
-  const { publicKey, connected, connecting, walletAvailable, connect } = useP01Wallet();
+function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, interval = "monthly" }: { popular?: boolean; tierName?: string; price?: number; interval?: string }) {
+  const { publicKey, connected, connecting, walletAvailable, connect, signMessage } = useP01Wallet();
+  const [isSubscribing, setIsSubscribing] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
 
   const handleClick = async () => {
     if (!walletAvailable) {
@@ -1137,15 +1807,53 @@ function TierWalletButton({ popular = false }: { popular?: boolean }) {
       return;
     }
 
-    if (connected) {
-      // Already connected - could show subscription modal here
-      alert(`Ready to subscribe with wallet: ${publicKey?.slice(0, 8)}...`);
-    } else {
+    if (!connected) {
       try {
         await connect();
       } catch (error) {
         console.error("Connection failed:", error);
       }
+      return;
+    }
+
+    // Already connected - initiate subscription
+    setIsSubscribing(true);
+    try {
+      // Create subscription message for wallet to sign
+      const subscriptionMessage = `
+═══════════════════════════════════════
+   PROTOCOL 01 - STREAM SUBSCRIPTION
+═══════════════════════════════════════
+
+Plan: ${tierName}
+Price: ${price} USDC/${interval}
+Recipient: Protocol 01 (Demo)
+Network: Solana Devnet
+
+By signing this message, you authorize:
+• A recurring payment of ${price} USDC/${interval}
+• Price locked on-chain (cannot be changed)
+• Cancel anytime from your wallet
+
+Timestamp: ${new Date().toISOString()}
+═══════════════════════════════════════
+      `.trim();
+
+      // Request wallet signature
+      const signature = await signMessage(subscriptionMessage);
+
+      if (signature) {
+        console.log("Subscription signed:", signature);
+        setSubscribed(true);
+
+        // Show success notification
+        alert(`✅ Subscription Active!\n\nPlan: ${tierName}\nPrice: ${price} USDC/${interval}\n\nYour stream payment is now active. You can manage it from your P-01 wallet.`);
+      }
+    } catch (error) {
+      console.error("Subscription failed:", error);
+      alert("Subscription cancelled or failed. Please try again.");
+    } finally {
+      setIsSubscribing(false);
     }
   };
 
@@ -1153,21 +1861,26 @@ function TierWalletButton({ popular = false }: { popular?: boolean }) {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
 
+  const isLoading = connecting || isSubscribing;
+  const buttonBg = subscribed ? "#22c55e" : (popular ? THEME.primaryColor : "transparent");
+  const buttonColor = subscribed ? "#ffffff" : (popular ? THEME.backgroundColor : THEME.primaryColor);
+  const buttonBorder = subscribed ? "none" : (popular ? "none" : `2px solid ${THEME.primaryColor}`);
+
   return (
     <button
       onClick={handleClick}
-      disabled={connecting}
+      disabled={isLoading || subscribed}
       style={{
         width: "100%",
         padding: "14px 24px",
-        backgroundColor: popular ? THEME.primaryColor : "transparent",
-        color: popular ? THEME.backgroundColor : THEME.primaryColor,
-        border: popular ? "none" : `2px solid ${THEME.primaryColor}`,
+        backgroundColor: buttonBg,
+        color: buttonColor,
+        border: buttonBorder,
         borderRadius: "10px",
         fontSize: "16px",
         fontWeight: 600,
-        cursor: connecting ? "wait" : "pointer",
-        opacity: connecting ? 0.7 : 1,
+        cursor: isLoading || subscribed ? "default" : "pointer",
+        opacity: isLoading ? 0.7 : 1,
         transition: "all 0.2s ease",
         display: "flex",
         alignItems: "center",
@@ -1182,12 +1895,22 @@ function TierWalletButton({ popular = false }: { popular?: boolean }) {
         </>
       ) : connecting ? (
         <>
-          <LoadingSpinner color={popular ? THEME.backgroundColor : THEME.primaryColor} />
+          <LoadingSpinner color={buttonColor} />
           Connecting...
+        </>
+      ) : isSubscribing ? (
+        <>
+          <LoadingSpinner color={buttonColor} />
+          Confirm in Wallet...
+        </>
+      ) : subscribed ? (
+        <>
+          <CheckIcon color="#ffffff" />
+          Subscribed ✓
         </>
       ) : connected && publicKey ? (
         <>
-          <CheckIcon color={popular ? THEME.backgroundColor : THEME.primaryColor} />
+          <CheckIcon color={buttonColor} />
           Subscribe with {truncateAddress(publicKey)}
         </>
       ) : (

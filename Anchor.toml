@@ -4,6 +4,7 @@ skip-lint = false
 
 [programs.devnet]
 specter = "SPEC1111111111111111111111111111111111111111"
+p01_whitelist = "P01WL1stxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 [registry]
 url = "https://api.apr.dev"

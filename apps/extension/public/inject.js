@@ -4,6 +4,7 @@
   var CHANNEL = "p01-extension-channel";
   var REQUEST_TIMEOUT = 3e5;
   var pendingRequests = /* @__PURE__ */ new Map();
+  var approvalToOriginal = /* @__PURE__ */ new Map();
   var eventListeners = /* @__PURE__ */ new Map();
   function addEventListener(event, callback) {
     if (!eventListeners.has(event)) {
@@ -50,10 +51,12 @@
     if (event.data?.channel !== CHANNEL) return;
     const { type, payload, requestId, error } = event.data;
     if (type === "APPROVAL_RESULT") {
-      const pending = pendingRequests.get(requestId);
+      const originalRequestId = approvalToOriginal.get(requestId) || requestId;
+      const pending = pendingRequests.get(originalRequestId);
       if (pending) {
         clearTimeout(pending.timeout);
-        pendingRequests.delete(requestId);
+        pendingRequests.delete(originalRequestId);
+        approvalToOriginal.delete(requestId);
         if (payload?.approved) {
           pending.resolve(payload.data || { success: true });
         } else {
@@ -65,6 +68,11 @@
     if (type.endsWith("_RESPONSE")) {
       const pending = pendingRequests.get(requestId);
       if (pending) {
+        if (payload?.pending && payload?.requestId) {
+          approvalToOriginal.set(payload.requestId, requestId);
+          console.log("[Protocol 01] Waiting for approval:", payload.requestId);
+          return;
+        }
         clearTimeout(pending.timeout);
         pendingRequests.delete(requestId);
         if (error || payload?.error) {

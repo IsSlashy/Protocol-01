@@ -4,6 +4,18 @@
 
 ![Protocol 01 Banner](docs/assets/banner.png)
 
+---
+
+> **PROPRIETARY SOFTWARE - ALL RIGHTS RESERVED**
+>
+> © 2026 Volta Team | Developed by Slashy Fx
+>
+> This repository is visible for **hackathon evaluation purposes only**.
+> **No license is granted** to use, copy, modify, fork, or distribute this code.
+> See [LICENSE](./LICENSE) for details.
+
+---
+
 ## Overview
 
 Protocol 01 is a comprehensive Web3 wallet ecosystem designed for the Solana blockchain, focusing on privacy, seamless payments, and innovative features. The project includes a browser extension, mobile application, web platform, and SDK for developers.
