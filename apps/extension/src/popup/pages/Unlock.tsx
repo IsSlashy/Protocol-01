@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { AlertCircle, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogOut, X } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import GlitchLogo from '../components/GlitchLogo';
 import { cn } from '@/shared/utils';
@@ -13,6 +13,7 @@ export default function Unlock() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const handleUnlock = async () => {
     if (!password) {
@@ -56,11 +57,13 @@ export default function Unlock() {
     }
   };
 
-  const handleReset = () => {
-    if (confirm('Are you sure? This will delete your wallet. Make sure you have your seed phrase backed up.')) {
-      reset();
-      navigate('/welcome');
-    }
+  const handleLogout = () => {
+    setShowLogoutModal(true);
+  };
+
+  const handleConfirmLogout = () => {
+    reset();
+    navigate('/welcome');
   };
 
   return (
@@ -145,12 +148,13 @@ export default function Unlock() {
           </button>
         </div>
 
-        {/* Recovery link */}
+        {/* Logout link */}
         <button
-          onClick={handleReset}
-          className="mt-6 text-[10px] text-[#555560] hover:text-p01-pink transition-colors font-mono tracking-wider"
+          onClick={handleLogout}
+          className="mt-6 text-[10px] text-[#555560] hover:text-p01-cyan transition-colors font-mono tracking-wider flex items-center gap-1"
         >
-          FORGOT PASSWORD? RESET WALLET
+          <LogOut className="w-3 h-3" />
+          FORGOT PASSWORD? DISCONNECT
         </button>
       </div>
 
@@ -160,6 +164,74 @@ export default function Unlock() {
           Solana Network
         </p>
       </footer>
+
+      {/* Logout Modal - Simple confirmation */}
+      <AnimatePresence>
+        {showLogoutModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-p01-void border border-p01-border w-full max-w-sm"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-4 border-b border-p01-border">
+                <div className="flex items-center gap-2">
+                  <LogOut className="w-5 h-5 text-p01-cyan" />
+                  <h2 className="text-sm font-bold text-white font-mono tracking-wider">
+                    DISCONNECT WALLET
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setShowLogoutModal(false)}
+                  className="p-1 hover:bg-p01-surface transition-colors"
+                >
+                  <X className="w-4 h-4 text-p01-chrome" />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-4 space-y-4">
+                <div className="bg-p01-cyan/10 border border-p01-cyan/30 p-4">
+                  <p className="text-xs text-p01-cyan font-mono font-bold mb-2">
+                    🔑 YOUR FUNDS ARE SAFE
+                  </p>
+                  <ul className="text-[11px] text-p01-chrome font-mono space-y-1">
+                    <li>• This only disconnects from this device</li>
+                    <li>• Your wallet still exists on the blockchain</li>
+                    <li>• Re-import anytime with your seed phrase</li>
+                  </ul>
+                </div>
+
+                <p className="text-[11px] text-p01-chrome/60 font-mono text-center">
+                  After disconnecting, you can import your wallet again using your 12 or 24 word recovery phrase.
+                </p>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowLogoutModal(false)}
+                    className="flex-1 py-3 bg-p01-surface text-p01-chrome font-bold text-sm tracking-wider font-mono border border-p01-border hover:text-white transition-colors"
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    onClick={handleConfirmLogout}
+                    className="flex-1 py-3 bg-p01-cyan text-p01-void font-bold text-sm tracking-wider font-mono hover:bg-p01-cyan-dim transition-colors"
+                  >
+                    DISCONNECT
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

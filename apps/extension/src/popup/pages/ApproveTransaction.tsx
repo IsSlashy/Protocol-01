@@ -18,6 +18,15 @@ import { useWalletStore } from '@/shared/store/wallet';
 import { approveRequest, rejectRequest } from '@/shared/messaging';
 import type { ApprovalRequest } from '@/shared/types';
 import nacl from 'tweetnacl';
+import {
+  Connection,
+  Transaction,
+  VersionedTransaction,
+  Keypair,
+} from '@solana/web3.js';
+
+// Devnet RPC endpoint
+const DEVNET_RPC = 'https://api.devnet.solana.com';
 
 interface TransactionPayload {
   transaction?: string;
@@ -101,11 +110,71 @@ export default function ApproveTransaction() {
         await approveRequest(request.id, {
           signature: signatureBase64,
         });
+      } else if (payload.transaction) {
+        // Handle transaction signing
+        if (!_keypair) {
+          throw new Error('Wallet is locked. Please unlock your wallet first.');
+        }
+
+        // Decode the transaction from base64
+        const transactionBytes = base64ToUint8Array(payload.transaction);
+
+        // Try to deserialize as VersionedTransaction first, then legacy Transaction
+        let transaction: Transaction | VersionedTransaction;
+        let isVersioned = false;
+
+        try {
+          // Check if it's a versioned transaction (first byte indicates version)
+          if (transactionBytes[0] === 0x80 || transactionBytes[0] & 0x80) {
+            transaction = VersionedTransaction.deserialize(transactionBytes);
+            isVersioned = true;
+          } else {
+            transaction = Transaction.from(transactionBytes);
+          }
+        } catch {
+          // Fallback to legacy transaction
+          transaction = Transaction.from(transactionBytes);
+        }
+
+        // Create Keypair from secretKey
+        const keypair = Keypair.fromSecretKey(_keypair.secretKey);
+
+        // Sign the transaction
+        if (isVersioned) {
+          (transaction as VersionedTransaction).sign([keypair]);
+        } else {
+          (transaction as Transaction).sign(keypair);
+        }
+
+        // If sendAfterSign, send the transaction to the network
+        if (payload.sendAfterSign) {
+          const connection = new Connection(DEVNET_RPC, 'confirmed');
+
+          const serializedTx = transaction.serialize();
+          const signature = await connection.sendRawTransaction(serializedTx, {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
+
+          console.log('[ApproveTransaction] Transaction sent:', signature);
+
+          // Wait for confirmation
+          await connection.confirmTransaction(signature, 'confirmed');
+
+          console.log('[ApproveTransaction] Transaction confirmed:', signature);
+
+          await approveRequest(request.id, {
+            signature,
+          });
+        } else {
+          // Just sign, don't send
+          const signedTxBase64 = uint8ArrayToBase64(transaction.serialize());
+          await approveRequest(request.id, {
+            signedTransaction: signedTxBase64,
+          });
+        }
       } else {
-        // Handle transaction signing (TODO: implement full transaction signing)
-        await approveRequest(request.id, {
-          approved: true,
-        });
+        throw new Error('No transaction data provided');
       }
 
       await chrome.storage.session.remove('currentApproval');

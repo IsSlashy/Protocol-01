@@ -153,9 +153,12 @@ export default function ImportWallet() {
               <div className="w-14 h-14 mx-auto mb-4 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
                 <Shield className="w-7 h-7 text-p01-cyan" />
               </div>
-              <h2 className="text-base font-display font-bold text-white tracking-wider">SECURE YOUR WALLET</h2>
+              <h2 className="text-base font-display font-bold text-white tracking-wider">LOCAL ENCRYPTION</h2>
               <p className="text-[11px] text-p01-chrome/60 mt-2 font-mono">
-                Create a password to encrypt your wallet
+                Set a password to unlock your wallet on this device
+              </p>
+              <p className="text-[10px] text-p01-cyan/60 mt-1 font-mono">
+                This password is stored locally only
               </p>
             </div>
 
