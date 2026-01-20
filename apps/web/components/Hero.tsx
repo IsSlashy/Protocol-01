@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useEffect, useState, useCallback } from "react";
+import Image from "next/image";
 import GlitchLogo01 from "./GlitchLogo01";
 import PhoneMockup from "./PhoneMockup";
 
@@ -159,6 +160,39 @@ export default function Hero() {
     <section className="relative min-h-screen flex items-center overflow-hidden">
       {/* Corruption noise overlay */}
       <CorruptionNoise />
+
+      {/* Miku background - semi-transparent, centered between 01 and phone */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5] overflow-hidden">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 1.2, delay: 0.3 }}
+          className="relative w-[500px] h-[500px] lg:w-[700px] lg:h-[700px]"
+        >
+          {/* Scan lines overlay */}
+          <div
+            className="absolute inset-0 z-10"
+            style={{
+              background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)',
+            }}
+          />
+          {/* Cyan glow */}
+          <div className="absolute inset-0 bg-gradient-radial from-[#39c5bb]/10 via-transparent to-transparent" />
+          {/* The image */}
+          <Image
+            src="/Miku.png"
+            alt=""
+            fill
+            className="object-contain opacity-[0.15] mix-blend-lighten"
+            style={{
+              filter: 'grayscale(30%) contrast(1.1)',
+              maskImage: 'radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 70%)',
+              WebkitMaskImage: 'radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 70%)',
+            }}
+            priority
+          />
+        </motion.div>
+      </div>
 
       {/* Main content - Asymmetric layout */}
       <div className="relative z-10 w-full max-w-7xl mx-auto px-6 lg:px-12 py-20">
