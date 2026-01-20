@@ -1,0 +1,73 @@
+name: Build and Deploy Anchor Program
+
+on:
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      network:
+        description: 'Network to deploy to'
+        required: true
+        default: 'devnet'
+        type: choice
+        options:
+          - devnet
+          - mainnet-beta
+
+env:
+  SOLANA_VERSION: '1.18.17'
+  ANCHOR_VERSION: '0.30.1'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: 1.75.0
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.solana.com/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Install Anchor CLI
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install ${{ env.ANCHOR_VERSION }}
+          avm use ${{ env.ANCHOR_VERSION }}
+          echo "$HOME/.avm/bin" >> $GITHUB_PATH
+
+      - name: Setup Solana Keypair
+        run: |
+          echo "${{ secrets.SOLANA_KEYPAIR }}" > ~/.config/solana/id.json
+          solana config set --url ${{ inputs.network }}
+          solana config set --keypair ~/.config/solana/id.json
+
+      - name: Build Anchor Program
+        run: |
+          cd programs/stream
+          anchor build
+
+      - name: Deploy to ${{ inputs.network }}
+        run: |
+          cd programs/stream
+          anchor deploy --provider.cluster ${{ inputs.network }}
+
+      - name: Output Program ID
+        run: |
+          echo "Program deployed!"
+          solana program show --programs

@@ -1,0 +1,101 @@
+name: Sync to Isolated Repos
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'apps/web/**'
+      - 'apps/mobile/**'
+      - 'apps/extension/**'
+      - 'packages/p01-js/**'
+      - 'packages/specter-sdk/**'
+
+jobs:
+  sync-web:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'apps/web/') || contains(github.event.head_commit.added, 'apps/web/')
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync to p01-web
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.P01_WEB_DEPLOY_KEY }}
+        with:
+          source-directory: 'apps/web'
+          destination-github-username: 'IsSlashy'
+          destination-repository-name: 'p01-web'
+          target-branch: main
+          commit-message: 'Sync from main repo: ${{ github.event.head_commit.message }}'
+
+  sync-mobile:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'apps/mobile/') || contains(github.event.head_commit.added, 'apps/mobile/')
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync to p01-mobile
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.P01_MOBILE_DEPLOY_KEY }}
+        with:
+          source-directory: 'apps/mobile'
+          destination-github-username: 'IsSlashy'
+          destination-repository-name: 'p01-mobile'
+          target-branch: main
+          commit-message: 'Sync from main repo: ${{ github.event.head_commit.message }}'
+
+  sync-extension:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'apps/extension/') || contains(github.event.head_commit.added, 'apps/extension/')
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync to p01-extension
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.P01_EXTENSION_DEPLOY_KEY }}
+        with:
+          source-directory: 'apps/extension'
+          destination-github-username: 'IsSlashy'
+          destination-repository-name: 'p01-extension'
+          target-branch: main
+          commit-message: 'Sync from main repo: ${{ github.event.head_commit.message }}'
+
+  sync-sdk:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'packages/p01-js/') || contains(github.event.head_commit.added, 'packages/p01-js/') || contains(github.event.head_commit.modified, 'packages/specter-sdk/') || contains(github.event.head_commit.added, 'packages/specter-sdk/')
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare SDK directory
+        run: |
+          mkdir -p /tmp/p01-sdk
+          cp -r packages/p01-js/* /tmp/p01-sdk/
+          mkdir -p /tmp/p01-sdk/core
+          cp -r packages/specter-sdk/* /tmp/p01-sdk/core/
+
+      - name: Sync to p01-sdk
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.P01_SDK_DEPLOY_KEY }}
+        with:
+          source-directory: '/tmp/p01-sdk'
+          destination-github-username: 'IsSlashy'
+          destination-repository-name: 'p01-sdk'
+          target-branch: main
+          commit-message: 'Sync from main repo: ${{ github.event.head_commit.message }}'
