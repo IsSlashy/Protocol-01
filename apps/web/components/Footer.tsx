@@ -1,36 +1,31 @@
 "use client";
 
-import { Github, Twitter, MessageCircle, Book, ExternalLink } from "lucide-react";
+import { Github, Twitter, MessageCircle, Send } from "lucide-react";
 
 const footerLinks = {
   product: {
     title: "Product",
     links: [
-      { name: "Stealth Wallet", href: "#" },
-      { name: "Private Streams", href: "#" },
-      { name: "Anonymous Social", href: "#" },
-      { name: "AI Agent", href: "#" },
-      { name: "SDK", href: "#" },
+      { name: "Mobile App", href: "#" },
+      { name: "Extension", href: "#" },
+      { name: "Web SDK", href: "#" },
+      { name: "SDK Demo", href: "/sdk-demo" },
     ],
   },
-  resources: {
-    title: "Resources",
+  developers: {
+    title: "Developers",
     links: [
       { name: "Documentation", href: "#" },
-      { name: "API Reference", href: "#" },
-      { name: "Whitepaper", href: "#" },
-      { name: "Security Audits", href: "#" },
-      { name: "Blog", href: "#" },
+      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01" },
+      { name: "npm package", href: "#" },
     ],
   },
   community: {
     title: "Community",
     links: [
       { name: "Discord", href: "#" },
-      { name: "Twitter", href: "#" },
-      { name: "GitHub", href: "#" },
-      { name: "Forum", href: "#" },
-      { name: "Newsletter", href: "#" },
+      { name: "Twitter/X", href: "#" },
+      { name: "Telegram", href: "#" },
     ],
   },
   legal: {
@@ -38,16 +33,15 @@ const footerLinks = {
     links: [
       { name: "Privacy Policy", href: "#" },
       { name: "Terms of Service", href: "#" },
-      { name: "Cookie Policy", href: "#" },
     ],
   },
 };
 
 const socialLinks = [
   { icon: Twitter, href: "#", label: "Twitter" },
-  { icon: Github, href: "#", label: "GitHub" },
+  { icon: Github, href: "https://github.com/IsSlashy/Protocol-01", label: "GitHub" },
   { icon: MessageCircle, href: "#", label: "Discord" },
-  { icon: Book, href: "#", label: "Documentation" },
+  { icon: Send, href: "#", label: "Telegram" },
 ];
 
 // Mini ASCII logo for footer
@@ -120,26 +114,17 @@ export default function Footer() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="text-sm text-p01-text-dim font-mono">
-              &copy; {new Date().getFullYear()} PROTOCOL 01. All rights reserved.
+              &copy; 2024 Protocol 01. All rights reserved.
             </div>
             <div className="flex items-center gap-6">
               <a
-                href="#"
-                className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors"
+                href="https://github.com/IsSlashy/Protocol-01"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-p01-text-dim hover:text-p01-cyan transition-colors inline-flex items-center gap-2"
               >
-                Status
-              </a>
-              <a
-                href="#"
-                className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors"
-              >
-                Security
-              </a>
-              <a
-                href="#"
-                className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors inline-flex items-center gap-1"
-              >
-                Audit Report <ExternalLink size={12} />
+                <Github size={14} />
+                GitHub
               </a>
             </div>
           </div>
