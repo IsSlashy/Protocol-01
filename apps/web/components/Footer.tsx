@@ -1,58 +1,69 @@
 "use client";
 
-import { Github, Twitter, MessageCircle, Send } from "lucide-react";
+import { Github, MessageCircle } from "lucide-react";
 
-const footerLinks = {
+interface FooterLink {
+  name: string;
+  href: string;
+  external?: boolean;
+}
+
+interface FooterSection {
+  title: string;
+  links: FooterLink[];
+}
+
+const footerLinks: Record<string, FooterSection> = {
   product: {
     title: "Product",
     links: [
-      { name: "Mobile App", href: "#" },
-      { name: "Extension", href: "#" },
-      { name: "Web SDK", href: "#" },
+      { name: "Mobile App", href: "#download" },
+      { name: "Chrome Extension", href: "#download" },
+      { name: "Features", href: "#features" },
       { name: "SDK Demo", href: "/sdk-demo" },
     ],
   },
   developers: {
     title: "Developers",
     links: [
-      { name: "Documentation", href: "#" },
-      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01" },
-      { name: "npm package", href: "#" },
+      { name: "SDK Demo", href: "/sdk-demo" },
+      { name: "Documentation", href: "https://github.com/SectorCT/Protocol01#readme", external: true },
+      { name: "GitHub", href: "https://github.com/SectorCT/Protocol01", external: true },
     ],
   },
   community: {
     title: "Community",
     links: [
-      { name: "Discord", href: "#" },
-      { name: "Twitter/X", href: "#" },
-      { name: "Telegram", href: "#" },
-    ],
-  },
-  legal: {
-    title: "Legal",
-    links: [
-      { name: "Privacy Policy", href: "#" },
-      { name: "Terms of Service", href: "#" },
+      { name: "Discord", href: "https://discord.gg/KfmhPFAHNH", external: true },
+      { name: "Twitter / X", href: "https://x.com/AnonMusic_NFT", external: true },
+      { name: "GitHub", href: "https://github.com/SectorCT/Protocol01", external: true },
     ],
   },
 };
 
-const socialLinks = [
-  { icon: Twitter, href: "#", label: "Twitter" },
-  { icon: Github, href: "https://github.com/IsSlashy/Protocol-01", label: "GitHub" },
-  { icon: MessageCircle, href: "#", label: "Discord" },
-  { icon: Send, href: "#", label: "Telegram" },
-];
+// Custom X/Twitter icon
+const XIcon = () => (
+  <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+  </svg>
+);
 
-// Mini ASCII logo for footer
-const miniLogo = `P-01`;
+// Wrapper for Lucide icons to match size
+const GithubIcon = () => <Github size={18} />;
+const DiscordIcon = () => <MessageCircle size={18} />;
+
+const socialLinks = [
+  { icon: XIcon, href: "https://x.com/AnonMusic_NFT", label: "Twitter/X" },
+  { icon: GithubIcon, href: "https://github.com/SectorCT/Protocol01", label: "GitHub" },
+  { icon: DiscordIcon, href: "https://discord.gg/KfmhPFAHNH", label: "Discord" },
+];
 
 export default function Footer() {
   return (
     <footer className="relative border-t border-p01-border bg-p01-void">
       {/* Main Footer */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-8 lg:gap-12">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-8 lg:gap-12">
           {/* Brand Column */}
           <div className="col-span-2">
             <div className="flex items-center gap-3 mb-6">
@@ -65,8 +76,8 @@ export default function Footer() {
               </span>
             </div>
             <p className="text-p01-text-muted text-sm mb-6 max-w-xs">
-              The privacy-first protocol for secure transactions, private
-              communications, and anonymous interactions.
+              Anonymous Solana wallet with stealth addresses for private
+              transactions. Complete financial privacy.
             </p>
             <p className="text-p01-cyan text-xs font-mono mb-6">
               &gt; The system cannot see you.
@@ -77,10 +88,12 @@ export default function Footer() {
                 <a
                   key={social.label}
                   href={social.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   aria-label={social.label}
                   className="w-10 h-10 bg-[#151518] border border-[#2a2a30] flex items-center justify-center text-[#888892] hover:text-[#39c5bb] hover:border-[#39c5bb]/50 transition-all"
                 >
-                  <social.icon size={18} />
+                  <social.icon />
                 </a>
               ))}
             </div>
@@ -97,6 +110,8 @@ export default function Footer() {
                   <li key={link.name}>
                     <a
                       href={link.href}
+                      target={link.external ? "_blank" : undefined}
+                      rel={link.external ? "noopener noreferrer" : undefined}
                       className="text-sm text-p01-text-muted hover:text-p01-cyan transition-colors inline-flex items-center gap-1"
                     >
                       {link.name}
@@ -114,17 +129,32 @@ export default function Footer() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="text-sm text-p01-text-dim font-mono">
-              &copy; 2024 Protocol 01. All rights reserved.
+              &copy; {new Date().getFullYear()} PROTOCOL 01. All rights reserved.
             </div>
             <div className="flex items-center gap-6">
               <a
-                href="https://github.com/IsSlashy/Protocol-01"
+                href="https://x.com/AnonMusic_NFT"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-p01-text-dim hover:text-p01-cyan transition-colors inline-flex items-center gap-2"
+                className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors"
               >
-                <Github size={14} />
+                Twitter / X
+              </a>
+              <a
+                href="https://github.com/SectorCT/Protocol01"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors"
+              >
                 GitHub
+              </a>
+              <a
+                href="https://discord.gg/KfmhPFAHNH"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors"
+              >
+                Discord
               </a>
             </div>
           </div>

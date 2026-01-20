@@ -56,6 +56,9 @@ const pendingRequests = new Map<string, {
   timeout: ReturnType<typeof setTimeout>;
 }>();
 
+// Map approval requestIds to original requestIds for async approval flows
+const approvalToOriginal = new Map<string, string>();
+
 // ============ Event System ============
 
 const eventListeners = new Map<string, Set<EventCallback>>();
@@ -118,10 +121,14 @@ window.addEventListener('message', (event) => {
 
   // Handle approval results
   if (type === 'APPROVAL_RESULT') {
-    const pending = pendingRequests.get(requestId);
+    // Look up the original requestId from the approval requestId
+    const originalRequestId = approvalToOriginal.get(requestId) || requestId;
+    const pending = pendingRequests.get(originalRequestId);
+
     if (pending) {
       clearTimeout(pending.timeout);
-      pendingRequests.delete(requestId);
+      pendingRequests.delete(originalRequestId);
+      approvalToOriginal.delete(requestId);
 
       if (payload?.approved) {
         pending.resolve(payload.data || { success: true });
@@ -136,6 +143,15 @@ window.addEventListener('message', (event) => {
   if (type.endsWith('_RESPONSE')) {
     const pending = pendingRequests.get(requestId);
     if (pending) {
+      // Check if this is a pending approval response (async flow)
+      if (payload?.pending && payload?.requestId) {
+        // Store mapping from approval requestId to original requestId
+        // Don't resolve yet - wait for APPROVAL_RESULT
+        approvalToOriginal.set(payload.requestId, requestId);
+        console.log('[Protocol 01] Waiting for approval:', payload.requestId);
+        return;
+      }
+
       clearTimeout(pending.timeout);
       pendingRequests.delete(requestId);
 

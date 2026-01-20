@@ -22,7 +22,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "PROTOCOL 01 | One app. Total invisibility.",
+  title: "PROTOCOL -01",
   description:
     "The ultimate privacy-first protocol for secure transactions, private communications, and anonymous interactions. Powered by zero-knowledge proofs.",
   keywords: [
@@ -37,18 +37,31 @@ export const metadata: Metadata = {
     "p01",
   ],
   authors: [{ name: "Protocol 01" }],
+  icons: {
+    icon: "/01-miku.png",
+    apple: "/01-miku.png",
+  },
   openGraph: {
-    title: "PROTOCOL 01 | One app. Total invisibility.",
+    title: "PROTOCOL -01",
     description:
       "The ultimate privacy-first protocol for secure transactions, private communications, and anonymous interactions.",
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: "/01-miku.png",
+        width: 512,
+        height: 512,
+        alt: "Protocol -01",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "PROTOCOL 01 | One app. Total invisibility.",
+    title: "PROTOCOL -01",
     description:
       "The ultimate privacy-first protocol for secure transactions, private communications, and anonymous interactions.",
+    images: ["/01-miku.png"],
   },
 };
 

@@ -27,6 +27,9 @@ yarn-error.log*
 .env*.local
 .env
 
+# whitelist data (contains emails)
+/data
+
 # vercel
 .vercel
 
@@ -35,3 +38,5 @@ yarn-error.log*
 next-env.d.ts
 
 certificates
+.vercel
+.env*.local
