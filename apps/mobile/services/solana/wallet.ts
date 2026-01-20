@@ -1,6 +1,6 @@
 import { Keypair } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
-import * as bip39 from '@scure/bip39';
+import { generateMnemonic as scureGenerateMnemonic, mnemonicToSeedSync, validateMnemonic as scureValidateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import CryptoJS from 'crypto-js';
 import bs58 from 'bs58';
@@ -20,8 +20,10 @@ const SECURE_OPTIONS = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
 
-// Solana derivation path (BIP44)
+// Solana derivation path (BIP44) - same as extension
 const SOLANA_DERIVATION_PATH = "m/44'/501'/0'/0'";
+const ED25519_CURVE = 'ed25519 seed';
+const HARDENED_OFFSET = 0x80000000;
 
 export interface WalletInfo {
   publicKey: string;
@@ -29,100 +31,137 @@ export interface WalletInfo {
 }
 
 /**
- * Generate a new mnemonic phrase (24 words)
+ * Convert Uint8Array to CryptoJS WordArray
+ */
+function uint8ArrayToWordArray(u8Array: Uint8Array): CryptoJS.lib.WordArray {
+  const words: number[] = [];
+  for (let i = 0; i < u8Array.length; i += 4) {
+    words.push(
+      ((u8Array[i] || 0) << 24) |
+      ((u8Array[i + 1] || 0) << 16) |
+      ((u8Array[i + 2] || 0) << 8) |
+      (u8Array[i + 3] || 0)
+    );
+  }
+  return CryptoJS.lib.WordArray.create(words, u8Array.length);
+}
+
+/**
+ * Convert CryptoJS WordArray to Uint8Array
+ */
+function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
+  const words = wordArray.words;
+  const sigBytes = wordArray.sigBytes;
+  const u8Array = new Uint8Array(sigBytes);
+
+  for (let i = 0; i < sigBytes; i++) {
+    u8Array[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+  }
+
+  return u8Array;
+}
+
+/**
+ * HMAC-SHA512 using CryptoJS
+ */
+function hmacSha512(key: Uint8Array | string, data: Uint8Array): Uint8Array {
+  const keyWordArray = typeof key === 'string'
+    ? CryptoJS.enc.Utf8.parse(key)
+    : uint8ArrayToWordArray(key);
+  const dataWordArray = uint8ArrayToWordArray(data);
+  const hmacResult = CryptoJS.HmacSHA512(dataWordArray, keyWordArray);
+  return wordArrayToUint8Array(hmacResult);
+}
+
+/**
+ * Parse derivation path into array of indices
+ */
+function parsePath(path: string): number[] {
+  const parts = path.replace('m/', '').split('/');
+  return parts.map(part => {
+    const isHardened = part.endsWith("'");
+    const index = parseInt(isHardened ? part.slice(0, -1) : part, 10);
+    return isHardened ? index + HARDENED_OFFSET : index;
+  });
+}
+
+/**
+ * Derive master key from seed using HMAC-SHA512
+ * This is equivalent to what ed25519-hd-key does internally
+ */
+function getMasterKeyFromSeed(seed: Uint8Array): { key: Uint8Array; chainCode: Uint8Array } {
+  const I = hmacSha512(ED25519_CURVE, seed);
+  const IL = I.slice(0, 32);
+  const IR = I.slice(32);
+  return { key: IL, chainCode: IR };
+}
+
+/**
+ * Derive child key at given index
+ */
+function deriveChild(
+  parentKey: Uint8Array,
+  parentChainCode: Uint8Array,
+  index: number
+): { key: Uint8Array; chainCode: Uint8Array } {
+  // For hardened keys, prepend 0x00 to the key
+  const data = new Uint8Array(37);
+  data[0] = 0;
+  data.set(parentKey, 1);
+  // Add index as big-endian 4 bytes
+  data[33] = (index >>> 24) & 0xff;
+  data[34] = (index >>> 16) & 0xff;
+  data[35] = (index >>> 8) & 0xff;
+  data[36] = index & 0xff;
+
+  const I = hmacSha512(parentChainCode, data);
+  const IL = I.slice(0, 32);
+  const IR = I.slice(32);
+  return { key: IL, chainCode: IR };
+}
+
+/**
+ * Derive key from seed using path - compatible with ed25519-hd-key
+ */
+function derivePath(path: string, seed: Uint8Array): { key: Uint8Array } {
+  const { key, chainCode } = getMasterKeyFromSeed(seed);
+  const indices = parsePath(path);
+
+  let currentKey = key;
+  let currentChainCode = chainCode;
+
+  for (const index of indices) {
+    const derived = deriveChild(currentKey, currentChainCode, index);
+    currentKey = derived.key;
+    currentChainCode = derived.chainCode;
+  }
+
+  return { key: currentKey };
+}
+
+/**
+ * Generate a new mnemonic phrase (12 words - same as extension)
  */
 export function generateMnemonic(): string {
-  return bip39.generateMnemonic(wordlist, 256);
+  return scureGenerateMnemonic(wordlist, 128); // 128 bits = 12 words
 }
 
 /**
  * Validate a mnemonic phrase
  */
 export function validateMnemonic(mnemonic: string): boolean {
-  return bip39.validateMnemonic(mnemonic, wordlist);
+  return scureValidateMnemonic(mnemonic, wordlist);
 }
 
 /**
- * Derive seed from mnemonic using BIP39
- */
-async function mnemonicToSeed(mnemonic: string): Promise<Uint8Array> {
-  return bip39.mnemonicToSeed(mnemonic);
-}
-
-/**
- * HMAC-SHA512 using crypto-js
- */
-function hmacSha512(key: Uint8Array | string, data: Uint8Array): Uint8Array {
-  // Convert key to WordArray
-  let keyWords: CryptoJS.lib.WordArray;
-  if (typeof key === 'string') {
-    keyWords = CryptoJS.enc.Utf8.parse(key);
-  } else {
-    keyWords = CryptoJS.lib.WordArray.create(key as unknown as number[]);
-  }
-
-  // Convert data to WordArray
-  const dataWords = CryptoJS.lib.WordArray.create(data as unknown as number[]);
-
-  // Compute HMAC-SHA512
-  const hmac = CryptoJS.HmacSHA512(dataWords, keyWords);
-
-  // Convert result to Uint8Array
-  const words = hmac.words;
-  const sigBytes = hmac.sigBytes;
-  const result = new Uint8Array(sigBytes);
-
-  for (let i = 0; i < sigBytes; i++) {
-    result[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
-  }
-
-  return result;
-}
-
-/**
- * Derive keypair from seed using SLIP-0010/ED25519
- */
-function deriveKeyFromSeed(seed: Uint8Array, path: string): Uint8Array {
-  const ED25519_CURVE = 'ed25519 seed';
-
-  // Master key derivation
-  const I = hmacSha512(ED25519_CURVE, seed);
-  let key = I.slice(0, 32);
-  let chainCode = I.slice(32);
-
-  // Parse path and derive
-  const segments = path
-    .split('/')
-    .slice(1)
-    .map((segment) => {
-      const hardened = segment.endsWith("'");
-      const index = parseInt(hardened ? segment.slice(0, -1) : segment, 10);
-      return hardened ? index + 0x80000000 : index;
-    });
-
-  for (const segment of segments) {
-    const indexBytes = new Uint8Array(4);
-    new DataView(indexBytes.buffer).setUint32(0, segment, false);
-
-    const data = new Uint8Array(1 + 32 + 4);
-    data[0] = 0x00;
-    data.set(key, 1);
-    data.set(indexBytes, 33);
-
-    const I = hmacSha512(chainCode, data);
-    key = I.slice(0, 32);
-    chainCode = I.slice(32);
-  }
-
-  return key;
-}
-
-/**
- * Derive keypair from mnemonic
+ * Derive keypair from mnemonic - uses same method as extension
  */
 export async function deriveKeypairFromMnemonic(mnemonic: string): Promise<Keypair> {
-  const seed = await mnemonicToSeed(mnemonic);
-  const derivedSeed = deriveKeyFromSeed(seed, SOLANA_DERIVATION_PATH);
+  // Convert mnemonic to seed (64 bytes)
+  const seed = mnemonicToSeedSync(mnemonic);
+  // Derive key using SLIP-0010/BIP32-Ed25519 path
+  const derivedSeed = derivePath(SOLANA_DERIVATION_PATH, seed).key;
+  // Create keypair from the 32-byte derived seed
   const keyPair = nacl.sign.keyPair.fromSeed(derivedSeed);
   return Keypair.fromSecretKey(keyPair.secretKey);
 }
@@ -183,7 +222,9 @@ export async function importWallet(mnemonic: string): Promise<WalletInfo> {
     throw new Error('Invalid mnemonic phrase. Please check the words and their order.');
   }
 
+  console.log('[Wallet] Deriving keypair from mnemonic...');
   const keypair = await deriveKeypairFromMnemonic(normalizedMnemonic);
+  console.log('[Wallet] Derived publicKey:', keypair.publicKey.toBase58());
 
   await SecureStore.setItemAsync(STORAGE_KEYS.MNEMONIC, normalizedMnemonic, SECURE_OPTIONS);
   await SecureStore.setItemAsync(

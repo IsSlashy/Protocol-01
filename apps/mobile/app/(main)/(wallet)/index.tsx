@@ -241,8 +241,11 @@ export default function WalletHomeScreen() {
           </View>
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.headerButton} onPress={copyAddress}>
-            <Ionicons name="copy-outline" size={20} color={Colors.text} />
+          <TouchableOpacity
+            style={styles.headerButton}
+            onPress={() => router.push('/(main)/(wallet)/scan')}
+          >
+            <Ionicons name="scan-outline" size={20} color={Colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
@@ -338,12 +341,12 @@ export default function WalletHomeScreen() {
 
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => router.push('/(main)/(wallet)/scan')}
+                onPress={() => router.push('/(main)/(wallet)/buy')}
               >
                 <View style={[styles.actionIcon, { backgroundColor: P01.pinkDim }]}>
-                  <Ionicons name="scan" size={18} color={P01.pink} />
+                  <Ionicons name="card" size={18} color={P01.pink} />
                 </View>
-                <Text style={[styles.actionLabel, { color: P01.pink }]}>Scan</Text>
+                <Text style={[styles.actionLabel, { color: P01.pink }]}>Buy</Text>
               </TouchableOpacity>
             </View>
           </LinearGradient>

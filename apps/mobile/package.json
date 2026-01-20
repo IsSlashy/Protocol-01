@@ -76,6 +76,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
+    "@types/crypto-js": "^4.2.2",
     "@types/react": "~18.2.79",
     "eslint": "^8.57.0",
     "eslint-config-expo": "~7.1.2",

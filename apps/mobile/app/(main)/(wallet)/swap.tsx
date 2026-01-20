@@ -43,6 +43,7 @@ interface Token {
 }
 
 const TOKENS: Token[] = [
+  // Native
   {
     symbol: 'SOL',
     name: 'Solana',
@@ -50,6 +51,7 @@ const TOKENS: Token[] = [
     decimals: 9,
     logoColor: '#39c5bb',
   },
+  // Stablecoins
   {
     symbol: 'USDC',
     name: 'USD Coin',
@@ -65,12 +67,20 @@ const TOKENS: Token[] = [
     logoColor: '#26A17B',
   },
   {
-    symbol: 'BONK',
-    name: 'Bonk',
-    mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-    decimals: 5,
-    logoColor: '#F7931A',
+    symbol: 'PYUSD',
+    name: 'PayPal USD',
+    mint: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',
+    decimals: 6,
+    logoColor: '#003087',
   },
+  {
+    symbol: 'DAI',
+    name: 'Dai Stablecoin',
+    mint: 'EjmyN6qEC1Tf1JxiG1ae7UTJhUxSwk1TCCb39HfbhS3H',
+    decimals: 8,
+    logoColor: '#F5AC37',
+  },
+  // DeFi tokens
   {
     symbol: 'JUP',
     name: 'Jupiter',
@@ -86,6 +96,13 @@ const TOKENS: Token[] = [
     logoColor: '#5AC4BE',
   },
   {
+    symbol: 'ORCA',
+    name: 'Orca',
+    mint: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+    decimals: 6,
+    logoColor: '#FFD700',
+  },
+  {
     symbol: 'PYTH',
     name: 'Pyth Network',
     mint: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
@@ -93,11 +110,48 @@ const TOKENS: Token[] = [
     logoColor: '#ff77a8',
   },
   {
+    symbol: 'JITO',
+    name: 'Jito',
+    mint: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
+    decimals: 9,
+    logoColor: '#8B5CF6',
+  },
+  // Meme coins
+  {
+    symbol: 'BONK',
+    name: 'Bonk',
+    mint: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+    decimals: 5,
+    logoColor: '#F7931A',
+  },
+  {
     symbol: 'WIF',
     name: 'dogwifhat',
     mint: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
     decimals: 6,
     logoColor: '#A5682A',
+  },
+  {
+    symbol: 'POPCAT',
+    name: 'Popcat',
+    mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+    decimals: 9,
+    logoColor: '#FF6B6B',
+  },
+  // Wrapped tokens
+  {
+    symbol: 'WBTC',
+    name: 'Wrapped Bitcoin',
+    mint: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh',
+    decimals: 8,
+    logoColor: '#F7931A',
+  },
+  {
+    symbol: 'WETH',
+    name: 'Wrapped Ethereum',
+    mint: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',
+    decimals: 8,
+    logoColor: '#627EEA',
   },
 ];
 
