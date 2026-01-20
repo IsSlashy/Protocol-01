@@ -1,0 +1,116 @@
+name: Sync All Repos
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:  # Permet de lancer manuellement
+
+env:
+  GIT_USER_NAME: IsSlashy
+  GIT_USER_EMAIL: slashyfx@volta.team
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "${{ env.GIT_USER_NAME }}"
+          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
+
+      - name: Detect changes
+        id: changes
+        run: |
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+
+          echo "web=$(echo "$CHANGED_FILES" | grep -q '^apps/web/' && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "mobile=$(echo "$CHANGED_FILES" | grep -q '^apps/mobile/' && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "extension=$(echo "$CHANGED_FILES" | grep -q '^apps/extension/' && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "sdk=$(echo "$CHANGED_FILES" | grep -qE '^packages/(p01-js|specter-sdk)/' && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+      - name: Sync p01-web
+        if: steps.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Syncing p01-web..."
+          cd apps/web
+          rm -rf .git 2>/dev/null || true
+          git init
+          git add -A
+          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git branch -M main
+          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-web.git
+          git push -f origin main
+          echo "✓ p01-web synced"
+
+      - name: Sync p01-mobile
+        if: steps.changes.outputs.mobile == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Syncing p01-mobile..."
+          cd apps/mobile
+          rm -rf .git node_modules android/app/build android/.gradle .expo 2>/dev/null || true
+          git init
+          git add -A
+          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git branch -M main
+          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-mobile.git
+          git push -f origin main
+          echo "✓ p01-mobile synced"
+
+      - name: Sync p01-extension
+        if: steps.changes.outputs.extension == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Syncing p01-extension..."
+          cd apps/extension
+          rm -rf .git node_modules dist 2>/dev/null || true
+          git init
+          git add -A
+          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git branch -M main
+          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-extension.git
+          git push -f origin main
+          echo "✓ p01-extension synced"
+
+      - name: Sync p01-sdk
+        if: steps.changes.outputs.sdk == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Syncing p01-sdk..."
+          mkdir -p /tmp/p01-sdk/core
+
+          # Copy p01-js as main SDK
+          cp -r packages/p01-js/* /tmp/p01-sdk/ 2>/dev/null || true
+
+          # Copy specter-sdk as core
+          cp -r packages/specter-sdk/* /tmp/p01-sdk/core/ 2>/dev/null || true
+
+          # Clean up
+          rm -rf /tmp/p01-sdk/node_modules /tmp/p01-sdk/core/node_modules /tmp/p01-sdk/.git 2>/dev/null || true
+
+          cd /tmp/p01-sdk
+          git init
+          git add -A
+          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git branch -M main
+          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-sdk.git
+          git push -f origin main
+          echo "✓ p01-sdk synced"
+
+      - name: Summary
+        run: |
+          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Repo | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| p01-web | ${{ steps.changes.outputs.web == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| p01-mobile | ${{ steps.changes.outputs.mobile == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| p01-extension | ${{ steps.changes.outputs.extension == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| p01-sdk | ${{ steps.changes.outputs.sdk == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
