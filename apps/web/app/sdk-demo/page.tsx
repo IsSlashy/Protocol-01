@@ -4,6 +4,13 @@ import React, { useState, useEffect, useCallback, createContext, useContext } fr
 import { motion } from "framer-motion";
 import Link from "next/link";
 import {
+  Connection,
+  PublicKey,
+  Transaction,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+} from "@solana/web3.js";
+import {
   Link2,
   FileCode,
   Ticket,
@@ -64,6 +71,7 @@ interface P01WalletContextType {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   signMessage: (message: string) => Promise<string | null>;
+  signAndSendTransaction: (transaction: unknown) => Promise<string | null>;
 }
 
 const P01WalletContext = createContext<P01WalletContextType>({
@@ -74,6 +82,7 @@ const P01WalletContext = createContext<P01WalletContextType>({
   connect: async () => {},
   disconnect: async () => {},
   signMessage: async () => null,
+  signAndSendTransaction: async () => null,
 });
 
 export const useP01Wallet = () => useContext(P01WalletContext);
@@ -86,6 +95,8 @@ interface Protocol01Provider {
   connect: (options?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: { toBase58: () => string } }>;
   disconnect: () => Promise<void>;
   signMessage: (message: Uint8Array, display?: 'utf8' | 'hex') => Promise<{ signature: Uint8Array; publicKey: { toBase58: () => string } }>;
+  signAndSendTransaction: (transaction: unknown) => Promise<{ signature: string }>;
+  signTransaction: (transaction: unknown) => Promise<unknown>;
   on: (event: string, callback: (...args: unknown[]) => void) => void;
   off: (event: string, callback: (...args: unknown[]) => void) => void;
 }
@@ -236,6 +247,20 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const signAndSendTransaction = useCallback(async (transaction: unknown): Promise<string | null> => {
+    if (!window.protocol01) {
+      throw new Error("Protocol 01 wallet not installed");
+    }
+
+    try {
+      const result = await window.protocol01.signAndSendTransaction(transaction);
+      return result.signature;
+    } catch (error) {
+      console.error("Failed to sign and send transaction:", error);
+      throw error;
+    }
+  }, []);
+
   return (
     <P01WalletContext.Provider
       value={{
@@ -246,6 +271,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
         connect,
         disconnect,
         signMessage,
+        signAndSendTransaction,
       }}
     >
       {children}
@@ -651,10 +677,13 @@ function DevnetSection() {
 // Check whitelist via API (admin-managed)
 async function checkWhitelistAPI(walletAddress: string): Promise<boolean> {
   try {
+    console.log("[P-01 SDK] Checking whitelist for:", walletAddress);
     const res = await fetch(`/api/whitelist?wallet=${walletAddress}`);
     const data = await res.json();
+    console.log("[P-01 SDK] Whitelist response:", data);
     return data.approved === true;
-  } catch {
+  } catch (error) {
+    console.error("[P-01 SDK] Whitelist check failed:", error);
     return false;
   }
 }
@@ -684,8 +713,10 @@ function StreamSDKSection() {
   // Check whitelist via API
   useEffect(() => {
     if (connected && publicKey) {
+      console.log("[P-01 SDK] Wallet connected, checking whitelist for:", publicKey);
       setHasDevAccess(null); // Loading state
       checkWhitelistAPI(publicKey).then((approved) => {
+        console.log("[P-01 SDK] Whitelist check result:", approved);
         setHasDevAccess(approved);
       });
     } else {
@@ -1796,10 +1827,15 @@ function LoadingSpinner({ color }: { color: string }) {
 }
 
 // Tier Wallet Button - Used in subscription pricing tiers (P-01 only)
+// Protocol 01 Treasury address for demo subscriptions (devnet)
+const P01_TREASURY = new PublicKey("7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5");
+const DEVNET_RPC = "https://api.devnet.solana.com";
+
 function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, interval = "monthly" }: { popular?: boolean; tierName?: string; price?: number; interval?: string }) {
-  const { publicKey, connected, connecting, walletAvailable, connect, signMessage } = useP01Wallet();
+  const { publicKey, connected, connecting, walletAvailable, connect, signAndSendTransaction } = useP01Wallet();
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
+  const [txSignature, setTxSignature] = useState<string | null>(null);
 
   const handleClick = async () => {
     if (!walletAvailable) {
@@ -1816,42 +1852,65 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
       return;
     }
 
-    // Already connected - initiate subscription
+    if (!publicKey) {
+      alert("Wallet not connected properly.");
+      return;
+    }
+
+    // Already connected - initiate subscription with real transaction
     setIsSubscribing(true);
     try {
-      // Create subscription message for wallet to sign
-      const subscriptionMessage = `
-═══════════════════════════════════════
-   PROTOCOL 01 - STREAM SUBSCRIPTION
-═══════════════════════════════════════
+      // Connect to devnet
+      const connection = new Connection(DEVNET_RPC, "confirmed");
 
-Plan: ${tierName}
-Price: ${price} USDC/${interval}
-Recipient: Protocol 01 (Demo)
-Network: Solana Devnet
+      // Calculate subscription deposit (0.01 SOL for demo, represents first payment)
+      const depositLamports = Math.floor(0.01 * LAMPORTS_PER_SOL);
 
-By signing this message, you authorize:
-• A recurring payment of ${price} USDC/${interval}
-• Price locked on-chain (cannot be changed)
-• Cancel anytime from your wallet
+      // Create a real SOL transfer transaction
+      const senderPubkey = new PublicKey(publicKey);
+      const transaction = new Transaction();
 
-Timestamp: ${new Date().toISOString()}
-═══════════════════════════════════════
-      `.trim();
+      // Add transfer instruction
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey: senderPubkey,
+          toPubkey: P01_TREASURY,
+          lamports: depositLamports,
+        })
+      );
 
-      // Request wallet signature
-      const signature = await signMessage(subscriptionMessage);
+      // Get recent blockhash
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = senderPubkey;
+
+      // Request wallet to sign and send
+      const signature = await signAndSendTransaction(transaction);
 
       if (signature) {
-        console.log("Subscription signed:", signature);
+        console.log("Subscription transaction sent:", signature);
+        setTxSignature(signature);
+
+        // Wait for confirmation
+        await connection.confirmTransaction({
+          signature,
+          blockhash,
+          lastValidBlockHeight,
+        }, "confirmed");
+
         setSubscribed(true);
 
-        // Show success notification
-        alert(`✅ Subscription Active!\n\nPlan: ${tierName}\nPrice: ${price} USDC/${interval}\n\nYour stream payment is now active. You can manage it from your P-01 wallet.`);
+        // Show success notification with explorer link
+        alert(`✅ Subscription Active!\n\nPlan: ${tierName}\nDeposit: 0.01 SOL (Demo)\nTransaction: ${signature.slice(0, 8)}...${signature.slice(-8)}\n\nView on Solana Explorer:\nhttps://explorer.solana.com/tx/${signature}?cluster=devnet\n\nYour stream payment is now active on devnet!`);
       }
     } catch (error) {
       console.error("Subscription failed:", error);
-      alert("Subscription cancelled or failed. Please try again.");
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      if (errorMessage.includes("insufficient")) {
+        alert("Insufficient SOL balance. Please get devnet SOL from a faucet:\nhttps://faucet.solana.com");
+      } else {
+        alert(`Subscription failed: ${errorMessage}\n\nPlease try again.`);
+      }
     } finally {
       setIsSubscribing(false);
     }
