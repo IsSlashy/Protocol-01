@@ -1,0 +1,71 @@
+{
+  "expo": {
+    "name": "Protocol 01",
+    "slug": "protocol-01",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "p01",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0a0a0c"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.protocol01.app",
+      "backgroundColor": "#0a0a0c",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Use Face ID to unlock your wallet",
+        "NSBluetoothAlwaysUsageDescription": "P-01 uses Bluetooth to discover nearby users for mesh networking",
+        "NSBluetoothPeripheralUsageDescription": "P-01 uses Bluetooth to connect with nearby users"
+      }
+    },
+    "android": {
+      "package": "com.protocol01.app",
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_ADVERTISE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-local-authentication",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "P-01 uses Bluetooth to discover nearby users for mesh networking"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "protocol-01"
+      }
+    }
+  }
+}

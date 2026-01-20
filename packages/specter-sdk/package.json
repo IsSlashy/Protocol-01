@@ -1,0 +1,86 @@
+{
+  "name": "@specter-protocol/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for interacting with Specter Protocol - Privacy-preserving payments on Solana",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./wallet": {
+      "import": "./dist/wallet/index.mjs",
+      "require": "./dist/wallet/index.js",
+      "types": "./dist/wallet/index.d.ts"
+    },
+    "./stealth": {
+      "import": "./dist/stealth/index.mjs",
+      "require": "./dist/stealth/index.js",
+      "types": "./dist/stealth/index.d.ts"
+    },
+    "./transfer": {
+      "import": "./dist/transfer/index.mjs",
+      "require": "./dist/transfer/index.js",
+      "types": "./dist/transfer/index.d.ts"
+    },
+    "./streams": {
+      "import": "./dist/streams/index.mjs",
+      "require": "./dist/streams/index.js",
+      "types": "./dist/streams/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "solana",
+    "specter",
+    "privacy",
+    "stealth-address",
+    "crypto",
+    "blockchain",
+    "web3"
+  ],
+  "author": "Specter Protocol Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/specter-protocol/specter-sdk"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.29.0",
+    "@noble/hashes": "^1.3.3",
+    "@solana/spl-token": "^0.4.0",
+    "@solana/web3.js": "^1.91.0",
+    "bip39": "^3.1.0",
+    "bs58": "^5.0.0",
+    "ed25519-hd-key": "^1.3.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "eslint": "^8.56.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "peerDependencies": {
+    "@solana/web3.js": "^1.91.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

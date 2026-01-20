@@ -1,0 +1,96 @@
+{
+  "name": "p-01",
+  "version": "0.1.0",
+  "description": "Protocol 01 SDK for integrating privacy-first crypto payments and Stream Secure subscriptions",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./react": {
+      "import": "./dist/react/index.mjs",
+      "require": "./dist/react/index.js",
+      "types": "./dist/react/index.d.ts"
+    },
+    "./registry": {
+      "import": "./dist/registry.mjs",
+      "require": "./dist/registry.js",
+      "types": "./dist/registry.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
+  },
+  "keywords": [
+    "protocol01",
+    "p01",
+    "p-01",
+    "solana",
+    "payments",
+    "subscriptions",
+    "privacy",
+    "crypto",
+    "stealth-address",
+    "stream-secure",
+    "usdc",
+    "react",
+    "widget"
+  ],
+  "author": "Protocol 01",
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=17.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@chromatic-com/storybook": "^5.0.0",
+    "@storybook/addon-a11y": "^10.1.11",
+    "@storybook/addon-docs": "^10.1.11",
+    "@storybook/react-vite": "^10.1.11",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "rimraf": "^5.0.5",
+    "storybook": "^10.1.11",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.0"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.3.0",
+    "@noble/hashes": "^1.3.3",
+    "@noble/ciphers": "^0.5.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/protocol01/p01-js"
+  },
+  "bugs": {
+    "url": "https://github.com/protocol01/p01-js/issues"
+  },
+  "homepage": "https://protocol01.com"
+}
