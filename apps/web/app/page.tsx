@@ -37,23 +37,33 @@ export default function Home() {
                 Technology
               </a>
               <a
-                href="#docs"
+                href="https://github.com/IsSlashy/Protocol-01#readme"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-sm text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider"
               >
                 Docs
               </a>
               <a
-                href="#community"
+                href="#download"
                 className="text-sm text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider"
               >
                 Community
+              </a>
+              <a
+                href="/sdk-demo"
+                className="text-sm text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider"
+              >
+                SDK Demo
               </a>
             </div>
 
             {/* CTA Buttons */}
             <div className="flex items-center gap-4">
               <a
-                href="#"
+                href="https://github.com/IsSlashy/Protocol-01"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="hidden sm:flex items-center gap-2 text-sm text-p01-text-muted hover:text-white transition-colors"
               >
                 <svg
@@ -65,7 +75,7 @@ export default function Home() {
                 </svg>
                 GitHub
               </a>
-              <button className="btn-primary text-sm py-2">Initialize</button>
+              <a href="#download" className="btn-primary text-sm py-2">Initialize</a>
             </div>
           </div>
         </div>
