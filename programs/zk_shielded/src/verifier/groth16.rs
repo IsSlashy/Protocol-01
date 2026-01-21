@@ -1,9 +1,8 @@
 use anchor_lang::prelude::*;
 use ark_bn254::{Bn254, Fr, G1Affine, G2Affine};
-use ark_groth16::{Proof, VerifyingKey};
+use ark_groth16::{Groth16, Proof, VerifyingKey};
 use ark_serialize::CanonicalDeserialize;
 use ark_ff::PrimeField;
-
 use crate::{errors::ZkShieldedError, Groth16Proof};
 
 /// On-chain Groth16 proof verification for BN254 curve
@@ -44,8 +43,11 @@ impl Groth16Verifier {
             .map(|input| Self::bytes_to_field(input))
             .collect::<Result<Vec<_>>>()?;
 
-        // Perform the verification
-        let result = ark_groth16::verify_proof(&vk.into(), &proof, &inputs);
+        // Prepare the verification key for faster verification
+        let pvk = ark_groth16::prepare_verifying_key(&vk);
+
+        // Perform the verification using ark-groth16 API
+        let result = Groth16::<Bn254>::verify_proof(&pvk, &proof, &inputs);
 
         match result {
             Ok(valid) => Ok(valid),

@@ -6,12 +6,19 @@ solana_version = "1.18.17"
 seeds = false
 skip-lint = false
 
+[programs.localnet]
+specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
+p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
+p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
+p01_subscription = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
+
 [programs.devnet]
 specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
 p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
 p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
 p01_subscription = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-zk_shielded = "ZkShLdPooooooooooooooooooooooooooooooooooooo"
+zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
 
 [registry]
 url = "https://api.apr.dev"
