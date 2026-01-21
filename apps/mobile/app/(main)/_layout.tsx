@@ -8,17 +8,16 @@ import { Colors, FontFamily } from '../../constants/theme';
 import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
 import { useRealtimeSync } from '../../hooks/sync';
-import { registerForPushNotifications, setupNotificationListeners } from '../../services/notifications';
 
 export default function MainLayout() {
-  const { initialize, initialized, wallet } = useWalletStore();
+  const { initialize, initialized } = useWalletStore();
   const insets = useSafeAreaInsets();
 
   // Initialize security settings (applies screenshot blocking)
   useSecuritySettings();
 
   // Real-time sync for subscriptions from extension
-  const { status: syncStatus } = useRealtimeSync({
+  useRealtimeSync({
     onSubscriptionAdded: (stream) => {
       console.log('[RealtimeSync] New subscription added:', stream.name);
     },
@@ -35,31 +34,12 @@ export default function MainLayout() {
   const bottomPadding = Math.max(insets.bottom, 10);
   const totalHeight = TAB_BAR_HEIGHT + bottomPadding;
 
-  // Initialize wallet and notifications
+  // Initialize wallet
   useEffect(() => {
     if (!initialized) {
       initialize();
     }
   }, [initialized, initialize]);
-
-  // Setup push notifications
-  useEffect(() => {
-    const setupNotifications = async () => {
-      await registerForPushNotifications();
-      const cleanup = setupNotificationListeners(
-        (notification) => {
-          console.log('[Notification] Received:', notification);
-        },
-        (response) => {
-          console.log('[Notification] Response:', response);
-          // Handle notification tap - navigate to streams
-        }
-      );
-      return cleanup;
-    };
-
-    setupNotifications();
-  }, []);
 
   const handleTabPress = () => {
     if (Platform.OS !== 'web') {
@@ -121,6 +101,7 @@ export default function MainLayout() {
           ),
         }}
       />
+      {/* Social tab hidden - focusing on Streams technology
       <Tabs.Screen
         name="(social)"
         options={{
@@ -132,6 +113,13 @@ export default function MainLayout() {
               color={color}
             />
           ),
+        }}
+      />
+      */}
+      <Tabs.Screen
+        name="(social)"
+        options={{
+          href: null, // Hidden - Social features handled by other protocols (anonemesh, etc.)
         }}
       />
       <Tabs.Screen

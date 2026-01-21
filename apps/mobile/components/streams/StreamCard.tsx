@@ -46,11 +46,16 @@ interface StreamCardProps {
   onCancel?: () => void;
 }
 
+// Protocol 01 colors
+const P01_CYAN = '#39c5bb';
+const P01_YELLOW = '#ffcc00';
+const P01_RED = '#ff3366';
+
 const statusConfig: Record<StreamStatus, { color: string; label: string; bgColor: string }> = {
   active: { color: ACCENT_PINK, label: 'Active', bgColor: 'rgba(255, 119, 168, 0.2)' },
-  paused: { color: '#eab308', label: 'Paused', bgColor: 'rgba(234, 179, 8, 0.2)' },
-  completed: { color: '#22c55e', label: 'Completed', bgColor: 'rgba(34, 197, 94, 0.2)' },
-  cancelled: { color: '#ef4444', label: 'Cancelled', bgColor: 'rgba(239, 68, 68, 0.2)' },
+  paused: { color: P01_YELLOW, label: 'Paused', bgColor: 'rgba(255, 204, 0, 0.2)' },
+  completed: { color: P01_CYAN, label: 'Completed', bgColor: 'rgba(57, 197, 187, 0.2)' },
+  cancelled: { color: P01_RED, label: 'Cancelled', bgColor: 'rgba(255, 51, 102, 0.2)' },
 };
 
 export const StreamCard: React.FC<StreamCardProps> = ({

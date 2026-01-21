@@ -9,9 +9,15 @@ import { CreateStreamForm, StreamFormData } from '../../../components/streams';
 import { useStreamStore } from '../../../stores/streamStore';
 import { StreamFrequency } from '../../../services/solana/streams';
 
-const VIOLET = '#8b5cf6';
+// Protocol 01 Color System
+const COLORS = {
+  pink: '#ff77a8',
+  pinkDim: '#cc5f86',
+  void: '#0a0a0c',
+  text: '#ffffff',
+};
 
-export default function CreateStreamScreen() {
+export default function CreatePersonalStreamScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { createNewStream, loading } = useStreamStore();
@@ -35,34 +41,22 @@ export default function CreateStreamScreen() {
       const now = Date.now();
       const endDate = now + data.duration * 24 * 60 * 60 * 1000;
 
-      // Determine frequency based on duration
-      let frequency: StreamFrequency = 'daily';
-      if (data.duration >= 30) {
-        frequency = 'weekly';
-      } else if (data.duration >= 14) {
-        frequency = 'biweekly';
-      } else if (data.duration >= 7) {
-        frequency = 'daily';
-      }
+      // Use the frequency selected by user
+      const frequency: StreamFrequency = data.frequency;
 
-      // Create the stream with service info
+      // Create the personal payment stream
       const stream = await createNewStream({
-        name: data.name || `Stream to ${data.recipient.slice(0, 8)}...`,
+        name: data.name || `Payment to ${data.recipient.slice(0, 8)}...`,
         recipientAddress: data.recipient,
         totalAmount: data.amount,
         frequency,
         endDate,
-        // Include detected/selected service info
-        serviceId: data.serviceId,
-        serviceName: data.serviceName,
-        serviceCategory: data.serviceCategory,
-        serviceColor: data.serviceColor,
       });
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       Alert.alert(
-        'Stream Created!',
+        'Payment Stream Created!',
         `Your recurring payment of ${data.amount} ${data.token} has been set up.\n\nFirst payment will be processed immediately.`,
         [
           {
@@ -77,37 +71,59 @@ export default function CreateStreamScreen() {
       );
     } catch (error: any) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', error.message || 'Failed to create stream. Please try again.');
+      Alert.alert('Error', error.message || 'Failed to create payment stream. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <View className="flex-1 bg-p01-void">
+    <View style={{ flex: 1, backgroundColor: COLORS.void }}>
       {/* Header */}
       <View
-        className="flex-row items-center justify-between px-4 py-3"
-        style={{ paddingTop: insets.top + 8 }}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          paddingTop: insets.top + 8,
+        }}
       >
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: 'rgba(255, 119, 168, 0.2)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         >
-          <Ionicons name="close" size={24} color={VIOLET} />
+          <Ionicons name="close" size={24} color={COLORS.pink} />
         </TouchableOpacity>
 
-        <Text className="text-white text-lg font-semibold">Create Stream</Text>
+        <View style={{ alignItems: 'center' }}>
+          <Text style={{ color: COLORS.text, fontSize: 17, fontWeight: '600' }}>
+            Personal Payment
+          </Text>
+          <Text style={{ color: COLORS.pink, fontSize: 11, marginTop: 2 }}>
+            Salary, allowance, or recurring transfer
+          </Text>
+        </View>
 
-        <View className="w-10" />
+        <View style={{ width: 40 }} />
       </View>
 
       {/* Form */}
-      <View className="flex-1 px-4 pt-4">
+      <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 8 }}>
         <CreateStreamForm
           onSubmit={handleCreateStream}
           loading={loading || isSubmitting}
+          accentColor={COLORS.pink}
+          submitLabel="Create Payment Stream"
+          hideServiceSelector={true}
         />
       </View>
     </View>

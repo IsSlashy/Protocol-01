@@ -25,7 +25,19 @@ import {
   ServiceCategory,
 } from '../../../services/subscriptions/serviceRegistry';
 
-const VIOLET = '#8b5cf6';
+// Protocol 01 Color System
+const P01_COLORS = {
+  cyan: '#39c5bb',
+  cyanDim: '#2a9d95',
+  pink: '#ff77a8',
+  brightCyan: '#00ffe5',
+  yellow: '#ffcc00',
+  red: '#ff3366',
+  textMuted: '#888892',
+  textDim: '#555560',
+};
+
+const ACCENT = P01_COLORS.pink;
 
 export default function StreamDetailScreen() {
   const router = useRouter();
@@ -51,7 +63,7 @@ export default function StreamDetailScreen() {
 
   // Get service info if the stream has a serviceId
   const serviceInfo = stream?.serviceId ? getServiceById(stream.serviceId) : null;
-  const serviceColor = serviceInfo?.color || stream?.serviceColor || VIOLET;
+  const serviceColor = serviceInfo?.color || stream?.serviceColor || ACCENT;
   const categoryConfig = serviceInfo?.category
     ? CATEGORY_CONFIG[serviceInfo.category]
     : stream?.serviceCategory
@@ -61,7 +73,7 @@ export default function StreamDetailScreen() {
   if (!stream) {
     return (
       <SafeAreaView className="flex-1 bg-p01-void items-center justify-center">
-        <ActivityIndicator size="large" color={VIOLET} />
+        <ActivityIndicator size="large" color={ACCENT} />
         <Text className="text-gray-400 mt-4">Loading stream...</Text>
       </SafeAreaView>
     );
@@ -185,15 +197,15 @@ export default function StreamDetailScreen() {
         <TouchableOpacity
           onPress={() => router.back()}
           className="w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}
+          style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
         >
-          <Ionicons name="arrow-back" size={20} color={VIOLET} />
+          <Ionicons name="arrow-back" size={20} color={ACCENT} />
         </TouchableOpacity>
         <Text className="text-white text-lg font-semibold">{stream.name}</Text>
         <TouchableOpacity
           onPress={handleDelete}
           className="w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
+          style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
         >
           <Ionicons name="trash-outline" size={20} color="#ef4444" />
         </TouchableOpacity>
@@ -250,12 +262,12 @@ export default function StreamDetailScreen() {
             style={{
               backgroundColor:
                 stream.status === 'active'
-                  ? 'rgba(34, 197, 94, 0.2)'
+                  ? 'rgba(57, 197, 187, 0.2)'
                   : stream.status === 'paused'
-                  ? 'rgba(234, 179, 8, 0.2)'
+                  ? 'rgba(255, 204, 0, 0.2)'
                   : stream.status === 'completed'
-                  ? 'rgba(139, 92, 246, 0.2)'
-                  : 'rgba(239, 68, 68, 0.2)',
+                  ? 'rgba(255, 119, 168, 0.2)'
+                  : 'rgba(255, 51, 102, 0.2)',
             }}
           >
             <View
@@ -263,12 +275,12 @@ export default function StreamDetailScreen() {
               style={{
                 backgroundColor:
                   stream.status === 'active'
-                    ? '#22c55e'
+                    ? P01_COLORS.cyan
                     : stream.status === 'paused'
-                    ? '#eab308'
+                    ? P01_COLORS.yellow
                     : stream.status === 'completed'
                     ? serviceColor
-                    : '#ef4444',
+                    : P01_COLORS.red,
               }}
             />
             <Text
@@ -276,12 +288,12 @@ export default function StreamDetailScreen() {
               style={{
                 color:
                   stream.status === 'active'
-                    ? '#22c55e'
+                    ? P01_COLORS.cyan
                     : stream.status === 'paused'
-                    ? '#eab308'
+                    ? P01_COLORS.yellow
                     : stream.status === 'completed'
                     ? serviceColor
-                    : '#ef4444',
+                    : P01_COLORS.red,
               }}
             >
               {stream.status === 'active' ? 'Active' : stream.status}
@@ -295,7 +307,7 @@ export default function StreamDetailScreen() {
           className="mb-6"
           style={{
             borderWidth: 1,
-            borderColor: isDue ? 'rgba(239, 68, 68, 0.5)' : `${serviceColor}40`,
+            borderColor: isDue ? 'rgba(255, 51, 102, 0.5)' : `${serviceColor}40`,
           }}
         >
           {/* Amount per Payment */}
@@ -347,9 +359,9 @@ export default function StreamDetailScreen() {
           <View
             className="p-4 rounded-2xl mb-6"
             style={{
-              backgroundColor: isDue ? 'rgba(239, 68, 68, 0.1)' : `${serviceColor}15`,
+              backgroundColor: isDue ? 'rgba(255, 51, 102, 0.1)' : `${serviceColor}15`,
               borderWidth: 1,
-              borderColor: isDue ? 'rgba(239, 68, 68, 0.3)' : `${serviceColor}30`,
+              borderColor: isDue ? 'rgba(255, 51, 102, 0.3)' : `${serviceColor}30`,
             }}
           >
             <View className="flex-row items-center justify-between">
@@ -357,7 +369,7 @@ export default function StreamDetailScreen() {
                 <Text className="text-gray-400 text-sm">Next Payment</Text>
                 <Text
                   className="text-xl font-bold"
-                  style={{ color: isDue ? '#ef4444' : serviceColor }}
+                  style={{ color: isDue ? P01_COLORS.red : serviceColor }}
                 >
                   {formatTimeUntil(stream.nextPaymentDate)}
                 </Text>
@@ -408,7 +420,7 @@ export default function StreamDetailScreen() {
               <Ionicons
                 name={copied ? 'checkmark' : 'copy-outline'}
                 size={18}
-                color={copied ? '#22c55e' : serviceColor}
+                color={copied ? P01_COLORS.cyan : serviceColor}
               />
             </View>
           </TouchableOpacity>
@@ -470,14 +482,14 @@ export default function StreamDetailScreen() {
                     style={{
                       backgroundColor:
                         payment.status === 'success'
-                          ? 'rgba(34, 197, 94, 0.2)'
-                          : 'rgba(239, 68, 68, 0.2)',
+                          ? 'rgba(57, 197, 187, 0.2)'
+                          : 'rgba(255, 51, 102, 0.2)',
                     }}
                   >
                     <Ionicons
                       name={payment.status === 'success' ? 'checkmark' : 'close'}
                       size={14}
-                      color={payment.status === 'success' ? '#22c55e' : '#ef4444'}
+                      color={payment.status === 'success' ? P01_COLORS.cyan : P01_COLORS.red}
                     />
                   </View>
                   <View className="flex-1">
@@ -520,7 +532,7 @@ export default function StreamDetailScreen() {
             <TouchableOpacity
               onPress={handleCancel}
               className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
-              style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
+              style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
             >
               <Ionicons name="close-circle" size={20} color="#ef4444" />
               <Text className="font-semibold ml-2 text-red-500">Cancel Stream</Text>

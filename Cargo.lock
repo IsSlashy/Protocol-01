@@ -2821,6 +2821,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01-subscription"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+]
+
+[[package]]
 name = "p01-whitelist"
 version = "0.1.0"
 dependencies = [

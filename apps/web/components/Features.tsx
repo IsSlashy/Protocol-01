@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
-import { Wallet, Radio, MessageCircle, ArrowLeftRight, ShoppingCart, Shield, ArrowRight, Check } from "lucide-react";
+import { Wallet, Radio, ArrowLeftRight, ShoppingCart, Shield, ArrowRight, Check } from "lucide-react";
 
 const modules = [
   {
@@ -12,8 +12,11 @@ const modules = [
     name: "Stealth Wallet",
     tagline: "Invisible transactions on Solana",
     color: "cyan",
-    description:
-      "Send and receive SOL and SPL tokens without leaving a trace. Stealth addresses ensure each transaction is completely unlinkable. Works on both Devnet and Mainnet.",
+    description: [
+      "Send and receive SOL and SPL tokens without leaving a trace.",
+      "Stealth addresses ensure each transaction is completely unlinkable.",
+      "Works on both Devnet and Mainnet.",
+    ],
     features: [
       "One-time stealth addresses",
       "Devnet & Mainnet support",
@@ -35,8 +38,12 @@ const tx = await p01.wallet.send({
     name: "Stream Payments SDK",
     tagline: "Serverless B2B SDK for subscriptions",
     color: "pink",
-    description:
-      "Serverless SDK for businesses and developers to build subscription solutions. On-chain verification via smart contracts - no centralized server. Recipients must use Protocol 01 wallet. Closed ecosystem.",
+    description: [
+      "Serverless SDK for businesses and developers to build subscription solutions.",
+      "On-chain verification via smart contracts - no centralized server.",
+      "Recipients must use Protocol 01 wallet.",
+      "Closed ecosystem.",
+    ],
     features: [
       "100% Serverless / On-chain",
       "Smart contract verification",
@@ -62,8 +69,10 @@ const stream = await p01.streams.create({
     name: "Token Swap",
     tagline: "Swap any Solana token",
     color: "bright-cyan",
-    description:
-      "Swap between any Solana tokens including SOL, USDC, USDT, BONK, JUP, RAY, ORCA, and more. Powered by Jupiter aggregator for best rates.",
+    description: [
+      "Swap between any Solana tokens including SOL, USDC, USDT, BONK, JUP, RAY, ORCA, and more.",
+      "Powered by Jupiter aggregator for best rates.",
+    ],
     features: [
       "15+ tokens supported",
       "Best rate aggregation",
@@ -84,8 +93,10 @@ const swap = await p01.swap({
     name: "Buy Crypto",
     tagline: "Fiat to crypto on-ramp",
     color: "yellow",
-    description:
-      "Buy SOL, USDC, and USDT directly with fiat currency. Multiple payment providers including MoonPay, Transak, and Ramp Network.",
+    description: [
+      "Buy SOL, USDC, and USDT directly with fiat currency.",
+      "Multiple payment providers including MoonPay, Transak, and Ramp Network.",
+    ],
     features: [
       "Credit/Debit card support",
       "Bank transfer",
@@ -101,35 +112,15 @@ const purchase = await p01.buy({
 });`,
   },
   {
-    id: "messaging",
-    icon: MessageCircle,
-    name: "Encrypted Messaging",
-    tagline: "Private communication",
-    color: "cyan",
-    description:
-      "End-to-end encrypted messaging with on-chain identity. Communicate privately without revealing your real identity.",
-    features: [
-      "End-to-end encryption",
-      "On-chain identity",
-      "Private channels",
-      "Anonymous credentials",
-    ],
-    codePreview: `// Send encrypted message
-await p01.message.send({
-  to: "p01:7xK9...",
-  content: encrypted,
-  proof: identityProof,
-  anonymous: true
-});`,
-  },
-  {
     id: "security",
     icon: Shield,
     name: "Zero-Knowledge Proofs",
     tagline: "Maximum privacy",
     color: "pink",
-    description:
-      "Advanced cryptography ensures your transactions and identity remain private. ZK proofs verify without revealing sensitive data.",
+    description: [
+      "Advanced cryptography ensures your transactions and identity remain private.",
+      "ZK proofs verify without revealing sensitive data.",
+    ],
     features: [
       "ZK-proof transactions",
       "No KYC required",
@@ -153,7 +144,7 @@ const containerVariants = {
       staggerChildren: 0.2,
     },
   },
-};
+} as const;
 
 const itemVariants = {
   hidden: { opacity: 0, y: 40 },
@@ -162,10 +153,10 @@ const itemVariants = {
     y: 0,
     transition: {
       duration: 0.6,
-      ease: "easeOut",
+      ease: [0.16, 1, 0.3, 1] as const,
     },
   },
-};
+} as const;
 
 export default function Features() {
   const ref = useRef(null);
@@ -209,13 +200,13 @@ export default function Features() {
         >
           <span className="badge-cyan mb-4">Features</span>
           <h2 className="section-title">
-            Six modules.{" "}
+            Five modules.{" "}
             <span className="text-[#39c5bb]">Complete privacy.</span>
           </h2>
-          <p className="section-subtitle">
-            Protocol 01 provides a comprehensive suite of privacy tools, all working
-            together seamlessly. Works on Devnet for testing and Mainnet for real transactions.
-          </p>
+          <div className="section-subtitle space-y-1">
+            <p>Protocol 01 provides a comprehensive suite of privacy tools, all working together seamlessly.</p>
+            <p>Works on Devnet for testing and Mainnet for real transactions.</p>
+          </div>
         </motion.div>
 
         {/* Modules - Apple style alternating layout */}
@@ -257,9 +248,11 @@ export default function Features() {
                       </div>
                     </div>
 
-                    <p className="text-p01-text-muted text-lg mb-8">
-                      {module.description}
-                    </p>
+                    <div className="text-p01-text-muted text-lg mb-8 space-y-1">
+                      {module.description.map((line, i) => (
+                        <p key={i}>{line}</p>
+                      ))}
+                    </div>
 
                     <ul className="space-y-3 mb-8">
                       {module.features.map((feature, i) => (

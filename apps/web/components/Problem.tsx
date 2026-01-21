@@ -40,7 +40,7 @@ const containerVariants = {
       staggerChildren: 0.15,
     },
   },
-};
+} as const;
 
 const itemVariants = {
   hidden: { opacity: 0, y: 30 },
@@ -49,10 +49,10 @@ const itemVariants = {
     y: 0,
     transition: {
       duration: 0.5,
-      ease: "easeOut",
+      ease: [0.16, 1, 0.3, 1] as const,
     },
   },
-};
+} as const;
 
 export default function Problem() {
   const ref = useRef(null);
@@ -76,10 +76,10 @@ export default function Problem() {
             Your blockchain activity is{" "}
             <span className="text-[#ffcc00]">completely exposed</span>
           </h2>
-          <p className="section-subtitle">
-            Traditional blockchains offer pseudonymity, not privacy. Every transaction
-            you make creates a permanent trail that can be traced back to you.
-          </p>
+          <div className="section-subtitle space-y-1">
+            <p>Traditional blockchains offer pseudonymity, not privacy.</p>
+            <p>Every transaction you make creates a permanent trail that can be traced back to you.</p>
+          </div>
         </motion.div>
 
         {/* Stats Grid */}

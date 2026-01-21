@@ -1,11 +1,19 @@
 /**
  * useChat - Agent chat messages and conversation
  * @module hooks/agent/useChat
+ *
+ * Uses Gemma 3n for AI-powered intent parsing and response generation.
  */
 
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAsyncStorage, ASYNC_KEYS } from '../storage/useAsyncStorage';
 import { useAgent, AgentCapability } from './useAgent';
+import {
+  processWithGemma,
+  quickClassifyIntent,
+  GemmaMessage,
+  GemmaIntentResponse,
+} from '../../services/ai/gemma';
 
 export type MessageRole = 'user' | 'agent' | 'system';
 
@@ -66,6 +74,7 @@ export function useChat(): UseChatReturn {
   });
 
   const processingRef = useRef(false);
+  const conversationHistoryRef = useRef<GemmaMessage[]>([]);
 
   const { isReady, hasCapability, state: agentState } = useAgent();
 
@@ -114,161 +123,95 @@ export function useChat(): UseChatReturn {
     );
   }, []);
 
-  // Parse user intent and entities from message
-  const parseIntent = useCallback((content: string): {
-    intent: string;
-    entities: Record<string, unknown>;
-    requiredCapability?: AgentCapability;
-  } => {
-    const lowerContent = content.toLowerCase();
+  // Convert Gemma response to chat message format
+  const gemmaResponseToMessage = useCallback((
+    gemmaResponse: GemmaIntentResponse
+  ): { content: string; type: MessageType; data?: Record<string, unknown>; suggestions?: Suggestion[] } => {
+    // Map intent to message type
+    const typeMapping: Partial<Record<string, MessageType>> = {
+      send_transaction: 'transaction_request',
+      stealth_send: 'transaction_request',
+      check_balance: 'balance_info',
+      price_lookup: 'price_info',
+      create_stream: 'stream_request',
+      manage_stream: 'stream_request',
+    };
 
-    // Send intent
-    if (lowerContent.includes('send') || lowerContent.includes('transfer')) {
-      const amountMatch = content.match(/(\d+(?:\.\d+)?)\s*(eth|usdc|usdt|dai)?/i);
-      const addressMatch = content.match(/to\s+(0x[a-fA-F0-9]{40}|[\w-]+\.eth)/i);
+    const messageType = typeMapping[gemmaResponse.intent] || 'text';
 
-      return {
-        intent: 'send_transaction',
-        entities: {
-          amount: amountMatch?.[1],
-          token: amountMatch?.[2]?.toUpperCase() ?? 'ETH',
-          recipient: addressMatch?.[1],
-        },
-        requiredCapability: lowerContent.includes('stealth') || lowerContent.includes('private')
-          ? 'stealth_send'
-          : 'send_transaction',
-      };
+    // Convert Gemma suggestions to our format
+    const suggestions: Suggestion[] = (gemmaResponse.suggestions || []).map((s, i) => ({
+      id: `sug_${Date.now()}_${i}`,
+      text: s.text,
+      action: s.action,
+      params: gemmaResponse.entities,
+    }));
+
+    // Add default suggestions if none provided
+    if (suggestions.length === 0) {
+      if (gemmaResponse.requiresConfirmation) {
+        suggestions.push(
+          { id: '1', text: 'Yes, proceed', action: 'confirm', params: gemmaResponse.entities },
+          { id: '2', text: 'Cancel', action: 'cancel' }
+        );
+      } else if (gemmaResponse.intent === 'greeting' || gemmaResponse.intent === 'help') {
+        suggestions.push(
+          { id: '1', text: 'Check my balance', action: 'check_balance' },
+          { id: '2', text: 'Send payment', action: 'send_prompt' },
+          { id: '3', text: 'Create a stream', action: 'stream_prompt' }
+        );
+      }
     }
 
-    // Stream intent
-    if (lowerContent.includes('stream') || lowerContent.includes('salary')) {
-      return {
-        intent: 'create_stream',
-        entities: {},
-        requiredCapability: 'create_stream',
-      };
-    }
-
-    // Balance intent
-    if (lowerContent.includes('balance') || lowerContent.includes('how much')) {
-      return {
-        intent: 'check_balance',
-        entities: {},
-        requiredCapability: 'check_balance',
-      };
-    }
-
-    // Price intent
-    if (lowerContent.includes('price') || lowerContent.includes('worth')) {
-      const tokenMatch = content.match(/(eth|btc|usdc|usdt|dai)/i);
-      return {
-        intent: 'price_lookup',
-        entities: { token: tokenMatch?.[1]?.toUpperCase() },
-        requiredCapability: 'price_lookup',
-      };
-    }
-
-    // Gas intent
-    if (lowerContent.includes('gas') || lowerContent.includes('fee')) {
-      return {
-        intent: 'gas_estimation',
-        entities: {},
-        requiredCapability: 'gas_estimation',
-      };
-    }
-
-    // Default to general query
     return {
-      intent: 'general_query',
-      entities: {},
+      content: gemmaResponse.response,
+      type: messageType,
+      data: gemmaResponse.entities,
+      suggestions: suggestions.length > 0 ? suggestions : undefined,
     };
   }, []);
 
-  // Generate response based on intent
-  const generateResponse = useCallback(async (
-    intent: string,
-    entities: Record<string, unknown>
-  ): Promise<{ content: string; type: MessageType; data?: Record<string, unknown>; suggestions?: Suggestion[] }> => {
-    // Simulate AI processing delay
-    await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
+  // Process message with Gemma 3n AI
+  const processWithAI = useCallback(async (
+    content: string
+  ): Promise<{ content: string; type: MessageType; data?: Record<string, unknown>; suggestions?: Suggestion[]; requiredCapability?: AgentCapability }> => {
+    try {
+      // Process with Gemma
+      const gemmaResponse = await processWithGemma(
+        content,
+        conversationHistoryRef.current
+      );
 
-    switch (intent) {
-      case 'send_transaction':
-        if (entities.amount && entities.recipient) {
-          return {
-            content: `I'll help you send ${entities.amount} ${entities.token} to ${entities.recipient}. Would you like me to prepare this transaction?`,
-            type: 'transaction_request',
-            data: entities,
-            suggestions: [
-              { id: '1', text: 'Yes, proceed', action: 'confirm_send', params: entities },
-              { id: '2', text: 'Use stealth address', action: 'stealth_send', params: entities },
-              { id: '3', text: 'Cancel', action: 'cancel' },
-            ],
-          };
-        }
-        return {
-          content: 'I need more details to process your transaction. Who would you like to send to and how much?',
-          type: 'text',
-          suggestions: [
-            { id: '1', text: 'Send 0.1 ETH to...', action: 'prompt', params: { template: 'send' } },
-          ],
-        };
+      // Update conversation history
+      conversationHistoryRef.current.push(
+        { role: 'user', parts: [{ text: content }] },
+        { role: 'model', parts: [{ text: gemmaResponse.response }] }
+      );
 
-      case 'check_balance':
-        // In real implementation, fetch actual balance
-        return {
-          content: 'Here is your current balance:\n\n**ETH**: 1.5 ($3,750)\n**USDC**: 500 ($500)\n\n**Total**: $4,250',
-          type: 'balance_info',
-          data: {
-            eth: '1.5',
-            usdc: '500',
-            totalUsd: '4250',
-          },
-        };
+      // Keep history limited to last 10 exchanges
+      if (conversationHistoryRef.current.length > 20) {
+        conversationHistoryRef.current = conversationHistoryRef.current.slice(-20);
+      }
 
-      case 'price_lookup':
-        const token = entities.token ?? 'ETH';
-        return {
-          content: `The current price of ${token} is $2,500.00 (+2.5% in 24h)`,
-          type: 'price_info',
-          data: {
-            token,
-            price: 2500,
-            change24h: 2.5,
-          },
-        };
+      const result = gemmaResponseToMessage(gemmaResponse);
+      return {
+        ...result,
+        requiredCapability: gemmaResponse.requiredCapability,
+      };
+    } catch (error) {
+      console.error('[useChat] AI processing error:', error);
 
-      case 'gas_estimation':
-        return {
-          content: 'Current gas prices:\n\n**Slow**: 15 gwei (~$0.50)\n**Normal**: 20 gwei (~$0.75)\n**Fast**: 30 gwei (~$1.10)',
-          type: 'text',
-          suggestions: [
-            { id: '1', text: 'Set gas to fast', action: 'set_gas', params: { speed: 'fast' } },
-          ],
-        };
-
-      case 'create_stream':
-        return {
-          content: 'I can help you create a payment stream. Who should receive the stream and what amount over what period?',
-          type: 'stream_request',
-          suggestions: [
-            { id: '1', text: 'Monthly salary', action: 'stream_template', params: { type: 'salary' } },
-            { id: '2', text: 'Custom stream', action: 'stream_custom' },
-          ],
-        };
-
-      default:
-        return {
-          content: "I'm here to help you manage your wallet. You can ask me to send payments, check your balance, look up prices, or create payment streams.",
-          type: 'text',
-          suggestions: [
-            { id: '1', text: 'Check my balance', action: 'check_balance' },
-            { id: '2', text: 'Send payment', action: 'send_prompt' },
-            { id: '3', text: 'Create a stream', action: 'stream_prompt' },
-          ],
-        };
+      // Fallback response
+      return {
+        content: "I'm having trouble connecting to the AI. Please check your settings or try again.",
+        type: 'error',
+        suggestions: [
+          { id: '1', text: 'Check my balance', action: 'check_balance' },
+          { id: '2', text: 'Try again', action: 'retry' },
+        ],
+      };
     }
-  }, []);
+  }, [gemmaResponseToMessage]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || processingRef.current) return;
@@ -298,15 +241,31 @@ export function useChat(): UseChatReturn {
     setIsTyping(true);
 
     try {
-      // Parse intent
-      const { intent, entities, requiredCapability } = parseIntent(content);
+      // Quick classify to check capability before full AI processing
+      const quickIntent = quickClassifyIntent(content);
+      const quickCapability = mapIntentToCapability(quickIntent);
 
       // Check capability
-      if (requiredCapability && !hasCapability(requiredCapability)) {
+      if (quickCapability && !hasCapability(quickCapability)) {
         addMessage({
           role: 'agent',
           type: 'error',
-          content: `I don't have permission to ${requiredCapability.replace(/_/g, ' ')}. You can grant this permission in settings.`,
+          content: `I don't have permission to ${quickCapability.replace(/_/g, ' ')}. You can grant this permission in settings.`,
+        });
+        setIsTyping(false);
+        processingRef.current = false;
+        return;
+      }
+
+      // Process with Gemma 3n AI
+      const response = await processWithAI(content);
+
+      // Double-check capability from AI response
+      if (response.requiredCapability && !hasCapability(response.requiredCapability)) {
+        addMessage({
+          role: 'agent',
+          type: 'error',
+          content: `I don't have permission to ${response.requiredCapability.replace(/_/g, ' ')}. You can grant this permission in settings.`,
         });
         setIsTyping(false);
         processingRef.current = false;
@@ -316,12 +275,9 @@ export function useChat(): UseChatReturn {
       // Update context
       setContext(prev => ({
         ...prev,
-        lastIntent: intent,
-        entities,
+        lastIntent: quickIntent,
+        entities: response.data || {},
       }));
-
-      // Generate response
-      const response = await generateResponse(intent, entities);
 
       // Add agent response
       addMessage({
@@ -336,6 +292,7 @@ export function useChat(): UseChatReturn {
         setSuggestions(response.suggestions);
       }
     } catch (error) {
+      console.error('[useChat] Send message error:', error);
       addMessage({
         role: 'agent',
         type: 'error',
@@ -345,11 +302,12 @@ export function useChat(): UseChatReturn {
       setIsTyping(false);
       processingRef.current = false;
     }
-  }, [isReady, hasCapability, parseIntent, generateResponse, addMessage]);
+  }, [isReady, hasCapability, processWithAI, addMessage]);
 
   const clearChat = useCallback(async () => {
     setMessages([]);
     setSuggestions([]);
+    conversationHistoryRef.current = []; // Clear Gemma conversation history
     setContext({
       conversationId: generateConversationId(),
     });
@@ -390,4 +348,19 @@ export function useChat(): UseChatReturn {
 
 function generateConversationId(): string {
   return `conv_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+// Map quick intent to capability for permission checking
+function mapIntentToCapability(intent: string): AgentCapability | undefined {
+  const mapping: Record<string, AgentCapability> = {
+    send_transaction: 'send_transaction',
+    stealth_send: 'stealth_send',
+    check_balance: 'check_balance',
+    price_lookup: 'price_lookup',
+    create_stream: 'create_stream',
+    manage_stream: 'manage_stream',
+    gas_estimation: 'gas_estimation',
+    explain_transaction: 'explain_transaction',
+  };
+  return mapping[intent];
 }

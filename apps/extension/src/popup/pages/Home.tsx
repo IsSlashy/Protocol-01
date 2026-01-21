@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { usePrivacyStore } from '@/shared/store/privacy';
+import { useShieldedStore } from '@/shared/store/shielded';
 import { getSolscanUrl } from '@/shared/services/transactions';
 import {
   formatCurrency,
@@ -47,6 +48,7 @@ export default function Home() {
     fetchTransactions,
   } = useWalletStore();
   const { config: privacyConfig, walletPrivacyScore } = usePrivacyStore();
+  const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
 
   const [copied, setCopied] = useState(false);
   const [faucetLoading, setFaucetLoading] = useState(false);
@@ -268,6 +270,35 @@ export default function Home() {
             )} />
           </motion.button>
         )}
+
+        {/* Shielded Wallet Card */}
+        <motion.button
+          initial={{ y: 10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.15 }}
+          onClick={() => navigate('/shielded')}
+          className="mx-4 mb-4 bg-gradient-to-r from-p01-surface to-p01-dark rounded-xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:from-p01-surface/90 hover:to-p01-dark/90 transition-all border border-p01-cyan/20"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
+              <ShieldCheck className="w-5 h-5 text-p01-cyan" />
+            </div>
+            <div className="text-left">
+              <p className="text-white font-medium">Shielded Wallet</p>
+              <p className="text-p01-chrome text-xs">
+                {shieldedInitialized
+                  ? `${shieldedBalance.toFixed(4)} SOL shielded`
+                  : 'ZK-protected privacy'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-p01-cyan font-mono bg-p01-cyan/10 px-2 py-0.5 rounded">
+              ZK
+            </span>
+            <ChevronRight className="w-5 h-5 text-p01-cyan" />
+          </div>
+        </motion.button>
 
         {/* Assets Section */}
         <div className="px-4">

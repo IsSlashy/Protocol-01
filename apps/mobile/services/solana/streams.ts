@@ -2,6 +2,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendSol } from './transactions';
 import { getConnection } from './connection';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import {
+  applyAmountNoise,
+  NoiseAdjustment,
+  createNoiseAdjustment,
+  updateNoiseAdjustment,
+} from '../../utils/crypto/amountNoise';
+import {
+  applyTimingNoise,
+  ensurePaymentNotSkipped,
+} from '../../utils/privacy/timingNoise';
 
 // Stream status types
 export type StreamStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
@@ -25,7 +35,8 @@ export interface Stream {
   customIntervalDays?: number; // For custom frequency
   startDate: number; // Timestamp
   endDate?: number; // Optional end date
-  nextPaymentDate: number; // Next scheduled payment
+  nextPaymentDate: number; // Next scheduled payment (base time)
+  noisyPaymentDate?: number; // Actual payment time with timing noise applied
 
   // Progress
   amountStreamed: number; // Total SOL already sent
@@ -35,6 +46,14 @@ export interface Stream {
   // Status
   status: StreamStatus;
   direction: StreamDirection;
+
+  // Privacy options (synced from extension subscriptions)
+  amountNoise: number;       // Amount variation +/- % (0-20)
+  timingNoise: number;       // Timing variation +/- hours (0-24)
+  useStealthAddress: boolean; // Use unique derived address per payment
+
+  // Amount noise tracking (for balancing over time)
+  noiseAdjustment?: NoiseAdjustment; // Tracks cumulative overpay/underpay from noise
 
   // Service info (auto-detected or manually selected)
   serviceId?: string;
@@ -52,7 +71,9 @@ export interface Stream {
 
 export interface StreamPayment {
   id: string;
-  amount: number;
+  amount: number;           // Original scheduled amount
+  actualAmount?: number;    // Actual amount sent (with noise applied)
+  noiseDelta?: number;      // Noise adjustment applied (actualAmount - amount)
   signature: string;
   timestamp: number;
   status: 'success' | 'failed';
@@ -69,6 +90,10 @@ export interface CreateStreamParams {
   customIntervalDays?: number;
   startDate?: number;
   endDate?: number;
+  // Privacy options (optional, defaults to 0/false)
+  amountNoise?: number;
+  timingNoise?: number;
+  useStealthAddress?: boolean;
   // Service info (optional)
   serviceId?: string;
   serviceName?: string;
@@ -77,6 +102,71 @@ export interface CreateStreamParams {
 }
 
 const STORAGE_KEY = 'p01_streams';
+const DELETED_IDS_KEY = 'p01_streams_deleted_ids';
+const CANCELLED_IDS_KEY = 'p01_streams_cancelled_ids';
+const PAUSED_IDS_KEY = 'p01_streams_paused_ids';
+
+// Helper to get deleted stream IDs (defined early for use in cancel/delete)
+async function getDeletedIds(): Promise<Set<string>> {
+  try {
+    const data = await AsyncStorage.getItem(DELETED_IDS_KEY);
+    if (!data) return new Set();
+    return new Set(JSON.parse(data));
+  } catch {
+    return new Set();
+  }
+}
+
+// Helper to get cancelled stream IDs
+async function getCancelledIds(): Promise<Set<string>> {
+  try {
+    const data = await AsyncStorage.getItem(CANCELLED_IDS_KEY);
+    if (!data) return new Set();
+    return new Set(JSON.parse(data));
+  } catch {
+    return new Set();
+  }
+}
+
+// Add ID to cancelled list
+async function addCancelledId(streamId: string): Promise<void> {
+  const cancelledIds = await getCancelledIds();
+  console.log('[Streams] Current cancelled IDs before add:', cancelledIds.size, [...cancelledIds]);
+  cancelledIds.add(streamId);
+  const idsArray = [...cancelledIds];
+  await AsyncStorage.setItem(CANCELLED_IDS_KEY, JSON.stringify(idsArray));
+  console.log('[Streams] Added to cancelled list:', streamId, '- total now:', idsArray.length);
+  // Verify write
+  const verify = await AsyncStorage.getItem(CANCELLED_IDS_KEY);
+  console.log('[Streams] Verified cancelled IDs after write:', verify);
+}
+
+// Helper to get paused stream IDs
+async function getPausedIds(): Promise<Set<string>> {
+  try {
+    const data = await AsyncStorage.getItem(PAUSED_IDS_KEY);
+    if (!data) return new Set();
+    return new Set(JSON.parse(data));
+  } catch {
+    return new Set();
+  }
+}
+
+// Add ID to paused list
+async function addPausedId(streamId: string): Promise<void> {
+  const pausedIds = await getPausedIds();
+  pausedIds.add(streamId);
+  await AsyncStorage.setItem(PAUSED_IDS_KEY, JSON.stringify([...pausedIds]));
+  console.log('[Streams] Added to paused list:', streamId);
+}
+
+// Remove ID from paused list (when resumed)
+async function removePausedId(streamId: string): Promise<void> {
+  const pausedIds = await getPausedIds();
+  pausedIds.delete(streamId);
+  await AsyncStorage.setItem(PAUSED_IDS_KEY, JSON.stringify([...pausedIds]));
+  console.log('[Streams] Removed from paused list:', streamId);
+}
 
 // Helper to generate unique ID
 function generateId(): string {
@@ -122,12 +212,65 @@ function calculateAmountPerPayment(
   return totalAmount / Math.max(numPayments, 1);
 }
 
-// Load all streams from storage
+// Load all streams from storage (filters deleted, applies cancelled status)
 export async function loadStreams(): Promise<Stream[]> {
   try {
     const data = await AsyncStorage.getItem(STORAGE_KEY);
     if (!data) return [];
-    return JSON.parse(data);
+
+    let streams: Stream[] = JSON.parse(data);
+
+    // Filter out deleted IDs
+    const deletedIds = await getDeletedIds();
+    if (deletedIds.size > 0) {
+      streams = streams.filter(s => !deletedIds.has(s.id));
+      console.log(`[Streams] Filtered out ${deletedIds.size} deleted streams`);
+    }
+
+    // Apply cancelled status to streams in cancelled list
+    const cancelledIds = await getCancelledIds();
+    console.log(`[Streams] Cancelled IDs in list: ${cancelledIds.size}`, [...cancelledIds]);
+
+    if (cancelledIds.size > 0) {
+      streams = streams.map(s => {
+        if (cancelledIds.has(s.id)) {
+          if (s.status !== 'cancelled') {
+            console.log(`[Streams] Marking as cancelled: ${s.name} (was ${s.status})`);
+            return { ...s, status: 'cancelled' as StreamStatus };
+          } else {
+            console.log(`[Streams] Already cancelled: ${s.name}`);
+          }
+        }
+        return s;
+      });
+    }
+
+    // Apply paused status to streams in paused list (if not already cancelled)
+    const pausedIds = await getPausedIds();
+    console.log(`[Streams] Paused IDs in list: ${pausedIds.size}`, [...pausedIds]);
+
+    if (pausedIds.size > 0) {
+      streams = streams.map(s => {
+        // Don't override cancelled status
+        if (cancelledIds.has(s.id)) return s;
+
+        if (pausedIds.has(s.id)) {
+          if (s.status !== 'paused') {
+            console.log(`[Streams] Marking as paused: ${s.name} (was ${s.status})`);
+            return { ...s, status: 'paused' as StreamStatus };
+          }
+        }
+        return s;
+      });
+    }
+
+    // Log status of loaded streams
+    const statusCounts = streams.reduce((acc, s) => {
+      acc[s.status] = (acc[s.status] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    console.log(`[Streams] Loaded ${streams.length} streams:`, statusCounts);
+    return streams;
   } catch (error) {
     console.error('Failed to load streams:', error);
     return [];
@@ -177,6 +320,21 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     }
   }
 
+  // Apply timing noise to first payment if enabled
+  const timingNoise = params.timingNoise ?? 0;
+  let noisyPaymentDate: number | undefined;
+  if (timingNoise > 0) {
+    const rawNoisyTime = await applyTimingNoise(startDate, timingNoise);
+    // Ensure noise doesn't push first payment past the interval
+    noisyPaymentDate = ensurePaymentNotSkipped(rawNoisyTime, startDate, intervalMs);
+    console.log(
+      `[Streams] Applied initial timing noise: ` +
+      `base=${new Date(startDate).toISOString()}, ` +
+      `noisy=${new Date(noisyPaymentDate).toISOString()}, ` +
+      `offset=${Math.round((noisyPaymentDate - startDate) / (60 * 1000))} min`
+    );
+  }
+
   const stream: Stream = {
     id: generateId(),
     name: params.name,
@@ -189,12 +347,17 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     customIntervalDays: params.customIntervalDays,
     startDate,
     endDate: params.endDate,
-    nextPaymentDate: startDate, // First payment at start
+    nextPaymentDate: startDate, // First payment base time at start
+    noisyPaymentDate, // Actual time with noise (undefined if noise is 0)
     amountStreamed: 0,
     paymentsCompleted: 0,
     totalPayments,
     status: 'active',
     direction: 'outgoing',
+    // Privacy options (default to 0/false)
+    amountNoise: params.amountNoise ?? 0,
+    timingNoise,
+    useStealthAddress: params.useStealthAddress ?? false,
     // Service info
     serviceId: params.serviceId,
     serviceName: params.serviceName,
@@ -237,6 +400,8 @@ export async function updateStream(streamId: string, updates: Partial<Stream>): 
 
 // Pause a stream
 export async function pauseStream(streamId: string): Promise<Stream | null> {
+  // Add to paused list so status persists after sync/reload
+  await addPausedId(streamId);
   return updateStream(streamId, { status: 'paused' });
 }
 
@@ -245,27 +410,74 @@ export async function resumeStream(streamId: string): Promise<Stream | null> {
   const stream = await getStream(streamId);
   if (!stream) return null;
 
+  // Remove from paused list
+  await removePausedId(streamId);
+
   // Calculate new next payment date
   const now = Date.now();
   const intervalMs = getIntervalMs(stream.frequency, stream.customIntervalDays);
+  const nextPaymentDate = now + intervalMs;
+
+  // Apply timing noise if enabled
+  let noisyPaymentDate: number | undefined;
+  if (stream.timingNoise > 0) {
+    const rawNoisyTime = await applyTimingNoise(nextPaymentDate, stream.timingNoise);
+    noisyPaymentDate = ensurePaymentNotSkipped(rawNoisyTime, nextPaymentDate, intervalMs);
+    console.log(
+      `[Streams] Applied timing noise on resume for ${stream.name}: ` +
+      `base=${new Date(nextPaymentDate).toISOString()}, ` +
+      `noisy=${new Date(noisyPaymentDate).toISOString()}`
+    );
+  }
 
   return updateStream(streamId, {
     status: 'active',
-    nextPaymentDate: now + intervalMs,
+    nextPaymentDate,
+    noisyPaymentDate,
   });
 }
 
-// Cancel a stream
+// Cancel a stream (adds to cancelled list - will show in History)
 export async function cancelStream(streamId: string): Promise<Stream | null> {
+  // Add to cancelled list so status persists after sync
+  await addCancelledId(streamId);
   return updateStream(streamId, { status: 'cancelled' });
 }
 
-// Delete a stream
+// Cancel stream and publish to blockchain (for cross-device sync)
+export async function cancelStreamAndPublish(
+  streamId: string,
+  keypair: import('@solana/web3.js').Keypair
+): Promise<{ stream: Stream | null; signature: string | null }> {
+  // First cancel locally
+  const stream = await cancelStream(streamId);
+
+  // Then publish to blockchain
+  let signature: string | null = null;
+  try {
+    const { publishStatusUpdate } = await import('./onchainSync');
+    signature = await publishStatusUpdate(streamId, 'cancelled', keypair);
+    console.log('[Streams] Published cancel to blockchain:', signature);
+  } catch (error) {
+    console.warn('[Streams] Failed to publish cancel to blockchain:', error);
+    // Local cancel still succeeded, so don't throw
+  }
+
+  return { stream, signature };
+}
+
+// Delete a stream (also adds to deleted list to prevent re-sync)
 export async function deleteStream(streamId: string): Promise<boolean> {
   const streams = await loadStreams();
   const filtered = streams.filter(s => s.id !== streamId);
 
   if (filtered.length === streams.length) return false;
+
+  // Add to deleted list so it won't come back on sync
+  const deletedIds = await getDeletedIds();
+  deletedIds.add(streamId);
+  await AsyncStorage.setItem(DELETED_IDS_KEY, JSON.stringify([...deletedIds]));
+  console.log('[Streams] Deleted and added to deleted list:', streamId);
 
   await saveStreams(filtered);
   return true;
@@ -279,8 +491,46 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
   const paymentId = `payment_${Date.now()}`;
 
   try {
-    // Execute the payment
-    const result = await sendSol(stream.recipientAddress, stream.amountPerPayment);
+    // Calculate amount to send (with noise if enabled for privacy)
+    let amountToSend = stream.amountPerPayment;
+    let noiseDelta = 0;
+    let newNoiseAdjustment = stream.noiseAdjustment || createNoiseAdjustment();
+
+    // Apply amount noise for privacy if enabled
+    if (stream.amountNoise > 0) {
+      // Calculate remaining payments for smart balancing
+      let remainingPayments: number | undefined;
+      const intervalMs = getIntervalMs(stream.frequency, stream.customIntervalDays);
+      if (stream.totalPayments) {
+        remainingPayments = stream.totalPayments - stream.paymentsCompleted;
+      } else if (stream.endDate) {
+        const remainingMs = stream.endDate - Date.now();
+        remainingPayments = Math.ceil(remainingMs / intervalMs);
+      }
+
+      // Apply noise with cumulative tracking
+      const currentCumulative = stream.noiseAdjustment?.cumulative || 0;
+      const noiseResult = await applyAmountNoise(
+        stream.amountPerPayment,
+        stream.amountNoise,
+        currentCumulative,
+        remainingPayments
+      );
+
+      amountToSend = noiseResult.adjustedAmount;
+      noiseDelta = noiseResult.noiseDelta;
+      newNoiseAdjustment = updateNoiseAdjustment(newNoiseAdjustment, noiseDelta);
+
+      console.log(
+        `[Streams] Applied amount noise to ${stream.name}: ` +
+        `${stream.amountPerPayment} -> ${amountToSend.toFixed(9)} SOL ` +
+        `(delta: ${noiseDelta >= 0 ? '+' : ''}${noiseDelta.toFixed(9)}, ` +
+        `cumulative: ${newNoiseAdjustment.cumulative >= 0 ? '+' : ''}${newNoiseAdjustment.cumulative.toFixed(9)})`
+      );
+    }
+
+    // Execute the payment with potentially noise-adjusted amount
+    const result = await sendSol(stream.recipientAddress, amountToSend);
 
     if (!result.success) {
       throw new Error(result.error || 'Payment failed');
@@ -288,18 +538,39 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
 
     const payment: StreamPayment = {
       id: paymentId,
-      amount: stream.amountPerPayment,
+      amount: stream.amountPerPayment,    // Original scheduled amount
+      actualAmount: amountToSend,         // Amount actually sent (with noise)
+      noiseDelta: noiseDelta !== 0 ? noiseDelta : undefined,
       signature: result.signature!,
       timestamp: Date.now(),
       status: 'success',
     };
 
-    // Calculate next payment date
+    // Calculate next payment date (base time without noise)
     const intervalMs = getIntervalMs(stream.frequency, stream.customIntervalDays);
     const nextPaymentDate = Date.now() + intervalMs;
 
-    // Update stream
-    const newAmountStreamed = stream.amountStreamed + stream.amountPerPayment;
+    // Apply timing noise if enabled
+    // This randomizes when the payment actually triggers within +/- timingNoise hours
+    let noisyPaymentDate: number | undefined;
+    if (stream.timingNoise > 0) {
+      const rawNoisyTime = await applyTimingNoise(nextPaymentDate, stream.timingNoise);
+      // Ensure noise doesn't push payment past next interval (which would skip it)
+      noisyPaymentDate = ensurePaymentNotSkipped(
+        rawNoisyTime,
+        nextPaymentDate,
+        intervalMs
+      );
+      console.log(
+        `[Streams] Applied timing noise to ${stream.name}: ` +
+        `base=${new Date(nextPaymentDate).toISOString()}, ` +
+        `noisy=${new Date(noisyPaymentDate).toISOString()}, ` +
+        `offset=${Math.round((noisyPaymentDate - nextPaymentDate) / (60 * 1000))} min`
+      );
+    }
+
+    // Update stream - track actual amount sent
+    const newAmountStreamed = stream.amountStreamed + amountToSend;
     const newPaymentsCompleted = stream.paymentsCompleted + 1;
 
     // Check if stream is complete
@@ -314,6 +585,8 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
       amountStreamed: newAmountStreamed,
       paymentsCompleted: newPaymentsCompleted,
       nextPaymentDate,
+      noisyPaymentDate,
+      noiseAdjustment: stream.amountNoise > 0 ? newNoiseAdjustment : undefined,
       status: newStatus,
       paymentHistory: [...stream.paymentHistory, payment],
     });
@@ -348,7 +621,15 @@ export async function processDuePayments(): Promise<StreamPayment[]> {
 
   for (const stream of streams) {
     if (stream.status !== 'active') continue;
-    if (stream.nextPaymentDate > now) continue;
+
+    // Determine which time to check against:
+    // - If timing noise is enabled and we have a pre-computed noisy time, use that
+    // - Otherwise, fall back to the base scheduled time
+    const effectivePaymentTime = stream.timingNoise > 0 && stream.noisyPaymentDate
+      ? stream.noisyPaymentDate
+      : stream.nextPaymentDate;
+
+    if (effectivePaymentTime > now) continue;
 
     const payment = await processStreamPayment(stream.id);
     if (payment) {
@@ -439,8 +720,103 @@ export function calculateDailyRate(stream: Stream): number {
 const LAST_SYNC_KEY = 'p01_streams_last_sync';
 
 /**
+ * Get list of locally deleted stream IDs (exported version)
+ */
+export async function getDeletedStreamIds(): Promise<Set<string>> {
+  return getDeletedIds();
+}
+
+/**
+ * Add a stream ID to the deleted list
+ */
+export async function addDeletedStreamId(streamId: string): Promise<void> {
+  try {
+    const deletedIds = await getDeletedIds();
+    deletedIds.add(streamId);
+    await AsyncStorage.setItem(DELETED_IDS_KEY, JSON.stringify([...deletedIds]));
+    console.log('[Streams] Added to deleted list:', streamId);
+  } catch (error) {
+    console.error('[Streams] Failed to add deleted ID:', error);
+  }
+}
+
+/**
+ * Clear deleted IDs list (useful for full resync)
+ */
+export async function clearDeletedStreamIds(): Promise<void> {
+  await AsyncStorage.removeItem(DELETED_IDS_KEY);
+}
+
+/**
+ * Reset all streams data - clears local storage, deleted IDs, cancelled IDs, and paused IDs
+ * Use this to do a fresh sync from blockchain
+ */
+export async function resetAllStreamsData(): Promise<void> {
+  console.log('[Streams] Resetting all streams data...');
+  await AsyncStorage.removeItem(STORAGE_KEY);
+  await AsyncStorage.removeItem(DELETED_IDS_KEY);
+  await AsyncStorage.removeItem(CANCELLED_IDS_KEY);
+  await AsyncStorage.removeItem(PAUSED_IDS_KEY);
+  await AsyncStorage.removeItem(LAST_SYNC_KEY);
+  console.log('[Streams] All streams data cleared');
+}
+
+/**
+ * Mark all current subscriptions as cancelled (move to history)
+ */
+export async function cancelAllStreams(): Promise<number> {
+  const streams = await loadStreams();
+  const activeStreams = streams.filter(s => s.status === 'active' || s.status === 'paused');
+
+  for (const stream of activeStreams) {
+    await addCancelledId(stream.id);
+  }
+
+  // Update all to cancelled status
+  const updatedStreams = streams.map(s => ({
+    ...s,
+    status: 'cancelled' as StreamStatus,
+  }));
+
+  await saveStreams(updatedStreams);
+  console.log(`[Streams] Cancelled ${activeStreams.length} streams`);
+  return activeStreams.length;
+}
+
+/**
+ * Cancel all streams and publish updates to blockchain
+ */
+export async function cancelAllStreamsAndPublish(
+  keypair: import('@solana/web3.js').Keypair
+): Promise<{ count: number; signatures: string[] }> {
+  const streams = await loadStreams();
+  const activeStreams = streams.filter(s => s.status === 'active' || s.status === 'paused');
+
+  // First cancel all locally
+  const count = await cancelAllStreams();
+
+  // Then publish to blockchain
+  const signatures: string[] = [];
+  const { publishStatusUpdate } = await import('./onchainSync');
+
+  for (const stream of activeStreams) {
+    try {
+      const sig = await publishStatusUpdate(stream.id, 'cancelled', keypair);
+      signatures.push(sig);
+      console.log(`[Streams] Published cancel for ${stream.name}: ${sig}`);
+    } catch (error) {
+      console.warn(`[Streams] Failed to publish cancel for ${stream.name}:`, error);
+    }
+  }
+
+  console.log(`[Streams] Published ${signatures.length}/${activeStreams.length} cancels to blockchain`);
+  return { count, signatures };
+}
+
+/**
  * Sync streams from blockchain
  * Fetches subscriptions stored on-chain via memo program
+ * Respects locally deleted IDs - won't re-add them
  */
 export async function syncFromBlockchain(walletAddress: string): Promise<{
   newStreams: number;
@@ -462,18 +838,50 @@ export async function syncFromBlockchain(walletAddress: string): Promise<{
       return { newStreams: 0, updatedStreams: 0 };
     }
 
+    // Get locally deleted IDs to filter them out
+    const deletedIds = await getDeletedIds();
+    console.log(`[Streams] Filtering out ${deletedIds.size} locally deleted subscriptions`);
+
+    // Filter out deleted subscriptions from chain data
+    const filteredChainStreams = chainStreams.filter(s => !deletedIds.has(s.id));
+    console.log(`[Streams] ${filteredChainStreams.length} subscriptions after filtering`);
+
+    if (filteredChainStreams.length === 0) {
+      await AsyncStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
+      return { newStreams: 0, updatedStreams: 0 };
+    }
+
     // Load local streams
     const localStreams = await loadStreams();
 
-    // Merge with local
-    const mergedStreams = mergeStreams(localStreams, chainStreams);
+    // Merge with local (only non-deleted chain streams)
+    const mergedStreams = mergeStreams(localStreams, filteredChainStreams);
+
+    // Get cancelled and paused IDs to ensure they stay after merge
+    const cancelledIds = await getCancelledIds();
+    const pausedIds = await getPausedIds();
+
+    // Apply cancelled and paused status as a safeguard (in case merge didn't preserve it)
+    const finalStreams = mergedStreams.map(s => {
+      // Cancelled takes priority
+      if (cancelledIds.has(s.id) && s.status !== 'cancelled') {
+        console.log(`[Streams] Re-applying cancelled status to: ${s.name}`);
+        return { ...s, status: 'cancelled' as StreamStatus };
+      }
+      // Then paused
+      if (pausedIds.has(s.id) && s.status !== 'paused' && s.status !== 'cancelled') {
+        console.log(`[Streams] Re-applying paused status to: ${s.name}`);
+        return { ...s, status: 'paused' as StreamStatus };
+      }
+      return s;
+    });
 
     // Count changes
     const existingIds = new Set(localStreams.map(s => s.id));
     let newStreams = 0;
     let updatedStreams = 0;
 
-    for (const stream of mergedStreams) {
+    for (const stream of finalStreams) {
       if (!existingIds.has(stream.id)) {
         newStreams++;
       } else {
@@ -485,8 +893,8 @@ export async function syncFromBlockchain(walletAddress: string): Promise<{
       }
     }
 
-    // Save merged streams
-    await saveStreams(mergedStreams);
+    // Save streams with cancelled status preserved
+    await saveStreams(finalStreams);
 
     // Save sync time
     await AsyncStorage.setItem(LAST_SYNC_KEY, Date.now().toString());

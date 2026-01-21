@@ -13,9 +13,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card } from '@/components/ui/Card';
 import { formatUSD } from '@/utils/format/currency';
 import { useWalletStore } from '@/stores/walletStore';
+import { useStreamStore } from '@/stores/streamStore';
 
 // Types
-type TransactionType = 'all' | 'sent' | 'received' | 'streams';
+type TransactionType = 'all' | 'sent' | 'received' | 'streams' | 'scheduled';
+
+interface ScheduledPayment {
+  id: string;
+  streamName: string;
+  recipientAddress: string;
+  amount: number;
+  nextPaymentDate: Date;
+  frequency: string;
+  isPrivate: boolean;
+}
 
 interface Transaction {
   id: string;
@@ -35,6 +46,7 @@ const FILTER_TABS: { id: TransactionType; label: string }[] = [
   { id: 'sent', label: 'Sent' },
   { id: 'received', label: 'Received' },
   { id: 'streams', label: 'Streams' },
+  { id: 'scheduled', label: 'Scheduled' },
 ];
 
 // Loading state type
@@ -53,27 +65,118 @@ export default function ActivityScreen() {
     transactions: storeTransactions,
     refreshTransactions,
     refreshing: storeRefreshing,
+    publicKey,
   } = useWalletStore();
+
+  const { streams, initialize: initStreams, loading: streamsLoading } = useStreamStore();
 
   const [filter, setFilter] = useState<TransactionType>('all');
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingState, setLoadingState] = useState<LoadingState>('success');
+  const [loadingState, setLoadingState] = useState<LoadingState>('idle');
+
+  // Initialize streams store (loads from cache instantly)
+  useEffect(() => {
+    initStreams(publicKey || undefined);
+  }, [publicKey]);
+
+  // Load transactions on mount - use cache first, refresh in background
+  useEffect(() => {
+    // If we have cached transactions, show them immediately
+    if (storeTransactions.length > 0) {
+      setLoadingState('success');
+      // Refresh in background (don't await, don't show loading)
+      refreshTransactions().catch(err => {
+        console.warn('[Activity] Background refresh failed:', err?.message || err);
+      });
+    } else {
+      // No cache, need to fetch
+      setLoadingState('loading');
+      refreshTransactions()
+        .then(() => setLoadingState('success'))
+        .catch(err => {
+          console.error('[Activity] Failed to load transactions:', err);
+          setLoadingState('error');
+        });
+    }
+  }, []);
+
+  // Calculate scheduled payments from active streams
+  const scheduledPayments: ScheduledPayment[] = useMemo(() => {
+    return streams
+      .filter((stream) => stream.status === 'active')
+      .map((stream) => {
+        // Calculate next payment date based on last payment or start date
+        const lastPayment = stream.paymentHistory[stream.paymentHistory.length - 1];
+        const lastPaymentDate = lastPayment
+          ? new Date(lastPayment.timestamp)
+          : new Date(stream.startDate);
+
+        // Calculate interval based on frequency
+        let intervalMs = 30 * 24 * 60 * 60 * 1000; // default monthly
+        switch (stream.frequency) {
+          case 'daily':
+            intervalMs = 24 * 60 * 60 * 1000;
+            break;
+          case 'weekly':
+            intervalMs = 7 * 24 * 60 * 60 * 1000;
+            break;
+          case 'monthly':
+            intervalMs = 30 * 24 * 60 * 60 * 1000;
+            break;
+        }
+
+        const nextPaymentDate = new Date(lastPaymentDate.getTime() + intervalMs);
+
+        return {
+          id: stream.id,
+          streamName: stream.name,
+          recipientAddress: stream.recipientAddress,
+          amount: stream.amountPerPayment,
+          nextPaymentDate,
+          frequency: stream.frequency,
+          isPrivate: stream.useStealthAddress || stream.amountNoise > 0,
+        };
+      })
+      .sort((a, b) => a.nextPaymentDate.getTime() - b.nextPaymentDate.getTime());
+  }, [streams]);
 
   // Transform store transactions to local format
   const allTransactions: Transaction[] = useMemo(() => {
-    return storeTransactions.map((tx) => ({
+    // Wallet transactions
+    const walletTxs: Transaction[] = storeTransactions.map((tx) => ({
       id: tx.signature,
       type: tx.type === 'unknown' ? 'send' : tx.type as 'send' | 'receive',
       token: tx.token || 'SOL',
       amount: tx.amount || 0,
-      usdValue: 0, // TODO: Calculate USD value from price API
+      usdValue: 0,
       address: formatAddress(tx.type === 'send' ? (tx.to || '') : (tx.from || '')),
       timestamp: new Date(tx.timestamp ? tx.timestamp * 1000 : Date.now()),
       status: tx.status === 'confirmed' ? 'completed' as const : tx.status as 'pending' | 'failed',
       isPrivate: false,
       txHash: formatAddress(tx.signature),
     }));
-  }, [storeTransactions]);
+
+    // Stream payments
+    const streamTxs: Transaction[] = streams.flatMap((stream) =>
+      stream.paymentHistory.map((payment) => ({
+        id: payment.id,
+        type: 'stream' as const,
+        token: 'SOL',
+        amount: payment.amount,
+        usdValue: 0,
+        address: formatAddress(stream.recipientAddress),
+        timestamp: new Date(payment.timestamp),
+        status: payment.status === 'success' ? 'completed' as const : 'failed' as const,
+        isPrivate: stream.useStealthAddress || stream.amountNoise > 0,
+        txHash: formatAddress(payment.signature || payment.id),
+      }))
+    );
+
+    // Combine and sort by date (newest first)
+    return [...walletTxs, ...streamTxs].sort(
+      (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+    );
+  }, [storeTransactions, streams]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -122,6 +225,21 @@ export default function ActivityScreen() {
     if (hours < 24) return `${hours}h ago`;
     if (days < 7) return `${days}d ago`;
     return date.toLocaleDateString();
+  };
+
+  const formatTimeUntil = (date: Date): string => {
+    const now = new Date();
+    const diff = date.getTime() - now.getTime();
+
+    if (diff < 0) return 'Due now';
+
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (hours < 1) return 'Less than 1h';
+    if (hours < 24) return `In ${hours}h`;
+    if (days < 7) return `In ${days}d`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   const getStatusColor = (status: string) => {
@@ -246,8 +364,73 @@ export default function ActivityScreen() {
           />
         }
       >
-        {/* Empty State */}
-        {filteredTransactions.length === 0 ? (
+        {/* Scheduled Payments View */}
+        {filter === 'scheduled' ? (
+          scheduledPayments.length === 0 ? (
+            <View className="flex-1 items-center justify-center py-20">
+              <Ionicons name="calendar-outline" size={64} color="#666666" />
+              <Text className="text-white text-lg font-semibold mt-4">
+                No scheduled payments
+              </Text>
+              <Text className="text-p01-text-muted text-center mt-2">
+                Active streams will show upcoming payments here
+              </Text>
+            </View>
+          ) : (
+            <View className="gap-3">
+              <Text className="text-p01-text-muted text-sm font-medium mb-1">
+                Upcoming Payments
+              </Text>
+              {scheduledPayments.map((payment) => (
+                <TouchableOpacity key={payment.id} activeOpacity={0.7}>
+                  <Card variant="default" padding="md">
+                    <View className="flex-row items-center">
+                      {/* Icon */}
+                      <View className="w-10 h-10 rounded-full items-center justify-center mr-3 bg-blue-500/20">
+                        <Ionicons name="time-outline" size={20} color="#3b82f6" />
+                      </View>
+
+                      {/* Details - flex-1 with min-w-0 for proper truncation */}
+                      <View className="flex-1 min-w-0 mr-3">
+                        <View className="flex-row items-center flex-wrap">
+                          <Text className="text-white font-medium" numberOfLines={1}>
+                            {payment.streamName}
+                          </Text>
+                          {payment.isPrivate && (
+                            <View className="ml-2 flex-row items-center bg-p01-cyan/20 px-2 py-0.5 rounded-full">
+                              <Ionicons name="shield-checkmark" size={10} color="#39c5bb" />
+                              <Text className="text-p01-cyan text-xs ml-1">Private</Text>
+                            </View>
+                          )}
+                        </View>
+                        <View className="flex-row items-center mt-1">
+                          <Text className="text-p01-text-muted text-sm" numberOfLines={1}>
+                            {formatAddress(payment.recipientAddress)}
+                          </Text>
+                          <Text className="text-p01-text-dim text-xs mx-2">-</Text>
+                          <Text className="text-blue-400 text-xs font-medium">
+                            {formatTimeUntil(payment.nextPaymentDate)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Amount - fixed width to prevent overlap */}
+                      <View className="items-end" style={{ minWidth: 90 }}>
+                        <Text className="text-white font-semibold">
+                          -{payment.amount.toFixed(4)} SOL
+                        </Text>
+                        <Text className="text-p01-text-muted text-xs mt-1 capitalize">
+                          {payment.frequency}
+                        </Text>
+                      </View>
+                    </View>
+                  </Card>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )
+        ) : /* Empty State */
+        filteredTransactions.length === 0 ? (
           <View className="flex-1 items-center justify-center py-20">
             <Ionicons name="receipt-outline" size={64} color="#666666" />
             <Text className="text-white text-lg font-semibold mt-4">

@@ -13,7 +13,7 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -28,6 +28,7 @@ import Animated, {
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useShieldedStore } from '@/stores/shieldedStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 import { Colors, FontFamily, BorderRadius, Spacing, Shadows } from '@/constants/theme';
 
@@ -49,16 +50,6 @@ export default function WalletHomeScreen() {
   const { formatAmount, initialize: initSettings } = useSettingsStore();
   const [balanceHidden, setBalanceHidden] = useState(false);
 
-  // Initialize settings store
-  useEffect(() => {
-    initSettings();
-  }, []);
-
-  // Apply hide balance by default setting
-  useEffect(() => {
-    setBalanceHidden(securitySettings.hideBalanceByDefault);
-  }, [securitySettings.hideBalanceByDefault]);
-
   const {
     initialized,
     loading,
@@ -75,6 +66,31 @@ export default function WalletHomeScreen() {
     requestDevnetAirdrop,
     clearError,
   } = useWalletStore();
+
+  const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
+
+  // Initialize settings store
+  useEffect(() => {
+    initSettings();
+  }, []);
+
+  // Auto-refresh transactions when wallet screen is focused and empty
+  // Wait for loading to complete to avoid race condition with cache loading
+  useFocusEffect(
+    useCallback(() => {
+      if (initialized && !loading && hasWallet && transactions.length === 0) {
+        // Only fetch if we're done loading AND still have no transactions
+        // This gives the cache time to load first
+        console.log('[WalletHome] Screen focused with empty transactions after init, fetching...');
+        refreshTransactions();
+      }
+    }, [initialized, loading, hasWallet, transactions.length, refreshTransactions])
+  );
+
+  // Apply hide balance by default setting
+  useEffect(() => {
+    setBalanceHidden(securitySettings.hideBalanceByDefault);
+  }, [securitySettings.hideBalanceByDefault]);
 
   // Format balance with selected currency
   const formattedBalance = formatAmount(balance?.totalUsd || 0);
@@ -388,6 +404,37 @@ export default function WalletHomeScreen() {
             </TouchableOpacity>
           </Animated.View>
         )}
+
+        {/* Shielded Wallet Card */}
+        <Animated.View entering={FadeInUp.delay(350)}>
+          <TouchableOpacity
+            style={styles.shieldedCard}
+            onPress={() => router.push('/(main)/(wallet)/shielded')}
+          >
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.15)', 'rgba(57, 197, 187, 0.05)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.shieldedGradient}
+            >
+              <View style={styles.shieldedIconContainer}>
+                <Ionicons name="shield-checkmark" size={24} color={P01.cyan} />
+              </View>
+              <View style={styles.shieldedContent}>
+                <Text style={styles.shieldedTitle}>Shielded Wallet</Text>
+                <Text style={styles.shieldedSubtitle}>
+                  {shieldedInitialized
+                    ? `${shieldedBalance.toFixed(4)} SOL shielded`
+                    : 'ZK-protected privacy'}
+                </Text>
+              </View>
+              <View style={styles.shieldedBadge}>
+                <Text style={styles.shieldedBadgeText}>ZK</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={P01.cyan} />
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
 
         {/* Assets Section */}
         <Animated.View entering={FadeInUp.delay(400)} style={styles.section}>
@@ -753,6 +800,55 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: FontFamily.regular,
     marginTop: 2,
+  },
+  shieldedCard: {
+    marginBottom: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+  },
+  shieldedGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.3)',
+  },
+  shieldedIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(57, 197, 187, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  shieldedContent: {
+    flex: 1,
+  },
+  shieldedTitle: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+  },
+  shieldedSubtitle: {
+    color: '#888892',
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    marginTop: 2,
+  },
+  shieldedBadge: {
+    backgroundColor: 'rgba(57, 197, 187, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: Spacing.sm,
+  },
+  shieldedBadgeText: {
+    color: '#39c5bb',
+    fontSize: 10,
+    fontFamily: FontFamily.mono,
+    fontWeight: '600',
   },
   section: {
     marginBottom: Spacing['2xl'],

@@ -75,10 +75,10 @@ export default function Footer() {
                 PROTOCOL 01
               </span>
             </div>
-            <p className="text-p01-text-muted text-sm mb-6 max-w-xs">
-              Anonymous Solana wallet with stealth addresses for private
-              transactions. Complete financial privacy.
-            </p>
+            <div className="text-p01-text-muted text-sm mb-6 max-w-xs space-y-1">
+              <p>Anonymous Solana wallet with stealth addresses for private transactions.</p>
+              <p>Complete financial privacy.</p>
+            </div>
             <p className="text-p01-cyan text-xs font-mono mb-6">
               &gt; The system cannot see you.
             </p>

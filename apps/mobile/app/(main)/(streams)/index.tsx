@@ -8,26 +8,65 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { Card } from '../../../components/ui/Card';
+import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
-import { Stream, formatFrequency, calculateDailyRate } from '../../../services/solana/streams';
+import { Stream, formatFrequency } from '../../../services/solana/streams';
+import { getKeypair } from '../../../services/solana/wallet';
 
-const VIOLET = '#8b5cf6';
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 85;
 
-type TabType = 'active' | 'completed';
+// Protocol 01 Color System - matching website
+const COLORS = {
+  // Primary
+  cyan: '#39c5bb',
+  cyanDim: '#2a9d95',
+  // Accents
+  pink: '#ff77a8',
+  brightCyan: '#00ffe5',
+  yellow: '#ffcc00',
+  red: '#ff3366',
+  green: '#00ff88',
+  // Text
+  text: '#ffffff',
+  textMuted: '#888892',
+  textDim: '#555560',
+  // Surfaces
+  void: '#0a0a0c',
+  dark: '#0f0f12',
+  surface: '#151518',
+  surface2: '#1a1a1e',
+  border: '#2a2a30',
+  borderHover: '#3a3a42',
+};
+
+// Mock SDK Services - In production, these come from SDK providers
+const SDK_SERVICES = [
+  { id: 'netflix', name: 'Netflix', icon: 'play-circle', price: 0.15, frequency: 'monthly' as const, category: 'Entertainment' },
+  { id: 'spotify', name: 'Spotify', icon: 'musical-notes', price: 0.08, frequency: 'monthly' as const, category: 'Music' },
+  { id: 'chatgpt', name: 'ChatGPT Plus', icon: 'chatbubbles', price: 0.18, frequency: 'monthly' as const, category: 'AI' },
+  { id: 'github', name: 'GitHub Pro', icon: 'logo-github', price: 0.04, frequency: 'monthly' as const, category: 'Dev Tools' },
+  { id: 'figma', name: 'Figma', icon: 'color-palette', price: 0.12, frequency: 'monthly' as const, category: 'Design' },
+  { id: 'notion', name: 'Notion', icon: 'document-text', price: 0.07, frequency: 'monthly' as const, category: 'Productivity' },
+];
+
+type FilterType = 'all' | 'active' | 'paused' | 'history';
+type SectionType = 'services' | 'personal';
 
 export default function StreamsDashboard() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [activeTab, setActiveTab] = useState<TabType>('active');
+  const [filter, setFilter] = useState<FilterType>('all');
+  const [activeSection, setActiveSection] = useState<SectionType>('services');
+  const [showPrivacyInfo, setShowPrivacyInfo] = useState(false);
 
   const { publicKey } = useWalletStore();
   const {
@@ -36,535 +75,760 @@ export default function StreamsDashboard() {
     loading,
     refreshing,
     syncing,
-    lastSyncTime,
-    processingPayment,
     initialize,
     refresh,
     syncFromChain,
-    pauseStream,
-    resumeStream,
-    cancelStream,
-    processPayment,
-    processAllDuePayments,
+    resetAll,
+    cancelAllWithSync,
   } = useStreamStore();
 
   useEffect(() => {
-    // Initialize with wallet address for on-chain sync
     initialize(publicKey || undefined);
   }, [publicKey]);
 
   const onRefresh = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Pass wallet address to sync from blockchain
     await refresh(publicKey || undefined);
   };
 
-  const handleManualSync = async () => {
+  const handleSync = async () => {
     if (!publicKey) {
-      Alert.alert('No Wallet', 'Please connect a wallet to sync from blockchain.');
+      Alert.alert('Wallet Required', 'Connect a wallet to sync from blockchain.');
       return;
     }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const result = await syncFromChain(publicKey);
-      if (result.newStreams > 0) {
-        Alert.alert('Sync Complete', `Found ${result.newStreams} new subscription(s) from blockchain.`);
-      } else {
-        Alert.alert('Sync Complete', 'No new subscriptions found on blockchain.');
+      if (result.newStreams > 0 || result.updatedStreams > 0) {
+        Alert.alert('Sync Complete', `Found ${result.newStreams} new, ${result.updatedStreams} updated`);
       }
     } catch (error) {
-      Alert.alert('Sync Failed', 'Failed to sync from blockchain. Please try again.');
+      console.error('Sync failed:', error);
     }
   };
 
-  const activeStreams = streams.filter(
-    (s) => s.status === 'active' || s.status === 'paused'
+  const handleSubscribeService = (service: typeof SDK_SERVICES[0]) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Navigate to subscribe flow with pre-filled service data
+    router.push({
+      pathname: '/(main)/(streams)/subscribe',
+      params: {
+        serviceId: service.id,
+        serviceName: service.name,
+        price: service.price.toString(),
+        frequency: service.frequency,
+      },
+    });
+  };
+
+  const handleCreatePersonalStream = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push('/(main)/(streams)/create');
+  };
+
+  // Filter subscriptions
+  const filteredStreams = streams.filter((s) => {
+    if (filter === 'active') return s.status === 'active';
+    if (filter === 'paused') return s.status === 'paused';
+    if (filter === 'history') return s.status === 'cancelled' || s.status === 'completed';
+    return s.status !== 'cancelled' && s.status !== 'completed';
+  });
+
+  const sortedStreams = [...filteredStreams].sort((a, b) => {
+    if (a.status !== 'active' && b.status === 'active') return 1;
+    if (a.status === 'active' && b.status !== 'active') return -1;
+    return a.nextPaymentDate - b.nextPaymentDate;
+  });
+
+  // Separate streams by type (SDK services vs personal)
+  const serviceStreams = sortedStreams.filter(s =>
+    SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
-  const completedStreams = streams.filter(
-    (s) => s.status === 'completed' || s.status === 'cancelled'
+  const personalStreams = sortedStreams.filter(s =>
+    !SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
 
-  const displayedStreams = activeTab === 'active' ? activeStreams : completedStreams;
+  // Counts
+  const activeCount = streams.filter(s => s.status === 'active').length;
+  const pausedCount = streams.filter(s => s.status === 'paused').length;
 
-  const handlePauseResume = async (stream: Stream) => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (stream.status === 'active') {
-      await pauseStream(stream.id);
-    } else if (stream.status === 'paused') {
-      await resumeStream(stream.id);
-    }
-  };
+  // Privacy score
+  const privacyScore = activeCount > 0
+    ? Math.round(
+        (streams.filter(s =>
+          s.status === 'active' &&
+          (s.amountNoise > 0 || s.timingNoise > 0 || s.useStealthAddress)
+        ).length / activeCount) * 100
+      )
+    : 0;
 
-  const handleCancel = (stream: Stream) => {
-    Alert.alert(
-      'Cancel Stream',
-      `Are you sure you want to cancel "${stream.name}"? This action cannot be undone.`,
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await cancelStream(stream.id);
-          },
-        },
-      ]
-    );
-  };
-
-  const handlePayNow = async (stream: Stream) => {
-    Alert.alert(
-      'Process Payment',
-      `Pay ${stream.amountPerPayment.toFixed(4)} SOL to ${stream.recipientName || stream.recipientAddress.slice(0, 8)}... now?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pay Now',
-          onPress: async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            const payment = await processPayment(stream.id);
-            if (payment?.status === 'success') {
-              Alert.alert('Payment Sent!', `${stream.amountPerPayment.toFixed(4)} SOL has been sent.`);
-            } else {
-              Alert.alert('Payment Failed', payment?.error || 'Please try again.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleProcessAllDue = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    const dueStreams = activeStreams.filter(s => s.nextPaymentDate <= Date.now());
-
-    if (dueStreams.length === 0) {
-      Alert.alert('No Due Payments', 'All payments are up to date.');
-      return;
-    }
-
-    Alert.alert(
-      'Process Due Payments',
-      `${dueStreams.length} payment(s) are due. Process them now?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Process All',
-          onPress: async () => {
-            const payments = await processAllDuePayments();
-            const successful = payments.filter(p => p.status === 'success').length;
-            Alert.alert(
-              'Payments Processed',
-              `${successful}/${payments.length} payments completed successfully.`
-            );
-          },
-        },
-      ]
-    );
-  };
-
-  const formatTimeUntilPayment = (timestamp: number): string => {
-    const now = Date.now();
-    const diff = timestamp - now;
-
-    if (diff <= 0) return 'Due now';
-
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(hours / 24);
-
-    if (days > 0) return `${days}d ${hours % 24}h`;
-    if (hours > 0) return `${hours}h`;
-    return 'Soon';
-  };
+  // Next payment
+  const activeStreams = streams.filter(s => s.status === 'active');
+  const nextDue = activeStreams.length > 0
+    ? Math.min(...activeStreams.map(s => s.nextPaymentDate))
+    : null;
 
   return (
-    <View className="flex-1 bg-p01-void">
+    <View style={{ flex: 1, backgroundColor: COLORS.void }}>
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         contentContainerStyle={{
-          paddingTop: insets.top,
-          paddingBottom: TAB_BAR_HEIGHT + insets.bottom + 20,
+          paddingTop: insets.top + 8,
+          paddingBottom: TAB_BAR_HEIGHT + insets.bottom + 24,
         }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={VIOLET}
-            colors={[VIOLET]}
+            tintColor={COLORS.cyan}
           />
         }
       >
-        {/* Header */}
-        <View className="px-6 py-4 flex-row items-center justify-between">
-          <View className="flex-row items-center">
-            <Text className="text-white text-2xl font-bold">STREAMS</Text>
-            {syncing && (
-              <View className="ml-2 flex-row items-center">
-                <ActivityIndicator size="small" color={VIOLET} />
-                <Text className="text-gray-400 text-xs ml-1">Syncing...</Text>
+        {/* Summary Card */}
+        <View style={{ padding: 16 }}>
+          <Animated.View entering={FadeIn.duration(300)}>
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.15)', COLORS.surface]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{
+                borderRadius: 16,
+                padding: 16,
+                borderWidth: 1,
+                borderColor: 'rgba(57, 197, 187, 0.3)',
+              }}
+            >
+              {/* Header row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="repeat" size={20} color={COLORS.cyan} />
+                  <Text style={{ color: COLORS.cyan, fontSize: 14, fontWeight: '500' }}>
+                    Stream Secure
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={handleSync}
+                    disabled={syncing}
+                    style={{ padding: 6, borderRadius: 8, backgroundColor: 'rgba(21, 21, 24, 0.5)' }}
+                  >
+                    {syncing ? (
+                      <ActivityIndicator size={16} color={COLORS.cyan} />
+                    ) : (
+                      <Ionicons name="sync" size={16} color={COLORS.cyan} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setShowPrivacyInfo(!showPrivacyInfo)}
+                    style={{ padding: 6, borderRadius: 8, backgroundColor: 'rgba(21, 21, 24, 0.5)' }}
+                  >
+                    <Ionicons name="shield" size={16} color={COLORS.cyan} />
+                  </TouchableOpacity>
+                </View>
               </View>
-            )}
-          </View>
-          <View className="flex-row items-center gap-2">
-            {/* Sync from blockchain button */}
+
+              {/* Amount */}
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                <Text style={{ color: COLORS.text, fontSize: 28, fontWeight: '700' }}>
+                  {stats.monthlyOutflow.toFixed(2)}
+                </Text>
+                <Text style={{ color: COLORS.textMuted, fontSize: 14 }}>SOL/month</Text>
+              </View>
+
+              {/* Stats row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
+                  {activeCount} active stream{activeCount !== 1 ? 's' : ''}
+                </Text>
+                {nextDue && (
+                  <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
+                    Next: {new Date(nextDue).toLocaleDateString()}
+                  </Text>
+                )}
+              </View>
+
+              {/* Privacy Score */}
+              {streams.length > 0 && (
+                <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(42, 42, 48, 0.5)' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>Privacy Score</Text>
+                    <Text style={{ color: COLORS.cyan, fontSize: 12, fontWeight: '500' }}>{privacyScore}%</Text>
+                  </View>
+                  <View style={{ height: 6, backgroundColor: COLORS.border, borderRadius: 3, overflow: 'hidden' }}>
+                    <Animated.View
+                      style={{
+                        height: '100%',
+                        width: `${privacyScore}%`,
+                        borderRadius: 3,
+                        backgroundColor: COLORS.cyan,
+                      }}
+                    />
+                  </View>
+                </View>
+              )}
+            </LinearGradient>
+          </Animated.View>
+
+          {/* Privacy Info Panel */}
+          {showPrivacyInfo && (
+            <Animated.View
+              entering={FadeInDown.duration(200)}
+              style={{
+                marginTop: 12,
+                backgroundColor: COLORS.surface,
+                borderRadius: 16,
+                padding: 16,
+                borderWidth: 1,
+                borderColor: 'rgba(57, 197, 187, 0.3)',
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <Ionicons name="shield-checkmark" size={16} color={COLORS.cyan} />
+                <Text style={{ color: COLORS.cyan, fontSize: 14, fontWeight: '600' }}>Privacy Features</Text>
+              </View>
+
+              <View style={{ gap: 12 }}>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(57, 197, 187, 0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="shuffle" size={16} color={COLORS.cyan} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: COLORS.text, fontSize: 12, fontWeight: '500' }}>Amount Noise</Text>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11 }}>Vary amounts by up to 20%</Text>
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(57, 197, 187, 0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="time" size={16} color={COLORS.cyan} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: COLORS.text, fontSize: 12, fontWeight: '500' }}>Timing Noise</Text>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11 }}>Randomize payment times</Text>
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(255, 119, 168, 0.1)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Ionicons name="eye-off" size={16} color={COLORS.pink} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: COLORS.text, fontSize: 12, fontWeight: '500' }}>Stealth Addresses</Text>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11 }}>Unique address per payment</Text>
+                  </View>
+                </View>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+
+        {/* Section Toggle */}
+        <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
+          <View style={{ flexDirection: 'row', gap: 4, padding: 4, backgroundColor: COLORS.surface, borderRadius: 12 }}>
             <Pressable
-              onPress={handleManualSync}
-              disabled={syncing}
-              className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: 'rgba(139, 92, 246, 0.1)' }}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setActiveSection('services');
+              }}
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                paddingVertical: 12,
+                borderRadius: 10,
+                backgroundColor: activeSection === 'services' ? COLORS.cyan : 'transparent',
+              }}
             >
               <Ionicons
-                name="cloud-download-outline"
-                size={20}
-                color={syncing ? '#888' : VIOLET}
+                name="apps"
+                size={18}
+                color={activeSection === 'services' ? COLORS.void : COLORS.textMuted}
               />
+              <Text style={{
+                fontSize: 13,
+                fontWeight: '600',
+                color: activeSection === 'services' ? COLORS.void : COLORS.textMuted
+              }}>
+                Services
+              </Text>
             </Pressable>
-            {/* Create new stream button */}
             <Pressable
-              onPress={() => router.push('/(main)/(streams)/create')}
-              className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setActiveSection('personal');
+              }}
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                paddingVertical: 12,
+                borderRadius: 10,
+                backgroundColor: activeSection === 'personal' ? COLORS.pink : 'transparent',
+              }}
             >
-              <Ionicons name="add" size={24} color={VIOLET} />
+              <Ionicons
+                name="person"
+                size={18}
+                color={activeSection === 'personal' ? COLORS.void : COLORS.textMuted}
+              />
+              <Text style={{
+                fontSize: 13,
+                fontWeight: '600',
+                color: activeSection === 'personal' ? COLORS.void : COLORS.textMuted
+              }}>
+                Personal
+              </Text>
             </Pressable>
           </View>
         </View>
 
-        {/* Stats Card */}
-        <Animated.View
-          entering={FadeInDown.delay(100).springify()}
-          className="px-6 mb-6"
-        >
-          <Card
-            variant="glass"
-            style={{
+        {/* Services Section */}
+        {activeSection === 'services' && (
+          <View style={{ paddingHorizontal: 16 }}>
+            {/* Section Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="apps" size={18} color={COLORS.cyan} />
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>Available Services</Text>
+              </View>
+              <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
+                {SDK_SERVICES.length} services
+              </Text>
+            </View>
+
+            {/* Info Banner */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              padding: 12,
+              backgroundColor: 'rgba(57, 197, 187, 0.1)',
+              borderRadius: 10,
+              marginBottom: 16,
               borderWidth: 1,
-              borderColor: 'rgba(139, 92, 246, 0.3)',
-            }}
-          >
-            <View className="flex-row items-center justify-between mb-4">
-              <Text className="text-gray-400 text-sm">Streaming Overview</Text>
-              {activeStreams.some(s => s.nextPaymentDate <= Date.now()) && (
-                <TouchableOpacity
-                  onPress={handleProcessAllDue}
-                  className="px-3 py-1.5 rounded-full flex-row items-center"
-                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
-                >
-                  <Text className="text-red-400 text-xs font-semibold">
-                    Payments Due
+              borderColor: 'rgba(57, 197, 187, 0.2)',
+            }}>
+              <Ionicons name="information-circle" size={20} color={COLORS.cyan} />
+              <Text style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}>
+                Prices are set by service providers via SDK. Subscribe with one tap.
+              </Text>
+            </View>
+
+            {/* Services Grid */}
+            <View style={{ gap: 10 }}>
+              {SDK_SERVICES.map((service, index) => (
+                <ServiceCard
+                  key={service.id}
+                  service={service}
+                  index={index}
+                  onSubscribe={() => handleSubscribeService(service)}
+                  isSubscribed={serviceStreams.some(s =>
+                    s.name.toLowerCase().includes(service.name.toLowerCase()) &&
+                    s.status === 'active'
+                  )}
+                />
+              ))}
+            </View>
+
+            {/* Active Subscriptions */}
+            {serviceStreams.length > 0 && (
+              <View style={{ marginTop: 24 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                  <Ionicons name="checkmark-circle" size={18} color={COLORS.green} />
+                  <Text style={{ color: COLORS.text, fontSize: 14, fontWeight: '600' }}>
+                    Your Subscriptions ({serviceStreams.length})
                   </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <View className="flex-row justify-between">
-              {/* Active Streams */}
-              <View className="items-center flex-1">
-                <Text className="text-white text-2xl font-bold">{stats.activeStreams}</Text>
-                <Text className="text-gray-500 text-xs mt-1">Active</Text>
+                </View>
+                <View style={{ gap: 10 }}>
+                  {serviceStreams.map((stream, index) => (
+                    <SubscriptionCard
+                      key={stream.id}
+                      subscription={stream}
+                      index={index}
+                      onPress={() => router.push(`/(main)/(streams)/${stream.id}`)}
+                    />
+                  ))}
+                </View>
               </View>
-
-              {/* Divider */}
-              <View className="w-px bg-gray-800 mx-4" />
-
-              {/* Monthly Outflow */}
-              <View className="items-center flex-1">
-                <Text className="text-red-400 text-2xl font-bold">
-                  {stats.monthlyOutflow.toFixed(2)}
-                </Text>
-                <Text className="text-gray-500 text-xs mt-1">SOL/month</Text>
-              </View>
-
-              {/* Divider */}
-              <View className="w-px bg-gray-800 mx-4" />
-
-              {/* Total Streamed */}
-              <View className="items-center flex-1">
-                <Text style={{ color: VIOLET }} className="text-2xl font-bold">
-                  {stats.totalOutgoing.toFixed(2)}
-                </Text>
-                <Text className="text-gray-500 text-xs mt-1">Total Sent</Text>
-              </View>
-            </View>
-          </Card>
-        </Animated.View>
-
-        {/* Tabs */}
-        <Animated.View
-          entering={FadeInDown.delay(200).springify()}
-          className="px-6 mb-4"
-        >
-          <View
-            className="flex-row p-1 rounded-xl"
-            style={{ backgroundColor: 'rgba(26, 26, 26, 1)' }}
-          >
-            <Pressable
-              onPress={() => setActiveTab('active')}
-              className="flex-1 py-3 rounded-lg items-center"
-              style={
-                activeTab === 'active'
-                  ? { backgroundColor: 'rgba(139, 92, 246, 0.2)' }
-                  : {}
-              }
-            >
-              <Text
-                className="font-semibold"
-                style={{ color: activeTab === 'active' ? VIOLET : '#888888' }}
-              >
-                Active ({activeStreams.length})
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setActiveTab('completed')}
-              className="flex-1 py-3 rounded-lg items-center"
-              style={
-                activeTab === 'completed'
-                  ? { backgroundColor: 'rgba(139, 92, 246, 0.2)' }
-                  : {}
-              }
-            >
-              <Text
-                className="font-semibold"
-                style={{ color: activeTab === 'completed' ? VIOLET : '#888888' }}
-              >
-                History ({completedStreams.length})
-              </Text>
-            </Pressable>
+            )}
           </View>
-        </Animated.View>
+        )}
 
-        {/* Streams List */}
-        <Animated.View
-          entering={FadeInDown.delay(300).springify()}
-          className="px-6"
-        >
-          {loading && streams.length === 0 ? (
-            <View className="items-center py-12">
-              <ActivityIndicator size="large" color={VIOLET} />
-            </View>
-          ) : displayedStreams.length === 0 ? (
-            <View className="items-center justify-center py-12">
-              <View
-                className="w-16 h-16 rounded-full items-center justify-center mb-4"
-                style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}
-              >
-                <Ionicons name="water-outline" size={32} color={VIOLET} />
+        {/* Personal Payments Section */}
+        {activeSection === 'personal' && (
+          <View style={{ paddingHorizontal: 16 }}>
+            {/* Section Header */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="person" size={18} color={COLORS.pink} />
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>Personal Payments</Text>
               </View>
-              <Text className="text-white font-semibold text-lg mb-2">
-                {activeTab === 'active' ? 'No Active Streams' : 'No History'}
+              <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
+                {personalStreams.length} stream{personalStreams.length !== 1 ? 's' : ''}
               </Text>
-              <Text className="text-gray-400 text-center mb-4">
-                {activeTab === 'active'
-                  ? 'Set up recurring payments for subscriptions'
-                  : 'Completed streams will appear here'}
-              </Text>
-              {activeTab === 'active' && (
-                <Pressable
-                  onPress={() => router.push('/(main)/(streams)/create')}
-                  className="px-6 py-3 rounded-xl"
-                  style={{ backgroundColor: VIOLET }}
-                >
-                  <Text className="text-white font-semibold">Create Stream</Text>
-                </Pressable>
-              )}
             </View>
-          ) : (
-            displayedStreams.map((stream, index) => (
-              <StreamCard
-                key={stream.id}
-                stream={stream}
-                isProcessing={processingPayment === stream.id}
-                onPauseResume={() => handlePauseResume(stream)}
-                onCancel={() => handleCancel(stream)}
-                onPayNow={() => handlePayNow(stream)}
-                formatTimeUntilPayment={formatTimeUntilPayment}
-              />
-            ))
-          )}
-        </Animated.View>
+
+            {/* Info Banner */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              padding: 12,
+              backgroundColor: 'rgba(255, 119, 168, 0.1)',
+              borderRadius: 10,
+              marginBottom: 16,
+              borderWidth: 1,
+              borderColor: 'rgba(255, 119, 168, 0.2)',
+            }}>
+              <Ionicons name="information-circle" size={20} color={COLORS.pink} />
+              <Text style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}>
+                Create custom payment streams for salaries, allowances, or recurring transfers.
+              </Text>
+            </View>
+
+            {/* Create Button */}
+            <TouchableOpacity
+              onPress={handleCreatePersonalStream}
+              activeOpacity={0.8}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                paddingVertical: 16,
+                backgroundColor: COLORS.pink,
+                borderRadius: 12,
+                marginBottom: 16,
+              }}
+            >
+              <Ionicons name="add-circle" size={22} color={COLORS.void} />
+              <Text style={{ color: COLORS.void, fontSize: 15, fontWeight: '600' }}>
+                Create Payment Stream
+              </Text>
+            </TouchableOpacity>
+
+            {/* Personal Streams List */}
+            {loading && personalStreams.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 48 }}>
+                <ActivityIndicator size="large" color={COLORS.pink} />
+              </View>
+            ) : personalStreams.length === 0 ? (
+              <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
+                <View style={{
+                  width: 64,
+                  height: 64,
+                  borderRadius: 32,
+                  backgroundColor: 'rgba(255, 119, 168, 0.1)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 16,
+                }}>
+                  <Ionicons name="wallet-outline" size={28} color={COLORS.pink} />
+                </View>
+                <Text style={{ color: COLORS.textMuted, fontSize: 14, textAlign: 'center', marginBottom: 4 }}>
+                  No personal streams yet
+                </Text>
+                <Text style={{ color: COLORS.textDim, fontSize: 12, textAlign: 'center' }}>
+                  Create one to pay salaries or recurring transfers
+                </Text>
+              </View>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {personalStreams.map((stream, index) => (
+                  <SubscriptionCard
+                    key={stream.id}
+                    subscription={stream}
+                    index={index}
+                    onPress={() => router.push(`/(main)/(streams)/${stream.id}`)}
+                    accentColor={COLORS.pink}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Security Info */}
+        <View style={{ padding: 16, marginTop: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 12, backgroundColor: 'rgba(57, 197, 187, 0.1)', borderRadius: 10 }}>
+            <Ionicons name="shield-checkmark" size={16} color={COLORS.cyan} style={{ marginTop: 1 }} />
+            <Text style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}>
+              <Text style={{ color: COLORS.cyan, fontWeight: '500' }}>Protected: </Text>
+              All streams are secured on Solana. Recipients can only receive approved amounts.
+            </Text>
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
 }
 
-// Stream Card Component
-function StreamCard({
-  stream,
-  isProcessing,
-  onPauseResume,
-  onCancel,
-  onPayNow,
-  formatTimeUntilPayment,
+// Service Card Component
+function ServiceCard({
+  service,
+  index,
+  onSubscribe,
+  isSubscribed,
 }: {
-  stream: Stream;
-  isProcessing: boolean;
-  onPauseResume: () => void;
-  onCancel: () => void;
-  onPayNow: () => void;
-  formatTimeUntilPayment: (timestamp: number) => string;
+  service: typeof SDK_SERVICES[0];
+  index: number;
+  onSubscribe: () => void;
+  isSubscribed: boolean;
 }) {
-  const progress = stream.totalPayments
-    ? (stream.paymentsCompleted / stream.totalPayments) * 100
-    : 0;
+  return (
+    <Animated.View entering={FadeInDown.delay(index * 30).springify()}>
+      <TouchableOpacity
+        onPress={onSubscribe}
+        disabled={isSubscribed}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          padding: 14,
+          backgroundColor: COLORS.surface,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: isSubscribed ? 'rgba(0, 255, 136, 0.3)' : COLORS.border,
+        }}
+      >
+        {/* Icon - fixed size */}
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 10,
+            backgroundColor: isSubscribed ? 'rgba(0, 255, 136, 0.1)' : 'rgba(57, 197, 187, 0.1)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <Ionicons
+            name={service.icon as any}
+            size={22}
+            color={isSubscribed ? COLORS.green : COLORS.cyan}
+          />
+        </View>
 
-  const isDue = stream.status === 'active' && stream.nextPaymentDate <= Date.now();
+        {/* Info - takes remaining space with proper truncation */}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {/* Name */}
+          <Text
+            style={{ color: COLORS.text, fontSize: 14, fontWeight: '500' }}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {service.name}
+          </Text>
+
+          {/* Category row with badge if subscribed */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            {isSubscribed && (
+              <View style={{
+                paddingHorizontal: 5,
+                paddingVertical: 1,
+                backgroundColor: 'rgba(0, 255, 136, 0.2)',
+                borderRadius: 4,
+                flexShrink: 0,
+              }}>
+                <Text style={{ color: COLORS.green, fontSize: 9, fontWeight: '500' }}>ACTIVE</Text>
+              </View>
+            )}
+            <Text
+              style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}
+              numberOfLines={1}
+            >
+              {service.category}
+            </Text>
+          </View>
+        </View>
+
+        {/* Price - fixed, never shrinks */}
+        <View style={{ alignItems: 'flex-end', flexShrink: 0 }}>
+          <Text style={{ color: COLORS.text, fontSize: 14, fontWeight: '600' }}>
+            {service.price} SOL
+          </Text>
+          <Text style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 2 }}>
+            /{service.frequency}
+          </Text>
+        </View>
+
+        {/* Subscribe button - only if not subscribed */}
+        {!isSubscribed && (
+          <View style={{
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            backgroundColor: COLORS.cyan,
+            borderRadius: 8,
+            flexShrink: 0,
+          }}>
+            <Text style={{ color: COLORS.void, fontSize: 12, fontWeight: '600' }}>Subscribe</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// Subscription Card Component
+function SubscriptionCard({
+  subscription: sub,
+  index,
+  onPress,
+  accentColor = COLORS.cyan,
+}: {
+  subscription: Stream;
+  index: number;
+  onPress: () => void;
+  accentColor?: string;
+}) {
+  const isActive = sub.status === 'active';
+  const isPaused = sub.status === 'paused';
+
+  const daysUntilNext = Math.ceil(
+    (sub.nextPaymentDate - Date.now()) / (1000 * 60 * 60 * 24)
+  );
+
+  const hasPrivacyFeatures = sub.amountNoise > 0 || sub.timingNoise > 0 || sub.useStealthAddress;
+  const initial = sub.name.slice(0, 1).toUpperCase();
+
+  const getStatusText = () => {
+    if (isPaused) return 'Stream paused';
+    if (daysUntilNext <= 0) return 'Payment due now';
+    if (daysUntilNext === 1) return 'Due tomorrow';
+    return `Next in ${daysUntilNext} days`;
+  };
 
   return (
-    <View
-      className="mb-4 p-4 rounded-2xl"
-      style={{
-        backgroundColor: 'rgba(26, 26, 26, 0.8)',
-        borderWidth: 1,
-        borderColor: isDue ? 'rgba(239, 68, 68, 0.5)' : 'rgba(139, 92, 246, 0.2)',
-      }}
-    >
-      {/* Header */}
-      <View className="flex-row items-center justify-between mb-3">
-        <View className="flex-row items-center flex-1">
-          <View
-            className="w-10 h-10 rounded-full items-center justify-center mr-3"
-            style={{
-              backgroundColor:
-                stream.status === 'active'
-                  ? 'rgba(34, 197, 94, 0.2)'
-                  : stream.status === 'paused'
-                  ? 'rgba(234, 179, 8, 0.2)'
-                  : 'rgba(107, 114, 128, 0.2)',
-            }}
-          >
-            <Ionicons
-              name={
-                stream.status === 'active'
-                  ? 'play'
-                  : stream.status === 'paused'
-                  ? 'pause'
-                  : 'checkmark'
-              }
-              size={18}
-              color={
-                stream.status === 'active'
-                  ? '#22c55e'
-                  : stream.status === 'paused'
-                  ? '#eab308'
-                  : '#6b7280'
-              }
-            />
-          </View>
-          <View className="flex-1">
-            <Text className="text-white font-semibold" numberOfLines={1}>
-              {stream.name}
-            </Text>
-            <Text className="text-gray-500 text-xs">
-              {stream.recipientName || `${stream.recipientAddress.slice(0, 8)}...`}
-            </Text>
-          </View>
-        </View>
-
-        {/* Status Badge */}
-        {isDue && (
-          <View
-            className="px-2 py-1 rounded-full"
-            style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
-          >
-            <Text className="text-red-400 text-xs font-semibold">Due</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Amount and Frequency */}
-      <View className="flex-row items-center justify-between mb-3">
-        <View>
-          <Text className="text-white text-xl font-bold">
-            {stream.amountPerPayment.toFixed(4)} SOL
+    <Animated.View entering={FadeInDown.delay(index * 40).springify()}>
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          padding: 14,
+          backgroundColor: COLORS.surface,
+          borderRadius: 12,
+        }}
+      >
+        {/* Logo */}
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 10,
+            backgroundColor: isActive ? COLORS.border : 'rgba(42, 42, 48, 0.5)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            flexShrink: 0,
+          }}
+        >
+          <Text style={{ color: isActive ? COLORS.textMuted : COLORS.textDim, fontSize: 16, fontWeight: '700' }}>
+            {initial}
           </Text>
-          <Text className="text-gray-500 text-xs">
-            {formatFrequency(stream.frequency, stream.customIntervalDays)}
-          </Text>
-        </View>
 
-        {stream.status === 'active' && (
-          <View className="items-end">
-            <Text className="text-gray-400 text-xs">Next payment</Text>
-            <Text
-              className="font-semibold"
-              style={{ color: isDue ? '#ef4444' : VIOLET }}
-            >
-              {formatTimeUntilPayment(stream.nextPaymentDate)}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* Progress */}
-      {stream.totalPayments && (
-        <View className="mb-3">
-          <View className="flex-row justify-between mb-1">
-            <Text className="text-gray-500 text-xs">
-              {stream.paymentsCompleted}/{stream.totalPayments} payments
-            </Text>
-            <Text className="text-gray-500 text-xs">
-              {stream.amountStreamed.toFixed(4)} SOL sent
-            </Text>
-          </View>
-          <View className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-            <View
-              className="h-full rounded-full"
-              style={{
-                width: `${progress}%`,
-                backgroundColor: VIOLET,
-              }}
-            />
-          </View>
-        </View>
-      )}
-
-      {/* Actions */}
-      {(stream.status === 'active' || stream.status === 'paused') && (
-        <View className="flex-row gap-2 mt-2">
-          {isDue && (
-            <TouchableOpacity
-              onPress={onPayNow}
-              disabled={isProcessing}
-              className="flex-1 py-2.5 rounded-xl flex-row items-center justify-center"
-              style={{ backgroundColor: VIOLET }}
-            >
-              {isProcessing ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Ionicons name="flash" size={16} color="#fff" />
-                  <Text className="text-white font-semibold ml-1">Pay Now</Text>
-                </>
-              )}
-            </TouchableOpacity>
+          {/* Privacy indicator */}
+          {hasPrivacyFeatures && isActive && (
+            <View style={{
+              position: 'absolute',
+              top: -4,
+              right: -4,
+              width: 16,
+              height: 16,
+              borderRadius: 8,
+              backgroundColor: accentColor,
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Ionicons name="shield" size={10} color={COLORS.void} />
+            </View>
           )}
-
-          <TouchableOpacity
-            onPress={onPauseResume}
-            className="flex-1 py-2.5 rounded-xl flex-row items-center justify-center"
-            style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)' }}
-          >
-            <Ionicons
-              name={stream.status === 'active' ? 'pause' : 'play'}
-              size={16}
-              color="#fff"
-            />
-            <Text className="text-white font-semibold ml-1">
-              {stream.status === 'active' ? 'Pause' : 'Resume'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={onCancel}
-            className="py-2.5 px-4 rounded-xl"
-            style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
-          >
-            <Ionicons name="close" size={16} color="#ef4444" />
-          </TouchableOpacity>
         </View>
-      )}
-    </View>
+
+        {/* Info - flex: 1 with minWidth: 0 for proper truncation */}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {/* Name with truncation */}
+          <Text
+            style={{
+              color: isActive ? COLORS.text : COLORS.textMuted,
+              fontSize: 14,
+              fontWeight: '500',
+              maxWidth: '100%',
+            }}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
+            {sub.name}
+          </Text>
+
+          {/* Status row - badge and status text on same line */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            {isPaused && (
+              <View style={{
+                paddingHorizontal: 5,
+                paddingVertical: 1,
+                backgroundColor: 'rgba(255, 204, 0, 0.2)',
+                borderRadius: 4,
+                flexShrink: 0,
+              }}>
+                <Text style={{ color: COLORS.yellow, fontSize: 9, fontWeight: '500' }}>PAUSED</Text>
+              </View>
+            )}
+            <Text
+              style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}
+              numberOfLines={1}
+            >
+              {getStatusText()}
+            </Text>
+          </View>
+
+          {/* Privacy badges */}
+          {hasPrivacyFeatures && isActive && (
+            <View style={{ flexDirection: 'row', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+              {sub.amountNoise > 0 && (
+                <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: `${accentColor}20`, borderRadius: 4 }}>
+                  <Text style={{ color: accentColor, fontSize: 9 }}>+/-{sub.amountNoise}%</Text>
+                </View>
+              )}
+              {sub.timingNoise > 0 && (
+                <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: `${accentColor}20`, borderRadius: 4 }}>
+                  <Text style={{ color: accentColor, fontSize: 9 }}>+/-{sub.timingNoise}h</Text>
+                </View>
+              )}
+              {sub.useStealthAddress && (
+                <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: 'rgba(255, 119, 168, 0.2)', borderRadius: 4 }}>
+                  <Text style={{ color: COLORS.pink, fontSize: 9 }}>Stealth</Text>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+
+        {/* Amount - fixed width, never shrinks */}
+        <View style={{ alignItems: 'flex-end', flexShrink: 0, marginLeft: 8 }}>
+          <Text style={{
+            color: isActive ? COLORS.text : COLORS.textMuted,
+            fontSize: 14,
+            fontWeight: '600',
+          }}>
+            {sub.amountPerPayment.toFixed(sub.amountPerPayment < 1 ? 4 : 2)} SOL
+          </Text>
+          <Text style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 2 }}>
+            {formatFrequency(sub.frequency, sub.customIntervalDays)}
+          </Text>
+        </View>
+
+        <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} style={{ flexShrink: 0 }} />
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
