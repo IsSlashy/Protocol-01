@@ -7,9 +7,16 @@
  * Memo format: P01_SUB_V1:{compact JSON}
  */
 
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, Transaction, TransactionInstruction, Keypair } from '@solana/web3.js';
 import { getConnection } from './connection';
 import type { Stream, StreamFrequency, StreamStatus } from './streams';
+
+// Status encoding for on-chain updates
+const STATUS_TO_CODE: Record<string, string> = {
+  active: 'a',
+  paused: 'p',
+  cancelled: 'c',
+};
 
 // ============ Constants ============
 
@@ -102,6 +109,10 @@ function convertToStream(sub: OnChainSubscription, walletAddress: string): Strea
     totalPayments: sub.mp > 0 ? sub.mp : undefined,
     status,
     direction: 'outgoing',
+    // Privacy options from on-chain data
+    amountNoise: sub.an ?? 0,
+    timingNoise: sub.tn ?? 0,
+    useStealthAddress: sub.st ?? false,
     // Service info from origin
     serviceName: sub.n,
     createdAt,
@@ -121,6 +132,9 @@ export async function fetchSubscriptionsFromChain(
 ): Promise<Stream[]> {
   const connection = getConnection();
 
+  console.log('[OnChainSync] Fetching subscriptions for wallet:', walletAddress);
+  console.log('[OnChainSync] RPC endpoint:', connection.rpcEndpoint);
+
   try {
     const pubkey = new PublicKey(walletAddress);
 
@@ -128,7 +142,7 @@ export async function fetchSubscriptionsFromChain(
     const signatures = await connection.getSignaturesForAddress(pubkey, { limit });
 
     if (signatures.length === 0) {
-      console.log('[OnChainSync] No transactions found');
+      console.log('[OnChainSync] No transactions found for wallet:', walletAddress);
       return [];
     }
 
@@ -137,55 +151,106 @@ export async function fetchSubscriptionsFromChain(
     const subscriptionMap = new Map<string, OnChainSubscription>();
     const updates: { id: string; status: string; timestamp: number }[] = [];
 
-    // Fetch and parse transactions
-    for (const sigInfo of signatures) {
+    // Fetch and parse transactions one by one with delays to avoid rate limits
+    for (let i = 0; i < signatures.length; i++) {
+      const sigInfo = signatures[i];
+
       try {
+        // Add delay between requests to avoid rate limits (500ms)
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        console.log(`[OnChainSync] Parsing tx ${i + 1}/${signatures.length}: ${sigInfo.signature.substring(0, 20)}...`);
+
         const tx = await connection.getParsedTransaction(sigInfo.signature, {
           maxSupportedTransactionVersion: 0,
         });
 
-        if (!tx?.transaction?.message?.instructions) continue;
+        if (!tx?.transaction?.message?.instructions) {
+          console.log('[OnChainSync] No instructions in tx');
+          continue;
+        }
+
+        console.log(`[OnChainSync] Found ${tx.transaction.message.instructions.length} instructions`);
 
         // Look for memo instructions
         for (const instruction of tx.transaction.message.instructions) {
-          // Skip parsed instructions (we need raw data)
-          if ('parsed' in instruction) continue;
+          let memoText: string | null = null;
 
-          const rawInstruction = instruction as {
-            programId: PublicKey;
-            data: string;
-          };
+          // Check if it's a parsed instruction
+          if ('parsed' in instruction) {
+            const parsedInstruction = instruction as {
+              program: string;
+              programId: string;
+              parsed: string | object;
+            };
 
-          // Check if it's a memo program instruction
-          if (!rawInstruction.programId.equals(MEMO_PROGRAM_ID)) continue;
+            console.log('[OnChainSync] Parsed instruction:', parsedInstruction.program, parsedInstruction.programId);
 
-          // Decode memo data
-          let memoText: string;
-          try {
-            // Data is base58 encoded in getParsedTransaction
-            const bs58 = await import('bs58');
-            const dataBuffer = Buffer.from(bs58.default.decode(rawInstruction.data));
-            memoText = dataBuffer.toString('utf-8');
-          } catch {
-            // Try base64 as fallback
-            try {
-              const dataBuffer = Buffer.from(rawInstruction.data, 'base64');
-              memoText = dataBuffer.toString('utf-8');
-            } catch {
+            // Check if it's a parsed memo instruction (spl-memo)
+            if (parsedInstruction.program === 'spl-memo' ||
+                parsedInstruction.programId === MEMO_PROGRAM_ID.toString()) {
+              // For memo program, parsed contains the memo text directly
+              memoText = typeof parsedInstruction.parsed === 'string'
+                ? parsedInstruction.parsed
+                : JSON.stringify(parsedInstruction.parsed);
+              console.log('[OnChainSync] Found PARSED memo:', memoText.substring(0, 100));
+            } else {
+              continue; // Skip other parsed instructions
+            }
+          } else {
+            // Raw instruction
+            const rawInstruction = instruction as {
+              programId: PublicKey;
+              data: string;
+            };
+
+            console.log('[OnChainSync] Raw instruction programId:', rawInstruction.programId.toString());
+
+            // Check if it's a memo program instruction
+            if (!rawInstruction.programId.equals(MEMO_PROGRAM_ID)) {
               continue;
             }
+
+            console.log('[OnChainSync] Found RAW memo instruction! Data:', rawInstruction.data.substring(0, 50));
+
+            // Decode memo data
+            try {
+              // Data is base58 encoded in getParsedTransaction
+              const bs58 = await import('bs58');
+              const dataBuffer = Buffer.from(bs58.default.decode(rawInstruction.data));
+              memoText = dataBuffer.toString('utf-8');
+              console.log('[OnChainSync] Decoded memo (bs58):', memoText.substring(0, 100));
+            } catch (e) {
+              console.log('[OnChainSync] bs58 decode failed:', e);
+              // Try base64 as fallback
+              try {
+                const dataBuffer = Buffer.from(rawInstruction.data, 'base64');
+                memoText = dataBuffer.toString('utf-8');
+                console.log('[OnChainSync] Decoded memo (base64):', memoText.substring(0, 100));
+              } catch (e2) {
+                console.log('[OnChainSync] base64 decode also failed:', e2);
+                continue;
+              }
+            }
           }
+
+          if (!memoText) continue;
+
+          console.log('[OnChainSync] Processing memo:', memoText.substring(0, 100));
 
           // Check for subscription memo
           if (memoText.startsWith(MEMO_PREFIX)) {
             try {
               const jsonStr = memoText.slice(MEMO_PREFIX.length);
+              console.log('[OnChainSync] Parsing subscription JSON:', jsonStr.substring(0, 200));
               const encoded = JSON.parse(jsonStr) as OnChainSubscription;
 
               // Store by ID (earlier entries are more recent in the signatures list)
               if (!subscriptionMap.has(encoded.id)) {
                 subscriptionMap.set(encoded.id, encoded);
-                console.log(`[OnChainSync] Found subscription: ${encoded.n}`);
+                console.log(`[OnChainSync] Found subscription: ${encoded.n} (ID: ${encoded.id})`);
               }
             } catch (e) {
               console.warn('[OnChainSync] Failed to parse subscription memo:', e);
@@ -207,8 +272,15 @@ export async function fetchSubscriptionsFromChain(
             }
           }
         }
-      } catch (error) {
-        console.warn(`[OnChainSync] Failed to parse tx ${sigInfo.signature}:`, error);
+      } catch (error: any) {
+        const msg = error?.message || '';
+        if (msg.includes('429')) {
+          console.log('[OnChainSync] Rate limited, waiting 2s...');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Don't retry, just skip this tx and continue
+        } else {
+          console.warn(`[OnChainSync] Failed to parse tx ${sigInfo.signature}:`, error);
+        }
       }
     }
 
@@ -236,7 +308,7 @@ export async function fetchSubscriptionsFromChain(
 
 /**
  * Sync local streams with on-chain data
- * Returns merged streams with on-chain data taking precedence
+ * Returns merged streams - respects local cancelled/completed status
  */
 export function mergeStreams(localStreams: Stream[], chainStreams: Stream[]): Stream[] {
   const merged = new Map<string, Stream>();
@@ -254,14 +326,21 @@ export function mergeStreams(localStreams: Stream[], chainStreams: Stream[]): St
       // New stream from chain
       merged.set(chainStream.id, chainStream);
     } else {
-      // Merge: keep local payment history, use chain status
+      // IMPORTANT: Keep local status if cancelled or completed (user action takes precedence)
+      const shouldKeepLocalStatus = localStream.status === 'cancelled' || localStream.status === 'completed';
+
       merged.set(chainStream.id, {
         ...localStream,
-        status: chainStream.status,
+        // Keep local status if cancelled/completed, otherwise use chain status
+        status: shouldKeepLocalStatus ? localStream.status : chainStream.status,
         // Keep local payment data
         paymentHistory: localStream.paymentHistory,
         amountStreamed: Math.max(localStream.amountStreamed, chainStream.amountStreamed),
         paymentsCompleted: Math.max(localStream.paymentsCompleted, chainStream.paymentsCompleted),
+        // Update privacy options from chain (chain is source of truth)
+        amountNoise: chainStream.amountNoise,
+        timingNoise: chainStream.timingNoise,
+        useStealthAddress: chainStream.useStealthAddress,
       });
     }
   }
@@ -278,4 +357,59 @@ export function shouldRefreshFromChain(lastSyncTime: number | null): boolean {
   // Refresh every 5 minutes
   const REFRESH_INTERVAL = 5 * 60 * 1000;
   return Date.now() - lastSyncTime > REFRESH_INTERVAL;
+}
+
+// ============ Publishing Functions ============
+
+/**
+ * Create a memo instruction
+ */
+function createMemoInstruction(memo: string, signer: PublicKey): TransactionInstruction {
+  return new TransactionInstruction({
+    keys: [{ pubkey: signer, isSigner: true, isWritable: false }],
+    programId: MEMO_PROGRAM_ID,
+    data: Buffer.from(memo, 'utf-8'),
+  });
+}
+
+/**
+ * Publish subscription status update to blockchain
+ * This allows extension to sync cancellations from mobile
+ */
+export async function publishStatusUpdate(
+  subscriptionId: string,
+  status: StreamStatus,
+  keypair: Keypair
+): Promise<string> {
+  const connection = getConnection();
+
+  // Create minimal update memo
+  const updateData = {
+    v: 1,
+    id: subscriptionId,
+    s: STATUS_TO_CODE[status] || 'c',
+    u: Math.floor(Date.now() / 1000), // Update timestamp
+  };
+
+  const memoData = 'P01_SUB_UPD:' + JSON.stringify(updateData);
+  console.log('[OnChainSync] Publishing status update:', memoData);
+
+  const transaction = new Transaction();
+  transaction.add(createMemoInstruction(memoData, keypair.publicKey));
+
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  transaction.recentBlockhash = blockhash;
+  transaction.feePayer = keypair.publicKey;
+
+  transaction.sign(keypair);
+  const signature = await connection.sendRawTransaction(transaction.serialize());
+
+  await connection.confirmTransaction({
+    signature,
+    blockhash,
+    lastValidBlockHeight,
+  });
+
+  console.log(`[OnChainSync] Published status update for ${subscriptionId}: ${signature}`);
+  return signature;
 }

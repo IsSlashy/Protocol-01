@@ -316,8 +316,9 @@ export default function SendScreen() {
           </Animated.View>
         </ScrollView>
 
-        {/* Send Button */}
+        {/* Send Buttons */}
         <Animated.View entering={FadeInUp.delay(500)} style={styles.bottomSection}>
+          {/* Standard Send */}
           <TouchableOpacity
             onPress={handleSend}
             disabled={!isFormValid}
@@ -334,6 +335,26 @@ export default function SendScreen() {
                 <Text style={styles.sendButtonText}>Send SOL</Text>
               </>
             )}
+          </TouchableOpacity>
+
+          {/* Split Send Option */}
+          <TouchableOpacity
+            onPress={() => router.push({
+              pathname: '/(main)/(wallet)/send-split',
+              params: { recipient, amount },
+            })}
+            style={styles.splitSendButton}
+          >
+            <View style={styles.splitSendIcon}>
+              <Ionicons name="git-branch" size={18} color={P01.pink} />
+            </View>
+            <View style={styles.splitSendContent}>
+              <Text style={styles.splitSendTitle}>Split Send (Privacy+)</Text>
+              <Text style={styles.splitSendDesc}>
+                Split into multiple transactions over time
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
         </Animated.View>
       </KeyboardAvoidingView>
@@ -559,5 +580,38 @@ const styles = StyleSheet.create({
     color: Colors.background,
     fontSize: 16,
     fontFamily: FontFamily.semibold,
+  },
+  splitSendButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+    gap: Spacing.md,
+  },
+  splitSendIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    backgroundColor: P01.pinkDim,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  splitSendContent: {
+    flex: 1,
+  },
+  splitSendTitle: {
+    color: Colors.text,
+    fontSize: 14,
+    fontFamily: FontFamily.semibold,
+  },
+  splitSendDesc: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
+    marginTop: 2,
   },
 });

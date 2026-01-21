@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Keypair } from '@solana/web3.js';
 import {
   Stream,
   StreamStatus,
@@ -10,6 +11,7 @@ import {
   pauseStream,
   resumeStream,
   cancelStream,
+  cancelStreamAndPublish,
   deleteStream,
   processStreamPayment,
   processDuePayments,
@@ -17,6 +19,9 @@ import {
   syncFromBlockchain,
   shouldSyncFromChain,
   getLastSyncTime,
+  resetAllStreamsData,
+  cancelAllStreams,
+  cancelAllStreamsAndPublish,
 } from '../services/solana/streams';
 
 interface StreamStats {
@@ -45,9 +50,13 @@ interface StreamState {
   pauseStream: (streamId: string) => Promise<void>;
   resumeStream: (streamId: string) => Promise<void>;
   cancelStream: (streamId: string) => Promise<void>;
+  cancelStreamWithSync: (streamId: string, keypair: Keypair) => Promise<string | null>;
   deleteStream: (streamId: string) => Promise<void>;
   processPayment: (streamId: string) => Promise<StreamPayment | null>;
   processAllDuePayments: () => Promise<StreamPayment[]>;
+  resetAll: (walletAddress?: string) => Promise<void>;
+  cancelAll: () => Promise<number>;
+  cancelAllWithSync: (keypair: Keypair) => Promise<{ count: number; signatures: string[] }>;
   clearError: () => void;
 
   // Getters
@@ -242,6 +251,24 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     }
   },
 
+  // Cancel stream and publish to blockchain for cross-device sync
+  cancelStreamWithSync: async (streamId: string, keypair: Keypair) => {
+    try {
+      set({ loading: true, error: null });
+
+      const { signature } = await cancelStreamAndPublish(streamId, keypair);
+
+      const streams = await loadStreams();
+      const stats = await getStreamStats();
+
+      set({ streams, stats, loading: false });
+      return signature;
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to cancel stream', loading: false });
+      return null;
+    }
+  },
+
   // Delete stream
   deleteStream: async (streamId: string) => {
     try {
@@ -305,6 +332,94 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         loading: false,
       });
       return [];
+    }
+  },
+
+  // Reset all streams data and resync from blockchain
+  resetAll: async (walletAddress?: string) => {
+    try {
+      set({ loading: true, error: null });
+
+      // Clear all local data
+      await resetAllStreamsData();
+
+      // Reset state
+      set({
+        streams: [],
+        stats: {
+          totalOutgoing: 0,
+          totalIncoming: 0,
+          activeStreams: 0,
+          monthlyOutflow: 0,
+        },
+        lastSyncTime: null,
+      });
+
+      // Resync from blockchain if wallet provided
+      if (walletAddress) {
+        await get().syncFromChain(walletAddress);
+      }
+
+      set({ loading: false });
+    } catch (error: any) {
+      set({
+        error: error.message || 'Failed to reset streams',
+        loading: false,
+      });
+    }
+  },
+
+  // Cancel all streams (move to history)
+  cancelAll: async () => {
+    try {
+      set({ loading: true, error: null });
+
+      const count = await cancelAllStreams();
+
+      // Reload streams
+      const streams = await loadStreams();
+      const stats = await getStreamStats();
+
+      set({
+        streams,
+        stats,
+        loading: false,
+      });
+
+      return count;
+    } catch (error: any) {
+      set({
+        error: error.message || 'Failed to cancel streams',
+        loading: false,
+      });
+      return 0;
+    }
+  },
+
+  // Cancel all streams and publish to blockchain for cross-device sync
+  cancelAllWithSync: async (keypair: Keypair) => {
+    try {
+      set({ loading: true, error: null });
+
+      const result = await cancelAllStreamsAndPublish(keypair);
+
+      // Reload streams
+      const streams = await loadStreams();
+      const stats = await getStreamStats();
+
+      set({
+        streams,
+        stats,
+        loading: false,
+      });
+
+      return result;
+    } catch (error: any) {
+      set({
+        error: error.message || 'Failed to cancel streams',
+        loading: false,
+      });
+      return { count: 0, signatures: [] };
     }
   },
 

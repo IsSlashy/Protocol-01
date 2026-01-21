@@ -1,6 +1,13 @@
 import React from 'react';
 import { TouchableOpacity, View, Text } from 'react-native';
 
+const COLORS = {
+  text: '#ffffff',
+  textSecondary: '#9ca3af',
+  textMuted: '#6b7280',
+  cyan: '#06b6d4',
+};
+
 interface RadioOptionProps {
   label: string;
   description?: string;
@@ -18,31 +25,49 @@ export const RadioOption: React.FC<RadioOptionProps> = ({
 }) => {
   return (
     <TouchableOpacity
-      className={`
-        flex-row items-center justify-between
-        py-4 px-4
-        ${disabled ? 'opacity-50' : ''}
-      `}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 16,
+        paddingHorizontal: 16,
+        opacity: disabled ? 0.5 : 1,
+      }}
       onPress={onSelect}
       disabled={disabled}
       activeOpacity={0.7}
     >
-      <View className="flex-1 mr-3">
-        <Text className="text-white text-base font-medium">{label}</Text>
+      <View style={{ flex: 1, marginRight: 12 }}>
+        <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '500' }}>
+          {label}
+        </Text>
         {description && (
-          <Text className="text-p01-gray text-sm mt-1">{description}</Text>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginTop: 4 }}>
+            {description}
+          </Text>
         )}
       </View>
 
       <View
-        className={`
-          w-6 h-6 rounded-full border-2
-          items-center justify-center
-          ${selected ? 'border-p01-cyan' : 'border-p01-gray'}
-        `}
+        style={{
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          borderWidth: 2,
+          borderColor: selected ? COLORS.cyan : COLORS.textMuted,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
       >
         {selected && (
-          <View className="w-3 h-3 rounded-full bg-p01-cyan" />
+          <View
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: 6,
+              backgroundColor: COLORS.cyan,
+            }}
+          />
         )}
       </View>
     </TouchableOpacity>

@@ -24,6 +24,7 @@ import Social from './pages/Social';
 import Agent from './pages/Agent';
 import PrivacyZone from './pages/PrivacyZone';
 import StealthPayments from './pages/StealthPayments';
+import ShieldedWallet from './pages/ShieldedWallet';
 import ConnectDapp from './pages/ConnectDapp';
 import ApproveTransaction from './pages/ApproveTransaction';
 import ApproveSubscription from './pages/ApproveSubscription';
@@ -179,6 +180,7 @@ function App() {
           <Route path="/agent" element={<Agent />} />
           <Route path="/privacy" element={<PrivacyZone />} />
           <Route path="/stealth-payments" element={<StealthPayments />} />
+          <Route path="/shielded" element={<ShieldedWallet />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />
         </Route>
 

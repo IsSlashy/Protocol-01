@@ -8,12 +8,10 @@
  */
 
 import {
-  Connection,
   PublicKey,
   Transaction,
   TransactionInstruction,
   Keypair,
-  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import { getConnection, NetworkType } from './wallet';
 import type { StreamSubscription, SubscriptionInterval } from './stream';
@@ -115,7 +113,7 @@ export function encodeSubscription(sub: StreamSubscription): OnChainSubscription
 /**
  * Convert compact on-chain format to StreamSubscription
  */
-export function decodeSubscription(encoded: OnChainSubscription, walletAddress: string): StreamSubscription {
+export function decodeSubscription(encoded: OnChainSubscription, _walletAddress?: string): StreamSubscription {
   return {
     id: encoded.id,
     name: encoded.n,

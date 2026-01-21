@@ -51,7 +51,7 @@ const technologies = [
 const architectureLayers = [
   {
     name: "Application Layer",
-    description: "Wallet, Streams, Social, Agent",
+    description: "Wallet, Streams, Agent",
     color: "p01-cyan",
   },
   {
@@ -79,7 +79,7 @@ const containerVariants = {
       staggerChildren: 0.1,
     },
   },
-};
+} as const;
 
 const itemVariants = {
   hidden: { opacity: 0, y: 20 },
@@ -88,10 +88,10 @@ const itemVariants = {
     y: 0,
     transition: {
       duration: 0.5,
-      ease: "easeOut",
+      ease: [0.16, 1, 0.3, 1] as const,
     },
   },
-};
+} as const;
 
 export default function TechStack() {
   const ref = useRef(null);
@@ -170,10 +170,9 @@ export default function TechStack() {
               cutting-edge cryptography
             </span>
           </h2>
-          <p className="section-subtitle">
-            We combine the latest advances in zero-knowledge proofs, trusted execution
-            environments, and privacy-preserving protocols.
-          </p>
+          <div className="section-subtitle space-y-1">
+            <p>We combine the latest advances in zero-knowledge proofs, trusted execution environments, and privacy-preserving protocols.</p>
+          </div>
         </motion.div>
 
         {/* Architecture Diagram */}

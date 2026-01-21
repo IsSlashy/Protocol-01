@@ -109,9 +109,9 @@ function SystemStatus() {
         </span>
       </div>
 
-      {/* Status indicator - industrial style */}
+      {/* Status indicator - terminal style with blinking square */}
       <div className="flex items-center mt-4">
-        <div className="w-2 h-2 bg-[#39c5bb] mr-3" />
+        <div className="w-2 h-2 bg-[#39c5bb] mr-3 animate-blink" />
         <span
           className="text-[#555560] text-xs tracking-[4px] font-mono uppercase"
           style={{ letterSpacing: "0.3em" }}
@@ -232,16 +232,17 @@ export default function Hero() {
             </motion.div>
 
             {/* Description - industrial monospace */}
-            <motion.p
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.5 }}
-              className="text-[#888892] text-base max-w-lg mt-8 mb-8 font-mono leading-relaxed"
+              className="text-[#888892] text-base max-w-lg mt-8 mb-8 font-mono leading-loose"
             >
-              Anonymous transactions. Private streams. Zero-knowledge
-              communications.{" "}
-              <span className="text-[#39c5bb]">Total invisibility.</span>
-            </motion.p>
+              <p>Anonymous transactions.</p>
+              <p>Private streams.</p>
+              <p>Zero-knowledge communications.</p>
+              <p className="text-[#39c5bb]">Total invisibility.</p>
+            </motion.div>
 
             {/* CTA Buttons - sharp edges, no soft shadows */}
             <motion.div

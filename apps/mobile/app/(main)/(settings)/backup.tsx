@@ -9,6 +9,21 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { SettingsSection } from '../../../components/settings';
 import { useWalletStore } from '../../../stores/walletStore';
 
+const COLORS = {
+  background: '#09090b',
+  surface: '#18181b',
+  border: '#3f3f46',
+  text: '#ffffff',
+  textSecondary: '#9ca3af',
+  textMuted: '#6b7280',
+  cyan: '#06b6d4',
+  red: '#ef4444',
+  yellow: '#eab308',
+  green: '#22c55e',
+  blue: '#3b82f6',
+  pink: '#ff77a8',
+};
+
 export default function BackupRecoveryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -21,7 +36,6 @@ export default function BackupRecoveryScreen() {
 
   const handleShowSeedPhrase = async () => {
     try {
-      // Check if biometrics is available
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
@@ -36,7 +50,6 @@ export default function BackupRecoveryScreen() {
         }
       }
 
-      // Get the mnemonic
       const mnemonic = await getBackupMnemonic();
       if (mnemonic) {
         setSeedPhrase(mnemonic.split(' '));
@@ -87,58 +100,56 @@ export default function BackupRecoveryScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
+    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 py-4">
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 16 }}>
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+          style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Ionicons name="arrow-back" size={20} color="#fff" />
+          <Ionicons name="arrow-back" size={20} color={COLORS.text} />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">Backup & Recovery</Text>
-        <View className="w-10" />
+        <Text style={{ color: COLORS.text, fontSize: 18, fontWeight: '600' }}>Backup & Recovery</Text>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 40 }}
       >
         {/* Warning Card */}
-        <View className="mx-4 mb-6 p-4 bg-red-500/10 rounded-2xl border border-red-500/30">
-          <View className="flex-row items-start">
-            <View className="w-10 h-10 rounded-full bg-red-500/20 items-center justify-center">
-              <Ionicons name="warning" size={24} color="#ef4444" />
+        <View style={{ marginHorizontal: 16, marginBottom: 24, padding: 16, backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(239, 68, 68, 0.2)', alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="warning" size={24} color={COLORS.red} />
             </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-red-400 text-base font-semibold mb-1">
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={{ color: '#f87171', fontSize: 16, fontWeight: '600', marginBottom: 4 }}>
                 Important: Back Up Your Wallet
               </Text>
-              <Text className="text-red-300/80 text-sm leading-5">
-                If you lose access to your device and haven't backed up your seed phrase, you will permanently lose access to your funds. Make sure you have securely stored your backup.
+              <Text style={{ color: 'rgba(252, 165, 165, 0.8)', fontSize: 14, lineHeight: 20 }}>
+                If you lose access to your device and haven't backed up your seed phrase, you will permanently lose access to your funds.
               </Text>
             </View>
           </View>
         </View>
 
         {/* Backup Status */}
-        <View className="mx-4 mb-6 p-4 bg-p01-surface rounded-2xl">
-          <View className="flex-row items-center">
-            <View className={`w-12 h-12 rounded-full items-center justify-center ${
-              isBackedUp ? 'bg-green-500/20' : 'bg-yellow-500/20'
-            }`}>
+        <View style={{ marginHorizontal: 16, marginBottom: 24, padding: 16, backgroundColor: COLORS.surface, borderRadius: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: isBackedUp ? 'rgba(34, 197, 94, 0.2)' : 'rgba(234, 179, 8, 0.2)' }}>
               <Ionicons
                 name={isBackedUp ? 'shield-checkmark' : 'shield-outline'}
                 size={24}
-                color={isBackedUp ? '#22c55e' : '#eab308'}
+                color={isBackedUp ? COLORS.green : COLORS.yellow}
               />
             </View>
-            <View className="flex-1 ml-4">
-              <Text className="text-white text-base font-semibold">
+            <View style={{ flex: 1, marginLeft: 16 }}>
+              <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>
                 {isBackedUp ? 'Wallet Backed Up' : 'Backup Recommended'}
               </Text>
-              <Text className="text-p01-text-secondary text-sm mt-1">
+              <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginTop: 4 }}>
                 {isBackedUp
                   ? 'Your wallet is securely backed up'
                   : 'Create a backup to protect your funds'}
@@ -150,30 +161,30 @@ export default function BackupRecoveryScreen() {
         {/* SEED PHRASE */}
         <SettingsSection title="Seed Phrase">
           <TouchableOpacity
-            className="flex-row items-center justify-between py-4 px-4"
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, paddingHorizontal: 16 }}
             onPress={handleShowSeedPhrase}
             activeOpacity={0.7}
           >
-            <View className="flex-row items-center flex-1">
-              <View className="w-10 h-10 rounded-xl bg-p01-cyan/20 items-center justify-center mr-3">
-                <Ionicons name="key" size={20} color="#39c5bb" />
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(6, 182, 212, 0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <Ionicons name="key" size={20} color={COLORS.cyan} />
               </View>
-              <View className="flex-1">
-                <Text className="text-white text-base font-medium">Show Seed Phrase</Text>
-                <Text className="text-p01-text-secondary text-sm mt-0.5">
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '500' }}>Show Seed Phrase</Text>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginTop: 2 }}>
                   View your 12-word recovery phrase
                 </Text>
               </View>
             </View>
-            <Ionicons name="lock-closed" size={18} color="#666" />
+            <Ionicons name="lock-closed" size={18} color={COLORS.textMuted} />
           </TouchableOpacity>
         </SettingsSection>
 
         {/* Warning about seed phrase */}
-        <View className="mx-4 mb-6 p-3 bg-yellow-500/10 rounded-xl border border-yellow-500/20">
-          <View className="flex-row items-center">
-            <Ionicons name="eye-off" size={16} color="#eab308" />
-            <Text className="text-yellow-500 text-xs ml-2 flex-1">
+        <View style={{ marginHorizontal: 16, marginBottom: 24, padding: 12, backgroundColor: 'rgba(234, 179, 8, 0.1)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(234, 179, 8, 0.2)' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="eye-off" size={16} color={COLORS.yellow} />
+            <Text style={{ color: COLORS.yellow, fontSize: 12, marginLeft: 8, flex: 1 }}>
               Never share your seed phrase. Anyone with it can access your funds.
             </Text>
           </View>
@@ -182,49 +193,49 @@ export default function BackupRecoveryScreen() {
         {/* BACKUP OPTIONS */}
         <SettingsSection title="Backup Options">
           <TouchableOpacity
-            className="flex-row items-center justify-between py-4 px-4"
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, paddingHorizontal: 16 }}
             onPress={handleExportBackup}
             activeOpacity={0.7}
           >
-            <View className="flex-row items-center flex-1">
-              <View className="w-10 h-10 rounded-xl bg-blue-500/20 items-center justify-center mr-3">
-                <Ionicons name="download-outline" size={20} color="#3b82f6" />
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(59, 130, 246, 0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <Ionicons name="download-outline" size={20} color={COLORS.blue} />
               </View>
-              <View className="flex-1">
-                <Text className="text-white text-base font-medium">Export Encrypted Backup</Text>
-                <Text className="text-p01-text-secondary text-sm mt-0.5">
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '500' }}>Export Encrypted Backup</Text>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginTop: 2 }}>
                   Save password-protected backup file
                 </Text>
               </View>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
+            <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
           </TouchableOpacity>
-          <View className="h-px bg-p01-border mx-4" />
+          <View style={{ height: 1, backgroundColor: COLORS.border, marginHorizontal: 16 }} />
           <TouchableOpacity
-            className="flex-row items-center justify-between py-4 px-4"
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, paddingHorizontal: 16 }}
             onPress={handleImportBackup}
             activeOpacity={0.7}
           >
-            <View className="flex-row items-center flex-1">
-              <View className="w-10 h-10 rounded-xl bg-p01-pink/20 items-center justify-center mr-3">
-                <Ionicons name="push-outline" size={20} color="#ff77a8" />
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255, 119, 168, 0.2)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <Ionicons name="push-outline" size={20} color={COLORS.pink} />
               </View>
-              <View className="flex-1">
-                <Text className="text-white text-base font-medium">Import Backup</Text>
-                <Text className="text-p01-text-secondary text-sm mt-0.5">
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '500' }}>Import Backup</Text>
+                <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginTop: 2 }}>
                   Restore from encrypted backup file
                 </Text>
               </View>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
+            <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
           </TouchableOpacity>
         </SettingsSection>
 
         {/* Info Card */}
-        <View className="mx-4 mt-2 p-4 bg-p01-surface rounded-2xl border border-p01-border">
-          <View className="flex-row items-start">
-            <Ionicons name="information-circle" size={20} color="#39c5bb" />
-            <Text className="text-p01-text-secondary text-sm ml-3 flex-1 leading-5">
+        <View style={{ marginHorizontal: 16, marginTop: 8, padding: 16, backgroundColor: COLORS.surface, borderRadius: 16, borderWidth: 1, borderColor: COLORS.border }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <Ionicons name="information-circle" size={20} color={COLORS.cyan} />
+            <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginLeft: 12, flex: 1, lineHeight: 20 }}>
               Your seed phrase is the only way to recover your wallet. Store it securely offline, never screenshot it, and never share it with anyone.
             </Text>
           </View>
@@ -241,44 +252,41 @@ export default function BackupRecoveryScreen() {
           setSeedPhrase([]);
         }}
       >
-        <View className="flex-1 bg-p01-void" style={{ paddingTop: insets.top }}>
+        <View style={{ flex: 1, backgroundColor: COLORS.background, paddingTop: insets.top }}>
           {/* Modal Header */}
-          <View className="flex-row items-center justify-between px-4 py-4">
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 16 }}>
             <TouchableOpacity
               onPress={() => {
                 setShowSeedModal(false);
                 setSeedPhrase([]);
               }}
-              className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Ionicons name="close" size={20} color="#fff" />
+              <Ionicons name="close" size={20} color={COLORS.text} />
             </TouchableOpacity>
-            <Text className="text-white text-lg font-semibold">Seed Phrase</Text>
-            <View className="w-10" />
+            <Text style={{ color: COLORS.text, fontSize: 18, fontWeight: '600' }}>Seed Phrase</Text>
+            <View style={{ width: 40 }} />
           </View>
 
-          <ScrollView className="flex-1 px-4">
+          <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
             {/* Warning */}
-            <View className="mb-6 p-4 bg-red-500/10 rounded-2xl border border-red-500/30">
-              <View className="flex-row items-center">
-                <Ionicons name="warning" size={20} color="#ef4444" />
-                <Text className="text-red-400 text-sm ml-2 flex-1">
+            <View style={{ marginBottom: 24, padding: 16, backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="warning" size={20} color={COLORS.red} />
+                <Text style={{ color: '#f87171', fontSize: 14, marginLeft: 8, flex: 1 }}>
                   Do not share this phrase with anyone. Anyone with access to it can steal your funds.
                 </Text>
               </View>
             </View>
 
             {/* Seed Words Grid */}
-            <View className="bg-p01-surface rounded-2xl p-4 mb-6">
-              <View className="flex-row flex-wrap">
+            <View style={{ backgroundColor: COLORS.surface, borderRadius: 16, padding: 16, marginBottom: 24 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 {seedPhrase.map((word, index) => (
-                  <View
-                    key={index}
-                    className="w-1/3 p-2"
-                  >
-                    <View className="bg-p01-void rounded-xl py-3 px-3 flex-row items-center">
-                      <Text className="text-p01-text-secondary text-xs w-5">{index + 1}.</Text>
-                      <Text className="text-white font-mono text-sm flex-1">{word}</Text>
+                  <View key={index} style={{ width: '33.33%', padding: 8 }}>
+                    <View style={{ backgroundColor: COLORS.background, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ color: COLORS.textSecondary, fontSize: 12, width: 20 }}>{index + 1}.</Text>
+                      <Text style={{ color: COLORS.text, fontFamily: 'monospace', fontSize: 14, flex: 1 }}>{word}</Text>
                     </View>
                   </View>
                 ))}
@@ -287,18 +295,17 @@ export default function BackupRecoveryScreen() {
 
             {/* Copy Button */}
             <TouchableOpacity
-              className="py-4 rounded-xl items-center mb-4"
-              style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)' }}
+              style={{ paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16, backgroundColor: 'rgba(255, 255, 255, 0.1)' }}
               onPress={handleCopySeed}
               activeOpacity={0.7}
             >
-              <View className="flex-row items-center">
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons
                   name={copied ? 'checkmark' : 'copy-outline'}
                   size={18}
-                  color={copied ? '#39c5bb' : '#fff'}
+                  color={copied ? COLORS.cyan : COLORS.text}
                 />
-                <Text className={`font-semibold ml-2 ${copied ? 'text-p01-cyan' : 'text-white'}`}>
+                <Text style={{ fontWeight: '600', marginLeft: 8, color: copied ? COLORS.cyan : COLORS.text }}>
                   {copied ? 'Copied!' : 'Copy to Clipboard'}
                 </Text>
               </View>
@@ -306,17 +313,20 @@ export default function BackupRecoveryScreen() {
 
             {/* I've Backed Up Button */}
             <TouchableOpacity
-              className="bg-p01-cyan py-4 rounded-xl items-center"
-              onPress={handleConfirmBackup}
-              activeOpacity={0.8}
               style={{
-                shadowColor: '#39c5bb',
+                backgroundColor: COLORS.cyan,
+                paddingVertical: 16,
+                borderRadius: 12,
+                alignItems: 'center',
+                shadowColor: COLORS.cyan,
                 shadowOpacity: 0.3,
                 shadowRadius: 10,
                 shadowOffset: { width: 0, height: 4 },
               }}
+              onPress={handleConfirmBackup}
+              activeOpacity={0.8}
             >
-              <Text className="text-p01-void font-semibold text-base">
+              <Text style={{ color: COLORS.background, fontWeight: '600', fontSize: 16 }}>
                 I've Saved My Seed Phrase
               </Text>
             </TouchableOpacity>

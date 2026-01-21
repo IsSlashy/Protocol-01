@@ -164,7 +164,7 @@ export default function NetworkSettingsScreen() {
                selectedNetwork === 'devnet' ? 'Devnet' : 'Testnet'}
             </Text>
           </View>
-          <Text className="text-p01-text-secondary text-sm mt-2">
+          <Text style={{ color: '#9ca3af', fontSize: 14, marginTop: 8 }}>
             {selectedNetwork === 'mainnet-beta'
               ? 'Production Solana network. All transactions use real SOL.'
               : selectedNetwork === 'devnet'
@@ -218,7 +218,7 @@ export default function NetworkSettingsScreen() {
           <View className="mx-4 mt-2 p-4 bg-yellow-500/10 rounded-2xl border border-yellow-500/30">
             <View className="flex-row items-start">
               <Ionicons name="warning" size={20} color="#eab308" />
-              <Text className="text-yellow-500 text-sm ml-3 flex-1">
+              <Text style={{ color: '#eab308', fontSize: 14, marginLeft: 12, flex: 1 }}>
                 You are connecting to Mainnet. All transactions will use real SOL and tokens. Make sure you understand the risks.
               </Text>
             </View>
@@ -229,8 +229,8 @@ export default function NetworkSettingsScreen() {
         {selectedNetwork === 'devnet' && (
           <View className="mx-4 mt-2 p-4 bg-p01-surface rounded-2xl border border-p01-border">
             <View className="flex-row items-start">
-              <Ionicons name="information-circle" size={20} color="#39c5bb" />
-              <Text className="text-p01-text-secondary text-sm ml-3 flex-1">
+              <Ionicons name="information-circle" size={20} color="#06b6d4" />
+              <Text style={{ color: '#9ca3af', fontSize: 14, marginLeft: 12, flex: 1 }}>
                 Devnet tokens have no real value. You can get free test SOL using the airdrop button on the wallet screen.
               </Text>
             </View>
@@ -242,7 +242,7 @@ export default function NetworkSettingsScreen() {
           <View className="mx-4 mt-2 p-4 bg-blue-500/10 rounded-2xl border border-blue-500/30">
             <View className="flex-row items-start">
               <Ionicons name="flask-outline" size={20} color="#3b82f6" />
-              <Text className="text-blue-400 text-sm ml-3 flex-1">
+              <Text style={{ color: '#60a5fa', fontSize: 14, marginLeft: 12, flex: 1 }}>
                 Testnet is used for experimental features and may experience downtime or resets. Not recommended for regular use.
               </Text>
             </View>
@@ -268,7 +268,7 @@ export default function NetworkSettingsScreen() {
           {isSaving ? (
             <ActivityIndicator color="#0a0a0a" />
           ) : (
-            <Text className="text-p01-void font-semibold text-base">
+            <Text style={{ color: '#09090b', fontWeight: '600', fontSize: 16 }}>
               Save Network Settings
             </Text>
           )}

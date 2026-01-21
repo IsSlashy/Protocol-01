@@ -80,15 +80,15 @@ export default function CTA() {
             </motion.h2>
 
             {/* Subtitle */}
-            <motion.p
+            <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.5, delay: 0.4 }}
-              className="text-lg text-p01-text-muted max-w-2xl mx-auto mb-12"
+              className="text-lg text-p01-text-muted max-w-2xl mx-auto mb-12 space-y-1"
             >
-              Download Protocol 01 and take back control of your financial privacy.
-              Free to use, open source, and built for everyone.
-            </motion.p>
+              <p>Download Protocol 01 and take back control of your financial privacy.</p>
+              <p>Free to use, open source, and built for everyone.</p>
+            </motion.div>
 
             {/* Download Buttons */}
             <motion.div

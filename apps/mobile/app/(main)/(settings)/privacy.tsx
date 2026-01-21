@@ -7,8 +7,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { SettingsSection, SettingsRow, RadioOption, ToggleRow } from '../../../components/settings';
 import { usePrivacyStore, getZoneStatusColor, getZoneStatusLabel } from '../../../stores/privacyStore';
-
-type PrivacyLevel = 'standard' | 'enhanced' | 'maximum';
+import {
+  PRIVACY_LEVELS,
+  calculateDecoyFees,
+  getPrivacyLevelDescription,
+  type PrivacyLevel,
+} from '../../../services/solana/decoyTransactions';
 
 const STORAGE_KEYS = {
   PRIVACY_LEVEL: 'settings_privacy_level',
@@ -174,13 +178,22 @@ export default function PrivacySettingsScreen() {
                privacyLevel === 'enhanced' ? 'Enhanced Privacy' : 'Maximum Privacy'}
             </Text>
           </View>
-          <Text className="text-p01-text-secondary text-sm">
+          <Text style={{ color: '#9ca3af', fontSize: 14, marginBottom: 8 }}>
             {privacyLevel === 'standard'
               ? 'Minimal privacy protection with lower fees. Best for small transactions.'
               : privacyLevel === 'enhanced'
               ? 'Balanced privacy and cost. Recommended for most users.'
               : 'Maximum anonymity with highest decoy count. Higher fees apply.'}
           </Text>
+          <View className="bg-p01-void/50 rounded-lg p-3 mt-2">
+            <Text className="text-p01-text-muted text-xs mb-1">Features:</Text>
+            <Text className="text-white text-sm">
+              {getPrivacyLevelDescription(privacyLevel)}
+            </Text>
+            <Text className="text-p01-text-muted text-xs mt-2">
+              Est. extra fee: ~{calculateDecoyFees(privacyLevel, 1).totalFees.toFixed(6)} SOL per transaction
+            </Text>
+          </View>
         </View>
 
         {/* STEALTH ADDRESSES */}
@@ -213,7 +226,7 @@ export default function PrivacySettingsScreen() {
               </View>
               <View className="flex-1">
                 <Text className="text-white text-base font-medium">Privacy Zone Settings</Text>
-                <Text className="text-p01-gray text-sm mt-0.5">
+                <Text style={{ color: '#9ca3af', fontSize: 14, marginTop: 2 }}>
                   {privacyZoneSettings.enabled
                     ? `${zoneLabel} - ${zoneStatus.nearbyTrustedCount} trusted nearby`
                     : 'Bluetooth-based auto-lock'}
@@ -259,12 +272,27 @@ export default function PrivacySettingsScreen() {
           />
         </SettingsSection>
 
+        {/* How Decoys Work */}
+        <View className="mx-4 mt-2 p-4 bg-p01-cyan/10 rounded-2xl border border-p01-cyan/30">
+          <View className="flex-row items-start">
+            <Ionicons name="information-circle" size={20} color="#39c5bb" />
+            <View className="ml-3 flex-1">
+              <Text className="text-p01-cyan font-medium mb-1">How Decoy Transactions Work</Text>
+              <Text className="text-p01-text-muted text-sm">
+                Decoys are small self-transfers sent before your real transaction to confuse chain analysis.
+                They create noise on the blockchain, making it harder to identify your actual payment.
+              </Text>
+            </View>
+          </View>
+        </View>
+
         {/* Warning */}
-        <View className="mx-4 mt-2 p-4 bg-yellow-500/10 rounded-2xl border border-yellow-500/30">
+        <View className="mx-4 mt-4 p-4 bg-yellow-500/10 rounded-2xl border border-yellow-500/30">
           <View className="flex-row items-start">
             <Ionicons name="warning" size={20} color="#eab308" />
             <Text className="text-yellow-500 text-sm ml-3 flex-1">
-              Higher privacy levels use more decoys and may result in higher transaction fees.
+              Higher privacy levels send more decoy transactions, resulting in additional network fees (~0.000005 SOL each).
+              Decoys are self-transfers and do not reduce your balance beyond fees.
             </Text>
           </View>
         </View>
