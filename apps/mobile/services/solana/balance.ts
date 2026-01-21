@@ -1,5 +1,8 @@
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getConnection, switchEndpoint } from './connection';
+
+const BALANCE_CACHE_KEY = 'p01_balance_cache_';
 
 // Rate limit handling
 const MAX_RETRIES = 2;
@@ -155,6 +158,38 @@ export async function getTokenBalances(publicKey: string): Promise<TokenBalance[
 }
 
 /**
+ * Get cached balance (instant, from local storage)
+ */
+export async function getCachedBalance(publicKey: string): Promise<WalletBalance | null> {
+  try {
+    console.log('[Balance] Loading cache for:', publicKey.slice(0, 8) + '...');
+    const cached = await AsyncStorage.getItem(BALANCE_CACHE_KEY + publicKey);
+    if (cached) {
+      const data = JSON.parse(cached);
+      console.log('[Balance] ✓ CACHE HIT:', data.sol, 'SOL loaded instantly');
+      return data;
+    } else {
+      console.log('[Balance] ✗ CACHE MISS: No cached balance found');
+    }
+  } catch (error) {
+    console.warn('[Balance] Failed to load cache:', error);
+  }
+  return null;
+}
+
+/**
+ * Save balance to local cache
+ */
+async function cacheBalance(publicKey: string, balance: WalletBalance): Promise<void> {
+  try {
+    await AsyncStorage.setItem(BALANCE_CACHE_KEY + publicKey, JSON.stringify(balance));
+    console.log('[Balance] Cached balance:', balance.sol, 'SOL');
+  } catch (error) {
+    console.warn('[Balance] Failed to cache:', error);
+  }
+}
+
+/**
  * Get complete wallet balance
  */
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance> {
@@ -169,12 +204,17 @@ export async function getWalletBalance(publicKey: string): Promise<WalletBalance
   // Calculate total USD (simplified - only SOL for now)
   const totalUsd = solUsd + tokens.reduce((acc, t) => acc + (t.usdValue || 0), 0);
 
-  return {
+  const balance: WalletBalance = {
     sol,
     solUsd,
     tokens,
     totalUsd,
   };
+
+  // Cache for instant loading next time
+  await cacheBalance(publicKey, balance);
+
+  return balance;
 }
 
 /**

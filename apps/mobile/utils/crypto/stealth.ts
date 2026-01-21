@@ -38,11 +38,23 @@ export interface StealthError {
 }
 
 /**
- * Generate stealth key pair (spending and viewing keys)
+ * Generate a Keypair using expo-crypto for randomness
+ * This avoids the crypto.getRandomValues issue in React Native
  */
-export function generateStealthKeys(): StealthKeys {
-  const spendingKey = Keypair.generate();
-  const viewingKey = Keypair.generate();
+async function generateKeypairSecure(): Promise<Keypair> {
+  // Generate 32 random bytes using expo-crypto
+  const randomBytes = await Crypto.getRandomBytesAsync(32);
+  // Create keypair from seed
+  return Keypair.fromSeed(randomBytes);
+}
+
+/**
+ * Generate stealth key pair (spending and viewing keys)
+ * Now async to use expo-crypto for secure randomness
+ */
+export async function generateStealthKeys(): Promise<StealthKeys> {
+  const spendingKey = await generateKeypairSecure();
+  const viewingKey = await generateKeypairSecure();
 
   return {
     spendingKey,
@@ -60,8 +72,8 @@ export async function generateStealthAddress(
   recipientViewingPubKey: string
 ): Promise<StealthAddress> {
   try {
-    // Generate ephemeral keypair
-    const ephemeralKey = Keypair.generate();
+    // Generate ephemeral keypair using secure randomness
+    const ephemeralKey = await generateKeypairSecure();
 
     // Compute shared secret using ECDH-like construction
     const sharedSecret = await computeSharedSecret(

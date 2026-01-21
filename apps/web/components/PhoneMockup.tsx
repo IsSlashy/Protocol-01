@@ -94,7 +94,7 @@ export default function PhoneMockup() {
       >
         {/* Phone frame - modern design, no ugly borders */}
         <div
-          className="relative w-[280px] h-[580px] bg-[#0a0a0c] rounded-[50px] overflow-hidden mx-auto"
+          className="relative w-[280px] h-[600px] bg-[#0a0a0c] rounded-[50px] overflow-hidden mx-auto"
           style={{
             boxShadow: `
               0 0 0 1px rgba(255, 255, 255, 0.08),
@@ -106,110 +106,159 @@ export default function PhoneMockup() {
         >
 
           {/* Dynamic Island / Notch */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 w-28 h-7 bg-black rounded-full z-20 flex items-center justify-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-[#1a1a1e] border border-[#2a2a30]" />
-            <div className="w-14 h-3.5 rounded-full bg-[#1a1a1e]" />
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 w-24 h-6 bg-black rounded-full z-20 flex items-center justify-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-[#1a1a1e] border border-[#2a2a30]" />
+            <div className="w-12 h-3 rounded-full bg-[#1a1a1e]" />
           </div>
 
           {/* Screen content */}
           <div className="absolute inset-[3px] top-2 bg-[#0a0a0c] rounded-[47px] overflow-hidden">
 
             {/* Status bar */}
-            <div className="pt-2 px-8 flex justify-between items-center text-white/70 text-xs font-medium">
+            <div className="pt-2 px-7 flex justify-between items-center text-white/70 text-[10px] font-medium">
               <span>9:41</span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
                 <div className="flex gap-0.5">
                   {[1, 2, 3, 4].map((_, i) => (
-                    <div key={i} className={`w-1 h-${i + 1} ${i < 3 ? 'bg-white/70' : 'bg-white/30'} rounded-sm`} style={{ height: `${4 + i * 2}px` }} />
+                    <div key={i} className={`w-0.5 ${i < 3 ? 'bg-white/70' : 'bg-white/30'} rounded-sm`} style={{ height: `${3 + i * 1.5}px` }} />
                   ))}
                 </div>
-                <div className="w-6 h-3 border border-white/50 rounded-sm relative ml-1">
+                <div className="w-5 h-2.5 border border-white/50 rounded-sm relative ml-1">
                   <div className="absolute inset-0.5 bg-[#39c5bb] rounded-sm" style={{ width: '70%' }} />
                 </div>
               </div>
             </div>
 
-            {/* App Header */}
-            <div className="pt-8 px-5 pb-4 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-[#151518] border border-[#39c5bb]/30 flex items-center justify-center">
-                <span className="text-[#ff77a8] font-bold text-sm">P-01</span>
+            {/* App Header - FIDELE A L'APP */}
+            <div className="pt-6 px-4 pb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[#ff77a8] font-bold text-xl">01</span>
+                <div>
+                  <p className="text-white font-bold text-sm tracking-wide">PROTOCOL 01</p>
+                  <span className="px-1.5 py-0.5 bg-[#39c5bb]/20 text-[#39c5bb] text-[8px] rounded font-medium">
+                    DEVNET
+                  </span>
+                </div>
               </div>
-              <div>
-                <p className="text-white font-semibold text-lg tracking-wide">PROTOCOL 01</p>
-                <p className="text-[#39c5bb] text-sm flex items-center gap-1.5">
-                  <motion.span
-                    className="w-2 h-2 rounded-full bg-[#39c5bb]"
-                    animate={{ opacity: [1, 0.4, 1] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                  />
-                  Connected
+              <div className="flex gap-1.5">
+                <div className="w-7 h-7 rounded-lg border border-[#2a2a30] flex items-center justify-center text-white/60 text-xs">
+                  ⌇
+                </div>
+                <div className="w-7 h-7 rounded-lg border border-[#2a2a30] flex items-center justify-center text-white/60 text-xs">
+                  ⚙
+                </div>
+              </div>
+            </div>
+
+            {/* Balance Card - FIDELE A L'APP */}
+            <div className="mx-3 p-3 bg-[#151518] rounded-2xl border border-[#2a2a30]">
+              <div className="flex items-center gap-1.5 text-[#808088] text-[10px] mb-2">
+                <span>Wallet Address</span>
+                <span className="text-[#808088] text-[8px]">📋</span>
+              </div>
+
+              <div className="text-center py-2">
+                <p className="text-white text-3xl font-bold">$2,847.00</p>
+                <p className="text-[#808088] mt-1 flex items-center justify-center gap-1.5 text-sm">
+                  <span className="w-4 h-4 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center text-[8px]">◎</span>
+                  12.5 SOL
                 </p>
               </div>
             </div>
 
-            {/* Balance card */}
-            <div className="mx-5 p-5 bg-gradient-to-br from-[#151518] to-[#101014] rounded-2xl border border-[#2a2a30]/60">
-              <p className="text-[#707078] text-xs tracking-[0.2em] mb-2 font-medium">STEALTH BALANCE</p>
-              <p className="text-white text-4xl font-bold tracking-tight">
-                $12,847<span className="text-2xl text-[#707078]">.00</span>
-              </p>
-              <p className="text-[#39c5bb] text-sm mt-2 flex items-center gap-1.5 font-medium">
-                <span className="text-[#00ffe5]">◆</span>
-                4.2847 SOL
-              </p>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex justify-center gap-4 py-5 px-5">
+            {/* Action Buttons - COULEURS CORRECTES */}
+            <div className="flex justify-center gap-3 py-3 px-3">
               {[
-                { icon: '↑', label: 'Send', color: '#39c5bb' },
-                { icon: '↓', label: 'Receive', color: '#39c5bb' },
-                { icon: '⇄', label: 'Swap', color: '#39c5bb' },
-                { icon: '◇', label: 'Buy', color: '#ff77a8' },
+                { icon: '↑', label: 'Send', bg: '#39c5bb', text: 'black' },
+                { icon: '↓', label: 'Receive', bg: '#39c5bb', text: 'black' },
+                { icon: '⇄', label: 'Swap', bg: '#6366f1', text: 'white' },
+                { icon: '💳', label: 'Buy', bg: '#ec4899', text: 'white' },
               ].map((action, i) => (
-                <div key={i} className="flex flex-col items-center gap-1.5">
+                <div key={i} className="flex flex-col items-center gap-1">
                   <div
-                    className="w-13 h-13 rounded-2xl flex items-center justify-center text-lg border transition-all"
+                    className="w-12 h-12 rounded-full flex items-center justify-center text-base font-medium"
                     style={{
-                      width: '52px',
-                      height: '52px',
-                      backgroundColor: `${action.color}12`,
-                      borderColor: `${action.color}35`,
-                      color: action.color,
+                      backgroundColor: action.bg,
+                      color: action.text,
                     }}
                   >
                     {action.icon}
                   </div>
-                  <span className="text-[#707078] text-xs">{action.label}</span>
+                  <span className="text-white text-[10px]">{action.label}</span>
                 </div>
               ))}
             </div>
 
+            {/* Faucet Card - NOUVEAU */}
+            <div className="mx-3 p-3 rounded-xl flex items-center justify-between"
+              style={{
+                background: 'linear-gradient(135deg, #1a1a2e 0%, #2d1f3d 100%)',
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center"
+                  style={{
+                    background: 'linear-gradient(135deg, #f97316 0%, #ec4899 100%)',
+                  }}
+                >
+                  <span className="text-white text-sm">💧</span>
+                </div>
+                <div>
+                  <p className="text-white font-medium text-xs">Get Test SOL</p>
+                  <p className="text-[#808088] text-[8px]">Tap to receive 1 SOL from faucet</p>
+                </div>
+              </div>
+              <span className="text-[#ff77a8] text-lg">›</span>
+            </div>
+
+            {/* Assets Section */}
+            <div className="px-3 mt-3">
+              <p className="text-[#808088] text-[9px] tracking-wider mb-1.5 font-medium">ASSETS</p>
+              <div className="p-2.5 bg-[#151518] rounded-xl flex items-center justify-between border border-[#2a2a30]/50">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#9945FF] to-[#14F195] flex items-center justify-center">
+                    <span className="text-white font-bold text-xs">◎</span>
+                  </div>
+                  <div>
+                    <p className="text-white font-medium text-xs">Solana</p>
+                    <p className="text-[#808088] text-[9px]">SOL</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-white font-medium text-xs">12.5</p>
+                  <p className="text-[#808088] text-[9px]">$2,847.00</p>
+                </div>
+              </div>
+            </div>
+
             {/* Recent Activity */}
-            <div className="px-5">
-              <p className="text-[#707078] text-xs tracking-[0.15em] mb-3 font-medium">RECENT ACTIVITY</p>
-              <div className="space-y-2">
+            <div className="px-3 mt-3">
+              <div className="flex justify-between items-center mb-1.5">
+                <p className="text-[#808088] text-[9px] tracking-wider font-medium">RECENT ACTIVITY</p>
+                <button className="text-[#39c5bb] text-[9px] font-medium">See All</button>
+              </div>
+              <div className="space-y-1.5">
                 {[
-                  { type: 'stealth', label: 'Stealth TX', amount: '-0.5 SOL', time: '2m ago', color: '#ff77a8' },
-                  { type: 'received', label: 'Received', amount: '+1.2 SOL', time: '1h ago', color: '#39c5bb' },
+                  { type: 'send', label: 'Send', amount: '-0.5 SOL', time: '2m ago', color: '#ff77a8' },
+                  { type: 'receive', label: 'Received', amount: '+1.2 SOL', time: '1h ago', color: '#39c5bb' },
                 ].map((tx, i) => (
-                  <div key={i} className="flex justify-between items-center p-3.5 bg-[#151518]/90 rounded-xl border border-[#2a2a30]/40">
-                    <div className="flex items-center gap-3">
+                  <div key={i} className="flex justify-between items-center p-2.5 bg-[#151518] rounded-xl border border-[#2a2a30]/40">
+                    <div className="flex items-center gap-2">
                       <div
-                        className="w-9 h-9 rounded-xl flex items-center justify-center text-sm"
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs"
                         style={{
-                          backgroundColor: `${tx.color}18`,
+                          backgroundColor: `${tx.color}20`,
                           color: tx.color,
                         }}
                       >
-                        ◆
+                        {tx.type === 'send' ? '↑' : '↓'}
                       </div>
                       <div>
-                        <p className="text-white text-sm font-medium">{tx.label}</p>
-                        <p className="text-[#606068] text-xs">{tx.time}</p>
+                        <p className="text-white text-[11px] font-medium">{tx.label}</p>
+                        <p className="text-[#606068] text-[8px]">{tx.time}</p>
                       </div>
                     </div>
-                    <span className="text-sm font-medium" style={{ color: tx.color }}>
+                    <span className="text-[11px] font-medium" style={{ color: tx.color }}>
                       {tx.amount}
                     </span>
                   </div>
@@ -217,24 +266,29 @@ export default function PhoneMockup() {
               </div>
             </div>
 
-            {/* Bottom nav */}
-            <div className="absolute bottom-5 left-5 right-5">
-              <div className="flex justify-around items-center py-2.5 px-3 bg-[#151518]/95 rounded-2xl border border-[#2a2a30]/40 backdrop-blur-sm">
+            {/* Bottom nav - 3 TABS SEULEMENT */}
+            <div className="absolute bottom-4 left-3 right-3">
+              <div className="flex justify-around items-center py-2 px-2 bg-[#151518]/95 rounded-2xl border border-[#2a2a30]/40 backdrop-blur-sm">
                 {[
-                  { icon: '⌂', active: true },
-                  { icon: '◈', active: false },
-                  { icon: '💬', active: false },
-                  { icon: '⚙', active: false },
+                  { icon: '💼', label: 'Wallet', active: true },
+                  { icon: '💧', label: 'Streams', active: false },
+                  { icon: '✨', label: 'Agent', active: false },
                 ].map((item, i) => (
-                  <div
-                    key={i}
-                    className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${
-                      item.active
-                        ? 'text-[#39c5bb] bg-[#39c5bb]/15'
-                        : 'text-[#606068]'
-                    }`}
-                  >
-                    {item.icon}
+                  <div key={i} className="flex flex-col items-center gap-0.5">
+                    <div
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all text-sm ${
+                        item.active
+                          ? 'bg-[#39c5bb]/20'
+                          : ''
+                      }`}
+                    >
+                      <span className={item.active ? 'text-[#39c5bb]' : 'text-[#606068]'}>
+                        {item.icon}
+                      </span>
+                    </div>
+                    <span className={`text-[8px] ${item.active ? 'text-[#39c5bb]' : 'text-[#606068]'}`}>
+                      {item.label}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -242,7 +296,7 @@ export default function PhoneMockup() {
 
             {/* Subtle scanlines */}
             <div
-              className="absolute inset-0 pointer-events-none opacity-[0.03]"
+              className="absolute inset-0 pointer-events-none opacity-[0.02]"
               style={{
                 background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.5) 2px, rgba(255,255,255,0.5) 4px)',
               }}
@@ -253,7 +307,7 @@ export default function PhoneMockup() {
           <div
             className="absolute inset-0 rounded-[50px] pointer-events-none"
             style={{
-              background: 'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 40%)',
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 40%)',
             }}
           />
         </div>

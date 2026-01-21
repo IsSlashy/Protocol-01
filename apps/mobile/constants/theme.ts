@@ -47,6 +47,7 @@ export const Colors = {
 
   // Text (NO black text)
   text: '#ffffff',             // white
+  textPrimary: '#ffffff',      // white (alias for text)
   textSecondary: '#888892',    // muted
   textTertiary: '#555560',     // dim
   textMuted: '#555560',        // dim

@@ -6,3 +6,4 @@ export * from './transactions';
 export * from './streams';
 export * from './onchainSync';
 export * from './websocket';
+export * from './decoyTransactions';

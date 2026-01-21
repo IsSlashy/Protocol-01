@@ -4,12 +4,10 @@
  * Connects to Solana WebSocket to listen for new subscription events.
  * When a new subscription is detected:
  * - Syncs the subscription to local store (streamStore)
- * - Triggers a push notification
  * - Updates UI
  */
 
 import { Connection, PublicKey, Logs, Context } from '@solana/web3.js';
-import * as Notifications from 'expo-notifications';
 import { getConnection } from '../solana/connection';
 import { syncFromBlockchain, loadStreams, Stream } from '../solana/streams';
 import { useStreamStore } from '../../stores/streamStore';
@@ -32,7 +30,7 @@ export interface RealtimeSyncConfig {
   reconnectDelay?: number;
   /** Maximum reconnection attempts (default: 5) */
   maxReconnectAttempts?: number;
-  /** Enable push notifications (default: true) */
+  /** Enable push notifications (default: false for Expo Go compatibility) */
   enableNotifications?: boolean;
   /** Sync interval for periodic checks in ms (default: 60000) */
   syncInterval?: number;
@@ -49,22 +47,9 @@ const DEFAULT_CONFIG: Required<RealtimeSyncConfig> = {
   autoReconnect: true,
   reconnectDelay: 3000,
   maxReconnectAttempts: 5,
-  enableNotifications: true,
-  syncInterval: 60000,
+  enableNotifications: true, // Will fail silently in Expo Go
+  syncInterval: 300000, // 5 minutes (increased to avoid rate limits)
 };
-
-// ============ Notification Setup ============
-
-// Configure notification handler
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
 
 // ============ RealtimeSyncService ============
 
@@ -257,6 +242,8 @@ export class RealtimeSyncService {
 
   private async requestNotificationPermissions(): Promise<void> {
     try {
+      // Dynamic import to avoid crash in Expo Go
+      const Notifications = await import('expo-notifications');
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
 
       if (existingStatus !== 'granted') {
@@ -266,7 +253,8 @@ export class RealtimeSyncService {
         }
       }
     } catch (error) {
-      console.warn('[RealtimeSync] Failed to request notification permissions:', error);
+      // Silently fail in Expo Go
+      console.log('[RealtimeSync] Notifications not available (Expo Go)');
     }
   }
 
@@ -330,9 +318,9 @@ export class RealtimeSyncService {
 
       console.log('[RealtimeSync] Sync result:', result);
 
-      // Refresh the stream store
+      // Refresh the stream store (don't pass wallet to avoid double sync)
       const streamStore = useStreamStore.getState();
-      await streamStore.refresh(this.walletAddress);
+      await streamStore.refresh(); // Just reload local data, sync already done above
 
       // Check for new streams and send notifications
       if (result.newStreams > 0) {
@@ -379,26 +367,27 @@ export class RealtimeSyncService {
 
   private async sendSubscriptionNotification(stream: Stream): Promise<void> {
     try {
-      // Format the interval for display
+      // Dynamic import to avoid crash in Expo Go
+      const Notifications = await import('expo-notifications');
       const intervalDisplay = this.formatFrequency(stream.frequency, stream.customIntervalDays);
 
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Nouvel abonnement ajoute',
+          title: 'Nouvel abonnement ajouté',
           body: `${stream.name} - ${stream.amountPerPayment.toFixed(4)} SOL/${intervalDisplay}`,
           data: {
             subscriptionId: stream.id,
             type: 'subscription_added',
           },
           sound: true,
-          badge: 1,
         },
-        trigger: null, // Send immediately
+        trigger: null,
       });
 
       console.log('[RealtimeSync] Notification sent for subscription:', stream.name);
     } catch (error) {
-      console.error('[RealtimeSync] Failed to send notification:', error);
+      // Silently fail in Expo Go
+      console.log('[RealtimeSync] New subscription (notif unavailable):', stream.name);
     }
   }
 

@@ -203,6 +203,16 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
+        {/* DEVELOPER */}
+        <SettingsSection title="Developer">
+          <SettingsRow
+            label="Privacy Tech Test"
+            value="Devnet"
+            leftIcon="flask-outline"
+            onPress={() => router.push('/(main)/(settings)/privacy-test')}
+          />
+        </SettingsSection>
+
         {/* Danger Zone */}
         <View className="mt-4 mx-4">
           <TouchableOpacity

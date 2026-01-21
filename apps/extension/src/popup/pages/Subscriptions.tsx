@@ -22,9 +22,12 @@ import {
   GraduationCap,
   Target,
   MessageCircle,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { cn, formatCurrency } from '@/shared/utils';
 import { useSubscriptionsStore, useSubscriptionStats } from '@/shared/store/subscriptions';
+import { useWalletStore } from '@/shared/store/wallet';
 import type { StreamSubscription } from '@/shared/services/stream';
 import { formatInterval } from '@/shared/services/stream';
 import {
@@ -58,9 +61,30 @@ export default function Subscriptions() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all');
   const [showPrivacyInfo, setShowPrivacyInfo] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  const { subscriptions, refreshComputedValues } = useSubscriptionsStore();
+  const { subscriptions, refreshComputedValues, syncFromChain } = useSubscriptionsStore();
+  const { publicKey, network } = useWalletStore();
   const stats = useSubscriptionStats();
+
+  // Handle sync from blockchain
+  const handleSync = async () => {
+    if (!publicKey || isSyncing) return;
+
+    setIsSyncing(true);
+    try {
+      const result = await syncFromChain(publicKey, network);
+      console.log('[Subscriptions] Sync complete:', result);
+      if (result.newCount > 0 || result.updatedCount > 0) {
+        // Could show a toast notification here
+        console.log(`Found ${result.newCount} new, ${result.updatedCount} updated subscriptions`);
+      }
+    } catch (error) {
+      console.error('[Subscriptions] Sync failed:', error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // Refresh computed values on mount
   useEffect(() => {
@@ -106,13 +130,27 @@ export default function Subscriptions() {
                 Stream Secure
               </span>
             </div>
-            <button
-              onClick={() => setShowPrivacyInfo(!showPrivacyInfo)}
-              className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors"
-              title="Privacy Info"
-            >
-              <Shield className="w-4 h-4 text-p01-cyan" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSync}
+                disabled={!publicKey || isSyncing}
+                className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors disabled:opacity-50"
+                title="Sync from blockchain"
+              >
+                {isSyncing ? (
+                  <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 text-p01-cyan" />
+                )}
+              </button>
+              <button
+                onClick={() => setShowPrivacyInfo(!showPrivacyInfo)}
+                className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors"
+                title="Privacy Info"
+              >
+                <Shield className="w-4 h-4 text-p01-cyan" />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-baseline gap-2">

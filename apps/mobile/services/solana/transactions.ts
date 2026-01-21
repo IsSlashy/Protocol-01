@@ -7,8 +7,11 @@ import {
   TransactionSignature,
   ParsedTransactionWithMeta,
 } from '@solana/web3.js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getConnection, getExplorerUrl } from './connection';
 import { getKeypair } from './wallet';
+
+const TX_CACHE_KEY = 'p01_tx_cache_';
 
 export interface TransactionResult {
   signature: string;
@@ -26,6 +29,38 @@ export interface TransactionHistory {
   from?: string;
   to?: string;
   status: 'confirmed' | 'failed' | 'pending';
+}
+
+/**
+ * Get cached transactions (instant, from local storage)
+ */
+export async function getCachedTransactions(publicKey: string): Promise<TransactionHistory[]> {
+  try {
+    console.log('[Transactions] Loading cache for:', publicKey.slice(0, 8) + '...');
+    const cached = await AsyncStorage.getItem(TX_CACHE_KEY + publicKey);
+    if (cached) {
+      const data = JSON.parse(cached);
+      console.log('[Transactions] ✓ CACHE HIT:', data.length, 'transactions loaded instantly');
+      return data;
+    } else {
+      console.log('[Transactions] ✗ CACHE MISS: No cached transactions found');
+    }
+  } catch (error) {
+    console.warn('[Transactions] Failed to load cache:', error);
+  }
+  return [];
+}
+
+/**
+ * Save transactions to local cache
+ */
+async function cacheTransactions(publicKey: string, transactions: TransactionHistory[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(TX_CACHE_KEY + publicKey, JSON.stringify(transactions));
+    console.log('[Transactions] Cached', transactions.length, 'transactions');
+  } catch (error) {
+    console.warn('[Transactions] Failed to cache:', error);
+  }
 }
 
 /**
@@ -84,53 +119,126 @@ export async function sendSol(
 
 /**
  * Get transaction history for a wallet
+ * Fetches transactions one by one to avoid rate limits
  */
 export async function getTransactionHistory(
   publicKey: string,
-  limit: number = 20
+  limit: number = 20 // Need 20 to include older SOL transfers past memo transactions
 ): Promise<TransactionHistory[]> {
   try {
+    console.log('=== [Transactions] Fetching history for:', publicKey, '===');
     const connection = getConnection();
     const pubkey = new PublicKey(publicKey);
 
-    // Get signatures
-    const signatures = await connection.getSignaturesForAddress(pubkey, {
-      limit,
-    });
+    // Get signatures with retry for server errors
+    let signatures;
+    let retries = 2;
+    while (retries > 0) {
+      try {
+        signatures = await connection.getSignaturesForAddress(pubkey, { limit });
+        break;
+      } catch (sigError: any) {
+        const errMsg = sigError?.message || String(sigError);
+        if (errMsg.includes('500') || errMsg.includes('502') || errMsg.includes('503') || errMsg.includes('429')) {
+          console.log(`[Transactions] Server error getting signatures, retrying in 3s... (${retries} left)`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          retries--;
+          if (retries === 0) throw sigError;
+        } else {
+          throw sigError;
+        }
+      }
+    }
 
-    if (signatures.length === 0) {
+    if (!signatures) {
+      console.log('[Transactions] Failed to get signatures after retries');
       return [];
     }
 
-    // Get transaction details
-    const transactions = await connection.getParsedTransactions(
-      signatures.map((s) => s.signature),
-      { maxSupportedTransactionVersion: 0 }
-    );
+    console.log('[Transactions] Found', signatures.length, 'signatures');
+
+    if (signatures.length === 0) {
+      console.log('[Transactions] No signatures found');
+      return [];
+    }
 
     const history: TransactionHistory[] = [];
 
+    // Fetch transactions one by one with delay to avoid rate limits
     for (let i = 0; i < signatures.length; i++) {
       const sig = signatures[i];
-      const tx = transactions[i];
 
-      if (!tx) continue;
+      try {
+        // Add delay between requests to avoid rate limits (1.5 seconds)
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
 
-      const parsed = parseTransaction(tx, publicKey);
-      history.push({
-        signature: sig.signature,
-        timestamp: sig.blockTime,
-        status: sig.err ? 'failed' : 'confirmed',
-        ...parsed,
-      });
+        const tx = await connection.getParsedTransaction(sig.signature, {
+          maxSupportedTransactionVersion: 0,
+        });
+
+        if (!tx) {
+          continue;
+        }
+
+        const parsed = parseTransaction(tx, publicKey);
+
+        // Include all transactions with SOL changes (skip memo-only)
+        if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
+          console.log('[Transactions] Adding:', parsed.type, parsed.amount?.toFixed(4), parsed.token);
+          history.push({
+            signature: sig.signature,
+            timestamp: sig.blockTime,
+            status: sig.err ? 'failed' : 'confirmed',
+            ...parsed,
+          });
+        }
+      } catch (txError: any) {
+        // Skip this transaction on error, continue with others
+        const msg = txError?.message || String(txError);
+        const isRateLimit = msg.includes('429');
+        const isServerError = msg.includes('500') || msg.includes('502') || msg.includes('503');
+
+        if (isRateLimit || isServerError) {
+          const errorType = isRateLimit ? 'Rate limited' : 'Server error';
+          console.log(`[Transactions] ${errorType} (${msg.slice(0, 50)}), waiting 5s and retrying...`);
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          // Retry this transaction once
+          try {
+            const tx = await connection.getParsedTransaction(sig.signature, {
+              maxSupportedTransactionVersion: 0,
+            });
+            if (tx) {
+              const parsed = parseTransaction(tx, publicKey);
+              if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
+                console.log('[Transactions] Retry successful:', parsed.type, parsed.amount?.toFixed(4));
+                history.push({
+                  signature: sig.signature,
+                  timestamp: sig.blockTime,
+                  status: sig.err ? 'failed' : 'confirmed',
+                  ...parsed,
+                });
+              }
+            }
+          } catch {
+            console.log('[Transactions] Retry also failed, skipping...');
+          }
+        }
+      }
+    }
+
+    console.log('[Transactions] Total:', history.length, 'transactions returned');
+
+    // Cache the results for instant loading next time
+    if (history.length > 0) {
+      await cacheTransactions(publicKey, history);
     }
 
     return history;
   } catch (error: any) {
-    // Silently handle rate limit errors - they're expected on public RPCs
-    if (!error?.message?.includes('429')) {
-      console.warn('Failed to fetch transaction history:', error?.message || error);
-    }
+    const errMsg = error?.message || String(error);
+    console.warn('[Transactions] Error fetching history:', errMsg.slice(0, 100));
     return [];
   }
 }
@@ -142,40 +250,104 @@ function parseTransaction(
   tx: ParsedTransactionWithMeta,
   walletAddress: string
 ): Partial<TransactionHistory> {
-  const instructions = tx.transaction.message.instructions;
   const walletPubkey = walletAddress;
 
+  // FIRST: Check pre/post balances for SOL changes (catches airdrops and all transfers)
+  const accountKeys = tx.transaction.message.accountKeys;
+  const preBalances = tx.meta?.preBalances || [];
+  const postBalances = tx.meta?.postBalances || [];
+
+  // Find wallet in account keys
+  let walletIndex = -1;
+  for (let i = 0; i < accountKeys.length; i++) {
+    const key = accountKeys[i];
+    const keyStr = typeof key === 'object' && 'pubkey' in key
+      ? key.pubkey.toString()
+      : String(key);
+    if (keyStr === walletPubkey) {
+      walletIndex = i;
+      break;
+    }
+  }
+
+  if (walletIndex !== -1) {
+    const preBal = preBalances[walletIndex] || 0;
+    const postBal = postBalances[walletIndex] || 0;
+    const diff = postBal - preBal;
+
+    // If there's a significant SOL change (> 0.0001 SOL = 100000 lamports)
+    if (Math.abs(diff) > 100000) {
+      const amount = Math.abs(diff) / LAMPORTS_PER_SOL;
+      const isReceive = diff > 0;
+
+      // Try to find the counterparty
+      let counterparty: string | undefined;
+      for (let i = 0; i < accountKeys.length; i++) {
+        if (i !== walletIndex) {
+          const otherPre = preBalances[i] || 0;
+          const otherPost = postBalances[i] || 0;
+          const otherDiff = otherPost - otherPre;
+          // If this account had an opposite change, it's likely the counterparty
+          if ((isReceive && otherDiff < -100000) || (!isReceive && otherDiff > 100000)) {
+            const key = accountKeys[i];
+            counterparty = typeof key === 'object' && 'pubkey' in key
+              ? key.pubkey.toString()
+              : String(key);
+            break;
+          }
+        }
+      }
+
+      // For airdrops, counterparty might be the system program
+      if (!counterparty && isReceive) {
+        counterparty = 'Airdrop/Faucet';
+      }
+
+      return {
+        type: isReceive ? 'receive' : 'send',
+        amount,
+        token: 'SOL',
+        from: isReceive ? counterparty : walletPubkey,
+        to: isReceive ? walletPubkey : counterparty,
+      };
+    }
+  }
+
+  // SECOND: Fall back to instruction parsing
+  const instructions = tx.transaction.message.instructions;
   for (const instruction of instructions) {
     if ('parsed' in instruction) {
       const parsed = instruction.parsed;
 
       // System program transfer
-      if (parsed.type === 'transfer' && parsed.info) {
-        const { source, destination, lamports } = parsed.info;
-        const amount = lamports / LAMPORTS_PER_SOL;
-        const isSend = source === walletPubkey;
+      if (parsed && typeof parsed === 'object' && 'type' in parsed) {
+        if (parsed.type === 'transfer' && parsed.info) {
+          const { source, destination, lamports } = parsed.info;
+          const amount = lamports / LAMPORTS_PER_SOL;
+          const isSend = source === walletPubkey;
 
-        return {
-          type: isSend ? 'send' : 'receive',
-          amount,
-          token: 'SOL',
-          from: source,
-          to: destination,
-        };
-      }
+          return {
+            type: isSend ? 'send' : 'receive',
+            amount,
+            token: 'SOL',
+            from: source,
+            to: destination,
+          };
+        }
 
-      // SPL Token transfer
-      if (parsed.type === 'transferChecked' && parsed.info) {
-        const { source, destination, tokenAmount } = parsed.info;
-        const isSend = source === walletPubkey;
+        // SPL Token transfer
+        if (parsed.type === 'transferChecked' && parsed.info) {
+          const { source, destination, tokenAmount } = parsed.info;
+          const isSend = source === walletPubkey;
 
-        return {
-          type: isSend ? 'send' : 'receive',
-          amount: tokenAmount?.uiAmount,
-          token: 'Token',
-          from: source,
-          to: destination,
-        };
+          return {
+            type: isSend ? 'send' : 'receive',
+            amount: tokenAmount?.uiAmount,
+            token: 'Token',
+            from: source,
+            to: destination,
+          };
+        }
       }
     }
   }

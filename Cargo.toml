@@ -64,3 +64,12 @@ borsh-derive = "0.10.3"
 # Common utilities
 thiserror = "1.0"
 bytemuck = { version = "1.14", features = ["derive"] }
+
+# ZK dependencies for shielded transactions
+ark-bn254 = "0.4.0"
+ark-groth16 = "0.4.0"
+ark-serialize = "0.4.0"
+ark-ff = "0.4.0"
+ark-ec = "0.4.0"
+ark-std = "0.4.0"
+sha3 = "0.10"

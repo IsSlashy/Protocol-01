@@ -2,6 +2,14 @@ import React from 'react';
 import { TouchableOpacity, View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+const COLORS = {
+  text: '#ffffff',
+  textSecondary: '#9ca3af',
+  textMuted: '#6b7280',
+  surface: '#27272a',
+  cyan: '#06b6d4',
+};
+
 interface SettingsRowProps {
   label: string;
   value?: string;
@@ -21,30 +29,43 @@ export const SettingsRow: React.FC<SettingsRowProps> = ({
 }) => {
   return (
     <TouchableOpacity
-      className={`
-        flex-row items-center justify-between
-        py-4 px-4
-        ${disabled ? 'opacity-50' : ''}
-      `}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 16,
+        paddingHorizontal: 16,
+        opacity: disabled ? 0.5 : 1,
+      }}
       onPress={onPress}
       disabled={disabled || !onPress}
       activeOpacity={0.7}
     >
-      <View className="flex-row items-center flex-1">
+      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
         {leftIcon && (
-          <View className="w-8 h-8 rounded-lg bg-p01-elevated items-center justify-center mr-3">
-            <Ionicons name={leftIcon} size={18} color="#39c5bb" />
+          <View
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              backgroundColor: COLORS.surface,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 12,
+            }}
+          >
+            <Ionicons name={leftIcon} size={18} color={COLORS.cyan} />
           </View>
         )}
-        <Text className="text-white text-base font-medium">{label}</Text>
+        <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '500' }}>{label}</Text>
       </View>
 
-      <View className="flex-row items-center">
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         {value && (
-          <Text className="text-p01-gray text-sm mr-2">{value}</Text>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginRight: 8 }}>{value}</Text>
         )}
         {showChevron && onPress && (
-          <Ionicons name="chevron-forward" size={20} color="#555560" />
+          <Ionicons name="chevron-forward" size={20} color={COLORS.textMuted} />
         )}
       </View>
     </TouchableOpacity>

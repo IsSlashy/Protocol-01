@@ -216,10 +216,10 @@ export default function SecuritySettingsScreen() {
         </SettingsSection>
 
         {/* Info Card */}
-        <View className="mx-4 mt-2 p-4 bg-p01-surface rounded-2xl border border-p01-border">
-          <View className="flex-row items-start">
-            <Ionicons name="information-circle" size={20} color="#39c5bb" />
-            <Text className="text-p01-text-secondary text-sm ml-3 flex-1">
+        <View style={{ marginHorizontal: 16, marginTop: 8, padding: 16, backgroundColor: '#18181b', borderRadius: 16, borderWidth: 1, borderColor: '#3f3f46' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <Ionicons name="information-circle" size={20} color="#06b6d4" />
+            <Text style={{ color: '#9ca3af', fontSize: 14, marginLeft: 12, flex: 1 }}>
               Enabling biometrics and transaction authentication adds an extra layer of security to protect your assets.
             </Text>
           </View>

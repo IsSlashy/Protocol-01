@@ -1,16 +1,13 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
+  TextInput,
+  StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Input } from '../ui/Input';
-import { Button } from '../ui/Button';
-import { Card } from '../ui/Card';
 import { ServiceSelector, ServiceLogo } from './ServiceSelector';
 import {
   ServiceInfo,
@@ -18,8 +15,26 @@ import {
   CATEGORY_CONFIG,
 } from '../../services/subscriptions/serviceRegistry';
 
-const ACCENT_PINK = '#ff77a8';
-const VIOLET = '#8b5cf6';
+// Protocol 01 Color System
+const COLORS = {
+  // Primary
+  cyan: '#39c5bb',
+  cyanDim: '#2a9d95',
+  // Accent
+  accent: '#ff77a8',
+  brightCyan: '#00ffe5',
+  yellow: '#ffcc00',
+  // Surfaces
+  void: '#0a0a0c',
+  surface: '#151518',
+  surface2: '#1a1a1e',
+  border: '#2a2a30',
+  borderHover: '#3a3a42',
+  // Text
+  text: '#ffffff',
+  textMuted: '#888892',
+  textDim: '#555560',
+};
 
 interface CreateStreamFormProps {
   balance?: number;
@@ -33,14 +48,21 @@ interface CreateStreamFormProps {
   onSubmit?: (data: StreamFormData) => void;
   onSelectContact?: () => void;
   loading?: boolean;
+  accentColor?: string;
+  submitLabel?: string;
+  /** Hide service selector for personal payments (default: false) */
+  hideServiceSelector?: boolean;
 }
+
+export type PaymentFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly';
 
 export interface StreamFormData {
   recipient: string;
   name: string;
   token: string;
   amount: number;
-  duration: number; // in days
+  duration: number;
+  frequency: PaymentFrequency;
   isPrivate: boolean;
   serviceId?: string;
   serviceName?: string;
@@ -53,6 +75,13 @@ const DURATION_OPTIONS = [
   { label: '30d', value: 30 },
   { label: '90d', value: 90 },
   { label: 'Custom', value: -1 },
+];
+
+const FREQUENCY_OPTIONS: { label: string; value: PaymentFrequency }[] = [
+  { label: 'Daily', value: 'daily' },
+  { label: 'Weekly', value: 'weekly' },
+  { label: 'Bi-weekly', value: 'biweekly' },
+  { label: 'Monthly', value: 'monthly' },
 ];
 
 const TOKEN_OPTIONS = [
@@ -68,6 +97,9 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   onSubmit,
   onSelectContact,
   loading = false,
+  accentColor = COLORS.accent,
+  submitLabel = 'Create Stream',
+  hideServiceSelector = false,
 }) => {
   const [recipient, setRecipient] = useState('');
   const [name, setName] = useState('');
@@ -75,25 +107,24 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   const [amount, setAmount] = useState('');
   const [selectedDuration, setSelectedDuration] = useState(DURATION_OPTIONS[1].value);
   const [customDuration, setCustomDuration] = useState('');
+  const [selectedFrequency, setSelectedFrequency] = useState<PaymentFrequency>('monthly');
   const [isPrivate, setIsPrivate] = useState(true);
   const [showTokenSelector, setShowTokenSelector] = useState(false);
   const [errors, setErrors] = useState<{ recipient?: string; amount?: string }>({});
   const [selectedService, setSelectedService] = useState<ServiceInfo | null>(null);
   const [autoDetectedService, setAutoDetectedService] = useState<ServiceInfo | null>(null);
 
-  // Auto-detect service from name input
+  // Auto-detect service from name (only if service selector is visible)
   useEffect(() => {
-    if (name && name.length >= 3 && !selectedService) {
+    if (!hideServiceSelector && name && name.length >= 3 && !selectedService) {
       const detected = detectServiceFromName(name, 0.7);
       setAutoDetectedService(detected);
     } else {
       setAutoDetectedService(null);
     }
-  }, [name, selectedService]);
+  }, [name, selectedService, hideServiceSelector]);
 
-  // Get the active service (manually selected or auto-detected)
   const activeService = selectedService || autoDetectedService;
-
   const actualDuration = selectedDuration === -1 ? Number(customDuration) || 0 : selectedDuration;
   const amountNum = Number(amount) || 0;
   const tokenBalance = balance || selectedToken.balance;
@@ -137,7 +168,6 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   const handleSubmit = () => {
     if (!validateForm()) return;
 
-    // Determine the name to use (selected service, auto-detected, or custom)
     const streamName = activeService
       ? activeService.name
       : name || `Stream to ${recipient.slice(0, 8)}...`;
@@ -149,6 +179,7 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
         token: tokenSymbol,
         amount: amountNum,
         duration: actualDuration,
+        frequency: selectedFrequency,
         isPrivate,
         serviceId: activeService?.id,
         serviceName: activeService?.name,
@@ -170,111 +201,140 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   const isValid = recipient && amountNum > 0 && actualDuration > 0;
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      className="flex-1"
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingBottom: 40 }}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="always"
+      keyboardDismissMode="on-drag"
+      automaticallyAdjustKeyboardInsets={true}
     >
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Recipient Input */}
-        <View className="mb-4">
-          <View className="flex-row items-center justify-between mb-2">
-            <Text className="text-p01-text-secondary text-sm font-medium">
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: 14, fontWeight: '500' }}>
               Recipient Address
             </Text>
             {onSelectContact && (
               <TouchableOpacity
                 onPress={onSelectContact}
-                className="flex-row items-center px-3 py-1.5 rounded-lg"
-                style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(255, 119, 168, 0.2)',
+                }}
               >
-                <Ionicons name="people-outline" size={16} color={ACCENT_PINK} />
-                <Text className="text-sm ml-1" style={{ color: ACCENT_PINK }}>
+                <Ionicons name="people-outline" size={16} color={COLORS.accent} />
+                <Text style={{ color: COLORS.accent, fontSize: 14, marginLeft: 4 }}>
                   Contacts
                 </Text>
               </TouchableOpacity>
             )}
           </View>
-          <Input
-            placeholder="Enter wallet address"
-            value={recipient}
-            onChangeText={(text) => {
-              setRecipient(text);
-              setErrors({ ...errors, recipient: undefined });
-            }}
-            error={errors.recipient}
-            leftIcon="wallet-outline"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          <View style={styles.inputContainer}>
+            <Ionicons name="wallet-outline" size={20} color={COLORS.textMuted} style={{ marginRight: 12 }} />
+            <TextInput
+              style={styles.textInput}
+              placeholder="Enter wallet address"
+              placeholderTextColor={COLORS.textDim}
+              value={recipient}
+              onChangeText={setRecipient}
+              autoCapitalize="none"
+              autoCorrect={false}
+              blurOnSubmit={false}
+            />
+          </View>
+          {errors.recipient && (
+            <Text style={styles.errorText}>{errors.recipient}</Text>
+          )}
         </View>
 
-        {/* Service Selector */}
-        <View className="mb-4">
-          <Text className="text-p01-text-secondary text-sm mb-2 font-medium">
-            Service (Optional)
-          </Text>
-          <ServiceSelector
-            selectedService={selectedService}
-            onSelectService={(service) => {
-              setSelectedService(service);
-              // If a service is selected, update the name to match
-              if (service) {
-                setName(service.name);
-              }
-            }}
-            placeholder="Select a known service..."
-          />
-        </View>
-
-        {/* Stream Name - with auto-detection indicator */}
-        <View className="mb-4">
-          <View className="flex-row items-center justify-between mb-2">
-            <Text className="text-p01-text-secondary text-sm font-medium">
-              {selectedService ? 'Service Name' : 'Stream Name (Optional)'}
+        {/* Service Selector - Hidden for personal payments */}
+        {!hideServiceSelector && (
+          <View style={{ marginBottom: 20 }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: 14, marginBottom: 8, fontWeight: '500' }}>
+              Service (Optional)
             </Text>
-            {autoDetectedService && !selectedService && (
+            <ServiceSelector
+              selectedService={selectedService}
+              onSelectService={(service) => {
+                setSelectedService(service);
+                if (service) {
+                  setName(service.name);
+                }
+              }}
+              placeholder="Select a known service..."
+            />
+          </View>
+        )}
+
+        {/* Stream Name */}
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: 14, fontWeight: '500' }}>
+              {hideServiceSelector
+                ? 'Payment Name (Optional)'
+                : selectedService
+                  ? 'Service Name'
+                  : 'Stream Name (Optional)'}
+            </Text>
+            {!hideServiceSelector && autoDetectedService && !selectedService && (
               <TouchableOpacity
                 onPress={() => setSelectedService(autoDetectedService)}
-                className="flex-row items-center px-2 py-1 rounded-lg"
-                style={{ backgroundColor: `${autoDetectedService.color || VIOLET}20` }}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 8,
+                  backgroundColor: `${autoDetectedService.color || COLORS.cyan}20`,
+                }}
               >
-                <Ionicons
-                  name="sparkles"
-                  size={12}
-                  color={autoDetectedService.color || VIOLET}
-                />
-                <Text
-                  className="text-xs ml-1"
-                  style={{ color: autoDetectedService.color || VIOLET }}
-                >
+                <Ionicons name="sparkles" size={12} color={autoDetectedService.color || COLORS.cyan} />
+                <Text style={{ color: autoDetectedService.color || COLORS.cyan, fontSize: 12, marginLeft: 4 }}>
                   Detected: {autoDetectedService.name}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
-          <Input
-            placeholder={selectedService ? selectedService.name : 'e.g., Monthly salary'}
-            value={name}
-            onChangeText={setName}
-            leftIcon="pricetag-outline"
-            editable={!selectedService}
-          />
-          {selectedService && (
+          <View style={styles.inputContainer}>
+            <Ionicons name="pricetag-outline" size={20} color={COLORS.textMuted} style={{ marginRight: 12 }} />
+            <TextInput
+              style={styles.textInput}
+              placeholder={hideServiceSelector ? 'e.g., Salary, Rent, Allowance' : selectedService ? selectedService.name : 'e.g., Monthly salary'}
+              placeholderTextColor={COLORS.textDim}
+              value={name}
+              onChangeText={setName}
+              editable={!selectedService}
+              blurOnSubmit={false}
+            />
+          </View>
+          {!hideServiceSelector && selectedService && (
             <View
-              className="flex-row items-center mt-2 px-3 py-2 rounded-lg"
-              style={{ backgroundColor: `${selectedService.color || VIOLET}15` }}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 8,
+                backgroundColor: `${selectedService.color || COLORS.cyan}15`,
+              }}
             >
               <ServiceLogo service={selectedService} size={24} />
-              <Text className="text-white text-sm ml-2 flex-1">
+              <Text style={{ color: COLORS.text, fontSize: 14, marginLeft: 8, flex: 1 }}>
                 {selectedService.name}
               </Text>
-              <View className="flex-row items-center">
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons
                   name={CATEGORY_CONFIG[selectedService.category].icon as any}
                   size={14}
                   color={CATEGORY_CONFIG[selectedService.category].color}
                 />
-                <Text className="text-xs ml-1" style={{ color: '#888892' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: 12, marginLeft: 4 }}>
                   {CATEGORY_CONFIG[selectedService.category].label}
                 </Text>
               </View>
@@ -283,24 +343,43 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
         </View>
 
         {/* Token Selector */}
-        <View className="mb-4">
-          <Text className="text-p01-text-secondary text-sm mb-2 font-medium">Token</Text>
+        <View style={{ marginBottom: 20 }}>
+          <Text style={{ color: COLORS.textMuted, fontSize: 14, marginBottom: 8, fontWeight: '500' }}>
+            Token
+          </Text>
           <TouchableOpacity
             onPress={() => setShowTokenSelector(!showTokenSelector)}
-            className="bg-p01-surface border border-p01-border rounded-xl p-4 flex-row items-center justify-between"
+            style={{
+              backgroundColor: COLORS.surface,
+              borderWidth: 1,
+              borderColor: COLORS.border,
+              borderRadius: 12,
+              padding: 16,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
           >
-            <View className="flex-row items-center gap-3">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <View
-                className="w-10 h-10 rounded-full items-center justify-center"
-                style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  backgroundColor: 'rgba(255, 119, 168, 0.2)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
               >
-                <Text style={{ color: ACCENT_PINK }} className="font-bold">
+                <Text style={{ color: COLORS.accent, fontWeight: 'bold' }}>
                   {selectedToken.symbol.slice(0, 1)}
                 </Text>
               </View>
               <View>
-                <Text className="text-white font-semibold">{selectedToken.symbol}</Text>
-                <Text className="text-p01-text-secondary text-xs">
+                <Text style={{ color: COLORS.text, fontWeight: '600', fontSize: 16 }}>
+                  {selectedToken.symbol}
+                </Text>
+                <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
                   Balance: {selectedToken.balance} {selectedToken.symbol}
                 </Text>
               </View>
@@ -308,12 +387,21 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
             <Ionicons
               name={showTokenSelector ? 'chevron-up' : 'chevron-down'}
               size={20}
-              color="#888892"
+              color={COLORS.textMuted}
             />
           </TouchableOpacity>
 
           {showTokenSelector && (
-            <View className="mt-2 bg-p01-surface border border-p01-border rounded-xl overflow-hidden">
+            <View
+              style={{
+                marginTop: 8,
+                backgroundColor: COLORS.surface,
+                borderWidth: 1,
+                borderColor: COLORS.border,
+                borderRadius: 12,
+                overflow: 'hidden',
+              }}
+            >
               {TOKEN_OPTIONS.map((token, index) => (
                 <TouchableOpacity
                   key={token.symbol}
@@ -321,27 +409,34 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
                     setSelectedToken(token);
                     setShowTokenSelector(false);
                   }}
-                  className={`p-4 flex-row items-center justify-between ${
-                    index < TOKEN_OPTIONS.length - 1 ? 'border-b border-p01-border' : ''
-                  }`}
-                  style={
-                    selectedToken.symbol === token.symbol
-                      ? { backgroundColor: 'rgba(255, 119, 168, 0.1)' }
-                      : {}
-                  }
+                  style={{
+                    padding: 16,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    borderBottomWidth: index < TOKEN_OPTIONS.length - 1 ? 1 : 0,
+                    borderBottomColor: COLORS.border,
+                    backgroundColor: selectedToken.symbol === token.symbol ? 'rgba(255, 119, 168, 0.1)' : 'transparent',
+                  }}
                 >
-                  <View className="flex-row items-center gap-3">
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View
-                      className="w-8 h-8 rounded-full items-center justify-center"
-                      style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        backgroundColor: 'rgba(255, 119, 168, 0.2)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
                     >
-                      <Text style={{ color: ACCENT_PINK }} className="font-bold text-sm">
+                      <Text style={{ color: COLORS.accent, fontWeight: 'bold', fontSize: 14 }}>
                         {token.symbol.slice(0, 1)}
                       </Text>
                     </View>
-                    <Text className="text-white">{token.symbol}</Text>
+                    <Text style={{ color: COLORS.text, fontSize: 16 }}>{token.symbol}</Text>
                   </View>
-                  <Text className="text-p01-text-secondary text-sm">
+                  <Text style={{ color: COLORS.textMuted, fontSize: 14 }}>
                     {token.balance} {token.symbol}
                   </Text>
                 </TouchableOpacity>
@@ -351,52 +446,60 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
         </View>
 
         {/* Amount Input */}
-        <View className="mb-4">
-          <View className="flex-row items-center justify-between mb-2">
-            <Text className="text-p01-text-secondary text-sm font-medium">Total Amount</Text>
-            <Text className="text-p01-text-secondary text-sm">
+        <View style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ color: COLORS.textMuted, fontSize: 14, fontWeight: '500' }}>
+              Total Amount
+            </Text>
+            <Text style={{ color: COLORS.textMuted, fontSize: 14 }}>
               Balance: {tokenBalance.toFixed(4)} {tokenSymbol}
             </Text>
           </View>
-          <Input
-            placeholder="0.00"
-            value={amount}
-            onChangeText={(text) => {
-              const cleaned = text.replace(/[^0-9.]/g, '');
-              setAmount(cleaned);
-              setErrors({ ...errors, amount: undefined });
-            }}
-            error={errors.amount}
-            keyboardType="decimal-pad"
-            leftIcon="wallet-outline"
-          />
+          <View style={styles.inputContainer}>
+            <Ionicons name="wallet-outline" size={20} color={COLORS.textMuted} style={{ marginRight: 12 }} />
+            <TextInput
+              style={styles.textInput}
+              placeholder="0.00"
+              placeholderTextColor={COLORS.textDim}
+              value={amount}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9.]/g, '');
+                setAmount(cleaned);
+              }}
+              keyboardType="decimal-pad"
+              blurOnSubmit={false}
+            />
+          </View>
+          {errors.amount && (
+            <Text style={styles.errorText}>{errors.amount}</Text>
+          )}
         </View>
 
         {/* Duration Selector */}
-        <View className="mb-4">
-          <Text className="text-p01-text-secondary text-sm mb-2 font-medium">Duration</Text>
-          <View className="flex-row gap-2">
+        <View style={{ marginBottom: 20 }}>
+          <Text style={{ color: COLORS.textMuted, fontSize: 14, marginBottom: 8, fontWeight: '500' }}>
+            Duration
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
             {DURATION_OPTIONS.map((option) => (
               <TouchableOpacity
                 key={option.value}
                 onPress={() => setSelectedDuration(option.value)}
-                className="flex-1 py-3 rounded-xl items-center justify-center"
                 style={{
-                  backgroundColor:
-                    selectedDuration === option.value
-                      ? 'rgba(255, 119, 168, 0.2)'
-                      : 'rgba(21, 21, 24, 1)',
+                  flex: 1,
+                  paddingVertical: 14,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: selectedDuration === option.value ? `${accentColor}30` : COLORS.surface,
                   borderWidth: 1,
-                  borderColor:
-                    selectedDuration === option.value
-                      ? 'rgba(255, 119, 168, 0.5)'
-                      : 'rgba(42, 42, 48, 0.5)',
+                  borderColor: selectedDuration === option.value ? `${accentColor}80` : COLORS.border,
                 }}
               >
                 <Text
-                  className="font-semibold"
                   style={{
-                    color: selectedDuration === option.value ? ACCENT_PINK : '#888892',
+                    fontWeight: '600',
+                    color: selectedDuration === option.value ? accentColor : COLORS.textMuted,
                   }}
                 >
                   {option.label}
@@ -406,54 +509,99 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
           </View>
 
           {selectedDuration === -1 && (
-            <Input
-              placeholder="Enter days"
-              value={customDuration}
-              onChangeText={setCustomDuration}
-              keyboardType="number-pad"
-              containerClassName="mt-2"
-            />
+            <View style={[styles.inputContainer, { marginTop: 8 }]}>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Enter days"
+                placeholderTextColor={COLORS.textDim}
+                value={customDuration}
+                onChangeText={setCustomDuration}
+                keyboardType="number-pad"
+                blurOnSubmit={false}
+              />
+            </View>
           )}
+        </View>
+
+        {/* Frequency Selector */}
+        <View style={{ marginBottom: 20 }}>
+          <Text style={{ color: COLORS.textMuted, fontSize: 14, marginBottom: 8, fontWeight: '500' }}>
+            Payment Frequency
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {FREQUENCY_OPTIONS.map((option) => (
+              <TouchableOpacity
+                key={option.value}
+                onPress={() => setSelectedFrequency(option.value)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 14,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: selectedFrequency === option.value ? `${accentColor}30` : COLORS.surface,
+                  borderWidth: 1,
+                  borderColor: selectedFrequency === option.value ? `${accentColor}80` : COLORS.border,
+                }}
+              >
+                <Text
+                  style={{
+                    fontWeight: '600',
+                    fontSize: 12,
+                    color: selectedFrequency === option.value ? accentColor : COLORS.textMuted,
+                  }}
+                >
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {/* Preview Card */}
         {preview && (
-          <Card
-            variant="outlined"
-            className="mb-4"
-            style={{ borderColor: 'rgba(255, 119, 168, 0.3)' }}
+          <View
+            style={{
+              marginBottom: 20,
+              backgroundColor: COLORS.surface,
+              borderRadius: 16,
+              padding: 16,
+              borderWidth: 1,
+              borderColor: `${accentColor}50`,
+            }}
           >
-            <Text className="text-white font-semibold mb-3">Stream Preview</Text>
+            <Text style={{ color: COLORS.text, fontWeight: '600', fontSize: 16, marginBottom: 16 }}>
+              Stream Preview
+            </Text>
 
-            <View className="space-y-3">
-              <View className="flex-row justify-between items-center">
-                <Text className="text-p01-text-secondary">Rate</Text>
-                <View className="flex-row items-center">
+            <View style={{ gap: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ color: COLORS.textMuted }}>Frequency</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <View
-                    className="w-2 h-2 rounded-full mr-2"
-                    style={{ backgroundColor: ACCENT_PINK }}
+                    style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: accentColor, marginRight: 8 }}
                   />
-                  <Text className="text-white font-mono">
-                    {preview.rate.toFixed(4)} {tokenSymbol}/day
+                  <Text style={{ color: COLORS.text, fontWeight: '600' }}>
+                    {FREQUENCY_OPTIONS.find(f => f.value === selectedFrequency)?.label}
                   </Text>
                 </View>
               </View>
 
-              <View className="flex-row justify-between">
-                <Text className="text-p01-text-secondary">Per Second</Text>
-                <Text className="text-white font-mono">
-                  {preview.ratePerSecond.toFixed(8)} {tokenSymbol}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: COLORS.textMuted }}>Amount per payment</Text>
+                <Text style={{ color: COLORS.text, fontFamily: 'monospace' }}>
+                  {amountNum.toFixed(4)} {tokenSymbol}
                 </Text>
               </View>
 
-              <View className="flex-row justify-between">
-                <Text className="text-p01-text-secondary">Start</Text>
-                <Text className="text-white">Immediately</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: COLORS.textMuted }}>Start</Text>
+                <Text style={{ color: COLORS.text }}>Immediately</Text>
               </View>
 
-              <View className="flex-row justify-between">
-                <Text className="text-p01-text-secondary">End</Text>
-                <Text className="text-white">
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: COLORS.textMuted }}>End</Text>
+                <Text style={{ color: COLORS.text }}>
                   {preview.endDate.toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
@@ -466,44 +614,61 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
             {/* Private Toggle */}
             <TouchableOpacity
               onPress={() => setIsPrivate(!isPrivate)}
-              className="flex-row items-center justify-between mt-4 pt-4"
-              style={{ borderTopWidth: 1, borderTopColor: 'rgba(42, 42, 48, 0.5)' }}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginTop: 16,
+                paddingTop: 16,
+                borderTopWidth: 1,
+                borderTopColor: COLORS.border,
+              }}
             >
-              <View className="flex-row items-center gap-2">
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons
                   name="shield-checkmark"
                   size={18}
-                  color={isPrivate ? ACCENT_PINK : '#888892'}
+                  color={isPrivate ? accentColor : COLORS.textMuted}
                 />
-                <Text className="text-white">Private Stream</Text>
+                <Text style={{ color: COLORS.text }}>Private Stream</Text>
               </View>
               <View
-                className="w-12 h-7 rounded-full justify-center px-1"
                 style={{
-                  backgroundColor: isPrivate
-                    ? 'rgba(255, 119, 168, 0.3)'
-                    : 'rgba(42, 42, 48, 0.5)',
+                  width: 48,
+                  height: 28,
+                  borderRadius: 14,
+                  justifyContent: 'center',
+                  paddingHorizontal: 4,
+                  backgroundColor: isPrivate ? `${accentColor}50` : COLORS.border,
                 }}
               >
                 <View
-                  className="w-5 h-5 rounded-full"
                   style={{
-                    backgroundColor: isPrivate ? ACCENT_PINK : '#888892',
+                    width: 20,
+                    height: 20,
+                    borderRadius: 10,
+                    backgroundColor: isPrivate ? accentColor : COLORS.textMuted,
                     alignSelf: isPrivate ? 'flex-end' : 'flex-start',
                   }}
                 />
               </View>
             </TouchableOpacity>
-          </Card>
+          </View>
         )}
 
         {/* Info Box */}
         <View
-          className="mb-4 p-3 rounded-xl flex-row items-start"
-          style={{ backgroundColor: 'rgba(255, 119, 168, 0.1)' }}
+          style={{
+            marginBottom: 20,
+            padding: 12,
+            borderRadius: 12,
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            backgroundColor: `${accentColor}18`,
+          }}
         >
-          <Ionicons name="information-circle" size={18} color={ACCENT_PINK} />
-          <Text className="text-p01-text-secondary text-xs ml-2 flex-1">
+          <Ionicons name="information-circle" size={18} color={accentColor} />
+          <Text style={{ color: COLORS.textMuted, fontSize: 12, marginLeft: 8, flex: 1 }}>
             The recipient will receive tokens continuously over the stream duration. You can pause
             or cancel the stream at any time.
           </Text>
@@ -513,26 +678,53 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
         <TouchableOpacity
           onPress={handleSubmit}
           disabled={!isValid || loading}
-          className="py-4 rounded-xl items-center justify-center mb-8"
           style={{
-            backgroundColor: isValid ? ACCENT_PINK : 'rgba(255, 119, 168, 0.3)',
-            shadowColor: ACCENT_PINK,
+            paddingVertical: 18,
+            borderRadius: 14,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 32,
+            backgroundColor: isValid ? accentColor : `${accentColor}50`,
+            shadowColor: accentColor,
             shadowOpacity: isValid ? 0.4 : 0,
             shadowRadius: 12,
             shadowOffset: { width: 0, height: 4 },
             opacity: loading ? 0.7 : 1,
           }}
         >
-          <View className="flex-row items-center gap-2">
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Ionicons name="water" size={20} color="#fff" />
-            <Text className="text-white font-semibold text-lg">
-              {loading ? 'Creating...' : 'Create Stream'}
+            <Text style={{ color: COLORS.text, fontWeight: '600', fontSize: 18 }}>
+              {loading ? 'Creating...' : submitLabel}
             </Text>
           </View>
         </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
   );
 };
+
+const styles = StyleSheet.create({
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  textInput: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 16,
+  },
+  errorText: {
+    color: '#ef4444',
+    fontSize: 12,
+    marginTop: 6,
+    marginLeft: 4,
+  },
+});
 
 export default CreateStreamForm;

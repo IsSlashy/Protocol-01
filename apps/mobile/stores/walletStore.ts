@@ -10,12 +10,14 @@ import {
 } from '../services/solana/wallet';
 import {
   getWalletBalance,
+  getCachedBalance,
   WalletBalance,
   formatBalance,
   formatUsd,
 } from '../services/solana/balance';
 import {
   getTransactionHistory,
+  getCachedTransactions,
   TransactionHistory,
   sendSol,
   TransactionResult,
@@ -87,15 +89,49 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       const exists = await walletExists();
       if (exists) {
         const publicKey = await getPublicKey();
+
+        // INSTANT: Load cached data immediately (like Phantom)
+        const [cachedBalance, cachedTransactions] = await Promise.all([
+          getCachedBalance(publicKey),
+          getCachedTransactions(publicKey),
+        ]);
+
         set({
           hasWallet: true,
           publicKey,
-          // Set default balance to avoid null errors
-          balance: { sol: 0, tokens: [], totalUsd: 0 },
+          // Load cached balance or default
+          balance: cachedBalance || { sol: 0, tokens: [], totalUsd: 0 },
+          // Load cached transactions instantly
+          transactions: cachedTransactions,
         });
 
-        // Don't auto-fetch on startup to avoid rate limits
-        // User can pull-to-refresh to load balance
+        console.log('[WalletStore] INSTANT: Loaded cached balance:', cachedBalance?.sol || 0, 'SOL,', cachedTransactions.length, 'transactions');
+
+        // BACKGROUND: Refresh balance (update cache)
+        setTimeout(async () => {
+          console.log('[WalletStore] Background refresh: fetching fresh balance...');
+          try {
+            const balance = await getWalletBalance(publicKey);
+            console.log('[WalletStore] Fresh balance fetched:', balance.sol, 'SOL');
+            set({ balance });
+          } catch (err: any) {
+            console.warn('[WalletStore] Failed to fetch fresh balance:', err?.message || err);
+            // Keep cached balance on error
+          }
+        }, 500);
+
+        // BACKGROUND: Fetch fresh transactions (will update cache)
+        setTimeout(async () => {
+          console.log('[WalletStore] Background refresh: fetching fresh transactions...');
+          try {
+            const transactions = await getTransactionHistory(publicKey);
+            console.log('[WalletStore] Fresh transactions fetched:', transactions.length);
+            set({ transactions });
+          } catch (err: any) {
+            console.warn('[WalletStore] Failed to fetch fresh transactions:', err?.message || err);
+            // Keep cached transactions on error
+          }
+        }, 3000); // Refresh in background after 3s
       }
 
       set({ initialized: true, loading: false });

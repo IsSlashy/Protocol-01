@@ -23,6 +23,7 @@ import {
   executeSubscriptionPayment,
 } from '../services/stream';
 import { NetworkType } from '../services/wallet';
+import { fetchSubscriptionsFromChain, mergeSubscriptions } from '../services/onchain-sync';
 import { Keypair } from '@solana/web3.js';
 
 // ============ Types ============
@@ -61,6 +62,9 @@ export interface SubscriptionsState {
   getCancelledSubscriptions: () => StreamSubscription[];
   getDueSubscriptions: () => StreamSubscription[];
   getSubscriptionsByOrigin: (origin: string) => StreamSubscription[];
+
+  // Sync
+  syncFromChain: (walletAddress: string, network: NetworkType) => Promise<{ newCount: number; updatedCount: number }>;
 
   // Utilities
   refreshComputedValues: () => void;
@@ -259,6 +263,66 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
       // Get subscriptions by dApp origin
       getSubscriptionsByOrigin: (origin: string) => {
         return get().subscriptions.filter(s => s.origin === origin);
+      },
+
+      // Sync from blockchain - fetches subscription updates from on-chain memos
+      syncFromChain: async (walletAddress: string, network: NetworkType) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          console.log('[SubscriptionsStore] Syncing from blockchain...');
+
+          // Fetch subscriptions from chain
+          const chainSubscriptions = await fetchSubscriptionsFromChain(walletAddress, network);
+          console.log(`[SubscriptionsStore] Found ${chainSubscriptions.length} subscriptions on-chain`);
+
+          if (chainSubscriptions.length === 0) {
+            set({ isLoading: false });
+            return { newCount: 0, updatedCount: 0 };
+          }
+
+          // Get current local subscriptions
+          const localSubscriptions = get().subscriptions;
+
+          // Merge with local (chain status takes precedence for updates)
+          const mergedSubscriptions = mergeSubscriptions(localSubscriptions, chainSubscriptions);
+
+          // Count new and updated
+          const existingIds = new Set(localSubscriptions.map(s => s.id));
+          let newCount = 0;
+          let updatedCount = 0;
+
+          for (const sub of mergedSubscriptions) {
+            if (!existingIds.has(sub.id)) {
+              newCount++;
+            } else {
+              const localSub = localSubscriptions.find(s => s.id === sub.id);
+              if (localSub && localSub.status !== sub.status) {
+                updatedCount++;
+              }
+            }
+          }
+
+          // Update store
+          set({
+            subscriptions: mergedSubscriptions,
+            activeCount: mergedSubscriptions.filter(s => s.status === 'active').length,
+            pausedCount: mergedSubscriptions.filter(s => s.status === 'paused').length,
+            monthlyCost: calculateMonthlyCost(mergedSubscriptions),
+            yearlyCost: calculateYearlyCost(mergedSubscriptions),
+            isLoading: false,
+          });
+
+          console.log(`[SubscriptionsStore] Sync complete: ${newCount} new, ${updatedCount} updated`);
+          return { newCount, updatedCount };
+        } catch (error) {
+          console.error('[SubscriptionsStore] Sync failed:', error);
+          set({
+            error: error instanceof Error ? error.message : 'Failed to sync from blockchain',
+            isLoading: false,
+          });
+          return { newCount: 0, updatedCount: 0 };
+        }
       },
 
       // Refresh computed values

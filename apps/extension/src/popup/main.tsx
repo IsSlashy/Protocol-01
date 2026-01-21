@@ -16,6 +16,7 @@ import ReactDOM from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { SpecterPrivyProvider } from '../shared/providers/PrivyProvider';
 import './styles/globals.css';
 
 console.log('[P01] Mounting React...');
@@ -29,13 +30,15 @@ if (!rootElement) {
     ReactDOM.createRoot(rootElement).render(
       <React.StrictMode>
         <ErrorBoundary>
-          <HashRouter>
-            <App />
-          </HashRouter>
+          <SpecterPrivyProvider>
+            <HashRouter>
+              <App />
+            </HashRouter>
+          </SpecterPrivyProvider>
         </ErrorBoundary>
       </React.StrictMode>
     );
-    console.log('[P01] React mounted');
+    console.log('[P01] React mounted with Privy');
   } catch (e) {
     console.error('[P01] Mount error:', e);
   }
