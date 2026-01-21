@@ -30,18 +30,7 @@ codegen-units = 1
 # Add more crates here as needed when you encounter edition 2024 errors.
 # =============================================================================
 
-[patch.crates-io]
-# Core crypto crates - these are the most common culprits
-constant_time_eq = { git = "https://github.com/cesarb/constant_time_eq", tag = "0.3.0" }
-
-# Base64/encoding crates
-# base64ct >= 1.7.0 requires edition 2024
-# Note: We use version spec, Cargo will resolve to compatible version
-
-# Crypto primitives
-# subtle >= 2.6.0 requires edition 2024
-# zeroize >= 1.8.0 requires edition 2024
-# crypto-common >= 0.2.0 requires edition 2024
+# Note: Patches removed - using MSRV-aware resolver instead
 
 # =============================================================================
 # WORKSPACE DEPENDENCIES
@@ -49,17 +38,16 @@ constant_time_eq = { git = "https://github.com/cesarb/constant_time_eq", tag = "
 # Define shared dependencies with specific versions to ensure consistency
 
 [workspace.dependencies]
-# Anchor dependencies pinned to 0.29.0 (compatible with Solana 1.17-1.18)
-anchor-lang = "0.29.0"
-anchor-spl = "0.29.0"
+# Anchor dependencies pinned to 0.30.1 (compatible with Solana 1.18)
+anchor-lang = "0.30.1"
+anchor-spl = "0.30.1"
 
 # Solana dependencies
 solana-program = "1.18.17"
 solana-sdk = "1.18.17"
 
-# Serialization - use borsh 0.10.x for Anchor 0.29.0 compatibility
-borsh = "0.10.3"
-borsh-derive = "0.10.3"
+# Serialization - borsh version compatible with Anchor 0.30.1
+borsh = "1.5"
 
 # Common utilities
 thiserror = "1.0"
