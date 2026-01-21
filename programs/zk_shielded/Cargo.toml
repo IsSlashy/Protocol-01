@@ -17,8 +17,8 @@ cpi = ["no-entrypoint"]
 default = []
 
 [dependencies]
-anchor-lang = { version = "0.29.0", features = ["init-if-needed"] }
-anchor-spl = "0.29.0"
+anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
+anchor-spl = "0.30.1"
 
 # ZK verification dependencies
 ark-bn254 = "0.4.0"
