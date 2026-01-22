@@ -3,6 +3,30 @@
   // src/inject/index.ts
   var CHANNEL = "p01-extension-channel";
   var REQUEST_TIMEOUT = 3e5;
+
+  // UUID generator with fallback for non-secure contexts
+  function generateUUID() {
+    // Use crypto.randomUUID if available (secure contexts)
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    // Fallback using crypto.getRandomValues
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      var bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      var hex = Array.from(bytes, function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+      return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+    }
+    // Last resort fallback
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = (Math.random() * 16) | 0;
+      var v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
   var pendingRequests = /* @__PURE__ */ new Map();
   var approvalToOriginal = /* @__PURE__ */ new Map();
   var eventListeners = /* @__PURE__ */ new Map();
@@ -26,7 +50,7 @@
   }
   function sendMessage(type, payload) {
     return new Promise((resolve, reject) => {
-      const requestId = crypto.randomUUID();
+      const requestId = generateUUID();
       const timeout = setTimeout(() => {
         pendingRequests.delete(requestId);
         reject(new Error("Request timeout - user may have closed the approval window"));

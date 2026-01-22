@@ -42,18 +42,18 @@ pub struct InitializePool<'info> {
     )]
     pub merkle_tree: Account<'info, MerkleTreeState>,
 
-    /// Nullifier set account (PDA)
+    /// Nullifier set account (PDA) - zero-copy for large bloom filter
     #[account(
         init,
         payer = authority,
-        space = NullifierSet::LEN,
+        space = 8 + std::mem::size_of::<NullifierSet>(),
         seeds = [
             NullifierSet::SEED_PREFIX,
             shielded_pool.key().as_ref()
         ],
         bump
     )]
-    pub nullifier_set: Account<'info, NullifierSet>,
+    pub nullifier_set: AccountLoader<'info, NullifierSet>,
 
     /// System program
     pub system_program: Program<'info, System>,
@@ -90,10 +90,14 @@ pub fn handler(ctx: Context<InitializePool>, vk_hash: [u8; 32]) -> Result<()> {
     // Set initial root
     pool.merkle_root = merkle_tree.root;
 
-    // Initialize nullifier set
-    let nullifier_set = &mut ctx.accounts.nullifier_set;
-    nullifier_set.initialize(pool.key());
+    // Initialize nullifier set (zero-copy)
+    let mut nullifier_set = ctx.accounts.nullifier_set.load_init()?;
+    nullifier_set.pool = pool.key();
+    nullifier_set.count = 0;
+    nullifier_set.num_hash_functions = 7;
     nullifier_set.bump = ctx.bumps.nullifier_set;
+    nullifier_set._padding = [0u8; 6];
+    nullifier_set.bloom_filter = [0u64; 256];
 
     msg!("Initialized shielded pool for token mint: {}", pool.token_mint);
     msg!("Merkle tree depth: {}", pool.tree_depth);
