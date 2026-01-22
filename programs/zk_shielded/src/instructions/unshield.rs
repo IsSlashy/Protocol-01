@@ -51,16 +51,16 @@ pub struct Unshield<'info> {
     )]
     pub merkle_tree: Account<'info, MerkleTreeState>,
 
-    /// Nullifier set
+    /// Nullifier set (zero-copy for large bloom filter)
     #[account(
         mut,
         seeds = [
             NullifierSet::SEED_PREFIX,
             shielded_pool.key().as_ref()
         ],
-        bump = nullifier_set.bump
+        bump
     )]
-    pub nullifier_set: Account<'info, NullifierSet>,
+    pub nullifier_set: AccountLoader<'info, NullifierSet>,
 
     /// Pool's token vault (source)
     #[account(
@@ -100,13 +100,15 @@ pub fn handler(
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.shielded_pool;
     let merkle_tree = &mut ctx.accounts.merkle_tree;
-    let nullifier_set = &mut ctx.accounts.nullifier_set;
 
     // Check sufficient balance
     require!(
         pool.total_shielded >= amount,
         ZkShieldedError::InsufficientBalance
     );
+
+    // Load nullifier set (zero-copy)
+    let mut nullifier_set = ctx.accounts.nullifier_set.load_mut()?;
 
     // Check nullifiers haven't been spent
     require!(

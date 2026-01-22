@@ -3,14 +3,13 @@ use anchor_lang::prelude::*;
 /// Nullifier set for preventing double-spending
 /// Uses a Bloom filter for fast probabilistic checking
 /// plus an on-chain list for definitive verification
-#[account]
+///
+/// Uses zero-copy to avoid stack overflow during deserialization
+#[account(zero_copy)]
+#[repr(C)]
 pub struct NullifierSet {
     /// Associated shielded pool
     pub pool: Pubkey,
-
-    /// Bloom filter for fast probabilistic checking (16KB)
-    /// False positives possible, false negatives impossible
-    pub bloom_filter: [u64; 256],
 
     /// Number of nullifiers stored
     pub count: u64,
@@ -20,43 +19,21 @@ pub struct NullifierSet {
 
     /// Bump seed for PDA
     pub bump: u8,
-}
 
-impl Default for NullifierSet {
-    fn default() -> Self {
-        Self {
-            pool: Pubkey::default(),
-            bloom_filter: [0u64; 256],
-            count: 0,
-            num_hash_functions: 7, // Optimal for ~100K items with 16KB filter
-            bump: 0,
-        }
-    }
+    /// Padding for alignment
+    pub _padding: [u8; 6],
+
+    /// Bloom filter for fast probabilistic checking (2KB)
+    /// False positives possible, false negatives impossible
+    pub bloom_filter: [u64; 256],
 }
 
 impl NullifierSet {
-    /// Account size calculation
-    /// Bloom filter: 256 * 8 = 2048 bytes = 2KB
-    pub const LEN: usize = 8   // discriminator
-        + 32   // pool
-        + (256 * 8)  // bloom_filter
-        + 8    // count
-        + 1    // num_hash_functions
-        + 1;   // bump
-
     /// Seeds for PDA derivation
     pub const SEED_PREFIX: &'static [u8] = b"nullifier_set";
 
     /// Bloom filter size in bits
     pub const BLOOM_SIZE_BITS: usize = 256 * 64; // 16,384 bits
-
-    /// Initialize the nullifier set
-    pub fn initialize(&mut self, pool: Pubkey) {
-        self.pool = pool;
-        self.bloom_filter = [0u64; 256];
-        self.count = 0;
-        self.num_hash_functions = 7;
-    }
 
     /// Check if a nullifier might be in the set (Bloom filter check)
     /// Returns true if POSSIBLY in set, false if DEFINITELY not in set

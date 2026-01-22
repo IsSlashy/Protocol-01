@@ -30,7 +30,7 @@ codegen-units = 1
 # Add more crates here as needed when you encounter edition 2024 errors.
 # =============================================================================
 
-# Note: Patches removed - using MSRV-aware resolver instead
+# Patches handled by .cargo/config.toml MSRV-aware resolver
 
 # =============================================================================
 # WORKSPACE DEPENDENCIES

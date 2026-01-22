@@ -20,17 +20,17 @@ default = []
 anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
 anchor-spl = "0.30.1"
 
-# ZK verification dependencies
-ark-bn254 = "0.4.0"
-ark-groth16 = "0.4.0"
-ark-serialize = "0.4.0"
-ark-ff = "0.4.0"
-ark-ec = "0.4.0"
-ark-std = "0.4.0"
+# Solana program for alt_bn128 operations
+solana-program = "1.18"
 
-# Poseidon hash
-# Using a Solana-compatible implementation
+# Hash function for verification key hashing
 sha3 = "0.10"
+
+# Required for zero-copy accounts
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# Note: Groth16 verification uses Solana's native alt_bn128 syscall
+# This eliminates heavy ark-* dependencies and stack overflow issues
 
 [dev-dependencies]
 solana-program-test = "1.18"
