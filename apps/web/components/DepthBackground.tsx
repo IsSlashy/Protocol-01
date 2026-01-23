@@ -1,125 +1,83 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { useEffect, useState, useMemo } from "react";
+import { memo } from "react";
 
-interface Particle {
-  id: number;
-  symbol: string;
-  x: string;
-  y: string;
-  size: number;
-  depth: number;
-  drift: number;
-}
+/**
+ * DepthBackground - Optimized version
+ *
+ * Changes from original:
+ * - Removed 65+ framer-motion infinite animations
+ * - Using pure CSS animations (GPU-accelerated)
+ * - Reduced particle count from 33 to 8
+ * - Removed SVG mesh animations (static only)
+ * - Added prefers-reduced-motion support
+ * - Memoized component to prevent re-renders
+ */
 
-interface MeshPoint {
-  x: string;
-  y: string;
-  size: number;
-}
-
-interface MeshLine {
-  from: number;
-  to: number;
-}
-
-// Génération de particules avec profondeur variable
-function generateParticles(): Particle[] {
-  const symbols = ["+", "◇", "○", "×", "△"];
-  const particles: Particle[] = [];
-
-  // Layer lointain (petits, transparents, lents) - 15 particules
-  for (let i = 0; i < 15; i++) {
-    particles.push({
-      id: i,
-      symbol: symbols[Math.floor(Math.random() * symbols.length)],
-      x: `${5 + Math.random() * 90}%`,
-      y: `${5 + Math.random() * 90}%`,
-      size: 6 + Math.random() * 4,
-      depth: 0.03 + Math.random() * 0.04,
-      drift: (Math.random() - 0.5) * 8,
-    });
-  }
-
-  // Layer moyen - 10 particules
-  for (let i = 15; i < 25; i++) {
-    particles.push({
-      id: i,
-      symbol: symbols[Math.floor(Math.random() * symbols.length)],
-      x: `${5 + Math.random() * 90}%`,
-      y: `${5 + Math.random() * 90}%`,
-      size: 10 + Math.random() * 6,
-      depth: 0.08 + Math.random() * 0.05,
-      drift: (Math.random() - 0.5) * 12,
-    });
-  }
-
-  // Layer proche (gros, plus visibles, rapides) - 8 particules
-  for (let i = 25; i < 33; i++) {
-    particles.push({
-      id: i,
-      symbol: symbols[Math.floor(Math.random() * symbols.length)],
-      x: `${5 + Math.random() * 90}%`,
-      y: `${5 + Math.random() * 90}%`,
-      size: 16 + Math.random() * 10,
-      depth: 0.14 + Math.random() * 0.08,
-      drift: (Math.random() - 0.5) * 16,
-    });
-  }
-
-  return particles;
-}
-
-// Points du mesh network
-const meshPoints: MeshPoint[] = [
-  { x: "12%", y: "18%", size: 2.5 },
-  { x: "35%", y: "8%", size: 2 },
-  { x: "58%", y: "22%", size: 3 },
-  { x: "82%", y: "12%", size: 2.5 },
-  { x: "88%", y: "45%", size: 3.5 },
-  { x: "72%", y: "68%", size: 2 },
-  { x: "45%", y: "78%", size: 3 },
-  { x: "18%", y: "62%", size: 2.5 },
-  { x: "8%", y: "35%", size: 2 },
-  { x: "50%", y: "45%", size: 4 },
-  { x: "92%", y: "82%", size: 2 },
-  { x: "25%", y: "88%", size: 2.5 },
+// Static particles - no state needed
+const particles = [
+  { id: 1, symbol: "+", x: "15%", y: "20%", size: 10, color: "#39c5bb", delay: "0s" },
+  { id: 2, symbol: "◇", x: "75%", y: "15%", size: 12, color: "#ff77a8", delay: "1s" },
+  { id: 3, symbol: "○", x: "85%", y: "45%", size: 8, color: "#39c5bb", delay: "2s" },
+  { id: 4, symbol: "×", x: "25%", y: "70%", size: 14, color: "#ff77a8", delay: "3s" },
+  { id: 5, symbol: "△", x: "60%", y: "80%", size: 10, color: "#39c5bb", delay: "4s" },
+  { id: 6, symbol: "+", x: "45%", y: "35%", size: 16, color: "#ff77a8", delay: "5s" },
+  { id: 7, symbol: "◇", x: "10%", y: "55%", size: 9, color: "#39c5bb", delay: "6s" },
+  { id: 8, symbol: "○", x: "90%", y: "75%", size: 11, color: "#ff77a8", delay: "7s" },
 ];
 
-// Connexions du mesh
-const meshLines: MeshLine[] = [
-  { from: 0, to: 1 },
-  { from: 1, to: 2 },
-  { from: 2, to: 3 },
-  { from: 3, to: 4 },
-  { from: 4, to: 5 },
-  { from: 5, to: 6 },
-  { from: 6, to: 7 },
-  { from: 7, to: 8 },
-  { from: 8, to: 0 },
-  { from: 0, to: 9 },
-  { from: 2, to: 9 },
-  { from: 5, to: 9 },
-  { from: 7, to: 9 },
-  { from: 4, to: 10 },
-  { from: 5, to: 10 },
-  { from: 6, to: 11 },
-  { from: 7, to: 11 },
-  { from: 1, to: 9 },
-  { from: 6, to: 9 },
+// Static mesh points for SVG
+const meshPoints = [
+  { x: "12%", y: "18%", size: 2 },
+  { x: "35%", y: "8%", size: 1.5 },
+  { x: "58%", y: "22%", size: 2.5 },
+  { x: "82%", y: "12%", size: 2 },
+  { x: "88%", y: "45%", size: 3 },
+  { x: "72%", y: "68%", size: 1.5 },
+  { x: "45%", y: "78%", size: 2 },
+  { x: "18%", y: "62%", size: 2 },
+  { x: "50%", y: "45%", size: 3 },
 ];
 
-export default function DepthBackground() {
-  const [particles, setParticles] = useState<Particle[]>([]);
+// Mesh connections
+const meshLines = [
+  [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 0],
+  [0, 8], [2, 8], [5, 8], [7, 8],
+];
 
-  useEffect(() => {
-    setParticles(generateParticles());
-  }, []);
-
+function DepthBackground() {
   return (
     <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-      {/* LAYER 1 - Base gradient avec hints de couleur */}
+      {/* CSS for animations - injected once */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes float-particle {
+          0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.15; }
+          50% { transform: translateY(-20px) rotate(5deg); opacity: 0.3; }
+        }
+
+        @keyframes scanline-move {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(100vh); }
+        }
+
+        @keyframes shimmer {
+          0% { background-position: -200% -200%; }
+          100% { background-position: 200% 200%; }
+        }
+
+        @keyframes pulse-point {
+          0%, 100% { opacity: 0.1; transform: scale(1); }
+          50% { opacity: 0.3; transform: scale(1.2); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .animate-float, .animate-scanline, .animate-shimmer, .animate-pulse {
+            animation: none !important;
+          }
+        }
+      `}} />
+
+      {/* LAYER 1 - Base gradient (static) */}
       <div
         className="absolute inset-0"
         style={{
@@ -132,9 +90,8 @@ export default function DepthBackground() {
         }}
       />
 
-      {/* LAYER 2 - Perspective grid ULTRAKILL style */}
+      {/* LAYER 2 - Perspective grid (static, no animation) */}
       <div className="absolute inset-0 overflow-hidden">
-        {/* Grille horizontale avec perspective */}
         <div
           className="absolute w-[300%] h-[150%] left-[-100%] top-[35%]"
           style={{
@@ -145,246 +102,118 @@ export default function DepthBackground() {
             backgroundSize: "100px 100px",
             transform: "perspective(500px) rotateX(70deg)",
             transformOrigin: "center top",
-            maskImage:
-              "linear-gradient(to bottom, transparent 0%, black 15%, black 60%, transparent 100%)",
-            WebkitMaskImage:
-              "linear-gradient(to bottom, transparent 0%, black 15%, black 60%, transparent 100%)",
-          }}
-        />
-
-        {/* Lignes de fuite additionnelles */}
-        <div
-          className="absolute w-full h-full"
-          style={{
-            background: `
-              linear-gradient(180deg,
-                transparent 0%,
-                transparent 50%,
-                rgba(57, 197, 187, 0.02) 50.5%,
-                transparent 51%,
-                transparent 100%
-              )
-            `,
+            maskImage: "linear-gradient(to bottom, transparent 0%, black 15%, black 60%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(to bottom, transparent 0%, black 15%, black 60%, transparent 100%)",
           }}
         />
       </div>
 
-      {/* LAYER 3 - Mesh network SVG */}
+      {/* LAYER 3 - Static mesh network SVG with CSS pulse */}
       <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
         <defs>
-          {/* Gradient pour les lignes */}
-          <linearGradient
-            id="mesh-gradient-cyan-pink"
-            x1="0%"
-            y1="0%"
-            x2="100%"
-            y2="100%"
-          >
+          <linearGradient id="mesh-grad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#39c5bb" />
             <stop offset="100%" stopColor="#ff77a8" />
           </linearGradient>
-
-          {/* Gradient inversé */}
-          <linearGradient
-            id="mesh-gradient-pink-cyan"
-            x1="0%"
-            y1="0%"
-            x2="100%"
-            y2="100%"
-          >
-            <stop offset="0%" stopColor="#ff77a8" />
-            <stop offset="100%" stopColor="#39c5bb" />
-          </linearGradient>
-
-          {/* Glow filter pour les points */}
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="2" result="coloredBlur" />
-            <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
-        {/* Lignes de connexion */}
-        {meshLines.map((line, i) => (
-          <motion.line
-            key={`line-${i}`}
-            x1={meshPoints[line.from].x}
-            y1={meshPoints[line.from].y}
-            x2={meshPoints[line.to].x}
-            y2={meshPoints[line.to].y}
-            stroke={
-              i % 2 === 0
-                ? "url(#mesh-gradient-cyan-pink)"
-                : "url(#mesh-gradient-pink-cyan)"
-            }
+        {/* Static lines */}
+        {meshLines.map(([from, to], i) => (
+          <line
+            key={i}
+            x1={meshPoints[from].x}
+            y1={meshPoints[from].y}
+            x2={meshPoints[to].x}
+            y2={meshPoints[to].y}
+            stroke="url(#mesh-grad)"
             strokeWidth="1"
-            initial={{ opacity: 0.02, pathLength: 0.8 }}
-            animate={{
-              opacity: [0.02, 0.06, 0.02],
-              pathLength: [0.8, 1, 0.8],
-            }}
-            transition={{
-              duration: 5 + (i % 4),
-              delay: i * 0.2,
-              repeat: Infinity,
-              ease: "easeInOut",
-            }}
+            opacity="0.04"
           />
         ))}
 
-        {/* Points du mesh avec glow */}
+        {/* Points with CSS animation */}
         {meshPoints.map((point, i) => (
-          <motion.circle
-            key={`point-${i}`}
+          <circle
+            key={i}
             cx={point.x}
             cy={point.y}
             r={point.size}
-            fill={i % 3 === 0 ? "#39c5bb" : i % 3 === 1 ? "#ff77a8" : "#39c5bb"}
-            filter="url(#glow)"
-            initial={{ opacity: 0.08 }}
-            animate={{
-              opacity: [0.08, 0.25, 0.08],
-              r: [point.size, point.size * 1.3, point.size],
-            }}
-            transition={{
-              duration: 3 + (i % 3),
-              delay: i * 0.15,
-              repeat: Infinity,
-              ease: "easeInOut",
+            fill={i % 2 === 0 ? "#39c5bb" : "#ff77a8"}
+            className="animate-pulse"
+            style={{
+              animation: `pulse-point ${3 + (i % 2)}s ease-in-out infinite`,
+              animationDelay: `${i * 0.3}s`,
             }}
           />
         ))}
       </svg>
 
-      {/* LAYER 4 - Particules flottantes avec profondeur */}
+      {/* LAYER 4 - Floating particles (CSS animation, only 8) */}
       {particles.map((p) => (
-        <motion.span
+        <span
           key={p.id}
           className="absolute font-light select-none pointer-events-none"
           style={{
             left: p.x,
             top: p.y,
             fontSize: p.size,
-            color: p.depth > 0.12 ? "#ff77a8" : "#39c5bb",
-            textShadow:
-              p.depth > 0.15
-                ? `0 0 ${p.size / 2}px ${p.depth > 0.12 ? "rgba(255, 119, 168, 0.5)" : "rgba(57, 197, 187, 0.5)"}`
-                : "none",
-          }}
-          initial={{ opacity: p.depth }}
-          animate={{
-            y: [0, -40 * p.depth, 0],
-            x: [0, p.drift, 0],
-            opacity: [p.depth, p.depth * 1.8, p.depth],
-            rotate: [0, p.drift > 0 ? 10 : -10, 0],
-          }}
-          transition={{
-            duration: 8 / (p.depth + 0.1),
-            repeat: Infinity,
-            ease: "easeInOut",
-            delay: p.id * 0.1,
+            color: p.color,
+            opacity: 0.15,
+            animation: `float-particle 8s ease-in-out infinite`,
+            animationDelay: p.delay,
+            willChange: "transform, opacity",
           }}
         >
           {p.symbol}
-        </motion.span>
+        </span>
       ))}
 
-      {/* LAYER 5 - Scanlines animées (CRT effect) */}
-      <motion.div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `repeating-linear-gradient(
-            0deg,
-            transparent 0px,
-            transparent 3px,
-            rgba(57, 197, 187, 0.008) 3px,
-            rgba(57, 197, 187, 0.008) 4px
-          )`,
-        }}
-        animate={{ y: [0, 16] }}
-        transition={{
-          duration: 12,
-          repeat: Infinity,
-          ease: "linear",
-        }}
-      />
-
-      {/* Scanline pulse horizontal occasionnel */}
-      <motion.div
+      {/* LAYER 5 - Single scanline (CSS animation) */}
+      <div
         className="absolute left-0 right-0 h-[2px] pointer-events-none"
         style={{
-          background:
-            "linear-gradient(90deg, transparent, rgba(57, 197, 187, 0.15), transparent)",
-        }}
-        initial={{ top: "-2px", opacity: 0 }}
-        animate={{
-          top: ["0%", "100%"],
-          opacity: [0, 0.5, 0.5, 0],
-        }}
-        transition={{
-          duration: 8,
-          repeat: Infinity,
-          ease: "linear",
-          repeatDelay: 4,
+          background: "linear-gradient(90deg, transparent, rgba(57, 197, 187, 0.1), transparent)",
+          animation: "scanline-move 10s linear infinite",
+          willChange: "transform",
         }}
       />
 
-      {/* LAYER 6 - Vignette profonde */}
+      {/* LAYER 6 - Vignette (static) */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: `
-            radial-gradient(ellipse 120% 80% at 50% 50%, transparent 30%, rgba(10, 10, 12, 0.4) 70%, rgba(10, 10, 12, 0.7) 100%)
-          `,
+          background: `radial-gradient(ellipse 120% 80% at 50% 50%, transparent 30%, rgba(10, 10, 12, 0.4) 70%, rgba(10, 10, 12, 0.7) 100%)`,
         }}
       />
 
-      {/* Vignette corners accentuée */}
+      {/* LAYER 7 - Shimmer effect (single CSS animation) */}
       <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `
-            radial-gradient(ellipse at 0% 0%, rgba(10, 10, 12, 0.5) 0%, transparent 50%),
-            radial-gradient(ellipse at 100% 0%, rgba(10, 10, 12, 0.5) 0%, transparent 50%),
-            radial-gradient(ellipse at 0% 100%, rgba(10, 10, 12, 0.5) 0%, transparent 50%),
-            radial-gradient(ellipse at 100% 100%, rgba(10, 10, 12, 0.5) 0%, transparent 50%)
-          `,
-        }}
-      />
-
-      {/* LAYER 7 - Noise texture subtile */}
-      <div
-        className="absolute inset-0 pointer-events-none opacity-[0.025] mix-blend-overlay"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-        }}
-      />
-
-      {/* Holographic shimmer occasionnel (Kangel Y2K) */}
-      <motion.div
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `linear-gradient(
             135deg,
             transparent 40%,
-            rgba(57, 197, 187, 0.03) 45%,
-            rgba(255, 119, 168, 0.03) 50%,
-            rgba(57, 197, 187, 0.03) 55%,
+            rgba(57, 197, 187, 0.02) 45%,
+            rgba(255, 119, 168, 0.02) 50%,
+            rgba(57, 197, 187, 0.02) 55%,
             transparent 60%
           )`,
           backgroundSize: "200% 200%",
+          animation: "shimmer 20s linear infinite",
+          willChange: "background-position",
         }}
-        animate={{
-          backgroundPosition: ["-100% -100%", "200% 200%"],
-        }}
-        transition={{
-          duration: 15,
-          repeat: Infinity,
-          ease: "linear",
+      />
+
+      {/* LAYER 8 - Noise texture (static) */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.02] mix-blend-overlay"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
         }}
       />
     </div>
   );
 }
+
+// Memoize to prevent unnecessary re-renders
+export default memo(DepthBackground);
