@@ -1,65 +1,67 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { useEffect, useState, useCallback } from "react";
+import { memo } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import GlitchLogo01 from "./GlitchLogo01";
 import PhoneMockup from "./PhoneMockup";
 
-// Terminal-style status text with its own glitch rhythm
-function SystemStatus() {
-  const [textGlitch, setTextGlitch] = useState({
-    offsetX: 0,
-    skew: 0,
-    showCyan: false,
-    showPink: false,
-    cyanX: 0,
-    pinkX: 0,
-  });
+/**
+ * Hero - Optimized version
+ *
+ * Changes from original:
+ * - Replaced JS setState animations with CSS keyframes
+ * - SystemStatus now uses CSS glitch animation
+ * - CorruptionNoise now uses CSS animation
+ * - Removed framer-motion infinite animations
+ * - GPU-accelerated transforms
+ */
 
-  const performTextGlitch = useCallback(() => {
-    const intensity = Math.random();
-    if (intensity > 0.5) {
-      setTextGlitch({
-        offsetX: (Math.random() - 0.5) * 8,
-        skew: (Math.random() - 0.5) * 4,
-        showCyan: true,
-        showPink: true,
-        cyanX: -3 - Math.random() * 4,
-        pinkX: 3 + Math.random() * 4,
-      });
-
-      setTimeout(() => {
-        setTextGlitch({
-          offsetX: 0,
-          skew: 0,
-          showCyan: false,
-          showPink: false,
-          cyanX: 0,
-          pinkX: 0,
-        });
-      }, 80 + Math.random() * 120);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Text glitch: slower rhythm 800-1500ms (ULTRAKILL style)
-    let timerId: NodeJS.Timeout;
-
-    const scheduleTextGlitch = () => {
-      const delay = 800 + Math.random() * 700; // Slower than logo
-      timerId = setTimeout(() => {
-        performTextGlitch();
-        scheduleTextGlitch();
-      }, delay);
-    };
-
-    scheduleTextGlitch();
-    return () => clearTimeout(timerId);
-  }, [performTextGlitch]);
-
+// Terminal-style status text - CSS animated
+const SystemStatus = memo(function SystemStatus() {
   return (
     <div className="mt-6 flex flex-col items-start">
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes text-glitch-status {
+          0%, 75%, 100% {
+            transform: translateX(0) skewX(0deg);
+          }
+          76% {
+            transform: translateX(4px) skewX(2deg);
+          }
+          78% {
+            transform: translateX(-3px) skewX(-1deg);
+          }
+          80% {
+            transform: translateX(2px) skewX(1deg);
+          }
+          82% {
+            transform: translateX(0) skewX(0deg);
+          }
+        }
+
+        @keyframes chromatic-cyan {
+          0%, 75%, 100% { opacity: 0; transform: translateX(0); }
+          76% { opacity: 0.7; transform: translateX(-5px); }
+          82% { opacity: 0; transform: translateX(0); }
+        }
+
+        @keyframes chromatic-pink {
+          0%, 75%, 100% { opacity: 0; transform: translateX(0); }
+          76% { opacity: 0.7; transform: translateX(5px); }
+          82% { opacity: 0; transform: translateX(0); }
+        }
+
+        @keyframes blink-square {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .status-glitch { animation: none !important; }
+        }
+      `}} />
+
       {/* System status label */}
       <span
         className="text-[#ff2d7a] text-xs font-bold tracking-[6px] mb-3 font-mono"
@@ -70,39 +72,38 @@ function SystemStatus() {
 
       {/* UNTRACEABLE - with chromatic glitch */}
       <div className="relative h-[60px] flex items-center">
-        {/* Cyan ghost layer */}
-        {textGlitch.showCyan && (
-          <span
-            className="absolute text-[#39c5bb] text-4xl sm:text-5xl font-black tracking-wider opacity-70"
-            style={{
-              transform: `translateX(${textGlitch.cyanX}px)`,
-              fontFamily: "var(--font-display)",
-            }}
-          >
-            UNTRACEABLE
-          </span>
-        )}
-
-        {/* Pink ghost layer */}
-        {textGlitch.showPink && (
-          <span
-            className="absolute text-[#ff2d7a] text-4xl sm:text-5xl font-black tracking-wider opacity-70"
-            style={{
-              transform: `translateX(${textGlitch.pinkX}px)`,
-              fontFamily: "var(--font-display)",
-            }}
-          >
-            UNTRACEABLE
-          </span>
-        )}
-
-        {/* Main text */}
+        {/* Cyan ghost layer - CSS animated */}
         <span
-          className="text-white text-4xl sm:text-5xl font-black tracking-wider"
+          className="absolute text-[#39c5bb] text-4xl sm:text-5xl font-black tracking-wider status-glitch"
           style={{
-            transform: `translateX(${textGlitch.offsetX}px) skewX(${textGlitch.skew}deg)`,
             fontFamily: "var(--font-display)",
-            transition: "transform 0.05s ease-out",
+            animation: "chromatic-cyan 2.5s steps(1) infinite",
+            willChange: "opacity, transform",
+          }}
+        >
+          UNTRACEABLE
+        </span>
+
+        {/* Pink ghost layer - CSS animated */}
+        <span
+          className="absolute text-[#ff2d7a] text-4xl sm:text-5xl font-black tracking-wider status-glitch"
+          style={{
+            fontFamily: "var(--font-display)",
+            animation: "chromatic-pink 2.5s steps(1) infinite",
+            animationDelay: "0.1s",
+            willChange: "opacity, transform",
+          }}
+        >
+          UNTRACEABLE
+        </span>
+
+        {/* Main text - CSS animated */}
+        <span
+          className="text-white text-4xl sm:text-5xl font-black tracking-wider status-glitch"
+          style={{
+            fontFamily: "var(--font-display)",
+            animation: "text-glitch-status 2.5s steps(1) infinite",
+            willChange: "transform",
           }}
         >
           UNTRACEABLE
@@ -111,7 +112,10 @@ function SystemStatus() {
 
       {/* Status indicator - terminal style with blinking square */}
       <div className="flex items-center mt-4">
-        <div className="w-2 h-2 bg-[#39c5bb] mr-3 animate-blink" />
+        <div
+          className="w-2 h-2 bg-[#39c5bb] mr-3"
+          style={{ animation: "blink-square 1s ease-in-out infinite" }}
+        />
         <span
           className="text-[#555560] text-xs tracking-[4px] font-mono uppercase"
           style={{ letterSpacing: "0.3em" }}
@@ -121,53 +125,94 @@ function SystemStatus() {
       </div>
     </div>
   );
-}
+});
 
-// Corruption noise effect - raw, not soft
-function CorruptionNoise() {
-  const [noiseOpacity, setNoiseOpacity] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (Math.random() > 0.8) {
-        setNoiseOpacity(0.15 + Math.random() * 0.1);
-        setTimeout(() => setNoiseOpacity(0), 80);
-      }
-    }, 150);
-    return () => clearInterval(interval);
-  }, []);
-
+// Corruption noise effect - CSS animated
+const CorruptionNoise = memo(function CorruptionNoise() {
   return (
-    <div
-      className="absolute inset-0 pointer-events-none z-20"
-      style={{
-        opacity: noiseOpacity,
-        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-        mixBlendMode: "overlay",
-      }}
-    />
+    <>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes noise-flash {
+          0%, 70%, 100% { opacity: 0; }
+          72% { opacity: 0.18; }
+          74% { opacity: 0; }
+          85% { opacity: 0.15; }
+          87% { opacity: 0; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .noise-layer { animation: none !important; opacity: 0 !important; }
+        }
+      `}} />
+      <div
+        className="absolute inset-0 pointer-events-none z-20 noise-layer"
+        style={{
+          animation: "noise-flash 4s steps(1) infinite",
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+          mixBlendMode: "overlay",
+          willChange: "opacity",
+        }}
+      />
+    </>
   );
-}
+});
 
-export default function Hero() {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
+function Hero() {
   return (
     <section className="relative min-h-screen flex items-center overflow-hidden">
+      {/* CSS Animations for Hero elements */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes fade-in-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes fade-in-left {
+          from { opacity: 0; transform: translateX(-20px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes fade-in-scale {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
+        }
+
+        @keyframes pulse-opacity {
+          0%, 100% { opacity: 0.2; }
+          50% { opacity: 0.4; }
+        }
+
+        @keyframes scroll-bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(10px); }
+        }
+
+        @keyframes scroll-dot {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(8px); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .hero-animate { animation: none !important; opacity: 1 !important; transform: none !important; }
+        }
+      `}} />
+
       {/* Corruption noise overlay */}
       <CorruptionNoise />
 
       {/* Miku background - semi-transparent, centered between 01 and phone */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5] overflow-hidden">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.2, delay: 0.3 }}
-          className="relative w-[500px] h-[500px] lg:w-[700px] lg:h-[700px]"
+        <div
+          className="relative w-[500px] h-[500px] lg:w-[700px] lg:h-[700px] hero-animate"
+          style={{
+            animation: "fade-in-scale 1.2s ease-out 0.3s forwards",
+            opacity: 0,
+          }}
         >
           {/* Scan lines overlay */}
           <div
@@ -191,7 +236,7 @@ export default function Hero() {
             }}
             priority
           />
-        </motion.div>
+        </div>
       </div>
 
       {/* Main content - Asymmetric layout */}
@@ -200,56 +245,62 @@ export default function Hero() {
           {/* Left side - Text content */}
           <div className="order-2 lg:order-1">
             {/* Protocol badge - sharp, no rounded-full, no soft glow */}
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[#151518] border border-[#39c5bb]/40 mb-6"
+            <div
+              className="inline-flex items-center gap-2 px-4 py-2 bg-[#151518] border border-[#39c5bb]/40 mb-6 hero-animate"
+              style={{
+                animation: "fade-in-left 0.5s ease-out forwards",
+                opacity: 0,
+              }}
             >
               <span className="w-2 h-2 bg-[#39c5bb]" />
               <span className="text-sm text-[#39c5bb] font-mono uppercase tracking-wider">
                 Protocol Active
               </span>
-            </motion.div>
+            </div>
 
             {/* Massive 01 - Using PNG image with ULTRAKILL glitch */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.8, delay: 0.2 }}
-              className="mb-2"
+            <div
+              className="mb-2 hero-animate"
+              style={{
+                animation: "fade-in-scale 0.8s ease-out 0.2s forwards",
+                opacity: 0,
+              }}
             >
               <GlitchLogo01 />
-            </motion.div>
+            </div>
 
             {/* Terminal-style system status */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.4 }}
+            <div
+              className="hero-animate"
+              style={{
+                animation: "fade-in-up 0.5s ease-out 0.4s forwards",
+                opacity: 0,
+              }}
             >
-              {mounted && <SystemStatus />}
-            </motion.div>
+              <SystemStatus />
+            </div>
 
             {/* Description - industrial monospace */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.5 }}
-              className="text-[#888892] text-base max-w-lg mt-8 mb-8 font-mono leading-loose"
+            <div
+              className="text-[#888892] text-base max-w-lg mt-8 mb-8 font-mono leading-loose hero-animate"
+              style={{
+                animation: "fade-in-up 0.5s ease-out 0.5s forwards",
+                opacity: 0,
+              }}
             >
               <p>Anonymous transactions.</p>
               <p>Private streams.</p>
               <p>Zero-knowledge communications.</p>
               <p className="text-[#39c5bb]">Total invisibility.</p>
-            </motion.div>
+            </div>
 
             {/* CTA Buttons - sharp edges, no soft shadows */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.6 }}
-              className="flex flex-wrap gap-4 mb-12"
+            <div
+              className="flex flex-wrap gap-4 mb-12 hero-animate"
+              style={{
+                animation: "fade-in-up 0.5s ease-out 0.6s forwards",
+                opacity: 0,
+              }}
             >
               <button className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors">
                 <svg
@@ -263,7 +314,7 @@ export default function Hero() {
                 </svg>
                 Initialize Protocol
               </button>
-              <button className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
+              <Link href="/docs" className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
                 <svg
                   className="w-5 h-5"
                   viewBox="0 0 24 24"
@@ -275,15 +326,16 @@ export default function Hero() {
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
                 Documentation
-              </button>
-            </motion.div>
+              </Link>
+            </div>
 
             {/* Stats Row - industrial style */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.8 }}
-              className="grid grid-cols-3 gap-6"
+            <div
+              className="grid grid-cols-3 gap-6 hero-animate"
+              style={{
+                animation: "fade-in 0.5s ease-out 0.8s forwards",
+                opacity: 0,
+              }}
             >
               {[
                 { value: "0", label: "Data Leaks", color: "text-[#39c5bb]" },
@@ -302,7 +354,7 @@ export default function Hero() {
                   </div>
                 </div>
               ))}
-            </motion.div>
+            </div>
           </div>
 
           {/* Right side - Phone Mockup */}
@@ -314,55 +366,57 @@ export default function Hero() {
 
       {/* Corner data streams - raw monospace */}
       <div className="absolute top-0 left-0 w-64 h-64 overflow-hidden pointer-events-none">
-        <motion.div
+        <div
           className="absolute top-4 left-4 font-mono text-xs text-[#39c5bb]/30 whitespace-pre"
-          animate={{ opacity: [0.2, 0.4, 0.2] }}
-          transition={{ duration: 3, repeat: Infinity }}
+          style={{ animation: "pulse-opacity 3s ease-in-out infinite" }}
         >
           {`00110101 01010011
 01000101 01000011
 01010101 01010010
 01000101 00100000`}
-        </motion.div>
+        </div>
       </div>
 
       <div className="absolute bottom-0 right-0 w-64 h-64 overflow-hidden pointer-events-none">
-        <motion.div
+        <div
           className="absolute bottom-4 right-4 font-mono text-xs text-[#ff2d7a]/30 whitespace-pre text-right"
-          animate={{ opacity: [0.2, 0.4, 0.2] }}
-          transition={{ duration: 3, repeat: Infinity, delay: 1.5 }}
+          style={{
+            animation: "pulse-opacity 3s ease-in-out infinite",
+            animationDelay: "1.5s",
+          }}
         >
           {`PROTOCOL::01
 STATUS::ACTIVE
 LEAK::NONE
 TRACE::NULL`}
-        </motion.div>
+        </div>
       </div>
 
       {/* Scroll indicator - sharp, industrial */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 2 }}
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20"
+      <div
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 hero-animate"
+        style={{
+          animation: "fade-in 0.5s ease-out 2s forwards",
+          opacity: 0,
+        }}
       >
-        <motion.div
-          animate={{ y: [0, 10, 0] }}
-          transition={{ duration: 1.5, repeat: Infinity }}
+        <div
           className="flex flex-col items-center gap-2"
+          style={{ animation: "scroll-bounce 1.5s ease-in-out infinite" }}
         >
           <span className="text-xs text-[#555560] font-mono uppercase tracking-widest">
             Scroll
           </span>
           <div className="w-6 h-10 border-2 border-[#2a2a30] flex items-start justify-center p-2">
-            <motion.div
-              animate={{ y: [0, 8, 0] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
+            <div
               className="w-1 h-2 bg-[#39c5bb]"
+              style={{ animation: "scroll-dot 1.5s ease-in-out infinite" }}
             />
           </div>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
     </section>
   );
 }
+
+export default memo(Hero);
