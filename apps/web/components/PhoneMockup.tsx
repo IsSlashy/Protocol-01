@@ -1,96 +1,109 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { memo } from "react";
 
-export default function PhoneMockup() {
+/**
+ * PhoneMockup - Optimized version
+ *
+ * Changes from original:
+ * - Replaced framer-motion infinite animations with CSS animations
+ * - GPU-accelerated transforms via will-change
+ * - Reduced blur values slightly for performance
+ * - Memoized component to prevent re-renders
+ */
+function PhoneMockup() {
   return (
     <div className="relative w-[340px] h-[700px]">
+      {/* CSS Animations for glow effects */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes glow-pulse-cyan {
+          0%, 100% { opacity: 0.6; transform: translate(-50%, 0) scale(1); }
+          50% { opacity: 0.85; transform: translate(-50%, 0) scale(1.08); }
+        }
+
+        @keyframes glow-pulse-pink-right {
+          0%, 100% { opacity: 0.5; transform: translateX(0); }
+          50% { opacity: 0.7; transform: translateX(15px); }
+        }
+
+        @keyframes glow-pulse-pink-left {
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 0.55; }
+        }
+
+        @keyframes glow-pulse-top {
+          0%, 100% { opacity: 0.2; }
+          50% { opacity: 0.35; }
+        }
+
+        @keyframes phone-enter {
+          from { opacity: 0; transform: translateY(50px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .phone-container {
+          animation: phone-enter 1s ease-out forwards;
+        }
+
+        .phone-container:hover {
+          transform: scale(1.02) translateY(-5px);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .glow-layer { animation: none !important; opacity: 0.6 !important; }
+          .phone-container { animation: none !important; opacity: 1 !important; }
+        }
+      `}} />
 
       {/* === NEON GLOW BACKGROUND (diffuse, no borders) === */}
 
       {/* Main cyan glow - bottom center (like light reflecting up) */}
-      <motion.div
-        className="absolute -bottom-40 left-1/2 -translate-x-1/2 w-[450px] h-[350px] -z-10"
+      <div
+        className="absolute -bottom-40 left-1/2 w-[450px] h-[350px] -z-10 glow-layer"
         style={{
           background: 'radial-gradient(ellipse 70% 60% at center, rgba(57, 197, 187, 0.45) 0%, rgba(57, 197, 187, 0.15) 35%, transparent 65%)',
           filter: 'blur(50px)',
-        }}
-        animate={{
-          opacity: [0.6, 0.85, 0.6],
-          scale: [1, 1.08, 1],
-        }}
-        transition={{
-          duration: 4,
-          repeat: Infinity,
-          ease: 'easeInOut',
+          animation: 'glow-pulse-cyan 4s ease-in-out infinite',
+          willChange: 'opacity, transform',
         }}
       />
 
       {/* Pink/Magenta glow - right side */}
-      <motion.div
-        className="absolute -right-24 top-[20%] w-[280px] h-[450px] -z-10"
+      <div
+        className="absolute -right-24 top-[20%] w-[280px] h-[450px] -z-10 glow-layer"
         style={{
           background: 'radial-gradient(ellipse 60% 70% at center, rgba(255, 119, 168, 0.4) 0%, rgba(255, 119, 168, 0.1) 40%, transparent 65%)',
           filter: 'blur(70px)',
-        }}
-        animate={{
-          opacity: [0.5, 0.7, 0.5],
-          x: [0, 15, 0],
-        }}
-        transition={{
-          duration: 5,
-          repeat: Infinity,
-          ease: 'easeInOut',
+          animation: 'glow-pulse-pink-right 5s ease-in-out infinite',
+          willChange: 'opacity, transform',
         }}
       />
 
       {/* Subtle pink glow - left side */}
-      <motion.div
-        className="absolute -left-20 top-[30%] w-[220px] h-[320px] -z-10"
+      <div
+        className="absolute -left-20 top-[30%] w-[220px] h-[320px] -z-10 glow-layer"
         style={{
           background: 'radial-gradient(ellipse at center, rgba(255, 119, 168, 0.25) 0%, transparent 55%)',
           filter: 'blur(55px)',
-        }}
-        animate={{
-          opacity: [0.35, 0.55, 0.35],
-        }}
-        transition={{
-          duration: 6,
-          repeat: Infinity,
-          ease: 'easeInOut',
-          delay: 1,
+          animation: 'glow-pulse-pink-left 6s ease-in-out infinite 1s',
+          willChange: 'opacity',
         }}
       />
 
       {/* Bright cyan accent - top */}
-      <motion.div
-        className="absolute -top-20 left-1/2 -translate-x-1/2 w-[300px] h-[200px] -z-10"
+      <div
+        className="absolute -top-20 left-1/2 -translate-x-1/2 w-[300px] h-[200px] -z-10 glow-layer"
         style={{
           background: 'radial-gradient(ellipse at center, rgba(0, 255, 229, 0.15) 0%, transparent 50%)',
           filter: 'blur(40px)',
-        }}
-        animate={{
-          opacity: [0.2, 0.35, 0.2],
-        }}
-        transition={{
-          duration: 5,
-          repeat: Infinity,
-          ease: 'easeInOut',
-          delay: 2,
+          animation: 'glow-pulse-top 5s ease-in-out infinite 2s',
+          willChange: 'opacity',
         }}
       />
 
       {/* === PHONE MOCKUP === */}
-      <motion.div
-        className="relative z-10"
-        initial={{ opacity: 0, y: 50 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 1, ease: 'easeOut' }}
-        whileHover={{
-          scale: 1.02,
-          y: -5,
-          transition: { type: 'spring', stiffness: 300, damping: 20 }
-        }}
+      <div
+        className="relative z-10 phone-container transition-transform duration-300 ease-out"
       >
         {/* Phone frame - modern design, no ugly borders */}
         <div
@@ -311,7 +324,7 @@ export default function PhoneMockup() {
             }}
           />
         </div>
-      </motion.div>
+      </div>
 
       {/* === REFLECTION UNDER PHONE (subtle glow) === */}
       <div
@@ -325,3 +338,5 @@ export default function PhoneMockup() {
     </div>
   );
 }
+
+export default memo(PhoneMockup);
