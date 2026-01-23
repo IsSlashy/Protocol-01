@@ -45,7 +45,7 @@ export function WalletProvider({
   return (
     <ConnectionProvider endpoint={endpoint}>
       <SolanaWalletProvider wallets={wallets} autoConnect>
-        {/* @ts-expect-error React 19 type compatibility with wallet adapter */}
+        {/* @ts-ignore React 19 type compatibility with wallet adapter */}
         <WalletModalProvider>{children}</WalletModalProvider>
       </SolanaWalletProvider>
     </ConnectionProvider>
