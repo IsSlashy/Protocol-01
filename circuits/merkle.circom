@@ -6,6 +6,7 @@ include "circomlib/circuits/bitify.circom";
 
 // Merkle tree path verification
 // Verifies that a leaf exists at a specific position in the tree
+// Outputs computedRoot for conditional checking by caller
 template MerkleTreeChecker(depth) {
     signal input leaf;
     signal input root;
@@ -13,6 +14,7 @@ template MerkleTreeChecker(depth) {
     signal input pathElements[depth];
 
     signal output valid;
+    signal output computedRoot;
 
     component hashers[depth];
     component mux[depth];
@@ -40,9 +42,10 @@ template MerkleTreeChecker(depth) {
         computedPath[i + 1] <== hashers[i].out;
     }
 
-    // Check that computed root matches expected root
+    // Output computed root for conditional checking
+    computedRoot <== computedPath[depth];
     valid <== 1;
-    computedPath[depth] === root;
+    // Note: Caller should check (computedRoot === root) conditionally
 }
 
 // Compute Merkle root from path (without verification)

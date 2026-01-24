@@ -1,4 +1,4 @@
-package com.specter.protocol
+package com.p01.protocol
 
 import android.app.Application
 import android.content.res.Configuration

@@ -1,10 +1,26 @@
-import { Keypair } from '@solana/web3.js';
+import {
+  Keypair,
+  PublicKey,
+  Connection,
+  Transaction,
+  SystemProgram,
+  TransactionInstruction,
+  LAMPORTS_PER_SOL,
+} from '@solana/web3.js';
+import {
+  createTransferInstruction,
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+} from '@solana/spl-token';
 import * as SecureStore from 'expo-secure-store';
 import { generateMnemonic as scureGenerateMnemonic, mnemonicToSeedSync, validateMnemonic as scureValidateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import CryptoJS from 'crypto-js';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
+import { getConnection } from './connection';
 
 // Secure storage keys
 const STORAGE_KEYS = {
@@ -306,4 +322,172 @@ export async function deleteWallet(): Promise<void> {
 export function formatPublicKey(publicKey: string, chars: number = 4): string {
   if (publicKey.length <= chars * 2 + 3) return publicKey;
   return `${publicKey.slice(0, chars)}...${publicKey.slice(-chars)}`;
+}
+
+/**
+ * Get associated token address for a wallet and mint
+ */
+export function getAssociatedTokenAddress(mint: PublicKey, owner: PublicKey): PublicKey {
+  return getAssociatedTokenAddressSync(mint, owner, true);
+}
+
+/**
+ * Check if an associated token account exists
+ */
+export async function tokenAccountExists(
+  connection: Connection,
+  tokenAccount: PublicKey
+): Promise<boolean> {
+  try {
+    const accountInfo = await connection.getAccountInfo(tokenAccount);
+    return accountInfo !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send SOL to an address
+ */
+export async function sendSol(params: {
+  connection: Connection;
+  fromKeypair: Keypair;
+  toAddress: string;
+  amount: number; // In SOL
+}): Promise<string> {
+  const { connection, fromKeypair, toAddress, amount } = params;
+  const lamports = Math.floor(amount * LAMPORTS_PER_SOL);
+
+  const transaction = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: fromKeypair.publicKey,
+      toPubkey: new PublicKey(toAddress),
+      lamports,
+    })
+  );
+
+  transaction.feePayer = fromKeypair.publicKey;
+  transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+  transaction.sign(fromKeypair);
+  const signature = await connection.sendRawTransaction(transaction.serialize());
+  await connection.confirmTransaction(signature, 'confirmed');
+
+  return signature;
+}
+
+/**
+ * Send SPL tokens to an address
+ */
+export async function sendSplToken(params: {
+  connection: Connection;
+  fromKeypair: Keypair;
+  toAddress: string;
+  mintAddress: string;
+  amount: number; // In token units (will be converted using decimals)
+  decimals: number;
+}): Promise<string> {
+  const { connection, fromKeypair, toAddress, mintAddress, amount, decimals } = params;
+
+  const mint = new PublicKey(mintAddress);
+  const toWallet = new PublicKey(toAddress);
+
+  // Get token accounts
+  const fromTokenAccount = getAssociatedTokenAddress(mint, fromKeypair.publicKey);
+  const toTokenAccount = getAssociatedTokenAddress(mint, toWallet);
+
+  // Convert amount to token units
+  const tokenAmount = BigInt(Math.floor(amount * 10 ** decimals));
+
+  const instructions: TransactionInstruction[] = [];
+
+  // Check if recipient's token account exists, if not create it
+  const toAccountExists = await tokenAccountExists(connection, toTokenAccount);
+  if (!toAccountExists) {
+    instructions.push(
+      createAssociatedTokenAccountInstruction(
+        fromKeypair.publicKey, // payer
+        toTokenAccount,        // associated token account
+        toWallet,              // owner
+        mint                   // mint
+      )
+    );
+  }
+
+  // Add transfer instruction
+  instructions.push(
+    createTransferInstruction(
+      fromTokenAccount,
+      toTokenAccount,
+      fromKeypair.publicKey,
+      tokenAmount
+    )
+  );
+
+  const transaction = new Transaction().add(...instructions);
+  transaction.feePayer = fromKeypair.publicKey;
+  transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+  transaction.sign(fromKeypair);
+  const signature = await connection.sendRawTransaction(transaction.serialize());
+  await connection.confirmTransaction(signature, 'confirmed');
+
+  console.log('[Wallet] SPL token transfer successful:', signature);
+  return signature;
+}
+
+/**
+ * Get token balance for a wallet
+ */
+export async function getTokenBalance(params: {
+  connection: Connection;
+  walletAddress: string;
+  mintAddress: string;
+}): Promise<{ balance: number; decimals: number } | null> {
+  const { connection, walletAddress, mintAddress } = params;
+
+  try {
+    const mint = new PublicKey(mintAddress);
+    const wallet = new PublicKey(walletAddress);
+    const tokenAccount = getAssociatedTokenAddress(mint, wallet);
+
+    const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
+    return {
+      balance: accountInfo.value.uiAmount ?? 0,
+      decimals: accountInfo.value.decimals,
+    };
+  } catch (error) {
+    // Token account doesn't exist or other error
+    return null;
+  }
+}
+
+/**
+ * Get all token accounts for a wallet
+ */
+export async function getTokenAccounts(params: {
+  connection: Connection;
+  walletAddress: string;
+}): Promise<Array<{
+  mint: string;
+  balance: number;
+  decimals: number;
+}>> {
+  const { connection, walletAddress } = params;
+  const wallet = new PublicKey(walletAddress);
+
+  try {
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet, {
+      programId: TOKEN_PROGRAM_ID,
+    });
+
+    return tokenAccounts.value.map(account => ({
+      mint: account.account.data.parsed.info.mint,
+      balance: account.account.data.parsed.info.tokenAmount.uiAmount ?? 0,
+      decimals: account.account.data.parsed.info.tokenAmount.decimals,
+    }));
+  } catch (error) {
+    console.error('[Wallet] Error fetching token accounts:', error);
+    return [];
+  }
 }

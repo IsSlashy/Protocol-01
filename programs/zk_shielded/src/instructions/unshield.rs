@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
@@ -9,14 +10,20 @@ use crate::Groth16Proof;
 /// Unshield tokens: withdraw from shielded pool to a transparent address
 /// Requires a valid ZK proof showing ownership of the spent notes
 /// The output includes a change note back to the shielded pool if not withdrawing full amount
+///
+/// Supports both native SOL and SPL tokens:
+/// - For native SOL: transfers lamports from pool PDA to recipient
+/// - For SPL tokens: transfers tokens from pool vault to recipient token account
 #[derive(Accounts)]
 #[instruction(
     proof: Groth16Proof,
     nullifier_1: [u8; 32],
     nullifier_2: [u8; 32],
-    output_commitment: [u8; 32],
+    output_commitment_1: [u8; 32],
+    output_commitment_2: [u8; 32],
     merkle_root: [u8; 32],
-    amount: u64
+    amount: u64,
+    new_root: [u8; 32]
 )]
 pub struct Unshield<'info> {
     /// Transaction submitter (can be anyone)
@@ -25,6 +32,7 @@ pub struct Unshield<'info> {
 
     /// Recipient of the unshielded tokens
     /// CHECK: Any address can receive tokens
+    #[account(mut)]
     pub recipient: AccountInfo<'info>,
 
     /// Shielded pool
@@ -62,28 +70,26 @@ pub struct Unshield<'info> {
     )]
     pub nullifier_set: AccountLoader<'info, NullifierSet>,
 
-    /// Pool's token vault (source)
-    #[account(
-        mut,
-        constraint = pool_vault.mint == shielded_pool.token_mint,
-        constraint = pool_vault.owner == shielded_pool.key()
-    )]
-    pub pool_vault: Account<'info, TokenAccount>,
-
-    /// Recipient's token account (destination)
-    #[account(
-        mut,
-        constraint = recipient_token_account.mint == shielded_pool.token_mint,
-        constraint = recipient_token_account.owner == recipient.key()
-    )]
-    pub recipient_token_account: Account<'info, TokenAccount>,
-
     /// Verification key data account
     /// CHECK: Validated by hash comparison
     pub verification_key_data: AccountInfo<'info>,
 
-    /// Token program
-    pub token_program: Program<'info, Token>,
+    /// System program (required for native SOL transfers)
+    pub system_program: Program<'info, System>,
+
+    /// Token program (optional, for SPL token transfers)
+    /// CHECK: Only used when unshielding SPL tokens
+    pub token_program: Option<Program<'info, Token>>,
+
+    /// Pool's token vault (optional, only for SPL tokens)
+    /// CHECK: Validated in handler when needed
+    #[account(mut)]
+    pub pool_vault: Option<Account<'info, TokenAccount>>,
+
+    /// Recipient's token account (optional, only for SPL tokens)
+    /// CHECK: Validated in handler when needed
+    #[account(mut)]
+    pub recipient_token_account: Option<Account<'info, TokenAccount>>,
 }
 
 pub fn handler(
@@ -91,15 +97,20 @@ pub fn handler(
     proof: Groth16Proof,
     nullifier_1: [u8; 32],
     nullifier_2: [u8; 32],
-    output_commitment: [u8; 32],
+    output_commitment_1: [u8; 32],
+    output_commitment_2: [u8; 32],
     merkle_root: [u8; 32],
     amount: u64,
+    new_root: [u8; 32],
 ) -> Result<()> {
     require!(amount > 0, ZkShieldedError::InvalidAmount);
 
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.shielded_pool;
     let merkle_tree = &mut ctx.accounts.merkle_tree;
+
+    // Check if this is native SOL
+    let is_native_sol = pool.token_mint == system_program::ID;
 
     // Check sufficient balance
     require!(
@@ -135,15 +146,13 @@ pub fn handler(
     let token_mint_bytes: [u8; 32] = pool.token_mint.to_bytes();
 
     // Verify the ZK proof
-    // Note: For unshield, we only have one output commitment (change note)
-    // The other output is a "dummy" commitment or we can use a simplified circuit
     let is_valid = Groth16Verifier::verify_transfer(
         &proof,
         &merkle_root,
         &nullifier_1,
         &nullifier_2,
-        &output_commitment,
-        &[0u8; 32], // Dummy commitment for the withdrawn amount
+        &output_commitment_1,
+        &output_commitment_2,
         public_amount,
         &token_mint_bytes,
         &vk_data,
@@ -155,14 +164,15 @@ pub fn handler(
     nullifier_set.add(&nullifier_1);
     nullifier_set.add(&nullifier_2);
 
-    // Insert change commitment if non-zero
-    let leaf_index = if output_commitment != [0u8; 32] {
-        Some(merkle_tree.insert(output_commitment)?)
+    // Insert change commitment if non-zero (output_commitment_1 is the change note)
+    // Use insert_with_root since Poseidon syscall not available on devnet
+    let leaf_index = if output_commitment_1 != [0u8; 32] {
+        Some(merkle_tree.insert_with_root(output_commitment_1, new_root)?)
     } else {
         None
     };
 
-    // Transfer tokens from pool vault to recipient
+    // Prepare pool signer seeds
     let pool_key = pool.key();
     let token_mint = pool.token_mint;
     let bump = pool.bump;
@@ -174,16 +184,58 @@ pub fn handler(
     ];
     let signer_seeds = &[&seeds[..]];
 
-    let transfer_ctx = CpiContext::new_with_signer(
-        ctx.accounts.token_program.to_account_info(),
-        TokenTransfer {
-            from: ctx.accounts.pool_vault.to_account_info(),
-            to: ctx.accounts.recipient_token_account.to_account_info(),
-            authority: pool.to_account_info(),
-        },
-        signer_seeds,
-    );
-    token::transfer(transfer_ctx, amount)?;
+    if is_native_sol {
+        // Native SOL: transfer lamports from pool PDA to recipient
+        // Check pool has enough lamports
+        let pool_lamports = pool.to_account_info().lamports();
+        let rent = Rent::get()?;
+        let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
+
+        require!(
+            pool_lamports.saturating_sub(min_rent) >= amount,
+            ZkShieldedError::InsufficientPoolBalance
+        );
+
+        // Transfer lamports using raw pointer manipulation (PDAs can't use SystemProgram CPI for outgoing transfers)
+        **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
+        **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
+
+        msg!("Transferred {} lamports (native SOL) from shielded pool", amount);
+    } else {
+        // SPL Token: transfer tokens from pool vault to recipient token account
+        let token_program = ctx.accounts.token_program
+            .as_ref()
+            .ok_or(ZkShieldedError::MissingTokenProgram)?;
+        let pool_vault = ctx.accounts.pool_vault
+            .as_ref()
+            .ok_or(ZkShieldedError::MissingPoolVault)?;
+        let recipient_token_account = ctx.accounts.recipient_token_account
+            .as_ref()
+            .ok_or(ZkShieldedError::MissingTokenAccount)?;
+
+        // Validate token accounts
+        require!(
+            pool_vault.mint == pool.token_mint,
+            ZkShieldedError::InvalidTokenMint
+        );
+        require!(
+            recipient_token_account.mint == pool.token_mint,
+            ZkShieldedError::InvalidTokenMint
+        );
+
+        let transfer_ctx = CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            TokenTransfer {
+                from: pool_vault.to_account_info(),
+                to: recipient_token_account.to_account_info(),
+                authority: pool.to_account_info(),
+            },
+            signer_seeds,
+        );
+        token::transfer(transfer_ctx, amount)?;
+
+        msg!("Transferred {} SPL tokens from shielded pool", amount);
+    }
 
     // Update pool state
     pool.update_root(merkle_tree.root);
@@ -208,7 +260,7 @@ pub fn handler(
         amount,
         nullifier_1,
         nullifier_2,
-        change_commitment: output_commitment,
+        change_commitment: output_commitment_1,
         change_leaf_index: leaf_index,
         new_root: merkle_tree.root,
         timestamp: clock.unix_timestamp,

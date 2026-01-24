@@ -1,5 +1,5 @@
 /**
- * Specter JS Types
+ * Protocol 01 JS Types
  */
 
 // ============ Payment Types ============
@@ -116,15 +116,15 @@ export interface ConnectResult {
 export interface WalletInfo {
   /** Wallet public key */
   publicKey: string;
-  /** Is Specter wallet */
-  isSpecter: boolean;
+  /** Is Protocol 01 wallet */
+  isP01: boolean;
   /** Wallet version */
   version: string;
 }
 
 // ============ Event Types ============
 
-export type SpecterEventType =
+export type P01EventType =
   | 'connect'
   | 'disconnect'
   | 'accountChanged'
@@ -134,27 +134,27 @@ export type SpecterEventType =
   | 'subscriptionCancelled'
   | 'subscriptionPayment';
 
-export interface SpecterEvent {
-  type: SpecterEventType;
+export interface P01Event {
+  type: P01EventType;
   data: unknown;
   timestamp: number;
 }
 
 // ============ Error Types ============
 
-export class SpecterError extends Error {
-  code: SpecterErrorCode;
+export class P01Error extends Error {
+  code: P01ErrorCode;
   details?: unknown;
 
-  constructor(code: SpecterErrorCode, message: string, details?: unknown) {
+  constructor(code: P01ErrorCode, message: string, details?: unknown) {
     super(message);
-    this.name = 'SpecterError';
+    this.name = 'P01Error';
     this.code = code;
     this.details = details;
   }
 }
 
-export enum SpecterErrorCode {
+export enum P01ErrorCode {
   NOT_INSTALLED = 'NOT_INSTALLED',
   NOT_CONNECTED = 'NOT_CONNECTED',
   USER_REJECTED = 'USER_REJECTED',

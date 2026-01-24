@@ -1,7 +1,7 @@
 {
-  "name": "@specter/js",
+  "name": "@p01/js",
   "version": "0.1.0",
-  "description": "Specter Protocol SDK for integrating privacy-first payments and Stream Secure subscriptions",
+  "description": "Protocol 01 SDK for integrating privacy-first payments and Stream Secure subscriptions",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -28,14 +28,14 @@
   },
   "keywords": [
     "solana",
-    "specter",
+    "protocol-01",
     "privacy",
     "payments",
     "subscriptions",
     "streaming",
     "crypto"
   ],
-  "author": "Specter Protocol",
+  "author": "Protocol 01",
   "license": "MIT",
   "peerDependencies": {
     "react": ">=17.0.0"

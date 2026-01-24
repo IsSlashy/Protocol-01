@@ -1,7 +1,14 @@
 const snarkjs = require('snarkjs');
-const { poseidon } = require('circomlib');
 const path = require('path');
 const fs = require('fs');
+
+// Use circomlib's buildPoseidon for hash function
+let poseidon;
+
+async function initPoseidon() {
+    const { buildPoseidon } = require('circomlibjs');
+    poseidon = await buildPoseidon();
+}
 
 // Test constants
 const MERKLE_DEPTH = 20;
@@ -9,7 +16,8 @@ const ZERO_VALUE = BigInt('21663839004416932945382355908790599225266501822907911
 
 // Helper function to compute Poseidon hash
 function poseidonHash(inputs) {
-    return poseidon(inputs);
+    const hash = poseidon(inputs.map(x => BigInt(x)));
+    return poseidon.F.toObject(hash);
 }
 
 // Generate empty Merkle tree
@@ -55,6 +63,10 @@ function deriveOwnerPubkey(spendingKey) {
 // Main test
 async function runTest() {
     console.log('Testing Specter ZK Transfer Circuit...\n');
+
+    // Initialize Poseidon
+    await initPoseidon();
+    console.log('Poseidon initialized.\n');
 
     // Generate test keys
     const spendingKey = BigInt('12345678901234567890');

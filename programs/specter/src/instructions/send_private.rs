@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::errors::SpecterError;
-use crate::state::{DecoyLevel, SpecterWallet, StealthAccount};
+use crate::errors::P01Error;
+use crate::state::{DecoyLevel, P01Wallet, StealthAccount};
 
 /// Send a private payment using stealth addressing
 ///
@@ -15,14 +15,14 @@ pub struct SendPrivate<'info> {
     #[account(mut)]
     pub sender: Signer<'info>,
 
-    /// Sender's Specter wallet (for nonce increment)
+    /// Sender's Protocol 01 wallet (for nonce increment)
     #[account(
         mut,
-        seeds = [SpecterWallet::SEED_PREFIX, sender.key().as_ref()],
+        seeds = [P01Wallet::SEED_PREFIX, sender.key().as_ref()],
         bump = sender_wallet.bump,
-        constraint = sender_wallet.owner == sender.key() @ SpecterError::UnauthorizedWalletAccess
+        constraint = sender_wallet.owner == sender.key() @ P01Error::UnauthorizedWalletAccess
     )]
-    pub sender_wallet: Account<'info, SpecterWallet>,
+    pub sender_wallet: Account<'info, P01Wallet>,
 
     /// The stealth account PDA to be created
     #[account(
@@ -41,14 +41,14 @@ pub struct SendPrivate<'info> {
     /// Sender's token account (source of funds)
     #[account(
         mut,
-        constraint = sender_token_account.owner == sender.key() @ SpecterError::UnauthorizedWalletAccess
+        constraint = sender_token_account.owner == sender.key() @ P01Error::UnauthorizedWalletAccess
     )]
     pub sender_token_account: Account<'info, TokenAccount>,
 
     /// Stealth escrow token account (destination for funds)
     #[account(
         mut,
-        constraint = escrow_token_account.mint == sender_token_account.mint @ SpecterError::InvalidTokenMint
+        constraint = escrow_token_account.mint == sender_token_account.mint @ P01Error::InvalidTokenMint
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
@@ -69,21 +69,21 @@ pub fn handler(
 ) -> Result<()> {
     // Validate amount
     if amount == 0 {
-        return Err(SpecterError::InvalidStreamAmount.into());
+        return Err(P01Error::InvalidStreamAmount.into());
     }
 
     // Validate decoy level
     let _decoy = DecoyLevel::from_u8(decoy_level)
-        .ok_or(SpecterError::InvalidDecoyLevel)?;
+        .ok_or(P01Error::InvalidDecoyLevel)?;
 
     // Validate stealth address is not empty
     if stealth_address == [0u8; 32] {
-        return Err(SpecterError::InvalidStealthAddress.into());
+        return Err(P01Error::InvalidStealthAddress.into());
     }
 
     // Check sender has sufficient balance
     if ctx.accounts.sender_token_account.amount < amount {
-        return Err(SpecterError::InsufficientFundsForStealth.into());
+        return Err(P01Error::InsufficientFundsForStealth.into());
     }
 
     // Transfer tokens to escrow
@@ -134,14 +134,14 @@ pub struct SendPrivateNative<'info> {
     #[account(mut)]
     pub sender: Signer<'info>,
 
-    /// Sender's Specter wallet
+    /// Sender's Protocol 01 wallet
     #[account(
         mut,
-        seeds = [SpecterWallet::SEED_PREFIX, sender.key().as_ref()],
+        seeds = [P01Wallet::SEED_PREFIX, sender.key().as_ref()],
         bump = sender_wallet.bump,
-        constraint = sender_wallet.owner == sender.key() @ SpecterError::UnauthorizedWalletAccess
+        constraint = sender_wallet.owner == sender.key() @ P01Error::UnauthorizedWalletAccess
     )]
-    pub sender_wallet: Account<'info, SpecterWallet>,
+    pub sender_wallet: Account<'info, P01Wallet>,
 
     /// The stealth account PDA
     #[account(

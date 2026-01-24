@@ -51,6 +51,9 @@ impl Groth16Verifier {
     }
 
     /// Verify a transfer proof with standard public inputs
+    ///
+    /// IMPORTANT: Public inputs are received in little-endian format (matching Solana storage)
+    /// but the alt_bn128 precompile expects big-endian. We convert inside this function.
     pub fn verify_transfer(
         proof: &Groth16Proof,
         merkle_root: &[u8; 32],
@@ -64,17 +67,27 @@ impl Groth16Verifier {
     ) -> Result<bool> {
         let public_amount_bytes = Self::i64_to_field_bytes(public_amount);
 
+        // Convert public inputs from little-endian to big-endian for alt_bn128 pairing
         let public_inputs = [
-            *merkle_root,
-            *nullifier_1,
-            *nullifier_2,
-            *output_commitment_1,
-            *output_commitment_2,
-            public_amount_bytes,
-            *token_mint,
+            Self::le_to_be(merkle_root),
+            Self::le_to_be(nullifier_1),
+            Self::le_to_be(nullifier_2),
+            Self::le_to_be(output_commitment_1),
+            Self::le_to_be(output_commitment_2),
+            Self::le_to_be(&public_amount_bytes),
+            Self::le_to_be(token_mint),
         ];
 
         Self::verify(proof, &public_inputs, vk_data)
+    }
+
+    /// Convert 32-byte array from little-endian to big-endian
+    fn le_to_be(bytes: &[u8; 32]) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        for i in 0..32 {
+            result[i] = bytes[31 - i];
+        }
+        result
     }
 
     /// Parse verification key from bytes
@@ -235,18 +248,20 @@ impl Groth16Verifier {
     }
 
     /// Negate G1 point (negate y coordinate in the field)
+    /// Input/output are in BIG-ENDIAN format (as expected by alt_bn128)
     fn g1_negate(p: &[u8; G1_SIZE]) -> Result<[u8; G1_SIZE]> {
         let mut result = *p;
 
-        // BN254 field modulus for Fq (little-endian)
+        // BN254 field modulus for Fq (BIG-ENDIAN)
+        // q = 21888242871839275222246405745257275088696311157297823662689037894645226208583
         let q: [u8; 32] = [
-            0x47, 0xFD, 0x7C, 0xD8, 0x16, 0x8C, 0x20, 0x3C,
-            0x8d, 0xca, 0x40, 0x29, 0x43, 0x93, 0x7C, 0x83,
-            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
+            0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29,
+            0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
+            0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d,
+            0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c, 0xfd, 0x47,
         ];
 
-        // Copy y coordinate to avoid borrow issues
+        // Copy y coordinate (bytes 32-63)
         let mut y = [0u8; 32];
         y.copy_from_slice(&p[32..64]);
 
@@ -255,8 +270,9 @@ impl Groth16Verifier {
 
         if !is_zero {
             // Subtract y from q to get -y: result[32..64] = q - y
+            // For big-endian, we subtract from the END (index 31) to the START (index 0)
             let mut borrow = 0i16;
-            for i in 0..32 {
+            for i in (0..32).rev() {
                 let diff = q[i] as i16 - y[i] as i16 - borrow;
                 if diff < 0 {
                     result[32 + i] = (diff + 256) as u8;
@@ -294,17 +310,41 @@ impl Groth16Verifier {
     }
 
     /// Convert i64 to field element bytes (handles negative values)
+    /// For negative values, returns FIELD_MODULUS - |value| (little-endian)
     fn i64_to_field_bytes(value: i64) -> [u8; 32] {
         let mut bytes = [0u8; 32];
         if value >= 0 {
             let value_bytes = (value as u64).to_le_bytes();
             bytes[..8].copy_from_slice(&value_bytes);
         } else {
-            // For negative values, use field modular arithmetic
+            // For negative values: -x in field = p - x where p is BN254 Fr modulus
+            // BN254 Fr modulus (little-endian):
+            // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+            let p: [u8; 32] = [
+                0x01, 0x00, 0x00, 0xf0, 0x93, 0xf5, 0xe1, 0x43,
+                0x91, 0x70, 0xb9, 0x79, 0x48, 0xe8, 0x33, 0x28,
+                0x5d, 0x58, 0x81, 0x81, 0xb6, 0x45, 0x50, 0xb8,
+                0x29, 0xa0, 0x31, 0xe1, 0x72, 0x4e, 0x64, 0x30,
+            ];
+
+            // Compute p - |value| using subtraction with borrow
             let abs_value = value.unsigned_abs();
-            let value_bytes = abs_value.to_le_bytes();
-            bytes[..8].copy_from_slice(&value_bytes);
-            bytes[31] = 0xFF;
+            let abs_bytes = abs_value.to_le_bytes();
+
+            let mut borrow: u16 = 0;
+            for i in 0..32 {
+                let p_byte = p[i] as u16;
+                let v_byte = if i < 8 { abs_bytes[i] as u16 } else { 0 };
+                let diff = p_byte.wrapping_sub(v_byte).wrapping_sub(borrow);
+
+                if p_byte < v_byte + borrow {
+                    bytes[i] = diff as u8;
+                    borrow = 1;
+                } else {
+                    bytes[i] = diff as u8;
+                    borrow = 0;
+                }
+            }
         }
         bytes
     }
@@ -359,14 +399,50 @@ mod tests {
         let value: i64 = 1000;
         let bytes = Groth16Verifier::i64_to_field_bytes(value);
         assert_eq!(bytes[0..8], 1000u64.to_le_bytes());
-        assert_eq!(bytes[31], 0);
+        assert_eq!(bytes[8..32], [0u8; 24]);
     }
 
     #[test]
     fn test_i64_to_field_bytes_negative() {
+        // -1000 in BN254 Fr field = p - 1000
+        // p = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+        // p - 1000 = 21888242871839275222246405745257275088548364400416034343698204186575808494617
         let value: i64 = -1000;
         let bytes = Groth16Verifier::i64_to_field_bytes(value);
-        assert_eq!(bytes[0..8], 1000u64.to_le_bytes());
-        assert_eq!(bytes[31], 0xFF);
+
+        // p - 1000 in little-endian should have the lower bytes modified
+        // p[0..8] in LE = 0x43e1f593f0000001
+        // p - 1000: the first byte should be 0x01 - 0xe8 (1000 in LE starts with 0xe8, 0x03, ...)
+        // Actually 1000 = 0x3E8, so LE is [0xe8, 0x03, 0, 0, 0, 0, 0, 0]
+        // p[0..8] LE = [0x01, 0x00, 0x00, 0xf0, 0x93, 0xf5, 0xe1, 0x43]
+        // So p - 1000: 0x01 - 0xe8 needs borrow -> (256 + 1 - 232) = 25 = 0x19, borrow=1
+        // Then 0x00 - 0x03 - 1 (borrow) -> (256 - 4) = 252 = 0xfc, borrow=1
+        // Then 0x00 - 0x00 - 1 -> (256 - 1) = 255 = 0xff, borrow=1
+        // And so on...
+
+        // The important thing is it should NOT have 0xFF at byte 31
+        // byte 31 for p is 0x30, and we're subtracting from it with possible borrow
+        // Since 1000 is small, the upper bytes should remain mostly unchanged
+
+        // Verify it's a valid field element (not the buggy 0xFF marker)
+        // For -1000, byte 31 should be 0x30 (same as p's byte 31, since the subtraction
+        // doesn't propagate that far for such a small number)
+        assert_eq!(bytes[31], 0x30);
+
+        // Verify the lower bytes are correctly computed
+        // p - 1000 lower byte: 0x01 - 0xe8 with borrow = 0x19
+        assert_eq!(bytes[0], 0x19);
+    }
+
+    #[test]
+    fn test_i64_to_field_bytes_negative_one() {
+        // -1 in BN254 Fr field = p - 1
+        let value: i64 = -1;
+        let bytes = Groth16Verifier::i64_to_field_bytes(value);
+
+        // p - 1: the first byte should be 0x01 - 0x01 = 0x00
+        assert_eq!(bytes[0], 0x00);
+        // byte 31 should still be 0x30
+        assert_eq!(bytes[31], 0x30);
     }
 }

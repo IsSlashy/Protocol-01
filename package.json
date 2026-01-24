@@ -1,5 +1,5 @@
 {
-  "name": "specter-protocol",
+  "name": "protocol-01",
   "version": "0.1.0",
   "private": true,
   "description": "Privacy super-app for Solana - One app. Total invisibility.",
@@ -9,9 +9,25 @@
     "lint": "turbo run lint",
     "dev:web": "turbo run dev --filter=web",
     "dev:mobile": "turbo run dev --filter=mobile",
-    "build:sdk": "turbo run build --filter=specter-sdk"
+    "build:sdk": "turbo run build --filter=p01-sdk",
+    "test:zk": "ts-mocha -p tsconfig.test.json tests/zk-shielded.test.ts --timeout 120000",
+    "test:zk-transfer": "ts-mocha -p tsconfig.test.json tests/zk-transfer.test.ts --timeout 180000",
+    "test:zk-e2e": "ts-mocha -p tsconfig.test.json tests/zk-e2e.test.ts --timeout 300000"
   },
   "devDependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^25.0.10",
+    "chai": "^6.2.2",
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "mocha": "^11.7.5",
+    "poseidon-lite": "^0.2.0",
+    "snarkjs": "^0.7.4",
+    "ts-mocha": "^11.1.0",
     "turbo": "^2.0.0",
     "typescript": "^5.3.0"
   },

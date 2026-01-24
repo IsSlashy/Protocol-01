@@ -1,7 +1,7 @@
 [package]
 name = "specter"
 version = "0.1.0"
-description = "Specter Protocol - Privacy-focused Solana program with stealth payments and streaming"
+description = "Protocol 01 - Privacy-focused Solana program with stealth payments and streaming"
 edition = "2021"
 rust-version = "1.75"
 

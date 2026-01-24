@@ -28,9 +28,9 @@ export const ZERO_VALUE = BigInt(
 );
 
 /**
- * Program ID for the ZK shielded pool
+ * Program ID for the ZK shielded pool (deployed on devnet)
  */
-export const ZK_SHIELDED_PROGRAM_ID = 'ZkShLdPooooooooooooooooooooooooooooooooooooo';
+export const ZK_SHIELDED_PROGRAM_ID = '8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY';
 
 /**
  * Seed prefixes for PDA derivation

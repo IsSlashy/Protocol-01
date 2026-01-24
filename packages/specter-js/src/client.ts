@@ -1,7 +1,7 @@
 /**
- * Specter Client
+ * Protocol 01 Client
  *
- * Main SDK class for interacting with Specter wallet.
+ * Main SDK class for interacting with Protocol 01 wallet.
  */
 
 import {
@@ -13,21 +13,21 @@ import {
   SubscriptionPeriod,
   ConnectResult,
   WalletInfo,
-  SpecterEvent,
-  SpecterEventType,
-  SpecterError,
-  SpecterErrorCode,
+  P01Event,
+  P01EventType,
+  P01Error,
+  P01ErrorCode,
 } from './types';
 import {
   PERIODS,
   TOKENS,
   TOKEN_DECIMALS,
   DEFAULT_CONFIG,
-  SPECTER_PROVIDER_KEY,
-  SPECTER_INITIALIZED_EVENT,
+  P01_PROVIDER_KEY,
+  P01_INITIALIZED_EVENT,
 } from './constants';
 
-export interface SpecterConfig {
+export interface P01Config {
   /** Network to use */
   network?: 'devnet' | 'mainnet-beta';
   /** Auto-connect on initialization */
@@ -38,16 +38,16 @@ export interface SpecterConfig {
   rpcEndpoint?: string;
 }
 
-type EventCallback = (event: SpecterEvent) => void;
+type EventCallback = (event: P01Event) => void;
 
-export class Specter {
-  private config: Required<SpecterConfig>;
-  private provider: SpecterProvider | null = null;
+export class P01 {
+  private config: Required<P01Config>;
+  private provider: P01Provider | null = null;
   private connected = false;
   private publicKey: string | null = null;
-  private eventListeners = new Map<SpecterEventType, Set<EventCallback>>();
+  private eventListeners = new Map<P01EventType, Set<EventCallback>>();
 
-  constructor(config: SpecterConfig = {}) {
+  constructor(config: P01Config = {}) {
     this.config = {
       network: config.network ?? DEFAULT_CONFIG.network,
       autoConnect: config.autoConnect ?? DEFAULT_CONFIG.autoConnect,
@@ -64,48 +64,48 @@ export class Specter {
   // ============ Connection ============
 
   /**
-   * Check if Specter wallet is installed
+   * Check if Protocol 01 wallet is installed
    */
   static isInstalled(): boolean {
-    return typeof window !== 'undefined' && !!window[SPECTER_PROVIDER_KEY as keyof Window];
+    return typeof window !== 'undefined' && !!window[P01_PROVIDER_KEY as keyof Window];
   }
 
   /**
-   * Wait for Specter wallet to be available
+   * Wait for Protocol 01 wallet to be available
    */
   static waitForInstall(timeout = 3000): Promise<boolean> {
     return new Promise((resolve) => {
-      if (Specter.isInstalled()) {
+      if (P01.isInstalled()) {
         resolve(true);
         return;
       }
 
       const handler = () => {
-        window.removeEventListener(SPECTER_INITIALIZED_EVENT, handler);
+        window.removeEventListener(P01_INITIALIZED_EVENT, handler);
         resolve(true);
       };
 
-      window.addEventListener(SPECTER_INITIALIZED_EVENT, handler);
+      window.addEventListener(P01_INITIALIZED_EVENT, handler);
 
       setTimeout(() => {
-        window.removeEventListener(SPECTER_INITIALIZED_EVENT, handler);
-        resolve(Specter.isInstalled());
+        window.removeEventListener(P01_INITIALIZED_EVENT, handler);
+        resolve(P01.isInstalled());
       }, timeout);
     });
   }
 
   /**
-   * Connect to Specter wallet
+   * Connect to Protocol 01 wallet
    */
   async connect(): Promise<ConnectResult> {
-    if (!Specter.isInstalled()) {
-      throw new SpecterError(
-        SpecterErrorCode.NOT_INSTALLED,
-        'Specter wallet is not installed. Please install the extension.'
+    if (!P01.isInstalled()) {
+      throw new P01Error(
+        P01ErrorCode.NOT_INSTALLED,
+        'Protocol 01 wallet is not installed. Please install the extension.'
       );
     }
 
-    this.provider = (window as Window & { specter?: SpecterProvider })[SPECTER_PROVIDER_KEY] as SpecterProvider;
+    this.provider = (window as Window & { specter?: P01Provider })[P01_PROVIDER_KEY] as P01Provider;
 
     try {
       const result = await this.provider.connect();
@@ -116,8 +116,8 @@ export class Specter {
 
       return result;
     } catch (error) {
-      throw new SpecterError(
-        SpecterErrorCode.USER_REJECTED,
+      throw new P01Error(
+        P01ErrorCode.USER_REJECTED,
         'Connection rejected by user',
         error
       );
@@ -147,12 +147,12 @@ export class Specter {
    * Get wallet info
    */
   async getWalletInfo(): Promise<WalletInfo | null> {
-    if (!Specter.isInstalled()) return null;
+    if (!P01.isInstalled()) return null;
 
-    const provider = (window as Window & { specter?: SpecterProvider })[SPECTER_PROVIDER_KEY] as SpecterProvider;
+    const provider = (window as Window & { specter?: P01Provider })[P01_PROVIDER_KEY] as P01Provider;
     return {
       publicKey: this.publicKey || '',
-      isSpecter: provider.isSpecter,
+      isP01: provider.isP01,
       version: provider.version,
     };
   }
@@ -176,10 +176,10 @@ export class Specter {
 
     // Validate
     if (!recipient) {
-      throw new SpecterError(SpecterErrorCode.INVALID_PARAMS, 'Recipient required');
+      throw new P01Error(P01ErrorCode.INVALID_PARAMS, 'Recipient required');
     }
     if (!amount || amount <= 0) {
-      throw new SpecterError(SpecterErrorCode.INVALID_PARAMS, 'Invalid amount');
+      throw new P01Error(P01ErrorCode.INVALID_PARAMS, 'Invalid amount');
     }
 
     // Convert amount to raw units
@@ -266,13 +266,13 @@ export class Specter {
 
     // Validate
     if (!recipient) {
-      throw new SpecterError(SpecterErrorCode.INVALID_PARAMS, 'Recipient required');
+      throw new P01Error(P01ErrorCode.INVALID_PARAMS, 'Recipient required');
     }
     if (!merchantName) {
-      throw new SpecterError(SpecterErrorCode.INVALID_PARAMS, 'Merchant name required');
+      throw new P01Error(P01ErrorCode.INVALID_PARAMS, 'Merchant name required');
     }
     if (!amount || amount <= 0) {
-      throw new SpecterError(SpecterErrorCode.INVALID_PARAMS, 'Invalid amount');
+      throw new P01Error(P01ErrorCode.INVALID_PARAMS, 'Invalid amount');
     }
 
     // Resolve period to seconds
@@ -328,7 +328,7 @@ export class Specter {
   /**
    * Subscribe to events
    */
-  on(event: SpecterEventType, callback: EventCallback): () => void {
+  on(event: P01EventType, callback: EventCallback): () => void {
     if (!this.eventListeners.has(event)) {
       this.eventListeners.set(event, new Set());
     }
@@ -341,15 +341,15 @@ export class Specter {
   /**
    * Unsubscribe from events
    */
-  off(event: SpecterEventType, callback: EventCallback): void {
+  off(event: P01EventType, callback: EventCallback): void {
     this.eventListeners.get(event)?.delete(callback);
   }
 
   /**
    * Emit an event
    */
-  private emit(type: SpecterEventType, data: unknown): void {
-    const event: SpecterEvent = {
+  private emit(type: P01EventType, data: unknown): void {
+    const event: P01Event = {
       type,
       data,
       timestamp: Date.now(),
@@ -368,8 +368,8 @@ export class Specter {
 
   private ensureConnected(): void {
     if (!this.connected || !this.provider) {
-      throw new SpecterError(
-        SpecterErrorCode.NOT_CONNECTED,
+      throw new P01Error(
+        P01ErrorCode.NOT_CONNECTED,
         'Not connected to wallet. Call connect() first.'
       );
     }
@@ -404,8 +404,8 @@ export class Specter {
 }
 
 // Provider interface (what window.specter provides)
-interface SpecterProvider {
-  isSpecter: boolean;
+interface P01Provider {
+  isP01: boolean;
   version: string;
   connect(): Promise<{ publicKey: string }>;
   disconnect(): Promise<void>;

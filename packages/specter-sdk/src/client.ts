@@ -1,7 +1,7 @@
 import { Connection, PublicKey, Keypair } from '@solana/web3.js';
 import type {
-  SpecterWallet,
-  SpecterClientConfig,
+  P01Wallet,
+  P01ClientConfig,
   Balance,
   StealthAddress,
   StealthPayment,
@@ -11,11 +11,11 @@ import type {
   ScanOptions,
   Cluster,
   WalletAdapter,
-  SpecterEvent,
-  SpecterEventListener,
+  P01Event,
+  P01EventListener,
   StealthMetaAddress,
 } from './types';
-import { SpecterError, SpecterErrorCode } from './types';
+import { P01Error, P01ErrorCode } from './types';
 import {
   RPC_ENDPOINTS,
   DEFAULT_PROGRAM_ID,
@@ -51,15 +51,15 @@ import { withdrawStream, getStream, getUserStreams } from './streams/withdraw';
 import { cancelStream, pauseStream, resumeStream } from './streams/cancel';
 
 /**
- * Main client for interacting with the Specter Protocol
+ * Main client for interacting with the Protocol 01
  *
  * @example
  * ```typescript
  * // Create a new client
- * const client = new SpecterClient({ cluster: 'devnet' });
+ * const client = new P01Client({ cluster: 'devnet' });
  *
  * // Create a wallet
- * const wallet = await SpecterClient.createWallet();
+ * const wallet = await P01Client.createWallet();
  * client.connect(wallet);
  *
  * // Send a private transfer
@@ -70,16 +70,16 @@ import { cancelStream, pauseStream, resumeStream } from './streams/cancel';
  * );
  * ```
  */
-export class SpecterClient {
+export class P01Client {
   private connection: Connection;
-  private config: Required<SpecterClientConfig>;
+  private config: Required<P01ClientConfig>;
   private walletState: WalletState | null = null;
   private externalWallet: WalletAdapter | null = null;
   private scanner: StealthScanner | null = null;
-  private eventListeners: Map<string, SpecterEventListener[]> = new Map();
+  private eventListeners: Map<string, P01EventListener[]> = new Map();
   private scanSubscription: { unsubscribe: () => void } | null = null;
 
-  constructor(config: SpecterClientConfig = {}) {
+  constructor(config: P01ClientConfig = {}) {
     const cluster = config.cluster || 'devnet';
 
     this.config = {
@@ -97,7 +97,7 @@ export class SpecterClient {
     );
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Initialized with config:', this.config);
+      console.log('[P01Client] Initialized with config:', this.config);
     }
   }
 
@@ -108,7 +108,7 @@ export class SpecterClient {
   /**
    * Create a new Specter wallet with a fresh seed phrase
    */
-  static async createWallet(): Promise<SpecterWallet> {
+  static async createWallet(): Promise<P01Wallet> {
     return createWallet();
   }
 
@@ -116,7 +116,7 @@ export class SpecterClient {
    * Import a wallet from a seed phrase
    * @param seedPhrase - BIP39 mnemonic phrase
    */
-  static async importWallet(seedPhrase: string): Promise<SpecterWallet> {
+  static async importWallet(seedPhrase: string): Promise<P01Wallet> {
     return importFromSeedPhrase(seedPhrase);
   }
 
@@ -126,13 +126,13 @@ export class SpecterClient {
 
   /**
    * Connect a wallet to the client
-   * @param wallet - SpecterWallet, Keypair, or external wallet adapter
+   * @param wallet - P01Wallet, Keypair, or external wallet adapter
    */
   async connect(
-    wallet: SpecterWallet | Keypair | WalletAdapter
+    wallet: P01Wallet | Keypair | WalletAdapter
   ): Promise<void> {
     if ('seedPhrase' in wallet && wallet.seedPhrase) {
-      // Full SpecterWallet with seed phrase
+      // Full P01Wallet with seed phrase
       this.walletState = await createWalletState(wallet.seedPhrase);
       this.externalWallet = null;
     } else if ('secretKey' in wallet) {
@@ -157,7 +157,7 @@ export class SpecterClient {
     }
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Wallet connected:', this.publicKey?.toBase58());
+      console.log('[P01Client] Wallet connected:', this.publicKey?.toBase58());
     }
   }
 
@@ -176,7 +176,7 @@ export class SpecterClient {
     }
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Wallet disconnected');
+      console.log('[P01Client] Wallet disconnected');
     }
   }
 
@@ -249,8 +249,8 @@ export class SpecterClient {
         lastUpdated: new Date(),
       };
     } catch (error) {
-      throw new SpecterError(
-        SpecterErrorCode.RPC_ERROR,
+      throw new P01Error(
+        P01ErrorCode.RPC_ERROR,
         'Failed to fetch balance',
         error as Error
       );
@@ -268,8 +268,8 @@ export class SpecterClient {
     this.ensureConnected();
 
     if (!this.walletState) {
-      throw new SpecterError(
-        SpecterErrorCode.WALLET_NOT_CONNECTED,
+      throw new P01Error(
+        P01ErrorCode.WALLET_NOT_CONNECTED,
         'Full wallet required for stealth address generation'
       );
     }
@@ -292,8 +292,8 @@ export class SpecterClient {
     this.ensureConnected();
 
     if (!this.scanner) {
-      throw new SpecterError(
-        SpecterErrorCode.WALLET_NOT_CONNECTED,
+      throw new P01Error(
+        P01ErrorCode.WALLET_NOT_CONNECTED,
         'Full wallet required for scanning'
       );
     }
@@ -309,8 +309,8 @@ export class SpecterClient {
     this.ensureConnected();
 
     if (!this.walletState) {
-      throw new SpecterError(
-        SpecterErrorCode.WALLET_NOT_CONNECTED,
+      throw new P01Error(
+        P01ErrorCode.WALLET_NOT_CONNECTED,
         'Full wallet required for subscriptions'
       );
     }
@@ -355,7 +355,7 @@ export class SpecterClient {
     });
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Private transfer sent:', result.signature);
+      console.log('[P01Client] Private transfer sent:', result.signature);
     }
 
     return result.signature;
@@ -391,8 +391,8 @@ export class SpecterClient {
     this.ensureConnected();
 
     if (!this.walletState) {
-      throw new SpecterError(
-        SpecterErrorCode.WALLET_NOT_CONNECTED,
+      throw new P01Error(
+        P01ErrorCode.WALLET_NOT_CONNECTED,
         'Full wallet required for claiming'
       );
     }
@@ -427,7 +427,7 @@ export class SpecterClient {
     });
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Stealth payment claimed:', result.signature);
+      console.log('[P01Client] Stealth payment claimed:', result.signature);
     }
 
     return result.signature;
@@ -473,7 +473,7 @@ export class SpecterClient {
     });
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Stream created:', stream.id.toBase58());
+      console.log('[P01Client] Stream created:', stream.id.toBase58());
     }
 
     return stream;
@@ -502,7 +502,7 @@ export class SpecterClient {
     });
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Stream withdrawal:', result.signature);
+      console.log('[P01Client] Stream withdrawal:', result.signature);
     }
 
     return result.signature;
@@ -526,7 +526,7 @@ export class SpecterClient {
     });
 
     if (this.config.debug) {
-      console.log('[SpecterClient] Stream cancelled:', result.signature);
+      console.log('[P01Client] Stream cancelled:', result.signature);
     }
 
     return result.signature;
@@ -558,7 +558,7 @@ export class SpecterClient {
    * @param event - Event type
    * @param listener - Callback function
    */
-  on(event: string, listener: SpecterEventListener): void {
+  on(event: string, listener: P01EventListener): void {
     const listeners = this.eventListeners.get(event) || [];
     listeners.push(listener);
     this.eventListeners.set(event, listeners);
@@ -569,7 +569,7 @@ export class SpecterClient {
    * @param event - Event type
    * @param listener - Callback function to remove
    */
-  off(event: string, listener: SpecterEventListener): void {
+  off(event: string, listener: P01EventListener): void {
     const listeners = this.eventListeners.get(event) || [];
     const index = listeners.indexOf(listener);
     if (index !== -1) {
@@ -581,7 +581,7 @@ export class SpecterClient {
   /**
    * Emit an event
    */
-  private emit(event: SpecterEvent): void {
+  private emit(event: P01Event): void {
     const listeners = this.eventListeners.get(event.type) || [];
     for (const listener of listeners) {
       try {
@@ -630,8 +630,8 @@ export class SpecterClient {
 
   private ensureConnected(): void {
     if (!this.isConnected) {
-      throw new SpecterError(
-        SpecterErrorCode.WALLET_NOT_CONNECTED,
+      throw new P01Error(
+        P01ErrorCode.WALLET_NOT_CONNECTED,
         'No wallet connected. Call connect() first.'
       );
     }
@@ -647,11 +647,11 @@ export class SpecterClient {
     if ((this as any)._keypair) {
       return (this as any)._keypair;
     }
-    throw new SpecterError(
-      SpecterErrorCode.WALLET_NOT_CONNECTED,
+    throw new P01Error(
+      P01ErrorCode.WALLET_NOT_CONNECTED,
       'No wallet connected'
     );
   }
 }
 
-export default SpecterClient;
+export default P01Client;

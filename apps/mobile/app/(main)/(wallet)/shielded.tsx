@@ -24,6 +24,9 @@ import Animated, {
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
+import { useZkProver } from '@/providers/ZkProverProvider';
+import { getKeypair } from '@/services/solana/wallet';
+import { PublicKey, Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors - NO purple/violet allowed
@@ -47,23 +50,34 @@ export default function ShieldedWalletScreen() {
     zkAddress,
     pendingTransactions,
     initialize,
+    ensureInitialized,
     refreshBalance,
     shield,
     unshield,
+    importNote,
   } = useShieldedStore();
+
+  // ZK Prover status (for unshield/transfer)
+  const { isCircuitLoaded, error: proverError } = useZkProver();
 
   const [showBalance, setShowBalance] = useState(true);
   const [actionModal, setActionModal] = useState<'shield' | 'unshield' | null>(null);
   const [amount, setAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importNoteString, setImportNoteString] = useState('');
 
-  // Initialize on mount
+  // Initialize on mount - handles both first init and app restart
   useEffect(() => {
-    if (!isInitialized && publicKey) {
-      initialize();
-    }
-  }, [publicKey, isInitialized]);
+    const initZk = async () => {
+      if (publicKey) {
+        // ensureInitialized will re-init if needed (e.g., after app restart)
+        await ensureInitialized();
+      }
+    };
+    initZk();
+  }, [publicKey]);
 
   const handleRefresh = useCallback(async () => {
     await refreshBalance();
@@ -84,11 +98,28 @@ export default function ShieldedWalletScreen() {
       return;
     }
 
+    if (!publicKey) {
+      Alert.alert('Error', 'Wallet not connected');
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsProcessing(true);
 
     try {
-      await shield(parseFloat(amount));
+      // Get keypair for signing
+      const keypair = await getKeypair();
+      if (!keypair) {
+        throw new Error('Could not get wallet keypair');
+      }
+
+      // Create sign function
+      const signTransaction = async (tx: Transaction): Promise<Transaction> => {
+        tx.sign(keypair);
+        return tx;
+      };
+
+      await shield(parseFloat(amount), keypair.publicKey, signTransaction);
       setActionModal(null);
       setAmount('');
       Alert.alert('Success', 'SOL has been shielded successfully');
@@ -110,11 +141,29 @@ export default function ShieldedWalletScreen() {
       return;
     }
 
+    if (!publicKey) {
+      Alert.alert('Error', 'Wallet not connected');
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsProcessing(true);
 
     try {
-      await unshield(parseFloat(amount));
+      // Get keypair for signing
+      const keypair = await getKeypair();
+      if (!keypair) {
+        throw new Error('Could not get wallet keypair');
+      }
+
+      // Create sign function
+      const signTransaction = async (tx: Transaction): Promise<Transaction> => {
+        tx.sign(keypair);
+        return tx;
+      };
+
+      // Unshield back to own wallet
+      await unshield(parseFloat(amount), keypair.publicKey, keypair.publicKey, signTransaction);
       setActionModal(null);
       setAmount('');
       Alert.alert('Success', 'SOL has been unshielded successfully');
@@ -122,6 +171,42 @@ export default function ShieldedWalletScreen() {
       Alert.alert('Error', (err as Error).message);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleImportNote = async () => {
+    if (!importNoteString.trim()) {
+      Alert.alert('Error', 'Please paste a note string');
+      return;
+    }
+
+    if (!importNoteString.startsWith('p01note:')) {
+      Alert.alert('Invalid Format', 'Note string must start with "p01note:"');
+      return;
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsProcessing(true);
+
+    try {
+      await importNote(importNoteString.trim());
+      setShowImportModal(false);
+      setImportNoteString('');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Note imported successfully! Your shielded balance has been updated.');
+    } catch (err) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Import Failed', (err as Error).message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePasteNote = async () => {
+    const text = await Clipboard.getStringAsync();
+    if (text) {
+      setImportNoteString(text);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   };
 
@@ -228,23 +313,72 @@ export default function ShieldedWalletScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: P01.pinkDim }]}
-            onPress={() => setActionModal('unshield')}
+            style={[
+              styles.actionButton,
+              { backgroundColor: P01.pinkDim },
+              (!isCircuitLoaded || shieldedBalance <= 0) && styles.actionButtonDisabled,
+            ]}
+            onPress={() => {
+              if (!isCircuitLoaded) {
+                Alert.alert(
+                  'ZK Prover Not Ready',
+                  'Circuit files are loading. Please wait a moment and try again.\n\nIf this persists, restart the app.',
+                );
+                return;
+              }
+              setActionModal('unshield');
+            }}
             disabled={shieldedBalance <= 0}
           >
-            <Ionicons name="arrow-up" size={24} color={P01.pink} />
-            <Text style={[styles.actionText, { color: P01.pink }]}>Unshield</Text>
+            <Ionicons name="arrow-up" size={24} color={isCircuitLoaded ? P01.pink : Colors.textTertiary} />
+            <Text style={[styles.actionText, { color: isCircuitLoaded ? P01.pink : Colors.textTertiary }]}>Unshield</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: P01.blueDim }]}
-            onPress={() => router.push('/(main)/(wallet)/shielded-transfer')}
+            style={[
+              styles.actionButton,
+              { backgroundColor: P01.blueDim },
+              (!isCircuitLoaded || shieldedBalance <= 0) && styles.actionButtonDisabled,
+            ]}
+            onPress={() => {
+              if (!isCircuitLoaded) {
+                Alert.alert(
+                  'ZK Prover Not Ready',
+                  'Circuit files are loading. Please wait a moment and try again.\n\nIf this persists, restart the app.',
+                );
+                return;
+              }
+              router.push('/(main)/(wallet)/shielded-transfer');
+            }}
             disabled={shieldedBalance <= 0}
           >
-            <Ionicons name="flash" size={24} color={P01.blue} />
-            <Text style={[styles.actionText, { color: P01.blue }]}>Transfer</Text>
+            <Ionicons name="flash" size={24} color={isCircuitLoaded ? P01.blue : Colors.textTertiary} />
+            <Text style={[styles.actionText, { color: isCircuitLoaded ? P01.blue : Colors.textTertiary }]}>Transfer</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.actionButton,
+              { backgroundColor: 'rgba(255, 204, 0, 0.15)' },
+            ]}
+            onPress={() => setShowImportModal(true)}
+          >
+            <Ionicons name="download" size={24} color="#ffcc00" />
+            <Text style={[styles.actionText, { color: '#ffcc00' }]}>Import</Text>
           </TouchableOpacity>
         </Animated.View>
+
+        {/* Prover Status Warning */}
+        {!isCircuitLoaded && (
+          <Animated.View entering={FadeInDown.delay(250)}>
+            <View style={styles.proverWarning}>
+              <Ionicons name="warning" size={16} color="#fbbf24" />
+              <Text style={styles.proverWarningText}>
+                {proverError || 'Loading ZK circuits... Unshield and transfer will be available shortly.'}
+              </Text>
+            </View>
+          </Animated.View>
+        )}
 
         {/* Transparent Balance */}
         <Animated.View entering={FadeInDown.delay(300)}>
@@ -496,6 +630,74 @@ export default function ShieldedWalletScreen() {
             >
               <Text style={styles.confirmText}>Got it</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Import Note Modal */}
+      <Modal
+        visible={showImportModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowImportModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalIcon, { backgroundColor: 'rgba(255, 204, 0, 0.15)' }]}>
+                <Ionicons name="download" size={28} color="#ffcc00" />
+              </View>
+              <View>
+                <Text style={styles.modalTitle}>Import Note</Text>
+                <Text style={styles.modalSubtitle}>Receive a shielded transfer</Text>
+              </View>
+            </View>
+
+            <Text style={styles.inputLabel}>Note String</Text>
+            <View style={styles.importInputContainer}>
+              <TextInput
+                style={styles.importInput}
+                value={importNoteString}
+                onChangeText={setImportNoteString}
+                placeholder="p01note:..."
+                placeholderTextColor={Colors.textTertiary}
+                multiline
+                numberOfLines={4}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity style={styles.pasteButton} onPress={handlePasteNote}>
+                <Ionicons name="clipboard-outline" size={20} color={P01.cyan} />
+                <Text style={styles.pasteText}>Paste</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.importHint}>
+              Ask the sender to share the note string with you after they complete the transfer.
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => {
+                  setShowImportModal(false);
+                  setImportNoteString('');
+                }}
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmButton, { backgroundColor: '#ffcc00' }]}
+                onPress={handleImportNote}
+                disabled={isProcessing || !importNoteString.trim()}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator color="#000" />
+                ) : (
+                  <Text style={[styles.confirmText, { color: '#000' }]}>Import</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -934,5 +1136,58 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.regular,
     color: Colors.textSecondary,
     lineHeight: 20,
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
+  },
+  proverWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(251, 191, 36, 0.1)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  proverWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
+    color: '#fbbf24',
+  },
+  importInputContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.sm,
+  },
+  importInput: {
+    padding: Spacing.md,
+    fontSize: 14,
+    fontFamily: FontFamily.mono,
+    color: Colors.textPrimary,
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  pasteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    padding: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  pasteText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+    color: P01.cyan,
+  },
+  importHint: {
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginBottom: Spacing.lg,
+    lineHeight: 18,
   },
 });

@@ -257,6 +257,76 @@ export function parsePaymentResponse(response: Response): PaymentResponse | null
 }
 
 /**
+ * Verify a payment transaction on-chain
+ */
+async function verifyPaymentOnChain(
+  signature: string,
+  expectedRecipient: string,
+  expectedAmount: number,
+  rpcEndpoint: string
+): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const connection = new Connection(rpcEndpoint, 'confirmed');
+
+    // Get transaction details
+    const tx = await connection.getParsedTransaction(signature, {
+      maxSupportedTransactionVersion: 0,
+      commitment: 'confirmed',
+    });
+
+    if (!tx) {
+      return { valid: false, error: 'Transaction not found' };
+    }
+
+    // Check if transaction succeeded
+    if (tx.meta?.err) {
+      return { valid: false, error: 'Transaction failed on-chain' };
+    }
+
+    // Look for the transfer to the expected recipient
+    const instructions = tx.transaction.message.instructions;
+    let foundValidTransfer = false;
+
+    for (const ix of instructions) {
+      // Check parsed SystemProgram transfer
+      if ('parsed' in ix && ix.program === 'system' && ix.parsed?.type === 'transfer') {
+        const { destination, lamports } = ix.parsed.info;
+        if (destination === expectedRecipient && lamports >= expectedAmount) {
+          foundValidTransfer = true;
+          break;
+        }
+      }
+    }
+
+    // Also check post-balances for the recipient
+    if (!foundValidTransfer && tx.meta) {
+      const accountKeys = tx.transaction.message.accountKeys;
+      const recipientIndex = accountKeys.findIndex(
+        (key) => key.pubkey.toBase58() === expectedRecipient
+      );
+
+      if (recipientIndex !== -1) {
+        const preBalance = tx.meta.preBalances[recipientIndex] || 0;
+        const postBalance = tx.meta.postBalances[recipientIndex] || 0;
+        const received = postBalance - preBalance;
+
+        if (received >= expectedAmount) {
+          foundValidTransfer = true;
+        }
+      }
+    }
+
+    if (!foundValidTransfer) {
+      return { valid: false, error: 'Payment not found in transaction' };
+    }
+
+    return { valid: true };
+  } catch (error) {
+    return { valid: false, error: `Verification error: ${(error as Error).message}` };
+  }
+}
+
+/**
  * Create x402 middleware for Express-style servers
  * (For server-side usage, e.g., in a backend service)
  */
@@ -266,6 +336,12 @@ export function createX402Middleware(config: {
   pricing: Record<string, number>; // Route pattern -> lamports
   rpcEndpoint?: string;
 }) {
+  const rpcEndpoint = config.rpcEndpoint || (
+    config.network === 'solana:mainnet-beta'
+      ? 'https://api.mainnet-beta.solana.com'
+      : 'https://api.devnet.solana.com'
+  );
+
   return async (req: Request): Promise<Response | null> => {
     const url = new URL(req.url);
     const path = url.pathname;
@@ -308,17 +384,36 @@ export function createX402Middleware(config: {
     try {
       const payload: PaymentPayload = JSON.parse(atob(paymentHeader));
 
-      // TODO: Verify transaction on-chain
-      // For now, just check signature exists
       if (!payload.signature) {
         throw new Error('Missing signature');
       }
 
-      console.log('[x402] Payment verified:', payload.signature);
+      // Verify transaction on-chain
+      const verification = await verifyPaymentOnChain(
+        payload.signature,
+        config.recipient,
+        price,
+        rpcEndpoint
+      );
+
+      if (!verification.valid) {
+        console.error('[x402] Payment verification failed:', verification.error);
+        return new Response(JSON.stringify({ error: verification.error }), {
+          status: 402,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+
+      console.log('[x402] Payment verified on-chain:', payload.signature);
       return null; // Payment OK, continue to handler
     } catch (error) {
       return new Response(JSON.stringify({ error: 'Invalid payment' }), {
         status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
     }
   };

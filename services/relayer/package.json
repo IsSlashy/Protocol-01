@@ -1,5 +1,5 @@
 {
-  "name": "@specter-protocol/relayer",
+  "name": "@p01/relayer",
   "version": "0.1.0",
   "description": "ZK Shielded Pool Relayer Service for gasless transactions",
   "main": "dist/index.js",
@@ -13,7 +13,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.29.0",
     "@solana/web3.js": "^1.91.0",
-    "@specter-protocol/zk-sdk": "workspace:*",
+    "@p01/zk-sdk": "workspace:*",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "snarkjs": "^0.7.4",

@@ -1,7 +1,7 @@
 {
-  "name": "@specter-protocol/sdk",
+  "name": "@p01/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for interacting with Specter Protocol - Privacy-preserving payments on Solana",
+  "description": "TypeScript SDK for interacting with Protocol 01 - Privacy-preserving payments on Solana",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -47,18 +47,18 @@
   },
   "keywords": [
     "solana",
-    "specter",
+    "protocol-01",
     "privacy",
     "stealth-address",
     "crypto",
     "blockchain",
     "web3"
   ],
-  "author": "Specter Protocol Team",
+  "author": "Protocol 01 Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/specter-protocol/specter-sdk"
+    "url": "https://github.com/protocol-01/sdk"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.29.0",

@@ -1,17 +1,26 @@
 /**
  * Protocol 01 - Notification Service
  *
- * Push and local notification management:
- * - Permission handling and token registration
- * - Local notification scheduling
- * - Notification response handling
- * - Android notification channels
+ * Push and local notification management.
+ *
+ * Note: Push notifications are NOT available in Expo Go (SDK 53+).
+ * Use a development build for full push notification support.
  */
 
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
+
+import {
+  isExpoGo,
+  getNotificationsModule,
+  scheduleNotification,
+  cancelNotification as cancelNotificationWrapper,
+  cancelAllNotifications as cancelAllNotificationsWrapper,
+  setBadgeCount as setBadgeCountWrapper,
+  getAndroidImportance,
+  isNotificationsAvailable,
+} from './notificationsWrapper';
 
 import {
   PushToken,
@@ -26,34 +35,42 @@ import {
   DEFAULT_CHANNELS,
 } from './types';
 
-// Configure default notification behavior
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    priority: Notifications.AndroidNotificationPriority.HIGH,
-  }),
-});
-
 // Service state
 let serviceState: NotificationServiceState = {
   isInitialized: false,
   permissionStatus: 'undetermined',
   pushToken: null,
-  lastError: null,
+  lastError: isExpoGo ? 'Push notifications not available in Expo Go' : null,
 };
+
+// Initialize notification handler (only if not in Expo Go)
+if (!isExpoGo) {
+  const Notifications = getNotificationsModule();
+  if (Notifications) {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+        priority: Notifications.AndroidNotificationPriority.HIGH,
+      }),
+    });
+  }
+}
 
 /**
  * Initialize Android notification channels
  */
 async function initializeAndroidChannels(): Promise<void> {
-  if (Platform.OS !== 'android') return;
+  if (Platform.OS !== 'android' || isExpoGo) return;
+
+  const Notifications = getNotificationsModule();
+  if (!Notifications) return;
 
   for (const channel of DEFAULT_CHANNELS) {
     await Notifications.setNotificationChannelAsync(channel.id, {
       name: channel.name,
-      importance: getAndroidImportance(channel.importance),
+      importance: getAndroidImportance(channel.importance as any),
       description: channel.description,
       sound: channel.sound,
       vibrationPattern: channel.vibrationPattern,
@@ -64,27 +81,23 @@ async function initializeAndroidChannels(): Promise<void> {
 }
 
 /**
- * Convert importance string to Android constant
- */
-function getAndroidImportance(
-  importance: string
-): Notifications.AndroidImportance {
-  const importanceMap: Record<string, Notifications.AndroidImportance> = {
-    none: Notifications.AndroidImportance.NONE,
-    min: Notifications.AndroidImportance.MIN,
-    low: Notifications.AndroidImportance.LOW,
-    default: Notifications.AndroidImportance.DEFAULT,
-    high: Notifications.AndroidImportance.HIGH,
-    max: Notifications.AndroidImportance.MAX,
-  };
-  return importanceMap[importance] ?? Notifications.AndroidImportance.DEFAULT;
-}
-
-/**
  * Request notification permissions and register for push notifications
  * @returns Push token information or null if registration fails
  */
 export async function registerForPushNotifications(): Promise<PushToken | null> {
+  // Skip in Expo Go
+  if (isExpoGo) {
+    console.log('[Notifications] Push notifications not available in Expo Go');
+    serviceState.lastError = 'Push notifications not available in Expo Go';
+    return null;
+  }
+
+  const Notifications = getNotificationsModule();
+  if (!Notifications) {
+    serviceState.lastError = 'Notifications module not available';
+    return null;
+  }
+
   try {
     // Check if running on a physical device
     if (!Device.isDevice) {
@@ -97,8 +110,7 @@ export async function registerForPushNotifications(): Promise<PushToken | null> 
     await initializeAndroidChannels();
 
     // Check existing permissions
-    const { status: existingStatus } =
-      await Notifications.getPermissionsAsync();
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
     // Request permissions if not already granted
@@ -145,8 +157,7 @@ export async function registerForPushNotifications(): Promise<PushToken | null> 
     console.log('Push notification token registered:', pushToken.token);
     return pushToken;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Failed to register for push notifications:', errorMessage);
     serviceState.lastError = errorMessage;
     return null;
@@ -155,111 +166,68 @@ export async function registerForPushNotifications(): Promise<PushToken | null> 
 
 /**
  * Schedule a local notification
- * @param title - Notification title
- * @param body - Notification body text
- * @param data - Optional custom data payload
- * @returns Notification identifier
  */
 export async function scheduleLocalNotification(
   title: string,
   body: string,
   data?: NotificationData
 ): Promise<string> {
-  try {
-    const config: LocalNotificationConfig = {
+  return scheduleNotification({
+    content: {
       title,
       body,
-      data,
-      sound: true,
+      data: data ?? {},
+      sound: 'default',
       priority: 'high',
-    };
-
-    const identifier = await Notifications.scheduleNotificationAsync({
-      content: {
-        title: config.title,
-        body: config.body,
-        data: config.data ?? {},
-        sound: config.sound === true ? 'default' : config.sound || undefined,
-        priority: config.priority,
-      },
-      trigger: null, // Immediate notification
-    });
-
-    console.log('Local notification scheduled:', identifier);
-    return identifier;
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
-    console.error('Failed to schedule local notification:', errorMessage);
-    throw new Error(`Failed to schedule notification: ${errorMessage}`);
-  }
+    },
+    trigger: null, // Immediate notification
+  });
 }
 
 /**
  * Schedule a delayed or repeating notification
- * @param config - Scheduled notification configuration
- * @returns Notification identifier
  */
 export async function scheduleDelayedNotification(
   config: ScheduledNotificationConfig
 ): Promise<string> {
-  try {
-    const identifier = await Notifications.scheduleNotificationAsync({
-      content: {
-        title: config.title,
-        body: config.body,
-        data: config.data ?? {},
-        sound: config.sound === true ? 'default' : config.sound || undefined,
-        priority: config.priority,
-      },
-      trigger: config.trigger,
-    });
-
-    console.log('Delayed notification scheduled:', identifier);
-    return identifier;
-  } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error';
-    console.error('Failed to schedule delayed notification:', errorMessage);
-    throw new Error(`Failed to schedule notification: ${errorMessage}`);
-  }
+  return scheduleNotification({
+    content: {
+      title: config.title,
+      body: config.body,
+      data: config.data ?? {},
+      sound: config.sound === true ? 'default' : config.sound || undefined,
+      priority: config.priority,
+    },
+    trigger: config.trigger as any,
+  });
 }
 
 /**
  * Cancel a scheduled notification
- * @param identifier - Notification identifier to cancel
  */
 export async function cancelNotification(identifier: string): Promise<void> {
-  try {
-    await Notifications.cancelScheduledNotificationAsync(identifier);
-    console.log('Notification cancelled:', identifier);
-  } catch (error) {
-    console.error('Failed to cancel notification:', error);
-  }
+  return cancelNotificationWrapper(identifier);
 }
 
 /**
  * Cancel all scheduled notifications
  */
 export async function cancelAllNotifications(): Promise<void> {
-  try {
-    await Notifications.cancelAllScheduledNotificationsAsync();
-    console.log('All notifications cancelled');
-  } catch (error) {
-    console.error('Failed to cancel all notifications:', error);
-  }
+  return cancelAllNotificationsWrapper();
 }
 
 /**
  * Set up notification listeners for foreground and response handling
- * @param onReceived - Callback when notification is received in foreground
- * @param onResponse - Callback when user interacts with notification
- * @returns Cleanup function to remove listeners
  */
 export function setupNotificationListeners(
   onReceived?: NotificationReceivedCallback,
   onResponse?: NotificationResponseCallback
 ): () => void {
+  const Notifications = getNotificationsModule();
+  if (!Notifications) {
+    return () => {}; // No-op cleanup
+  }
+
   // Listener for notifications received while app is foregrounded
   const receivedSubscription = Notifications.addNotificationReceivedListener(
     (notification) => {
@@ -282,10 +250,7 @@ export function setupNotificationListeners(
   // Listener for user interaction with notifications
   const responseSubscription =
     Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log(
-        'Notification response:',
-        response.notification.request.identifier
-      );
+      console.log('Notification response:', response.notification.request.identifier);
       if (onResponse) {
         onResponse({
           notification: {
@@ -294,8 +259,7 @@ export function setupNotificationListeners(
               content: {
                 title: response.notification.request.content.title,
                 body: response.notification.request.content.body,
-                data: response.notification.request.content
-                  .data as NotificationData,
+                data: response.notification.request.content.data as NotificationData,
               },
             },
           },
@@ -312,10 +276,12 @@ export function setupNotificationListeners(
 }
 
 /**
- * Get the last notification response (for handling app launch from notification)
- * @returns Last notification response or null
+ * Get the last notification response
  */
 export async function getLastNotificationResponse(): Promise<NotificationResponse | null> {
+  const Notifications = getNotificationsModule();
+  if (!Notifications) return null;
+
   try {
     const response = await Notifications.getLastNotificationResponseAsync();
     if (!response) return null;
@@ -341,9 +307,11 @@ export async function getLastNotificationResponse(): Promise<NotificationRespons
 
 /**
  * Get current notification permission status
- * @returns Permission status
  */
 export async function getNotificationPermissionStatus(): Promise<NotificationPermissionStatus> {
+  const Notifications = getNotificationsModule();
+  if (!Notifications) return 'undetermined';
+
   try {
     const { status } = await Notifications.getPermissionsAsync();
     serviceState.permissionStatus = status as NotificationPermissionStatus;
@@ -356,7 +324,6 @@ export async function getNotificationPermissionStatus(): Promise<NotificationPer
 
 /**
  * Get the current service state
- * @returns Current notification service state
  */
 export function getNotificationServiceState(): NotificationServiceState {
   return { ...serviceState };
@@ -364,24 +331,20 @@ export function getNotificationServiceState(): NotificationServiceState {
 
 /**
  * Set the badge count on the app icon
- * @param count - Badge count (0 to clear)
  */
 export async function setBadgeCount(count: number): Promise<void> {
-  try {
-    await Notifications.setBadgeCountAsync(count);
-  } catch (error) {
-    console.error('Failed to set badge count:', error);
-  }
+  return setBadgeCountWrapper(count);
 }
 
 /**
  * Get all pending notification requests
- * @returns Array of pending notification identifiers
  */
 export async function getPendingNotifications(): Promise<string[]> {
+  const Notifications = getNotificationsModule();
+  if (!Notifications) return [];
+
   try {
-    const notifications =
-      await Notifications.getAllScheduledNotificationsAsync();
+    const notifications = await Notifications.getAllScheduledNotificationsAsync();
     return notifications.map((n) => n.identifier);
   } catch (error) {
     console.error('Failed to get pending notifications:', error);
@@ -391,3 +354,4 @@ export async function getPendingNotifications(): Promise<string[]> {
 
 // Re-export types
 export * from './types';
+export { isExpoGo, isNotificationsAvailable };

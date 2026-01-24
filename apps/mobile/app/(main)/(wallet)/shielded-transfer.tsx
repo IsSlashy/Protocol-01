@@ -20,6 +20,9 @@ import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useShieldedStore } from '@/stores/shieldedStore';
+import { useZkProver } from '@/providers/ZkProverProvider';
+import { getKeypair } from '@/services/solana/wallet';
+import { Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors - NO purple allowed
@@ -39,23 +42,43 @@ export default function ShieldedTransferScreen() {
   const {
     shieldedBalance,
     isInitialized,
+    ensureInitialized,
     transfer,
     pendingTransactions,
+    getLastSentNote,
   } = useShieldedStore();
+
+  // ZK Prover status
+  const { isCircuitLoaded, error: proverError } = useZkProver();
 
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [proofProgress, setProofProgress] = useState(0);
   const [proofStatus, setProofStatus] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
-  // Redirect if not initialized
+  // Ensure ZK service is initialized on mount
   useEffect(() => {
-    if (!isInitialized) {
-      Alert.alert('Not Initialized', 'Please initialize your shielded wallet first.');
-      router.back();
-    }
-  }, [isInitialized]);
+    const init = async () => {
+      const ready = await ensureInitialized();
+      setIsReady(ready && isCircuitLoaded);
+      if (!ready) {
+        Alert.alert('Not Initialized', 'Please initialize your shielded wallet first.');
+        router.replace('/(main)/(wallet)');
+      } else if (!isCircuitLoaded) {
+        Alert.alert(
+          'ZK Prover Not Ready',
+          'Circuit files are still loading. Please wait a moment or go back and try again.',
+          [
+            { text: 'Go Back', onPress: () => router.back() },
+            { text: 'Wait', style: 'cancel' },
+          ]
+        );
+      }
+    };
+    init();
+  }, [isCircuitLoaded]);
 
   const handlePaste = async () => {
     const text = await Clipboard.getStringAsync();
@@ -76,6 +99,11 @@ export default function ShieldedTransferScreen() {
   };
 
   const validateInputs = (): boolean => {
+    if (!isCircuitLoaded) {
+      Alert.alert('ZK Prover Not Ready', 'Circuit files are still loading. Please wait and try again.');
+      return false;
+    }
+
     if (!recipient.trim()) {
       Alert.alert('Missing Recipient', 'Please enter a ZK address.');
       return false;
@@ -109,6 +137,18 @@ export default function ShieldedTransferScreen() {
     setProofStatus('Preparing transaction...');
 
     try {
+      // Get keypair for signing
+      const keypair = await getKeypair();
+      if (!keypair) {
+        throw new Error('Could not get wallet keypair');
+      }
+
+      // Create sign function
+      const signTransaction = async (tx: Transaction): Promise<Transaction> => {
+        tx.sign(keypair);
+        return tx;
+      };
+
       // Simulate proof generation progress
       const progressInterval = setInterval(() => {
         setProofProgress(prev => {
@@ -130,7 +170,7 @@ export default function ShieldedTransferScreen() {
         });
       }, 500);
 
-      await transfer(recipient, parseFloat(amount));
+      await transfer(recipient, parseFloat(amount), keypair.publicKey, signTransaction);
 
       clearInterval(progressInterval);
       setProofProgress(100);
@@ -138,11 +178,33 @@ export default function ShieldedTransferScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      Alert.alert(
-        'Transfer Successful',
-        `${amount} SOL has been sent privately to the recipient.`,
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
+      // Get the note string to share with recipient
+      const lastNote = getLastSentNote();
+      if (lastNote) {
+        Alert.alert(
+          'Transfer Successful',
+          `${amount} SOL has been sent privately.\n\n⚠️ IMPORTANT: The recipient must import this note to receive the funds.\n\nCopy and share this with the recipient:`,
+          [
+            {
+              text: 'Copy Note',
+              onPress: async () => {
+                await Clipboard.setStringAsync(lastNote.noteString);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                Alert.alert('Copied!', 'Share this note with the recipient so they can import it.', [
+                  { text: 'OK', onPress: () => router.back() }
+                ]);
+              }
+            },
+            { text: 'Done', onPress: () => router.back() }
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Transfer Successful',
+          `${amount} SOL has been sent privately to the recipient.`,
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+      }
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Transfer Failed', (err as Error).message);

@@ -9,7 +9,6 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
-import * as Notifications from 'expo-notifications';
 
 import {
   TransactionSplitter,
@@ -18,6 +17,12 @@ import {
   SplitConfig,
   DEFAULT_SPLIT_CONFIG,
 } from '@/services/privacy/transactionSplitter';
+
+import {
+  scheduleNotification,
+  getNotificationsModule,
+  isExpoGo,
+} from '@/services/notifications/notificationsWrapper';
 
 // Background task name
 const SPLIT_FORWARD_TASK = 'SPLIT_FORWARD_TASK';
@@ -247,23 +252,20 @@ async function scheduleForwardNotification(
   splitTx: SplitTransaction,
   part: SplitPart
 ): Promise<void> {
-  try {
-    const delay = Math.max(0, part.scheduledTime - Date.now());
+  const delay = Math.max(0, part.scheduledTime - Date.now());
+  const Notifications = getNotificationsModule();
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Split Transfer Progress',
-        body: `Part ${splitTx.parts.indexOf(part) + 1}/${splitTx.parts.length} will be delivered (${part.amount.toFixed(4)} SOL)`,
-        data: { splitId: splitTx.id, partId: part.id },
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-        seconds: Math.max(1, Math.floor(delay / 1000)),
-      },
-    });
-  } catch (error) {
-    console.error('[SplitStore] Failed to schedule notification:', error);
-  }
+  await scheduleNotification({
+    content: {
+      title: 'Split Transfer Progress',
+      body: `Part ${splitTx.parts.indexOf(part) + 1}/${splitTx.parts.length} will be delivered (${part.amount.toFixed(4)} SOL)`,
+      data: { splitId: splitTx.id, partId: part.id },
+    },
+    trigger: Notifications ? {
+      type: 'timeInterval',
+      seconds: Math.max(1, Math.floor(delay / 1000)),
+    } : null,
+  });
 }
 
 /**
@@ -272,18 +274,14 @@ async function scheduleForwardNotification(
 async function sendCompletionNotification(
   splitTx: SplitTransaction
 ): Promise<void> {
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Split Transfer Complete',
-        body: `All ${splitTx.parts.length} parts delivered (${splitTx.totalAmount.toFixed(4)} SOL total)`,
-        data: { splitId: splitTx.id },
-      },
-      trigger: null, // Immediate
-    });
-  } catch (error) {
-    console.error('[SplitStore] Failed to send completion notification:', error);
-  }
+  await scheduleNotification({
+    content: {
+      title: 'Split Transfer Complete',
+      body: `All ${splitTx.parts.length} parts delivered (${splitTx.totalAmount.toFixed(4)} SOL total)`,
+      data: { splitId: splitTx.id },
+    },
+    trigger: null, // Immediate
+  });
 }
 
 /**
