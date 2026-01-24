@@ -65,7 +65,7 @@ export default function StreamsDashboard() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<FilterType>('all');
-  const [activeSection, setActiveSection] = useState<SectionType>('services');
+  const [activeSection, setActiveSection] = useState<SectionType>('personal');
   const [showPrivacyInfo, setShowPrivacyInfo] = useState(false);
 
   const { publicKey } = useWalletStore();
@@ -329,35 +329,6 @@ export default function StreamsDashboard() {
             <Pressable
               onPress={() => {
                 Haptics.selectionAsync();
-                setActiveSection('services');
-              }}
-              style={{
-                flex: 1,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                paddingVertical: 12,
-                borderRadius: 10,
-                backgroundColor: activeSection === 'services' ? COLORS.cyan : 'transparent',
-              }}
-            >
-              <Ionicons
-                name="apps"
-                size={18}
-                color={activeSection === 'services' ? COLORS.void : COLORS.textMuted}
-              />
-              <Text style={{
-                fontSize: 13,
-                fontWeight: '600',
-                color: activeSection === 'services' ? COLORS.void : COLORS.textMuted
-              }}>
-                Services
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => {
-                Haptics.selectionAsync();
                 setActiveSection('personal');
               }}
               style={{
@@ -368,7 +339,7 @@ export default function StreamsDashboard() {
                 gap: 8,
                 paddingVertical: 12,
                 borderRadius: 10,
-                backgroundColor: activeSection === 'personal' ? COLORS.pink : 'transparent',
+                backgroundColor: activeSection === 'personal' ? COLORS.cyan : 'transparent',
               }}
             >
               <Ionicons
@@ -384,6 +355,35 @@ export default function StreamsDashboard() {
                 Personal
               </Text>
             </Pressable>
+            <Pressable
+              onPress={() => {
+                Haptics.selectionAsync();
+                setActiveSection('services');
+              }}
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                paddingVertical: 12,
+                borderRadius: 10,
+                backgroundColor: activeSection === 'services' ? COLORS.pink : 'transparent',
+              }}
+            >
+              <Ionicons
+                name="apps"
+                size={18}
+                color={activeSection === 'services' ? COLORS.void : COLORS.textMuted}
+              />
+              <Text style={{
+                fontSize: 13,
+                fontWeight: '600',
+                color: activeSection === 'services' ? COLORS.void : COLORS.textMuted
+              }}>
+                Services
+              </Text>
+            </Pressable>
           </View>
         </View>
 
@@ -393,7 +393,7 @@ export default function StreamsDashboard() {
             {/* Section Header */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Ionicons name="apps" size={18} color={COLORS.cyan} />
+                <Ionicons name="apps" size={18} color={COLORS.pink} />
                 <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>Available Services</Text>
               </View>
               <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
@@ -407,13 +407,13 @@ export default function StreamsDashboard() {
               alignItems: 'center',
               gap: 10,
               padding: 12,
-              backgroundColor: 'rgba(57, 197, 187, 0.1)',
+              backgroundColor: 'rgba(255, 119, 168, 0.1)',
               borderRadius: 10,
               marginBottom: 16,
               borderWidth: 1,
-              borderColor: 'rgba(57, 197, 187, 0.2)',
+              borderColor: 'rgba(255, 119, 168, 0.2)',
             }}>
-              <Ionicons name="information-circle" size={20} color={COLORS.cyan} />
+              <Ionicons name="information-circle" size={20} color={COLORS.pink} />
               <Text style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}>
                 Prices are set by service providers via SDK. Subscribe with one tap.
               </Text>
@@ -450,7 +450,14 @@ export default function StreamsDashboard() {
                       key={stream.id}
                       subscription={stream}
                       index={index}
-                      onPress={() => router.push(`/(main)/(streams)/${stream.id}`)}
+                      onPress={() => {
+                        console.log('[Streams] Navigating to stream detail:', stream.id);
+                        router.push({
+                          pathname: '/(main)/(streams)/[id]',
+                          params: { id: stream.id },
+                        });
+                      }}
+                      accentColor={COLORS.pink}
                     />
                   ))}
                 </View>
@@ -465,7 +472,7 @@ export default function StreamsDashboard() {
             {/* Section Header */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Ionicons name="person" size={18} color={COLORS.pink} />
+                <Ionicons name="person" size={18} color={COLORS.cyan} />
                 <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>Personal Payments</Text>
               </View>
               <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
@@ -479,13 +486,13 @@ export default function StreamsDashboard() {
               alignItems: 'center',
               gap: 10,
               padding: 12,
-              backgroundColor: 'rgba(255, 119, 168, 0.1)',
+              backgroundColor: 'rgba(57, 197, 187, 0.1)',
               borderRadius: 10,
               marginBottom: 16,
               borderWidth: 1,
-              borderColor: 'rgba(255, 119, 168, 0.2)',
+              borderColor: 'rgba(57, 197, 187, 0.2)',
             }}>
-              <Ionicons name="information-circle" size={20} color={COLORS.pink} />
+              <Ionicons name="information-circle" size={20} color={COLORS.cyan} />
               <Text style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}>
                 Create custom payment streams for salaries, allowances, or recurring transfers.
               </Text>
@@ -501,7 +508,7 @@ export default function StreamsDashboard() {
                 justifyContent: 'center',
                 gap: 10,
                 paddingVertical: 16,
-                backgroundColor: COLORS.pink,
+                backgroundColor: COLORS.cyan,
                 borderRadius: 12,
                 marginBottom: 16,
               }}
@@ -515,7 +522,7 @@ export default function StreamsDashboard() {
             {/* Personal Streams List */}
             {loading && personalStreams.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-                <ActivityIndicator size="large" color={COLORS.pink} />
+                <ActivityIndicator size="large" color={COLORS.cyan} />
               </View>
             ) : personalStreams.length === 0 ? (
               <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
@@ -523,12 +530,12 @@ export default function StreamsDashboard() {
                   width: 64,
                   height: 64,
                   borderRadius: 32,
-                  backgroundColor: 'rgba(255, 119, 168, 0.1)',
+                  backgroundColor: 'rgba(57, 197, 187, 0.1)',
                   alignItems: 'center',
                   justifyContent: 'center',
                   marginBottom: 16,
                 }}>
-                  <Ionicons name="wallet-outline" size={28} color={COLORS.pink} />
+                  <Ionicons name="wallet-outline" size={28} color={COLORS.cyan} />
                 </View>
                 <Text style={{ color: COLORS.textMuted, fontSize: 14, textAlign: 'center', marginBottom: 4 }}>
                   No personal streams yet
@@ -544,8 +551,14 @@ export default function StreamsDashboard() {
                     key={stream.id}
                     subscription={stream}
                     index={index}
-                    onPress={() => router.push(`/(main)/(streams)/${stream.id}`)}
-                    accentColor={COLORS.pink}
+                    onPress={() => {
+                      console.log('[Streams] Navigating to stream detail:', stream.id);
+                      router.push({
+                        pathname: '/(main)/(streams)/[id]',
+                        params: { id: stream.id },
+                      });
+                    }}
+                    accentColor={COLORS.cyan}
                   />
                 ))}
               </View>
@@ -603,7 +616,7 @@ function ServiceCard({
             width: 44,
             height: 44,
             borderRadius: 10,
-            backgroundColor: isSubscribed ? 'rgba(0, 255, 136, 0.1)' : 'rgba(57, 197, 187, 0.1)',
+            backgroundColor: isSubscribed ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 119, 168, 0.1)',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
@@ -612,7 +625,7 @@ function ServiceCard({
           <Ionicons
             name={service.icon as any}
             size={22}
-            color={isSubscribed ? COLORS.green : COLORS.cyan}
+            color={isSubscribed ? COLORS.green : COLORS.pink}
           />
         </View>
 
@@ -664,7 +677,7 @@ function ServiceCard({
           <View style={{
             paddingHorizontal: 12,
             paddingVertical: 8,
-            backgroundColor: COLORS.cyan,
+            backgroundColor: COLORS.pink,
             borderRadius: 8,
             flexShrink: 0,
           }}>
@@ -691,6 +704,11 @@ function SubscriptionCard({
   const isActive = sub.status === 'active';
   const isPaused = sub.status === 'paused';
 
+  const handlePress = () => {
+    console.log('[SubscriptionCard] Pressed stream:', sub.id, sub.name);
+    onPress();
+  };
+
   const daysUntilNext = Math.ceil(
     (sub.nextPaymentDate - Date.now()) / (1000 * 60 * 60 * 24)
   );
@@ -708,7 +726,7 @@ function SubscriptionCard({
   return (
     <Animated.View entering={FadeInDown.delay(index * 40).springify()}>
       <TouchableOpacity
-        onPress={onPress}
+        onPress={handlePress}
         activeOpacity={0.7}
         style={{
           flexDirection: 'row',

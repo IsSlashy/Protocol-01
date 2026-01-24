@@ -1,7 +1,7 @@
 {
-  "name": "@specter-protocol/zk-sdk",
+  "name": "@p01/zk-sdk",
   "version": "0.1.0",
-  "description": "Zero-knowledge SDK for Specter Protocol shielded transactions",
+  "description": "Zero-knowledge SDK for Protocol 01 shielded transactions",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -53,7 +53,7 @@
   },
   "keywords": [
     "solana",
-    "specter",
+    "protocol-01",
     "privacy",
     "zero-knowledge",
     "zk-snark",
@@ -61,11 +61,11 @@
     "shielded",
     "crypto"
   ],
-  "author": "Specter Protocol Team",
+  "author": "Protocol 01 Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/specter-protocol/zk-sdk"
+    "url": "https://github.com/protocol-01/zk-sdk"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.29.0",

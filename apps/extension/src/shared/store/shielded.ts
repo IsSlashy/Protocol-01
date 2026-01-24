@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { getZkServiceExtension, ZkServiceExtension, ZkAddress } from '../services/zk';
 
 /**
- * Shielded note data
+ * Shielded note data (serializable)
  */
 interface ShieldedNote {
-  amount: bigint;
-  commitment: bigint;
+  amount: string;
+  commitment: string;
   leafIndex?: number;
   createdAt: number;
 }
@@ -21,6 +23,7 @@ interface PendingTransaction {
   status: 'pending' | 'generating_proof' | 'submitting' | 'confirmed' | 'failed';
   error?: string;
   createdAt: number;
+  signature?: string;
 }
 
 /**
@@ -37,31 +40,36 @@ interface ShieldedState {
   lastSyncedIndex: number;
   merkleRoot: string | null;
 
+  // Internal
+  _zkService: ZkServiceExtension | null;
+
   // Actions
-  initialize: () => Promise<void>;
+  initialize: (seedPhrase: string, connection: Connection) => Promise<void>;
   refreshBalance: () => Promise<void>;
-  shield: (amount: number) => Promise<string>;
-  unshield: (amount: number) => Promise<string>;
-  transfer: (recipient: string, amount: number) => Promise<string>;
+  shield: (
+    amount: number,
+    walletPublicKey: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ) => Promise<string>;
+  unshield: (
+    amount: number,
+    recipient: PublicKey,
+    walletPublicKey: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ) => Promise<string>;
+  transfer: (
+    recipient: string,
+    amount: number,
+    walletPublicKey: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ) => Promise<string>;
   scanNotes: () => Promise<void>;
   reset: () => void;
 }
 
-// Serialize bigint for storage
-const serializeNote = (note: ShieldedNote) => ({
-  ...note,
-  amount: note.amount.toString(),
-  commitment: note.commitment.toString(),
-});
-
-const deserializeNote = (note: any): ShieldedNote => ({
-  ...note,
-  amount: BigInt(note.amount),
-  commitment: BigInt(note.commitment),
-});
-
 /**
  * Shielded wallet store
+ * Uses real ZK SDK service for on-chain shielded transactions
  */
 export const useShieldedStore = create<ShieldedState>()(
   persist(
@@ -75,29 +83,36 @@ export const useShieldedStore = create<ShieldedState>()(
       pendingTransactions: [],
       lastSyncedIndex: 0,
       merkleRoot: null,
+      _zkService: null,
 
-      // Initialize the shielded wallet
-      initialize: async () => {
+      // Initialize with real ZK service
+      initialize: async (seedPhrase: string, connection: Connection) => {
         set({ isLoading: true });
 
         try {
-          // In production, this would:
-          // 1. Load the spending key from secure storage
-          // 2. Initialize the ZK SDK client
-          // 3. Generate the ZK address
-          // 4. Scan for existing notes
+          // Get ZK service singleton
+          const zkService = getZkServiceExtension();
+          zkService.setConnection(connection);
 
-          // For now, generate a mock ZK address
-          const mockZkAddress = `zk:${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64').slice(0, 32)}`;
+          // Initialize with user's seed phrase
+          await zkService.initialize(seedPhrase);
+
+          // Get ZK address
+          const zkAddress = zkService.getZkAddress();
+
+          // Get initial balance
+          const balanceLamports = zkService.getShieldedBalance();
+          const balance = Number(balanceLamports) / 1e9;
 
           set({
             isInitialized: true,
-            zkAddress: mockZkAddress,
+            zkAddress: zkAddress.encoded,
+            shieldedBalance: balance,
             isLoading: false,
+            _zkService: zkService,
           });
 
-          // Scan for notes after initialization
-          await get().scanNotes();
+          console.log('[Shielded] Initialized with ZK address:', zkAddress.encoded);
         } catch (error) {
           console.error('[Shielded] Initialize error:', error);
           set({ isLoading: false });
@@ -105,17 +120,16 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Refresh shielded balance
+      // Refresh balance from ZK service
       refreshBalance: async () => {
-        const { notes } = get();
+        const { _zkService } = get();
+        if (!_zkService) return;
+
         set({ isLoading: true });
 
         try {
-          // Calculate balance from notes
-          const balance = notes.reduce(
-            (sum, note) => sum + Number(note.amount) / 1e9,
-            0
-          );
+          const balanceLamports = _zkService.getShieldedBalance();
+          const balance = Number(balanceLamports) / 1e9;
 
           set({
             shieldedBalance: balance,
@@ -127,9 +141,15 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Shield tokens
-      shield: async (amount: number) => {
+      // Shield tokens using real ZK SDK
+      shield: async (amount: number, walletPublicKey: PublicKey, signTransaction) => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+
         const txId = crypto.randomUUID();
+        const amountLamports = BigInt(Math.floor(amount * 1e9));
 
         set(state => ({
           pendingTransactions: [
@@ -145,40 +165,40 @@ export const useShieldedStore = create<ShieldedState>()(
         }));
 
         try {
-          // In production, this would:
-          // 1. Create a new note commitment
-          // 2. Call the shield instruction on-chain
-          // 3. Wait for confirmation
-          // 4. Update local note storage
-
-          // Simulate proof generation delay
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId ? { ...tx, status: 'submitting' } : tx
             ),
           }));
 
-          // Simulate transaction submission
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          // Call real ZK service
+          const signature = await _zkService.shield(
+            amountLamports,
+            walletPublicKey,
+            signTransaction
+          );
 
-          // Create new note
-          const newNote: ShieldedNote = {
-            amount: BigInt(Math.floor(amount * 1e9)),
-            commitment: BigInt('0x' + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')),
-            leafIndex: get().notes.length,
-            createdAt: Date.now(),
-          };
+          // Update state
+          const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
 
           set(state => ({
-            notes: [...state.notes, newNote],
-            shieldedBalance: state.shieldedBalance + amount,
-            pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+            shieldedBalance: newBalance,
+            pendingTransactions: state.pendingTransactions.map(tx =>
+              tx.id === txId ? { ...tx, status: 'confirmed', signature } : tx
+            ),
           }));
 
-          return 'mock_signature_' + txId;
+          // Remove from pending after delay
+          setTimeout(() => {
+            set(state => ({
+              pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+            }));
+          }, 5000);
+
+          console.log('[Shielded] Shield successful:', signature);
+          return signature;
         } catch (error) {
+          console.error('[Shielded] Shield error:', error);
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId
@@ -190,9 +210,15 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Unshield tokens
-      unshield: async (amount: number) => {
+      // Unshield tokens using real ZK SDK
+      unshield: async (amount: number, recipient: PublicKey, walletPublicKey: PublicKey, signTransaction) => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+
         const txId = crypto.randomUUID();
+        const amountLamports = BigInt(Math.floor(amount * 1e9));
 
         set(state => ({
           pendingTransactions: [
@@ -208,51 +234,40 @@ export const useShieldedStore = create<ShieldedState>()(
         }));
 
         try {
-          // In production, this would:
-          // 1. Select notes to spend
-          // 2. Generate ZK proof
-          // 3. Call the unshield instruction
-          // 4. Update local state
-
-          // Simulate proof generation
-          await new Promise(resolve => setTimeout(resolve, 3000));
-
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId ? { ...tx, status: 'submitting' } : tx
             ),
           }));
 
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          // Call real ZK service
+          const signature = await _zkService.unshield(
+            recipient,
+            amountLamports,
+            walletPublicKey,
+            signTransaction
+          );
 
-          // Remove spent notes (simplified - would need proper coin selection)
-          const amountLamports = BigInt(Math.floor(amount * 1e9));
-          let remaining = amountLamports;
-          const newNotes: ShieldedNote[] = [];
-
-          for (const note of get().notes) {
-            if (remaining > 0 && note.amount <= remaining) {
-              remaining -= note.amount;
-            } else if (remaining > 0 && note.amount > remaining) {
-              // Create change note
-              newNotes.push({
-                ...note,
-                amount: note.amount - remaining,
-              });
-              remaining = BigInt(0);
-            } else {
-              newNotes.push(note);
-            }
-          }
+          // Update state
+          const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
 
           set(state => ({
-            notes: newNotes,
-            shieldedBalance: state.shieldedBalance - amount,
-            pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+            shieldedBalance: newBalance,
+            pendingTransactions: state.pendingTransactions.map(tx =>
+              tx.id === txId ? { ...tx, status: 'confirmed', signature } : tx
+            ),
           }));
 
-          return 'mock_signature_' + txId;
+          setTimeout(() => {
+            set(state => ({
+              pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+            }));
+          }, 5000);
+
+          console.log('[Shielded] Unshield successful:', signature);
+          return signature;
         } catch (error) {
+          console.error('[Shielded] Unshield error:', error);
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId
@@ -264,9 +279,37 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Transfer shielded tokens
-      transfer: async (recipient: string, amount: number) => {
+      // Transfer shielded tokens using real ZK SDK
+      transfer: async (recipient: string, amount: number, walletPublicKey: PublicKey, signTransaction) => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+
         const txId = crypto.randomUUID();
+        const amountLamports = BigInt(Math.floor(amount * 1e9));
+
+        // Parse recipient ZK address
+        if (!recipient.startsWith('zk:')) {
+          throw new Error('Invalid ZK address format. Must start with "zk:"');
+        }
+
+        // Decode ZK address
+        const combined = Uint8Array.from(atob(recipient.slice(3)), c => c.charCodeAt(0));
+        const receivingPubkeyBytes = combined.slice(0, 32);
+        const viewingKey = combined.slice(32, 64);
+
+        // Convert to bigint (LE)
+        let receivingPubkey = BigInt(0);
+        for (let i = receivingPubkeyBytes.length - 1; i >= 0; i--) {
+          receivingPubkey = (receivingPubkey << BigInt(8)) + BigInt(receivingPubkeyBytes[i]);
+        }
+
+        const zkRecipient: ZkAddress = {
+          receivingPubkey,
+          viewingKey,
+          encoded: recipient,
+        };
 
         set(state => ({
           pendingTransactions: [
@@ -282,31 +325,40 @@ export const useShieldedStore = create<ShieldedState>()(
         }));
 
         try {
-          // In production, this would:
-          // 1. Parse recipient ZK address
-          // 2. Select notes to spend
-          // 3. Create output notes
-          // 4. Generate ZK proof
-          // 5. Submit transaction
-
-          await new Promise(resolve => setTimeout(resolve, 4000));
-
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId ? { ...tx, status: 'submitting' } : tx
             ),
           }));
 
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          // Call real ZK service
+          const signature = await _zkService.transfer(
+            zkRecipient,
+            amountLamports,
+            walletPublicKey,
+            signTransaction
+          );
 
-          // Update balance (simplified)
+          // Update state
+          const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
+
           set(state => ({
-            shieldedBalance: state.shieldedBalance - amount,
-            pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+            shieldedBalance: newBalance,
+            pendingTransactions: state.pendingTransactions.map(tx =>
+              tx.id === txId ? { ...tx, status: 'confirmed', signature } : tx
+            ),
           }));
 
-          return 'mock_signature_' + txId;
+          setTimeout(() => {
+            set(state => ({
+              pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+            }));
+          }, 5000);
+
+          console.log('[Shielded] Transfer successful:', signature);
+          return signature;
         } catch (error) {
+          console.error('[Shielded] Transfer error:', error);
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId
@@ -318,20 +370,39 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Scan for incoming notes
+      // Scan for incoming notes on the blockchain
       scanNotes: async () => {
+        const { _zkService } = get();
+        if (!_zkService) return;
+
         set({ isLoading: true });
 
         try {
-          // In production, this would:
-          // 1. Fetch commitment events from chain
-          // 2. Try to decrypt each with viewing key
-          // 3. Add successful decryptions to notes
+          // Get last scanned position
+          const lastSignature = await _zkService.getLastScannedSignature();
 
-          // For now, just update balance
-          await get().refreshBalance();
+          // Scan blockchain for incoming shielded notes
+          const { found, newBalance } = await _zkService.scanIncomingNotes(lastSignature);
+
+          // Update last scanned position if we found transactions
+          // Note: In production, track the latest signature scanned
+
+          // Update balance from scanned notes
+          const balance = Number(newBalance) / 1e9;
+
+          set({
+            shieldedBalance: balance,
+            lastSyncedIndex: get().lastSyncedIndex + found,
+            isLoading: false,
+          });
+
+          if (found > 0) {
+            console.log(`[Shielded] Found ${found} new incoming notes`);
+          }
         } catch (error) {
           console.error('[Shielded] Scan notes error:', error);
+          // Fall back to just refreshing local balance
+          await get().refreshBalance();
         } finally {
           set({ isLoading: false });
         }
@@ -339,6 +410,11 @@ export const useShieldedStore = create<ShieldedState>()(
 
       // Reset state
       reset: () => {
+        const { _zkService } = get();
+        if (_zkService) {
+          _zkService.reset();
+        }
+
         set({
           isInitialized: false,
           isLoading: false,
@@ -348,6 +424,7 @@ export const useShieldedStore = create<ShieldedState>()(
           pendingTransactions: [],
           lastSyncedIndex: 0,
           merkleRoot: null,
+          _zkService: null,
         });
       },
     }),
@@ -365,16 +442,14 @@ export const useShieldedStore = create<ShieldedState>()(
           await chrome.storage.local.remove(name);
         },
       })),
-      // Custom serializer for bigint
       partialize: (state) => ({
-        ...state,
-        notes: state.notes.map(serializeNote),
+        isInitialized: state.isInitialized,
+        zkAddress: state.zkAddress,
+        shieldedBalance: state.shieldedBalance,
+        notes: state.notes,
+        lastSyncedIndex: state.lastSyncedIndex,
+        merkleRoot: state.merkleRoot,
       }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.notes) {
-          state.notes = state.notes.map(deserializeNote);
-        }
-      },
     }
   )
 );

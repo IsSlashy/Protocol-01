@@ -1,0 +1,53 @@
+{
+  "name": "@p01/auth-sdk",
+  "version": "0.1.0",
+  "description": "Protocol 01 Authentication SDK - Login with blockchain subscriptions",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./client": {
+      "require": "./dist/client.js",
+      "import": "./dist/client.mjs",
+      "types": "./dist/client.d.ts"
+    },
+    "./server": {
+      "require": "./dist/server.js",
+      "import": "./dist/server.mjs",
+      "types": "./dist/server.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/client.ts src/server.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts src/client.ts src/server.ts --format cjs,esm --dts --watch",
+    "test": "vitest",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "@solana/web3.js": "^1.90.0"
+  },
+  "keywords": [
+    "solana",
+    "authentication",
+    "qr-code",
+    "subscription",
+    "protocol-01"
+  ],
+  "license": "MIT"
+}

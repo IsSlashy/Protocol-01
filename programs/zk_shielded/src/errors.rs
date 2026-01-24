@@ -46,4 +46,22 @@ pub enum ZkShieldedError {
 
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
+
+    #[msg("Missing token program for SPL token operation")]
+    MissingTokenProgram,
+
+    #[msg("Missing user token account for SPL token operation")]
+    MissingTokenAccount,
+
+    #[msg("Missing pool vault for SPL token operation")]
+    MissingPoolVault,
+
+    #[msg("Invalid token mint")]
+    InvalidTokenMint,
+
+    #[msg("Invalid token account owner")]
+    InvalidTokenOwner,
+
+    #[msg("Insufficient pool balance for withdrawal")]
+    InsufficientPoolBalance,
 }

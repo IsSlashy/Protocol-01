@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::errors::SpecterError;
-use crate::state::{SpecterWallet, StreamAccount};
+use crate::errors::P01Error;
+use crate::state::{P01Wallet, StreamAccount};
 
 /// Create a new streaming payment
 ///
@@ -14,13 +14,13 @@ pub struct CreateStream<'info> {
     #[account(mut)]
     pub sender: Signer<'info>,
 
-    /// Sender's Specter wallet (optional, for private streams)
+    /// Sender's Protocol 01 wallet (optional, for private streams)
     #[account(
-        seeds = [SpecterWallet::SEED_PREFIX, sender.key().as_ref()],
+        seeds = [P01Wallet::SEED_PREFIX, sender.key().as_ref()],
         bump = sender_wallet.bump,
-        constraint = sender_wallet.owner == sender.key() @ SpecterError::UnauthorizedWalletAccess
+        constraint = sender_wallet.owner == sender.key() @ P01Error::UnauthorizedWalletAccess
     )]
-    pub sender_wallet: Account<'info, SpecterWallet>,
+    pub sender_wallet: Account<'info, P01Wallet>,
 
     /// The recipient of the stream
     /// CHECK: Validated as not equal to sender
@@ -48,14 +48,14 @@ pub struct CreateStream<'info> {
     /// Sender's token account (source of funds)
     #[account(
         mut,
-        constraint = sender_token_account.owner == sender.key() @ SpecterError::UnauthorizedWalletAccess
+        constraint = sender_token_account.owner == sender.key() @ P01Error::UnauthorizedWalletAccess
     )]
     pub sender_token_account: Account<'info, TokenAccount>,
 
     /// Stream escrow token account (holds streamed funds)
     #[account(
         mut,
-        constraint = escrow_token_account.mint == sender_token_account.mint @ SpecterError::InvalidTokenMint
+        constraint = escrow_token_account.mint == sender_token_account.mint @ P01Error::InvalidTokenMint
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
@@ -75,22 +75,22 @@ pub fn handler(
 ) -> Result<()> {
     // Validate amount
     if total_amount == 0 {
-        return Err(SpecterError::InvalidStreamAmount.into());
+        return Err(P01Error::InvalidStreamAmount.into());
     }
 
     // Validate duration
     if !StreamAccount::validate_duration(duration_seconds) {
-        return Err(SpecterError::InvalidStreamDuration.into());
+        return Err(P01Error::InvalidStreamDuration.into());
     }
 
     // Validate recipient is not sender
     if ctx.accounts.recipient.key() == ctx.accounts.sender.key() {
-        return Err(SpecterError::RecipientIsSender.into());
+        return Err(P01Error::RecipientIsSender.into());
     }
 
     // Check sender has sufficient balance
     if ctx.accounts.sender_token_account.amount < total_amount {
-        return Err(SpecterError::InsufficientBalance.into());
+        return Err(P01Error::InsufficientBalance.into());
     }
 
     // Get current timestamp
@@ -98,7 +98,7 @@ pub fn handler(
     let start_time = clock.unix_timestamp;
     let end_time = start_time
         .checked_add(duration_seconds)
-        .ok_or(SpecterError::ArithmeticOverflow)?;
+        .ok_or(P01Error::ArithmeticOverflow)?;
 
     // Transfer tokens to escrow
     let transfer_ctx = CpiContext::new(

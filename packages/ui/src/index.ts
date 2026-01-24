@@ -1,12 +1,12 @@
 /**
- * @specter/ui - Specter Protocol Design System
+ * @p01/ui - Protocol 01 Design System
  *
  * Ultra dark theme with neon accents
  * Supports both Web (React) and Mobile (React Native)
  *
  * @example
  * ```tsx
- * import { Button, Card, colors, spacing } from '@specter/ui';
+ * import { Button, Card, colors, spacing } from '@p01/ui';
  *
  * function MyComponent() {
  *   return (

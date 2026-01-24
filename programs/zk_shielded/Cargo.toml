@@ -1,7 +1,7 @@
 [package]
 name = "zk_shielded"
 version = "0.1.0"
-description = "Specter Protocol - ZK Shielded Pool with Groth16 verification"
+description = "Protocol 01 - ZK Shielded Pool with Groth16 verification"
 edition = "2021"
 rust-version = "1.75"
 
@@ -25,6 +25,10 @@ solana-program = "1.18"
 
 # Hash function for verification key hashing
 sha3 = "0.10"
+
+# Poseidon hash for Merkle tree
+# NOTE: Disabled until Poseidon syscall is enabled on devnet/mainnet
+# solana-poseidon = "2.2"
 
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }

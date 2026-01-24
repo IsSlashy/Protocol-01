@@ -17,6 +17,9 @@ import nacl from 'tweetnacl';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import { Buffer } from 'buffer';
+import { ed25519 } from '@noble/curves/ed25519';
+import { x25519 } from '@noble/curves/x25519';
+import { sha512 } from '@noble/hashes/sha512';
 
 // =============================================================================
 // TYPES
@@ -90,26 +93,67 @@ const HKDF_INFO = new TextEncoder().encode('P01-STEALTH-v1');
 // =============================================================================
 
 /**
- * Convertit une clé ed25519 en clé curve25519 pour ECDH
- * Note: ed25519 et curve25519 partagent la même courbe mais avec des représentations différentes
+ * Converts an ed25519 public key to a curve25519 (x25519) public key
+ * Uses the birational map from Edwards to Montgomery form
+ *
+ * The conversion formula is: u = (1 + y) / (1 - y) mod p
+ * where y is the y-coordinate of the ed25519 point
  */
 function ed25519PublicKeyToCurve25519(publicKey: Uint8Array): Uint8Array {
-  // Pour une vraie implémentation, utiliser libsodium crypto_sign_ed25519_pk_to_curve25519
-  // Ici on utilise une approximation qui fonctionne pour notre cas d'usage
-  // En production, on devrait utiliser @stablelib/x25519 ou libsodium
-  return nacl.scalarMult.base(nacl.hash(publicKey).slice(0, 32));
+  // ed25519 public key is the compressed y-coordinate with sign bit
+  // We use the @noble/curves library for proper conversion
+  try {
+    // Decode the ed25519 point
+    const point = ed25519.ExtendedPoint.fromHex(publicKey);
+
+    // Convert to Montgomery form (x25519)
+    // u = (1 + y) / (1 - y) mod p
+    const { y } = point.toAffine();
+    const p = ed25519.CURVE.Fp.ORDER;
+    const Fp = ed25519.CURVE.Fp;
+
+    const one = Fp.create(1n);
+    const numerator = Fp.add(one, y);
+    const denominator = Fp.sub(one, y);
+    const u = Fp.mul(numerator, Fp.inv(denominator));
+
+    // Convert to bytes (little-endian)
+    const uBytes = new Uint8Array(32);
+    let val = u;
+    for (let i = 0; i < 32; i++) {
+      uBytes[i] = Number(val & 0xffn);
+      val >>= 8n;
+    }
+
+    return uBytes;
+  } catch {
+    // Fallback for invalid points - hash the key
+    const hash = sha512(publicKey);
+    return hash.slice(0, 32);
+  }
 }
 
+/**
+ * Converts an ed25519 secret key to a curve25519 (x25519) secret key
+ * The ed25519 secret key is hashed with SHA-512, then the first 32 bytes
+ * are clamped according to the x25519 specification
+ */
 function ed25519SecretKeyToCurve25519(secretKey: Uint8Array): Uint8Array {
-  // Extraire la seed (32 premiers bytes) de la clé secrète ed25519 (64 bytes)
+  // ed25519 secret key is 64 bytes: first 32 are seed, last 32 are public key
+  // For x25519, we hash the seed and clamp it
   const seed = secretKey.slice(0, 32);
-  // Hash pour obtenir une clé curve25519 valide
-  const hash = nacl.hash(seed);
-  // Clamp la clé selon les spécifications curve25519
-  const scalar = hash.slice(0, 32);
-  scalar[0] &= 248;
-  scalar[31] &= 127;
-  scalar[31] |= 64;
+
+  // Hash the seed with SHA-512 (same as ed25519 key expansion)
+  const hash = sha512(seed);
+
+  // Take first 32 bytes and clamp for x25519
+  const scalar = new Uint8Array(hash.slice(0, 32));
+
+  // Clamp according to x25519 spec (RFC 7748)
+  scalar[0] &= 248;      // Clear bottom 3 bits
+  scalar[31] &= 127;     // Clear top bit
+  scalar[31] |= 64;      // Set second-to-top bit
+
   return scalar;
 }
 
@@ -381,23 +425,31 @@ export async function generateStealthAddress(metaAddress: string): Promise<Gener
 }
 
 /**
- * Addition de deux clés publiques ed25519
- * Approximation: XOR des bytes puis hash
- * Note: Pour production, utiliser une vraie addition de points EC
+ * Addition of two ed25519 public keys using proper elliptic curve point addition
+ * P3 = P1 + P2 on the Edwards curve
  */
 function addPublicKeys(key1: Uint8Array, key2: Uint8Array): Uint8Array {
-  // Combiner les deux clés
-  const combined = new Uint8Array(64);
-  combined.set(key1, 0);
-  combined.set(key2, 32);
+  try {
+    // Decode both points from compressed form
+    const point1 = ed25519.ExtendedPoint.fromHex(key1);
+    const point2 = ed25519.ExtendedPoint.fromHex(key2);
 
-  // Hash pour obtenir une nouvelle clé valide
-  const hash = nacl.hash(combined);
+    // Add points on the curve
+    const sumPoint = point1.add(point2);
 
-  // Utiliser les 32 premiers bytes comme seed pour générer une clé publique valide
-  const keyPair = nacl.sign.keyPair.fromSeed(hash.slice(0, 32));
-
-  return keyPair.publicKey;
+    // Convert back to compressed public key format
+    return sumPoint.toRawBytes();
+  } catch (error) {
+    // Fallback: if point operations fail, use deterministic derivation
+    // This maintains compatibility but loses the algebraic relationship
+    console.warn('[Stealth] Point addition failed, using fallback derivation');
+    const combined = new Uint8Array(64);
+    combined.set(key1, 0);
+    combined.set(key2, 32);
+    const hash = sha512(combined);
+    const keyPair = nacl.sign.keyPair.fromSeed(hash.slice(0, 32));
+    return keyPair.publicKey;
+  }
 }
 
 // =============================================================================

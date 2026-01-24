@@ -28,21 +28,13 @@
   --color-p01-text-muted: #888892;
   --color-p01-text-dim: #555560;
 
-  /* Legacy support - specter colors redirect to p01 */
-  --color-specter-bg: #0a0a0c;
-  --color-specter-surface: #151518;
-  --color-specter-surface-2: #1a1a1e;
-  --color-specter-border: #2a2a30;
-  --color-specter-border-hover: #3a3a42;
-  --color-specter-green: #39c5bb;
-  --color-specter-green-dark: #2a9d95;
-  --color-specter-purple: #ff77a8;
-  --color-specter-blue: #00ffe5;
-  --color-specter-orange: #ffcc00;
-  --color-specter-red: #ff3366;
-  --color-specter-text: #ffffff;
-  --color-specter-text-muted: #888892;
-  --color-specter-text-dim: #555560;
+  /* Legacy support - p01 color aliases */
+  --color-p01-bg: #0a0a0c;
+  --color-p01-green: #39c5bb;
+  --color-p01-green-dark: #2a9d95;
+  --color-p01-purple: #ff77a8;
+  --color-p01-blue: #00ffe5;
+  --color-p01-orange: #ffcc00;
 
   /* Font Families */
   --font-sans: var(--font-inter), system-ui, sans-serif;

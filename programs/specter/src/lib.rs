@@ -9,10 +9,10 @@ use instructions::*;
 declare_id!("2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp");
 
 #[program]
-pub mod specter {
+pub mod p01 {
     use super::*;
 
-    /// Initialize a new Specter wallet with viewing and spending keys
+    /// Initialize a new Protocol 01 wallet with viewing and spending keys
     pub fn init_wallet(
         ctx: Context<InitWallet>,
         viewing_key: [u8; 32],

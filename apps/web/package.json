@@ -22,6 +22,7 @@
     "next": "^16.1.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-qr-code": "^2.0.15",
     "resend": "^6.8.0",
     "tailwind-merge": "^2.3.0"
   },

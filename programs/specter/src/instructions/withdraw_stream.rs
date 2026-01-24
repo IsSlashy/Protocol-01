@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::errors::SpecterError;
+use crate::errors::P01Error;
 use crate::state::StreamAccount;
 
 /// Withdraw available funds from an active stream
@@ -24,24 +24,24 @@ pub struct WithdrawStream<'info> {
             &stream_account.start_time.to_le_bytes()
         ],
         bump = stream_account.bump,
-        constraint = stream_account.recipient == recipient.key() @ SpecterError::UnauthorizedStreamAccess,
-        constraint = !stream_account.cancelled @ SpecterError::StreamAlreadyCancelled,
-        constraint = !stream_account.paused @ SpecterError::StreamPaused
+        constraint = stream_account.recipient == recipient.key() @ P01Error::UnauthorizedStreamAccess,
+        constraint = !stream_account.cancelled @ P01Error::StreamAlreadyCancelled,
+        constraint = !stream_account.paused @ P01Error::StreamPaused
     )]
     pub stream_account: Account<'info, StreamAccount>,
 
     /// Stream escrow token account (source of funds)
     #[account(
         mut,
-        constraint = escrow_token_account.mint == stream_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = escrow_token_account.mint == stream_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
     /// Recipient's token account (destination for funds)
     #[account(
         mut,
-        constraint = recipient_token_account.owner == recipient.key() @ SpecterError::UnauthorizedStreamAccess,
-        constraint = recipient_token_account.mint == stream_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = recipient_token_account.owner == recipient.key() @ P01Error::UnauthorizedStreamAccess,
+        constraint = recipient_token_account.mint == stream_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 
@@ -67,14 +67,14 @@ pub fn handler(ctx: Context<WithdrawStream>) -> Result<()> {
 
     // Check if stream has started
     if !stream_account.has_started(current_time) {
-        return Err(SpecterError::StreamNotStarted.into());
+        return Err(P01Error::StreamNotStarted.into());
     }
 
     // Calculate withdrawable amount
     let withdrawable = stream_account.withdrawable_amount(current_time);
 
     if withdrawable == 0 {
-        return Err(SpecterError::NoFundsAvailable.into());
+        return Err(P01Error::NoFundsAvailable.into());
     }
 
     // Create signer seeds for escrow authority PDA

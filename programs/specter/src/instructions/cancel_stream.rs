@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::errors::SpecterError;
+use crate::errors::P01Error;
 use crate::state::StreamAccount;
 
 /// Cancel an active stream and return remaining funds to sender
@@ -24,31 +24,31 @@ pub struct CancelStream<'info> {
             &stream_account.start_time.to_le_bytes()
         ],
         bump = stream_account.bump,
-        constraint = stream_account.sender == sender.key() @ SpecterError::UnauthorizedStreamAccess,
-        constraint = !stream_account.cancelled @ SpecterError::StreamAlreadyCancelled
+        constraint = stream_account.sender == sender.key() @ P01Error::UnauthorizedStreamAccess,
+        constraint = !stream_account.cancelled @ P01Error::StreamAlreadyCancelled
     )]
     pub stream_account: Account<'info, StreamAccount>,
 
     /// Stream escrow token account (source of remaining funds)
     #[account(
         mut,
-        constraint = escrow_token_account.mint == stream_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = escrow_token_account.mint == stream_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
     /// Sender's token account (destination for remaining funds)
     #[account(
         mut,
-        constraint = sender_token_account.owner == sender.key() @ SpecterError::UnauthorizedStreamAccess,
-        constraint = sender_token_account.mint == stream_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = sender_token_account.owner == sender.key() @ P01Error::UnauthorizedStreamAccess,
+        constraint = sender_token_account.mint == stream_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub sender_token_account: Account<'info, TokenAccount>,
 
     /// Recipient's token account (for unlocked funds)
     #[account(
         mut,
-        constraint = recipient_token_account.owner == stream_account.recipient @ SpecterError::UnauthorizedStreamAccess,
-        constraint = recipient_token_account.mint == stream_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = recipient_token_account.owner == stream_account.recipient @ P01Error::UnauthorizedStreamAccess,
+        constraint = recipient_token_account.mint == stream_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 

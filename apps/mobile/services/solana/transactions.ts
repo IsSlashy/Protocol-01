@@ -64,6 +64,18 @@ async function cacheTransactions(publicKey: string, transactions: TransactionHis
 }
 
 /**
+ * Clear transaction cache for a wallet (used when importing new wallet)
+ */
+export async function clearTransactionCache(publicKey: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(TX_CACHE_KEY + publicKey);
+    console.log('[Transactions] Cache cleared for:', publicKey.slice(0, 8) + '...');
+  } catch (error) {
+    console.warn('[Transactions] Failed to clear cache:', error);
+  }
+}
+
+/**
  * Send SOL to another wallet
  */
 export async function sendSol(

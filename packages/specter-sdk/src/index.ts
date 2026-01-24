@@ -1,17 +1,17 @@
 // ============================================================================
-// Specter Protocol SDK
+// Protocol 01 SDK
 // Privacy-preserving payments on Solana
 // ============================================================================
 
 // Main client
-export { SpecterClient, default } from './client';
+export { P01Client, default } from './client';
 
 // ============================================================================
 // Types
 // ============================================================================
 export type {
   // Wallet types
-  SpecterWallet,
+  P01Wallet,
   WalletCreateOptions,
   WalletImportOptions,
 
@@ -47,19 +47,19 @@ export type {
 
   // Client types
   Cluster,
-  SpecterClientConfig,
+  P01ClientConfig,
   WalletAdapter,
 
   // Event types
-  SpecterEventType,
-  SpecterEvent,
-  SpecterEventListener,
+  P01EventType,
+  P01Event,
+  P01EventListener,
   PaymentReceivedEvent,
   StreamEvent,
 } from './types';
 
 // Error types
-export { SpecterError, SpecterErrorCode } from './types';
+export { P01Error, P01ErrorCode } from './types';
 
 // ============================================================================
 // Constants

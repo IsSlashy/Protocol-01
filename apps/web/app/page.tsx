@@ -43,9 +43,7 @@ export default function Home() {
                 SDK Demo
               </a>
               <a
-                href="https://github.com/SectorCT/Protocol01#readme"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="/docs"
                 className="text-sm text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider"
               >
                 Docs

@@ -13,7 +13,9 @@ import { View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { SpecterPrivyProvider } from '../providers/PrivyProvider';
+import { P01PrivyProvider } from '../providers/PrivyProvider';
+import { ZkProverProvider } from '../providers/ZkProverProvider';
+import { AlertProvider } from '../providers/AlertProvider';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -30,23 +32,27 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#050505' }}>
       <SafeAreaProvider>
-        <SpecterPrivyProvider>
-          <View style={{ flex: 1, backgroundColor: '#050505' }}>
-            <StatusBar style="light" />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: '#050505' },
-                animation: 'fade',
-              }}
-            >
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(onboarding)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(main)" />
-            </Stack>
-          </View>
-        </SpecterPrivyProvider>
+        <P01PrivyProvider>
+          <ZkProverProvider>
+            <AlertProvider>
+              <View style={{ flex: 1, backgroundColor: '#050505' }}>
+                <StatusBar style="light" />
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: '#050505' },
+                    animation: 'fade',
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="(onboarding)" />
+                  <Stack.Screen name="(auth)" />
+                  <Stack.Screen name="(main)" />
+                </Stack>
+              </View>
+            </AlertProvider>
+          </ZkProverProvider>
+        </P01PrivyProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

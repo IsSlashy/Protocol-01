@@ -1,20 +1,20 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::Mint;
+use anchor_lang::system_program;
 
 use crate::state::{MerkleTreeState, NullifierSet, ShieldedPool};
 
 /// Initialize a new shielded pool for a specific token
 /// Creates the pool configuration, Merkle tree, and nullifier set
+///
+/// Supports both native SOL and SPL tokens:
+/// - For native SOL: pass System Program ID as token_mint
+/// - For SPL tokens: pass the token mint address
 #[derive(Accounts)]
-#[instruction(vk_hash: [u8; 32])]
+#[instruction(vk_hash: [u8; 32], token_mint: Pubkey)]
 pub struct InitializePool<'info> {
     /// Authority that will manage the pool
     #[account(mut)]
     pub authority: Signer<'info>,
-
-    /// Token mint for the shielded pool
-    /// Use System Program ID for native SOL
-    pub token_mint: Account<'info, Mint>,
 
     /// Shielded pool account (PDA)
     #[account(
@@ -23,7 +23,7 @@ pub struct InitializePool<'info> {
         space = ShieldedPool::LEN,
         seeds = [
             ShieldedPool::SEED_PREFIX,
-            token_mint.key().as_ref()
+            token_mint.as_ref()
         ],
         bump
     )]
@@ -62,13 +62,16 @@ pub struct InitializePool<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
-pub fn handler(ctx: Context<InitializePool>, vk_hash: [u8; 32]) -> Result<()> {
+pub fn handler(ctx: Context<InitializePool>, vk_hash: [u8; 32], token_mint: Pubkey) -> Result<()> {
     let clock = Clock::get()?;
+
+    // Check if this is native SOL
+    let is_native_sol = token_mint == system_program::ID;
 
     // Initialize shielded pool
     let pool = &mut ctx.accounts.shielded_pool;
     pool.authority = ctx.accounts.authority.key();
-    pool.token_mint = ctx.accounts.token_mint.key();
+    pool.token_mint = token_mint;
     pool.tree_depth = ShieldedPool::DEFAULT_TREE_DEPTH;
     pool.next_leaf_index = 0;
     pool.vk_hash = vk_hash;
@@ -99,7 +102,11 @@ pub fn handler(ctx: Context<InitializePool>, vk_hash: [u8; 32]) -> Result<()> {
     nullifier_set._padding = [0u8; 6];
     nullifier_set.bloom_filter = [0u64; 256];
 
-    msg!("Initialized shielded pool for token mint: {}", pool.token_mint);
+    if is_native_sol {
+        msg!("Initialized shielded pool for native SOL");
+    } else {
+        msg!("Initialized shielded pool for token mint: {}", token_mint);
+    }
     msg!("Merkle tree depth: {}", pool.tree_depth);
     msg!("Initial root: {:?}", pool.merkle_root);
 

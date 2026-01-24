@@ -11,6 +11,7 @@ import {
 import {
   getWalletBalance,
   getCachedBalance,
+  clearBalanceCache,
   WalletBalance,
   formatBalance,
   formatUsd,
@@ -18,6 +19,7 @@ import {
 import {
   getTransactionHistory,
   getCachedTransactions,
+  clearTransactionCache,
   TransactionHistory,
   sendSol,
   TransactionResult,
@@ -174,14 +176,31 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     try {
       set({ loading: true, error: null });
 
+      // Clear old wallet data from state
+      const oldPublicKey = get().publicKey;
+      if (oldPublicKey) {
+        console.log('[WalletStore] Clearing old wallet caches...');
+        await Promise.all([
+          clearBalanceCache(oldPublicKey),
+          clearTransactionCache(oldPublicKey),
+        ]);
+      }
+
       const wallet = await importWallet(mnemonic);
+
+      // Reset state completely with new wallet
       set({
         hasWallet: true,
         publicKey: wallet.publicKey,
+        balance: { sol: 0, tokens: [], totalUsd: 0 },
+        transactions: [],
         loading: false,
+        error: null,
       });
 
-      // Refresh balance
+      console.log('[WalletStore] Wallet imported:', wallet.publicKey);
+
+      // Refresh balance for new wallet
       get().refreshBalance();
       get().refreshTransactions();
     } catch (error: any) {

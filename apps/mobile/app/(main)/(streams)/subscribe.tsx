@@ -3,10 +3,10 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Alert,
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
+import { useAlert } from '../../../providers/AlertProvider';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,6 +47,7 @@ const SERVICE_ICONS: Record<string, string> = {
 export default function SubscribeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { showAlert, showCustom } = useAlert();
   const params = useLocalSearchParams<{
     serviceId: string;
     serviceName: string;
@@ -73,7 +74,9 @@ export default function SubscribeScreen() {
 
   const handleSubscribe = async () => {
     if (!publicKey) {
-      Alert.alert('Wallet Required', 'Please connect your wallet to subscribe.');
+      showAlert('Wallet Required', 'Please connect your wallet to subscribe.', {
+        icon: 'warning',
+      });
       return;
     }
 
@@ -86,9 +89,12 @@ export default function SubscribeScreen() {
       const endDate = now + durationMonths * 30 * 24 * 60 * 60 * 1000;
 
       // Create subscription stream
+      // In production, recipientAddress comes from SDK. Using devnet test address for now.
+      const devnetTestAddress = 'GJyrdH4xBKjQiWspGUqfwHR1Mqn2pgXMxpXsE3M2aGS6';
+
       const stream = await createNewStream({
         name: serviceName,
-        recipientAddress: `${serviceId}_provider_address`, // In production, this comes from SDK
+        recipientAddress: devnetTestAddress,
         totalAmount: totalPrice,
         frequency,
         endDate,
@@ -102,23 +108,28 @@ export default function SubscribeScreen() {
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      Alert.alert(
-        'Subscribed!',
-        `You're now subscribed to ${serviceName}. Your first payment of ${price} SOL will be processed shortly.`,
-        [
+      showCustom({
+        title: 'Subscribed!',
+        message: `You're now subscribed to ${serviceName}. Your first payment of ${price} SOL will be processed shortly.`,
+        icon: 'success',
+        buttons: [
           {
             text: 'View Subscription',
+            style: 'default',
             onPress: () => router.replace(`/(main)/(streams)/${stream.id}`),
           },
           {
             text: 'Done',
+            style: 'cancel',
             onPress: () => router.replace('/(main)/(streams)'),
           },
-        ]
-      );
+        ],
+      });
     } catch (error: any) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', error.message || 'Failed to subscribe. Please try again.');
+      showAlert('Error', error.message || 'Failed to subscribe. Please try again.', {
+        icon: 'error',
+      });
     } finally {
       setIsSubscribing(false);
     }

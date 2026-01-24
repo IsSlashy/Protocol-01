@@ -7,6 +7,7 @@ import { Keypair } from '@solana/web3.js';
 import {
   NetworkType,
   sendSol,
+  sendSplToken,
   isValidSolanaAddress,
 } from './wallet';
 import { generateId } from '../utils';
@@ -136,20 +137,35 @@ export async function payRequest(
     throw new Error('Payment request has expired');
   }
 
-  // Currently only support SOL transfers
-  // TODO: Add SPL token transfer support
-  if (request.token !== 'SOL') {
-    throw new Error(`Token ${request.token} transfers not yet supported`);
-  }
-
   try {
-    // Send the payment
-    const signature = await sendSol(
-      keypair,
-      request.requesterId, // Pay to the requester
-      request.amount,
-      network
-    );
+    let signature: string;
+
+    if (request.token === 'SOL') {
+      // Native SOL transfer
+      signature = await sendSol(
+        keypair,
+        request.requesterId,
+        request.amount,
+        network
+      );
+    } else {
+      // SPL token transfer
+      const tokenInfo = KNOWN_TOKENS[request.token];
+      if (!tokenInfo && !request.tokenMint) {
+        throw new Error(`Unknown token: ${request.token}. Please provide tokenMint.`);
+      }
+      const mint = request.tokenMint || tokenInfo.mint;
+      const decimals = tokenInfo?.decimals || 6; // Default to 6 decimals
+
+      signature = await sendSplToken(
+        keypair,
+        request.requesterId,
+        mint,
+        request.amount,
+        decimals,
+        network
+      );
+    }
 
     // Update request status
     const updatedRequest: PaymentRequest = {
@@ -216,14 +232,23 @@ export async function sendCryptoInChat(
     throw new Error('Amount must be greater than 0');
   }
 
-  // Currently only support SOL transfers
-  // TODO: Add SPL token transfer support
-  if (token !== 'SOL') {
-    throw new Error(`Token ${token} transfers not yet supported`);
-  }
-
   try {
-    const signature = await sendSol(keypair, recipient, amount, network);
+    let signature: string;
+
+    if (token === 'SOL') {
+      // Native SOL transfer
+      signature = await sendSol(keypair, recipient, amount, network);
+    } else {
+      // SPL token transfer
+      const tokenInfo = KNOWN_TOKENS[token];
+      if (!tokenInfo && !tokenMint) {
+        throw new Error(`Unknown token: ${token}. Please provide tokenMint.`);
+      }
+      const mint = tokenMint || tokenInfo.mint;
+      const decimals = tokenInfo?.decimals || 6;
+
+      signature = await sendSplToken(keypair, recipient, mint, amount, decimals, network);
+    }
 
     const payment: PaymentSent = {
       id: generateId(),

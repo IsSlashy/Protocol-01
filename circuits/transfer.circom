@@ -6,7 +6,7 @@ include "circomlib/circuits/bitify.circom";
 include "./merkle.circom";
 include "./poseidon.circom";
 
-// Main transfer circuit for Specter Protocol ZK Shielded Pool
+// Main transfer circuit for Protocol 01 ZK Shielded Pool
 // Supports 2-in-2-out transfers (Zcash-style)
 //
 // Public inputs:
@@ -101,6 +101,7 @@ template Transfer(merkleDepth) {
 
     // ========================================
     // STEP 3: Verify Merkle tree membership
+    // Skip verification for dummy notes (amount=0)
     // ========================================
     component merkleChecker1 = MerkleTreeChecker(merkleDepth);
     merkleChecker1.leaf <== inCommitment1.commitment;
@@ -109,6 +110,8 @@ template Transfer(merkleDepth) {
         merkleChecker1.pathIndices[i] <== in_path_indices_1[i];
         merkleChecker1.pathElements[i] <== in_path_elements_1[i];
     }
+    // For input 1: if amount > 0, computed root must match; if amount = 0, skip check
+    (1 - isZeroAmount1.out) * (merkleChecker1.computedRoot - merkle_root) === 0;
 
     component merkleChecker2 = MerkleTreeChecker(merkleDepth);
     merkleChecker2.leaf <== inCommitment2.commitment;
@@ -117,6 +120,8 @@ template Transfer(merkleDepth) {
         merkleChecker2.pathIndices[i] <== in_path_indices_2[i];
         merkleChecker2.pathElements[i] <== in_path_elements_2[i];
     }
+    // For input 2: if amount > 0, computed root must match; if amount = 0, skip check
+    (1 - isZeroAmount2.out) * (merkleChecker2.computedRoot - merkle_root) === 0;
 
     // ========================================
     // STEP 4: Compute and verify nullifiers

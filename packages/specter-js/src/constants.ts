@@ -1,5 +1,5 @@
 /**
- * Specter JS Constants
+ * Protocol 01 JS Constants
  */
 
 // Period durations in seconds
@@ -33,6 +33,6 @@ export const DEFAULT_CONFIG = {
   autoConnect: false,
 };
 
-// Specter extension detection
-export const SPECTER_PROVIDER_KEY = 'specter';
-export const SPECTER_INITIALIZED_EVENT = 'specter#initialized';
+// Protocol 01 extension detection
+export const P01_PROVIDER_KEY = 'protocol01';
+export const P01_INITIALIZED_EVENT = 'protocol01#initialized';

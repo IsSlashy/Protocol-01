@@ -27,7 +27,7 @@ const footerLinks: Record<string, FooterSection> = {
     title: "Developers",
     links: [
       { name: "SDK Demo", href: "/sdk-demo" },
-      { name: "Documentation", href: "https://github.com/SectorCT/Protocol01#readme", external: true },
+      { name: "Documentation", href: "/docs" },
       { name: "GitHub", href: "https://github.com/SectorCT/Protocol01", external: true },
     ],
   },

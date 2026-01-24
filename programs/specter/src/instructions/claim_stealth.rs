@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-use crate::errors::SpecterError;
-use crate::state::{SpecterWallet, StealthAccount};
+use crate::errors::P01Error;
+use crate::state::{P01Wallet, StealthAccount};
 
 /// Claim a stealth payment by providing proof of ownership
 ///
@@ -14,35 +14,35 @@ pub struct ClaimStealth<'info> {
     #[account(mut)]
     pub claimer: Signer<'info>,
 
-    /// Claimer's Specter wallet (verifies ownership)
+    /// Claimer's Protocol 01 wallet (verifies ownership)
     #[account(
-        seeds = [SpecterWallet::SEED_PREFIX, claimer.key().as_ref()],
+        seeds = [P01Wallet::SEED_PREFIX, claimer.key().as_ref()],
         bump = claimer_wallet.bump,
-        constraint = claimer_wallet.owner == claimer.key() @ SpecterError::UnauthorizedWalletAccess
+        constraint = claimer_wallet.owner == claimer.key() @ P01Error::UnauthorizedWalletAccess
     )]
-    pub claimer_wallet: Account<'info, SpecterWallet>,
+    pub claimer_wallet: Account<'info, P01Wallet>,
 
     /// The stealth account being claimed
     #[account(
         mut,
         seeds = [StealthAccount::SEED_PREFIX, &stealth_account.recipient_key],
         bump = stealth_account.bump,
-        constraint = !stealth_account.claimed @ SpecterError::StealthAlreadyClaimed
+        constraint = !stealth_account.claimed @ P01Error::StealthAlreadyClaimed
     )]
     pub stealth_account: Account<'info, StealthAccount>,
 
     /// Escrow token account holding the funds
     #[account(
         mut,
-        constraint = escrow_token_account.mint == stealth_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = escrow_token_account.mint == stealth_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
     /// Claimer's token account (destination for funds)
     #[account(
         mut,
-        constraint = claimer_token_account.owner == claimer.key() @ SpecterError::UnauthorizedWalletAccess,
-        constraint = claimer_token_account.mint == stealth_account.token_mint @ SpecterError::InvalidTokenMint
+        constraint = claimer_token_account.owner == claimer.key() @ P01Error::UnauthorizedWalletAccess,
+        constraint = claimer_token_account.mint == stealth_account.token_mint @ P01Error::InvalidTokenMint
     )]
     pub claimer_token_account: Account<'info, TokenAccount>,
 
@@ -72,14 +72,14 @@ pub fn handler(ctx: Context<ClaimStealth>, proof: [u8; 64]) -> Result<()> {
 
     // Check if payment has expired
     if stealth_account.is_expired(current_time) {
-        return Err(SpecterError::StealthPaymentExpired.into());
+        return Err(P01Error::StealthPaymentExpired.into());
     }
 
     // Verify the claim proof
     // The proof should be a signature over the stealth_account pubkey
     // using the claimer's spending key
     if !verify_claim_proof(&proof, &stealth_account.recipient_key, &claimer_wallet.spending_key) {
-        return Err(SpecterError::InvalidClaimProof.into());
+        return Err(P01Error::InvalidClaimProof.into());
     }
 
     // Get the amount from escrow
