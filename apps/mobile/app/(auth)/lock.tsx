@@ -218,6 +218,20 @@ export default function LockScreen() {
           </View>
         )}
       </Animated.View>
+
+      {/* Switch/Add Wallet Option */}
+      <Animated.View entering={FadeInDown.delay(500)} style={styles.switchWalletContainer}>
+        <TouchableOpacity
+          onPress={() => router.push('/(onboarding)')}
+          style={styles.switchWalletButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="swap-horizontal-outline" size={16} color="#666" />
+          <Text style={styles.switchWalletText}>
+            Utiliser un autre wallet
+          </Text>
+        </TouchableOpacity>
+      </Animated.View>
     </View>
   );
 }
@@ -332,5 +346,21 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 28,
     fontWeight: '600',
+  },
+  switchWalletContainer: {
+    position: 'absolute',
+    bottom: 40,
+    alignItems: 'center',
+  },
+  switchWalletButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  switchWalletText: {
+    color: '#666',
+    fontSize: 14,
+    marginLeft: 8,
   },
 });

@@ -5,9 +5,9 @@ import { PublicKey, Keypair, Transaction, VersionedTransaction } from '@solana/w
 // ============================================================================
 
 /**
- * Represents a Specter wallet with stealth capabilities
+ * Represents a Protocol 01 wallet with stealth capabilities
  */
-export interface SpecterWallet {
+export interface P01Wallet {
   /** The main public key of the wallet */
   publicKey: PublicKey;
   /** The keypair for signing transactions */
@@ -356,7 +356,7 @@ export type Cluster = 'mainnet-beta' | 'testnet' | 'devnet' | 'localnet';
 /**
  * Client configuration options
  */
-export interface SpecterClientConfig {
+export interface P01ClientConfig {
   /** Solana cluster to connect to */
   cluster?: Cluster;
   /** Custom RPC endpoint */
@@ -388,7 +388,7 @@ export interface WalletAdapter {
 /**
  * Error codes for SDK errors
  */
-export enum SpecterErrorCode {
+export enum P01ErrorCode {
   // Wallet errors (1xxx)
   WALLET_NOT_CONNECTED = 1001,
   WALLET_CREATION_FAILED = 1002,
@@ -426,14 +426,14 @@ export enum SpecterErrorCode {
 /**
  * Custom error class for Specter SDK
  */
-export class SpecterError extends Error {
+export class P01Error extends Error {
   constructor(
-    public readonly code: SpecterErrorCode,
+    public readonly code: P01ErrorCode,
     message: string,
     public readonly cause?: Error
   ) {
     super(message);
-    this.name = 'SpecterError';
+    this.name = 'P01Error';
   }
 }
 
@@ -444,7 +444,7 @@ export class SpecterError extends Error {
 /**
  * Event types emitted by the SDK
  */
-export type SpecterEventType =
+export type P01EventType =
   | 'payment_received'
   | 'payment_claimed'
   | 'stream_created'
@@ -455,15 +455,15 @@ export type SpecterEventType =
 /**
  * Event payload base
  */
-export interface SpecterEventBase {
-  type: SpecterEventType;
+export interface P01EventBase {
+  type: P01EventType;
   timestamp: Date;
 }
 
 /**
  * Payment received event
  */
-export interface PaymentReceivedEvent extends SpecterEventBase {
+export interface PaymentReceivedEvent extends P01EventBase {
   type: 'payment_received';
   payment: StealthPayment;
 }
@@ -471,7 +471,7 @@ export interface PaymentReceivedEvent extends SpecterEventBase {
 /**
  * Stream event
  */
-export interface StreamEvent extends SpecterEventBase {
+export interface StreamEvent extends P01EventBase {
   type: 'stream_created' | 'stream_withdrawn' | 'stream_cancelled' | 'stream_completed';
   stream: Stream;
   amount?: bigint;
@@ -480,9 +480,9 @@ export interface StreamEvent extends SpecterEventBase {
 /**
  * Union type for all events
  */
-export type SpecterEvent = PaymentReceivedEvent | StreamEvent;
+export type P01Event = PaymentReceivedEvent | StreamEvent;
 
 /**
  * Event listener callback
  */
-export type SpecterEventListener = (event: SpecterEvent) => void;
+export type P01EventListener = (event: P01Event) => void;

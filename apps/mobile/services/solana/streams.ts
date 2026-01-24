@@ -320,18 +320,21 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     }
   }
 
+  // Calculate first payment date - should be in the future (after first interval)
+  const firstPaymentDate = startDate + intervalMs;
+
   // Apply timing noise to first payment if enabled
   const timingNoise = params.timingNoise ?? 0;
   let noisyPaymentDate: number | undefined;
   if (timingNoise > 0) {
-    const rawNoisyTime = await applyTimingNoise(startDate, timingNoise);
+    const rawNoisyTime = await applyTimingNoise(firstPaymentDate, timingNoise);
     // Ensure noise doesn't push first payment past the interval
-    noisyPaymentDate = ensurePaymentNotSkipped(rawNoisyTime, startDate, intervalMs);
+    noisyPaymentDate = ensurePaymentNotSkipped(rawNoisyTime, firstPaymentDate, intervalMs);
     console.log(
       `[Streams] Applied initial timing noise: ` +
-      `base=${new Date(startDate).toISOString()}, ` +
+      `base=${new Date(firstPaymentDate).toISOString()}, ` +
       `noisy=${new Date(noisyPaymentDate).toISOString()}, ` +
-      `offset=${Math.round((noisyPaymentDate - startDate) / (60 * 1000))} min`
+      `offset=${Math.round((noisyPaymentDate - firstPaymentDate) / (60 * 1000))} min`
     );
   }
 
@@ -347,7 +350,7 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     customIntervalDays: params.customIntervalDays,
     startDate,
     endDate: params.endDate,
-    nextPaymentDate: startDate, // First payment base time at start
+    nextPaymentDate: firstPaymentDate, // First payment scheduled after first interval
     noisyPaymentDate, // Actual time with noise (undefined if noise is 0)
     amountStreamed: 0,
     paymentsCompleted: 0,

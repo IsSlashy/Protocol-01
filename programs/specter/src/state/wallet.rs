@@ -1,13 +1,13 @@
 use anchor_lang::prelude::*;
 
-/// SpecterWallet - Main wallet account for privacy operations
+/// P01Wallet - Main wallet account for privacy operations
 ///
 /// This account stores the cryptographic keys needed for stealth addressing
 /// and private payments. The viewing key allows scanning for incoming payments
 /// while the spending key authorizes outgoing transactions.
 #[account]
 #[derive(Default)]
-pub struct SpecterWallet {
+pub struct P01Wallet {
     /// The owner's public key (authority)
     pub owner: Pubkey,
 
@@ -27,13 +27,13 @@ pub struct SpecterWallet {
     pub bump: u8,
 }
 
-impl SpecterWallet {
+impl P01Wallet {
     /// Account space calculation for rent exemption
     /// discriminator (8) + owner (32) + viewing_key (32) + spending_key (32) + nonce (8) + bump (1)
     pub const LEN: usize = 8 + 32 + 32 + 32 + 8 + 1;
 
     /// Seed prefix for PDA derivation
-    pub const SEED_PREFIX: &'static [u8] = b"specter_wallet";
+    pub const SEED_PREFIX: &'static [u8] = b"p01_wallet";
 
     /// Initialize the wallet with the given keys
     pub fn initialize(

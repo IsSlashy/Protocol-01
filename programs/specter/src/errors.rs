@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum SpecterError {
+pub enum P01Error {
     // Wallet Errors (6000-6009)
     #[msg("Wallet already initialized")]
     WalletAlreadyInitialized,

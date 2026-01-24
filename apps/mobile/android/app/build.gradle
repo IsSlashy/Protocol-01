@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.specter.protocol'
+    namespace 'com.p01.protocol'
     defaultConfig {
-        applicationId 'com.specter.protocol'
+        applicationId 'com.p01.protocol'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

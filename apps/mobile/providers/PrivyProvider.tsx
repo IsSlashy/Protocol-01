@@ -1,5 +1,5 @@
 /**
- * Privy Provider for Specter Mobile App
+ * Privy Provider for Protocol 01 Mobile App
  *
  * Wraps the application with Privy authentication context.
  * Falls back to legacy auth if Privy is not configured.
@@ -44,7 +44,7 @@ interface PrivyProviderProps {
  * Privy Provider that wraps the app
  * Falls back to mock implementation if Privy not configured
  */
-export function SpecterPrivyProvider({ children }: PrivyProviderProps) {
+export function P01PrivyProvider({ children }: PrivyProviderProps) {
   // If Privy is not enabled, use legacy auth
   if (!PRIVY_ENABLED) {
     console.log('[Privy] Not configured, using legacy auth');
@@ -145,7 +145,7 @@ function MockPrivyProvider({ children }: { children: React.ReactNode }) {
 export function usePrivyAuth(): PrivyContextType {
   const context = useContext(PrivyContext);
   if (!context) {
-    throw new Error('usePrivyAuth must be used within SpecterPrivyProvider');
+    throw new Error('usePrivyAuth must be used within P01PrivyProvider');
   }
   return context;
 }

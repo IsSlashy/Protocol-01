@@ -1,9 +1,9 @@
 use anchor_lang::prelude::*;
 
-use crate::errors::SpecterError;
-use crate::state::SpecterWallet;
+use crate::errors::P01Error;
+use crate::state::P01Wallet;
 
-/// Initialize a new Specter wallet for the signing user
+/// Initialize a new Protocol 01 wallet for the signing user
 ///
 /// # Arguments
 /// * `viewing_key` - 32-byte viewing key for scanning incoming stealth payments
@@ -14,15 +14,15 @@ pub struct InitWallet<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    /// The Specter wallet PDA to be created
+    /// The Protocol 01 wallet PDA to be created
     #[account(
         init,
         payer = owner,
-        space = SpecterWallet::LEN,
-        seeds = [SpecterWallet::SEED_PREFIX, owner.key().as_ref()],
+        space = P01Wallet::LEN,
+        seeds = [P01Wallet::SEED_PREFIX, owner.key().as_ref()],
         bump
     )]
-    pub wallet: Account<'info, SpecterWallet>,
+    pub wallet: Account<'info, P01Wallet>,
 
     /// System program for account creation
     pub system_program: Program<'info, System>,
@@ -36,11 +36,11 @@ pub fn handler(
 ) -> Result<()> {
     // Validate that keys are not all zeros
     if viewing_key == [0u8; 32] {
-        return Err(SpecterError::InvalidViewingKey.into());
+        return Err(P01Error::InvalidViewingKey.into());
     }
 
     if spending_key == [0u8; 32] {
-        return Err(SpecterError::InvalidSpendingKey.into());
+        return Err(P01Error::InvalidSpendingKey.into());
     }
 
     let wallet = &mut ctx.accounts.wallet;
@@ -53,7 +53,7 @@ pub fn handler(
         bump,
     );
 
-    msg!("Specter wallet initialized for {}", ctx.accounts.owner.key());
+    msg!("Protocol 01 wallet initialized for {}", ctx.accounts.owner.key());
     msg!("Wallet PDA: {}", wallet.key());
 
     Ok(())

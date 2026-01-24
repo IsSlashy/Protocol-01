@@ -190,6 +190,18 @@ async function cacheBalance(publicKey: string, balance: WalletBalance): Promise<
 }
 
 /**
+ * Clear balance cache for a wallet (used when importing new wallet)
+ */
+export async function clearBalanceCache(publicKey: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(BALANCE_CACHE_KEY + publicKey);
+    console.log('[Balance] Cache cleared for:', publicKey.slice(0, 8) + '...');
+  } catch (error) {
+    console.warn('[Balance] Failed to clear cache:', error);
+  }
+}
+
+/**
  * Get complete wallet balance
  */
 export async function getWalletBalance(publicKey: string): Promise<WalletBalance> {

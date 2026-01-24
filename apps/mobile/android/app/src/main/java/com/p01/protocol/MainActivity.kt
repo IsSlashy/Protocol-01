@@ -1,4 +1,4 @@
-package com.specter.protocol
+package com.p01.protocol
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

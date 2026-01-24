@@ -1,5 +1,5 @@
 /**
- * Privy Provider Wrapper for Specter Extension
+ * Privy Provider Wrapper for Protocol 01 Extension
  *
  * Wraps the application with Privy authentication context.
  * This enables:
@@ -23,7 +23,7 @@ interface PrivyProviderProps {
   children: React.ReactNode;
 }
 
-export function SpecterPrivyProvider({ children }: PrivyProviderProps) {
+export function P01PrivyProvider({ children }: PrivyProviderProps) {
   // Check if we have a valid app ID
   const hasValidAppId = PRIVY_APP_ID && PRIVY_APP_ID !== 'YOUR_PRIVY_APP_ID';
 

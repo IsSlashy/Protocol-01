@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,13 +9,16 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { isValidSolanaAddress } from '@/utils/format/address';
+import { isP01AuthRequest, parseAuthQR } from '@/services/auth/p01Auth';
 
 const { width, height } = Dimensions.get('window');
 const SCAN_AREA_SIZE = width * 0.7;
@@ -24,33 +27,67 @@ type ScanMode = 'camera' | 'manual';
 
 export default function ScanScreen() {
   const router = useRouter();
+  const cameraRef = useRef<CameraView>(null);
 
   const [mode, setMode] = useState<ScanMode>('camera');
   const [torchOn, setTorchOn] = useState(false);
   const [manualAddress, setManualAddress] = useState('');
   const [error, setError] = useState('');
   const [isScanning, setIsScanning] = useState(true);
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [permission, requestPermission] = useCameraPermissions();
 
-  // Simulate camera permission check
+  // Request camera permission on mount
   useEffect(() => {
-    const checkPermission = async () => {
-      // In real app, use expo-camera to check permissions
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      setHasPermission(true);
-    };
-    checkPermission();
-  }, []);
+    if (!permission?.granted && permission?.canAskAgain) {
+      requestPermission();
+    }
+  }, [permission]);
 
-  const handleBarCodeScanned = (data: string) => {
+  const handleBarCodeScanned = (result: BarcodeScanningResult) => {
+    if (!isScanning) return;
     setIsScanning(false);
 
+    const data = result.data;
+
+    // Check for P01 Auth QR codes (Login with Protocol 01)
+    if (isP01AuthRequest(data)) {
+      const authRequest = parseAuthQR(data);
+      if (authRequest) {
+        // Navigate to auth confirmation screen
+        router.push({
+          pathname: '/(main)/(wallet)/auth-confirm',
+          params: {
+            payload: JSON.stringify(authRequest.payload),
+            serviceName: authRequest.serviceName,
+            serviceLogo: authRequest.serviceLogo || '',
+            requiresSubscription: authRequest.requiresSubscription ? '1' : '0',
+            isExpired: authRequest.isExpired ? '1' : '0',
+          },
+        });
+        return;
+      } else {
+        setError('QR Code P01 Auth invalide');
+        setTimeout(() => {
+          setError('');
+          setIsScanning(true);
+        }, 3000);
+        return;
+      }
+    }
+
+    // Handle Solana Pay URLs: solana:<address>?...
+    let address = data;
+    if (data.startsWith('solana:')) {
+      const parsed = data.slice(7).split('?')[0];
+      address = parsed;
+    }
+
     // Validate scanned data
-    if (isValidSolanaAddress(data) || data.endsWith('.sol')) {
+    if (isValidSolanaAddress(address) || address.endsWith('.sol') || address.startsWith('zk:')) {
       // Navigate back to send screen with the address
       router.push({
         pathname: '/(main)/(wallet)/send',
-        params: { address: data },
+        params: { address },
       });
     } else {
       setError('Invalid QR code. Please scan a valid Solana address.');
@@ -79,7 +116,7 @@ export default function ScanScreen() {
   };
 
   // Loading state
-  if (hasPermission === null) {
+  if (!permission) {
     return (
       <SafeAreaView className="flex-1 bg-p01-void items-center justify-center">
         <ActivityIndicator size="large" color="#39c5bb" />
@@ -89,7 +126,7 @@ export default function ScanScreen() {
   }
 
   // No permission state
-  if (hasPermission === false) {
+  if (!permission.granted) {
     return (
       <SafeAreaView className="flex-1 bg-p01-void">
         <View className="flex-row items-center justify-between px-5 py-4">
@@ -111,14 +148,18 @@ export default function ScanScreen() {
           <Text className="text-p01-text-muted text-center mt-2">
             Please enable camera access in your device settings to scan QR codes.
           </Text>
-          <Button
-            onPress={() => {
-              // In real app, open settings
-            }}
-            className="mt-6"
-          >
-            Open Settings
-          </Button>
+          {permission.canAskAgain ? (
+            <Button onPress={requestPermission} className="mt-6">
+              Grant Permission
+            </Button>
+          ) : (
+            <Button
+              onPress={() => Linking.openSettings()}
+              className="mt-6"
+            >
+              Open Settings
+            </Button>
+          )}
         </View>
       </SafeAreaView>
     );
@@ -126,13 +167,22 @@ export default function ScanScreen() {
 
   return (
     <View className="flex-1 bg-black">
-      {/* Camera View Simulation */}
+      {/* Camera View with Barcode Scanner */}
       {mode === 'camera' && (
         <View className="flex-1 bg-black">
-          {/* Simulated camera feed */}
-          <View className="flex-1 items-center justify-center">
-            {/* Scan Frame Overlay */}
-            <View style={styles.overlay}>
+          {/* Real Camera Feed */}
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFillObject}
+            facing="back"
+            enableTorch={torchOn}
+            barcodeScannerSettings={{
+              barcodeTypes: ['qr'],
+            }}
+            onBarcodeScanned={isScanning ? handleBarCodeScanned : undefined}
+          />
+          {/* Scan Frame Overlay */}
+          <View style={styles.overlay}>
               {/* Top Overlay */}
               <View style={styles.overlayTop} />
 
@@ -194,7 +244,6 @@ export default function ScanScreen() {
                 <Text className="text-white font-medium">{error}</Text>
               </View>
             )}
-          </View>
 
           {/* Header */}
           <SafeAreaView
@@ -250,17 +299,17 @@ export default function ScanScreen() {
                 </Text>
               </TouchableOpacity>
 
-              {/* Simulate scan for testing */}
-              <TouchableOpacity
-                onPress={() =>
-                  handleBarCodeScanned('7nxQB4Hy9LmPdTJ3kYfPq8WvNs2jKmRt4xFc6dZe8fKm')
-                }
-                className="bg-p01-cyan/20 py-3 rounded-xl items-center mt-3"
-              >
-                <Text className="text-p01-cyan font-medium">
-                  [DEV] Simulate Scan
-                </Text>
-              </TouchableOpacity>
+              {/* Re-enable scanning if paused */}
+              {!isScanning && (
+                <TouchableOpacity
+                  onPress={() => setIsScanning(true)}
+                  className="bg-p01-cyan/20 py-3 rounded-xl items-center mt-3"
+                >
+                  <Text className="text-p01-cyan font-medium">
+                    Scan Again
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </SafeAreaView>
         </View>

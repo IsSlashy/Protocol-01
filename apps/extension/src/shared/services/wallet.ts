@@ -12,6 +12,7 @@ import {
   LAMPORTS_PER_SOL,
   sendAndConfirmTransaction,
   clusterApiUrl,
+  TransactionInstruction,
 } from '@solana/web3.js';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
@@ -132,6 +133,118 @@ export async function sendSol(
       toPubkey,
       lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
     })
+  );
+
+  const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);
+  return signature;
+}
+
+// SPL Token Program ID
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+
+/**
+ * Get or derive associated token account address
+ */
+export function getAssociatedTokenAddress(
+  mint: PublicKey,
+  owner: PublicKey
+): PublicKey {
+  const [address] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return address;
+}
+
+/**
+ * Create instruction to create associated token account if it doesn't exist
+ */
+function createAssociatedTokenAccountInstruction(
+  payer: PublicKey,
+  associatedToken: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey
+): TransactionInstruction {
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: associatedToken, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+    data: Buffer.alloc(0),
+  });
+}
+
+/**
+ * Create SPL token transfer instruction
+ */
+function createTokenTransferInstruction(
+  source: PublicKey,
+  destination: PublicKey,
+  owner: PublicKey,
+  amount: bigint
+): TransactionInstruction {
+  // SPL Token transfer instruction (opcode 3)
+  const data = Buffer.alloc(9);
+  data.writeUInt8(3, 0); // Transfer instruction
+  data.writeBigUInt64LE(amount, 1);
+
+  return new TransactionInstruction({
+    keys: [
+      { pubkey: source, isSigner: false, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: false },
+    ],
+    programId: TOKEN_PROGRAM_ID,
+    data,
+  });
+}
+
+/**
+ * Send SPL token transaction
+ */
+export async function sendSplToken(
+  fromKeypair: Keypair,
+  toAddress: string,
+  mintAddress: string,
+  amount: number,
+  decimals: number,
+  network: NetworkType
+): Promise<string> {
+  const connection = getConnection(network);
+  const toPubkey = new PublicKey(toAddress);
+  const mintPubkey = new PublicKey(mintAddress);
+
+  // Get associated token accounts
+  const fromAta = getAssociatedTokenAddress(mintPubkey, fromKeypair.publicKey);
+  const toAta = getAssociatedTokenAddress(mintPubkey, toPubkey);
+
+  // Convert amount to token units
+  const tokenAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+
+  const transaction = new Transaction();
+
+  // Check if destination ATA exists, if not create it
+  const toAtaInfo = await connection.getAccountInfo(toAta);
+  if (!toAtaInfo) {
+    transaction.add(
+      createAssociatedTokenAccountInstruction(
+        fromKeypair.publicKey,
+        toAta,
+        toPubkey,
+        mintPubkey
+      )
+    );
+  }
+
+  // Add transfer instruction
+  transaction.add(
+    createTokenTransferInstruction(fromAta, toAta, fromKeypair.publicKey, tokenAmount)
   );
 
   const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);

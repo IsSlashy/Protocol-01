@@ -4,11 +4,11 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   Linking,
   Image,
 } from 'react-native';
+import { useAlert } from '../../../providers/AlertProvider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,6 +42,7 @@ const ACCENT = P01_COLORS.pink;
 export default function StreamDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { showConfirm, showAlert } = useAlert();
   const {
     streams,
     processingPayment,
@@ -102,62 +103,64 @@ export default function StreamDetailScreen() {
   };
 
   const handleCancel = () => {
-    Alert.alert(
+    showConfirm(
       'Cancel Stream',
-      `Are you sure you want to cancel "${stream.name}"? This will stop all future payments.`,
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await cancelStream(stream.id);
-            router.back();
-          },
+      `Are you sure you want to cancel "${stream.name}"? This will stop all future payments and remove the subscription.`,
+      {
+        icon: 'warning',
+        confirmText: 'Yes, Cancel',
+        confirmStyle: 'destructive',
+        cancelText: 'No',
+        onConfirm: async () => {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          await cancelStream(stream.id);
+          await deleteStream(stream.id);
+          router.back();
         },
-      ]
+      }
     );
   };
 
   const handleDelete = () => {
-    Alert.alert(
+    showConfirm(
       'Delete Stream',
       'Are you sure you want to delete this stream? This will remove it from your history.',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await deleteStream(stream.id);
-            router.back();
-          },
+      {
+        icon: 'warning',
+        confirmText: 'Yes, Delete',
+        confirmStyle: 'destructive',
+        cancelText: 'No',
+        onConfirm: async () => {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          await deleteStream(stream.id);
+          router.back();
         },
-      ]
+      }
     );
   };
 
   const handlePayNow = async () => {
-    Alert.alert(
+    showConfirm(
       'Process Payment',
       `Pay ${stream.amountPerPayment.toFixed(4)} SOL now?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pay Now',
-          onPress: async () => {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            const payment = await processPayment(stream.id);
-            if (payment?.status === 'success') {
-              Alert.alert('Payment Sent!', 'Transaction completed successfully.');
-            } else {
-              Alert.alert('Payment Failed', payment?.error || 'Please try again.');
-            }
-          },
+      {
+        icon: 'question',
+        confirmText: 'Pay Now',
+        cancelText: 'Cancel',
+        onConfirm: async () => {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          const payment = await processPayment(stream.id);
+          if (payment?.status === 'success') {
+            showAlert('Payment Sent!', 'Transaction completed successfully.', {
+              icon: 'success',
+            });
+          } else {
+            showAlert('Payment Failed', payment?.error || 'Please try again.', {
+              icon: 'error',
+            });
+          }
         },
-      ]
+      }
     );
   };
 
@@ -202,13 +205,8 @@ export default function StreamDetailScreen() {
           <Ionicons name="arrow-back" size={20} color={ACCENT} />
         </TouchableOpacity>
         <Text className="text-white text-lg font-semibold">{stream.name}</Text>
-        <TouchableOpacity
-          onPress={handleDelete}
-          className="w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
-        >
-          <Ionicons name="trash-outline" size={20} color="#ef4444" />
-        </TouchableOpacity>
+        {/* Empty view for header alignment */}
+        <View className="w-10 h-10" />
       </View>
 
       <ScrollView
@@ -468,13 +466,25 @@ export default function StreamDetailScreen() {
             {stream.paymentHistory.slice().reverse().map((payment, index) => (
               <TouchableOpacity
                 key={payment.id}
-                onPress={() => payment.signature && openExplorer(payment.signature)}
+                onPress={() => {
+                  console.log('[StreamDetail] Payment clicked:', payment.id, 'signature:', payment.signature ? 'yes' : 'no');
+                  if (payment.signature) {
+                    openExplorer(payment.signature);
+                  } else {
+                    showAlert(
+                      'No Transaction',
+                      payment.status === 'failed'
+                        ? `This payment failed: ${payment.error || 'Unknown error'}`
+                        : 'This payment was recorded locally but not sent to the blockchain.',
+                      { icon: payment.status === 'failed' ? 'error' : 'info' }
+                    );
+                  }
+                }}
                 className="flex-row items-center justify-between py-3"
                 style={{
                   borderTopWidth: index > 0 ? 1 : 0,
                   borderTopColor: 'rgba(75, 85, 99, 0.3)',
                 }}
-                disabled={!payment.signature}
               >
                 <View className="flex-row items-center flex-1">
                   <View
@@ -501,8 +511,10 @@ export default function StreamDetailScreen() {
                     </Text>
                   </View>
                 </View>
-                {payment.signature && (
-                  <Ionicons name="open-outline" size={16} color="#666" />
+                {payment.signature ? (
+                  <Ionicons name="open-outline" size={16} color={P01_COLORS.cyan} />
+                ) : (
+                  <Ionicons name="alert-circle-outline" size={16} color={P01_COLORS.textMuted} />
                 )}
               </TouchableOpacity>
             ))}

@@ -8,7 +8,7 @@
  */
 
 import { Keypair, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { getConnection, NetworkType } from './wallet';
+import { getConnection, NetworkType, sendSplToken } from './wallet';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 
@@ -382,42 +382,47 @@ export async function executeSubscriptionPayment(
   // Get connection
   const connection = getConnection(network);
 
-  // Build transaction
-  // For now, only supporting native SOL payments
-  // TODO: Add SPL token support
+  let signature: string;
+
   if (sub.tokenMint) {
-    throw new Error('SPL token subscriptions not yet supported');
+    // SPL token payment
+    signature = await sendSplToken(
+      keypair,
+      calculatedPayment.recipient,
+      sub.tokenMint,
+      calculatedPayment.amount,
+      sub.tokenDecimals,
+      network
+    );
+  } else {
+    // Native SOL payment
+    const recipientPubkey = new PublicKey(calculatedPayment.recipient);
+    const lamports = Math.round(calculatedPayment.amount * LAMPORTS_PER_SOL);
+
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: keypair.publicKey,
+        toPubkey: recipientPubkey,
+        lamports,
+      })
+    );
+
+    // Sign and send transaction
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = keypair.publicKey;
+
+    transaction.sign(keypair);
+
+    signature = await connection.sendRawTransaction(transaction.serialize());
+
+    // Wait for confirmation
+    await connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    });
   }
-
-  const recipientPubkey = new PublicKey(calculatedPayment.recipient);
-  const lamports = Math.round(calculatedPayment.amount * LAMPORTS_PER_SOL);
-
-  const transaction = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: keypair.publicKey,
-      toPubkey: recipientPubkey,
-      lamports,
-    })
-  );
-
-  // Add memo for tracking (optional, can be disabled for more privacy)
-  // In production, you might want to make this configurable
-
-  // Sign and send transaction
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-  transaction.recentBlockhash = blockhash;
-  transaction.feePayer = keypair.publicKey;
-
-  transaction.sign(keypair);
-
-  const signature = await connection.sendRawTransaction(transaction.serialize());
-
-  // Wait for confirmation
-  await connection.confirmTransaction({
-    signature,
-    blockhash,
-    lastValidBlockHeight,
-  });
 
   // Create payment record
   const payment: PaymentRecord = {

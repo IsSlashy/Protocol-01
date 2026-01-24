@@ -1,4 +1,4 @@
-// Main exports for @specter-protocol/zk-sdk
+// Main exports for @p01/zk-sdk
 
 // Core client
 export { ShieldedClient, type ShieldedClientConfig } from './client';

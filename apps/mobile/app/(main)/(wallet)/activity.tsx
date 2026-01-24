@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -14,6 +15,8 @@ import { Card } from '@/components/ui/Card';
 import { formatUSD } from '@/utils/format/currency';
 import { useWalletStore } from '@/stores/walletStore';
 import { useStreamStore } from '@/stores/streamStore';
+import { getExplorerUrl } from '@/services/solana/connection';
+import { useAlert } from '@/providers/AlertProvider';
 
 // Types
 type TransactionType = 'all' | 'sent' | 'received' | 'streams' | 'scheduled';
@@ -60,6 +63,7 @@ const formatAddress = (address: string): string => {
 
 export default function ActivityScreen() {
   const router = useRouter();
+  const { showAlert } = useAlert();
 
   const {
     transactions: storeTransactions,
@@ -71,6 +75,41 @@ export default function ActivityScreen() {
   const { streams, initialize: initStreams, loading: streamsLoading } = useStreamStore();
 
   const [filter, setFilter] = useState<TransactionType>('all');
+
+  // Open transaction in Solana Explorer
+  const openExplorer = useCallback((signature: string) => {
+    const url = getExplorerUrl(signature, 'tx');
+    console.log('[Activity] Opening explorer:', url);
+    Linking.openURL(url);
+  }, []);
+
+  // Handle transaction click
+  const handleTransactionPress = useCallback((tx: Transaction) => {
+    console.log('[Activity] Transaction clicked:', tx.id, 'type:', tx.type);
+
+    // Check if this is a valid blockchain transaction signature
+    // Real Solana signatures are ~88 chars base58 (no underscores, no 'payment_' prefix)
+    const isValidSignature = tx.id &&
+      tx.id.length >= 80 &&
+      !tx.id.includes('-') &&
+      !tx.id.includes('_') &&
+      !tx.id.startsWith('payment');
+
+    console.log('[Activity] Is valid signature:', isValidSignature, 'length:', tx.id?.length);
+
+    if (isValidSignature) {
+      openExplorer(tx.id);
+    } else {
+      // Stream payment without blockchain signature
+      showAlert(
+        'Local Transaction',
+        tx.status === 'failed'
+          ? 'This payment failed and was not sent to the blockchain.'
+          : 'This payment was recorded locally. ZK stream payments are processed privately.',
+        { icon: tx.status === 'failed' ? 'error' : 'info' }
+      );
+    }
+  }, [openExplorer, showAlert]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
 
@@ -382,7 +421,11 @@ export default function ActivityScreen() {
                 Upcoming Payments
               </Text>
               {scheduledPayments.map((payment) => (
-                <TouchableOpacity key={payment.id} activeOpacity={0.7}>
+                <TouchableOpacity
+                  key={payment.id}
+                  activeOpacity={0.7}
+                  onPress={() => router.push(`/(main)/(streams)/${payment.id}`)}
+                >
                   <Card variant="default" padding="md">
                     <View className="flex-row items-center">
                       {/* Icon */}
@@ -451,7 +494,11 @@ export default function ActivityScreen() {
               </Text>
               <View className="gap-3">
                 {transactions.map((tx) => (
-                  <TouchableOpacity key={tx.id} activeOpacity={0.7}>
+                  <TouchableOpacity
+                    key={tx.id}
+                    activeOpacity={0.7}
+                    onPress={() => handleTransactionPress(tx)}
+                  >
                     <Card variant="default" padding="md">
                       <View className="flex-row items-center justify-between">
                         <View className="flex-row items-center flex-1">
@@ -554,7 +601,11 @@ export default function ActivityScreen() {
                         <Text className="text-p01-text-dim text-xs ml-2 font-mono">
                           {tx.txHash}
                         </Text>
-                        <TouchableOpacity className="ml-auto">
+                        <TouchableOpacity
+                          className="ml-auto p-1"
+                          onPress={() => handleTransactionPress(tx)}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        >
                           <Ionicons
                             name="open-outline"
                             size={14}
