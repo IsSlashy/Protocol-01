@@ -78,7 +78,7 @@ export default function PaymentRequestBubble({
             ? 'bg-gradient-to-br from-green-500/10 to-emerald-500/10 border-green-500/30'
             : effectiveStatus === 'declined' || effectiveStatus === 'expired'
             ? 'bg-p01-surface/50 border-p01-border'
-            : 'bg-gradient-to-br from-p01-pink/10 to-purple-500/10 border-p01-pink/30'
+            : 'bg-gradient-to-br from-p01-pink/10 to-p01-cyan/10 border-p01-pink/30'
         )}
         style={{ borderRadius: 'inherit' }}
       >

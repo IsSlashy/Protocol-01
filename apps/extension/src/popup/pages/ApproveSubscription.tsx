@@ -503,7 +503,7 @@ export default function ApproveSubscription() {
               {/* Stealth Address */}
               <div className="flex items-center justify-between py-2">
                 <div className="flex items-center gap-2">
-                  <EyeOff className="w-4 h-4 text-purple-400" />
+                  <EyeOff className="w-4 h-4 text-p01-cyan" />
                   <div>
                     <span className="text-xs text-p01-chrome">Stealth Addresses</span>
                     <p className="text-[10px] text-p01-chrome/40">
@@ -515,7 +515,7 @@ export default function ApproveSubscription() {
                   onClick={() => setUseStealthAddress(!useStealthAddress)}
                   className={cn(
                     'w-10 h-5 rounded-full transition-colors relative',
-                    useStealthAddress ? 'bg-purple-500' : 'bg-p01-border'
+                    useStealthAddress ? 'bg-p01-cyan' : 'bg-p01-border'
                   )}
                 >
                   <div
@@ -589,7 +589,7 @@ export default function ApproveSubscription() {
             </li>
             {(amountNoise > 0 || timingNoise > 0 || useStealthAddress) && (
               <li className="flex items-start gap-2 text-xs text-p01-chrome">
-                <Shield className="w-4 h-4 text-purple-400 flex-shrink-0 mt-0.5" />
+                <Shield className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
                 <span>
                   Privacy features will hide payment patterns
                 </span>

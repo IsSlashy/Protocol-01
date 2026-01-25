@@ -46,9 +46,6 @@ export function P01PrivyProvider({ children }: PrivyProviderProps) {
           },
         },
       }}
-      onSuccess={(user) => {
-        console.log('[Privy] Login successful:', user.id);
-      }}
     >
       {children}
     </BasePrivyProvider>

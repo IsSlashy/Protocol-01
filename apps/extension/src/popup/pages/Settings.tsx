@@ -298,8 +298,8 @@ export default function Settings() {
             {/* Network Selector */}
             <div className="p-4 border-b border-p01-border/50">
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 rounded-lg bg-violet-500/20 flex items-center justify-center">
-                  <Wifi className="w-5 h-5 text-violet-400" />
+                <div className="w-9 h-9 rounded-lg bg-p01-cyan/20 flex items-center justify-center">
+                  <Wifi className="w-5 h-5 text-p01-cyan" />
                 </div>
                 <p className="text-white font-medium">Network</p>
               </div>

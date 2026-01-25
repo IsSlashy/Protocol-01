@@ -6,14 +6,14 @@ export default function Agent() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-p01-border">
         <h1 className="text-white font-display font-bold tracking-wide">AI Agent</h1>
-        <span className="px-2 py-0.5 bg-violet-500/20 text-violet-400 text-[10px] font-mono font-bold rounded">
+        <span className="px-2 py-0.5 bg-p01-cyan/20 text-p01-cyan text-[10px] font-mono font-bold rounded">
           BETA
         </span>
       </header>
 
       {/* Content */}
       <div className="flex-1 flex flex-col items-center justify-center p-6">
-        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center mb-4">
+        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center mb-4">
           <Sparkles className="w-8 h-8 text-white" />
         </div>
         <h2 className="text-white font-display font-bold text-lg mb-2">Protocol Agent</h2>

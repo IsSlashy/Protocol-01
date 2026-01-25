@@ -227,8 +227,8 @@ export default function PrivacyZone() {
           <div className="bg-p01-surface rounded-xl overflow-hidden">
             {/* Transaction Batching */}
             <FeatureToggle
-              icon={<Clock className="w-5 h-5 text-violet-400" />}
-              iconBg="bg-violet-500/20"
+              icon={<Clock className="w-5 h-5 text-p01-cyan" />}
+              iconBg="bg-p01-cyan/20"
               title="Transaction Batching"
               description="Group transactions to obscure timing"
               enabled={config.batchingEnabled}
@@ -383,7 +383,7 @@ export default function PrivacyZone() {
               <StatCard
                 label="Batched Txs"
                 value={stats.totalBatchedTransactions}
-                icon={<Clock className="w-4 h-4 text-violet-400" />}
+                icon={<Clock className="w-4 h-4 text-p01-cyan" />}
               />
             </div>
 
