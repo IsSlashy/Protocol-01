@@ -60,7 +60,7 @@ importers:
         specifier: ^0.29.0
         version: 0.29.0(typescript@5.9.3)
       '@noble/curves':
-        specifier: ^1.4.0
+        specifier: ^1.9.7
         version: 1.9.7
       '@noble/hashes':
         specifier: ^1.4.0
@@ -71,6 +71,9 @@ importers:
       '@privy-io/react-auth':
         specifier: ^2.0.0
         version: 2.25.0(@solana/kit@5.4.0)(@solana/spl-token@0.4.14)(@solana/web3.js@1.98.4)(@types/react@18.3.27)(bs58@5.0.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@18.3.1)(react@18.3.1)(typescript@5.9.3)
+      '@solana/spl-memo':
+        specifier: ^0.2.5
+        version: 0.2.5(@solana/web3.js@1.98.4)
       '@solana/spl-token':
         specifier: ^0.4.14
         version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
@@ -8357,6 +8360,16 @@ packages:
       typescript: 5.9.3
     transitivePeerDependencies:
       - fastestsmallesttextencoderdecoder
+    dev: false
+
+  /@solana/spl-memo@0.2.5(@solana/web3.js@1.98.4):
+    resolution: {integrity: sha512-0Zx5t3gAdcHlRTt2O3RgGlni1x7vV7Xq7j4z9q8kKOMgU03PyoTbFQ/BSYCcICHzkaqD7ZxAiaJ6dlXolg01oA==}
+    engines: {node: '>=16'}
+    peerDependencies:
+      '@solana/web3.js': ^1.91.6
+    dependencies:
+      '@solana/web3.js': 1.98.4(encoding@0.1.13)(typescript@5.9.3)
+      buffer: 6.0.3
     dev: false
 
   /@solana/spl-token-group@0.0.7(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.2):

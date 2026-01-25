@@ -198,7 +198,7 @@ export default function Home() {
             </div>
             <div className="flex items-center justify-center gap-2 mt-2 text-p01-chrome">
               {/* Solana Icon */}
-              <div className="w-4 h-4 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center">
+              <div className="w-4 h-4 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
                 <span className="text-[8px] text-white font-bold">S</span>
               </div>
               <span>{solBalance.toFixed(4)} SOL</span>
@@ -311,7 +311,7 @@ export default function Home() {
             className="bg-p01-surface rounded-xl p-4 flex items-center justify-between mb-2"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
                 <span className="text-white font-bold text-sm">S</span>
               </div>
               <div>
@@ -415,7 +415,7 @@ function ActionButton({
   const colorClasses = {
     cyan: 'bg-p01-cyan text-p01-void',
     pink: 'bg-p01-pink text-white',
-    violet: 'bg-violet-500 text-white',
+    violet: 'bg-p01-cyan text-white',
     orange: 'bg-orange-500 text-white',
   };
 

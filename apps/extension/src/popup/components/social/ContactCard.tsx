@@ -25,8 +25,8 @@ interface ContactCardProps {
 // Generate a deterministic gradient from wallet address
 function getAvatarGradient(seed: string): string {
   const gradients = [
-    'from-p01-pink to-purple-600',
-    'from-violet-500 to-purple-600',
+    'from-p01-pink to-p01-cyan',
+    'from-p01-cyan to-p01-cyan-dim',
     'from-blue-500 to-cyan-500',
     'from-emerald-500 to-teal-500',
     'from-orange-500 to-red-500',

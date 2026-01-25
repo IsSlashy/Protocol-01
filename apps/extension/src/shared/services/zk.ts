@@ -542,8 +542,8 @@ export class ZkServiceExtension {
       this.programId
     );
 
-    // Build instruction
-    const discriminator = new Uint8Array([0x5a, 0x6a, 0x72, 0xe9, 0xa8, 0xb9, 0x4d, 0x5a]);
+    // Build shield instruction - Anchor discriminator: sha256("global:shield")[0..8]
+    const discriminator = new Uint8Array([0xdc, 0xc6, 0xfd, 0xf6, 0xe7, 0x54, 0x93, 0x62]);
     const amountBuffer = new ArrayBuffer(8);
     new DataView(amountBuffer).setBigUint64(0, amount, true);
     const commitmentBytes = bigintToLeBytes(note.commitment);
@@ -622,22 +622,26 @@ export class ZkServiceExtension {
       ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
       : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
 
+    // Save the current merkle root BEFORE inserting new commitments
+    // This is the root that will be used in the proof and validated on-chain
+    const merkleRoot = this.merkleTree.root;
+
     // Request proof from backend
     const zkProof = await this.generateProofClientSide({
-      merkleRoot: this.merkleTree.root,
+      merkleRoot: merkleRoot,
       nullifier1,
       nullifier2,
       outputCommitment1: recipientNote.commitment,
       outputCommitment2: changeNote.commitment,
       inputNotes: notesToSpend,
-      outputNotes: [recipientNote, changeNote],
       proofs: [proof1, proof2],
       spendingKey: this.spendingKey!,
     });
 
-    // Update Merkle tree
+    // Update local Merkle tree (after proof generation) and save the new root
     this.merkleTree.insert(recipientNote.commitment);
-    const newRoot = this.merkleTree.insert(changeNote.commitment);
+    this.merkleTree.insert(changeNote.commitment);
+    const newRoot = this.merkleTree.root;
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -655,9 +659,15 @@ export class ZkServiceExtension {
       this.programId
     );
 
-    // Build instruction
-    // Public inputs in little-endian (matching stored roots) - verifier converts to BE
-    const discriminator = new Uint8Array([0xa3, 0xb2, 0xc1, 0xd0, 0xe5, 0xf4, 0x03, 0x12]);
+    const [vkDataPDA] = PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('vk_data'), poolPDA.toBytes()],
+      this.programId
+    );
+
+    // Build transfer instruction - Anchor discriminator: sha256("global:transfer")[0..8]
+    // merkle_root = old root used in the ZK proof (for validation)
+    // new_root = root after inserting both commitments (for merkle tree update)
+    const discriminator = new Uint8Array([0xa3, 0x34, 0xc8, 0xe7, 0x8c, 0x03, 0x45, 0xba]);
     const data = new Uint8Array([
       ...discriminator,
       ...zkProof.pi_a,
@@ -667,8 +677,12 @@ export class ZkServiceExtension {
       ...bigintToLeBytes(nullifier2),
       ...bigintToLeBytes(recipientNote.commitment),
       ...bigintToLeBytes(changeNote.commitment),
-      ...bigintToLeBytes(newRoot),
+      ...bigintToLeBytes(merkleRoot),  // Old merkle root for proof validation
+      ...bigintToLeBytes(newRoot),     // New merkle root for tree update
     ]);
+
+    console.log('[ZK Transfer] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
+    console.log('[ZK Transfer] New root after insertion:', newRoot.toString().slice(0, 20) + '...');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
@@ -677,11 +691,37 @@ export class ZkServiceExtension {
         { pubkey: poolPDA, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
         { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
       ],
       data: Buffer.from(data),
     });
 
-    const tx = new Transaction().add(ix);
+    // Add compute budget instruction for Groth16 verification
+    const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+
+    // SetComputeUnitLimit instruction (discriminator = 2)
+    const computeLimitData = new Uint8Array(5);
+    computeLimitData[0] = 2;
+    new DataView(computeLimitData.buffer).setUint32(1, 1_800_000, true); // 1.8M compute units
+
+    // SetComputeUnitPrice instruction (discriminator = 3) - priority fee
+    const computePriceData = new Uint8Array(9);
+    computePriceData[0] = 3;
+    new DataView(computePriceData.buffer).setBigUint64(1, BigInt(1000), true); // 1000 microlamports per CU
+
+    const computeLimitIx = new TransactionInstruction({
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [],
+      data: Buffer.from(computeLimitData),
+    });
+
+    const computePriceIx = new TransactionInstruction({
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [],
+      data: Buffer.from(computePriceData),
+    });
+
+    const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
     tx.feePayer = walletPublicKey;
     tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
 
@@ -740,22 +780,27 @@ export class ZkServiceExtension {
       ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
       : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
 
+    // Save the current merkle root BEFORE inserting new commitments
+    const merkleRoot = this.merkleTree.root;
+
+    // Create dummy output commitment for the second output slot (unshield only has change, not two outputs)
+    const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+
     // Request proof
     const zkProof = await this.generateProofClientSide({
-      merkleRoot: this.merkleTree.root,
+      merkleRoot: merkleRoot,
       nullifier1,
       nullifier2,
-      outputCommitment1: changeNote?.commitment ?? BigInt(0),
-      outputCommitment2: BigInt(0),
+      outputCommitment1: changeNote?.commitment ?? poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField),
+      outputCommitment2: dummyCommitment,
       publicAmount: -amount,
       inputNotes: notesToSpend,
-      outputNotes: changeNote ? [changeNote] : [],
       proofs: [proof1, proof2],
       spendingKey: this.spendingKey!,
     });
 
-    // Update Merkle tree
-    let newRoot = this.merkleTree.root;
+    // Update Merkle tree - insert change note if it exists
+    let newRoot = merkleRoot;
     if (changeNote) {
       newRoot = this.merkleTree.insert(changeNote.commitment);
     }
@@ -776,9 +821,13 @@ export class ZkServiceExtension {
       this.programId
     );
 
-    // Build instruction
-    // Public inputs in little-endian (matching stored roots) - verifier converts to BE
-    const discriminator = new Uint8Array([0xb4, 0xc3, 0xd2, 0xe1, 0xf6, 0x05, 0x14, 0x23]);
+    const [vkDataPDA] = PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('vk_data'), poolPDA.toBytes()],
+      this.programId
+    );
+
+    // Build unshield instruction - Anchor discriminator: sha256("global:unshield")[0..8]
+    const discriminator = new Uint8Array([0x15, 0xe4, 0x37, 0x18, 0xc2, 0x0a, 0x15, 0x16]);
     const amountBuffer = new ArrayBuffer(8);
     new DataView(amountBuffer).setBigUint64(0, amount, true);
 
@@ -789,25 +838,50 @@ export class ZkServiceExtension {
       ...zkProof.pi_c,
       ...bigintToLeBytes(nullifier1),
       ...bigintToLeBytes(nullifier2),
-      ...bigintToLeBytes(changeNote?.commitment ?? BigInt(0)),
-      ...bigintToLeBytes(newRoot),
+      ...bigintToLeBytes(changeNote?.commitment ?? poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField)),
+      ...bigintToLeBytes(dummyCommitment),       // output_commitment_2 (always dummy for unshield)
+      ...bigintToLeBytes(merkleRoot),            // Old merkle root for proof validation
       ...new Uint8Array(amountBuffer),
+      ...bigintToLeBytes(newRoot),               // New merkle root for tree update
     ]);
+
+    console.log('[ZK Unshield] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
+    console.log('[ZK Unshield] Recipient:', recipient.toBase58());
+    console.log('[ZK Unshield] Amount:', amount.toString(), 'lamports');
+
+    const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: walletPublicKey, isSigner: true, isWritable: true },
-        { pubkey: recipient, isSigner: false, isWritable: true },
-        { pubkey: poolPDA, isSigner: false, isWritable: true },
-        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: walletPublicKey, isSigner: true, isWritable: true },    // payer
+        { pubkey: recipient, isSigner: false, isWritable: true },          // recipient
+        { pubkey: poolPDA, isSigner: false, isWritable: true },            // shielded_pool
+        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },      // merkle_tree
+        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },    // nullifier_set
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },         // verification_key_data
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },  // token_program
+        { pubkey: this.programId, isSigner: false, isWritable: false },    // pool_vault (None placeholder)
+        { pubkey: this.programId, isSigner: false, isWritable: false },    // recipient_token_account (None placeholder)
       ],
       data: Buffer.from(data),
     });
 
-    const tx = new Transaction().add(ix);
+    // Add compute budget instruction for Groth16 verification
+    const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+
+    const computeLimitData = new Uint8Array(5);
+    computeLimitData[0] = 2;
+    new DataView(computeLimitData.buffer).setUint32(1, 1_400_000, true); // 1.4M compute units
+
+    const computeLimitIx = new TransactionInstruction({
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [],
+      data: Buffer.from(computeLimitData),
+    });
+
+    const tx = new Transaction().add(computeLimitIx).add(ix);
     tx.feePayer = walletPublicKey;
     tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
 

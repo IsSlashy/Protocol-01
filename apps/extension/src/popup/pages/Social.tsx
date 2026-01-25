@@ -382,7 +382,7 @@ export default function Social() {
                     className="w-full p-3 bg-p01-surface rounded-xl flex items-center gap-3 hover:bg-p01-surface/80 transition-colors"
                   >
                     {/* Avatar */}
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-p01-pink to-purple-600 flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-p01-pink to-p01-cyan flex items-center justify-center">
                       <span className="text-white font-bold">
                         {contact.nickname?.[0] || contact.walletAddress[0]}
                       </span>
@@ -470,7 +470,7 @@ export default function Social() {
         {/* Content */}
         <div className="flex-1 p-4">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-p01-pink to-purple-600 flex items-center justify-center mx-auto mb-4">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-p01-pink to-p01-cyan flex items-center justify-center mx-auto mb-4">
               <UserPlus className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-white font-display font-bold text-lg mb-1">
@@ -571,7 +571,7 @@ export default function Social() {
                     className="p-4 bg-p01-surface rounded-xl"
                   >
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
                         <span className="text-white font-bold">
                           {contact.walletAddress[0]}
                         </span>
@@ -636,7 +636,7 @@ export default function Social() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-3 flex-1">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-pink to-purple-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-pink to-p01-cyan flex items-center justify-center">
               <span className="text-white font-bold text-sm">
                 {selectedContact.nickname?.[0] || selectedContact.walletAddress[0]}
               </span>

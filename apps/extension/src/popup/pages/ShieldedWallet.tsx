@@ -18,17 +18,16 @@ import {
   Info,
   ChevronRight,
   Zap,
-  ExternalLink,
   Clock,
   AlertTriangle,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
-import { cn, formatCurrency, truncateAddress, copyToClipboard } from '@/shared/utils';
+import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 
 export default function ShieldedWallet() {
   const navigate = useNavigate();
-  const { publicKey, solBalance, network } = useWalletStore();
+  const { publicKey, solBalance } = useWalletStore();
   const {
     isInitialized,
     isLoading,
@@ -240,7 +239,7 @@ export default function ShieldedWallet() {
           </p>
           <div className="bg-p01-surface rounded-xl p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
                 <Unlock className="w-5 h-5 text-white" />
               </div>
               <div>
@@ -328,7 +327,7 @@ export default function ShieldedWallet() {
                     </div>
                     <div className="text-right">
                       <p className="text-p01-chrome/60 text-xs font-mono">
-                        {truncateAddress(note.commitment?.toString(16) ?? '', 4)}
+                        {truncateAddress(note.commitment ?? '', 4)}
                       </p>
                     </div>
                   </div>
@@ -576,7 +575,7 @@ function ActionButton({
   const colorClasses = {
     cyan: 'bg-p01-cyan text-p01-void',
     pink: 'bg-p01-pink text-white',
-    violet: 'bg-violet-500 text-white',
+    violet: 'bg-p01-cyan text-white',
   };
 
   return (

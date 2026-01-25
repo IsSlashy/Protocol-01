@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import { PublicKey, Transaction } from '@solana/web3.js';
 import { getZkServiceExtension, ZkServiceExtension, ZkAddress } from '../services/zk';
+import { getConnection } from '../services/wallet';
+import { useWalletStore } from './wallet';
 
 /**
  * Shielded note data (serializable)
@@ -42,29 +44,63 @@ interface ShieldedState {
 
   // Internal
   _zkService: ZkServiceExtension | null;
+  _seedPhrase: string | null;
 
-  // Actions
-  initialize: (seedPhrase: string, connection: Connection) => Promise<void>;
+  // Actions - Simplified interface (gets wallet data internally)
+  initialize: () => Promise<void>;
   refreshBalance: () => Promise<void>;
-  shield: (
-    amount: number,
-    walletPublicKey: PublicKey,
-    signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) => Promise<string>;
-  unshield: (
-    amount: number,
-    recipient: PublicKey,
-    walletPublicKey: PublicKey,
-    signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) => Promise<string>;
-  transfer: (
-    recipient: string,
-    amount: number,
-    walletPublicKey: PublicKey,
-    signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) => Promise<string>;
+  shield: (amount: number) => Promise<string>;
+  unshield: (amount: number) => Promise<string>;
+  transfer: (recipient: string, amount: number) => Promise<string>;
   scanNotes: () => Promise<void>;
   reset: () => void;
+}
+
+/**
+ * Helper to get wallet data from wallet store
+ */
+function getWalletData() {
+  const walletState = useWalletStore.getState();
+
+  if (!walletState.publicKey || !walletState._keypair) {
+    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
+  }
+
+  const walletPublicKey = new PublicKey(walletState.publicKey);
+  const keypair = walletState._keypair;
+  const network = walletState.network;
+  const connection = getConnection(network);
+
+  // Sign transaction function
+  const signTransaction = async (tx: Transaction): Promise<Transaction> => {
+    tx.sign(keypair);
+    return tx;
+  };
+
+  return { walletPublicKey, keypair, connection, signTransaction, network };
+}
+
+/**
+ * Helper to get seed phrase from wallet store (requires decryption)
+ */
+async function getSeedPhrase(): Promise<string> {
+  // The seed phrase is encrypted in the wallet store
+  // We need to access it through the encrypted storage
+  // For now, we'll derive it from the keypair's secret key
+  const walletState = useWalletStore.getState();
+
+  if (!walletState._keypair) {
+    throw new Error('Wallet not unlocked');
+  }
+
+  // Use the keypair's secret key as seed for ZK derivation
+  // This ensures consistent ZK addresses across sessions
+  const secretKey = walletState._keypair.secretKey;
+  const seedHex = Array.from(secretKey.slice(0, 32))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+
+  return seedHex;
 }
 
 /**
@@ -84,12 +120,25 @@ export const useShieldedStore = create<ShieldedState>()(
       lastSyncedIndex: 0,
       merkleRoot: null,
       _zkService: null,
+      _seedPhrase: null,
 
-      // Initialize with real ZK service
-      initialize: async (seedPhrase: string, connection: Connection) => {
+      // Initialize with real ZK service (simplified - gets wallet data internally)
+      initialize: async () => {
+        const { isInitialized, _zkService } = get();
+
+        // Already initialized
+        if (isInitialized && _zkService) {
+          console.log('[Shielded] Already initialized');
+          return;
+        }
+
         set({ isLoading: true });
 
         try {
+          // Get wallet data
+          const { connection } = getWalletData();
+          const seedPhrase = await getSeedPhrase();
+
           // Get ZK service singleton
           const zkService = getZkServiceExtension();
           zkService.setConnection(connection);
@@ -110,6 +159,7 @@ export const useShieldedStore = create<ShieldedState>()(
             shieldedBalance: balance,
             isLoading: false,
             _zkService: zkService,
+            _seedPhrase: seedPhrase,
           });
 
           console.log('[Shielded] Initialized with ZK address:', zkAddress.encoded);
@@ -141,12 +191,15 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Shield tokens using real ZK SDK
-      shield: async (amount: number, walletPublicKey: PublicKey, signTransaction) => {
+      // Shield tokens (simplified - gets wallet data internally)
+      shield: async (amount: number) => {
         const { _zkService } = get();
         if (!_zkService) {
-          throw new Error('ZK service not initialized');
+          throw new Error('ZK service not initialized. Please wait for initialization.');
         }
+
+        // Get wallet data
+        const { walletPublicKey, signTransaction } = getWalletData();
 
         const txId = crypto.randomUUID();
         const amountLamports = BigInt(Math.floor(amount * 1e9));
@@ -210,12 +263,15 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Unshield tokens using real ZK SDK
-      unshield: async (amount: number, recipient: PublicKey, walletPublicKey: PublicKey, signTransaction) => {
+      // Unshield tokens (simplified - recipient defaults to own wallet)
+      unshield: async (amount: number) => {
         const { _zkService } = get();
         if (!_zkService) {
-          throw new Error('ZK service not initialized');
+          throw new Error('ZK service not initialized. Please wait for initialization.');
         }
+
+        // Get wallet data - recipient is own wallet by default
+        const { walletPublicKey, signTransaction } = getWalletData();
 
         const txId = crypto.randomUUID();
         const amountLamports = BigInt(Math.floor(amount * 1e9));
@@ -240,9 +296,9 @@ export const useShieldedStore = create<ShieldedState>()(
             ),
           }));
 
-          // Call real ZK service
+          // Call real ZK service - recipient is own wallet
           const signature = await _zkService.unshield(
-            recipient,
+            walletPublicKey, // recipient
             amountLamports,
             walletPublicKey,
             signTransaction
@@ -279,12 +335,15 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Transfer shielded tokens using real ZK SDK
-      transfer: async (recipient: string, amount: number, walletPublicKey: PublicKey, signTransaction) => {
+      // Transfer shielded tokens
+      transfer: async (recipient: string, amount: number) => {
         const { _zkService } = get();
         if (!_zkService) {
-          throw new Error('ZK service not initialized');
+          throw new Error('ZK service not initialized. Please wait for initialization.');
         }
+
+        // Get wallet data
+        const { walletPublicKey, signTransaction } = getWalletData();
 
         const txId = crypto.randomUUID();
         const amountLamports = BigInt(Math.floor(amount * 1e9));
@@ -384,9 +443,6 @@ export const useShieldedStore = create<ShieldedState>()(
           // Scan blockchain for incoming shielded notes
           const { found, newBalance } = await _zkService.scanIncomingNotes(lastSignature);
 
-          // Update last scanned position if we found transactions
-          // Note: In production, track the latest signature scanned
-
           // Update balance from scanned notes
           const balance = Number(newBalance) / 1e9;
 
@@ -425,6 +481,7 @@ export const useShieldedStore = create<ShieldedState>()(
           lastSyncedIndex: 0,
           merkleRoot: null,
           _zkService: null,
+          _seedPhrase: null,
         });
       },
     }),

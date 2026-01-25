@@ -17,8 +17,7 @@ import nacl from 'tweetnacl';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import { Buffer } from 'buffer';
-import { ed25519 } from '@noble/curves/ed25519';
-import { x25519 } from '@noble/curves/x25519';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
 
 // =============================================================================

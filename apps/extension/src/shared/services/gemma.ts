@@ -502,5 +502,4 @@ export function quickClassifyIntent(message: string): WalletIntent {
   return 'general_query';
 }
 
-// Export types
-export type { GemmaMessage };
+// Types are exported inline above

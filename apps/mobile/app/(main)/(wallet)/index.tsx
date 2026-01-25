@@ -43,6 +43,7 @@ const P01 = {
 };
 import { isDevnet } from '@/services/solana/connection';
 import { formatTxDate } from '@/services/solana/transactions';
+import { formatBalance } from '@/services/solana/balance';
 
 export default function WalletHomeScreen() {
   const router = useRouter();
@@ -60,12 +61,14 @@ export default function WalletHomeScreen() {
     refreshing,
     error,
     formattedPublicKey,
-    formattedSolBalance,
     refreshBalance,
     refreshTransactions,
     requestDevnetAirdrop,
     clearError,
   } = useWalletStore();
+
+  // Compute formatted balance locally (Zustand getters don't trigger re-renders)
+  const formattedSolBalance = balance ? formatBalance(balance.sol) : '0';
 
   const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
 

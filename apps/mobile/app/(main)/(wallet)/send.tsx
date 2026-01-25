@@ -21,6 +21,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 import { isValidAddress } from '@/services/solana/transactions';
 import { isDevnet, getCluster } from '@/services/solana/connection';
+import { formatBalance } from '@/services/solana/balance';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors - NO purple allowed
@@ -35,11 +36,13 @@ export default function SendScreen() {
   const router = useRouter();
   const {
     balance,
-    formattedSolBalance,
     sendTransaction,
     loading,
   } = useWalletStore();
   const { authenticateForSend } = useSecuritySettings();
+
+  // Compute formatted balance locally (Zustand getters don't trigger re-renders)
+  const formattedSolBalance = balance ? formatBalance(balance.sol) : '0';
 
   // Form state
   const [recipient, setRecipient] = useState('');

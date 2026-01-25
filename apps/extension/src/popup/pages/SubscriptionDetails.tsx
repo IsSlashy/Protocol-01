@@ -343,10 +343,10 @@ export default function SubscriptionDetails() {
               {subscription.useStealthAddress && (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <EyeOff className="w-4 h-4 text-purple-400/60" />
+                    <EyeOff className="w-4 h-4 text-p01-cyan/60" />
                     <span className="text-xs text-p01-chrome">Stealth Addresses</span>
                   </div>
-                  <Check className="w-4 h-4 text-purple-400" />
+                  <Check className="w-4 h-4 text-p01-cyan" />
                 </div>
               )}
             </div>
@@ -614,7 +614,7 @@ function PaymentHistoryItem({ payment }: { payment: PaymentRecord }) {
           {new Date(payment.timestamp).toLocaleString()}
         </p>
         {payment.wasStealthPayment && (
-          <span className="text-[9px] text-purple-400">Stealth</span>
+          <span className="text-[9px] text-p01-cyan">Stealth</span>
         )}
       </div>
       <div className="text-right">

@@ -106,7 +106,7 @@ export default function TokenSelector({
           className={cn(
             'w-5 h-5 rounded-full bg-gradient-to-br flex items-center justify-center',
             TOKEN_COLORS[selectedTokenOption.symbol]?.from || 'from-p01-pink',
-            TOKEN_COLORS[selectedTokenOption.symbol]?.to || 'to-purple-600'
+            TOKEN_COLORS[selectedTokenOption.symbol]?.to || 'to-p01-cyan'
           )}
         >
           <span className="text-[8px] font-bold text-white">
@@ -153,7 +153,7 @@ export default function TokenSelector({
                     className={cn(
                       'w-6 h-6 rounded-full bg-gradient-to-br flex items-center justify-center',
                       TOKEN_COLORS[token.symbol]?.from || 'from-p01-pink',
-                      TOKEN_COLORS[token.symbol]?.to || 'to-purple-600'
+                      TOKEN_COLORS[token.symbol]?.to || 'to-p01-cyan'
                     )}
                   >
                     <span className="text-[10px] font-bold text-white">

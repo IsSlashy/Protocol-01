@@ -558,14 +558,14 @@ export default function CreateSubscription() {
               <div className="bg-p01-surface rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <EyeOff className="w-4 h-4 text-purple-400" />
+                    <EyeOff className="w-4 h-4 text-p01-cyan" />
                     <span className="text-sm font-medium text-white">Stealth Addresses</span>
                   </div>
                   <button
                     onClick={() => setUseStealthAddress(!useStealthAddress)}
                     className={cn(
                       'w-12 h-6 rounded-full transition-colors relative',
-                      useStealthAddress ? 'bg-purple-500' : 'bg-p01-border'
+                      useStealthAddress ? 'bg-p01-cyan' : 'bg-p01-border'
                     )}
                   >
                     <div

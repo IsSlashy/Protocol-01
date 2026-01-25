@@ -226,8 +226,8 @@ export default function Subscriptions() {
                 </div>
               </div>
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center flex-shrink-0">
-                  <EyeOff className="w-4 h-4 text-purple-400" />
+                <div className="w-8 h-8 rounded-lg bg-p01-cyan/10 flex items-center justify-center flex-shrink-0">
+                  <EyeOff className="w-4 h-4 text-p01-cyan" />
                 </div>
                 <div>
                   <p className="text-xs font-medium text-white">Stealth Addresses</p>
@@ -486,7 +486,7 @@ function SubscriptionCard({
               </span>
             )}
             {sub.useStealthAddress && (
-              <span className="px-1.5 py-0.5 text-[9px] bg-purple-500/20 text-purple-400 rounded">
+              <span className="px-1.5 py-0.5 text-[9px] bg-p01-cyan/20 text-p01-cyan rounded">
                 Stealth
               </span>
             )}
