@@ -181,18 +181,18 @@ export default function ShieldedTransferScreen() {
       // Get the note string to share with recipient
       const lastNote = getLastSentNote();
       if (lastNote) {
+        // Auto-copy to clipboard immediately
+        await Clipboard.setStringAsync(lastNote.noteString);
+
         Alert.alert(
-          'Transfer Successful',
-          `${amount} SOL has been sent privately.\n\n⚠️ IMPORTANT: The recipient must import this note to receive the funds.\n\nCopy and share this with the recipient:`,
+          'Transfer Successful ✓',
+          `${amount} SOL has been sent privately.\n\n📋 Note copied to clipboard!\n\n⚠️ IMPORTANT: Share this note with the recipient so they can import it and receive the funds.`,
           [
             {
-              text: 'Copy Note',
+              text: 'Copy Again',
               onPress: async () => {
                 await Clipboard.setStringAsync(lastNote.noteString);
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                Alert.alert('Copied!', 'Share this note with the recipient so they can import it.', [
-                  { text: 'OK', onPress: () => router.back() }
-                ]);
               }
             },
             { text: 'Done', onPress: () => router.back() }
