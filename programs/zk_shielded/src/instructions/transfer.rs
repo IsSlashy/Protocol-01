@@ -20,7 +20,8 @@ use crate::Groth16Proof;
     nullifier_2: [u8; 32],
     output_commitment_1: [u8; 32],
     output_commitment_2: [u8; 32],
-    merkle_root: [u8; 32]
+    merkle_root: [u8; 32],
+    new_root: [u8; 32]
 )]
 pub struct Transfer<'info> {
     /// Transaction submitter (can be anyone, including relayer)
@@ -75,6 +76,7 @@ pub fn handler(
     output_commitment_1: [u8; 32],
     output_commitment_2: [u8; 32],
     merkle_root: [u8; 32],
+    new_root: [u8; 32],
 ) -> Result<()> {
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.shielded_pool;
@@ -124,11 +126,14 @@ pub fn handler(
     nullifier_set.add(&nullifier_2);
 
     // Insert new commitments into Merkle tree
-    let leaf_index_1 = merkle_tree.insert(output_commitment_1)?;
-    let leaf_index_2 = merkle_tree.insert(output_commitment_2)?;
+    // NOTE: Using insert_with_root because Poseidon syscall is not yet enabled on devnet
+    // First insertion uses a placeholder root (will be overwritten by second insertion)
+    let leaf_index_1 = merkle_tree.insert_with_root(output_commitment_1, [0u8; 32])?;
+    // Second insertion sets the actual new root computed by client
+    let leaf_index_2 = merkle_tree.insert_with_root(output_commitment_2, new_root)?;
 
-    // Update pool state
-    pool.update_root(merkle_tree.root);
+    // Update pool state with the client-computed root
+    pool.update_root(new_root);
     pool.next_leaf_index = merkle_tree.leaf_count;
     pool.last_tx_at = clock.unix_timestamp;
 

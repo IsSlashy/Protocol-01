@@ -46,6 +46,7 @@ pub mod zk_shielded {
         output_commitment_1: [u8; 32],
         output_commitment_2: [u8; 32],
         merkle_root: [u8; 32],
+        new_root: [u8; 32],
     ) -> Result<()> {
         instructions::transfer::handler(
             ctx,
@@ -55,6 +56,7 @@ pub mod zk_shielded {
             output_commitment_1,
             output_commitment_2,
             merkle_root,
+            new_root,
         )
     }
 

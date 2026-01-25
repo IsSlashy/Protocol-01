@@ -70,27 +70,19 @@ import { poseidon1, poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
  * Uses poseidon-lite for exact compatibility with circom circuits
  */
 function poseidonHash(...inputs: bigint[]): bigint {
-  console.log('[Poseidon] Hashing', inputs.length, 'inputs');
   try {
-    let result: bigint;
     switch (inputs.length) {
       case 1:
-        result = poseidon1(inputs);
-        break;
+        return poseidon1(inputs);
       case 2:
-        result = poseidon2(inputs);
-        break;
+        return poseidon2(inputs);
       case 3:
-        result = poseidon3(inputs);
-        break;
+        return poseidon3(inputs);
       case 4:
-        result = poseidon4(inputs);
-        break;
+        return poseidon4(inputs);
       default:
         throw new Error(`Poseidon: unsupported input count ${inputs.length}`);
     }
-    console.log('[Poseidon] Result:', result.toString().slice(0, 20) + '...');
-    return result;
   } catch (error) {
     console.error('[Poseidon] Error:', error);
     throw error;
@@ -198,14 +190,10 @@ async function createNote(
   ownerPubkey: bigint,
   tokenMint: bigint
 ): Promise<Note> {
-  console.log('[ZK createNote] Generating randomness...');
   const randomness = await randomFieldElement();
-  console.log('[ZK createNote] Computing commitment with Poseidon...');
-  console.log('[ZK createNote] Inputs:', { amount: amount.toString(), ownerPubkey: ownerPubkey.toString().slice(0,20), randomness: randomness.toString().slice(0,20), tokenMint: tokenMint.toString().slice(0,20) });
 
   try {
     const commitment = poseidonHash(amount, ownerPubkey, randomness, tokenMint);
-    console.log('[ZK createNote] Commitment computed:', commitment.toString().slice(0, 20) + '...');
 
     return {
       amount,
@@ -378,8 +366,7 @@ export class ZkService {
     this.ownerPubkey = keys.ownerPubkey;
     this.viewingKey = bigintToLeBytes(keys.ownerPubkey);
 
-    console.log('[ZK Service] Initialized with ownerPubkey:', this.ownerPubkey.toString().slice(0, 30) + '...');
-    console.log('[ZK Service] Full ownerPubkey (for debugging):', this.ownerPubkey.toString());
+    console.log('[ZK] Service initialized');
 
     // Load persisted notes
     await this.loadNotes();
@@ -542,19 +529,13 @@ export class ZkService {
     if (!this.ownerPubkey) {
       throw new Error('ZK Service not initialized');
     }
-    console.log('[ZK Shield] ownerPubkey:', this.ownerPubkey.toString().slice(0, 20) + '...');
-
     // Sync merkle tree with on-chain state first
-    console.log('[ZK Shield] Syncing merkle tree with on-chain state...');
     await this.syncMerkleTree();
 
     const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
-    console.log('[ZK Shield] tokenMintField:', tokenMintField.toString().slice(0, 20) + '...');
 
     // Create note for self
-    console.log('[ZK Shield] Creating note...');
     const note = await createNote(amount, this.ownerPubkey, tokenMintField);
-    console.log('[ZK Shield] Note created, commitment:', note.commitment.toString().slice(0, 20) + '...');
 
     // Get current leaf count before insertion
     const leafIndexBeforeInsert = this.merkleTree.leafCount;
@@ -622,7 +603,14 @@ export class ZkService {
       preflightCommitment: 'confirmed',
     });
 
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+
+    // Check if transaction actually succeeded
+    if (confirmation.value.err) {
+      console.error('[ZK Shield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
+      throw new Error(`Shield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
     console.log('[ZK Shield] Transaction confirmed:', signature);
 
     // Note already has leafIndex and merkle path set from before insertion
@@ -736,9 +724,13 @@ export class ZkService {
       ? notesToSpend
       : [notesToSpend[0], dummyInputNote!];
 
+    // Save the current merkle root BEFORE inserting new commitments
+    // This is the root that will be used in the proof and validated on-chain
+    const merkleRoot = this.merkleTree.root;
+
     // Request proof from backend prover
     const zkProof = await this.generateProofClientSide({
-      merkleRoot: this.merkleTree.root,
+      merkleRoot: merkleRoot,
       nullifier1,
       nullifier2,
       outputCommitment1: recipientNote.commitment,
@@ -750,9 +742,10 @@ export class ZkService {
       spendingKey: this.spendingKey!,
     });
 
-    // Update local Merkle tree
+    // Update local Merkle tree (after proof generation) and save the new root
     this.merkleTree.insert(recipientNote.commitment);
-    const newRoot = this.merkleTree.insert(changeNote.commitment);
+    this.merkleTree.insert(changeNote.commitment);
+    const newRoot = this.merkleTree.root;
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -770,8 +763,14 @@ export class ZkService {
       this.programId
     );
 
+    const [vkDataPDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from('vk_data'), poolPDA.toBytes()],
+      this.programId
+    );
+
     // Build transfer instruction - Anchor discriminator: sha256("global:transfer")[0..8]
-    // Public inputs in little-endian (matching stored roots) - verifier converts to BE
+    // merkle_root = old root used in the ZK proof (for validation)
+    // new_root = root after inserting both commitments (for merkle tree update)
     const discriminator = Buffer.from([0xa3, 0x34, 0xc8, 0xe7, 0x8c, 0x03, 0x45, 0xba]);
     const data = Buffer.concat([
       discriminator,
@@ -782,8 +781,12 @@ export class ZkService {
       bigintToLeBytes(nullifier2),
       bigintToLeBytes(recipientNote.commitment),
       bigintToLeBytes(changeNote.commitment),
-      bigintToLeBytes(newRoot),
+      bigintToLeBytes(merkleRoot),  // Old merkle root for proof validation
+      bigintToLeBytes(newRoot),     // New merkle root for tree update
     ]);
+
+    console.log('[ZK Transfer] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
+    console.log('[ZK Transfer] New root after insertion:', newRoot.toString().slice(0, 20) + '...');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
@@ -792,22 +795,38 @@ export class ZkService {
         { pubkey: poolPDA, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
         { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
       ],
       data,
     });
 
-    // Add compute budget instruction for Groth16 verification (requires ~1.4M compute units)
+    // Add compute budget instruction for Groth16 verification
+    // Transfer requires more compute than Shield because it verifies a more complex circuit
     const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+
+    // SetComputeUnitLimit instruction (discriminator = 2)
     const computeLimitData = Buffer.alloc(5);
     computeLimitData.writeUInt8(2, 0);
-    computeLimitData.writeUInt32LE(1_400_000, 1);
+    computeLimitData.writeUInt32LE(1_800_000, 1); // 1.8M compute units for Transfer
+
+    // SetComputeUnitPrice instruction (discriminator = 3) - priority fee
+    const computePriceData = Buffer.alloc(9);
+    computePriceData.writeUInt8(3, 0);
+    computePriceData.writeBigUInt64LE(BigInt(1000), 1); // 1000 microlamports per CU
+
     const computeLimitIx = new TransactionInstruction({
       programId: COMPUTE_BUDGET_PROGRAM_ID,
       keys: [],
       data: computeLimitData,
     });
 
-    const tx = new Transaction().add(computeLimitIx).add(ix);
+    const computePriceIx = new TransactionInstruction({
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [],
+      data: computePriceData,
+    });
+
+    const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
     tx.feePayer = walletPublicKey;
     tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
 
@@ -817,7 +836,17 @@ export class ZkService {
       preflightCommitment: 'confirmed',
     });
 
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    console.log('[ZK Transfer] Transaction sent:', signature);
+    const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+
+    // Check if transaction actually succeeded
+    if (confirmation.value.err) {
+      console.error('[ZK Transfer] Transaction FAILED:', signature);
+      console.error('[ZK Transfer] Error:', JSON.stringify(confirmation.value.err));
+      throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    console.log('[ZK Transfer] Transaction confirmed successfully:', signature);
 
     // Update local notes
     this.removeSpentNotes(notesToSpend);
@@ -1298,103 +1327,19 @@ export class ZkService {
       spending_key: inputs.spendingKey.toString(),
     };
 
-    console.log('[ZK] Generating proof client-side...');
-    console.log('[ZK] Debug - merkle_root:', circuitInputs.merkle_root.slice(0, 20) + '...');
-    console.log('[ZK] Debug - public_amount:', circuitInputs.public_amount.slice(0, 20) + '...');
-    console.log('[ZK] Debug - in_amount_1:', circuitInputs.in_amount_1);
-    console.log('[ZK] Debug - in_amount_2:', circuitInputs.in_amount_2);
-    console.log('[ZK] Debug - out_amount_1:', circuitInputs.out_amount_1);
-    console.log('[ZK] Debug - out_amount_2:', circuitInputs.out_amount_2);
+    console.log('[ZK] Generating proof...');
 
-    // Verify value conservation: in1 + in2 + public_amount = out1 + out2 (mod p)
-    const in1 = BigInt(circuitInputs.in_amount_1);
-    const in2 = BigInt(circuitInputs.in_amount_2);
-    const pub = BigInt(circuitInputs.public_amount);
-    const out1 = BigInt(circuitInputs.out_amount_1);
-    const out2 = BigInt(circuitInputs.out_amount_2);
-    const totalIn = (in1 + in2 + pub) % FIELD_MODULUS;
-    const totalOut = (out1 + out2) % FIELD_MODULUS;
-    console.log('[ZK] Debug - value conservation check:');
-    console.log('[ZK]   totalIn (in1 + in2 + pub) mod p:', totalIn.toString());
-    console.log('[ZK]   totalOut (out1 + out2):', totalOut.toString());
-    console.log('[ZK]   Values match:', totalIn === totalOut);
-
-    console.log('[ZK] Debug - input note 1 commitment:', inputs.inputNotes[0]?.commitment.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - spending_key:', inputs.spendingKey.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - ownerPubkey:', this.ownerPubkey?.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - input note 1 ownerPubkey:', inputs.inputNotes[0]?.ownerPubkey.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - ownerPubkeys match:', inputs.inputNotes[0]?.ownerPubkey === this.ownerPubkey);
-
-    // CRITICAL DEBUG: Verify the circuit will compute the SAME commitment
-    // The circuit does: inCommitment1 = Poseidon(amount, ownerPubkey, randomness, tokenMint)
-    // If this doesn't match note.commitment, the merkle proof will FAIL
+    // Verify commitment matches (critical for proof validity)
     const circuitComputedCommitment1 = poseidonHash(
       BigInt(circuitInputs.in_amount_1),
       BigInt(circuitInputs.in_owner_pubkey_1),
       BigInt(circuitInputs.in_randomness_1),
       tokenMintField
     );
-    console.log('[ZK] CRITICAL - Circuit will compute commitment:', circuitComputedCommitment1.toString().slice(0, 20) + '...');
-    console.log('[ZK] CRITICAL - Stored note commitment:', inputs.inputNotes[0]?.commitment.toString().slice(0, 20) + '...');
-    console.log('[ZK] CRITICAL - Commitments MATCH:', circuitComputedCommitment1 === inputs.inputNotes[0]?.commitment);
     if (circuitComputedCommitment1 !== inputs.inputNotes[0]?.commitment) {
-      console.error('[ZK] !!! COMMITMENT MISMATCH - This will cause MerkleTreeChecker to fail !!!');
-      console.error('[ZK] The inputs (amount, ownerPubkey, randomness, tokenMint) do not reproduce the stored commitment');
-      console.error('[ZK] in_amount_1:', circuitInputs.in_amount_1);
-      console.error('[ZK] in_owner_pubkey_1:', circuitInputs.in_owner_pubkey_1);
-      console.error('[ZK] in_randomness_1:', circuitInputs.in_randomness_1);
-      console.error('[ZK] token_mint:', tokenMintField.toString());
+      console.error('[ZK] Commitment mismatch - proof will fail');
+      throw new Error('Commitment mismatch: stored note does not match computed commitment');
     }
-
-    // Debug dummy input note 2
-    console.log('[ZK] Debug - in_amount_2:', circuitInputs.in_amount_2);
-    console.log('[ZK] Debug - in_owner_pubkey_2:', circuitInputs.in_owner_pubkey_2);
-    console.log('[ZK] Debug - in_randomness_2:', circuitInputs.in_randomness_2);
-    console.log('[ZK] Debug - nullifier_2:', circuitInputs.nullifier_2.slice(0, 20) + '...');
-
-    // Verify dummy commitment calculation
-    const dummyAmount = BigInt(circuitInputs.in_amount_2);
-    const dummyOwner = BigInt(circuitInputs.in_owner_pubkey_2);
-    const dummyRandomness = BigInt(circuitInputs.in_randomness_2);
-    const circuitDummyCommitment = poseidonHash(dummyAmount, dummyOwner, dummyRandomness, tokenMintField);
-    const circuitDummyNullifier = computeNullifier(circuitDummyCommitment, poseidonHash(inputs.spendingKey));
-    console.log('[ZK] Debug - circuit dummy commitment:', circuitDummyCommitment.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - circuit dummy nullifier:', circuitDummyNullifier.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - nullifiers match:', circuitDummyNullifier.toString() === circuitInputs.nullifier_2);
-
-    // Verify output commitment computation matches what circuit will compute
-    const expectedCommitment1 = poseidonHash(
-      BigInt(circuitInputs.out_amount_1),
-      BigInt(circuitInputs.out_recipient_1),
-      BigInt(circuitInputs.out_randomness_1),
-      tokenMintField
-    );
-    console.log('[ZK] Debug - expected out_commitment_1 from inputs:', expectedCommitment1.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - passed output_commitment_1:', inputs.outputCommitment1.toString().slice(0, 20) + '...');
-    console.log('[ZK] Debug - commitments match:', expectedCommitment1 === inputs.outputCommitment1);
-
-    // FULL DEBUG: Log ALL circuit inputs before proof generation
-    console.log('[ZK] ========== FULL CIRCUIT INPUTS ==========');
-    console.log('[ZK] PUBLIC INPUTS:');
-    console.log('[ZK]   merkle_root:', circuitInputs.merkle_root);
-    console.log('[ZK]   nullifier_1:', circuitInputs.nullifier_1);
-    console.log('[ZK]   nullifier_2:', circuitInputs.nullifier_2);
-    console.log('[ZK]   output_commitment_1:', circuitInputs.output_commitment_1);
-    console.log('[ZK]   output_commitment_2:', circuitInputs.output_commitment_2);
-    console.log('[ZK]   public_amount:', circuitInputs.public_amount);
-    console.log('[ZK]   token_mint:', circuitInputs.token_mint);
-    console.log('[ZK] PRIVATE INPUTS - Note 1:');
-    console.log('[ZK]   in_amount_1:', circuitInputs.in_amount_1);
-    console.log('[ZK]   in_owner_pubkey_1:', circuitInputs.in_owner_pubkey_1);
-    console.log('[ZK]   in_randomness_1:', circuitInputs.in_randomness_1);
-    console.log('[ZK]   in_path_indices_1:', circuitInputs.in_path_indices_1);
-    console.log('[ZK]   in_path_elements_1 (first 5):', JSON.parse(circuitInputs.in_path_elements_1).slice(0, 5));
-    console.log('[ZK] PRIVATE INPUTS - Note 2:');
-    console.log('[ZK]   in_amount_2:', circuitInputs.in_amount_2);
-    console.log('[ZK]   in_owner_pubkey_2:', circuitInputs.in_owner_pubkey_2);
-    console.log('[ZK]   in_randomness_2:', circuitInputs.in_randomness_2);
-    console.log('[ZK] spending_key:', circuitInputs.spending_key.slice(0, 20) + '...');
-    console.log('[ZK] ==========================================');
 
     try {
       const proof = await this.proverFunction(circuitInputs);
@@ -1633,18 +1578,8 @@ export class ZkService {
         }));
 
         // Filter notes: only keep notes that belong to current key
-        // This handles migration from old key derivation
-        console.log('[ZK] Filtering notes. Current ownerPubkey:', this.ownerPubkey?.toString().slice(0, 20));
-        console.log('[ZK] Total notes loaded:', allNotes.length);
-
         const validNotes = allNotes.filter((note: Note) => {
-          // Compare as strings to avoid bigint comparison issues
-          const isValid = note.ownerPubkey.toString() === this.ownerPubkey?.toString();
-          console.log('[ZK] Note ownerPubkey:', note.ownerPubkey.toString().slice(0, 20), 'Match:', isValid);
-          if (!isValid) {
-            console.log('[ZK] Discarding note with mismatched ownerPubkey (old key derivation)');
-          }
-          return isValid;
+          return note.ownerPubkey.toString() === this.ownerPubkey?.toString();
         });
 
         // Deduplicate notes by leafIndex (prevent corruption)
@@ -1917,7 +1852,7 @@ export class ZkService {
       if (signatures.length > 500) break;
     }
 
-    console.log('[ZK] Found', signatures.length, 'successful transactions');
+    console.log('[ZK] Found', signatures.length, 'transactions to process');
 
     // Process in chronological order (oldest first)
     signatures.sort((a, b) => a.slot - b.slot);
@@ -1972,6 +1907,7 @@ export class ZkService {
 
         // Look for shield, unshield, or transfer instruction logs
         const logs = tx.meta.logMessages;
+
         let isShield = false;
         let isUnshield = false;
         let isTransfer = false;
@@ -1986,8 +1922,11 @@ export class ZkService {
           if (log.includes('Unshield')) {
             isUnshield = true;
           }
-          if (log.includes('Transfer') && !log.includes('Unshield')) {
+          // Note: Program logs "Private transfer completed" - must be specific to avoid
+          // false positives from "Transferred X lamports" in Shield/Unshield logs
+          if (log.includes('Private transfer completed') || log.includes('Instruction: Transfer')) {
             isTransfer = true;
+            console.log('[ZK] Detected Transfer from log:', log);
           }
 
           // Parse "Commitment added at index: X" (from shield)
@@ -2015,6 +1954,16 @@ export class ZkService {
         if (isShield || isUnshield || isTransfer) {
           console.log('[ZK] TX type:', isShield ? 'Shield' : isUnshield ? 'Unshield' : 'Transfer',
             'leafIndex:', leafIndex, 'transferIndices:', transferIndices);
+        } else {
+          // Log unrecognized transactions for debugging
+          const relevantLogs = logs.filter(l =>
+            l.includes('Program log:') &&
+            !l.includes('invoke') &&
+            !l.includes('success')
+          );
+          if (relevantLogs.length > 0) {
+            console.log('[ZK] Unrecognized TX logs:', relevantLogs.slice(0, 3));
+          }
         }
 
         const txData = tx.transaction.message;
@@ -2298,45 +2247,27 @@ export class ZkService {
 
     console.log('[ZK Import] Note details:');
     console.log('[ZK Import]   amount:', note.amount.toString());
-    console.log('[ZK Import]   ownerPubkey:', note.ownerPubkey.toString().slice(0, 30) + '...');
-    console.log('[ZK Import]   commitment:', note.commitment.toString().slice(0, 30) + '...');
-    console.log('[ZK Import]   leafIndex from sender:', note.leafIndex);
-
     // Verify the commitment matches
     const computedCommitment = poseidonHash(note.amount, note.ownerPubkey, note.randomness, note.tokenMint);
-    console.log('[ZK Import] Computed commitment:', computedCommitment.toString().slice(0, 30) + '...');
-    console.log('[ZK Import] Commitment match:', computedCommitment === note.commitment);
-
     if (computedCommitment !== note.commitment) {
-      console.error('[ZK Import] Commitment mismatch!');
       throw new Error('Invalid note: commitment does not match');
     }
 
     // Verify this note belongs to us
-    console.log('[ZK Import] My ownerPubkey:', this.ownerPubkey?.toString().slice(0, 30) + '...');
-    console.log('[ZK Import] Note ownerPubkey:', note.ownerPubkey.toString().slice(0, 30) + '...');
-    console.log('[ZK Import] Ownership match:', note.ownerPubkey === this.ownerPubkey);
-
     if (note.ownerPubkey !== this.ownerPubkey) {
-      console.error('[ZK Import] Ownership check failed!');
-      console.error('[ZK Import] Expected:', this.ownerPubkey?.toString());
-      console.error('[ZK Import] Got:', note.ownerPubkey.toString());
       throw new Error('This note does not belong to your wallet');
     }
 
     // Check if note already exists
     const exists = this.notes.some(n => n.commitment === note.commitment);
     if (exists) {
-      console.error('[ZK Import] Note already exists in wallet');
       throw new Error('This note is already in your wallet');
     }
 
     // Sync merkle tree to verify the note exists on-chain
-    console.log('[ZK Import] Syncing merkle tree...');
     await this.syncMerkleTree();
 
     // Verify the note is in the merkle tree
-    console.log('[ZK Import] Looking for commitment in merkle tree (', this.merkleTree.leafCount, 'leaves)...');
     const onChainIndex = Array.from({ length: this.merkleTree.leafCount })
       .map((_, i) => this.merkleTree.getLeaf(i))
       .findIndex(leaf => leaf === note.commitment);
@@ -2344,13 +2275,8 @@ export class ZkService {
     console.log('[ZK Import] Found at index:', onChainIndex);
 
     if (onChainIndex === -1) {
-      // List first few leaves for debugging
-      console.log('[ZK Import] First 5 leaves in tree:');
-      for (let i = 0; i < Math.min(5, this.merkleTree.leafCount); i++) {
-        const leaf = this.merkleTree.getLeaf(i);
-        console.log(`[ZK Import]   [${i}]:`, leaf?.toString().slice(0, 30) + '...');
-      }
-      throw new Error('This note is not yet on-chain. Please wait for confirmation.');
+      console.error('[ZK Import] Note not found in merkle tree. Tree has', this.merkleTree.leafCount, 'leaves');
+      throw new Error('This note is not yet on-chain. Please wait for confirmation and try again.');
     }
 
     note.leafIndex = onChainIndex;
