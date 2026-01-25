@@ -103,7 +103,7 @@ export default function PaymentRequestModal({
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-p01-border">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-pink to-purple-600 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-pink to-p01-cyan flex items-center justify-center">
                     <DollarSign className="w-5 h-5 text-white" />
                   </div>
                   <div>

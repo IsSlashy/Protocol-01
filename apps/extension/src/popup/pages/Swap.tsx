@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowDownUp, ChevronDown, Settings2, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { PublicKey, VersionedTransaction } from '@solana/web3.js';
+import { VersionedTransaction } from '@solana/web3.js';
 import { useWalletStore } from '@/shared/store/wallet';
 import {
   getQuote,
@@ -25,7 +25,7 @@ interface TokenWithBalance extends JupiterToken {
 
 export default function Swap() {
   const navigate = useNavigate();
-  const { keypair, network, solBalance } = useWalletStore();
+  const { _keypair: keypair, network, solBalance } = useWalletStore();
 
   // Token state
   const [tokens, setTokens] = useState<TokenWithBalance[]>([]);
