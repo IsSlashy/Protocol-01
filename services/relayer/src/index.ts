@@ -13,6 +13,8 @@ import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import * as snarkjs from 'snarkjs';
 import winston from 'winston';
 import dotenv from 'dotenv';
+import * as fs from 'fs';
+import * as path from 'path';
 
 dotenv.config();
 
@@ -37,7 +39,23 @@ const CONFIG = {
   feeRecipient: process.env.FEE_RECIPIENT_PUBKEY,
   feeBps: parseInt(process.env.FEE_BPS || '10'), // 0.1% default
   maxPendingTx: parseInt(process.env.MAX_PENDING_TX || '100'),
+  verificationKeyPath: process.env.VERIFICATION_KEY_PATH || path.resolve(__dirname, '../../../circuits/build/verification_key.json'),
 };
+
+// Load verification key at startup
+let verificationKey: any = null;
+try {
+  const vkPath = CONFIG.verificationKeyPath;
+  if (fs.existsSync(vkPath)) {
+    verificationKey = JSON.parse(fs.readFileSync(vkPath, 'utf8'));
+    logger.info(`Loaded verification key from ${vkPath}`);
+    logger.info(`VK protocol: ${verificationKey.protocol}, curve: ${verificationKey.curve}, nPublic: ${verificationKey.nPublic}`);
+  } else {
+    logger.warn(`Verification key not found at ${vkPath} - using mock verification`);
+  }
+} catch (e) {
+  logger.error('Failed to load verification key:', e);
+}
 
 // Relayer state
 interface PendingTransaction {
@@ -86,6 +104,9 @@ app.get('/health', (req, res) => {
     relayer: relayerKeypair.publicKey.toBase58(),
     pendingTxs: pendingTxs.size,
     feeBps: CONFIG.feeBps,
+    zkVerification: verificationKey ? 'enabled' : 'disabled (mock)',
+    vkProtocol: verificationKey?.protocol || null,
+    vkNPublic: verificationKey?.nPublic || null,
   });
 });
 
@@ -104,6 +125,12 @@ app.get('/info', async (req, res) => {
       balance: balance / 1e9,
       pendingTxs: pendingTxs.size,
       maxPendingTx: CONFIG.maxPendingTx,
+      zkVerification: {
+        enabled: !!verificationKey,
+        protocol: verificationKey?.protocol || null,
+        curve: verificationKey?.curve || null,
+        nPublic: verificationKey?.nPublic || null,
+      },
     });
   } catch (e) {
     logger.error('Failed to get relayer info:', e);
@@ -233,16 +260,41 @@ app.get('/relay/status/:txId', (req, res) => {
  */
 async function verifyProofOffChain(proof: any, publicInputs: string[]): Promise<boolean> {
   try {
-    // Load verification key (in production, load from file)
-    const vkPath = process.env.VERIFICATION_KEY_PATH || './build/verification_key.json';
+    // Check if we have a verification key loaded
+    if (!verificationKey) {
+      logger.warn('No verification key loaded - using mock verification (INSECURE)');
+      return true; // Fallback for development
+    }
 
-    // For now, return true (mock verification)
-    // In production:
-    // const vk = JSON.parse(fs.readFileSync(vkPath, 'utf8'));
-    // return snarkjs.groth16.verify(vk, publicInputs, proof);
+    // Validate proof format
+    if (!proof || !proof.pi_a || !proof.pi_b || !proof.pi_c) {
+      logger.error('Invalid proof format - missing pi_a, pi_b, or pi_c');
+      return false;
+    }
 
-    logger.debug('Mock verification - returning true');
-    return true;
+    // Validate public inputs
+    if (!publicInputs || !Array.isArray(publicInputs) || publicInputs.length === 0) {
+      logger.error('Invalid public inputs - must be a non-empty array');
+      return false;
+    }
+
+    // Verify expected number of public inputs matches VK
+    if (publicInputs.length !== verificationKey.nPublic) {
+      logger.error(`Public inputs count mismatch: got ${publicInputs.length}, expected ${verificationKey.nPublic}`);
+      return false;
+    }
+
+    logger.debug('Verifying proof with snarkjs...', {
+      nPublicInputs: publicInputs.length,
+      proofKeys: Object.keys(proof),
+    });
+
+    // Perform actual verification with snarkjs
+    const isValid = await snarkjs.groth16.verify(verificationKey, publicInputs, proof);
+
+    logger.info(`Proof verification result: ${isValid ? 'VALID' : 'INVALID'}`);
+    return isValid;
+
   } catch (e) {
     logger.error('Proof verification error:', e);
     return false;
@@ -273,6 +325,10 @@ app.listen(CONFIG.port, () => {
   logger.info(`Program ID: ${CONFIG.programId.toBase58()}`);
   logger.info(`Relayer wallet: ${relayerKeypair.publicKey.toBase58()}`);
   logger.info(`Fee: ${CONFIG.feeBps / 100}%`);
+  logger.info(`ZK Verification: ${verificationKey ? 'ENABLED (real snarkjs)' : 'DISABLED (mock)'}`);
+  if (verificationKey) {
+    logger.info(`VK: protocol=${verificationKey.protocol}, curve=${verificationKey.curve}, nPublic=${verificationKey.nPublic}`);
+  }
 });
 
 // Graceful shutdown
