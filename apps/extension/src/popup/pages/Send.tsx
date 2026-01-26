@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
-  Scan,
   AlertCircle,
   Shield,
   ShieldCheck,
@@ -205,32 +204,27 @@ export default function Send() {
           <label className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
             RECIPIENT ADDRESS {isStealthSend && <span className="text-p01-cyan">(STEALTH)</span>}
           </label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={recipient}
-                onChange={(e) => {
-                  setRecipient(e.target.value);
-                  setLocalError('');
-                }}
-                placeholder="Enter Solana address or st:01... meta-address"
-                className={cn(
-                  'w-full bg-p01-surface border px-3 py-2.5 text-xs font-mono text-white placeholder-[#555560] focus:outline-none transition-colors rounded-lg',
-                  isStealthSend && stealthAddressValid
-                    ? 'border-p01-cyan focus:border-p01-cyan'
-                    : 'border-p01-border focus:border-p01-cyan'
-                )}
-              />
-              {isStealthSend && stealthAddressValid && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <EyeOff className="w-4 h-4 text-p01-cyan" />
-                </div>
+          <div className="relative">
+            <input
+              type="text"
+              value={recipient}
+              onChange={(e) => {
+                setRecipient(e.target.value);
+                setLocalError('');
+              }}
+              placeholder="Enter Solana address or st:01... meta-address"
+              className={cn(
+                'w-full bg-p01-surface border px-3 py-2.5 text-xs font-mono text-white placeholder-[#555560] focus:outline-none transition-colors rounded-lg',
+                isStealthSend && stealthAddressValid
+                  ? 'border-p01-cyan focus:border-p01-cyan'
+                  : 'border-p01-border focus:border-p01-cyan'
               )}
-            </div>
-            <button className="p-2.5 bg-p01-surface border border-p01-border hover:bg-p01-elevated hover:border-p01-cyan transition-colors rounded-lg">
-              <Scan className="w-4 h-4 text-p01-chrome" />
-            </button>
+            />
+            {isStealthSend && stealthAddressValid && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                <EyeOff className="w-4 h-4 text-p01-cyan" />
+              </div>
+            )}
           </div>
         </div>
 

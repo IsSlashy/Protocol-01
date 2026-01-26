@@ -55,6 +55,7 @@ export default function ShieldedWalletScreen() {
     shield,
     unshield,
     importNote,
+    clearNotes,
   } = useShieldedStore();
 
   // ZK Prover status (for unshield/transfer)
@@ -208,6 +209,29 @@ export default function ShieldedWalletScreen() {
       setImportNoteString(text);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
+  };
+
+  const handleClearNotes = () => {
+    Alert.alert(
+      'Clear All Notes',
+      'This will permanently delete all your shielded notes. This cannot be undone. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+              await clearNotes();
+              Alert.alert('Cleared', 'All shielded notes have been cleared.');
+            } catch (err) {
+              Alert.alert('Error', (err as Error).message);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const formatShieldedBalance = () => {
@@ -419,7 +443,15 @@ export default function ShieldedWalletScreen() {
 
         {/* Shielded Notes */}
         <Animated.View entering={FadeInDown.delay(400)}>
-          <Text style={styles.sectionTitle}>SHIELDED NOTES ({notes.length})</Text>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>SHIELDED NOTES ({notes.length})</Text>
+            {notes.length > 0 && (
+              <TouchableOpacity onPress={handleClearNotes} style={styles.clearButton}>
+                <Ionicons name="trash-outline" size={14} color="#ef4444" />
+                <Text style={styles.clearText}>Clear</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <View style={styles.notesContainer}>
             {notes.length === 0 ? (
               <View style={styles.emptyNotes}>
@@ -838,13 +870,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: FontFamily.medium,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
   sectionTitle: {
     fontSize: 11,
     fontFamily: FontFamily.bold,
     color: Colors.textTertiary,
     letterSpacing: 1,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.sm,
+  },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  clearText: {
+    fontSize: 11,
+    fontFamily: FontFamily.medium,
+    color: '#ef4444',
   },
   transparentCard: {
     flexDirection: 'row',

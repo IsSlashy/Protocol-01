@@ -25,6 +25,7 @@ import Agent from './pages/Agent';
 import PrivacyZone from './pages/PrivacyZone';
 import StealthPayments from './pages/StealthPayments';
 import ShieldedWallet from './pages/ShieldedWallet';
+import ShieldedTransfer from './pages/ShieldedTransfer';
 import ConnectDapp from './pages/ConnectDapp';
 import ApproveTransaction from './pages/ApproveTransaction';
 import ApproveSubscription from './pages/ApproveSubscription';
@@ -33,7 +34,7 @@ import ConnectedSites from './pages/ConnectedSites';
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const { isInitialized, isUnlocked, reset } = useWalletStore();
+  const { isInitialized, isUnlocked, reset, tryAutoUnlock } = useWalletStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -97,7 +98,7 @@ function App() {
     }
   }, [isHydrated, pendingPath, isInitialized, isUnlocked, navigate, location.pathname]);
 
-  // Wait for store hydration and verify storage state
+  // Wait for store hydration, verify storage state, and try auto-unlock
   useEffect(() => {
     const verifyAndHydrate = async () => {
       try {
@@ -121,6 +122,12 @@ function App() {
         }
       } catch (e) {
         console.error('[Popup] Error verifying storage:', e);
+      }
+
+      // Try auto-unlock from session (10 minute timeout)
+      if (isInitialized && !isUnlocked) {
+        console.log('[Popup] Trying auto-unlock from session...');
+        await tryAutoUnlock();
       }
 
       // Give a bit more time for proper hydration
@@ -181,6 +188,7 @@ function App() {
           <Route path="/privacy" element={<PrivacyZone />} />
           <Route path="/stealth-payments" element={<StealthPayments />} />
           <Route path="/shielded" element={<ShieldedWallet />} />
+          <Route path="/shielded/transfer" element={<ShieldedTransfer />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />
         </Route>
 
