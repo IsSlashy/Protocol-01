@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { PublicKey, Transaction } from '@solana/web3.js';
-import { getZkServiceExtension, ZkServiceExtension, ZkAddress } from '../services/zk';
+import { getZkServiceExtension, ZkServiceExtension, ZkAddress, RecipientNoteData } from '../services/zk';
 import { getConnection } from '../services/wallet';
 import { useWalletStore } from './wallet';
 
@@ -51,8 +51,12 @@ interface ShieldedState {
   refreshBalance: () => Promise<void>;
   shield: (amount: number) => Promise<string>;
   unshield: (amount: number) => Promise<string>;
-  transfer: (recipient: string, amount: number) => Promise<string>;
+  transfer: (recipient: string, amount: number) => Promise<{ signature: string; recipientNote: RecipientNoteData }>;
   scanNotes: () => Promise<void>;
+  exportNotes: () => string;
+  importNotes: (jsonData: string) => Promise<{ imported: number; skipped: number }>;
+  syncFromBlockchain: () => Promise<{ success: boolean; localRoot: string; onChainRoot: string }>;
+  clearNotes: () => Promise<void>;
   reset: () => void;
 }
 
@@ -391,7 +395,7 @@ export const useShieldedStore = create<ShieldedState>()(
           }));
 
           // Call real ZK service
-          const signature = await _zkService.transfer(
+          const result = await _zkService.transfer(
             zkRecipient,
             amountLamports,
             walletPublicKey,
@@ -404,7 +408,7 @@ export const useShieldedStore = create<ShieldedState>()(
           set(state => ({
             shieldedBalance: newBalance,
             pendingTransactions: state.pendingTransactions.map(tx =>
-              tx.id === txId ? { ...tx, status: 'confirmed', signature } : tx
+              tx.id === txId ? { ...tx, status: 'confirmed', signature: result.signature } : tx
             ),
           }));
 
@@ -414,8 +418,8 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Shielded] Transfer successful:', signature);
-          return signature;
+          console.log('[Shielded] Transfer successful:', result.signature);
+          return result;
         } catch (error) {
           console.error('[Shielded] Transfer error:', error);
           set(state => ({
@@ -462,6 +466,98 @@ export const useShieldedStore = create<ShieldedState>()(
         } finally {
           set({ isLoading: false });
         }
+      },
+
+      // Export notes for backup
+      exportNotes: () => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+        return _zkService.exportNotes();
+      },
+
+      // Import notes from backup
+      importNotes: async (jsonData: string) => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+
+        const result = await _zkService.importNotes(jsonData);
+
+        // Refresh balance after import
+        const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
+        const notes = _zkService.getNotes();
+
+        set({
+          shieldedBalance: newBalance,
+          notes: notes.map(note => ({
+            amount: note.amount.toString(),
+            commitment: note.commitment.toString(),
+            leafIndex: note.leafIndex,
+            createdAt: Date.now(),
+          })),
+        });
+
+        return result;
+      },
+
+      // Sync Merkle tree from blockchain
+      syncFromBlockchain: async () => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+
+        set({ isLoading: true });
+
+        try {
+          const result = await _zkService.syncFromBlockchain();
+
+          if (result.success) {
+            // Refresh balance after sync
+            const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
+            const notes = _zkService.getNotes();
+
+            set({
+              shieldedBalance: newBalance,
+              merkleRoot: result.localRoot,
+              notes: notes.map(note => ({
+                amount: note.amount.toString(),
+                commitment: note.commitment.toString(),
+                leafIndex: note.leafIndex,
+                createdAt: Date.now(),
+              })),
+              isLoading: false,
+            });
+          } else {
+            set({ isLoading: false });
+          }
+
+          return result;
+        } catch (error) {
+          console.error('[Shielded] Sync from blockchain error:', error);
+          set({ isLoading: false });
+          throw error;
+        }
+      },
+
+      // Clear notes but keep tree intact
+      clearNotes: async () => {
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not initialized');
+        }
+
+        await _zkService.clearNotes();
+
+        set({
+          shieldedBalance: 0,
+          notes: [],
+        });
+
+        console.log('[Shielded] Notes cleared');
       },
 
       // Reset state

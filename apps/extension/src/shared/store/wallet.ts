@@ -21,6 +21,84 @@ import { getRecentTransactions } from '../services/transactions';
 import { Keypair } from '@solana/web3.js';
 import type { TransactionRecord } from '../types';
 
+// Session timeout in milliseconds (10 minutes)
+const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+
+// Session storage keys
+const SESSION_KEYS = {
+  SECRET_KEY: 'p01_session_secret',
+  TIMESTAMP: 'p01_session_timestamp',
+};
+
+/**
+ * Save session to chrome.storage.local with timestamp for expiry
+ */
+async function saveSession(secretKey: Uint8Array): Promise<void> {
+  try {
+    await chrome.storage.local.set({
+      [SESSION_KEYS.SECRET_KEY]: Array.from(secretKey),
+      [SESSION_KEYS.TIMESTAMP]: Date.now(),
+    });
+    console.log('[Session] Saved unlock session');
+  } catch (e) {
+    console.warn('[Session] Failed to save session:', e);
+  }
+}
+
+/**
+ * Clear session from storage
+ */
+async function clearSession(): Promise<void> {
+  try {
+    await chrome.storage.local.remove([SESSION_KEYS.SECRET_KEY, SESSION_KEYS.TIMESTAMP]);
+    console.log('[Session] Cleared session');
+  } catch (e) {
+    console.warn('[Session] Failed to clear session:', e);
+  }
+}
+
+/**
+ * Try to restore session if still valid
+ * Returns keypair if session is valid, null otherwise
+ */
+async function tryRestoreSession(): Promise<Keypair | null> {
+  try {
+    const result = await chrome.storage.local.get([SESSION_KEYS.SECRET_KEY, SESSION_KEYS.TIMESTAMP]);
+
+    const secretKeyArray = result[SESSION_KEYS.SECRET_KEY];
+    const timestamp = result[SESSION_KEYS.TIMESTAMP];
+
+    console.log('[Session] Checking session:', { hasKey: !!secretKeyArray, timestamp });
+
+    if (!secretKeyArray || !timestamp) {
+      console.log('[Session] No session found');
+      return null;
+    }
+
+    // Check if session has expired
+    const elapsed = Date.now() - timestamp;
+    if (elapsed > SESSION_TIMEOUT_MS) {
+      console.log('[Session] Session expired after', Math.round(elapsed / 1000), 'seconds');
+      await clearSession();
+      return null;
+    }
+
+    // Restore keypair from secret key
+    const secretKey = new Uint8Array(secretKeyArray);
+    const keypair = Keypair.fromSecretKey(secretKey);
+
+    console.log('[Session] Restored session, expires in', Math.round((SESSION_TIMEOUT_MS - elapsed) / 1000), 'seconds');
+
+    // Refresh session timestamp on successful restore
+    await chrome.storage.local.set({ [SESSION_KEYS.TIMESTAMP]: Date.now() });
+
+    return keypair;
+  } catch (e) {
+    console.warn('[Session] Failed to restore session:', e);
+    return null;
+  }
+}
+
 export interface Token {
   mint: string;
   symbol: string;
@@ -63,6 +141,7 @@ export interface WalletState {
   createWallet: (password: string) => Promise<string[]>;
   importWallet: (seedPhrase: string[], password: string) => Promise<void>;
   unlock: (password: string) => Promise<boolean>;
+  tryAutoUnlock: () => Promise<boolean>;
   lock: () => void;
   reset: () => void;
   refreshBalance: () => Promise<void>;
@@ -207,6 +286,9 @@ export const useWalletStore = create<WalletState>()(
           });
           console.log('[WalletStore] State updated, unlocked');
 
+          // Save session for auto-unlock (10 minute timeout)
+          await saveSession(keypair.secretKey);
+
           // Fetch balance
           get().refreshBalance();
 
@@ -218,8 +300,54 @@ export const useWalletStore = create<WalletState>()(
         }
       },
 
+      // Try to auto-unlock from saved session
+      tryAutoUnlock: async () => {
+        const { isUnlocked, isInitialized, publicKey } = get();
+
+        // Already unlocked or not initialized
+        if (isUnlocked || !isInitialized || !publicKey) {
+          return isUnlocked;
+        }
+
+        console.log('[WalletStore] Trying auto-unlock from session...');
+
+        try {
+          const keypair = await tryRestoreSession();
+
+          if (!keypair) {
+            console.log('[WalletStore] No valid session found');
+            return false;
+          }
+
+          // Verify the keypair matches our stored public key
+          if (keypair.publicKey.toBase58() !== publicKey) {
+            console.log('[WalletStore] Session keypair mismatch, clearing...');
+            await clearSession();
+            return false;
+          }
+
+          set({
+            isUnlocked: true,
+            _keypair: keypair,
+          });
+
+          console.log('[WalletStore] Auto-unlocked from session');
+
+          // Fetch balance
+          get().refreshBalance();
+
+          return true;
+        } catch (error) {
+          console.error('[WalletStore] Auto-unlock error:', error);
+          return false;
+        }
+      },
+
       // Lock wallet
       lock: () => {
+        // Clear session
+        clearSession();
+
         set({
           isUnlocked: false,
           _keypair: null,

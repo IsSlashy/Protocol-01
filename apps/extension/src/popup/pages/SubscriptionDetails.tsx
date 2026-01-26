@@ -10,12 +10,8 @@ import {
   Play,
   Pause,
   Ban,
-  Shuffle,
-  EyeOff,
   ChevronDown,
   Check,
-  Loader2,
-  Edit3,
   Music,
   Bot,
   Gamepad2,
@@ -70,22 +66,17 @@ export default function SubscriptionDetails() {
   const { id } = useParams<{ id: string }>();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [showEditAmount, setShowEditAmount] = useState(false);
-  const [newAmount, setNewAmount] = useState('');
 
   const {
     getSubscription,
     pauseSubscription,
     resumeSubscription,
     cancelSubscription,
-    updateSubscription,
-    processPayment,
     error,
     clearError,
   } = useSubscriptionsStore();
 
-  const { _keypair, network, isUnlocked } = useWalletStore();
+  const { _keypair } = useWalletStore();
 
   const subscription = id ? getSubscription(id) : undefined;
 
@@ -153,8 +144,7 @@ export default function SubscriptionDetails() {
   // Check privacy features
   const hasPrivacyFeatures =
     subscription.amountNoise > 0 ||
-    subscription.timingNoise > 0 ||
-    subscription.useStealthAddress;
+    subscription.timingNoise > 0;
 
   const handlePauseResume = () => {
     if (subscription.status === 'active') {
@@ -170,32 +160,6 @@ export default function SubscriptionDetails() {
     navigate('/subscriptions');
   };
 
-  const handlePayNow = async () => {
-    if (!_keypair || !isUnlocked) {
-      alert('Wallet must be unlocked to process payments');
-      return;
-    }
-
-    setIsProcessing(true);
-    clearError();
-
-    try {
-      await processPayment(subscription.id, _keypair, network);
-    } catch (err) {
-      console.error('Payment failed:', err);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleUpdateAmount = () => {
-    const amount = parseFloat(newAmount);
-    if (!isNaN(amount) && amount > 0) {
-      updateSubscription(subscription.id, { amount });
-      setShowEditAmount(false);
-      setNewAmount('');
-    }
-  };
 
   return (
     <div className="flex flex-col h-full">
@@ -262,49 +226,16 @@ export default function SubscriptionDetails() {
           </div>
         </div>
 
-        {/* Amount with Edit */}
+        {/* Amount */}
         <div className="bg-p01-surface rounded-xl p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-p01-chrome/60">Amount</span>
-            {subscription.status !== 'cancelled' && (
-              <button
-                onClick={() => {
-                  setShowEditAmount(!showEditAmount);
-                  setNewAmount(subscription.amount.toString());
-                }}
-                className="text-xs text-p01-cyan hover:underline flex items-center gap-1"
-              >
-                <Edit3 className="w-3 h-3" />
-                Edit
-              </button>
-            )}
+          <span className="text-xs text-p01-chrome/60 block mb-2">Amount</span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-white">
+              {subscription.amount.toFixed(subscription.amount < 1 ? 4 : 2)}
+            </span>
+            <span className="text-sm text-p01-chrome">{subscription.tokenSymbol}</span>
+            <span className="text-sm text-p01-chrome/60">/ {formatInterval(subscription.interval).toLowerCase()}</span>
           </div>
-          {showEditAmount ? (
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={newAmount}
-                onChange={(e) => setNewAmount(e.target.value)}
-                className="flex-1 px-3 py-2 bg-p01-border rounded-lg text-white text-sm"
-                step="0.001"
-                min="0"
-              />
-              <button
-                onClick={handleUpdateAmount}
-                className="px-3 py-2 bg-p01-cyan text-p01-void rounded-lg text-sm font-medium"
-              >
-                Save
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-white">
-                {subscription.amount.toFixed(subscription.amount < 1 ? 4 : 2)}
-              </span>
-              <span className="text-sm text-p01-chrome">{subscription.tokenSymbol}</span>
-              <span className="text-sm text-p01-chrome/60">/ {formatInterval(subscription.interval).toLowerCase()}</span>
-            </div>
-          )}
         </div>
 
         {/* Privacy Features Card */}
@@ -314,42 +245,15 @@ export default function SubscriptionDetails() {
             animate={{ y: 0, opacity: 1 }}
             className="bg-p01-cyan/10 rounded-xl p-4 border border-p01-cyan/30"
           >
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-2">
               <Shield className="w-5 h-5 text-p01-cyan" />
               <span className="text-sm font-semibold text-p01-cyan">
-                Privacy Enabled
+                Privacy Active
               </span>
             </div>
-
-            <div className="space-y-2">
-              {subscription.amountNoise > 0 && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Shuffle className="w-4 h-4 text-p01-cyan/60" />
-                    <span className="text-xs text-p01-chrome">Amount Noise</span>
-                  </div>
-                  <span className="text-xs font-mono text-white">+/-{subscription.amountNoise}%</span>
-                </div>
-              )}
-              {subscription.timingNoise > 0 && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-streams/60" />
-                    <span className="text-xs text-p01-chrome">Timing Noise</span>
-                  </div>
-                  <span className="text-xs font-mono text-white">+/-{subscription.timingNoise}h</span>
-                </div>
-              )}
-              {subscription.useStealthAddress && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <EyeOff className="w-4 h-4 text-p01-cyan/60" />
-                    <span className="text-xs text-p01-chrome">Stealth Addresses</span>
-                  </div>
-                  <Check className="w-4 h-4 text-p01-cyan" />
-                </div>
-              )}
-            </div>
+            <p className="text-xs text-p01-chrome/60">
+              Amounts and timing are randomized automatically.
+            </p>
 
             {/* Preview next payment */}
             {subscription.status === 'active' && (
@@ -420,22 +324,11 @@ export default function SubscriptionDetails() {
               />
             </div>
 
-            {/* Pay Now Button */}
-            {daysUntilNext <= 1 && isUnlocked && (
-              <button
-                onClick={handlePayNow}
-                disabled={isProcessing}
-                className="mt-3 w-full py-2 bg-p01-cyan text-p01-void text-sm font-medium rounded-lg hover:bg-p01-cyan-dim transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  'Pay Now'
-                )}
-              </button>
+            {/* Auto-payment info */}
+            {daysUntilNext <= 0 && (
+              <p className="mt-2 text-xs text-p01-cyan">
+                Payment will be sent automatically
+              </p>
             )}
           </div>
         )}

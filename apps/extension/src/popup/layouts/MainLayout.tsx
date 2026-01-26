@@ -1,12 +1,12 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Wallet, Repeat, Users, Sparkles } from 'lucide-react';
+import { Wallet, Repeat, Shield, Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/shared/utils';
 
 const navItems = [
   { path: '/', icon: Wallet, label: 'Wallet' },
   { path: '/subscriptions', icon: Repeat, label: 'Streams' },
-  { path: '/social', icon: Users, label: 'Social' },
+  { path: '/shielded', icon: Shield, label: 'Shield' },
   { path: '/agent', icon: Sparkles, label: 'Agent' },
 ];
 

@@ -12,6 +12,31 @@ import { getConnection, NetworkType } from './wallet';
 import type { TransactionRecord } from '../types';
 
 /**
+ * Process items in batches with delay between batches to avoid rate limiting
+ */
+async function batchProcess<T, R>(
+  items: T[],
+  processor: (item: T) => Promise<R>,
+  batchSize: number = 5,
+  delayMs: number = 200
+): Promise<R[]> {
+  const results: R[] = [];
+
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map(processor));
+    results.push(...batchResults);
+
+    // Add delay between batches (but not after the last one)
+    if (i + batchSize < items.length) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return results;
+}
+
+/**
  * Parse a Solana transaction to extract relevant info
  */
 function parseTransaction(
@@ -211,9 +236,10 @@ export async function getRecentTransactions(
       return [];
     }
 
-    // Fetch all transactions in parallel
-    const transactions = await Promise.all(
-      signatures.map(async (sig) => {
+    // Fetch transactions in batches to avoid rate limiting
+    const transactions = await batchProcess(
+      signatures,
+      async (sig) => {
         try {
           const tx = await connection.getParsedTransaction(sig.signature, {
             maxSupportedTransactionVersion: 0,
@@ -226,7 +252,9 @@ export async function getRecentTransactions(
           console.error(`Error fetching tx ${sig.signature}:`, error);
           return null;
         }
-      })
+      },
+      5, // batch size
+      300 // delay between batches (ms)
     );
 
     // Filter out nulls and sort by timestamp (newest first)

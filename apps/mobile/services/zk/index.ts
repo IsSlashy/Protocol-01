@@ -244,19 +244,20 @@ class MerkleTree {
   private getZeroValue(level: number): bigint {
     // Cache zero values for efficiency
     // IMPORTANT: Base zero value must match circuit and on-chain!
-    // On-chain uses keccak256("specter") mod p, stored as little-endian bytes
+    // On-chain uses keccak256("specter") mod p = 0x6caf9948ed859624e241e7760f341b82b45da1ebb6353a34f3abacd3604ce52f
     if (!this._zeroValues) {
-      // On-chain zero value bytes (stored in Rust as [u8; 32])
+      // Convert the on-chain zero value bytes to bigint (BIG-ENDIAN for field elements)
+      // The hex 0x6caf... means first byte (0x6c) is the MSB
       const ZERO_VALUE_BYTES = [
         0x6c, 0xaf, 0x99, 0x48, 0xed, 0x85, 0x96, 0x24,
         0xe2, 0x41, 0xe7, 0x76, 0x0f, 0x34, 0x1b, 0x82,
         0xb4, 0x5d, 0xa1, 0xeb, 0xb6, 0x35, 0x3a, 0x34,
         0xf3, 0xab, 0xac, 0xd3, 0x60, 0x4c, 0xe5, 0x2f,
       ];
-      // Convert to bigint (LITTLE-ENDIAN - matches Solana's byte order)
-      // Last byte becomes MSB when constructing the bigint
+      // Convert to bigint (BIG-ENDIAN - standard for field elements and Poseidon)
+      // First byte is MSB, last byte is LSB
       let baseZero = BigInt(0);
-      for (let i = ZERO_VALUE_BYTES.length - 1; i >= 0; i--) {
+      for (let i = 0; i < ZERO_VALUE_BYTES.length; i++) {
         baseZero = (baseZero << BigInt(8)) | BigInt(ZERO_VALUE_BYTES[i]);
       }
       console.log('[MerkleTree] Base zero value:', baseZero.toString().slice(0, 20) + '...');
@@ -348,6 +349,8 @@ export class ZkService {
   private viewingKey: Uint8Array | null = null;
   private tokenMint: PublicKey;
   private isInitialized: boolean = false;
+  // When on-chain root differs from local (due to extension using different impl), store it here
+  private _onChainRoot: bigint | null = null;
 
   constructor() {
     this.connection = getConnection();
@@ -726,7 +729,16 @@ export class ZkService {
 
     // Save the current merkle root BEFORE inserting new commitments
     // This is the root that will be used in the proof and validated on-chain
+    // IMPORTANT: We must use the LOCAL tree root because the proof siblings come from the local tree.
+    // Using a different root (like _onChainRoot) would cause proof verification to fail since
+    // the siblings wouldn't hash up to that root.
     const merkleRoot = this.merkleTree.root;
+    if (this._onChainRoot && this._onChainRoot !== merkleRoot) {
+      console.warn('[ZK Transfer] WARNING: Local root differs from on-chain. This may cause transaction to fail.');
+      console.warn('[ZK Transfer] Local root:', merkleRoot.toString().slice(0, 20) + '...');
+      console.warn('[ZK Transfer] On-chain root:', this._onChainRoot.toString().slice(0, 20) + '...');
+      console.warn('[ZK Transfer] The sync may have failed. Try refreshing the wallet or resetting ZK state.');
+    }
 
     // Request proof from backend prover
     const zkProof = await this.generateProofClientSide({
@@ -978,7 +990,15 @@ export class ZkService {
     console.log('[ZK Unshield] Generating merkle proofs from synced tree (current root required)');
 
     const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
+    // IMPORTANT: We must use the LOCAL tree root because the proof siblings come from the local tree.
+    // Using a different root would cause circuit verification to fail.
     const merkleRoot = this.merkleTree.root;
+    if (this._onChainRoot && this._onChainRoot !== merkleRoot) {
+      console.warn('[ZK Unshield] WARNING: Local root differs from on-chain. This may cause transaction to fail.');
+      console.warn('[ZK Unshield] Local root:', merkleRoot.toString().slice(0, 20) + '...');
+      console.warn('[ZK Unshield] On-chain root:', this._onChainRoot.toString().slice(0, 20) + '...');
+      console.warn('[ZK Unshield] The sync may have failed. Try refreshing the wallet or resetting ZK state.');
+    }
 
     const proof2 = notesToSpend[1]
       ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
@@ -1647,14 +1667,16 @@ export class ZkService {
   }
 
   /**
-   * Reset storage - clears all notes from SecureStore
-   * Call this when migrating data or resetting the wallet
+   * Reset storage - clears all notes and caches from SecureStore
+   * Call this when migrating data, resetting the wallet, or when there's a persistent root mismatch
    */
   static async resetStorage(): Promise<void> {
     try {
       await SecureStore.deleteItemAsync('zk_notes');
       await SecureStore.deleteItemAsync('zk_all_commitments');
-      console.log('[ZK] Storage reset - notes and commitments cleared');
+      await SecureStore.deleteItemAsync('zk_global_commitments');
+      await SecureStore.deleteItemAsync('zk_last_scanned_sig');
+      console.log('[ZK] Storage fully reset - all notes and caches cleared');
     } catch (error) {
       console.error('[ZK] Failed to reset storage:', error);
     }
@@ -1721,44 +1743,61 @@ export class ZkService {
         console.warn('[ZK]   On-chain root:', onChainRoot.toString().slice(0, 20) + '...');
         console.warn('[ZK]   Leaf counts match:', this.merkleTree.leafCount === onChainLeafCount);
 
-        // If leaf counts match, this is likely due to a previous bug where on-chain root wasn't updated
-        // The client-computed root is correct; the next transaction will fix on-chain state
-        if (this.merkleTree.leafCount === onChainLeafCount) {
-          console.warn('[ZK] RECOVERY MODE: Leaf counts match but roots differ.');
-          console.warn('[ZK] This is likely due to a previous client bug. Proceeding with client-computed root.');
-          console.warn('[ZK] The next successful shield/unshield will fix the on-chain root.');
+        // IMPORTANT: Backup user notes before clearing - we need to preserve imported notes!
+        const backupNotes = [...this.notes];
+        console.log('[ZK] Backed up', backupNotes.length, 'notes before rebuild');
 
-          // Clear notes but don't fail - allow recovery
-          this.notes = [];
-          await SecureStore.deleteItemAsync('zk_notes');
-          await SecureStore.deleteItemAsync('zk_all_commitments');
+        // ROOT MISMATCH - clear local cache but KEEP global cache as fallback
+        // Global cache is needed when some transactions can't be fetched due to rate limiting
+        console.warn('[ZK] Clearing local cache and retrying fresh extraction...');
+        await SecureStore.deleteItemAsync('zk_all_commitments');
+        // Keep zk_global_commitments as fallback for rate-limited transactions
 
-          console.log('[ZK] Notes cleared for recovery. Proceeding with client-computed merkle tree.');
+        // Rebuild tree fresh from blockchain only (no cache fallback)
+        this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
+        const freshCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
+        for (const commitment of freshCommitments) {
+          this.merkleTree.insert(commitment);
+        }
+
+        console.log('[ZK] Fresh rebuild - Local root:', this.merkleTree.root.toString().slice(0, 20) + '...');
+
+        // Check if fresh rebuild matches
+        if (this.merkleTree.root !== onChainRoot) {
+          console.error('[ZK] ============================================================');
+          console.error('[ZK] CRITICAL: Root still mismatched after fresh rebuild!');
+          console.error('[ZK] Local root:', this.merkleTree.root.toString());
+          console.error('[ZK] On-chain root:', onChainRoot.toString());
+          console.error('[ZK] ============================================================');
+          console.error('[ZK] This means some commitment was extracted incorrectly.');
+          console.error('[ZK] Transfer/unshield operations will FAIL with this state.');
+          console.error('[ZK] Try resetting ZK state from settings and re-importing notes.');
+
+          // Log ALL commitments for debugging
+          console.log('[ZK] DEBUG: ALL extracted commitments (copy this to compare with extension):');
+          console.log('[ZK] ======= COMMITMENT DUMP START =======');
+          for (let i = 0; i < freshCommitments.length; i++) {
+            // Log full commitment value for comparison
+            console.log(`[ZK] C[${i.toString().padStart(2, '0')}]: ${freshCommitments[i].toString()}`);
+          }
+          console.log('[ZK] ======= COMMITMENT DUMP END =======');
+          console.log('[ZK] Total commitments:', freshCommitments.length);
+
+          // Store the on-chain root for reference but DO NOT use it for proofs
+          // Using on-chain root with local siblings causes proof failure!
+          this._onChainRoot = onChainRoot;
         } else {
-          // Leaf counts don't match - this is a real sync issue
-          console.error('[ZK] Leaf count mismatch! Local:', this.merkleTree.leafCount, 'On-chain:', onChainLeafCount);
+          console.log('[ZK] Fresh rebuild successful! Root now matches on-chain.');
+          this._onChainRoot = null;
+        }
 
-          // Clear corrupted notes
-          console.log('[ZK] Clearing all stored notes due to corruption...');
-          this.notes = [];
-          await SecureStore.deleteItemAsync('zk_notes');
-          await SecureStore.deleteItemAsync('zk_all_commitments');
+        // Restore backed up notes - don't lose imported notes!
+        this.notes = backupNotes;
+        console.log('[ZK] Restored', this.notes.length, 'notes after rebuild');
 
-          // Rebuild tree fresh from blockchain only
-          this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
-          const freshCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
-          for (const commitment of freshCommitments) {
-            this.merkleTree.insert(commitment);
-          }
-
-          console.log('[ZK] Fresh rebuild - Local root:', this.merkleTree.root.toString().slice(0, 20) + '...');
-
-          if (this.merkleTree.root !== onChainRoot) {
-            console.error('[ZK] Still mismatched after fresh rebuild!');
-            throw new Error('Merkle tree root mismatch - blockchain extraction failed');
-          }
-
-          console.log('[ZK] Fresh rebuild successful! Notes cleared - you may need to re-shield.');
+        if (this.merkleTree.leafCount !== onChainLeafCount) {
+          console.error('[ZK] Leaf count mismatch after fresh rebuild! Local:', this.merkleTree.leafCount, 'On-chain:', onChainLeafCount);
+          throw new Error('Merkle tree leaf count mismatch - some commitments could not be extracted');
         }
       } else {
         console.log('[ZK] Root matches on-chain! Tree synced successfully.');
@@ -1971,7 +2010,11 @@ export class ZkService {
         // Handle Shield transactions - always extract from blockchain (source of truth)
         if (isShield && leafIndex !== null) {
           // Shield instruction: discriminator(8) + amount(8) + commitment(32) + new_root(32)
-          if ('compiledInstructions' in txData) {
+          const hasCompiledInstructions = 'compiledInstructions' in txData;
+          if (leafIndex === 0) {
+            console.log('[ZK] DEBUG index 0: hasCompiledInstructions =', hasCompiledInstructions);
+          }
+          if (hasCompiledInstructions) {
             const programIndex = txData.staticAccountKeys.findIndex(
               (k: PublicKey) => k.equals(this.programId)
             );
@@ -1984,17 +2027,28 @@ export class ZkService {
                     commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
                   }
                   commitmentMap.set(leafIndex, commitment);
+                  // Debug: show first few bytes for index 0
+                  if (leafIndex === 0) {
+                    const bytesHex = Array.from(commitmentBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    console.log('[ZK] DEBUG index 0 raw bytes (first 8):', bytesHex);
+                  }
                   console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
                   break;
                 }
               }
             }
           } else {
+            console.log('[ZK] Using legacy instructions path for shield');
             for (const ix of txData.instructions) {
               // For parsed transactions, ix.data is base58 encoded string
               const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
               if (ix.programId.equals(this.programId) && ixDataRaw.length >= 80) {
                 const commitmentBytes = ixDataRaw.slice(16, 48);
+                // Debug: show first few bytes for index 0
+                if (leafIndex === 0) {
+                  const bytesHex = Array.from(commitmentBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                  console.log('[ZK] DEBUG index 0 raw bytes (first 8):', bytesHex);
+                }
                 let commitment = BigInt(0);
                 for (let i = 31; i >= 0; i--) {
                   commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
@@ -2175,6 +2229,16 @@ export class ZkService {
   }
 
   /**
+   * Clear all notes but keep the Merkle tree intact
+   * Use this when notes are unrecoverable (wrong indices, etc.)
+   */
+  async clearNotes(): Promise<void> {
+    this.notes = [];
+    await SecureStore.deleteItemAsync('zk_notes');
+    console.log('[ZK] Cleared all notes. Tree remains with', this.merkleTree.leafCount, 'leaves');
+  }
+
+  /**
    * Reset the service
    */
   async reset(): Promise<void> {
@@ -2185,9 +2249,11 @@ export class ZkService {
     this.notes = [];
     this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
     this.isInitialized = false;
+    this._onChainRoot = null;
 
     await SecureStore.deleteItemAsync('zk_notes');
-    // Note: We keep zk_global_commitments as it contains pool-wide data that's useful for recovery
+    // Also clear the global commitment cache to force fresh rebuild from chain
+    await SecureStore.deleteItemAsync('zk_global_commitments');
   }
 
   /**
