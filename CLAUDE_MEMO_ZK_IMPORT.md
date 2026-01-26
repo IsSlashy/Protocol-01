@@ -1,32 +1,54 @@
-# ZK Shielded Transfers - COMPLETED
+# Protocol 01 - Recent Changes
 
-## Status: WORKING
+## P2P Subscriptions (Streaming Payments)
 
-All ZK shielded transfer features are now fully functional:
-- ✅ **Shield** - Deposit SOL into shielded pool
-- ✅ **Transfer** - Private transfer between users with note export/import
-- ✅ **Unshield** - Withdraw from shielded pool to transparent wallet
-- ✅ **Auto-copy** - Note automatically copied to clipboard after transfer
+### Features
+- **P2P Focused**: No predefined services (Netflix, Spotify removed)
+- **Immediate First Payment**: Payment executes on creation, no "Pay Now" button
+- **Commitment Model**: Amount cannot be edited after creation
+- **Auto Privacy**: Random noise applied automatically (5-15% amount, 1-6h timing)
 
-## Fixes Applied
+### Flow
+1. User enters: name, recipient address, amount, interval
+2. Click "Start & Pay Now"
+3. First payment sent immediately
+4. Future payments handled by background scheduler
 
-### 1. Missing `verification_key_data` account (Error 3005)
-Transfer instruction was missing the VK data PDA.
+### Key Files
+- `apps/extension/src/popup/pages/CreateSubscription.tsx`
+- `apps/extension/src/popup/pages/SubscriptionDetails.tsx`
+- `apps/extension/src/shared/services/stream.ts`
 
-### 2. Wrong merkle root sent (Error 6002)
-Client was sending `newRoot` instead of `merkleRoot` for proof validation.
+### Bug Fixes
+- Fixed double interval bug (weekly showing 14 days instead of 7)
+- Removed stealth addresses from subscriptions (not useful for P2P)
+- Removed scan buttons from desktop extension
 
-### 3. Poseidon syscall panic on devnet
-On-chain program used `insert()` which calls Poseidon syscall (not enabled on devnet).
-Fixed by using `insert_with_root()` with client-computed root.
+---
 
-### 4. Auto-copy note to clipboard
-Note is now automatically copied when transfer succeeds.
+## ZK Shielded Transfers
 
-### 5. Cleaned up verbose debug logs
-Removed noisy Poseidon/circuit debug logs for cleaner output.
+### Status: WORKING
 
-## Key Files
-- `apps/mobile/services/zk/index.ts` - ZK service
-- `programs/zk_shielded/src/instructions/transfer.rs` - On-chain transfer
-- `apps/mobile/app/(main)/(wallet)/shielded-transfer.tsx` - Transfer UI
+All ZK shielded transfer features are functional:
+- **Shield** - Deposit SOL into shielded pool
+- **Transfer** - Private transfer with note export/import (p01note format)
+- **Unshield** - Withdraw from shielded pool
+
+### Note Import/Export
+Recipients must import the note to access funds:
+- Copy note data or download as file
+- Use "Import Note" on ShieldedWallet page
+- p01note format: `p01note:1:base64data`
+
+### Key Files
+- `apps/extension/src/popup/pages/ShieldedTransfer.tsx`
+- `apps/extension/src/popup/pages/ShieldedWallet.tsx`
+- `apps/extension/src/shared/services/zk.ts`
+- `apps/mobile/services/zk/index.ts`
+
+### Bug Fixes Applied
+1. Missing `verification_key_data` account (Error 3005)
+2. Wrong merkle root sent (Error 6002)
+3. Poseidon syscall panic - using `insert_with_root()`
+4. Cross-platform note format compatibility
