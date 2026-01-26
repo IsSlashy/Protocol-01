@@ -250,8 +250,9 @@ export function createSubscription(params: CreateSubscriptionParams): StreamSubs
     tokenDecimals = tokenMint ? 6 : 9,
     interval,
     maxPayments = 0,
-    amountNoise = 5,      // Default 5% noise
-    timingNoise = 2,      // Default 2 hours noise
+    // Auto-generate random noise for privacy (no user configuration)
+    amountNoise = Math.floor(secureRandom(5, 15)),   // Random 5-15%
+    timingNoise = Math.floor(secureRandom(1, 6)),    // Random 1-6 hours
     useStealthAddress = false,
     merchantLogo,
     origin,
@@ -267,8 +268,9 @@ export function createSubscription(params: CreateSubscriptionParams): StreamSubs
   if (startDate) {
     nextPayment = startDate.getTime();
   } else {
-    // Schedule first payment for next interval
-    nextPayment = now + intervalSeconds * 1000;
+    // First payment is immediate, so nextPayment starts at now
+    // After first payment, it will be advanced by interval
+    nextPayment = now;
   }
 
   const subscription: StreamSubscription = {
@@ -366,6 +368,12 @@ export async function executeSubscriptionPayment(
   keypair: Keypair,
   network: NetworkType
 ): Promise<{ signature: string; payment: PaymentRecord }> {
+  console.log('[StreamPayment] Starting payment execution...');
+  console.log('[StreamPayment] Subscription:', sub.name, sub.id);
+  console.log('[StreamPayment] Recipient:', sub.recipient);
+  console.log('[StreamPayment] Amount:', sub.amount, 'SOL');
+  console.log('[StreamPayment] Network:', network);
+
   // Check if subscription is active
   if (sub.status !== 'active') {
     throw new Error('Subscription is not active');
@@ -378,9 +386,11 @@ export async function executeSubscriptionPayment(
 
   // Calculate payment with noise
   const calculatedPayment = calculateNextPayment(sub, keypair);
+  console.log('[StreamPayment] Calculated payment:', calculatedPayment);
 
   // Get connection
   const connection = getConnection(network);
+  console.log('[StreamPayment] Got connection for', network);
 
   let signature: string;
 
@@ -398,6 +408,7 @@ export async function executeSubscriptionPayment(
     // Native SOL payment
     const recipientPubkey = new PublicKey(calculatedPayment.recipient);
     const lamports = Math.round(calculatedPayment.amount * LAMPORTS_PER_SOL);
+    console.log('[StreamPayment] Sending', lamports, 'lamports to', calculatedPayment.recipient);
 
     const transaction = new Transaction().add(
       SystemProgram.transfer({
@@ -408,20 +419,26 @@ export async function executeSubscriptionPayment(
     );
 
     // Sign and send transaction
+    console.log('[StreamPayment] Getting blockhash...');
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = keypair.publicKey;
 
+    console.log('[StreamPayment] Signing transaction...');
     transaction.sign(keypair);
 
+    console.log('[StreamPayment] Sending transaction...');
     signature = await connection.sendRawTransaction(transaction.serialize());
+    console.log('[StreamPayment] Sent! Signature:', signature);
 
     // Wait for confirmation
+    console.log('[StreamPayment] Waiting for confirmation...');
     await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight,
     });
+    console.log('[StreamPayment] Confirmed!');
   }
 
   // Create payment record

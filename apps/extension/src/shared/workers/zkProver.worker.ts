@@ -14,7 +14,7 @@ interface ProveRequest {
   id: string;
   circuitWasm: ArrayBuffer;
   circuitZkey: ArrayBuffer;
-  inputs: Record<string, string>;
+  inputs: Record<string, string | string[]>;
 }
 
 interface ProveResponse {
@@ -49,6 +49,8 @@ self.onmessage = async (event: MessageEvent<ProveRequest>) => {
 
   try {
     console.log('[ZK Worker] Starting proof generation...');
+    console.log('[ZK Worker] Input keys:', Object.keys(inputs));
+    console.log('[ZK Worker] WASM size:', circuitWasm.byteLength, 'ZKEY size:', circuitZkey.byteLength);
     const startTime = performance.now();
 
     // Generate the proof using snarkjs

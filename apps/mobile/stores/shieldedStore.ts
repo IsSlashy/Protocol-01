@@ -77,6 +77,7 @@ interface ShieldedState {
   scanNotes: () => Promise<void>;
   importNote: (noteString: string) => Promise<void>;
   getLastSentNote: () => { noteString: string; amount: number; leafIndex: number } | null;
+  clearNotes: () => Promise<void>;
   reset: () => void;
 }
 
@@ -570,6 +571,23 @@ export const useShieldedStore = create<ShieldedState>()(
           amount: Number(lastNote.amount) / 1e9,
           leafIndex: lastNote.leafIndex,
         };
+      },
+
+      // Clear all notes (for when notes become unrecoverable)
+      clearNotes: async () => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) {
+          throw new Error('ZK service not initialized');
+        }
+
+        const { _zkService } = get();
+        if (!_zkService) {
+          throw new Error('ZK service not available');
+        }
+
+        await _zkService.clearNotes();
+        set({ shieldedBalance: 0, notes: [] });
+        console.log('[Shielded] Notes cleared');
       },
 
       // Reset state
