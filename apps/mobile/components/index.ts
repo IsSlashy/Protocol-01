@@ -27,15 +27,6 @@ export {
   CreateStreamForm,
 } from './streams';
 
-// Social Components
-export {
-  ContactAvatar,
-  ContactRow,
-  RequestCard,
-  AddContactForm,
-  ContactActions,
-} from './social';
-
 // Agent Components
 export {
   AgentAvatar,

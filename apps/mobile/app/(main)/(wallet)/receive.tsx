@@ -26,7 +26,7 @@ const P01 = {
   pink: '#ff77a8',
   pinkDim: 'rgba(255, 119, 168, 0.15)',
 };
-import { QRCodeGenerator } from '@/components/mesh/QRCodeGenerator';
+import QRCode from 'react-native-qrcode-svg';
 
 export default function ReceiveScreen() {
   const router = useRouter();
@@ -86,7 +86,7 @@ export default function ReceiveScreen() {
         <Animated.View entering={FadeInUp.delay(200)} style={styles.qrSection}>
           <View style={styles.qrContainer}>
             {publicKey ? (
-              <QRCodeGenerator
+              <QRCode
                 value={`solana:${publicKey}`}
                 size={200}
                 color="#000000"
