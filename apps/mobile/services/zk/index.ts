@@ -1415,6 +1415,13 @@ export class ZkService {
   }
 
   /**
+   * Get the current backend prover URL
+   */
+  static getBackendProverUrl(): string {
+    return ZkService.BACKEND_PROVER_URL;
+  }
+
+  /**
    * Set the prover function (called by ZkProverProvider)
    */
   setProver(prover: (inputs: Record<string, string>) => Promise<Groth16Proof>): void {

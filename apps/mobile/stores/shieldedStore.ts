@@ -191,10 +191,14 @@ export const useShieldedStore = create<ShieldedState>()(
           const zkService = getZkService();
 
           // Configure backend prover URL for mobile (no local circuit bundling)
-          // Uses EXPO_PUBLIC_RELAYER_URL from .env or falls back to Cloudflare tunnel
-          const RELAYER_URL = process.env.EXPO_PUBLIC_RELAYER_URL || 'https://corps-mag-distributed-ref.trycloudflare.com';
-          ZkService.setBackendProverUrl(RELAYER_URL);
-          console.log('[Shielded] Backend prover configured:', RELAYER_URL);
+          // Only override if env var is set; otherwise use the default in ZkService
+          const envRelayerUrl = process.env.EXPO_PUBLIC_RELAYER_URL;
+          if (envRelayerUrl) {
+            ZkService.setBackendProverUrl(envRelayerUrl);
+            console.log('[Shielded] Backend prover configured from env:', envRelayerUrl);
+          } else {
+            console.log('[Shielded] Using default backend prover URL');
+          }
 
           // Initialize with user's seed phrase
           await zkService.initialize(phrase);
@@ -523,7 +527,7 @@ export const useShieldedStore = create<ShieldedState>()(
             ),
           }));
 
-          const RELAYER_URL = process.env.EXPO_PUBLIC_RELAYER_URL || 'https://corps-mag-distributed-ref.trycloudflare.com';
+          const RELAYER_URL = process.env.EXPO_PUBLIC_RELAYER_URL || ZkService.getBackendProverUrl();
 
           // Fetch relayer info to get fee and wallet address
           let relayerAddress: string;
