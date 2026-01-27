@@ -198,7 +198,7 @@ export class AgentBridge {
       success: true,
       intent: 'check_balance',
       message,
-      data: balance,
+      data: balance as unknown as Record<string, unknown>,
     };
   }
 
@@ -226,7 +226,7 @@ export class AgentBridge {
       success: true,
       intent: 'price_lookup',
       message,
-      data: price,
+      data: price as unknown as Record<string, unknown>,
     };
   }
 

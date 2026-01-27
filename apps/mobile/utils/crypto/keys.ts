@@ -5,7 +5,8 @@
 
 import * as Crypto from 'expo-crypto';
 import { Keypair } from '@solana/web3.js';
-import * as bip39 from 'bip39';
+import { validateMnemonic, mnemonicToSeed } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english';
 import { derivePath } from 'ed25519-hd-key';
 
 // Solana BIP44 derivation path
@@ -37,12 +38,12 @@ export async function deriveKeypairFromMnemonic(
 ): Promise<KeyDerivationResult> {
   try {
     // Validate mnemonic
-    if (!bip39.validateMnemonic(mnemonic)) {
+    if (!validateMnemonic(mnemonic, wordlist)) {
       throw createKeyError('INVALID_MNEMONIC', 'Invalid mnemonic phrase');
     }
 
     // Convert mnemonic to seed
-    const seed = await bip39.mnemonicToSeed(mnemonic);
+    const seed = await mnemonicToSeed(mnemonic);
 
     // Derive path for account
     const path = getDerivationPath(accountIndex);

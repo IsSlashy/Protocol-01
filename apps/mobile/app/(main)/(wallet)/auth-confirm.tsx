@@ -128,7 +128,7 @@ export default function AuthConfirmScreen() {
           <Text className="text-p01-text-muted text-center mb-8">
             Cette demande de connexion a expiré. Veuillez scanner un nouveau QR code.
           </Text>
-          <Button onPress={handleCancel} variant="outline" fullWidth>
+          <Button onPress={handleCancel} variant="secondary" fullWidth>
             Retour
           </Button>
         </View>
@@ -197,7 +197,7 @@ export default function AuthConfirmScreen() {
             <Button onPress={loadData} fullWidth>
               Réessayer
             </Button>
-            <Button onPress={handleCancel} variant="outline" fullWidth>
+            <Button onPress={handleCancel} variant="secondary" fullWidth>
               Annuler
             </Button>
           </View>

@@ -2,7 +2,8 @@
  * Seed phrase validation utilities for Protocol 01
  */
 
-import * as bip39 from 'bip39';
+import { validateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english';
 
 export type ValidWordCount = 12 | 15 | 18 | 21 | 24;
 
@@ -59,7 +60,6 @@ export function validateSeedPhrase(
   }
 
   // Check each word
-  const wordlist = bip39.wordlists.english;
   const invalidWords: InvalidWordInfo[] = [];
 
   words.forEach((word, index) => {
@@ -86,7 +86,7 @@ export function validateSeedPhrase(
 
   // Validate checksum
   const mnemonic = words.join(' ').toLowerCase();
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!validateMnemonic(mnemonic, wordlist)) {
     return {
       isValid: false,
       wordCount: words.length,
@@ -117,7 +117,6 @@ export function validateWord(word: string): boolean {
   if (!word || typeof word !== 'string') {
     return false;
   }
-  const wordlist = bip39.wordlists.english;
   return wordlist.includes(word.toLowerCase().trim());
 }
 
@@ -138,7 +137,6 @@ export function validateWordAtPosition(
     return { isValid: true };
   }
 
-  const wordlist = bip39.wordlists.english;
   return {
     isValid: false,
     suggestions: getSuggestions(word, wordlist),
@@ -156,7 +154,6 @@ export function getWordSuggestions(
     return [];
   }
 
-  const wordlist = bip39.wordlists.english;
   const lowerPrefix = prefix.toLowerCase().trim();
 
   return wordlist

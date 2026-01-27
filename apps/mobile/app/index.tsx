@@ -1,11 +1,12 @@
-import { Redirect } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Text } from 'react-native';
 import { walletExists } from '../services/solana/wallet';
 
 export default function Index() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasWallet, setHasWallet] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     checkAppState();
@@ -24,19 +25,22 @@ export default function Index() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#050505', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#00ff88" />
-      </View>
-    );
-  }
+  // Navigate after loading completes
+  useEffect(() => {
+    if (!isLoading) {
+      console.log('[Index] Navigating, hasWallet:', hasWallet);
+      if (hasWallet) {
+        router.replace('/(auth)/lock');
+      } else {
+        router.replace('/(onboarding)');
+      }
+    }
+  }, [isLoading, hasWallet, router]);
 
-  // If has wallet, go to biometric lock
-  if (hasWallet) {
-    return <Redirect href="/(auth)/lock" />;
-  }
-
-  // No wallet - always show onboarding welcome screen
-  return <Redirect href="/(onboarding)" />;
+  return (
+    <View style={{ flex: 1, backgroundColor: '#050505', alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator size="large" color="#00ff88" />
+      <Text style={{ color: '#666', marginTop: 16 }}>Loading...</Text>
+    </View>
+  );
 }

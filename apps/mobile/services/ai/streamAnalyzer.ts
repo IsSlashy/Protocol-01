@@ -68,7 +68,7 @@ export function analyzeStreams(
   // Calculate spending
   let totalMonthlySpend = 0;
   activeStreams.forEach(stream => {
-    totalMonthlySpend += calculateMonthlyAmount(stream.amount, stream.interval);
+    totalMonthlySpend += calculateMonthlyAmount(stream.amountPerPayment, stream.frequency);
   });
 
   const totalYearlySpend = totalMonthlySpend * 12;
@@ -78,14 +78,16 @@ export function analyzeStreams(
   let savingsPotential = 0;
 
   activeStreams.forEach(stream => {
-    const monthlyAmount = calculateMonthlyAmount(stream.amount, stream.interval);
-    const daysSinceCreated = Math.floor((now - stream.createdAt) / (1000 * 60 * 60 * 24));
-    const daysSinceLastPayment = stream.lastPayment
-      ? Math.floor((now - stream.lastPayment) / (1000 * 60 * 60 * 24))
-      : daysSinceCreated;
+    const monthlyAmount = calculateMonthlyAmount(stream.amountPerPayment, stream.frequency);
+    const daysSinceCreated = Math.floor((now - stream.startDate) / (1000 * 60 * 60 * 24));
+    // Calculate last payment from paymentsCompleted and frequency
+    const intervalDays = INTERVAL_DAYS[stream.frequency] || 30;
+    const lastPaymentEstimate = stream.paymentsCompleted > 0
+      ? stream.startDate + (stream.paymentsCompleted * intervalDays * 24 * 60 * 60 * 1000)
+      : stream.startDate;
+    const daysSinceLastPayment = Math.floor((now - lastPaymentEstimate) / (1000 * 60 * 60 * 24));
 
     // Check for unused streams (no payment in 60+ days for monthly)
-    const intervalDays = INTERVAL_DAYS[stream.interval] || 30;
     if (daysSinceLastPayment > intervalDays * 2) {
       recommendations.push({
         type: 'cancel',
@@ -114,13 +116,13 @@ export function analyzeStreams(
     }
 
     // Check for streams with max payments reached
-    if (stream.maxPayments && stream.paymentsMade >= stream.maxPayments) {
+    if (stream.totalPayments && stream.paymentsCompleted >= stream.totalPayments) {
       recommendations.push({
         type: 'cancel',
         priority: 'low',
         streamId: stream.id,
         streamName: stream.name,
-        reason: `Nombre max de paiements atteint (${stream.paymentsMade}/${stream.maxPayments})`,
+        reason: `Nombre max de paiements atteint (${stream.paymentsCompleted}/${stream.totalPayments})`,
         potentialSavings: 0,
         actionText: 'Supprimer ce stream terminé',
       });
@@ -160,12 +162,12 @@ export function analyzeStreams(
   // Calculate upcoming payments
   const upcomingPayments: UpcomingPayment[] = activeStreams
     .map(stream => {
-      const nextPaymentDate = new Date(stream.nextPayment);
-      const daysUntil = Math.ceil((stream.nextPayment - now) / (1000 * 60 * 60 * 24));
+      const nextPaymentDate = new Date(stream.nextPaymentDate);
+      const daysUntil = Math.ceil((stream.nextPaymentDate - now) / (1000 * 60 * 60 * 24));
       return {
         streamId: stream.id,
         streamName: stream.name,
-        amount: stream.amount,
+        amount: stream.amountPerPayment,
         dueDate: nextPaymentDate,
         daysUntil: Math.max(0, daysUntil),
       };

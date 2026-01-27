@@ -21,8 +21,10 @@ import {
   PrivacyLevel,
   DecoyProgress,
 } from '@/services/solana/decoyTransactions';
-import { sendSol } from '@/services/solana/transactions';
+import { sendSol, sendSolWithSigner } from '@/services/solana/transactions';
 import { getExplorerUrl } from '@/services/solana/connection';
+import { useAuth } from '@/providers/PrivyProvider';
+import { PublicKey } from '@solana/web3.js';
 
 // Types
 type TransactionStatus =
@@ -63,6 +65,9 @@ export default function SendConfirmScreen() {
     networkFee: string;
     privacyFee: string;
   }>();
+
+  // Privy wallet support
+  const { walletAddress: privyWalletAddress, signTransaction: privySignTransaction } = useAuth();
 
   const [status, setStatus] = useState<TransactionStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -127,8 +132,20 @@ export default function SendConfirmScreen() {
       let txHash: string;
       let decoyCount = 0;
 
-      if (privacyInfo.decoys > 0 && token === 'SOL') {
-        // Private transaction with decoys
+      // Check if user has Privy wallet with signing capability
+      const isPrivyUser = !!privyWalletAddress && typeof privySignTransaction === 'function';
+
+      console.log('[SendConfirm] Wallet check:', {
+        privyWalletAddress,
+        hasSignTransaction: typeof privySignTransaction === 'function',
+        isPrivyUser,
+      });
+
+      // Decoy transactions only work with local wallets (need keypair)
+      const canUseDecoys = privacyInfo.decoys > 0 && token === 'SOL' && !isPrivyUser;
+
+      if (canUseDecoys) {
+        // Private transaction with decoys (local wallet only)
         setStatus('sending_decoys');
 
         console.log(`[SendConfirm] Starting private transaction with ${privacyInfo.decoys} decoys`);
@@ -158,12 +175,25 @@ export default function SendConfirmScreen() {
         console.log(`[SendConfirm] Decoys sent: ${decoyCount}, Total fees: ${result.decoyResult.totalFeesSOL} SOL`);
 
       } else {
-        // Regular transaction (no decoys)
+        // Regular transaction (no decoys) - works with both Privy and local wallets
         setStatus('signing');
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         setStatus('broadcasting');
-        const result = await sendSol(recipient, parseFloat(amount));
+
+        let result;
+        if (isPrivyUser && privyWalletAddress && privySignTransaction) {
+          console.log('[SendConfirm] Using Privy wallet for transaction');
+          result = await sendSolWithSigner(
+            recipient,
+            parseFloat(amount),
+            new PublicKey(privyWalletAddress),
+            privySignTransaction
+          );
+        } else {
+          console.log('[SendConfirm] Using local wallet for transaction');
+          result = await sendSol(recipient, parseFloat(amount));
+        }
 
         if (!result.success) {
           throw new Error(result.error || 'Transaction failed');

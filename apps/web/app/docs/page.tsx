@@ -191,6 +191,36 @@ let pairing_result = sol_alt_bn128_pairing(
 require!(pairing_result == 1, "Invalid proof");`,
   },
   {
+    id: "private-relay",
+    title: "Private Relay Architecture",
+    icon: <Zap className="w-6 h-6" />,
+    description:
+      "User-funded relayer that verifies ZK proofs and executes private transfers to stealth addresses, breaking the on-chain link between sender and recipient.",
+    details: [
+      "User funds relayer with transfer amount + fee (0.5%) + gas + rent",
+      "Relayer verifies ZK proof server-side (Groth16 snarkjs verification)",
+      "Relayer sends to stealth address — no on-chain link to the sender",
+      "Currently a self-hosted backend service (Node.js)",
+      "Roadmap: on-chain Solana program for fully decentralized relay",
+    ],
+    codeExample: `// Private relay flow
+// 1. User generates ZK proof client-side
+const { proof, publicSignals } = await generateProof(inputs);
+
+// 2. User funds relayer with amount + fee + gas
+const fundTx = await fundRelayer(amount, fee, gasCost, rentCost);
+
+// 3. Relayer verifies proof and sends to stealth address
+// POST /api/private-send
+{
+  proof,           // Groth16 ZK proof
+  publicSignals,   // Nullifier + commitments
+  recipient,       // Stealth address (unlinkable)
+  amount           // Transfer amount
+}
+// Result: recipient receives funds with no link to sender`,
+  },
+  {
     id: "client-sdk",
     title: "Client SDK Architecture",
     icon: <Code className="w-6 h-6" />,
@@ -297,6 +327,24 @@ const ArchitectureDiagram = () => (
 
       {/* Arrow */}
       <div className="text-[#00ffe5] text-2xl">↓</div>
+
+      {/* Relay Layer */}
+      <div className="w-full">
+        <div className="text-xs text-[#555560] uppercase tracking-wider mb-2 text-center">Relay Layer</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-[#0a0a0c] border border-[#ff77a8]/30 p-3 rounded text-center">
+            <div className="text-[#ff77a8] font-bold text-sm">RELAYER</div>
+            <div className="text-[#555560] text-xs mt-1">ZK Verification + Private Transfers</div>
+          </div>
+          <div className="bg-[#0a0a0c] border border-[#ff77a8]/30 p-3 rounded text-center">
+            <div className="text-[#ff77a8] font-bold text-sm">ROADMAP</div>
+            <div className="text-[#555560] text-xs mt-1">On-chain Solana program</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Arrow */}
+      <div className="text-[#ff77a8] text-2xl">↓</div>
 
       {/* Blockchain Layer */}
       <div className="w-full max-w-md">

@@ -36,7 +36,12 @@
         "BLUETOOTH_CONNECT",
         "BLUETOOTH_ADVERTISE",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
       ]
     },
     "notification": {
@@ -49,6 +54,7 @@
       "output": "static"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-notifications",
       "expo-router",
       "expo-secure-store",
@@ -57,7 +63,10 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": true,
-          "modes": ["peripheral", "central"],
+          "modes": [
+            "peripheral",
+            "central"
+          ],
           "bluetoothAlwaysPermission": "P-01 uses Bluetooth to discover nearby users for mesh networking"
         }
       ]
@@ -70,7 +79,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "protocol-01"
+        "projectId": "15b9f4d7-0466-4c94-a1eb-effcfe79f1ae"
       }
     }
   }

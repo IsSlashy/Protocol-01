@@ -160,22 +160,24 @@ export function useBiometrics(): UseBiometricsReturn {
         return true;
       }
 
-      // Handle specific error types
-      if (result.error === 'user_cancel') {
+      // Handle specific error types - result.success is false so error exists
+      const errorCode = 'error' in result ? result.error : undefined;
+
+      if (errorCode === 'user_cancel') {
         return false;
       }
 
-      if (result.error === 'user_fallback') {
+      if (errorCode === 'user_fallback') {
         // User chose fallback (PIN)
         return false;
       }
 
-      if (result.error === 'lockout') {
+      if (errorCode === 'authentication_failed') {
         throw new Error('Too many failed attempts. Please try again later.');
       }
 
-      if (result.error === 'lockout_permanent') {
-        throw new Error('Biometrics permanently locked. Please use PIN.');
+      if (errorCode === 'not_available') {
+        throw new Error('Biometrics not available. Please use PIN.');
       }
 
       return false;
