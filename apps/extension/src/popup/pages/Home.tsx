@@ -7,7 +7,7 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Repeat,
-  Share2,
+  Plus,
   Copy,
   Check,
   Settings,
@@ -227,10 +227,10 @@ export default function Home() {
             onClick={() => navigate('/swap')}
           />
           <ActionButton
-            icon={<Share2 className="w-5 h-5" />}
-            label="Share"
+            icon={<Plus className="w-5 h-5" />}
+            label="Buy"
             color="orange"
-            onClick={() => navigate('/receive')}
+            onClick={() => navigate('/buy')}
           />
         </div>
 

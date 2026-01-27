@@ -21,6 +21,7 @@ const footerLinks: Record<string, FooterSection> = {
       { name: "Chrome Extension", href: "#download" },
       { name: "Features", href: "#features" },
       { name: "SDK Demo", href: "/sdk-demo" },
+      { name: "Roadmap", href: "/roadmap" },
     ],
   },
   developers: {
