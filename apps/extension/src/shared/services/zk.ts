@@ -615,6 +615,21 @@ export class ZkServiceExtension {
   }
 
   /**
+   * Get stealth keys for scanning stealth payments
+   * Returns viewing and spending keys in format needed for stealth address derivation
+   */
+  getStealthKeys(): { viewingKey: Uint8Array; spendingKey: Uint8Array } | null {
+    if (!this.viewingKey || !this.spendingKey) {
+      return null;
+    }
+
+    return {
+      viewingKey: this.viewingKey,
+      spendingKey: bigintToLeBytes(this.spendingKey),
+    };
+  }
+
+  /**
    * Get shielded balance
    */
   getShieldedBalance(): bigint {
@@ -2087,36 +2102,39 @@ export class ZkServiceExtension {
         // Get all leaves for verification
         const allLeaves = this.merkleTree.getAllLeaves();
 
-        // Verify the commitment is in the tree at the expected index
+        // Verify the commitment is in the tree
+        // First try the claimed index, then search the whole tree as fallback
+        let foundIndex: number = -1;
+
         if (note.leafIndex !== undefined && note.leafIndex < this.merkleTree.leafCount) {
           const treeCommitment = allLeaves[note.leafIndex];
-          if (treeCommitment !== note.commitment) {
-            console.error(`[ZK Import] Commitment mismatch at index ${note.leafIndex}!`);
-            console.error(`[ZK Import] Expected: ${note.commitment}`);
-            console.error(`[ZK Import] In tree:  ${treeCommitment}`);
-            skipped++;
-            continue;
-          }
-          console.log(`[ZK Import] Verified commitment at index ${note.leafIndex} matches`);
-        } else if (note.leafIndex !== undefined && note.leafIndex >= this.merkleTree.leafCount) {
-          // The note claims an index we don't have - can't verify, skip
-          console.error(`[ZK Import] Note claims index ${note.leafIndex} but tree only has ${this.merkleTree.leafCount} leaves`);
-          skipped++;
-          continue;
-        } else {
-          // No leaf index - need to find it or add to tree
-          // Check if it's already in the tree
-          const existingIndex = allLeaves.findIndex(l => l === note.commitment);
-          if (existingIndex >= 0) {
-            note.leafIndex = existingIndex;
-            console.log(`[ZK Import] Found commitment in tree at index ${existingIndex}`);
+          if (treeCommitment === note.commitment) {
+            foundIndex = note.leafIndex;
+            console.log(`[ZK Import] Verified commitment at claimed index ${note.leafIndex}`);
           } else {
-            // Not in tree - this shouldn't happen for received notes
-            console.warn('[ZK Import] Note commitment not found in tree, skipping');
-            skipped++;
-            continue;
+            console.warn(`[ZK Import] Commitment mismatch at claimed index ${note.leafIndex}, searching tree...`);
+            console.warn(`[ZK Import] Claimed: ${note.commitment}`);
+            console.warn(`[ZK Import] At idx:  ${treeCommitment}`);
           }
         }
+
+        // If claimed index didn't work, search the entire tree
+        if (foundIndex === -1) {
+          foundIndex = allLeaves.findIndex(l => l === note.commitment);
+          if (foundIndex >= 0) {
+            console.log(`[ZK Import] Found commitment in tree at index ${foundIndex} (claimed: ${note.leafIndex})`);
+            note.leafIndex = foundIndex;
+          }
+        }
+
+        // If still not found, skip this note
+        if (foundIndex === -1) {
+          console.error(`[ZK Import] Commitment not found anywhere in tree (${this.merkleTree.leafCount} leaves), skipping`);
+          skipped++;
+          continue;
+        }
+
+        note.leafIndex = foundIndex;
 
         // Add note
         this.notes.push(note);

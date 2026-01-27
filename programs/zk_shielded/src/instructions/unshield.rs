@@ -200,7 +200,7 @@ pub fn handler(
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
         **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
 
-        msg!("Transferred {} lamports (native SOL) from shielded pool", amount);
+        // Minimal logging - transfer visible in transaction anyway
     } else {
         // SPL Token: transfer tokens from pool vault to recipient token account
         let token_program = ctx.accounts.token_program
@@ -234,7 +234,7 @@ pub fn handler(
         );
         token::transfer(transfer_ctx, amount)?;
 
-        msg!("Transferred {} SPL tokens from shielded pool", amount);
+        // Minimal logging - transfer visible in transaction anyway
     }
 
     // Update pool state
@@ -246,8 +246,7 @@ pub fn handler(
         .ok_or(ZkShieldedError::ArithmeticOverflow)?;
     pool.last_tx_at = clock.unix_timestamp;
 
-    msg!("Unshielded {} tokens to {}", amount, ctx.accounts.recipient.key());
-    msg!("Nullifiers spent: 2");
+    // Minimal logging for privacy - only emit data needed for tree sync
     if let Some(idx) = leaf_index {
         msg!("Change commitment at index: {}", idx);
     }

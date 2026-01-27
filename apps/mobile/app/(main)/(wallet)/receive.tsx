@@ -225,6 +225,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  qrPlaceholderText: {
+    color: Colors.textTertiary,
+    fontSize: 14,
+  },
   qrCorner: {
     position: 'absolute',
     width: 40,

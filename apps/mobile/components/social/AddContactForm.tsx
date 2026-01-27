@@ -6,6 +6,12 @@ import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Avatar } from '../ui/Avatar';
 
+export interface ContactFormData {
+  name: string;
+  address: string;
+  note?: string;
+}
+
 interface AddContactFormProps {
   onAddContact: (data: { name: string; address: string; note?: string }) => void;
   onScanQR?: () => void;

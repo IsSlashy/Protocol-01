@@ -1,8 +1,20 @@
 /**
- * Privy Configuration for Specter Mobile App
+ * Privy Configuration for Protocol 01 Mobile App
  *
  * React Native specific configuration for Privy authentication.
+ * Styled with P-01 cyberpunk design.
  */
+
+// P-01 Design Colors
+export const P01_COLORS = {
+  cyan: '#39c5bb',
+  cyanBright: '#00ffe5',
+  pink: '#ff2d7a',
+  pinkHot: '#ff77a8',
+  void: '#0a0a0c',
+  surface: '#151518',
+  border: '#2a2a30',
+};
 
 // Get App ID from environment
 export const PRIVY_APP_ID = process.env.EXPO_PUBLIC_PRIVY_APP_ID || 'YOUR_PRIVY_APP_ID';
@@ -12,10 +24,11 @@ export const PRIVY_ENABLED = PRIVY_APP_ID !== 'YOUR_PRIVY_APP_ID';
 
 // Privy configuration for React Native
 export const privyConfig = {
-  // Appearance
+  // Appearance - P-01 cyberpunk theme
   appearance: {
     theme: 'dark' as const,
-    accentColor: '#22d3ee', // Cyan to match Specter branding
+    accentColor: P01_COLORS.cyan,
+    logo: '', // Will use custom UI instead
   },
 
   // Login methods

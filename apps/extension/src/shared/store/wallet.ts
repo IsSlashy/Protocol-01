@@ -238,8 +238,9 @@ export const useWalletStore = create<WalletState>()(
             isLoading: false,
           });
 
-          // Fetch initial balance
+          // Fetch initial balance and transactions for imported wallet
           get().refreshBalance();
+          get().fetchTransactions();
         } catch (error) {
           set({ isLoading: false, error: (error as Error).message });
           throw error;
@@ -289,8 +290,9 @@ export const useWalletStore = create<WalletState>()(
           // Save session for auto-unlock (10 minute timeout)
           await saveSession(keypair.secretKey);
 
-          // Fetch balance
+          // Fetch balance and transactions
           get().refreshBalance();
+          get().fetchTransactions();
 
           return true;
         } catch (error) {
@@ -333,8 +335,9 @@ export const useWalletStore = create<WalletState>()(
 
           console.log('[WalletStore] Auto-unlocked from session');
 
-          // Fetch balance
+          // Fetch balance and transactions
           get().refreshBalance();
+          get().fetchTransactions();
 
           return true;
         } catch (error) {
@@ -418,8 +421,10 @@ export const useWalletStore = create<WalletState>()(
         try {
           const signature = await sendSol(_keypair, toAddress, amountSol, network);
 
-          // Refresh balance after transaction
+          // Refresh balance and transactions after transaction
           await get().refreshBalance();
+          // Delay transaction fetch slightly to allow blockchain to index
+          setTimeout(() => get().fetchTransactions(), 2000);
 
           set({ isLoading: false });
           return signature;
@@ -458,7 +463,7 @@ export const useWalletStore = create<WalletState>()(
       },
 
       // Fetch transactions from blockchain
-      fetchTransactions: async (limit: number = 20) => {
+      fetchTransactions: async (limit: number = 10) => {
         const { publicKey, network, isUnlocked } = get();
 
         if (!publicKey || !isUnlocked) return;

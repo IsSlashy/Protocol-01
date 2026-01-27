@@ -22,7 +22,7 @@ export default function AddContactScreen() {
     // Show success and navigate back
     Alert.alert(
       'Contact Added',
-      `${data.nickname} has been added to your contacts.`,
+      `${data.name} has been added to your contacts.`,
       [
         {
           text: 'OK',
@@ -83,7 +83,7 @@ export default function AddContactScreen() {
         {/* Form */}
         <View className="flex-1 px-5">
           <AddContactForm
-            onSubmit={handleSubmit}
+            onAddContact={handleSubmit}
             onScanQR={handleScanQR}
             loading={loading}
           />

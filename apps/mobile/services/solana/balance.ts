@@ -1,8 +1,16 @@
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getConnection, switchEndpoint } from './connection';
+import { getConnection, switchEndpoint, getCluster } from './connection';
 
 const BALANCE_CACHE_KEY = 'p01_balance_cache_';
+
+/**
+ * Get network-specific cache key
+ */
+function getBalanceCacheKey(publicKey: string): string {
+  const cluster = getCluster();
+  return `${BALANCE_CACHE_KEY}${cluster}_${publicKey}`;
+}
 
 // Rate limit handling
 const MAX_RETRIES = 2;
@@ -162,14 +170,16 @@ export async function getTokenBalances(publicKey: string): Promise<TokenBalance[
  */
 export async function getCachedBalance(publicKey: string): Promise<WalletBalance | null> {
   try {
-    console.log('[Balance] Loading cache for:', publicKey.slice(0, 8) + '...');
-    const cached = await AsyncStorage.getItem(BALANCE_CACHE_KEY + publicKey);
+    const cacheKey = getBalanceCacheKey(publicKey);
+    const cluster = getCluster();
+    console.log('[Balance] Loading cache for:', publicKey.slice(0, 8) + '...', 'on', cluster);
+    const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
       const data = JSON.parse(cached);
-      console.log('[Balance] ✓ CACHE HIT:', data.sol, 'SOL loaded instantly');
+      console.log('[Balance] ✓ CACHE HIT:', data.sol, 'SOL loaded instantly on', cluster);
       return data;
     } else {
-      console.log('[Balance] ✗ CACHE MISS: No cached balance found');
+      console.log('[Balance] ✗ CACHE MISS: No cached balance found for', cluster);
     }
   } catch (error) {
     console.warn('[Balance] Failed to load cache:', error);
@@ -182,8 +192,10 @@ export async function getCachedBalance(publicKey: string): Promise<WalletBalance
  */
 async function cacheBalance(publicKey: string, balance: WalletBalance): Promise<void> {
   try {
-    await AsyncStorage.setItem(BALANCE_CACHE_KEY + publicKey, JSON.stringify(balance));
-    console.log('[Balance] Cached balance:', balance.sol, 'SOL');
+    const cacheKey = getBalanceCacheKey(publicKey);
+    const cluster = getCluster();
+    await AsyncStorage.setItem(cacheKey, JSON.stringify(balance));
+    console.log('[Balance] Cached balance:', balance.sol, 'SOL on', cluster);
   } catch (error) {
     console.warn('[Balance] Failed to cache:', error);
   }
@@ -194,8 +206,10 @@ async function cacheBalance(publicKey: string, balance: WalletBalance): Promise<
  */
 export async function clearBalanceCache(publicKey: string): Promise<void> {
   try {
-    await AsyncStorage.removeItem(BALANCE_CACHE_KEY + publicKey);
-    console.log('[Balance] Cache cleared for:', publicKey.slice(0, 8) + '...');
+    const cacheKey = getBalanceCacheKey(publicKey);
+    const cluster = getCluster();
+    await AsyncStorage.removeItem(cacheKey);
+    console.log('[Balance] Cache cleared for:', publicKey.slice(0, 8) + '...', 'on', cluster);
   } catch (error) {
     console.warn('[Balance] Failed to clear cache:', error);
   }

@@ -52,6 +52,8 @@ export type WalletIntent =
   | 'swap_tokens'
   | 'gas_estimation'
   | 'explain_transaction'
+  | 'analyze_streams'
+  | 'stream_analysis'
   | 'general_query'
   | 'greeting'
   | 'help';
@@ -528,5 +530,4 @@ export function quickClassifyIntent(message: string): WalletIntent {
   return 'general_query';
 }
 
-// Export types
-export type { GemmaMessage };
+// GemmaMessage is already exported as interface above

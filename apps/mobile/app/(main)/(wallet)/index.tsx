@@ -30,6 +30,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
+import { useAuth } from '@/providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, Shadows } from '@/constants/theme';
 
 // P-01 Design System Colors - NO purple allowed
@@ -51,21 +52,40 @@ export default function WalletHomeScreen() {
   const { formatAmount, initialize: initSettings } = useSettingsStore();
   const [balanceHidden, setBalanceHidden] = useState(false);
 
+  // Get Privy auth state
+  const { isAuthenticated, walletAddress: privyWalletAddress } = useAuth();
+
   const {
     initialized,
     loading,
-    hasWallet,
-    publicKey,
+    hasWallet: hasLocalWallet,
+    publicKey: localPublicKey,
     balance,
     transactions,
     refreshing,
     error,
-    formattedPublicKey,
+    formattedPublicKey: localFormattedPublicKey,
     refreshBalance,
     refreshTransactions,
     requestDevnetAirdrop,
     clearError,
+    initializeWithPrivy,
   } = useWalletStore();
+
+  // Use Privy wallet if available, otherwise local wallet
+  const hasWallet = Boolean(privyWalletAddress || hasLocalWallet);
+  const publicKey = privyWalletAddress || localPublicKey;
+  const formattedPublicKey = publicKey
+    ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`
+    : localFormattedPublicKey;
+
+  // Sync Privy wallet to store on mount
+  useEffect(() => {
+    if (privyWalletAddress && !hasLocalWallet) {
+      console.log('[WalletHome] Syncing Privy wallet to store:', privyWalletAddress);
+      initializeWithPrivy(privyWalletAddress);
+    }
+  }, [privyWalletAddress, hasLocalWallet, initializeWithPrivy]);
 
   // Compute formatted balance locally (Zustand getters don't trigger re-renders)
   const formattedSolBalance = balance ? formatBalance(balance.sol) : '0';
@@ -205,6 +225,14 @@ export default function WalletHomeScreen() {
     }
   };
 
+  // No wallet - redirect to onboarding (this page should not be accessible without a wallet)
+  useEffect(() => {
+    if (initialized && !loading && !hasWallet) {
+      console.log('[WalletHome] No wallet found, redirecting to onboarding');
+      router.replace('/(onboarding)');
+    }
+  }, [initialized, loading, hasWallet, router]);
+
   // Loading state
   if (!initialized || loading) {
     return (
@@ -217,24 +245,11 @@ export default function WalletHomeScreen() {
     );
   }
 
-  // No wallet state
   if (!hasWallet) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIconContainer}>
-            <Ionicons name="wallet-outline" size={64} color={Colors.textTertiary} />
-          </View>
-          <Text style={styles.emptyTitle}>No Wallet Found</Text>
-          <Text style={styles.emptySubtitle}>
-            Create or import a wallet to get started
-          </Text>
-          <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() => router.push('/(onboarding)')}
-          >
-            <Text style={styles.primaryButtonText}>Get Started</Text>
-          </TouchableOpacity>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={Colors.primary} />
         </View>
       </SafeAreaView>
     );
@@ -323,10 +338,10 @@ export default function WalletHomeScreen() {
               </Animated.View>
             </TouchableOpacity>
 
-            {/* Action Buttons - Compact Row */}
-            <View style={styles.actionButtons}>
+            {/* Action Buttons - Adapts based on network */}
+            <View style={[styles.actionButtons, isDevnet() && styles.actionButtonsDevnet]}>
               <TouchableOpacity
-                style={styles.actionButton}
+                style={[styles.actionButton, isDevnet() && styles.actionButtonWide]}
                 onPress={() => router.push('/(main)/(wallet)/send')}
               >
                 <LinearGradient
@@ -339,7 +354,7 @@ export default function WalletHomeScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.actionButton}
+                style={[styles.actionButton, isDevnet() && styles.actionButtonWide]}
                 onPress={() => router.push('/(main)/(wallet)/receive')}
               >
                 <View style={[styles.actionIcon, { backgroundColor: Colors.primaryDim }]}>
@@ -349,7 +364,7 @@ export default function WalletHomeScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.actionButton}
+                style={[styles.actionButton, isDevnet() && styles.actionButtonWide]}
                 onPress={() => router.push('/(main)/(wallet)/swap')}
               >
                 <View style={[styles.actionIcon, { backgroundColor: P01.blueDim }]}>
@@ -358,15 +373,18 @@ export default function WalletHomeScreen() {
                 <Text style={[styles.actionLabel, { color: P01.blue }]}>Swap</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => router.push('/(main)/(wallet)/buy')}
-              >
-                <View style={[styles.actionIcon, { backgroundColor: P01.pinkDim }]}>
-                  <Ionicons name="card" size={18} color={P01.pink} />
-                </View>
-                <Text style={[styles.actionLabel, { color: P01.pink }]}>Buy</Text>
-              </TouchableOpacity>
+              {/* Buy button - Only visible on mainnet */}
+              {!isDevnet() && (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => router.push('/(main)/(wallet)/buy')}
+                >
+                  <View style={[styles.actionIcon, { backgroundColor: P01.pinkDim }]}>
+                    <Ionicons name="card" size={18} color={P01.pink} />
+                  </View>
+                  <Text style={[styles.actionLabel, { color: P01.pink }]}>Buy</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </LinearGradient>
         </Animated.View>
@@ -742,11 +760,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.sm,
   },
+  actionButtonsDevnet: {
+    justifyContent: 'space-around',
+  },
   actionButton: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: Spacing.sm,
     minWidth: 60,
+  },
+  actionButtonWide: {
+    minWidth: 80,
   },
   actionIconGradient: {
     width: 48,

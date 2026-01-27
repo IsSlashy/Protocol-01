@@ -14,7 +14,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { P01PrivyProvider } from '../providers/PrivyProvider';
-import { ZkProverProvider } from '../providers/ZkProverProvider';
+// ZkProverProvider DISABLED - 19MB circuit file freezes app even with lazy loading
+// Metro bundler includes the file in bundle regardless of dynamic import
+// TODO: Host circuits on CDN or use backend prover
 import { AlertProvider } from '../providers/AlertProvider';
 
 // Prevent splash screen from auto-hiding
@@ -33,7 +35,6 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#050505' }}>
       <SafeAreaProvider>
         <P01PrivyProvider>
-          <ZkProverProvider>
             <AlertProvider>
               <View style={{ flex: 1, backgroundColor: '#050505' }}>
                 <StatusBar style="light" />
@@ -51,7 +52,6 @@ export default function RootLayout() {
                 </Stack>
               </View>
             </AlertProvider>
-          </ZkProverProvider>
         </P01PrivyProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

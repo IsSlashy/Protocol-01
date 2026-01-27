@@ -27,6 +27,73 @@ export const TOKEN_MINTS = {
   STEP: 'StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT',
 };
 
+// ============== PLATFORM FEE CONFIG ==============
+// Your commission on each swap (0.25% by default)
+// Only enabled on mainnet
+export const PLATFORM_FEE_CONFIG = {
+  // Fee in basis points: 25 = 0.25%, 50 = 0.5%, 100 = 1%
+  feeBps: parseInt(process.env.EXPO_PUBLIC_PLATFORM_FEE_BPS || '25', 10),
+
+  // Your wallet address that receives fees
+  feeWallet: process.env.EXPO_PUBLIC_FEE_WALLET || '',
+
+  // Only take fees on mainnet
+  isMainnet: process.env.EXPO_PUBLIC_SOLANA_NETWORK === 'mainnet-beta',
+};
+
+// SPL Token Program ID
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+
+/**
+ * Derive the Associated Token Account (ATA) for a wallet + mint
+ * This is deterministic - same wallet + mint = same ATA address
+ */
+export function getAssociatedTokenAddress(
+  mint: PublicKey,
+  owner: PublicKey
+): PublicKey {
+  const [address] = PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+  return address;
+}
+
+/**
+ * Get the fee account (ATA) for a given token mint
+ * Only returns fee account on mainnet
+ */
+export function getFeeAccount(mint: string): string | undefined {
+  // Only take fees on mainnet
+  if (!PLATFORM_FEE_CONFIG.isMainnet) {
+    return undefined;
+  }
+
+  if (!PLATFORM_FEE_CONFIG.feeWallet) {
+    return undefined;
+  }
+
+  try {
+    const feeWallet = new PublicKey(PLATFORM_FEE_CONFIG.feeWallet);
+    const mintPubkey = new PublicKey(mint);
+    const ata = getAssociatedTokenAddress(mintPubkey, feeWallet);
+    return ata.toBase58();
+  } catch (e) {
+    console.error('[Jupiter] Failed to derive fee account:', e);
+    return undefined;
+  }
+}
+
+/**
+ * Check if platform fees are enabled (mainnet only)
+ */
+export function isPlatformFeeEnabled(): boolean {
+  return PLATFORM_FEE_CONFIG.isMainnet &&
+         PLATFORM_FEE_CONFIG.feeBps > 0 &&
+         !!PLATFORM_FEE_CONFIG.feeWallet;
+}
+
 // Token info cache
 let tokenListCache: JupiterToken[] | null = null;
 let tokenListCacheTime = 0;
@@ -192,6 +259,7 @@ export async function searchTokens(query: string, limit = 20): Promise<JupiterTo
 
 /**
  * Get a quote for a swap
+ * Includes platform fee if configured
  */
 export async function getQuote(params: {
   inputMint: string;
@@ -199,6 +267,7 @@ export async function getQuote(params: {
   amount: string;
   slippageBps?: number;
   swapMode?: 'ExactIn' | 'ExactOut';
+  includePlatformFee?: boolean; // Set to false to disable fee
 }): Promise<QuoteResponse> {
   const {
     inputMint,
@@ -206,6 +275,7 @@ export async function getQuote(params: {
     amount,
     slippageBps = 50,  // Default 0.5% slippage
     swapMode = 'ExactIn',
+    includePlatformFee = true,
   } = params;
 
   const url = new URL(JUPITER_QUOTE_API);
@@ -214,6 +284,11 @@ export async function getQuote(params: {
   url.searchParams.set('amount', amount);
   url.searchParams.set('slippageBps', slippageBps.toString());
   url.searchParams.set('swapMode', swapMode);
+
+  // Add platform fee if configured and enabled
+  if (includePlatformFee && PLATFORM_FEE_CONFIG.feeBps > 0) {
+    url.searchParams.set('platformFeeBps', PLATFORM_FEE_CONFIG.feeBps.toString());
+  }
 
   console.log('[Jupiter] Fetching quote:', url.toString());
 
@@ -238,19 +313,27 @@ export async function getQuote(params: {
 
 /**
  * Get the swap transaction from Jupiter
+ * Includes fee account if platform fee is configured
  */
 export async function getSwapTransaction(params: {
   quoteResponse: QuoteResponse;
   userPublicKey: string;
   wrapUnwrapSOL?: boolean;
   priorityFee?: 'auto' | number;
+  includePlatformFee?: boolean;
 }): Promise<SwapResponse> {
   const {
     quoteResponse,
     userPublicKey,
     wrapUnwrapSOL = true,
     priorityFee = 'auto',
+    includePlatformFee = true,
   } = params;
+
+  // Get the fee account for the output token (where we receive fees)
+  const feeAccount = includePlatformFee
+    ? getFeeAccount(quoteResponse.outputMint)
+    : undefined;
 
   const body: SwapRequest = {
     quoteResponse,
@@ -259,9 +342,10 @@ export async function getSwapTransaction(params: {
     useSharedAccounts: true,
     dynamicComputeUnitLimit: true,
     prioritizationFeeLamports: priorityFee,
+    feeAccount, // Your token account that receives the fee
   };
 
-  console.log('[Jupiter] Getting swap transaction...');
+  console.log('[Jupiter] Getting swap transaction...', feeAccount ? `(fee -> ${feeAccount})` : '(no fee)');
 
   const response = await fetch(JUPITER_SWAP_API, {
     method: 'POST',

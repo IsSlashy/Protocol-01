@@ -28,7 +28,7 @@ export interface RealtimeSyncConfig {
   autoReconnect?: boolean;
   /** Reconnection delay in ms (default: 3000) */
   reconnectDelay?: number;
-  /** Maximum reconnection attempts (default: 5) */
+  /** Maximum reconnection attempts (default: 3) */
   maxReconnectAttempts?: number;
   /** Enable push notifications (default: false for Expo Go compatibility) */
   enableNotifications?: boolean;
@@ -46,8 +46,8 @@ const MEMO_PREFIX = 'P01_SUB_V1:';
 const DEFAULT_CONFIG: Required<RealtimeSyncConfig> = {
   autoReconnect: true,
   reconnectDelay: 3000,
-  maxReconnectAttempts: 5,
-  enableNotifications: true, // Will fail silently in Expo Go
+  maxReconnectAttempts: 3,
+  enableNotifications: false, // Disabled: streams are shown in UI, push notifs are redundant
   syncInterval: 300000, // 5 minutes (increased to avoid rate limits)
 };
 
@@ -217,7 +217,7 @@ export class RealtimeSyncService {
 
   private setStatus(status: SyncStatus): void {
     this.status = status;
-    console.log('[RealtimeSync] Status changed:', status);
+    console.debug('[RealtimeSync] Status changed:', status);
   }
 
   private emitEvent(event: SyncEvent): void {

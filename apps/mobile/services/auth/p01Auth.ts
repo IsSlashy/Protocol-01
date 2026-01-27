@@ -202,8 +202,7 @@ export async function requestBiometricAuth(
     }
 
     const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: `Se connecter à ${serviceName}`,
-      subtitle: 'Confirmez avec votre empreinte digitale',
+      promptMessage: `Se connecter à ${serviceName} - Confirmez avec votre empreinte digitale`,
       cancelLabel: 'Annuler',
       disableDeviceFallback: false,
     });

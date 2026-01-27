@@ -31,6 +31,7 @@ import Slider from '@react-native-community/slider';
 import { useWalletStore } from '@/stores/walletStore';
 import { useSplitTransactionStore } from '@/stores/splitTransactionStore';
 import { TransactionSplitter, DEFAULT_SPLIT_CONFIG } from '@/services/privacy/transactionSplitter';
+import { getKeypair } from '@/services/solana/wallet';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors
@@ -49,7 +50,7 @@ export default function SendSplitScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ recipient?: string; amount?: string }>();
 
-  const { balance, getKeypair } = useWalletStore();
+  const { balance, isPrivyWallet } = useWalletStore();
   const {
     config,
     setConfig,
@@ -86,6 +87,17 @@ export default function SendSplitScreen() {
   };
 
   const validateInputs = (): boolean => {
+    // Split transactions require local keypair (secret key) access
+    // Privy wallets don't expose secret keys for security reasons
+    if (isPrivyWallet) {
+      Alert.alert(
+        'Feature Not Available',
+        'Split transactions are not available with Privy wallets. This feature requires direct key access for creating temporary wallets.\n\nUse the Shielded Wallet for private transactions instead.',
+        [{ text: 'OK' }]
+      );
+      return false;
+    }
+
     if (!recipient.trim()) {
       Alert.alert('Missing Recipient', 'Please enter a wallet address.');
       return false;

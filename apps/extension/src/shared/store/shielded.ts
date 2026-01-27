@@ -1,9 +1,164 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { PublicKey, Transaction } from '@solana/web3.js';
+import { PublicKey, Transaction, Keypair, SystemProgram } from '@solana/web3.js';
 import { getZkServiceExtension, ZkServiceExtension, ZkAddress, RecipientNoteData } from '../services/zk';
 import { getConnection } from '../services/wallet';
 import { useWalletStore } from './wallet';
+import nacl from 'tweetnacl';
+
+// ============= STEALTH ADDRESS UTILITIES (X25519 ECDH) =============
+
+/**
+ * Convert hex string to Uint8Array
+ */
+function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes;
+}
+
+/**
+ * Convert Uint8Array to hex string
+ */
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * SHA256 hash using Web Crypto API (hashes raw bytes)
+ */
+async function sha256Bytes(data: Uint8Array): Promise<Uint8Array> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data as unknown as ArrayBuffer);
+  return new Uint8Array(hashBuffer);
+}
+
+/**
+ * SHA256 hash of hex string (to match mobile's expo-crypto behavior)
+ */
+async function sha256Hex(data: Uint8Array): Promise<Uint8Array> {
+  const hexString = bytesToHex(data);
+  const encoder = new TextEncoder();
+  const hexBytes = encoder.encode(hexString);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', hexBytes as unknown as ArrayBuffer);
+  return new Uint8Array(hashBuffer);
+}
+
+/**
+ * Compute X25519 shared secret using nacl.box
+ */
+function computeX25519SharedSecret(mySecretKey: Uint8Array, theirPublicKey: Uint8Array): Uint8Array {
+  return nacl.box.before(theirPublicKey, mySecretKey);
+}
+
+/**
+ * Derive stealth private key seed for spending
+ * Must match mobile's algorithm with derivation hash
+ */
+async function deriveStealthSeed(
+  spendingPrivateKey: Uint8Array,
+  sharedSecret: Uint8Array
+): Promise<Uint8Array> {
+  // Hash the shared secret to get derivation bytes
+  const derivationBytes = await sha256Hex(sharedSecret);
+
+  // Combine spending seed + derivation bytes
+  const spendingSeed = spendingPrivateKey.slice(0, 32);
+  const combined = new Uint8Array(64);
+  combined.set(spendingSeed);
+  combined.set(derivationBytes);
+
+  // Hash to get stealth seed
+  return await sha256Hex(combined);
+}
+
+/**
+ * Generate view tag for efficient scanning
+ * Must match mobile: sha256(hex(sharedSecret) + 'view_tag').slice(0,4)
+ */
+async function generateViewTag(sharedSecret: Uint8Array): Promise<string> {
+  // Mobile does: Crypto.digestStringAsync(SHA256, hexString + 'view_tag')
+  const hexString = bytesToHex(sharedSecret) + 'view_tag';
+  const encoder = new TextEncoder();
+  const input = encoder.encode(hexString);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', input as unknown as ArrayBuffer);
+  const hash = new Uint8Array(hashBuffer);
+  // Return first 4 hex chars (2 bytes)
+  return bytesToHex(hash.slice(0, 2));
+}
+
+/**
+ * Scan a stealth payment to derive the private key
+ * Uses X25519 ECDH (matches mobile's fixed algorithm)
+ */
+async function scanStealthPayment(
+  ephemeralPublicKey: string,
+  viewingPrivateKey: Uint8Array,
+  spendingPrivateKey: Uint8Array,
+  expectedViewTag?: string
+): Promise<{ found: boolean; stealthAddress?: string; privateKey?: Uint8Array }> {
+  try {
+    console.log('[Stealth] Scanning with ephemeral:', ephemeralPublicKey.slice(0, 16) + '...');
+
+    // Decode ephemeral X25519 public key
+    let ephemeralX25519Public: Uint8Array;
+    try {
+      // Try as base64 (new format)
+      const decoded = new Uint8Array(Buffer.from(ephemeralPublicKey, 'base64'));
+      if (decoded.length === 32) {
+        ephemeralX25519Public = decoded;
+        console.log('[Stealth] Decoded ephemeral as base64 X25519');
+      } else {
+        throw new Error('Invalid length');
+      }
+    } catch {
+      // Fallback: try as base58 Solana public key (old format - won't work with new algorithm)
+      try {
+        console.log('[Stealth] Ephemeral appears to be old base58 format - cannot scan with X25519');
+        return { found: false };
+      } catch {
+        console.error('[Stealth] Failed to decode ephemeral public key');
+        return { found: false };
+      }
+    }
+
+    // Convert viewing private key to X25519 format
+    // MUST match mobile's getStealthKeys: nacl.hash(viewingKey).slice(0, 32)
+    const viewingSeed = viewingPrivateKey.slice(0, 32);
+    const viewingX25519Secret = nacl.hash(viewingSeed).slice(0, 32);
+
+    // Compute shared secret using X25519 ECDH
+    const sharedSecret = computeX25519SharedSecret(viewingX25519Secret, ephemeralX25519Public);
+    console.log('[Stealth] X25519 shared secret computed');
+
+    // Check view tag for quick rejection
+    if (expectedViewTag) {
+      const computedViewTag = await generateViewTag(sharedSecret);
+      console.log('[Stealth] View tag: expected=', expectedViewTag, 'computed=', computedViewTag);
+      if (computedViewTag !== expectedViewTag) {
+        console.log('[Stealth] View tag mismatch - not for us');
+        return { found: false };
+      }
+    }
+
+    // Derive the stealth seed
+    const stealthPrivateKeySeed = await deriveStealthSeed(spendingPrivateKey, sharedSecret);
+
+    // Derive the corresponding keypair
+    const stealthKeypair = Keypair.fromSeed(stealthPrivateKeySeed);
+    console.log('[Stealth] Derived stealth address:', stealthKeypair.publicKey.toBase58());
+
+    return {
+      found: true,
+      stealthAddress: stealthKeypair.publicKey.toBase58(),
+      privateKey: stealthKeypair.secretKey,
+    };
+  } catch (error) {
+    console.error('[Stealth] Scan failed:', error);
+    return { found: false };
+  }
+}
 
 /**
  * Shielded note data (serializable)
@@ -45,6 +200,13 @@ interface ShieldedState {
   // Internal
   _zkService: ZkServiceExtension | null;
   _seedPhrase: string | null;
+  _foundStealthPayments: Array<{
+    stealthAddress: string;
+    privateKey: Uint8Array;
+    amount: number;
+    signature: string;
+    ephemeralPublicKey: string;
+  }>;
 
   // Actions - Simplified interface (gets wallet data internally)
   initialize: () => Promise<void>;
@@ -58,6 +220,26 @@ interface ShieldedState {
   syncFromBlockchain: () => Promise<{ success: boolean; localRoot: string; onChainRoot: string }>;
   clearNotes: () => Promise<void>;
   reset: () => void;
+
+  // Stealth payment recovery
+  scanStealthPayments: () => Promise<{
+    found: number;
+    amount: number;
+    payments: Array<{ stealthAddress: string; amount: number; signature: string }>;
+  }>;
+  getPendingStealthPayments: () => Array<{ stealthAddress: string; amount: number; signature: string }>;
+  sweepStealthPayment: (stealthAddress: string, recipientAddress: string) => Promise<{
+    success: boolean;
+    signature?: string;
+    error?: string;
+  }>;
+  sweepAllStealthPayments: (recipientAddress: string) => Promise<{
+    success: boolean;
+    swept: number;
+    totalAmount: number;
+    signatures: string[];
+    errors: string[];
+  }>;
 }
 
 /**
@@ -125,6 +307,7 @@ export const useShieldedStore = create<ShieldedState>()(
       merkleRoot: null,
       _zkService: null,
       _seedPhrase: null,
+      _foundStealthPayments: [],
 
       // Initialize with real ZK service (simplified - gets wallet data internally)
       initialize: async () => {
@@ -558,6 +741,250 @@ export const useShieldedStore = create<ShieldedState>()(
         });
 
         console.log('[Shielded] Notes cleared');
+      },
+
+      // ============= STEALTH PAYMENT RECOVERY =============
+
+      // Scan for stealth payments from relayer
+      scanStealthPayments: async () => {
+        console.log('[Shielded] Starting stealth payment scan...');
+        const { isInitialized, _zkService } = get();
+        if (!isInitialized || !_zkService) {
+          console.log('[Shielded] ZK service not initialized, skipping scan');
+          return { found: 0, amount: 0, payments: [] };
+        }
+
+        try {
+          // Use the relayer URL from environment or default
+          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'http://localhost:3000';
+          console.log('[Shielded] Fetching from relayer:', RELAYER_URL);
+          const response = await fetch(`${RELAYER_URL}/relay/stealth-payments?limit=100`);
+
+          if (!response.ok) {
+            console.warn('[Shielded] Failed to fetch stealth payments, status:', response.status);
+            return { found: 0, amount: 0, payments: [] };
+          }
+
+          const data = await response.json();
+          const payments = data.payments || [];
+          console.log('[Shielded] Relayer returned', payments.length, 'payments');
+
+          if (payments.length === 0) {
+            console.log('[Shielded] No payments to scan');
+            return { found: 0, amount: 0, payments: [] };
+          }
+
+          // Get stealth keys from ZK service (derived from seed phrase)
+          const stealthKeys = _zkService.getStealthKeys();
+          if (!stealthKeys) {
+            console.warn('[Shielded] Stealth keys not available');
+            return { found: 0, amount: 0, payments: [] };
+          }
+
+          // Use the proper ZK-derived viewing and spending keys
+          const viewingKey = stealthKeys.viewingKey;
+          const spendingKey = stealthKeys.spendingKey;
+
+          // Scan each payment to find ones that belong to us
+          let found = 0;
+          let totalAmount = 0;
+          const foundPayments: Array<{ stealthAddress: string; amount: number; signature: string }> = [];
+          const newFoundPayments: Array<{
+            stealthAddress: string;
+            privateKey: Uint8Array;
+            amount: number;
+            signature: string;
+            ephemeralPublicKey: string;
+          }> = [];
+
+          for (const payment of payments) {
+            try {
+              // Check if we already have this payment
+              const existing = get()._foundStealthPayments.find(p => p.signature === payment.signature);
+              if (existing) {
+                foundPayments.push({
+                  stealthAddress: payment.stealthAddress,
+                  amount: payment.amount,
+                  signature: payment.signature,
+                });
+                continue;
+              }
+
+              // Try to scan this payment with our keys
+              console.log('[Shielded] Scanning payment:', payment.stealthAddress.slice(0, 16) + '...', 'viewTag:', payment.viewTag);
+              const result = await scanStealthPayment(
+                payment.ephemeralPublicKey,
+                viewingKey,
+                spendingKey,
+                payment.viewTag
+              );
+
+              console.log('[Shielded] Scan result:', result.found ? 'found' : 'not found',
+                'derived:', result.stealthAddress?.slice(0, 16) + '...',
+                'expected:', payment.stealthAddress.slice(0, 16) + '...',
+                'match:', result.stealthAddress === payment.stealthAddress);
+
+              if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
+                console.log('[Shielded] Found stealth payment!', payment.amount, 'SOL');
+                found++;
+                totalAmount += payment.amount;
+
+                foundPayments.push({
+                  stealthAddress: payment.stealthAddress,
+                  amount: payment.amount,
+                  signature: payment.signature,
+                });
+
+                newFoundPayments.push({
+                  stealthAddress: payment.stealthAddress,
+                  privateKey: result.privateKey,
+                  amount: payment.amount,
+                  signature: payment.signature,
+                  ephemeralPublicKey: payment.ephemeralPublicKey,
+                });
+              }
+            } catch (e) {
+              // Not for us, skip
+            }
+          }
+
+          // Store found payments
+          if (newFoundPayments.length > 0) {
+            set(state => ({
+              _foundStealthPayments: [...state._foundStealthPayments, ...newFoundPayments],
+            }));
+          }
+
+          console.log('[Shielded] Found', found, 'stealth payments totaling', totalAmount, 'SOL');
+
+          return {
+            found,
+            amount: totalAmount,
+            payments: foundPayments,
+          };
+        } catch (error) {
+          console.error('[Shielded] Stealth scan error:', error);
+          return { found: 0, amount: 0, payments: [] };
+        }
+      },
+
+      // Get pending stealth payments
+      getPendingStealthPayments: () => {
+        return get()._foundStealthPayments.map(p => ({
+          stealthAddress: p.stealthAddress,
+          amount: p.amount,
+          signature: p.signature,
+        }));
+      },
+
+      // Sweep a single stealth payment
+      sweepStealthPayment: async (stealthAddress: string, recipientAddress: string) => {
+        console.log('[Shielded] Sweeping stealth payment from', stealthAddress.slice(0, 16) + '...');
+
+        try {
+          // Find the stealth payment with private key
+          const payment = get()._foundStealthPayments.find(p => p.stealthAddress === stealthAddress);
+          if (!payment) {
+            return { success: false, error: 'Stealth payment not found. Run scan first.' };
+          }
+
+          // Create keypair from the stealth private key
+          const stealthKeypair = Keypair.fromSecretKey(payment.privateKey);
+
+          // Verify the keypair matches the stealth address
+          if (stealthKeypair.publicKey.toBase58() !== stealthAddress) {
+            return { success: false, error: 'Stealth keypair mismatch' };
+          }
+
+          // Get connection
+          const { network } = getWalletData();
+          const connection = getConnection(network);
+
+          // Get balance of stealth address
+          const balance = await connection.getBalance(stealthKeypair.publicKey);
+          console.log('[Shielded] Stealth address balance:', balance / 1e9, 'SOL');
+
+          if (balance === 0) {
+            return { success: false, error: 'Stealth address has no balance' };
+          }
+
+          // Calculate amount to send (balance minus tx fee)
+          const txFee = 5000; // 0.000005 SOL
+          const amountToSend = balance - txFee;
+
+          if (amountToSend <= 0) {
+            return { success: false, error: 'Balance too low to cover transaction fee' };
+          }
+
+          // Create transfer transaction
+          const recipient = new PublicKey(recipientAddress);
+          const transaction = new Transaction().add(
+            SystemProgram.transfer({
+              fromPubkey: stealthKeypair.publicKey,
+              toPubkey: recipient,
+              lamports: amountToSend,
+            })
+          );
+
+          transaction.feePayer = stealthKeypair.publicKey;
+          transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          transaction.sign(stealthKeypair);
+
+          // Send transaction
+          const signature = await connection.sendRawTransaction(transaction.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
+
+          await connection.confirmTransaction(signature, 'confirmed');
+
+          console.log('[Shielded] Sweep successful! Signature:', signature);
+          console.log('[Shielded] Transferred', amountToSend / 1e9, 'SOL to', recipientAddress.slice(0, 16) + '...');
+
+          // Remove the swept payment from pending list
+          set(state => ({
+            _foundStealthPayments: state._foundStealthPayments.filter(p => p.stealthAddress !== stealthAddress),
+          }));
+
+          return { success: true, signature };
+        } catch (error: any) {
+          console.error('[Shielded] Sweep error:', error);
+          return { success: false, error: error.message || 'Sweep failed' };
+        }
+      },
+
+      // Sweep all stealth payments
+      sweepAllStealthPayments: async (recipientAddress: string) => {
+        console.log('[Shielded] Sweeping all stealth payments...');
+
+        const results = {
+          success: true,
+          swept: 0,
+          totalAmount: 0,
+          signatures: [] as string[],
+          errors: [] as string[],
+        };
+
+        const payments = [...get()._foundStealthPayments];
+
+        for (const payment of payments) {
+          const result = await get().sweepStealthPayment(payment.stealthAddress, recipientAddress);
+
+          if (result.success && result.signature) {
+            results.swept++;
+            results.totalAmount += payment.amount;
+            results.signatures.push(result.signature);
+          } else {
+            results.errors.push(`${payment.stealthAddress.slice(0, 16)}...: ${result.error}`);
+          }
+        }
+
+        if (results.errors.length > 0) {
+          results.success = false;
+        }
+
+        console.log('[Shielded] Sweep complete:', results.swept, 'payments,', results.totalAmount, 'SOL');
+        return results;
       },
 
       // Reset state

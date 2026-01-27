@@ -276,7 +276,7 @@ export default function MeshChatScreen() {
       closePaymentModal();
       // Send message about the payment
       if (useEncryptedMessaging && isEncryptionReady) {
-        await sendEncryptedPaymentSent(amount, 'SOL', selectedToken, result.signature || '', paymentNote || undefined);
+        await sendEncryptedPaymentSent(amount, 'SOL', selectedToken, result.txSignature || '', paymentNote || undefined);
       } else {
         await sendMeshMessage(
           peerId!,
@@ -325,7 +325,7 @@ export default function MeshChatScreen() {
             }
             const result = await payPaymentRequest(request as any);
             if (useEncryptedMessaging && isEncryptionReady) {
-              await sendEncryptedPaymentSent(message.amount, message.tokenMint || 'SOL', message.token, result?.signature || '');
+              await sendEncryptedPaymentSent(message.amount, message.tokenMint || 'SOL', message.token, result?.txSignature || '');
             } else {
               await sendMeshMessage(
                 peerId!,
@@ -602,11 +602,12 @@ export default function MeshChatScreen() {
                 );
               }
 
-              // Regular message
+              // Regular message - cast to expected type
+              const regularMsg = msg as { id: string; timestamp: number; content: string; fromId: string };
               // For encrypted messages, check against wallet publicKey. For mesh, check against identity.id
               const isMe = useEncryptedMessaging
-                ? msg.fromId === publicKey
-                : msg.fromId === identity?.id;
+                ? regularMsg.fromId === publicKey
+                : regularMsg.fromId === identity?.id;
               const showTimestamp =
                 index === 0 ||
                 allMessages[index - 1].timestamp < msg.timestamp - 300000;
@@ -651,7 +652,7 @@ export default function MeshChatScreen() {
                           lineHeight: 20,
                         }}
                       >
-                        {msg.content}
+                        {regularMsg.content}
                       </Text>
                     </View>
                   </View>

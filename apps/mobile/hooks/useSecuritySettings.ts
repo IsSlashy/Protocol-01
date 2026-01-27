@@ -117,10 +117,11 @@ export function useSecuritySettings(): UseSecuritySettingsReturn {
         cancelLabel: 'Use PIN',
       });
 
-      // Handle lockout scenarios securely
-      if (result.error === 'lockout' || result.error === 'lockout_permanent') {
+      // Handle error scenarios securely
+      const errorCode = 'error' in result ? result.error : undefined;
+      if (errorCode === 'authentication_failed' || errorCode === 'not_available') {
         // Log security event (without sensitive details)
-        console.warn('Biometric authentication locked out');
+        console.warn('Biometric authentication failed');
         return false;
       }
 

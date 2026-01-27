@@ -57,7 +57,7 @@ export default function ConversationScreen() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentNote, setPaymentNote] = useState('');
-  const [selectedCurrency, setSelectedCurrency] = useState(SUPPORTED_CURRENCIES[0]);
+  const [selectedCurrency, setSelectedCurrency] = useState<typeof SUPPORTED_CURRENCIES[number]>(SUPPORTED_CURRENCIES[0]);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
 
   const contact = contacts.find(c => c.id === contactId);

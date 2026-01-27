@@ -25,7 +25,7 @@ import {
   calculateDecoyFees,
   PRIVACY_LEVELS,
 } from '../../../services/solana/decoyTransactions';
-import { sendSol } from '../../../services/solana/transfer';
+import { sendSol } from '../../../services/solana/transactions';
 import { Keypair, PublicKey } from '@solana/web3.js';
 
 const COLORS = {

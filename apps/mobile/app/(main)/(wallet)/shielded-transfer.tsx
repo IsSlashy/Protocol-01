@@ -20,9 +20,11 @@ import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useShieldedStore } from '@/stores/shieldedStore';
+import { useWalletStore } from '@/stores/walletStore';
 import { useZkProver } from '@/providers/ZkProverProvider';
+import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
-import { Transaction } from '@solana/web3.js';
+import { PublicKey, Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors - NO purple allowed
@@ -48,7 +50,11 @@ export default function ShieldedTransferScreen() {
     getLastSentNote,
   } = useShieldedStore();
 
-  // ZK Prover status
+  // Wallet state for Privy detection
+  const { publicKey, isPrivyWallet } = useWalletStore();
+  const { solanaWallet: privyWallet } = usePrivyAuth();
+
+  // ZK Prover - uses backend prover
   const { isCircuitLoaded, error: proverError } = useZkProver();
 
   const [recipient, setRecipient] = useState('');
@@ -62,23 +68,14 @@ export default function ShieldedTransferScreen() {
   useEffect(() => {
     const init = async () => {
       const ready = await ensureInitialized();
-      setIsReady(ready && isCircuitLoaded);
+      setIsReady(ready);
       if (!ready) {
         Alert.alert('Not Initialized', 'Please initialize your shielded wallet first.');
         router.replace('/(main)/(wallet)');
-      } else if (!isCircuitLoaded) {
-        Alert.alert(
-          'ZK Prover Not Ready',
-          'Circuit files are still loading. Please wait a moment or go back and try again.',
-          [
-            { text: 'Go Back', onPress: () => router.back() },
-            { text: 'Wait', style: 'cancel' },
-          ]
-        );
       }
     };
     init();
-  }, [isCircuitLoaded]);
+  }, []);
 
   const handlePaste = async () => {
     const text = await Clipboard.getStringAsync();
@@ -99,11 +96,6 @@ export default function ShieldedTransferScreen() {
   };
 
   const validateInputs = (): boolean => {
-    if (!isCircuitLoaded) {
-      Alert.alert('ZK Prover Not Ready', 'Circuit files are still loading. Please wait and try again.');
-      return false;
-    }
-
     if (!recipient.trim()) {
       Alert.alert('Missing Recipient', 'Please enter a ZK address.');
       return false;
@@ -137,40 +129,47 @@ export default function ShieldedTransferScreen() {
     setProofStatus('Preparing transaction...');
 
     try {
-      // Get keypair for signing
-      const keypair = await getKeypair();
-      if (!keypair) {
-        throw new Error('Could not get wallet keypair');
+      let walletPubkey: PublicKey;
+      let signTransaction: (tx: Transaction) => Promise<Transaction>;
+
+      // Use Privy signer if available, otherwise fall back to local keypair
+      if (isPrivyWallet && privyWallet) {
+        console.log('[ShieldedTransfer] Using Privy wallet for signing');
+        walletPubkey = new PublicKey(privyWallet.address);
+        signTransaction = privyWallet.signTransaction;
+      } else {
+        // Get local keypair for signing
+        const keypair = await getKeypair();
+        if (!keypair) {
+          throw new Error('Could not get wallet keypair');
+        }
+        walletPubkey = keypair.publicKey;
+        signTransaction = async (tx: Transaction): Promise<Transaction> => {
+          tx.sign(keypair);
+          return tx;
+        };
       }
 
-      // Create sign function
-      const signTransaction = async (tx: Transaction): Promise<Transaction> => {
-        tx.sign(keypair);
-        return tx;
-      };
-
-      // Simulate proof generation progress
+      // Simulate proof generation progress with proper closure handling
+      let currentProgress = 0;
       const progressInterval = setInterval(() => {
-        setProofProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return 90;
-          }
-          return prev + Math.random() * 15;
-        });
+        if (currentProgress >= 90) {
+          currentProgress = 90;
+        } else {
+          currentProgress = currentProgress + Math.random() * 15;
+          if (currentProgress > 90) currentProgress = 90;
+        }
+        setProofProgress(currentProgress);
 
-        // Update status messages
-        setProofStatus(prev => {
-          const progress = proofProgress;
-          if (progress < 20) return 'Selecting notes...';
-          if (progress < 40) return 'Building witness...';
-          if (progress < 60) return 'Generating ZK proof...';
-          if (progress < 80) return 'Finalizing proof...';
-          return 'Submitting transaction...';
-        });
+        // Update status messages based on current progress
+        if (currentProgress < 20) setProofStatus('Selecting notes...');
+        else if (currentProgress < 40) setProofStatus('Building witness...');
+        else if (currentProgress < 60) setProofStatus('Generating ZK proof...');
+        else if (currentProgress < 80) setProofStatus('Finalizing proof...');
+        else setProofStatus('Submitting transaction...');
       }, 500);
 
-      await transfer(recipient, parseFloat(amount), keypair.publicKey, signTransaction);
+      await transfer(recipient, parseFloat(amount), walletPubkey, signTransaction);
 
       clearInterval(progressInterval);
       setProofProgress(100);

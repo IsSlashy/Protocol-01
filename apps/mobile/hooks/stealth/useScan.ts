@@ -153,7 +153,7 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
       const currentBlock = 18000000; // Placeholder
 
       // Determine start block
-      const startBlock = fromBlock ?? lastScanBlock || (currentBlock - 10000);
+      const startBlock = fromBlock ?? (lastScanBlock || (currentBlock - 10000));
       const endBlock = currentBlock;
 
       let scannedBlocks = 0;

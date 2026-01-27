@@ -5,15 +5,27 @@
 
 // Format utilities (excluding duplicates)
 export {
-  formatCurrency,
-  formatFiatAmount,
+  formatSOL,
+  formatUSD,
   formatTokenAmount,
-  formatCompactNumber,
+  formatCompactUSD,
+  formatPercentage,
+  formatPriceChange,
+  solToUSD,
+  lamportsToUSD,
+  formatLamportsToUSD,
+  parseSOLToLamports,
 } from './format/currency';
 export {
   truncateAddress,
-  formatAddress,
+  truncateAddressCustom,
   isValidSolanaAddress,
+  isValidPublicKey,
+  formatAddressWithLabel,
+  addressesMatch,
+  getAddressChecksum,
+  maskAddress,
+  formatAddressForQR,
 } from './format/address';
 export * from './format/date';
 export * from './format/number';
@@ -30,10 +42,17 @@ export * from './crypto/stealth';
 
 // Validation utilities
 export {
-  validateAmount,
+  validateSOLAmount,
+  validateTokenAmount,
   isValidAmount,
-  normalizeAmount,
-  type AmountValidation,
+  isValidNumberFormat,
+  parseAmount,
+  sanitizeAmountInput,
+  limitDecimals,
+  calculateMaxSendable,
+  hasMinimumBalance,
+  type AmountValidationResult,
+  type AmountValidationOptions,
 } from './validation/amount';
 export {
   validateSolanaAddress,
@@ -41,7 +60,6 @@ export {
 export {
   validateSeedPhrase,
   getWordSuggestions,
-  type ValidationResult,
 } from './validation/seedPhrase';
 export * from './validation/pin';
 
@@ -55,9 +73,9 @@ export {
 } from './solana/connection';
 export * from './solana/fees';
 export {
-  getTokenInfo,
   getTokenBalance,
-  transferToken,
+  transferTokens,
+  type TokenInfo,
 } from './solana/tokens';
 export * from './solana/transaction';
 

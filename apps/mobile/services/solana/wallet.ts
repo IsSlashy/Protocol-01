@@ -16,7 +16,8 @@ import {
 } from '@solana/spl-token';
 import * as SecureStore from 'expo-secure-store';
 import { generateMnemonic as scureGenerateMnemonic, mnemonicToSeedSync, validateMnemonic as scureValidateMnemonic } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
+// @ts-ignore - Package exports .js extension but TS doesn't recognize it
+import { wordlist } from '@scure/bip39/wordlists/english.js';
 import CryptoJS from 'crypto-js';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';

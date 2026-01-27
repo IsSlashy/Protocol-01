@@ -8,22 +8,29 @@ import { Button } from '../ui/Button';
 type RequestType = 'payment' | 'contact' | 'stream';
 type RequestStatus = 'pending' | 'accepted' | 'rejected' | 'expired';
 
-interface RequestCardProps {
+export interface RequestCardProps {
   id: string;
-  type: RequestType;
-  from: {
+  type?: RequestType | 'sent' | 'received';
+  from?: {
     name: string;
     address: string;
     avatar?: string;
   };
+  // Alternative props for compatibility
+  contactName?: string;
+  contactAvatar?: string;
   amount?: number;
   symbol?: string;
+  currency?: string;
   message?: string;
-  createdAt: Date;
+  createdAt?: Date | string;
+  timestamp?: string;
   expiresAt?: Date;
-  status: RequestStatus;
+  status: RequestStatus | 'pending' | 'completed' | 'declined';
   onAccept?: () => void;
   onReject?: () => void;
+  onPay?: () => void;
+  onDecline?: () => void;
   onPress?: () => void;
 }
 
@@ -63,21 +70,41 @@ const getTimeUntilExpiry = (expiresAt?: Date): string | null => {
 
 export const RequestCard: React.FC<RequestCardProps> = ({
   id,
-  type,
+  type = 'payment',
   from,
+  contactName,
+  contactAvatar,
   amount,
   symbol,
+  currency,
   message,
   createdAt,
+  timestamp,
   expiresAt,
   status,
   onAccept,
   onReject,
+  onPay,
+  onDecline,
   onPress,
 }) => {
-  const config = typeConfig[type];
+  // Normalize props for compatibility
+  const displayName = from?.name || contactName || 'Unknown';
+  const displayAvatar = from?.avatar || contactAvatar;
+  const displaySymbol = symbol || currency || 'SOL';
+  const displayDate = createdAt instanceof Date ? createdAt :
+    createdAt ? new Date(createdAt) :
+    timestamp ? new Date(timestamp) : new Date();
+
+  // Map type to config key
+  const configKey: RequestType = type === 'sent' || type === 'received' ? 'payment' : (type as RequestType);
+  const config = typeConfig[configKey];
   const isPending = status === 'pending';
   const expiryText = getTimeUntilExpiry(expiresAt);
+
+  // Normalize callbacks
+  const handleAccept = onAccept || onPay;
+  const handleReject = onReject || onDecline;
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
@@ -93,7 +120,7 @@ export const RequestCard: React.FC<RequestCardProps> = ({
           <View className="flex-1 ml-3">
             <Text className="text-white font-semibold">{config.label}</Text>
             <Text className="text-p01-text-secondary text-xs mt-0.5">
-              {formatTime(createdAt)}
+              {formatTime(displayDate)}
               {expiryText && isPending && (
                 <Text className="text-yellow-500"> - {expiryText}</Text>
               )}
@@ -124,22 +151,24 @@ export const RequestCard: React.FC<RequestCardProps> = ({
         </View>
 
         <View className="flex-row items-center mb-4">
-          <Avatar source={from.avatar} name={from.name} size="sm" />
+          <Avatar source={displayAvatar} name={displayName} size="sm" />
           <View className="ml-2">
-            <Text className="text-white font-medium">{from.name}</Text>
-            <Text className="text-p01-text-secondary text-xs">
-              {from.address.slice(0, 6)}...{from.address.slice(-4)}
-            </Text>
+            <Text className="text-white font-medium">{displayName}</Text>
+            {from?.address && (
+              <Text className="text-p01-text-secondary text-xs">
+                {from.address.slice(0, 6)}...{from.address.slice(-4)}
+              </Text>
+            )}
           </View>
         </View>
 
-        {type === 'payment' && amount && symbol && (
+        {(type === 'payment' || type === 'sent' || type === 'received') && amount && (
           <View className="bg-p01-surface/50 rounded-xl p-4 mb-4">
             <Text className="text-p01-text-secondary text-xs mb-1">
               Requested Amount
             </Text>
             <Text className="text-white text-2xl font-bold">
-              {amount.toFixed(4)} {symbol}
+              {amount.toFixed(4)} {displaySymbol}
             </Text>
           </View>
         )}
@@ -155,24 +184,24 @@ export const RequestCard: React.FC<RequestCardProps> = ({
 
         {isPending && (
           <View className="flex-row gap-3">
-            {onReject && (
+            {handleReject && (
               <Button
                 variant="ghost"
                 size="md"
                 className="flex-1 bg-red-500/10 border border-red-500/30"
-                onPress={onReject}
+                onPress={handleReject}
               >
                 <Text className="text-red-500 font-semibold">Decline</Text>
               </Button>
             )}
-            {onAccept && (
+            {handleAccept && (
               <Button
                 variant="primary"
                 size="md"
                 className="flex-1"
-                onPress={onAccept}
+                onPress={handleAccept}
               >
-                {type === 'payment' ? 'Pay' : 'Accept'}
+                {type === 'payment' || type === 'received' ? 'Pay' : 'Accept'}
               </Button>
             )}
           </View>

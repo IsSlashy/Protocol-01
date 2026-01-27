@@ -82,7 +82,7 @@ pub fn handler(ctx: Context<Shield>, amount: u64, commitment: [u8; 32], new_root
         );
         system_program::transfer(cpi_context, amount)?;
 
-        msg!("Transferred {} lamports (native SOL) to shielded pool", amount);
+        // Minimal logging - transfer visible in transaction anyway
     } else {
         // SPL Token: transfer tokens from user account to pool vault
         let token_program = ctx.accounts.token_program
@@ -119,7 +119,7 @@ pub fn handler(ctx: Context<Shield>, amount: u64, commitment: [u8; 32], new_root
         );
         token::transfer(transfer_ctx, amount)?;
 
-        msg!("Transferred {} SPL tokens to shielded pool", amount);
+        // Minimal logging - transfer visible in transaction anyway
     }
 
     // Insert commitment into Merkle tree with client-computed root
@@ -135,7 +135,7 @@ pub fn handler(ctx: Context<Shield>, amount: u64, commitment: [u8; 32], new_root
         .ok_or(ZkShieldedError::ArithmeticOverflow)?;
     pool.last_tx_at = clock.unix_timestamp;
 
-    msg!("Shielded {} tokens", amount);
+    // Only log data needed for tree synchronization
     msg!("Commitment added at index: {}", leaf_index);
     msg!("New Merkle root: {:?}", merkle_tree.root);
 

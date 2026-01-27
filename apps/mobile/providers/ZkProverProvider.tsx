@@ -1,22 +1,49 @@
 /**
- * ZK Prover Provider
+ * ZK Prover Provider - Lazy Loading Version
  *
  * Provides client-side ZK proof generation using a hidden WebView.
  * All cryptographic operations stay on the device - no backend needed.
  *
- * Shield operations work without proofs.
- * Transfer/unshield require circuit files to be bundled.
+ * IMPORTANT: The WebView and circuits are NOT loaded at startup.
+ * They only load when generateProof() is called for the first time.
+ * This prevents ANR caused by the 19MB circuit file.
  */
 
-import React, { createContext, useContext, useRef, useState, useCallback, useEffect, ReactNode } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
+import React, { createContext, useContext, useRef, useState, useCallback, ReactNode } from 'react';
+import { View, StyleSheet, InteractionManager } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
-// Use legacy API - readAsStringAsync is deprecated in SDK 54
-import * as FileSystem from 'expo-file-system/legacy';
-import { Asset } from 'expo-asset';
 import { getZkService } from '../services/zk';
-// Pre-generated base64 circuit data (avoids asset loading issues)
-import { TRANSFER_WASM_BASE64, TRANSFER_ZKEY_BASE64 } from '../assets/circuits/circuitData';
+
+// Circuit data - loaded on first use to avoid ANR at startup
+let TRANSFER_WASM_BASE64: string | null = null;
+let TRANSFER_ZKEY_BASE64: string | null = null;
+let circuitLoadPromise: Promise<boolean> | null = null;
+
+// Load circuit data only when first needed - uses InteractionManager to not block UI
+async function loadCircuitData(): Promise<boolean> {
+  if (TRANSFER_WASM_BASE64 && TRANSFER_ZKEY_BASE64) return true;
+  if (circuitLoadPromise) return circuitLoadPromise;
+
+  circuitLoadPromise = new Promise((resolve) => {
+    // Wait for interactions to complete before loading heavy data
+    InteractionManager.runAfterInteractions(async () => {
+      console.log('[ZK Prover] Loading circuit data on demand...');
+      try {
+        // Dynamic import - only loads when this function is called
+        const circuitModule = await import('../assets/circuits/circuitData');
+        TRANSFER_WASM_BASE64 = circuitModule.TRANSFER_WASM_BASE64;
+        TRANSFER_ZKEY_BASE64 = circuitModule.TRANSFER_ZKEY_BASE64;
+        console.log('[ZK Prover] Circuit data loaded successfully');
+        resolve(true);
+      } catch (err) {
+        console.error('[ZK Prover] Failed to load circuit data:', err);
+        resolve(false);
+      }
+    });
+  });
+
+  return circuitLoadPromise;
+}
 
 // Groth16 proof type
 interface Groth16Proof {
@@ -30,6 +57,7 @@ interface ZkProverContextType {
   isReady: boolean;
   isCircuitLoaded: boolean;
   generateProof: (inputs: Record<string, string>) => Promise<Groth16Proof>;
+  startProver: () => Promise<boolean>; // Explicitly start the prover
   error: string | null;
 }
 
@@ -211,15 +239,27 @@ interface ZkProverProviderProps {
 
 /**
  * ZK Prover Provider Component
+ *
+ * LAZY LOADING: The WebView is NOT rendered at startup.
+ * It only renders when startProver() or generateProof() is called.
  */
 export function ZkProverProvider({ children }: ZkProverProviderProps) {
   const webViewRef = useRef<WebView>(null);
+  const [webViewEnabled, setWebViewEnabled] = useState(false); // Don't render WebView initially
   const [isReady, setIsReady] = useState(false);
   const [isCircuitLoaded, setIsCircuitLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Use ref for circuit loaded state to avoid stale closure in callback
   const isCircuitLoadedRef = useRef(false);
+  const webViewReadyRef = useRef(false);
+  const webViewRefCurrent = useRef<WebView | null>(null);
+
+  // Promise resolvers for initialization
+  const webViewReadyPromise = useRef<{
+    resolve: () => void;
+    reject: (err: Error) => void;
+  } | null>(null);
 
   // Handle WebView messages
   const onMessage = useCallback((event: WebViewMessageEvent) => {
@@ -228,9 +268,9 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
 
       if (data.type === 'ready') {
         console.log('[ZK Prover] WebView ready');
+        webViewReadyRef.current = true;
         setIsReady(true);
-        // Try to load circuit files
-        loadCircuitFiles();
+        webViewReadyPromise.current?.resolve();
         return;
       }
 
@@ -273,18 +313,35 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
     }
   }, []);
 
-  // Load circuit files from pre-generated base64 data
+  // Wait for WebView to be ready
+  const waitForWebView = (): Promise<void> => {
+    if (webViewReadyRef.current) return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+      webViewReadyPromise.current = { resolve, reject };
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (!webViewReadyRef.current) {
+          reject(new Error('WebView initialization timed out'));
+        }
+      }, 30000);
+    });
+  };
+
+  // Load circuit files into WebView
   const loadCircuitFiles = async () => {
     try {
-      console.log('[ZK Prover] Loading circuit files from embedded data...');
+      console.log('[ZK Prover] Loading circuit files...');
       setError('Loading ZK circuits...');
 
-      // Use pre-generated base64 data (avoids React Native asset loading issues)
-      if (!TRANSFER_WASM_BASE64 || !TRANSFER_ZKEY_BASE64) {
+      // Load the circuit data (uses InteractionManager internally)
+      const loaded = await loadCircuitData();
+
+      if (!loaded || !TRANSFER_WASM_BASE64 || !TRANSFER_ZKEY_BASE64) {
         console.error('[ZK Prover] Circuit data not available');
         setError('ZK circuits not bundled. Only shield available.');
         setIsCircuitLoaded(false);
-        return;
+        return false;
       }
 
       console.log('[ZK Prover] Using embedded circuit data...');
@@ -299,28 +356,63 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
       });
 
       console.log('[ZK Prover] Sending circuits to WebView...');
-      webViewRef.current?.injectJavaScript(`
+      webViewRefCurrent.current?.injectJavaScript(`
         window.postMessage(${JSON.stringify(message)}, '*');
         true;
       `);
 
       setError(null);
+      return true;
     } catch (err: any) {
       console.error('[ZK Prover] Failed to load circuit files:', err);
       setError(`Circuit error: ${err.message}. Only shield available.`);
       setIsCircuitLoaded(false);
+      return false;
     }
   };
 
-  // Generate proof via WebView
-  const generateProofViaWebView = useCallback(async (inputs: Record<string, string>): Promise<Groth16Proof> => {
-    if (!webViewRef.current) {
-      throw new Error('WebView not available');
+  // Start the prover (enables WebView and loads circuits)
+  const startProver = useCallback(async (): Promise<boolean> => {
+    console.log('[ZK Prover] Starting prover...');
+
+    // Enable WebView if not already
+    if (!webViewEnabled) {
+      console.log('[ZK Prover] Enabling WebView...');
+      setWebViewEnabled(true);
+      // Wait a frame for React to render the WebView
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    // Use ref to avoid stale closure issue
+    // Wait for WebView to be ready
+    try {
+      await waitForWebView();
+    } catch (err) {
+      console.error('[ZK Prover] WebView failed to initialize:', err);
+      setError('Failed to initialize ZK prover');
+      return false;
+    }
+
+    // Load circuits if not already loaded
     if (!isCircuitLoadedRef.current) {
-      throw new Error('Circuit files not loaded. Only shield operations are available.');
+      const loaded = await loadCircuitFiles();
+      // Wait for circuit loaded message
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return isCircuitLoadedRef.current;
+    }
+
+    return true;
+  }, [webViewEnabled]);
+
+  // Generate proof via WebView
+  const generateProofViaWebView = useCallback(async (inputs: Record<string, string>): Promise<Groth16Proof> => {
+    // Start prover if not already started
+    const ready = await startProver();
+    if (!ready) {
+      throw new Error('Failed to initialize ZK prover. Please try again.');
+    }
+
+    if (!webViewRefCurrent.current) {
+      throw new Error('WebView not available');
     }
 
     const id = Math.random().toString(36).substring(2);
@@ -329,7 +421,7 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
       pendingRequests.set(id, { resolve, reject });
 
       const message = JSON.stringify({ type: 'prove', id, inputs });
-      webViewRef.current?.injectJavaScript(`
+      webViewRefCurrent.current?.injectJavaScript(`
         window.postMessage(${JSON.stringify(message)}, '*');
         true;
       `);
@@ -342,40 +434,42 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
         }
       }, 180000);
     });
-  }, []); // No dependencies - uses refs for mutable state
+  }, [startProver]);
 
   // Context generateProof function
   const generateProof = useCallback(async (inputs: Record<string, string>): Promise<Groth16Proof> => {
-    if (!isReady) {
-      throw new Error('ZK Prover not ready');
-    }
     return generateProofViaWebView(inputs);
-  }, [isReady, generateProofViaWebView]);
+  }, [generateProofViaWebView]);
 
   const contextValue: ZkProverContextType = {
     isReady,
     isCircuitLoaded,
     generateProof,
+    startProver,
     error,
   };
 
   return (
     <ZkProverContext.Provider value={contextValue}>
-      {/* Hidden WebView for proof generation */}
-      <View style={styles.hiddenWebView}>
-        <WebView
-          ref={webViewRef}
-          source={{ html: PROVER_WEBVIEW_HTML }}
-          onMessage={onMessage}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-          originWhitelist={['*']}
-          onError={(e) => {
-            console.error('[ZK Prover] WebView error:', e.nativeEvent);
-            setError('WebView error: ' + e.nativeEvent.description);
-          }}
-        />
-      </View>
+      {/* Hidden WebView for proof generation - only rendered when enabled */}
+      {webViewEnabled && (
+        <View style={styles.hiddenWebView}>
+          <WebView
+            ref={(ref) => {
+              webViewRefCurrent.current = ref;
+            }}
+            source={{ html: PROVER_WEBVIEW_HTML }}
+            onMessage={onMessage}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            originWhitelist={['*']}
+            onError={(e) => {
+              console.error('[ZK Prover] WebView error:', e.nativeEvent);
+              setError('WebView error: ' + e.nativeEvent.description);
+            }}
+          />
+        </View>
+      )}
       {children}
     </ZkProverContext.Provider>
   );
@@ -383,11 +477,26 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
 
 /**
  * Hook to access the ZK Prover
+ * Returns a mock context if provider is not available (for graceful degradation)
  */
+let _zkProverWarnedOnce = false;
 export function useZkProver(): ZkProverContextType {
   const context = useContext(ZkProverContext);
   if (!context) {
-    throw new Error('useZkProver must be used within a ZkProverProvider');
+    // Return mock context instead of throwing - allows app to work without ZK features
+    if (!_zkProverWarnedOnce) {
+      console.log('[ZK Prover] Provider not in tree - using backend prover');
+      _zkProverWarnedOnce = true;
+    }
+    return {
+      isReady: false,
+      isCircuitLoaded: false,
+      generateProof: async () => {
+        throw new Error('ZK Prover not available. Please restart the app to enable ZK features.');
+      },
+      startProver: async () => false,
+      error: 'ZK Prover not initialized - circuits not loaded to save memory',
+    };
   }
   return context;
 }

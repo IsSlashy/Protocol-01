@@ -1,0 +1,42 @@
+#!/usr/bin/expect -f
+
+set timeout 600
+
+spawn bash -c "cd '/mnt/p/Protocol 01/apps/mobile' && eas build --profile development --platform android"
+
+expect {
+    "*Y/n*" {
+        send "y\r"
+        exp_continue
+    }
+    "*y/N*" {
+        send "y\r"
+        exp_continue
+    }
+    "*generate a new*" {
+        send "y\r"
+        exp_continue
+    }
+    "*Generate new*" {
+        send "\r"
+        exp_continue
+    }
+    "*Keystore*" {
+        send "\r"
+        exp_continue
+    }
+    "Build details" {
+        puts "\n=== BUILD SUBMITTED ==="
+    }
+    "https://expo.dev" {
+        puts "\n=== BUILD URL ==="
+    }
+    timeout {
+        puts "\nTimeout - check EAS dashboard"
+    }
+    eof {
+        puts "\nEOF - Check EAS dashboard for build status"
+    }
+}
+
+puts "Script completed"
