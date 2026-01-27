@@ -48,6 +48,12 @@ export default function Home() {
               >
                 Docs
               </a>
+              <a
+                href="/roadmap"
+                className="text-sm text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider"
+              >
+                Roadmap
+              </a>
             </div>
 
             {/* Social & CTA */}

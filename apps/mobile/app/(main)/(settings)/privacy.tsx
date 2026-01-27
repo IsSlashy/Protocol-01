@@ -6,7 +6,6 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { SettingsSection, SettingsRow, RadioOption, ToggleRow } from '../../../components/settings';
-import { usePrivacyStore, getZoneStatusColor, getZoneStatusLabel } from '../../../stores/privacyStore';
 import {
   PRIVACY_LEVELS,
   calculateDecoyFees,
@@ -39,14 +38,8 @@ export default function PrivacySettingsScreen() {
   const [privateByDefault, setPrivateByDefault] = useState(true);
   const [ephemeralWallets, setEphemeralWallets] = useState(false);
 
-  // Privacy zone store
-  const { zoneStatus, settings: privacyZoneSettings, initialize: initPrivacyZone } = usePrivacyStore();
-  const zoneColor = getZoneStatusColor(zoneStatus);
-  const zoneLabel = getZoneStatusLabel(zoneStatus);
-
   useEffect(() => {
     loadSettings();
-    initPrivacyZone();
   }, []);
 
   const loadSettings = async () => {
@@ -211,38 +204,6 @@ export default function PrivacySettingsScreen() {
             leftIcon="refresh-outline"
             onPress={handleAutoScanSelect}
           />
-        </SettingsSection>
-
-        {/* PRIVACY ZONE */}
-        <SettingsSection title="Privacy Zone">
-          <TouchableOpacity
-            className="flex-row items-center justify-between py-4 px-4"
-            onPress={() => router.push('/(main)/(settings)/privacy-zone')}
-            activeOpacity={0.7}
-          >
-            <View className="flex-row items-center flex-1">
-              <View className="w-8 h-8 rounded-lg bg-p01-elevated items-center justify-center mr-3">
-                <Ionicons name="bluetooth" size={18} color="#39c5bb" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-white text-base font-medium">Privacy Zone Settings</Text>
-                <Text style={{ color: '#9ca3af', fontSize: 14, marginTop: 2 }}>
-                  {privacyZoneSettings.enabled
-                    ? `${zoneLabel} - ${zoneStatus.nearbyTrustedCount} trusted nearby`
-                    : 'Bluetooth-based auto-lock'}
-                </Text>
-              </View>
-            </View>
-            <View className="flex-row items-center">
-              {privacyZoneSettings.enabled && (
-                <View
-                  className="w-2 h-2 rounded-full mr-2"
-                  style={{ backgroundColor: zoneColor }}
-                />
-              )}
-              <Ionicons name="chevron-forward" size={20} color="#555560" />
-            </View>
-          </TouchableOpacity>
         </SettingsSection>
 
         {/* TRANSACTIONS */}

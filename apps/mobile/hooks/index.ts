@@ -86,32 +86,6 @@ export type {
 } from './streams';
 
 // ============================================================================
-// Social Hooks
-// ============================================================================
-export {
-  useContacts,
-  useContact,
-  useRequests,
-  useAddContact,
-  createContactFromTransaction,
-  validateStealthMetaAddress,
-  formatAddressForDisplay,
-} from './social';
-
-export type {
-  Contact,
-  ContactGroup,
-  ContactStats,
-  ContactActivity,
-  PaymentRequest,
-  RequestStatus,
-  RequestDirection,
-  AddContactFormData,
-  ValidationResult,
-  AddContactStep,
-} from './social';
-
-// ============================================================================
 // Agent Hooks
 // ============================================================================
 export {
@@ -190,22 +164,6 @@ export type {
   HapticFeedbackType,
   HapticsSettings,
 } from './common';
-
-// ============================================================================
-// Bluetooth Hooks
-// ============================================================================
-export {
-  useMesh,
-  getZoneStatusColor,
-  getZoneStatusLabel,
-  getDeviceZoneColor,
-  formatDeviceZone,
-} from './bluetooth';
-
-export type {
-  UseMeshOptions,
-  UseMeshReturn,
-} from './bluetooth';
 
 // ============================================================================
 // Sync Hooks

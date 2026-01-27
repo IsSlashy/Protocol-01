@@ -101,27 +101,6 @@ export default function MainLayout() {
           ),
         }}
       />
-      {/* Social tab hidden - focusing on Streams technology
-      <Tabs.Screen
-        name="(social)"
-        options={{
-          title: 'Social',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'people' : 'people-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-      */}
-      <Tabs.Screen
-        name="(social)"
-        options={{
-          href: null, // Hidden - Social features handled by other protocols (anonemesh, etc.)
-        }}
-      />
       <Tabs.Screen
         name="(agent)"
         options={{
