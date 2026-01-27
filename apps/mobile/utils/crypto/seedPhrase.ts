@@ -3,7 +3,8 @@
  * Implements BIP39 mnemonic generation and validation
  */
 
-import * as bip39 from 'bip39';
+import { generateMnemonic as scureGenerateMnemonic, validateMnemonic as scureValidateMnemonic, mnemonicToSeed as scureMnemonicToSeed, mnemonicToEntropy as scureMnemonicToEntropy, entropyToMnemonic as scureEntropyToMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english';
 import * as Crypto from 'expo-crypto';
 
 export type MnemonicStrength = 128 | 160 | 192 | 224 | 256;
@@ -43,7 +44,7 @@ export function generateSeedPhrase(wordCount: WordCount = 12): string[] {
     );
   }
 
-  const mnemonic = bip39.generateMnemonic(strength);
+  const mnemonic = scureGenerateMnemonic(wordlist, strength);
   return mnemonic.split(' ');
 }
 
@@ -72,11 +73,11 @@ export function validateSeedPhrase(words: string[] | string): ValidationResult {
   }
 
   // Check each word is in the wordlist
-  const wordlist = bip39.wordlists.english;
+  const words = wordlist;
   const invalidWords: string[] = [];
 
   for (const word of wordArray) {
-    if (!wordlist.includes(word.toLowerCase())) {
+    if (!words.includes(word.toLowerCase())) {
       invalidWords.push(word);
     }
   }
@@ -94,7 +95,7 @@ export function validateSeedPhrase(words: string[] | string): ValidationResult {
 
   // Validate mnemonic (includes checksum validation)
   const mnemonic = wordArray.join(' ').toLowerCase();
-  if (!bip39.validateMnemonic(mnemonic)) {
+  if (!scureValidateMnemonic(mnemonic, wordlist)) {
     return {
       isValid: false,
       error: createSeedError(
@@ -111,7 +112,6 @@ export function validateSeedPhrase(words: string[] | string): ValidationResult {
  * Check if a single word is valid
  */
 export function isValidWord(word: string): boolean {
-  const wordlist = bip39.wordlists.english;
   return wordlist.includes(word.toLowerCase());
 }
 
@@ -123,7 +123,6 @@ export function getWordSuggestions(prefix: string, limit: number = 5): string[] 
     return [];
   }
 
-  const wordlist = bip39.wordlists.english;
   const lowerPrefix = prefix.toLowerCase();
 
   return wordlist
@@ -135,14 +134,13 @@ export function getWordSuggestions(prefix: string, limit: number = 5): string[] 
  * Get the full wordlist
  */
 export function getWordlist(): string[] {
-  return [...bip39.wordlists.english];
+  return [...wordlist];
 }
 
 /**
  * Get word index in wordlist
  */
 export function getWordIndex(word: string): number {
-  const wordlist = bip39.wordlists.english;
   return wordlist.indexOf(word.toLowerCase());
 }
 
@@ -155,7 +153,8 @@ export async function mnemonicToSeed(mnemonic: string, passphrase?: string): Pro
     throw validation.error;
   }
 
-  return bip39.mnemonicToSeed(mnemonic.toLowerCase(), passphrase);
+  const seed = await scureMnemonicToSeed(mnemonic.toLowerCase(), passphrase);
+  return Buffer.from(seed);
 }
 
 /**
@@ -175,14 +174,14 @@ export function mnemonicToEntropy(mnemonic: string): string {
     throw validation.error;
   }
 
-  return bip39.mnemonicToEntropy(mnemonic.toLowerCase());
+  return scureMnemonicToEntropy(mnemonic.toLowerCase(), wordlist);
 }
 
 /**
  * Convert entropy to mnemonic
  */
 export function entropyToMnemonic(entropy: string): string {
-  return bip39.entropyToMnemonic(entropy);
+  return scureEntropyToMnemonic(Buffer.from(entropy, 'hex'), wordlist);
 }
 
 /**
@@ -229,7 +228,6 @@ export function maskSeedPhrase(
  * Generate a random word from wordlist (for testing/UI)
  */
 export function getRandomWord(): string {
-  const wordlist = bip39.wordlists.english;
   const randomIndex = Math.floor(Math.random() * wordlist.length);
   return wordlist[randomIndex];
 }

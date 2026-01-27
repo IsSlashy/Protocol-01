@@ -7,18 +7,28 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-p01 = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
+specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
 p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
 p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
 p01_subscription = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 zk_shielded = "8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY"
+p01_fee_splitter = "muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD"
 
 [programs.devnet]
-p01 = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
+specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
 p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
 p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
 p01_subscription = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 zk_shielded = "8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY"
+p01_fee_splitter = "muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD"
+
+[programs.mainnet]
+specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
+p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
+p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
+p01_subscription = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+zk_shielded = "8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY"
+p01_fee_splitter = "7xwX64ZxMVyw7xWJPaPuy8WFcvvhJrDDWEkc64nUMDCu"
 
 [registry]
 url = "https://api.apr.dev"

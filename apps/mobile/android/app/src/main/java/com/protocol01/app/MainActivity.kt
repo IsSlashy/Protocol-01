@@ -1,4 +1,4 @@
-package com.p01.protocol
+package com.protocol01.app
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

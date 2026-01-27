@@ -1,4 +1,4 @@
-package com.p01.protocol
+package com.protocol01.app
 
 import android.app.Application
 import android.content.res.Configuration

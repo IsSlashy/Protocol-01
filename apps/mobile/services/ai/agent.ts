@@ -424,8 +424,8 @@ function sendToGemmaOnDevice(userMessage: string, context?: AIContext): ChatResp
       // Find most expensive
       const activeStreams = context!.streams!.filter(s => s.status === 'active');
       if (activeStreams.length > 0) {
-        const sorted = [...activeStreams].sort((a, b) => b.amount - a.amount);
-        message += `\nPlus cher: ${sorted[0].name} (${sorted[0].amount} SOL/${sorted[0].interval})`;
+        const sorted = [...activeStreams].sort((a, b) => b.amountPerPayment - a.amountPerPayment);
+        message += `\nPlus cher: ${sorted[0].name} (${sorted[0].amountPerPayment} SOL/${sorted[0].frequency})`;
       }
 
       return { success: true, message };

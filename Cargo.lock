@@ -2858,6 +2858,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01-fee-splitter"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+]
+
+[[package]]
 name = "p01-stream"
 version = "0.1.0"
 dependencies = [

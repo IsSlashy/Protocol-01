@@ -1,10 +1,42 @@
 /**
  * Stealth address utilities for Protocol 01
- * Implements stealth address generation and scanning
+ * Implements stealth address generation and scanning with proper ECDH
  */
 
 import { Keypair, PublicKey } from '@solana/web3.js';
 import * as Crypto from 'expo-crypto';
+import nacl from 'tweetnacl';
+
+// ============= ECDH-like Shared Secret =============
+// Uses nacl.box which internally does X25519 ECDH
+
+/**
+ * Generate an X25519 keypair for ECDH
+ */
+function generateX25519Keypair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
+  return nacl.box.keyPair();
+}
+
+/**
+ * Convert Ed25519 seed to X25519 keypair
+ * The seed is hashed to derive X25519 keys deterministically
+ */
+function seedToX25519Keypair(seed: Uint8Array): { publicKey: Uint8Array; secretKey: Uint8Array } {
+  // Use the seed to derive an X25519 keypair deterministically
+  // Hash the seed to get 32 bytes for X25519 secret key
+  const hash = nacl.hash(seed);
+  const secretKey = hash.slice(0, 32);
+  // Derive public key from secret key
+  return nacl.box.keyPair.fromSecretKey(secretKey);
+}
+
+/**
+ * Compute X25519 shared secret using nacl.box
+ */
+function computeX25519SharedSecret(mySecretKey: Uint8Array, theirPublicKey: Uint8Array): Uint8Array {
+  // nacl.box.before computes the shared secret
+  return nacl.box.before(theirPublicKey, mySecretKey);
+}
 
 export interface StealthKeys {
   spendingKey: Keypair;
@@ -66,22 +98,44 @@ export async function generateStealthKeys(): Promise<StealthKeys> {
 
 /**
  * Generate stealth address for a recipient
+ * Uses proper X25519 ECDH for shared secret derivation
+ *
+ * @param recipientSpendingPubKey - Recipient's Ed25519 spending public key (base58)
+ * @param recipientViewingPubKey - Recipient's Ed25519 viewing public key (base58)
+ * @param recipientViewingX25519Pub - Optional: Recipient's X25519 viewing public key (32 bytes)
  */
 export async function generateStealthAddress(
   recipientSpendingPubKey: string,
-  recipientViewingPubKey: string
+  recipientViewingPubKey: string,
+  recipientViewingX25519Pub?: Uint8Array
 ): Promise<StealthAddress> {
   try {
-    // Generate ephemeral keypair using secure randomness
-    const ephemeralKey = await generateKeypairSecure();
+    // Generate ephemeral X25519 keypair for ECDH
+    const ephemeralX25519 = generateX25519Keypair();
 
-    // Compute shared secret using ECDH-like construction
-    const sharedSecret = await computeSharedSecret(
-      ephemeralKey.secretKey,
-      recipientViewingPubKey
+    // Get recipient's X25519 viewing public key
+    let recipientX25519Public: Uint8Array;
+    if (recipientViewingX25519Pub && recipientViewingX25519Pub.length === 32) {
+      // Use provided X25519 public key directly (new format)
+      recipientX25519Public = recipientViewingX25519Pub;
+      console.log('[Stealth] Using provided X25519 viewing public key');
+    } else {
+      // Derive X25519 from Ed25519 viewing key (legacy fallback)
+      // Note: This uses the Ed25519 public key bytes as seed, which must match recipient's derivation
+      const viewingPubBytes = new PublicKey(recipientViewingPubKey).toBytes();
+      const recipientX25519Keypair = seedToX25519Keypair(viewingPubBytes);
+      recipientX25519Public = recipientX25519Keypair.publicKey;
+      console.log('[Stealth] Derived X25519 from Ed25519 viewing public key (legacy)');
+    }
+
+    // Compute shared secret using X25519 ECDH
+    // Sender: ephemeralSecret * recipientViewingX25519Public
+    const sharedSecret = computeX25519SharedSecret(
+      ephemeralX25519.secretKey,
+      recipientX25519Public
     );
 
-    // Derive stealth address
+    // Derive stealth address using spending key + shared secret
     const stealthPubKey = await deriveStealthPublicKey(
       recipientSpendingPubKey,
       sharedSecret
@@ -90,18 +144,26 @@ export async function generateStealthAddress(
     // Generate view tag for efficient scanning
     const viewTag = await generateViewTag(sharedSecret);
 
+    // Store ephemeral X25519 public key for recipient to compute shared secret
+    const ephemeralPubKeyBase64 = Buffer.from(ephemeralX25519.publicKey).toString('base64');
+
     return {
       address: stealthPubKey,
-      ephemeralPublicKey: ephemeralKey.publicKey.toBase58(),
+      ephemeralPublicKey: ephemeralPubKeyBase64, // base64 of X25519 key
       viewTag,
     };
   } catch (error) {
+    console.error('[Stealth] Generate error:', error);
     throw createStealthError('DERIVATION_FAILED', 'Failed to generate stealth address');
   }
 }
 
 /**
  * Scan for incoming stealth payments
+ * Uses proper X25519 ECDH for shared secret derivation (matches generateStealthAddress)
+ *
+ * IMPORTANT: viewingPrivateKey must be the same seed used in getStealthKeys()
+ * The X25519 private key is derived as: nacl.hash(viewingPrivateKey).slice(0, 32)
  */
 export async function scanStealthPayment(
   ephemeralPublicKey: string,
@@ -110,15 +172,47 @@ export async function scanStealthPayment(
   expectedViewTag?: string
 ): Promise<StealthScanResult> {
   try {
-    // Compute shared secret
-    const sharedSecret = await computeSharedSecret(
-      viewingPrivateKey,
-      ephemeralPublicKey
+    // Decode ephemeral X25519 public key (base64 encoded)
+    let ephemeralX25519Public: Uint8Array;
+    try {
+      // Try as base64 (new format)
+      const decoded = Buffer.from(ephemeralPublicKey, 'base64');
+      if (decoded.length === 32) {
+        ephemeralX25519Public = new Uint8Array(decoded);
+        console.log('[Stealth] Decoded ephemeral key as base64 X25519');
+      } else {
+        throw new Error('Invalid length');
+      }
+    } catch {
+      // Fallback: try as base58 Solana public key (old format)
+      try {
+        const ephemeralPubBytes = new PublicKey(ephemeralPublicKey).toBytes();
+        const ephemeralX25519 = seedToX25519Keypair(ephemeralPubBytes);
+        ephemeralX25519Public = ephemeralX25519.publicKey;
+        console.log('[Stealth] Decoded ephemeral key as Ed25519 (legacy)');
+      } catch {
+        console.error('[Stealth] Failed to decode ephemeral public key');
+        return { found: false };
+      }
+    }
+
+    // Convert viewing private key to X25519 format
+    // MUST match getStealthKeys: nacl.hash(viewingKey).slice(0, 32)
+    const viewingSeed = viewingPrivateKey.slice(0, 32);
+    const viewingX25519Secret = nacl.hash(viewingSeed).slice(0, 32);
+    const viewingX25519Keypair = nacl.box.keyPair.fromSecretKey(viewingX25519Secret);
+
+    // Compute shared secret using X25519 ECDH
+    // Recipient: viewingX25519Secret * ephemeralX25519Public
+    const sharedSecret = computeX25519SharedSecret(
+      viewingX25519Keypair.secretKey,
+      ephemeralX25519Public
     );
 
     // Check view tag for quick rejection
     if (expectedViewTag) {
       const computedViewTag = await generateViewTag(sharedSecret);
+      console.log('[Stealth] View tag: expected=', expectedViewTag, 'computed=', computedViewTag);
       if (computedViewTag !== expectedViewTag) {
         return { found: false };
       }
@@ -130,8 +224,9 @@ export async function scanStealthPayment(
       sharedSecret
     );
 
-    // Derive the corresponding public key
+    // Derive the corresponding keypair
     const stealthKeypair = Keypair.fromSeed(stealthPrivateKey);
+    console.log('[Stealth] Derived stealth address:', stealthKeypair.publicKey.toBase58());
 
     return {
       found: true,
@@ -139,33 +234,12 @@ export async function scanStealthPayment(
       privateKey: stealthKeypair.secretKey,
     };
   } catch (error) {
-    throw createStealthError('SCAN_FAILED', 'Failed to scan stealth payment');
+    console.error('[Stealth] Scan error:', error);
+    return { found: false };
   }
 }
 
-/**
- * Compute shared secret from private key and public key
- */
-async function computeSharedSecret(
-  privateKey: Uint8Array,
-  publicKeyBase58: string
-): Promise<Uint8Array> {
-  // Simple shared secret computation
-  // In production, use proper ECDH with Ed25519 -> X25519 conversion
-  const publicKeyBytes = new PublicKey(publicKeyBase58).toBytes();
-
-  // Combine keys and hash to get shared secret
-  const combined = new Uint8Array(privateKey.length + publicKeyBytes.length);
-  combined.set(privateKey.slice(0, 32)); // Use seed portion
-  combined.set(publicKeyBytes, 32);
-
-  const hashHex = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    Buffer.from(combined).toString('hex')
-  );
-
-  return hexToBytes(hashHex);
-}
+// Note: computeSharedSecret removed - now using X25519 ECDH via computeX25519SharedSecret
 
 /**
  * Derive stealth public key from recipient's spending key and shared secret

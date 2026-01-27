@@ -29,9 +29,17 @@ export default function ContactDetailScreen() {
   const {
     contacts,
     initialize,
-    toggleFavorite,
+    updateContact,
     removeContact,
   } = useContactsStore();
+
+  // Toggle favorite using updateContact
+  const toggleFavorite = async (contactId: string) => {
+    const contact = contacts.find(c => c.id === contactId);
+    if (contact) {
+      await updateContact(contactId, { isFavorite: !contact.isFavorite });
+    }
+  };
 
   useEffect(() => {
     initialize();

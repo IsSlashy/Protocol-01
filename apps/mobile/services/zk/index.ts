@@ -6,11 +6,13 @@
  * is delegated to a backend prover service.
  */
 
-import { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair } from '@solana/web3.js';
 import { getConnection } from '../solana/connection';
 import * as SecureStore from 'expo-secure-store';
 import { keccak_256 } from '@noble/hashes/sha3';
 import bs58 from 'bs58';
+import nacl from 'tweetnacl';
+import { generateStealthAddress, scanStealthPayment, type StealthAddress } from '../../utils/crypto/stealth';
 
 // Constants from zk-sdk
 const ZK_SHIELDED_PROGRAM_ID = '8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY';
@@ -60,6 +62,18 @@ export interface Groth16Proof {
   pi_a: Uint8Array;
   pi_b: Uint8Array;
   pi_c: Uint8Array;
+}
+
+/**
+ * Result of a stealth unshield operation
+ * Contains everything the recipient needs to find and spend their funds
+ */
+export interface StealthUnshieldResult {
+  signature: string;
+  stealthAddress: string;
+  ephemeralPublicKey: string;
+  viewTag: string;
+  amount: bigint;
 }
 
 // Import poseidon-lite for circom-compatible Poseidon hash
@@ -399,6 +413,22 @@ export class ZkService {
       encoded,
     };
   }
+  /**
+   * Parse a stealth address from encoded format
+   */
+  static parseStealthAddress(encoded: string): { spendingPublicKey: string; viewingPublicKey: string } | null {
+    if (!encoded.startsWith('stealth:')) {
+      return null;
+    }
+    const parts = encoded.slice(8).split(':');
+    if (parts.length !== 2) {
+      return null;
+    }
+    return {
+      spendingPublicKey: parts[0],
+      viewingPublicKey: parts[1],
+    };
+  }
 
   /**
    * Check if a nullifier is potentially spent on-chain
@@ -606,12 +636,30 @@ export class ZkService {
       preflightCommitment: 'confirmed',
     });
 
-    const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-
-    // Check if transaction actually succeeded
-    if (confirmation.value.err) {
-      console.error('[ZK Shield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
-      throw new Error(`Shield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    // Use 'processed' for faster confirmation, retry on timeout
+    try {
+      const confirmation = await this.connection.confirmTransaction(signature, 'processed');
+      if (confirmation.value.err) {
+        console.error('[ZK Shield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
+        throw new Error(`Shield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+      }
+    } catch (e: any) {
+      // Check if it's a timeout - the transaction might still succeed
+      if (e.message?.includes('timeout') || e.message?.includes('expired')) {
+        console.warn('[ZK Shield] Confirmation timed out, checking transaction status...');
+        // Give it a bit more time and check status
+        await new Promise(r => setTimeout(r, 5000));
+        const status = await this.connection.getSignatureStatus(signature);
+        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          console.log('[ZK Shield] Transaction confirmed after retry check');
+        } else if (status.value?.err) {
+          throw new Error(`Shield transaction failed: ${JSON.stringify(status.value.err)}`);
+        } else {
+          console.warn('[ZK Shield] Transaction status uncertain, proceeding optimistically. Check explorer:', signature);
+        }
+      } else {
+        throw e;
+      }
     }
 
     console.log('[ZK Shield] Transaction confirmed:', signature);
@@ -849,16 +897,32 @@ export class ZkService {
     });
 
     console.log('[ZK Transfer] Transaction sent:', signature);
-    const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
 
-    // Check if transaction actually succeeded
-    if (confirmation.value.err) {
-      console.error('[ZK Transfer] Transaction FAILED:', signature);
-      console.error('[ZK Transfer] Error:', JSON.stringify(confirmation.value.err));
-      throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    // Wait for confirmation with timeout handling
+    try {
+      const confirmation = await this.connection.confirmTransaction(signature, 'processed');
+      if (confirmation.value.err) {
+        console.error('[ZK Transfer] Transaction FAILED:', signature);
+        console.error('[ZK Transfer] Error:', JSON.stringify(confirmation.value.err));
+        throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+      }
+      console.log('[ZK Transfer] Transaction confirmed successfully:', signature);
+    } catch (e: any) {
+      if (e.message?.includes('timeout') || e.message?.includes('expired')) {
+        console.warn('[ZK Transfer] Confirmation timed out, checking status...');
+        await new Promise(r => setTimeout(r, 5000));
+        const status = await this.connection.getSignatureStatus(signature);
+        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          console.log('[ZK Transfer] Transaction confirmed after retry');
+        } else if (status.value?.err) {
+          throw new Error(`Transfer failed: ${JSON.stringify(status.value.err)}`);
+        } else {
+          console.warn('[ZK Transfer] Status uncertain, check explorer:', signature);
+        }
+      } else {
+        throw e;
+      }
     }
-
-    console.log('[ZK Transfer] Transaction confirmed successfully:', signature);
 
     // Update local notes
     this.removeSpentNotes(notesToSpend);
@@ -1163,13 +1227,30 @@ export class ZkService {
       throw err;
     }
 
-    // Wait for confirmation and check for errors
-    const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-    if (confirmation.value.err) {
-      console.error('[ZK Unshield] Transaction failed on-chain:', confirmation.value.err);
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    // Wait for confirmation with timeout handling
+    try {
+      const confirmation = await this.connection.confirmTransaction(signature, 'processed');
+      if (confirmation.value.err) {
+        console.error('[ZK Unshield] Transaction failed on-chain:', confirmation.value.err);
+        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+      }
+      console.log('[ZK Unshield] Transaction confirmed successfully:', signature);
+    } catch (e: any) {
+      if (e.message?.includes('timeout') || e.message?.includes('expired')) {
+        console.warn('[ZK Unshield] Confirmation timed out, checking status...');
+        await new Promise(r => setTimeout(r, 5000));
+        const status = await this.connection.getSignatureStatus(signature);
+        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          console.log('[ZK Unshield] Transaction confirmed after retry');
+        } else if (status.value?.err) {
+          throw new Error(`Unshield failed: ${JSON.stringify(status.value.err)}`);
+        } else {
+          console.warn('[ZK Unshield] Status uncertain, check explorer:', signature);
+        }
+      } else {
+        throw e;
+      }
     }
-    console.log('[ZK Unshield] Transaction confirmed successfully:', signature);
 
     // Update local notes
     this.removeSpentNotes(notesToSpend);
@@ -1181,6 +1262,67 @@ export class ZkService {
     await this.saveNotes();
 
     return signature;
+  }
+
+  /**
+   * Unshield tokens to a STEALTH ADDRESS for maximum privacy
+   *
+   * Instead of sending to a known recipient address, this generates
+   * a one-time stealth address that only the recipient can identify
+   * and spend from using their viewing and spending keys.
+   *
+   * Privacy benefits:
+   * - Recipient's real address is never revealed on-chain
+   * - Each payment creates a unique, unlinkable address
+   * - Only the recipient (with viewing key) can find their payments
+   *
+   * @param recipientSpendingPubKey - Recipient's stealth spending public key
+   * @param recipientViewingPubKey - Recipient's stealth viewing public key
+   * @param amount - Amount to unshield
+   * @param walletPublicKey - Payer's wallet
+   * @param signTransaction - Transaction signing function
+   * @returns StealthUnshieldResult with info for recipient to find funds
+   */
+  async unshieldStealth(
+    recipientSpendingPubKey: string,
+    recipientViewingPubKey: string,
+    amount: bigint,
+    walletPublicKey: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ): Promise<StealthUnshieldResult> {
+    console.log('[ZK Stealth Unshield] Generating stealth address for recipient...');
+
+    // Generate one-time stealth address
+    const stealthData: StealthAddress = await generateStealthAddress(
+      recipientSpendingPubKey,
+      recipientViewingPubKey
+    );
+
+    console.log('[ZK Stealth Unshield] Stealth address:', stealthData.address);
+    console.log('[ZK Stealth Unshield] Ephemeral pubkey:', stealthData.ephemeralPublicKey);
+    console.log('[ZK Stealth Unshield] View tag:', stealthData.viewTag);
+
+    // Convert stealth address to PublicKey
+    const stealthRecipient = new PublicKey(stealthData.address);
+
+    // Perform the actual unshield to the stealth address
+    const signature = await this.unshield(
+      stealthRecipient,
+      amount,
+      walletPublicKey,
+      signTransaction
+    );
+
+    console.log('[ZK Stealth Unshield] Complete! Tx:', signature);
+    console.log('[ZK Stealth Unshield] Recipient should scan with viewing key to find funds');
+
+    return {
+      signature,
+      stealthAddress: stealthData.address,
+      ephemeralPublicKey: stealthData.ephemeralPublicKey,
+      viewTag: stealthData.viewTag,
+      amount,
+    };
   }
 
   /**
@@ -1262,6 +1404,17 @@ export class ZkService {
   // Prover function injected by ZkProverProvider
   private proverFunction: ((inputs: Record<string, string>) => Promise<Groth16Proof>) | null = null;
 
+  // Backend prover URL (for mobile without bundled circuits)
+  private static BACKEND_PROVER_URL = 'https://signing-research-literally-remote.trycloudflare.com'; // Cloudflare tunnel to local relayer
+
+  /**
+   * Set the backend prover URL
+   */
+  static setBackendProverUrl(url: string): void {
+    ZkService.BACKEND_PROVER_URL = url;
+    console.log('[ZK] Backend prover URL set to:', url);
+  }
+
   /**
    * Set the prover function (called by ZkProverProvider)
    */
@@ -1271,10 +1424,129 @@ export class ZkService {
   }
 
   /**
-   * Generate proof using client-side prover (no backend)
+   * Generate proof using backend prover service
+   * This is the preferred method for mobile as it doesn't require bundling 19MB circuits
+   */
+  private async generateProofViaBackend(inputs: Record<string, string>): Promise<Groth16Proof> {
+    console.log('[ZK] Requesting proof from backend prover...');
+    console.log('[ZK] Backend URL:', ZkService.BACKEND_PROVER_URL);
+
+    try {
+      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ inputs }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(`Backend prover error: ${error.message || error.error || response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success || !result.proof) {
+        throw new Error(result.message || 'Backend prover returned invalid response');
+      }
+
+      console.log('[ZK] Backend proof generated in', result.proofTimeMs, 'ms');
+
+      // Convert snarkjs proof format to our Groth16Proof format
+      return this.convertSnarkjsProof(result.proof);
+    } catch (error: any) {
+      console.error('[ZK] Backend prover failed:', error);
+      throw new Error(`Backend prover failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Generate proof via backend and return raw snarkjs format
+   * Used for relayer which expects snarkjs format (not byte arrays for Solana)
+   */
+  private async generateProofViaBackendRaw(inputs: Record<string, string>): Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+  }> {
+    console.log('[ZK] Requesting raw proof from backend prover...');
+    console.log('[ZK] Backend URL:', ZkService.BACKEND_PROVER_URL);
+
+    try {
+      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ inputs }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(`Backend prover error: ${error.message || error.error || response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (!result.success || !result.proof) {
+        throw new Error(result.message || 'Backend prover returned invalid response');
+      }
+
+      console.log('[ZK] Backend raw proof generated in', result.proofTimeMs, 'ms');
+
+      // Return raw snarkjs format (string arrays, not byte arrays)
+      return {
+        proof: result.proof,
+        publicSignals: result.publicSignals,
+      };
+    } catch (error: any) {
+      console.error('[ZK] Backend prover failed:', error);
+      throw new Error(`Backend prover failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Convert snarkjs proof format to byte arrays for Solana
+   */
+  private convertSnarkjsProof(snarkjsProof: any): Groth16Proof {
+    const fieldToBytesBE = (value: bigint): Uint8Array => {
+      const bytes = new Uint8Array(32);
+      let temp = value;
+      for (let i = 31; i >= 0; i--) {
+        bytes[i] = Number(temp & BigInt(0xff));
+        temp = temp >> BigInt(8);
+      }
+      return bytes;
+    };
+
+    const pointToBytes = (point: string[]): Uint8Array => {
+      const bytes = new Uint8Array(64);
+      bytes.set(fieldToBytesBE(BigInt(point[0])), 0);
+      bytes.set(fieldToBytesBE(BigInt(point[1])), 32);
+      return bytes;
+    };
+
+    const point2ToBytes = (point: string[][]): Uint8Array => {
+      const bytes = new Uint8Array(128);
+      bytes.set(fieldToBytesBE(BigInt(point[0][1])), 0);
+      bytes.set(fieldToBytesBE(BigInt(point[0][0])), 32);
+      bytes.set(fieldToBytesBE(BigInt(point[1][1])), 64);
+      bytes.set(fieldToBytesBE(BigInt(point[1][0])), 96);
+      return bytes;
+    };
+
+    return {
+      pi_a: pointToBytes(snarkjsProof.pi_a.slice(0, 2)),
+      pi_b: point2ToBytes(snarkjsProof.pi_b.slice(0, 2)),
+      pi_c: pointToBytes(snarkjsProof.pi_c.slice(0, 2)),
+    };
+  }
+
+  /**
+   * Generate proof - tries backend prover first, then falls back to client-side
    *
-   * For React Native, this requires the ZkProverProvider to be mounted
-   * and circuit files to be bundled with the app.
+   * Backend prover is preferred for mobile as it doesn't require bundling 19MB circuits.
+   * Client-side prover requires ZkProverProvider to be mounted with circuit files.
    */
   private async generateProofClientSide(inputs: {
     merkleRoot: bigint;
@@ -1288,13 +1560,6 @@ export class ZkService {
     proofs: { pathElements: bigint[]; pathIndices: number[] }[];
     spendingKey: bigint;
   }): Promise<Groth16Proof> {
-    if (!this.proverFunction) {
-      throw new Error(
-        'ZK Prover not available. Transfer and unshield operations require ' +
-        'the ZkProverProvider to be mounted with circuit files bundled. ' +
-        'Shield operations are available without the prover.'
-      );
-    }
 
     // Format inputs for the circuit (must use snake_case to match circuit signals)
     const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
@@ -1361,13 +1626,32 @@ export class ZkService {
       throw new Error('Commitment mismatch: stored note does not match computed commitment');
     }
 
+    // Try backend prover first (preferred for mobile - no 19MB circuit bundling)
+    try {
+      console.log('[ZK] Trying backend prover...');
+      const proof = await this.generateProofViaBackend(circuitInputs);
+      console.log('[ZK] Backend proof generated successfully');
+      return proof;
+    } catch (backendError: any) {
+      console.warn('[ZK] Backend prover failed:', backendError.message);
+      console.log('[ZK] Falling back to client-side prover...');
+    }
+
+    // Fall back to client-side prover
+    if (!this.proverFunction) {
+      throw new Error(
+        'ZK Prover not available. The backend prover is not reachable and ' +
+        'client-side prover is not loaded. Please ensure the relayer is running ' +
+        'or restart the app to load circuits locally.'
+      );
+    }
+
     try {
       const proof = await this.proverFunction(circuitInputs);
-      console.log('[ZK] Proof generated successfully');
+      console.log('[ZK] Client-side proof generated successfully');
       return proof;
     } catch (error) {
       console.error('[ZK] Client-side proof generation failed:', error);
-      // Log the error details for debugging
       console.error('[ZK] This error means the circuit constraints are not satisfied.');
       console.error('[ZK] Most likely cause: commitment mismatch or invalid merkle proof.');
       throw error;
@@ -1897,7 +2181,7 @@ export class ZkService {
     signatures.sort((a, b) => a.slot - b.slot);
 
     // Helper function to fetch transaction with retry on rate limit
-    const fetchTxWithRetry = async (sig: string, retries = 3): Promise<any> => {
+    const fetchTxWithRetry = async (sig: string, retries = 5): Promise<any> => {
       for (let i = 0; i < retries; i++) {
         try {
           const tx = await this.connection.getTransaction(sig, {
@@ -1905,8 +2189,8 @@ export class ZkService {
           });
           return tx;
         } catch (e: any) {
-          if (e?.message?.includes('429') || e?.message?.includes('rate')) {
-            const delay = Math.pow(2, i) * 1000; // Exponential backoff: 1s, 2s, 4s
+          if (e?.message?.includes('429') || e?.message?.includes('rate') || e?.message?.includes('Too many')) {
+            const delay = Math.pow(2, i) * 1500; // Exponential backoff: 1.5s, 3s, 6s, 12s, 24s
             console.log(`[ZK] Rate limited, waiting ${delay}ms before retry ${i + 1}/${retries}`);
             await new Promise(resolve => setTimeout(resolve, delay));
           } else {
@@ -1915,6 +2199,122 @@ export class ZkService {
         }
       }
       return null;
+    };
+
+    // Helper to parse a fetched transaction and extract commitments into commitmentMap
+    const parseTxCommitments = (tx: any) => {
+      const logs = tx.meta.logMessages;
+
+      let isShield = false;
+      let isUnshield = false;
+      let isTransfer = false;
+      let leafIndex: number | null = null;
+      let transferIndices: [number, number] | null = null;
+
+      for (const log of logs) {
+        if (log.includes('Shield') && !log.includes('Unshield')) isShield = true;
+        if (log.includes('Unshield')) isUnshield = true;
+        if (log.includes('Private transfer completed') || log.includes('Instruction: Transfer')) isTransfer = true;
+
+        const indexMatch = log.match(/Commitment added at index: (\d+)/);
+        if (indexMatch) leafIndex = parseInt(indexMatch[1], 10);
+
+        const changeIndexMatch = log.match(/Change commitment at index: (\d+)/);
+        if (changeIndexMatch) leafIndex = parseInt(changeIndexMatch[1], 10);
+
+        const transferMatch = log.match(/New commitments at indices: (\d+), (\d+)/);
+        if (transferMatch) transferIndices = [parseInt(transferMatch[1], 10), parseInt(transferMatch[2], 10)];
+      }
+
+      const txData = tx.transaction.message;
+
+      const extractCommitmentBytes = (data: Uint8Array, offset: number, len: number = 32): bigint => {
+        const bytes = data.slice(offset, offset + len);
+        let c = BigInt(0);
+        for (let i = 31; i >= 0; i--) c = (c << BigInt(8)) | BigInt(bytes[i]);
+        return c;
+      };
+
+      if (isShield && leafIndex !== null) {
+        if ('compiledInstructions' in txData) {
+          const pi = txData.staticAccountKeys.findIndex((k: PublicKey) => k.equals(this.programId));
+          if (pi !== -1) {
+            for (const ix of txData.compiledInstructions) {
+              if (ix.programIdIndex === pi && ix.data.length >= 80) {
+                const commitment = extractCommitmentBytes(Buffer.from(ix.data), 16);
+                commitmentMap.set(leafIndex, commitment);
+                console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
+                break;
+              }
+            }
+          }
+        } else {
+          for (const ix of txData.instructions) {
+            const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
+            if (ix.programId.equals(this.programId) && ixDataRaw.length >= 80) {
+              const commitment = extractCommitmentBytes(ixDataRaw, 16);
+              commitmentMap.set(leafIndex, commitment);
+              console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
+              break;
+            }
+          }
+        }
+      }
+
+      if (isUnshield && leafIndex !== null) {
+        const OFFSET = 8 + 256 + 32 + 32; // 328
+        if ('compiledInstructions' in txData) {
+          const pi = txData.staticAccountKeys.findIndex((k: PublicKey) => k.equals(this.programId));
+          if (pi !== -1) {
+            for (const ix of txData.compiledInstructions) {
+              if (ix.programIdIndex === pi && ix.data.length > 400) {
+                const commitment = extractCommitmentBytes(Buffer.from(ix.data), OFFSET);
+                commitmentMap.set(leafIndex, commitment);
+                console.log('[ZK] Found unshield change commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
+                break;
+              }
+            }
+          }
+        } else {
+          for (const ix of txData.instructions) {
+            const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
+            if (ix.programId.equals(this.programId) && ixDataRaw.length > 400) {
+              const commitment = extractCommitmentBytes(ixDataRaw, OFFSET);
+              commitmentMap.set(leafIndex, commitment);
+              console.log('[ZK] Found unshield change commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
+              break;
+            }
+          }
+        }
+      }
+
+      if (isTransfer && transferIndices) {
+        const OFF1 = 8 + 256 + 32 + 32; // 328
+        const OFF2 = OFF1 + 32; // 360
+        if ('compiledInstructions' in txData) {
+          const pi = txData.staticAccountKeys.findIndex((k: PublicKey) => k.equals(this.programId));
+          if (pi !== -1) {
+            for (const ix of txData.compiledInstructions) {
+              if (ix.programIdIndex === pi && ix.data.length > 400) {
+                commitmentMap.set(transferIndices[0], extractCommitmentBytes(ix.data, OFF1));
+                commitmentMap.set(transferIndices[1], extractCommitmentBytes(ix.data, OFF2));
+                console.log('[ZK] Found transfer commitments at indices', transferIndices[0], transferIndices[1]);
+                break;
+              }
+            }
+          }
+        } else {
+          for (const ix of txData.instructions) {
+            const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
+            if (ix.programId.equals(this.programId) && ixDataRaw.length > 400) {
+              commitmentMap.set(transferIndices[0], extractCommitmentBytes(ixDataRaw, OFF1));
+              commitmentMap.set(transferIndices[1], extractCommitmentBytes(ixDataRaw, OFF2));
+              console.log('[ZK] Found transfer commitments at indices', transferIndices[0], transferIndices[1]);
+              break;
+            }
+          }
+        }
+      }
     };
 
     // Load global commitment cache (all commitments ever seen)
@@ -1931,243 +2331,44 @@ export class ZkService {
     }
 
     // Add delay between fetches to avoid rate limiting
+    const failedSignatures: string[] = [];
     let fetchCount = 0;
     for (const { signature } of signatures) {
       try {
-        // Add small delay every 5 fetches to avoid rate limiting
-        if (fetchCount > 0 && fetchCount % 5 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+        // Add small delay every 3 fetches to avoid rate limiting
+        if (fetchCount > 0 && fetchCount % 3 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 400));
         }
         fetchCount++;
 
         const tx = await fetchTxWithRetry(signature);
 
-        if (!tx?.meta?.logMessages) continue;
-
-        // Look for shield, unshield, or transfer instruction logs
-        const logs = tx.meta.logMessages;
-
-        let isShield = false;
-        let isUnshield = false;
-        let isTransfer = false;
-        let leafIndex: number | null = null;
-        let transferIndices: [number, number] | null = null;
-
-        for (const log of logs) {
-          // Anchor logs format: "Program log: Instruction: Shield"
-          if (log.includes('Shield') && !log.includes('Unshield')) {
-            isShield = true;
-          }
-          if (log.includes('Unshield')) {
-            isUnshield = true;
-          }
-          // Note: Program logs "Private transfer completed" - must be specific to avoid
-          // false positives from "Transferred X lamports" in Shield/Unshield logs
-          if (log.includes('Private transfer completed') || log.includes('Instruction: Transfer')) {
-            isTransfer = true;
-            console.log('[ZK] Detected Transfer from log:', log);
-          }
-
-          // Parse "Commitment added at index: X" (from shield)
-          const indexMatch = log.match(/Commitment added at index: (\d+)/);
-          if (indexMatch) {
-            leafIndex = parseInt(indexMatch[1], 10);
-          }
-
-          // Parse "Change commitment at index: X" (from unshield)
-          const changeIndexMatch = log.match(/Change commitment at index: (\d+)/);
-          if (changeIndexMatch) {
-            leafIndex = parseInt(changeIndexMatch[1], 10);
-            console.log('[ZK] Found unshield change index:', leafIndex);
-          }
-
-          // Parse "New commitments at indices: X, Y" (from transfer)
-          const transferMatch = log.match(/New commitments at indices: (\d+), (\d+)/);
-          if (transferMatch) {
-            transferIndices = [parseInt(transferMatch[1], 10), parseInt(transferMatch[2], 10)];
-            console.log('[ZK] Found transfer indices:', transferIndices);
-          }
+        if (!tx?.meta?.logMessages) {
+          failedSignatures.push(signature);
+          continue;
         }
 
-        // Debug log to see what we're detecting
-        if (isShield || isUnshield || isTransfer) {
-          console.log('[ZK] TX type:', isShield ? 'Shield' : isUnshield ? 'Unshield' : 'Transfer',
-            'leafIndex:', leafIndex, 'transferIndices:', transferIndices);
-        } else {
-          // Log unrecognized transactions for debugging
-          const relevantLogs = logs.filter(l =>
-            l.includes('Program log:') &&
-            !l.includes('invoke') &&
-            !l.includes('success')
-          );
-          if (relevantLogs.length > 0) {
-            console.log('[ZK] Unrecognized TX logs:', relevantLogs.slice(0, 3));
-          }
-        }
-
-        const txData = tx.transaction.message;
-
-        // Handle Shield transactions - always extract from blockchain (source of truth)
-        if (isShield && leafIndex !== null) {
-          // Shield instruction: discriminator(8) + amount(8) + commitment(32) + new_root(32)
-          const hasCompiledInstructions = 'compiledInstructions' in txData;
-          if (leafIndex === 0) {
-            console.log('[ZK] DEBUG index 0: hasCompiledInstructions =', hasCompiledInstructions);
-          }
-          if (hasCompiledInstructions) {
-            const programIndex = txData.staticAccountKeys.findIndex(
-              (k: PublicKey) => k.equals(this.programId)
-            );
-            if (programIndex !== -1) {
-              for (const ix of txData.compiledInstructions) {
-                if (ix.programIdIndex === programIndex && ix.data.length >= 80) {
-                  const commitmentBytes = Buffer.from(ix.data.slice(16, 48));
-                  let commitment = BigInt(0);
-                  for (let i = 31; i >= 0; i--) {
-                    commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
-                  }
-                  commitmentMap.set(leafIndex, commitment);
-                  // Debug: show first few bytes for index 0
-                  if (leafIndex === 0) {
-                    const bytesHex = Array.from(commitmentBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                    console.log('[ZK] DEBUG index 0 raw bytes (first 8):', bytesHex);
-                  }
-                  console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
-                  break;
-                }
-              }
-            }
-          } else {
-            console.log('[ZK] Using legacy instructions path for shield');
-            for (const ix of txData.instructions) {
-              // For parsed transactions, ix.data is base58 encoded string
-              const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
-              if (ix.programId.equals(this.programId) && ixDataRaw.length >= 80) {
-                const commitmentBytes = ixDataRaw.slice(16, 48);
-                // Debug: show first few bytes for index 0
-                if (leafIndex === 0) {
-                  const bytesHex = Array.from(commitmentBytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                  console.log('[ZK] DEBUG index 0 raw bytes (first 8):', bytesHex);
-                }
-                let commitment = BigInt(0);
-                for (let i = 31; i >= 0; i--) {
-                  commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
-                }
-                commitmentMap.set(leafIndex, commitment);
-                console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
-                break;
-              }
-            }
-          }
-        }
-
-        // Handle Unshield transactions (extract change note commitment)
-        // Unshield instruction layout:
-        // discriminator(8) + proof(256) + nullifier_1(32) + nullifier_2(32) + output_commitment_1(32) + ...
-        // output_commitment_1 is at offset 8 + 256 + 32 + 32 = 328
-        // Always extract from blockchain (source of truth)
-        if (isUnshield && leafIndex !== null) {
-          const UNSHIELD_COMMITMENT_OFFSET = 8 + 256 + 32 + 32; // 328
-          let found = false;
-
-          if ('compiledInstructions' in txData) {
-            const programIndex = txData.staticAccountKeys.findIndex(
-              (k: PublicKey) => k.equals(this.programId)
-            );
-            console.log('[ZK] Unshield TX - programIndex:', programIndex, 'looking for leafIndex:', leafIndex);
-            if (programIndex !== -1) {
-              for (const ix of txData.compiledInstructions) {
-                console.log('[ZK] Checking instruction - programIdIndex:', ix.programIdIndex, 'dataLength:', ix.data.length);
-                // Unshield instruction is larger than shield (>400 bytes)
-                if (ix.programIdIndex === programIndex && ix.data.length > 400) {
-                  const commitmentBytes = Buffer.from(ix.data.slice(UNSHIELD_COMMITMENT_OFFSET, UNSHIELD_COMMITMENT_OFFSET + 32));
-                  let commitment = BigInt(0);
-                  for (let i = 31; i >= 0; i--) {
-                    commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
-                  }
-                  commitmentMap.set(leafIndex, commitment);
-                  console.log('[ZK] Found unshield change commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
-                  found = true;
-                  break;
-                }
-              }
-            }
-          } else {
-            for (const ix of txData.instructions) {
-              // For parsed transactions, ix.data is base58 encoded string
-              const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
-              console.log('[ZK] Checking legacy instruction - dataLength:', ixDataRaw.length);
-              if (ix.programId.equals(this.programId) && ixDataRaw.length > 400) {
-                const commitmentBytes = ixDataRaw.slice(UNSHIELD_COMMITMENT_OFFSET, UNSHIELD_COMMITMENT_OFFSET + 32);
-                let commitment = BigInt(0);
-                for (let i = 31; i >= 0; i--) {
-                  commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
-                }
-                commitmentMap.set(leafIndex, commitment);
-                console.log('[ZK] Found unshield change commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
-                found = true;
-                break;
-              }
-            }
-          }
-
-          if (!found) {
-            console.warn('[ZK] Failed to extract unshield commitment at index', leafIndex);
-          }
-        }
-
-        // Handle Transfer transactions (extract both output commitments)
-        // Transfer instruction layout:
-        // discriminator(8) + proof(256) + nullifier_1(32) + nullifier_2(32) + output_commitment_1(32) + output_commitment_2(32) + merkle_root(32)
-        // output_commitment_1 at offset 328, output_commitment_2 at offset 360
-        if (isTransfer && transferIndices) {
-          const TRANSFER_COMMITMENT_1_OFFSET = 8 + 256 + 32 + 32; // 328
-          const TRANSFER_COMMITMENT_2_OFFSET = TRANSFER_COMMITMENT_1_OFFSET + 32; // 360
-
-          const extractCommitment = (data: Uint8Array, offset: number): bigint => {
-            const bytes = data.slice(offset, offset + 32);
-            let commitment = BigInt(0);
-            for (let i = 31; i >= 0; i--) {
-              commitment = (commitment << BigInt(8)) | BigInt(bytes[i]);
-            }
-            return commitment;
-          };
-
-          if ('compiledInstructions' in txData) {
-            const programIndex = txData.staticAccountKeys.findIndex(
-              (k: PublicKey) => k.equals(this.programId)
-            );
-            if (programIndex !== -1) {
-              for (const ix of txData.compiledInstructions) {
-                if (ix.programIdIndex === programIndex && ix.data.length > 400) {
-                  const commitment1 = extractCommitment(ix.data, TRANSFER_COMMITMENT_1_OFFSET);
-                  const commitment2 = extractCommitment(ix.data, TRANSFER_COMMITMENT_2_OFFSET);
-                  commitmentMap.set(transferIndices[0], commitment1);
-                  commitmentMap.set(transferIndices[1], commitment2);
-                  console.log('[ZK] Found transfer commitment 1 at index', transferIndices[0], ':', commitment1.toString().slice(0, 20) + '...');
-                  console.log('[ZK] Found transfer commitment 2 at index', transferIndices[1], ':', commitment2.toString().slice(0, 20) + '...');
-                  break;
-                }
-              }
-            }
-          } else {
-            for (const ix of txData.instructions) {
-              const ixDataRaw = typeof ix.data === 'string' ? bs58.decode(ix.data) : ix.data;
-              if (ix.programId.equals(this.programId) && ixDataRaw.length > 400) {
-                const commitment1 = extractCommitment(ixDataRaw, TRANSFER_COMMITMENT_1_OFFSET);
-                const commitment2 = extractCommitment(ixDataRaw, TRANSFER_COMMITMENT_2_OFFSET);
-                commitmentMap.set(transferIndices[0], commitment1);
-                commitmentMap.set(transferIndices[1], commitment2);
-                console.log('[ZK] Found transfer commitment 1 at index', transferIndices[0], ':', commitment1.toString().slice(0, 20) + '...');
-                console.log('[ZK] Found transfer commitment 2 at index', transferIndices[1], ':', commitment2.toString().slice(0, 20) + '...');
-                break;
-              }
-            }
-          }
-        }
+        parseTxCommitments(tx);
       } catch (e) {
-        // Skip failed tx parsing
         console.warn('[ZK] Failed to parse transaction:', e);
+      }
+    }
+
+    // Second pass: retry failed fetches with longer delays
+    if (failedSignatures.length > 0) {
+      console.log('[ZK] Retrying', failedSignatures.length, 'failed fetches after cooldown...');
+      await new Promise(resolve => setTimeout(resolve, 5000)); // 5s cooldown
+
+      for (const sig of failedSignatures) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5s between retries
+          const tx = await fetchTxWithRetry(sig, 5);
+          if (tx?.meta?.logMessages) {
+            parseTxCommitments(tx);
+          }
+        } catch (e) {
+          console.warn('[ZK] Retry failed for transaction:', e);
+        }
       }
     }
 
@@ -2348,6 +2549,19 @@ export class ZkService {
     note.leafIndex = onChainIndex;
     note.isOnChain = true;
 
+    // Check if note has already been spent (nullifier check)
+    if (this.spendingKeyHash) {
+      const nullifier = computeNullifier(note.commitment, this.spendingKeyHash);
+      const nullifierBytes = bigintToLeBytes(nullifier);
+      const isSpent = await this.checkNullifierOnChain(nullifierBytes);
+
+      if (isSpent) {
+        console.error('[ZK Import] Note has already been spent (nullifier in bloom filter)');
+        throw new Error('This note has already been spent and cannot be imported.');
+      }
+      console.log('[ZK Import] Nullifier check passed - note is unspent');
+    }
+
     // Add to local notes
     this.addNote(note);
     await this.saveNotes();
@@ -2365,6 +2579,690 @@ export class ZkService {
   }
 
   private _lastSentNote: { noteString: string; amount: bigint; leafIndex: number } | null = null;
+
+  /**
+   * Get the user's stealth keys for receiving private transfers
+   * Returns public keys that others can use to generate stealth addresses
+   */
+  getStealthKeys(): { spendingPublicKey: string; viewingPublicKey: string; viewingX25519Public: string; encoded: string } | null {
+    if (!this.spendingKey || !this.viewingKey) {
+      console.warn('[ZK] Stealth keys not initialized');
+      return null;
+    }
+
+    // Convert bigint spending key to bytes for deriving public key
+    const spendingKeyBytes = bigintToLeBytes(this.spendingKey);
+
+    // Derive spending public key from spending key (as a keypair seed)
+    const spendingKeypair = Keypair.fromSeed(spendingKeyBytes);
+    const spendingPublicKey = spendingKeypair.publicKey.toBase58();
+
+    // Derive viewing public key from viewing key
+    const viewingKeypair = Keypair.fromSeed(this.viewingKey);
+    const viewingPublicKey = viewingKeypair.publicKey.toBase58();
+
+    // Derive X25519 viewing keypair from viewing seed for ECDH
+    // Uses nacl.box.keyPair.fromSecretKey with hashed seed
+    const viewingX25519Secret = nacl.hash(this.viewingKey).slice(0, 32);
+    const viewingX25519Keypair = nacl.box.keyPair.fromSecretKey(viewingX25519Secret);
+    const viewingX25519Public = Buffer.from(viewingX25519Keypair.publicKey).toString('base64');
+
+    // Encode keys for easy sharing (base64)
+    // Format: spendingPub(32) + viewingPub(32) + viewingX25519Pub(32) = 96 bytes
+    const combined = Buffer.concat([
+      spendingKeypair.publicKey.toBytes(),
+      viewingKeypair.publicKey.toBytes(),
+      viewingX25519Keypair.publicKey
+    ]);
+    const encoded = combined.toString('base64');
+
+    return {
+      spendingPublicKey,
+      viewingPublicKey,
+      viewingX25519Public,
+      encoded,
+    };
+  }
+
+  /**
+   * PRIVATE SEND - True Zero-Knowledge Transfer
+   *
+   * This is the ultimate privacy solution:
+   * 1. Sender is hidden (relayer sends on their behalf)
+   * 2. Recipient is hidden (stealth address)
+   * 3. Amount is hidden (fixed denominations like Tornado Cash)
+   *
+   * Flow:
+   * 1. User creates ZK proof showing they have funds in pool
+   * 2. Relayer verifies proof and sends from ITS OWN wallet
+   * 3. On-chain shows: "Relayer → Stealth Address" (no link to depositor!)
+   * 4. Recipient scans for payments using their viewing key
+   *
+   * @param recipientStealthKeys - Recipient's encoded stealth keys (from getStealthKeys)
+   * @param denominationIndex - 0=0.1 SOL, 1=1 SOL, 2=10 SOL
+   * @param walletPublicKey - User's wallet for signing
+   * @param signTransaction - Transaction signing function
+   */
+  async privateSend(
+    recipientStealthKeys: string,
+    denominationIndex: number,
+    walletPublicKey: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ): Promise<{
+    success: boolean;
+    txSignature?: string;
+    stealthAddress?: string;
+    ephemeralPublicKey?: string;
+    viewTag?: string;
+    error?: string;
+  }> {
+    console.log('[ZK Private Send] Starting true ZK transfer...');
+
+    // Fixed denominations (must match relayer)
+    const DENOMINATIONS = [
+      0.1 * 1e9,   // 0.1 SOL = 100M lamports
+      1 * 1e9,     // 1 SOL = 1B lamports
+      10 * 1e9,    // 10 SOL = 10B lamports
+    ];
+
+    if (denominationIndex < 0 || denominationIndex >= DENOMINATIONS.length) {
+      return { success: false, error: 'Invalid denomination index' };
+    }
+
+    const amount = BigInt(DENOMINATIONS[denominationIndex]);
+    console.log('[ZK Private Send] Denomination:', DENOMINATIONS[denominationIndex] / 1e9, 'SOL');
+
+    try {
+      // 1. Decode recipient's stealth keys
+      const keyBuffer = Buffer.from(recipientStealthKeys, 'base64');
+
+      // Support both old format (64 bytes) and new format (96 bytes with X25519)
+      let recipientSpendingPubKey: string;
+      let recipientViewingPubKey: string;
+      let recipientViewingX25519Pub: Uint8Array | undefined;
+
+      if (keyBuffer.length === 96) {
+        // New format: spending(32) + viewing(32) + viewingX25519(32)
+        recipientSpendingPubKey = new PublicKey(keyBuffer.slice(0, 32)).toBase58();
+        recipientViewingPubKey = new PublicKey(keyBuffer.slice(32, 64)).toBase58();
+        recipientViewingX25519Pub = new Uint8Array(keyBuffer.slice(64, 96));
+        console.log('[ZK Private Send] Using new stealth format with X25519 key');
+      } else if (keyBuffer.length === 64) {
+        // Old format: spending(32) + viewing(32)
+        recipientSpendingPubKey = new PublicKey(keyBuffer.slice(0, 32)).toBase58();
+        recipientViewingPubKey = new PublicKey(keyBuffer.slice(32, 64)).toBase58();
+        console.log('[ZK Private Send] Using legacy stealth format (64 bytes)');
+      } else {
+        return { success: false, error: `Invalid stealth keys format (got ${keyBuffer.length} bytes)` };
+      }
+
+      // 2. Generate stealth address for recipient
+      console.log('[ZK Private Send] Generating stealth address...');
+      const stealthData = await generateStealthAddress(
+        recipientSpendingPubKey,
+        recipientViewingPubKey,
+        recipientViewingX25519Pub
+      );
+      console.log('[ZK Private Send] Stealth address:', stealthData.address);
+
+      // 3. Select notes for the exact denomination
+      if (!this.spendingKey || !this.spendingKeyHash) {
+        return { success: false, error: 'ZK Service not initialized' };
+      }
+
+      // Sync merkle tree first
+      await this.syncMerkleTree();
+
+      const { notesToSpend, totalValue } = this.selectNotes(amount);
+      if (totalValue < amount) {
+        return {
+          success: false,
+          error: `Insufficient shielded balance. Have ${Number(totalValue) / 1e9} SOL, need ${Number(amount) / 1e9} SOL`
+        };
+      }
+
+      // 4. Generate ZK proof
+      console.log('[ZK Private Send] Generating ZK proof...');
+      const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
+      const merkleRoot = this.merkleTree.root;
+
+      // Compute nullifiers
+      const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
+      let nullifier2: bigint;
+      let dummyInputNote: Note | undefined;
+
+      if (notesToSpend[1]) {
+        nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
+      } else {
+        // Create unique dummy input note
+        const dummyRandomness = generateRandomBigInt();
+        const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
+        nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
+        dummyInputNote = {
+          amount: BigInt(0),
+          ownerPubkey: BigInt(0),
+          randomness: dummyRandomness,
+          tokenMint: tokenMintField,
+          commitment: dummyCommitment,
+        };
+      }
+
+      // Generate merkle proofs
+      const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
+      const proof2 = notesToSpend[1]
+        ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
+        : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+
+      const inputNotesForCircuit = notesToSpend[1]
+        ? notesToSpend
+        : [notesToSpend[0], dummyInputNote!];
+
+      // Create change note
+      const changeAmount = totalValue - amount;
+      const changeNote = await createNote(changeAmount, this.ownerPubkey!, tokenMintField);
+
+      // Dummy output (for the transfer that goes to relayer, which handles sending to stealth)
+      const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+      const dummyOutput2: Note = {
+        amount: BigInt(0),
+        ownerPubkey: BigInt(0),
+        randomness: BigInt(0),
+        tokenMint: tokenMintField,
+        commitment: dummyOutput2Commitment,
+      };
+
+      // Generate proof
+      const zkProof = await this.generateProofClientSide({
+        merkleRoot,
+        nullifier1,
+        nullifier2,
+        outputCommitment1: changeNote.commitment,
+        outputCommitment2: dummyOutput2Commitment,
+        publicAmount: -amount, // Negative for unshield
+        inputNotes: inputNotesForCircuit,
+        outputNotes: [changeNote, dummyOutput2],
+        proofs: [proof1, proof2],
+        spendingKey: this.spendingKey,
+      });
+
+      console.log('[ZK Private Send] Proof generated, sending to relayer...');
+
+      // 5. Create request for relayer
+      const requestBody = {
+        proof: {
+          pi_a: Array.from(zkProof.pi_a),
+          pi_b: Array.from(zkProof.pi_b),
+          pi_c: Array.from(zkProof.pi_c),
+        },
+        publicSignals: [
+          merkleRoot.toString(),
+          nullifier1.toString(),
+          nullifier2.toString(),
+          changeNote.commitment.toString(),
+          dummyOutput2Commitment.toString(),
+        ],
+        nullifier: nullifier1.toString(),
+        encryptedRecipient: '', // Not needed - we send stealth address directly
+        ephemeralPublicKey: stealthData.ephemeralPublicKey,
+        viewTag: stealthData.viewTag,
+        denominationIndex,
+        feeCommitment: '0', // Fee paid from shielded balance (TODO)
+        stealthAddress: stealthData.address, // Direct stealth address
+      };
+
+      // 6. Send to relayer
+      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/relay/private-send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        console.error('[ZK Private Send] Relayer error:', result.error);
+        return { success: false, error: result.error || 'Relayer rejected request' };
+      }
+
+      // Relayer returns 'signature' not 'txSignature'
+      const txSignature = result.signature || result.txSignature;
+      console.log('[ZK Private Send] SUCCESS! Tx:', txSignature);
+      console.log('[ZK Private Send] Stealth address:', result.stealthAddress);
+
+      // 7. Mark notes as spent locally and add change note
+      this.removeSpentNotes(notesToSpend);
+      if (changeAmount > BigInt(0)) {
+        const newRoot = this.merkleTree.insert(changeNote.commitment);
+        changeNote.leafIndex = this.merkleTree.leafCount - 1;
+        changeNote.isOnChain = true;
+        this.addNote(changeNote);
+      }
+      await this.saveNotes();
+
+      return {
+        success: true,
+        txSignature,
+        stealthAddress: stealthData.address,
+        ephemeralPublicKey: stealthData.ephemeralPublicKey,
+        viewTag: stealthData.viewTag,
+      };
+
+    } catch (error: any) {
+      console.error('[ZK Private Send] Error:', error);
+      return { success: false, error: error.message || 'Private send failed' };
+    }
+  }
+
+  /**
+   * Generate a proof for relayer-based private transfer (any amount)
+   * This creates a proof showing we own funds, which the relayer verifies
+   * before sending SOL to the recipient's stealth address.
+   *
+   * @param amount - Amount in lamports
+   * @returns Proof data for relayer
+   */
+  async generateTransferProofForRelayer(amount: bigint): Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+    nullifier: string;
+    changeNoteData?: { noteString: string; amount: bigint; leafIndex: number };
+  }> {
+    if (!this.spendingKey || !this.spendingKeyHash || !this.ownerPubkey) {
+      throw new Error('ZK Service not initialized');
+    }
+
+    console.log('[ZK] Generating transfer proof for relayer, amount:', Number(amount) / 1e9, 'SOL');
+
+    // Sync merkle tree first
+    await this.syncMerkleTree();
+
+    // Select notes to spend
+    const { notesToSpend, totalValue } = this.selectNotes(amount);
+    if (totalValue < amount) {
+      throw new Error(`Insufficient shielded balance. Have ${Number(totalValue) / 1e9} SOL, need ${Number(amount) / 1e9} SOL`);
+    }
+
+    const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
+    const merkleRoot = this.merkleTree.root;
+
+    // Compute nullifiers
+    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
+    let nullifier2: bigint;
+    let dummyInputNote: Note | undefined;
+
+    if (notesToSpend[1]) {
+      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
+    } else {
+      // Create unique dummy input note
+      const dummyRandomness = generateRandomBigInt();
+      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
+      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
+      dummyInputNote = {
+        amount: BigInt(0),
+        ownerPubkey: BigInt(0),
+        randomness: dummyRandomness,
+        tokenMint: tokenMintField,
+        commitment: dummyCommitment,
+      };
+    }
+
+    // Generate merkle proofs
+    const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
+    const proof2 = notesToSpend[1]
+      ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
+      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+
+    const inputNotesForCircuit = notesToSpend[1]
+      ? notesToSpend
+      : [notesToSpend[0], dummyInputNote!];
+
+    // Create change note (remaining balance stays in pool)
+    const changeAmount = totalValue - amount;
+    const changeNote = await createNote(changeAmount, this.ownerPubkey, tokenMintField);
+
+    // Create dummy output (the "spent" amount - relayer will send actual SOL)
+    const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+    const dummyOutput2: Note = {
+      amount: BigInt(0),
+      ownerPubkey: BigInt(0),
+      randomness: BigInt(0),
+      tokenMint: tokenMintField,
+      commitment: dummyOutput2Commitment,
+    };
+
+    // BN254 field modulus - negative numbers must be represented as p - |amount|
+    const FIELD_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
+
+    // Convert public_amount to field representation (negative for withdrawal)
+    const publicAmountField = FIELD_MODULUS - amount; // amount is positive, we want -amount in field
+
+    // Build circuit inputs directly for backend prover (returns raw snarkjs format)
+    const circuitInputs: Record<string, string> = {
+      // Public inputs (snake_case)
+      merkle_root: merkleRoot.toString(),
+      nullifier_1: nullifier1.toString(),
+      nullifier_2: nullifier2.toString(),
+      output_commitment_1: changeNote.commitment.toString(),
+      output_commitment_2: dummyOutput2Commitment.toString(),
+      public_amount: publicAmountField.toString(),
+      token_mint: tokenMintField.toString(),
+
+      // Private inputs - Input note 1
+      in_amount_1: inputNotesForCircuit[0]?.amount.toString() ?? '0',
+      in_owner_pubkey_1: inputNotesForCircuit[0]?.ownerPubkey.toString() ?? '0',
+      in_randomness_1: inputNotesForCircuit[0]?.randomness.toString() ?? '0',
+      in_path_elements_1: JSON.stringify(proof1.pathElements.map(e => e.toString())),
+      in_path_indices_1: JSON.stringify(proof1.pathIndices.map(i => i.toString())),
+
+      // Private inputs - Input note 2
+      in_amount_2: inputNotesForCircuit[1]?.amount.toString() ?? '0',
+      in_owner_pubkey_2: inputNotesForCircuit[1]?.ownerPubkey.toString() ?? '0',
+      in_randomness_2: inputNotesForCircuit[1]?.randomness.toString() ?? '0',
+      in_path_elements_2: JSON.stringify(proof2.pathElements.map(e => e.toString())),
+      in_path_indices_2: JSON.stringify(proof2.pathIndices.map(i => i.toString())),
+
+      // Private inputs - Output notes
+      out_amount_1: changeNote.amount.toString(),
+      out_recipient_1: changeNote.ownerPubkey.toString(),
+      out_randomness_1: changeNote.randomness.toString(),
+      out_amount_2: dummyOutput2.amount.toString(),
+      out_recipient_2: dummyOutput2.ownerPubkey.toString(),
+      out_randomness_2: dummyOutput2.randomness.toString(),
+
+      // Spending key
+      spending_key: this.spendingKey.toString(),
+    };
+
+    // Generate proof using backend (returns raw snarkjs format for relayer)
+    const { proof: snarkjsProof } = await this.generateProofViaBackendRaw(circuitInputs);
+
+    console.log('[ZK] Raw snarkjs proof generated for relayer');
+
+    // Store change note data (will be applied after relayer confirms)
+    const changeNoteData = changeAmount > BigInt(0) ? {
+      noteString: this.exportNote(changeNote),
+      amount: changeAmount,
+      leafIndex: -1, // Will be set after on-chain confirmation
+    } : undefined;
+
+    // Store notes to spend for later marking
+    this._pendingSpendNotes = notesToSpend;
+    this._pendingChangeNote = changeNote;
+
+    // Return raw snarkjs format proof (string arrays, not byte arrays)
+    // This is what snarkjs.groth16.verify expects on the relayer side
+    return {
+      proof: snarkjsProof,
+      publicSignals: [
+        merkleRoot.toString(),
+        nullifier1.toString(),
+        nullifier2.toString(),
+        changeNote.commitment.toString(),
+        dummyOutput2Commitment.toString(),
+        publicAmountField.toString(), // public_amount as field element
+        tokenMintField.toString(),
+      ],
+      nullifier: nullifier1.toString(),
+      changeNoteData,
+    };
+  }
+
+  // Pending notes for after relayer confirms
+  private _pendingSpendNotes: Note[] = [];
+  private _pendingChangeNote: Note | null = null;
+
+  /**
+   * Mark a note as spent after relayer confirms the transfer
+   * @param nullifier - The nullifier string from the proof
+   */
+  async markNoteSpent(nullifier: string): Promise<void> {
+    console.log('[ZK] Marking notes as spent after relayer confirmation');
+
+    // Remove the spent notes
+    if (this._pendingSpendNotes.length > 0) {
+      this.removeSpentNotes(this._pendingSpendNotes);
+      this._pendingSpendNotes = [];
+    }
+
+    // Add change note if it exists
+    if (this._pendingChangeNote && this._pendingChangeNote.amount > BigInt(0)) {
+      // In a real implementation, we'd need to update the merkle tree
+      // For now, we track it locally - the next sync will pick it up
+      this._pendingChangeNote.isOnChain = false; // Will be confirmed on next sync
+      this.addNote(this._pendingChangeNote);
+      console.log('[ZK] Change note added:', Number(this._pendingChangeNote.amount) / 1e9, 'SOL');
+      this._pendingChangeNote = null;
+    }
+
+    await this.saveNotes();
+    console.log('[ZK] Notes updated, new balance:', Number(this.getShieldedBalance()) / 1e9, 'SOL');
+  }
+
+  /**
+   * Scan for incoming stealth payments
+   * This is called periodically to find payments sent to our stealth addresses
+   */
+  // Store found stealth payments for later withdrawal
+  private _foundStealthPayments: Array<{
+    stealthAddress: string;
+    privateKey: Uint8Array;
+    amount: number;
+    signature: string;
+    ephemeralPublicKey: string;
+  }> = [];
+
+  async scanStealthPayments(): Promise<{
+    found: number;
+    amount: number;
+    payments: Array<{ stealthAddress: string; amount: number; signature: string }>;
+  }> {
+    console.log('[ZK] Scanning for stealth payments...');
+
+    try {
+      const RELAYER_URL = ZkService.BACKEND_PROVER_URL;
+      const response = await fetch(`${RELAYER_URL}/relay/stealth-payments?limit=100`);
+
+      if (!response.ok) {
+        console.warn('[ZK] Failed to fetch stealth payments');
+        return { found: 0, amount: 0, payments: [] };
+      }
+
+      const data = await response.json();
+      const payments = data.payments || [];
+
+      if (payments.length === 0) {
+        return { found: 0, amount: 0, payments: [] };
+      }
+
+      // Get our stealth keys for scanning
+      const stealthKeys = this.getStealthKeys();
+      if (!stealthKeys) {
+        return { found: 0, amount: 0, payments: [] };
+      }
+
+      // Try to scan each payment
+      let found = 0;
+      let totalAmount = 0;
+      const foundPayments: Array<{ stealthAddress: string; amount: number; signature: string }> = [];
+
+      for (const payment of payments) {
+        try {
+          // Check if we already have this payment
+          if (this._foundStealthPayments.some(p => p.signature === payment.signature)) {
+            continue;
+          }
+
+          const result = await scanStealthPayment(
+            payment.ephemeralPublicKey,
+            this.viewingKey!,
+            bigintToLeBytes(this.spendingKey!),
+            payment.viewTag
+          );
+
+          if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
+            console.log('[ZK] Found stealth payment!', payment.amount, 'SOL at', payment.stealthAddress.slice(0, 16) + '...');
+            found++;
+            totalAmount += payment.amount;
+
+            // Store the payment with private key for later withdrawal
+            this._foundStealthPayments.push({
+              stealthAddress: payment.stealthAddress,
+              privateKey: result.privateKey,
+              amount: payment.amount,
+              signature: payment.signature,
+              ephemeralPublicKey: payment.ephemeralPublicKey,
+            });
+
+            foundPayments.push({
+              stealthAddress: payment.stealthAddress,
+              amount: payment.amount,
+              signature: payment.signature,
+            });
+          }
+        } catch (e) {
+          // Not for us, skip
+        }
+      }
+
+      if (found > 0) {
+        console.log('[ZK] Found', found, 'stealth payments totaling', totalAmount, 'SOL');
+      }
+
+      return { found, amount: totalAmount, payments: foundPayments };
+    } catch (error) {
+      console.error('[ZK] Stealth scan error:', error);
+      return { found: 0, amount: 0, payments: [] };
+    }
+  }
+
+  /**
+   * Get pending stealth payments that can be swept
+   */
+  getPendingStealthPayments(): Array<{ stealthAddress: string; amount: number; signature: string }> {
+    return this._foundStealthPayments.map(p => ({
+      stealthAddress: p.stealthAddress,
+      amount: p.amount,
+      signature: p.signature,
+    }));
+  }
+
+  /**
+   * Sweep SOL from a stealth address to the recipient wallet
+   * This transfers the funds from the one-time stealth address to the user's main wallet
+   */
+  async sweepStealthPayment(
+    stealthAddress: string,
+    recipientAddress: string
+  ): Promise<{ success: boolean; signature?: string; error?: string }> {
+    console.log('[ZK] Sweeping stealth payment from', stealthAddress.slice(0, 16) + '...');
+
+    try {
+      // Find the stealth payment with private key
+      const payment = this._foundStealthPayments.find(p => p.stealthAddress === stealthAddress);
+      if (!payment) {
+        return { success: false, error: 'Stealth payment not found. Run scanStealthPayments first.' };
+      }
+
+      // Create keypair from the stealth private key
+      const stealthKeypair = Keypair.fromSecretKey(payment.privateKey);
+
+      // Verify the keypair matches the stealth address
+      if (stealthKeypair.publicKey.toBase58() !== stealthAddress) {
+        return { success: false, error: 'Stealth keypair mismatch' };
+      }
+
+      // Get balance of stealth address
+      const balance = await this.connection.getBalance(stealthKeypair.publicKey);
+      console.log('[ZK] Stealth address balance:', balance / 1e9, 'SOL');
+
+      if (balance === 0) {
+        return { success: false, error: 'Stealth address has no balance' };
+      }
+
+      // Calculate amount to send (balance minus tx fee)
+      const txFee = 5000; // 0.000005 SOL
+      const amountToSend = balance - txFee;
+
+      if (amountToSend <= 0) {
+        return { success: false, error: 'Balance too low to cover transaction fee' };
+      }
+
+      // Create transfer transaction
+      const recipient = new PublicKey(recipientAddress);
+      const transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: stealthKeypair.publicKey,
+          toPubkey: recipient,
+          lamports: amountToSend,
+        })
+      );
+
+      transaction.feePayer = stealthKeypair.publicKey;
+      transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+      transaction.sign(stealthKeypair);
+
+      // Send transaction
+      const signature = await this.connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+
+      await this.connection.confirmTransaction(signature, 'confirmed');
+
+      console.log('[ZK] Sweep successful! Signature:', signature);
+      console.log('[ZK] Transferred', amountToSend / 1e9, 'SOL to', recipientAddress.slice(0, 16) + '...');
+
+      // Remove the swept payment from pending list
+      this._foundStealthPayments = this._foundStealthPayments.filter(p => p.stealthAddress !== stealthAddress);
+
+      return { success: true, signature };
+    } catch (error: any) {
+      console.error('[ZK] Sweep error:', error);
+      return { success: false, error: error.message || 'Sweep failed' };
+    }
+  }
+
+  /**
+   * Sweep all pending stealth payments to a recipient address
+   */
+  async sweepAllStealthPayments(recipientAddress: string): Promise<{
+    success: boolean;
+    swept: number;
+    totalAmount: number;
+    signatures: string[];
+    errors: string[];
+  }> {
+    console.log('[ZK] Sweeping all stealth payments...');
+
+    const results = {
+      success: true,
+      swept: 0,
+      totalAmount: 0,
+      signatures: [] as string[],
+      errors: [] as string[],
+    };
+
+    const payments = [...this._foundStealthPayments];
+
+    for (const payment of payments) {
+      const result = await this.sweepStealthPayment(payment.stealthAddress, recipientAddress);
+
+      if (result.success && result.signature) {
+        results.swept++;
+        results.totalAmount += payment.amount;
+        results.signatures.push(result.signature);
+      } else {
+        results.errors.push(`${payment.stealthAddress.slice(0, 16)}...: ${result.error}`);
+      }
+    }
+
+    if (results.errors.length > 0) {
+      results.success = false;
+    }
+
+    console.log('[ZK] Sweep complete:', results.swept, 'payments,', results.totalAmount, 'SOL');
+    return results;
+  }
 }
 
 // Singleton instance

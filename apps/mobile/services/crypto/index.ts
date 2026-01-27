@@ -2,16 +2,18 @@
 export {
   ENCRYPTION_CONFIG,
   type SessionKey,
-  type EncryptedData,
-  initializeEncryptionKeys,
-  getEncryptionKeys,
-  deriveSessionKey,
-  encryptData,
-  decryptData,
-  encryptForStorage,
-  decryptFromStorage,
-  rotateEncryptionKeys,
-  clearEncryptionKeys,
+  type EncryptionKeyPair as SL3EncryptionKeyPair,
+  type EncryptedMessage as EncryptedData,
+  type SignedMessage,
+  generateKeyPair,
+  getOrCreateKeys,
+  getSessionKey,
+  encryptMessage as encryptData,
+  decryptMessage as decryptData,
+  signMessage,
+  verifySignature,
+  deriveAddressKey,
+  createEncryptedPayload,
 } from './encryption';
 
 // Re-export from messaging (E2E chat encryption with tweetnacl)
@@ -23,5 +25,4 @@ export {
   deriveEncryptionKeys,
   encryptMessage,
   decryptMessage,
-  getConversationId,
 } from './messaging';

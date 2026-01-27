@@ -11,14 +11,37 @@ import {
 import { getConnection, NetworkType } from './wallet';
 import type { TransactionRecord } from '../types';
 
+// Rate limit handling
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 2000; // 2 seconds
+
+async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    const errorMsg = error?.message || '';
+    const shouldRetry = errorMsg.includes('429') ||
+                        errorMsg.includes('rate') ||
+                        errorMsg.includes('503') ||
+                        errorMsg.includes('timeout');
+
+    if (retries > 0 && shouldRetry) {
+      console.log(`[Transactions] RPC rate limit, retrying in ${RETRY_DELAY}ms...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      return withRetry(fn, retries - 1);
+    }
+    throw error;
+  }
+}
+
 /**
  * Process items in batches with delay between batches to avoid rate limiting
  */
 async function batchProcess<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
-  batchSize: number = 5,
-  delayMs: number = 200
+  batchSize: number = 3,
+  delayMs: number = 500
 ): Promise<R[]> {
   const results: R[] = [];
 
@@ -221,29 +244,32 @@ function getTokenSymbol(mint: string): string {
 export async function getRecentTransactions(
   publicKey: string,
   network: NetworkType,
-  limit: number = 20
+  limit: number = 10
 ): Promise<TransactionRecord[]> {
   const connection = getConnection(network);
   const pubkey = new PublicKey(publicKey);
 
   try {
-    // Get recent signatures
-    const signatures = await connection.getSignaturesForAddress(pubkey, {
-      limit,
-    });
+    // Get recent signatures with retry for rate limits
+    const signatures = await withRetry(() =>
+      connection.getSignaturesForAddress(pubkey, { limit })
+    );
 
     if (signatures.length === 0) {
       return [];
     }
 
     // Fetch transactions in batches to avoid rate limiting
+    // Using smaller batches (3) and longer delays (800ms) for devnet rate limits
     const transactions = await batchProcess(
       signatures,
       async (sig) => {
         try {
-          const tx = await connection.getParsedTransaction(sig.signature, {
-            maxSupportedTransactionVersion: 0,
-          });
+          const tx = await withRetry(() =>
+            connection.getParsedTransaction(sig.signature, {
+              maxSupportedTransactionVersion: 0,
+            })
+          );
 
           if (!tx) return null;
 
@@ -253,8 +279,8 @@ export async function getRecentTransactions(
           return null;
         }
       },
-      5, // batch size
-      300 // delay between batches (ms)
+      3, // batch size (reduced from 5)
+      800 // delay between batches (ms) - increased for devnet rate limits
     );
 
     // Filter out nulls and sort by timestamp (newest first)

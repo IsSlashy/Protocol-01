@@ -23,6 +23,7 @@ import {
   Download,
   Upload,
   FileText,
+  Scan,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
@@ -46,6 +47,8 @@ export default function ShieldedWallet() {
     importNotes,
     syncFromBlockchain,
     clearNotes,
+    scanStealthPayments,
+    sweepAllStealthPayments,
   } = useShieldedStore();
 
   const [showBalance, setShowBalance] = useState(true);
@@ -61,6 +64,12 @@ export default function ShieldedWallet() {
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Stealth recovery state
+  const [showRecoveryModal, setShowRecoveryModal] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isSweeping, setIsSweeping] = useState(false);
+  const [foundPayments, setFoundPayments] = useState<Array<{ stealthAddress: string; amount: number; signature: string }>>([]);
 
   // Initialize shielded wallet on mount
   // Always call initialize - it handles the guard internally and recreates _zkService if needed
@@ -211,6 +220,52 @@ export default function ShieldedWallet() {
       setError((err as Error).message);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // Stealth recovery handlers
+  const handleOpenRecovery = async () => {
+    setShowRecoveryModal(true);
+    setFoundPayments([]);
+    await handleScanStealth();
+  };
+
+  const handleScanStealth = async () => {
+    setIsScanning(true);
+    try {
+      const result = await scanStealthPayments();
+      setFoundPayments(result.payments);
+    } catch (err) {
+      console.error('[Recovery] Scan error:', err);
+      setError((err as Error).message);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleSweepAll = async () => {
+    if (!publicKey) {
+      setError('Wallet not connected');
+      return;
+    }
+
+    setIsSweeping(true);
+    try {
+      const result = await sweepAllStealthPayments(publicKey);
+
+      if (result.success && result.swept > 0) {
+        alert(`Recovered ${result.totalAmount.toFixed(4)} SOL from ${result.swept} stealth payment(s)!`);
+        setFoundPayments([]);
+        setShowRecoveryModal(false);
+        await refreshBalance();
+      } else if (result.errors.length > 0) {
+        setError(result.errors.join('\n'));
+      }
+    } catch (err) {
+      console.error('[Recovery] Sweep error:', err);
+      setError((err as Error).message);
+    } finally {
+      setIsSweeping(false);
     }
   };
 
@@ -382,7 +437,7 @@ export default function ShieldedWallet() {
         </motion.div>
 
         {/* Action Buttons */}
-        <div className="flex justify-center gap-6 py-6">
+        <div className="flex justify-center gap-4 py-6">
           <ActionButton
             icon={<ArrowDown className="w-5 h-5" />}
             label="Shield"
@@ -402,6 +457,12 @@ export default function ShieldedWallet() {
             color="violet"
             onClick={() => navigate('/shielded/transfer')}
             disabled={shieldedBalance <= 0}
+          />
+          <ActionButton
+            icon={<Scan className="w-5 h-5" />}
+            label="Recover"
+            color="green"
+            onClick={handleOpenRecovery}
           />
         </div>
 
@@ -844,6 +905,130 @@ export default function ShieldedWallet() {
           </motion.div>
         </div>
       )}
+
+      {/* Recovery Modal */}
+      {showRecoveryModal && (
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="w-full bg-p01-surface rounded-2xl p-5"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                <Scan className="w-6 h-6 text-emerald-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-display font-bold text-white">
+                  Recover Private Funds
+                </h3>
+                <p className="text-sm text-p01-chrome/60">
+                  Scan for stealth payments
+                </p>
+              </div>
+            </div>
+
+            {/* Scanning Status */}
+            {isScanning && (
+              <div className="mb-4 p-4 bg-emerald-500/10 rounded-xl flex items-center gap-3">
+                <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" />
+                <span className="text-emerald-400 text-sm">Scanning for payments...</span>
+              </div>
+            )}
+
+            {/* Found Payments */}
+            {!isScanning && foundPayments.length > 0 && (
+              <div className="mb-4 bg-p01-void rounded-xl p-4">
+                <p className="text-emerald-400 text-sm font-medium mb-3">
+                  Found {foundPayments.length} payment(s)
+                </p>
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {foundPayments.map((payment, index) => (
+                    <div key={index} className="flex items-center gap-2 py-2 border-b border-p01-border/50 last:border-0">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <div className="flex-1">
+                        <p className="text-white text-sm font-medium">{payment.amount} SOL</p>
+                        <p className="text-p01-chrome text-xs font-mono truncate">
+                          {payment.stealthAddress.slice(0, 12)}...{payment.stealthAddress.slice(-8)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-p01-chrome/60 text-xs mt-3">
+                  Note: Full sweep requires mobile app. Extension shows detected payments.
+                </p>
+              </div>
+            )}
+
+            {/* No Payments Found */}
+            {!isScanning && foundPayments.length === 0 && (
+              <div className="mb-4 p-6 text-center">
+                <Shield className="w-12 h-12 text-p01-chrome/30 mx-auto mb-3" />
+                <p className="text-p01-chrome text-sm">No stealth payments found</p>
+                <p className="text-p01-chrome/60 text-xs mt-1">
+                  Private transfers will appear here when received
+                </p>
+              </div>
+            )}
+
+            {/* Error */}
+            {error && (
+              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+                <p className="text-red-400 text-xs">{error}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowRecoveryModal(false);
+                  setError(null);
+                }}
+                disabled={isSweeping}
+                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-border transition-colors disabled:opacity-50"
+              >
+                Close
+              </button>
+              {foundPayments.length > 0 ? (
+                <button
+                  onClick={handleSweepAll}
+                  disabled={isSweeping}
+                  className="flex-1 py-3 bg-emerald-500 text-white font-medium rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isSweeping ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Sweeping...
+                    </>
+                  ) : (
+                    <>Sweep {foundPayments.reduce((sum, p) => sum + p.amount, 0).toFixed(4)} SOL</>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={handleScanStealth}
+                  disabled={isScanning}
+                  className="flex-1 py-3 bg-emerald-500 text-white font-medium rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isScanning ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Scanning...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-5 h-5" />
+                      Scan Again
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
@@ -858,7 +1043,7 @@ function ActionButton({
 }: {
   icon: React.ReactNode;
   label: string;
-  color: 'cyan' | 'pink' | 'violet';
+  color: 'cyan' | 'pink' | 'violet' | 'green';
   onClick: () => void;
   disabled?: boolean;
 }) {
@@ -866,6 +1051,7 @@ function ActionButton({
     cyan: 'bg-p01-cyan text-p01-void',
     pink: 'bg-p01-pink text-white',
     violet: 'bg-p01-cyan text-white',
+    green: 'bg-emerald-500 text-white',
   };
 
   return (

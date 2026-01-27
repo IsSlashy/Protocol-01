@@ -21,7 +21,7 @@ const technologies = [
     icon: Shield,
     items: [
       { name: "Stealth Addresses", description: "Unlinkable recipients" },
-      { name: "Private Relayers", description: "Anonymous submission" },
+      { name: "Private Relay", description: "Backend ZK verification → on-chain program" },
       { name: "Encrypted Storage", description: "Hidden metadata" },
     ],
     color: "pink",

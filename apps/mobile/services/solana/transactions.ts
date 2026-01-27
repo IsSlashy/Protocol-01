@@ -8,16 +8,49 @@ import {
   ParsedTransactionWithMeta,
 } from '@solana/web3.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getConnection, getExplorerUrl } from './connection';
+import { getConnection, getExplorerUrl, isMainnet } from './connection';
 import { getKeypair } from './wallet';
 
 const TX_CACHE_KEY = 'p01_tx_cache_';
+
+// P-01 Network Fee Configuration
+const P01_FEE_BPS = parseInt(process.env.EXPO_PUBLIC_PLATFORM_FEE_BPS || '25', 10); // 0.25% default
+const P01_FEE_WALLET = process.env.EXPO_PUBLIC_FEE_WALLET || '3EwUAV44kvjL23emA2yHCwZvAfJbfG4MrhL6YHUrqVLi';
 
 export interface TransactionResult {
   signature: string;
   explorerUrl: string;
   success: boolean;
   error?: string;
+}
+
+export interface FeeBreakdown {
+  totalAmount: number; // What user enters
+  recipientAmount: number; // What recipient receives
+  feeAmount: number; // P-01 fee
+  feePercentage: number; // As decimal (0.0025 = 0.25%)
+  feeWallet: string;
+  isMainnet: boolean;
+}
+
+/**
+ * Get fee breakdown for a transfer amount
+ * Useful for showing the user what they'll pay before confirming
+ */
+export function getTransferFeeBreakdown(amountInSol: number): FeeBreakdown {
+  const lamports = Math.floor(amountInSol * LAMPORTS_PER_SOL);
+  const onMainnet = isMainnet();
+  const feeAmount = onMainnet ? Math.floor((lamports * P01_FEE_BPS) / 10000) : 0;
+  const recipientAmount = lamports - feeAmount;
+
+  return {
+    totalAmount: amountInSol,
+    recipientAmount: recipientAmount / LAMPORTS_PER_SOL,
+    feeAmount: feeAmount / LAMPORTS_PER_SOL,
+    feePercentage: P01_FEE_BPS / 10000,
+    feeWallet: P01_FEE_WALLET,
+    isMainnet: onMainnet,
+  };
 }
 
 export interface TransactionHistory {
@@ -76,7 +109,95 @@ export async function clearTransactionCache(publicKey: string): Promise<void> {
 }
 
 /**
- * Send SOL to another wallet
+ * Calculate P-01 network fee
+ */
+function calculateP01Fee(lamports: number): number {
+  // Only charge fee on mainnet
+  if (!isMainnet()) {
+    return 0;
+  }
+  return Math.floor((lamports * P01_FEE_BPS) / 10000);
+}
+
+/**
+ * Send SOL with external signer (for Privy wallets)
+ * Automatically includes P-01 Network fee (0.25%) on mainnet
+ */
+export async function sendSolWithSigner(
+  toAddress: string,
+  amount: number,
+  fromPubkey: PublicKey,
+  signTransaction: (tx: Transaction) => Promise<Transaction>
+): Promise<TransactionResult> {
+  try {
+    const connection = getConnection();
+    const toPubkey = new PublicKey(toAddress);
+    const totalLamports = Math.floor(amount * LAMPORTS_PER_SOL);
+
+    // Calculate P-01 fee (only on mainnet)
+    const feeAmount = calculateP01Fee(totalLamports);
+    const recipientAmount = totalLamports - feeAmount;
+
+    // Create transaction
+    const transaction = new Transaction();
+
+    // Main transfer to recipient
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey,
+        toPubkey,
+        lamports: recipientAmount,
+      })
+    );
+
+    // P-01 Network fee transfer (only if > 0)
+    if (feeAmount > 0) {
+      const feeWallet = new PublicKey(P01_FEE_WALLET);
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey,
+          toPubkey: feeWallet,
+          lamports: feeAmount,
+        })
+      );
+      console.log(`[P-01 Fee] ${feeAmount} lamports (${P01_FEE_BPS / 100}%) to ${P01_FEE_WALLET.slice(0, 8)}...`);
+    }
+
+    // Get recent blockhash
+    const { blockhash } = await connection.getLatestBlockhash();
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = fromPubkey;
+
+    // Sign transaction with provided signer
+    console.log('[SendSolWithSigner] Signing transaction...');
+    const signedTransaction = await signTransaction(transaction);
+
+    // Send and confirm
+    console.log('[SendSolWithSigner] Sending raw transaction...');
+    const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+    await connection.confirmTransaction(signature, 'confirmed');
+
+    console.log(`[Send] Success: ${amount} SOL to ${toAddress.slice(0, 8)}... (fee: ${feeAmount / LAMPORTS_PER_SOL} SOL)`);
+
+    return {
+      signature,
+      explorerUrl: getExplorerUrl(signature, 'tx'),
+      success: true,
+    };
+  } catch (error: any) {
+    console.error('Failed to send SOL with signer:', error);
+    return {
+      signature: '',
+      explorerUrl: '',
+      success: false,
+      error: error.message || 'Transaction failed',
+    };
+  }
+}
+
+/**
+ * Send SOL to another wallet (uses local keypair)
+ * Automatically includes P-01 Network fee (0.25%) on mainnet
  */
 export async function sendSol(
   toAddress: string,
@@ -90,15 +211,36 @@ export async function sendSol(
 
     const connection = getConnection();
     const toPubkey = new PublicKey(toAddress);
+    const totalLamports = Math.floor(amount * LAMPORTS_PER_SOL);
+
+    // Calculate P-01 fee (only on mainnet)
+    const feeAmount = calculateP01Fee(totalLamports);
+    const recipientAmount = totalLamports - feeAmount;
 
     // Create transaction
-    const transaction = new Transaction().add(
+    const transaction = new Transaction();
+
+    // Main transfer to recipient
+    transaction.add(
       SystemProgram.transfer({
         fromPubkey: keypair.publicKey,
         toPubkey,
-        lamports: Math.floor(amount * LAMPORTS_PER_SOL),
+        lamports: recipientAmount,
       })
     );
+
+    // P-01 Network fee transfer (only if > 0)
+    if (feeAmount > 0) {
+      const feeWallet = new PublicKey(P01_FEE_WALLET);
+      transaction.add(
+        SystemProgram.transfer({
+          fromPubkey: keypair.publicKey,
+          toPubkey: feeWallet,
+          lamports: feeAmount,
+        })
+      );
+      console.log(`[P-01 Fee] ${feeAmount} lamports (${P01_FEE_BPS / 100}%) to ${P01_FEE_WALLET.slice(0, 8)}...`);
+    }
 
     // Get recent blockhash
     const { blockhash } = await connection.getLatestBlockhash();
@@ -112,6 +254,8 @@ export async function sendSol(
       [keypair],
       { commitment: 'confirmed' }
     );
+
+    console.log(`[Send] Success: ${amount} SOL to ${toAddress.slice(0, 8)}... (fee: ${feeAmount / LAMPORTS_PER_SOL} SOL)`);
 
     return {
       signature,
