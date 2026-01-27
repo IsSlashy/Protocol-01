@@ -351,8 +351,9 @@ class MerkleTree {
 class ClientProver {
   private worker: Worker | null = null;
   private pendingRequests: Map<string, {
-    resolve: (proof: Groth16Proof) => void;
+    resolve: (result: any) => void;
     reject: (error: Error) => void;
+    raw?: boolean;
   }> = new Map();
   private circuitWasm: ArrayBuffer | null = null;
   private circuitZkey: ArrayBuffer | null = null;
@@ -425,9 +426,14 @@ class ClientProver {
             console.error('[Prover] Proof error:', error);
             pending.reject(new Error(error));
           } else if (type === 'proof') {
-            // Convert proof to Groth16Proof format
-            const groth16Proof = this.convertProof(proof);
-            pending.resolve(groth16Proof);
+            if (pending.raw) {
+              // Return raw snarkjs format (string arrays) for relayer
+              pending.resolve({ proof: event.data.proof, publicSignals: event.data.publicSignals });
+            } else {
+              // Convert proof to Groth16Proof format for on-chain
+              const groth16Proof = this.convertProof(proof);
+              pending.resolve(groth16Proof);
+            }
           }
         };
 
@@ -519,6 +525,39 @@ class ClientProver {
       });
 
       // Timeout after 2 minutes
+      setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error('Proof generation timed out'));
+        }
+      }, 120000);
+    });
+  }
+
+  /**
+   * Generate proof and return raw snarkjs format (for relayer verification)
+   */
+  async generateProofRaw(inputs: Record<string, string | string[]>): Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+  }> {
+    if (!this.isReady || !this.worker || !this.circuitWasm || !this.circuitZkey) {
+      throw new Error('Prover not initialized. Circuit files may be missing.');
+    }
+
+    const id = crypto.randomUUID();
+
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(id, { resolve, reject, raw: true });
+
+      this.worker!.postMessage({
+        type: 'prove',
+        id,
+        circuitWasm: this.circuitWasm,
+        circuitZkey: this.circuitZkey,
+        inputs,
+      });
+
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
@@ -934,6 +973,165 @@ export class ZkServiceExtension {
     };
 
     return { signature, recipientNote: recipientNoteData };
+  }
+
+  // Pending notes for after relayer confirms
+  private _pendingSpendNotes: Note[] = [];
+  private _pendingChangeNote: Note | null = null;
+
+  /**
+   * Generate a proof for relayer-based private transfer
+   * Returns raw snarkjs proof format (string arrays) for relayer verification
+   */
+  async generateTransferProofForRelayer(amount: bigint): Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+    nullifier: string;
+  }> {
+    if (!this.spendingKey || !this.spendingKeyHash || !this.ownerPubkey) {
+      throw new Error('ZK Service not initialized');
+    }
+
+    console.log('[ZK] Generating transfer proof for relayer, amount:', Number(amount) / 1e9, 'SOL');
+
+    // Select notes to spend
+    const { notesToSpend, totalValue } = this.selectNotes(amount);
+    if (totalValue < amount) {
+      throw new Error(`Insufficient shielded balance. Have ${Number(totalValue) / 1e9} SOL, need ${Number(amount) / 1e9} SOL`);
+    }
+
+    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
+    const merkleRoot = this.merkleTree.root;
+
+    // Compute nullifiers
+    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
+    let nullifier2: bigint;
+    let dummyInputNote: Note | undefined;
+
+    if (notesToSpend[1]) {
+      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
+    } else {
+      const dummyRandomness = randomFieldElement();
+      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
+      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
+      dummyInputNote = {
+        amount: BigInt(0),
+        ownerPubkey: BigInt(0),
+        randomness: dummyRandomness,
+        tokenMint: tokenMintField,
+        commitment: dummyCommitment,
+      };
+    }
+
+    // Generate merkle proofs
+    const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
+    const proof2 = notesToSpend[1]
+      ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
+      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+
+    const inputNotesForCircuit = notesToSpend[1]
+      ? notesToSpend
+      : [notesToSpend[0], dummyInputNote!];
+
+    // Create change note (remaining balance stays in pool)
+    const changeAmount = totalValue - amount;
+    const changeNote = await createNote(changeAmount, this.ownerPubkey, tokenMintField);
+
+    // Create dummy output (the "spent" amount - relayer sends actual SOL)
+    const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+    const dummyOutput2: Note = {
+      amount: BigInt(0),
+      ownerPubkey: BigInt(0),
+      randomness: BigInt(0),
+      tokenMint: tokenMintField,
+      commitment: dummyOutput2Commitment,
+    };
+
+    // Negative public_amount (withdrawal from pool)
+    const publicAmountField = FIELD_ORDER - amount;
+
+    // Build circuit inputs
+    const circuitInputs: Record<string, string | string[]> = {
+      merkle_root: merkleRoot.toString(),
+      nullifier_1: nullifier1.toString(),
+      nullifier_2: nullifier2.toString(),
+      output_commitment_1: changeNote.commitment.toString(),
+      output_commitment_2: dummyOutput2Commitment.toString(),
+      public_amount: publicAmountField.toString(),
+      token_mint: tokenMintField.toString(),
+
+      in_amount_1: inputNotesForCircuit[0]?.amount.toString() ?? '0',
+      in_owner_pubkey_1: inputNotesForCircuit[0]?.ownerPubkey.toString() ?? '0',
+      in_randomness_1: inputNotesForCircuit[0]?.randomness.toString() ?? '0',
+      in_path_elements_1: proof1.pathElements.map(e => e.toString()),
+      in_path_indices_1: proof1.pathIndices.map(i => i.toString()),
+
+      in_amount_2: inputNotesForCircuit[1]?.amount.toString() ?? '0',
+      in_owner_pubkey_2: inputNotesForCircuit[1]?.ownerPubkey.toString() ?? '0',
+      in_randomness_2: inputNotesForCircuit[1]?.randomness.toString() ?? '0',
+      in_path_elements_2: proof2.pathElements.map(e => e.toString()),
+      in_path_indices_2: proof2.pathIndices.map(i => i.toString()),
+
+      out_amount_1: changeNote.amount.toString(),
+      out_recipient_1: changeNote.ownerPubkey.toString(),
+      out_randomness_1: changeNote.randomness.toString(),
+      out_amount_2: dummyOutput2.amount.toString(),
+      out_recipient_2: dummyOutput2.ownerPubkey.toString(),
+      out_randomness_2: dummyOutput2.randomness.toString(),
+
+      spending_key: this.spendingKey.toString(),
+    };
+
+    // Generate raw proof via client-side prover
+    console.log('[ZK] Generating raw proof client-side for relayer...');
+    const startTime = performance.now();
+
+    if (!this.prover.isReady) {
+      throw new Error('ZK prover not initialized. Please reload the extension.');
+    }
+
+    const { proof, publicSignals } = await this.prover.generateProofRaw(circuitInputs);
+    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
+    console.log(`[ZK] Raw proof generated in ${duration}s`);
+
+    // Store pending notes for later marking
+    this._pendingSpendNotes = notesToSpend;
+    this._pendingChangeNote = changeNote;
+
+    return {
+      proof,
+      publicSignals: [
+        merkleRoot.toString(),
+        nullifier1.toString(),
+        nullifier2.toString(),
+        changeNote.commitment.toString(),
+        dummyOutput2Commitment.toString(),
+        publicAmountField.toString(),
+        tokenMintField.toString(),
+      ],
+      nullifier: nullifier1.toString(),
+    };
+  }
+
+  /**
+   * Mark notes as spent after relayer confirms the transfer
+   */
+  async markNoteSpent(nullifier: string): Promise<void> {
+    console.log('[ZK] Marking notes as spent after relayer confirmation');
+
+    if (this._pendingSpendNotes.length > 0) {
+      this.removeSpentNotes(this._pendingSpendNotes);
+      this._pendingSpendNotes = [];
+    }
+
+    if (this._pendingChangeNote && this._pendingChangeNote.amount > BigInt(0)) {
+      this.notes.push(this._pendingChangeNote);
+      console.log('[ZK] Change note added:', Number(this._pendingChangeNote.amount) / 1e9, 'SOL');
+      this._pendingChangeNote = null;
+    }
+
+    await this.saveNotes();
+    console.log('[ZK] Notes updated, new balance:', Number(this.getShieldedBalance()) / 1e9, 'SOL');
   }
 
   /**

@@ -161,6 +161,61 @@ async function scanStealthPayment(
 }
 
 /**
+ * Generate a stealth address for a recipient from their ZK address
+ * Uses X25519 ECDH matching the mobile app's algorithm exactly
+ *
+ * @param ownerPubkeyBytes - First 32 bytes of recipient's ZK address
+ * @param viewingKeyBytes - Last 32 bytes of recipient's ZK address
+ */
+async function generateStealthAddressForRecipient(
+  ownerPubkeyBytes: Uint8Array,
+  viewingKeyBytes: Uint8Array
+): Promise<{ address: string; ephemeralPublicKey: string; viewTag: string }> {
+  // 1. Generate ephemeral X25519 keypair
+  const ephemeralX25519 = nacl.box.keyPair();
+
+  // 2. Derive recipient's X25519 viewing public key from viewing key bytes
+  //    Must match mobile's derivation: nacl.hash(viewingSeed).slice(0, 32)
+  const viewingX25519Secret = nacl.hash(viewingKeyBytes).slice(0, 32);
+  const recipientX25519Public = nacl.box.keyPair.fromSecretKey(viewingX25519Secret).publicKey;
+
+  // 3. Compute shared secret via X25519 ECDH
+  const sharedSecret = computeX25519SharedSecret(ephemeralX25519.secretKey, recipientX25519Public);
+
+  // 4. Generate view tag
+  const viewTag = await generateViewTag(sharedSecret);
+
+  // 5. Derive stealth address (must match mobile's deriveStealthPublicKey)
+  //    a. Hash shared secret to get derivation bytes
+  const derivationBytes = await sha256Hex(sharedSecret);
+
+  //    b. Get recipient's "spending public key" from ownerPubkey bytes
+  //       Mobile does: Keypair.fromSeed(ownerPubkeyBytes).publicKey.toBytes()
+  const recipientSpendingKeypair = Keypair.fromSeed(ownerPubkeyBytes);
+  const spendingPubBytes = recipientSpendingKeypair.publicKey.toBytes();
+
+  //    c. Combine spending pub bytes + derivation bytes
+  const combined = new Uint8Array(64);
+  combined.set(spendingPubBytes);
+  combined.set(derivationBytes);
+
+  //    d. Hash combined to get stealth seed
+  const stealthSeed = await sha256Hex(combined);
+
+  //    e. Create stealth keypair
+  const stealthKeypair = Keypair.fromSeed(stealthSeed);
+
+  // 6. Encode ephemeral X25519 public key as base64
+  const ephemeralPubKeyBase64 = btoa(String.fromCharCode(...ephemeralX25519.publicKey));
+
+  return {
+    address: stealthKeypair.publicKey.toBase58(),
+    ephemeralPublicKey: ephemeralPubKeyBase64,
+    viewTag,
+  };
+}
+
+/**
  * Shielded note data (serializable)
  */
 interface ShieldedNote {
@@ -522,7 +577,8 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Transfer shielded tokens
+      // Transfer shielded tokens using PRIVATE TRANSFER via relayer
+      // Routes through relayer for sender privacy, falls back to direct on-chain
       transfer: async (recipient: string, amount: number) => {
         const { _zkService } = get();
         if (!_zkService) {
@@ -530,7 +586,7 @@ export const useShieldedStore = create<ShieldedState>()(
         }
 
         // Get wallet data
-        const { walletPublicKey, signTransaction } = getWalletData();
+        const { walletPublicKey, signTransaction, connection, network } = getWalletData();
 
         const txId = crypto.randomUUID();
         const amountLamports = BigInt(Math.floor(amount * 1e9));
@@ -543,7 +599,7 @@ export const useShieldedStore = create<ShieldedState>()(
         // Decode ZK address
         const combined = Uint8Array.from(atob(recipient.slice(3)), c => c.charCodeAt(0));
         const receivingPubkeyBytes = combined.slice(0, 32);
-        const viewingKey = combined.slice(32, 64);
+        const viewingKeyBytes = combined.slice(32, 64);
 
         // Convert to bigint (LE)
         let receivingPubkey = BigInt(0);
@@ -553,9 +609,12 @@ export const useShieldedStore = create<ShieldedState>()(
 
         const zkRecipient: ZkAddress = {
           receivingPubkey,
-          viewingKey,
+          viewingKey: viewingKeyBytes,
           encoded: recipient,
         };
+
+        console.log('[Private Transfer] Using relayer for sender privacy');
+        console.log('[Private Transfer] Amount:', amount, 'SOL');
 
         set(state => ({
           pendingTransactions: [
@@ -571,21 +630,91 @@ export const useShieldedStore = create<ShieldedState>()(
         }));
 
         try {
+          // Step 1: Generate stealth address for recipient
+          const stealth = await generateStealthAddressForRecipient(receivingPubkeyBytes, viewingKeyBytes);
+          console.log('[Private Transfer] Stealth address:', stealth.address.slice(0, 16) + '...');
+
+          // Step 2: Generate ZK proof for relayer
+          const proofData = await _zkService.generateTransferProofForRelayer(amountLamports);
+          console.log('[Private Transfer] Proof generated');
+
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId ? { ...tx, status: 'submitting' } : tx
             ),
           }));
 
-          // Call real ZK service
-          const result = await _zkService.transfer(
-            zkRecipient,
-            amountLamports,
-            walletPublicKey,
-            signTransaction
-          );
+          // Step 3: Get relayer info
+          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://corps-mag-distributed-ref.trycloudflare.com';
+          let relayerAddress: string;
+          let feeBps: number;
 
-          // Update state
+          try {
+            const infoRes = await fetch(`${RELAYER_URL}/health`);
+            const info = await infoRes.json();
+            relayerAddress = info.relayer;
+            feeBps = info.feeBps || 50;
+          } catch {
+            const infoRes = await fetch(`${RELAYER_URL}/info`);
+            const info = await infoRes.json();
+            relayerAddress = info.relayer;
+            feeBps = info.feeBps || 50;
+          }
+
+          // Step 4: Fund the relayer
+          const feeLamports = BigInt(Math.ceil(Number(amountLamports) * feeBps / 10000));
+          const rentExempt = BigInt(890880);
+          const gasEstimate = BigInt(10000);
+          const totalFunding = amountLamports + feeLamports + gasEstimate + rentExempt;
+
+          console.log('[Private Transfer] Funding relayer:', relayerAddress);
+          console.log('[Private Transfer] Total:', Number(totalFunding) / 1e9, 'SOL (amount + fee + gas + rent)');
+
+          const fundingTx = new Transaction().add(
+            SystemProgram.transfer({
+              fromPubkey: walletPublicKey,
+              toPubkey: new PublicKey(relayerAddress),
+              lamports: Number(totalFunding),
+            })
+          );
+          fundingTx.feePayer = walletPublicKey;
+          fundingTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+          const signedFundingTx = await signTransaction(fundingTx);
+          const fundingSignature = await connection.sendRawTransaction(signedFundingTx.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          });
+          await connection.confirmTransaction(fundingSignature, 'confirmed');
+          console.log('[Private Transfer] Funding confirmed:', fundingSignature);
+
+          // Step 5: Send proof + stealth info to relayer
+          const response = await fetch(`${RELAYER_URL}/relay/private-transfer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              proof: proofData.proof,
+              publicSignals: proofData.publicSignals,
+              nullifier: proofData.nullifier,
+              stealthAddress: stealth.address,
+              ephemeralPublicKey: stealth.ephemeralPublicKey,
+              viewTag: stealth.viewTag,
+              amountLamports: amountLamports.toString(),
+              fundingTxSignature: fundingSignature,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Private transfer failed');
+          }
+
+          const result = await response.json();
+          console.log('[Private Transfer] Relayer response:', result);
+
+          // Step 6: Mark notes as spent
+          await _zkService.markNoteSpent(proofData.nullifier);
+
           const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
 
           set(state => ({
@@ -601,18 +730,50 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Shielded] Transfer successful:', result.signature);
-          return result;
-        } catch (error) {
-          console.error('[Shielded] Transfer error:', error);
-          set(state => ({
-            pendingTransactions: state.pendingTransactions.map(tx =>
-              tx.id === txId
-                ? { ...tx, status: 'failed', error: (error as Error).message }
-                : tx
-            ),
-          }));
-          throw error;
+          console.log('[Private Transfer] SUCCESS - Sender hidden, recipient at stealth address');
+          return { signature: result.signature, recipientNote: {} as RecipientNoteData };
+
+        } catch (relayerError) {
+          console.error('[Private Transfer] Relayer failed:', relayerError);
+          console.log('[Private Transfer] Falling back to direct on-chain transfer...');
+
+          // Fallback: direct on-chain ZK transfer (sender visible but still works)
+          try {
+            const directResult = await _zkService.transfer(
+              zkRecipient,
+              amountLamports,
+              walletPublicKey,
+              signTransaction
+            );
+
+            const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
+
+            set(state => ({
+              shieldedBalance: newBalance,
+              pendingTransactions: state.pendingTransactions.map(tx =>
+                tx.id === txId ? { ...tx, status: 'confirmed', signature: directResult.signature } : tx
+              ),
+            }));
+
+            setTimeout(() => {
+              set(state => ({
+                pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+              }));
+            }, 5000);
+
+            console.log('[Private Transfer] Fallback successful (sender visible):', directResult.signature);
+            return directResult;
+          } catch (fallbackError) {
+            console.error('[Private Transfer] Fallback also failed:', fallbackError);
+            set(state => ({
+              pendingTransactions: state.pendingTransactions.map(tx =>
+                tx.id === txId
+                  ? { ...tx, status: 'failed', error: (relayerError as Error).message }
+                  : tx
+              ),
+            }));
+            throw relayerError;
+          }
         }
       },
 
