@@ -799,12 +799,23 @@ export const useShieldedStore = create<ShieldedState>()(
 
           for (const payment of payments) {
             try {
-              // Check if we already have this payment
+              // Check if we already have this payment in local state
               const existing = get()._foundStealthPayments.find(p => p.signature === payment.signature);
               if (existing) {
+                // Verify it still has balance (not already swept)
+                const { network: net } = getWalletData();
+                const c = getConnection(net);
+                const bal = await c.getBalance(new PublicKey(payment.stealthAddress));
+                if (bal === 0) {
+                  // Already swept — remove from local state
+                  set(state => ({
+                    _foundStealthPayments: state._foundStealthPayments.filter(p => p.signature !== payment.signature),
+                  }));
+                  continue;
+                }
                 foundPayments.push({
                   stealthAddress: payment.stealthAddress,
-                  amount: payment.amount,
+                  amount: bal / 1e9,
                   signature: payment.signature,
                 });
                 continue;
@@ -825,20 +836,31 @@ export const useShieldedStore = create<ShieldedState>()(
                 'match:', result.stealthAddress === payment.stealthAddress);
 
               if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
-                console.log('[Shielded] Found stealth payment!', payment.amount, 'SOL');
+                // Check on-chain balance — skip if already swept
+                const { network } = getWalletData();
+                const conn = getConnection(network);
+                const onChainBalance = await conn.getBalance(new PublicKey(payment.stealthAddress));
+
+                if (onChainBalance === 0) {
+                  console.log('[Shielded] Stealth payment already swept (0 balance), skipping:', payment.stealthAddress.slice(0, 16) + '...');
+                  continue;
+                }
+
+                const actualAmount = onChainBalance / 1e9;
+                console.log('[Shielded] Found stealth payment!', actualAmount, 'SOL (on-chain:', onChainBalance, 'lamports)');
                 found++;
-                totalAmount += payment.amount;
+                totalAmount += actualAmount;
 
                 foundPayments.push({
                   stealthAddress: payment.stealthAddress,
-                  amount: payment.amount,
+                  amount: actualAmount,
                   signature: payment.signature,
                 });
 
                 newFoundPayments.push({
                   stealthAddress: payment.stealthAddress,
                   privateKey: result.privateKey,
-                  amount: payment.amount,
+                  amount: actualAmount,
                   signature: payment.signature,
                   ephemeralPublicKey: payment.ephemeralPublicKey,
                 });
