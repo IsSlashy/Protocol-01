@@ -23,7 +23,6 @@ const SWIPE_THRESHOLD = 50;
 const TABS = [
   { name: '(wallet)', path: '/(main)/(wallet)' },
   { name: '(streams)', path: '/(main)/(streams)' },
-  { name: '(social)', path: '/(main)/(social)' },
   { name: '(agent)', path: '/(main)/(agent)' },
 ];
 
