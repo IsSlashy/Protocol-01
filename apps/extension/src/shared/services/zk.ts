@@ -258,18 +258,17 @@ class MerkleTree {
     // IMPORTANT: Base zero value must match circuit and on-chain!
     // On-chain uses keccak256("specter") mod p = 0x6caf9948ed859624e241e7760f341b82b45da1ebb6353a34f3abacd3604ce52f
     if (!this._zeroValues) {
-      // Convert the on-chain zero value bytes to bigint (BIG-ENDIAN for field elements)
-      // The hex 0x6caf... means first byte (0x6c) is the MSB
+      // On-chain zero value bytes (stored as [u8; 32] in Rust, little-endian)
       const ZERO_VALUE_BYTES = [
         0x6c, 0xaf, 0x99, 0x48, 0xed, 0x85, 0x96, 0x24,
         0xe2, 0x41, 0xe7, 0x76, 0x0f, 0x34, 0x1b, 0x82,
         0xb4, 0x5d, 0xa1, 0xeb, 0xb6, 0x35, 0x3a, 0x34,
         0xf3, 0xab, 0xac, 0xd3, 0x60, 0x4c, 0xe5, 0x2f,
       ];
-      // Convert to bigint (BIG-ENDIAN - standard for field elements and Poseidon)
-      // First byte is MSB, last byte is LSB
+      // Convert to bigint (LITTLE-ENDIAN - matches Solana's on-chain byte order)
+      // Last byte becomes MSB when constructing the bigint
       let baseZero = BigInt(0);
-      for (let i = 0; i < ZERO_VALUE_BYTES.length; i++) {
+      for (let i = ZERO_VALUE_BYTES.length - 1; i >= 0; i--) {
         baseZero = (baseZero << BigInt(8)) | BigInt(ZERO_VALUE_BYTES[i]);
       }
       console.log('[MerkleTree] Base zero value:', baseZero.toString().slice(0, 20) + '...');
