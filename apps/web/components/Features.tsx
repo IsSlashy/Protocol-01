@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
+import Link from "next/link";
 import { Wallet, Radio, ArrowLeftRight, ShoppingCart, Shield, ArrowRight, Check } from "lucide-react";
 
 const modules = [
@@ -23,6 +24,7 @@ const modules = [
       "SOL & SPL tokens (USDC, USDT...)",
       "Private balance hiding",
     ],
+    docsLink: "/docs#stealth-addresses",
     codePreview: `// Send anonymously
 const tx = await p01.wallet.send({
   to: "p01:7xK9...",
@@ -50,6 +52,7 @@ const tx = await p01.wallet.send({
       "NFT-gated developer access",
       "P01 wallet required (closed circuit)",
     ],
+    docsLink: "/docs#client-sdk",
     codePreview: `// Serverless SDK - On-chain verification
 const p01 = new P01SDK({
   wallet: connectedWallet, // Your P01 wallet
@@ -79,6 +82,7 @@ const stream = await p01.streams.create({
       "Low slippage",
       "Instant swaps",
     ],
+    docsLink: "/docs#client-sdk",
     codePreview: `// Swap tokens
 const swap = await p01.swap({
   from: "SOL",
@@ -103,6 +107,7 @@ const swap = await p01.swap({
       "Multiple providers",
       "Competitive rates",
     ],
+    docsLink: "/docs",
     codePreview: `// Buy crypto with fiat
 const purchase = await p01.buy({
   asset: "SOL",
@@ -127,6 +132,7 @@ const purchase = await p01.buy({
       "Self-custody",
       "Open source",
     ],
+    docsLink: "/docs#zk-proofs",
     codePreview: `// Generate ZK proof
 const proof = await p01.zk.prove({
   statement: "balance > 100",
@@ -267,12 +273,13 @@ export default function Features() {
                       ))}
                     </ul>
 
-                    <button
+                    <Link
+                      href={module.docsLink}
                       className={`inline-flex items-center gap-2 ${colors.text} hover:gap-4 transition-all font-medium font-display uppercase tracking-wider text-sm`}
                     >
                       Learn more about {module.name}
                       <ArrowRight size={18} />
-                    </button>
+                    </Link>
                   </div>
 
                   {/* Code Preview Side */}
