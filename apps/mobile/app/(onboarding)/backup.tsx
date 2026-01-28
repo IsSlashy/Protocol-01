@@ -26,12 +26,47 @@ export default function BackupScreen() {
 
   const loadMnemonic = async () => {
     try {
+      console.log('[Backup] Loading mnemonic from secure storage...');
       const mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic');
-      if (mnemonic) {
-        setSeedPhrase(mnemonic.split(' '));
+      console.log('[Backup] Mnemonic retrieved, length:', mnemonic?.length, 'word count:', mnemonic?.split(' ').length);
+
+      if (mnemonic && mnemonic.trim()) {
+        const words = mnemonic.trim().split(' ').filter(w => w.length > 0);
+        console.log('[Backup] Parsed words:', words.length, 'First word:', words[0]);
+
+        if (words.length === 12) {
+          setSeedPhrase(words);
+        } else {
+          console.error('[Backup] Invalid word count:', words.length);
+          // Try to get from main storage as fallback
+          const fallbackMnemonic = await SecureStore.getItemAsync('p01_mnemonic', {
+            keychainService: 'protocol-01',
+          });
+          if (fallbackMnemonic) {
+            const fallbackWords = fallbackMnemonic.trim().split(' ').filter(w => w.length > 0);
+            if (fallbackWords.length === 12) {
+              setSeedPhrase(fallbackWords);
+              // Also store in temp for consistency
+              await SecureStore.setItemAsync('p01_temp_mnemonic', fallbackMnemonic);
+            }
+          }
+        }
+      } else {
+        console.error('[Backup] No mnemonic found in temp storage');
+        // Try fallback
+        const fallbackMnemonic = await SecureStore.getItemAsync('p01_mnemonic', {
+          keychainService: 'protocol-01',
+        });
+        if (fallbackMnemonic) {
+          const fallbackWords = fallbackMnemonic.trim().split(' ').filter(w => w.length > 0);
+          if (fallbackWords.length === 12) {
+            setSeedPhrase(fallbackWords);
+            await SecureStore.setItemAsync('p01_temp_mnemonic', fallbackMnemonic);
+          }
+        }
       }
     } catch (error) {
-      console.error('Error loading mnemonic:', error);
+      console.error('[Backup] Error loading mnemonic:', error);
     } finally {
       setIsLoading(false);
     }
@@ -68,6 +103,29 @@ export default function BackupScreen() {
     return (
       <SafeAreaView className="flex-1 bg-[#0a0a0c] items-center justify-center">
         <ActivityIndicator size="large" color="#39c5bb" />
+      </SafeAreaView>
+    );
+  }
+
+  // Show error if seed phrase failed to load
+  if (seedPhrase.length === 0) {
+    return (
+      <SafeAreaView className="flex-1 bg-[#0a0a0c] items-center justify-center px-8">
+        <View className="items-center">
+          <Ionicons name="warning" size={48} color="#ef4444" />
+          <Text className="text-white text-xl font-bold text-center mt-4 mb-2">
+            Failed to Load Seed Phrase
+          </Text>
+          <Text className="text-gray-400 text-center mb-6">
+            There was an error loading your seed phrase. Please try creating a new wallet.
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.replace('/(onboarding)/create-wallet')}
+            className="bg-[#39c5bb] px-6 py-3 rounded-xl"
+          >
+            <Text className="text-white font-semibold">Try Again</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
