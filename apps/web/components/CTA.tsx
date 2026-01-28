@@ -9,16 +9,16 @@ const downloadOptions = [
   {
     platform: "Android",
     icon: Smartphone,
-    description: "APK Download",
-    available: true,
-    link: "#", // TODO: Add APK link
+    description: "Coming Soon",
+    available: false,
+    link: "#",
   },
   {
     platform: "Chrome Extension",
     icon: Chrome,
-    description: "Chrome Web Store",
-    available: true,
-    link: "#", // TODO: Add Chrome Web Store link
+    description: "Coming Soon",
+    available: false,
+    link: "#",
   },
 ];
 
@@ -98,10 +98,14 @@ export default function CTA() {
               className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto mb-12"
             >
               {downloadOptions.map((option) => (
-                <a
+                <div
                   key={option.platform}
-                  href={option.link}
-                  className="group flex items-center gap-4 p-4 rounded-xl bg-p01-void border border-p01-border hover:border-p01-cyan/50 transition-all duration-300"
+                  className={`group flex items-center gap-4 p-4 rounded-xl bg-p01-void border border-p01-border transition-all duration-300 ${
+                    option.available
+                      ? "hover:border-p01-cyan/50 cursor-pointer"
+                      : "opacity-50 cursor-not-allowed"
+                  }`}
+                  onClick={() => option.available && option.link !== "#" && window.open(option.link)}
                 >
                   <div className="w-12 h-12 rounded-xl bg-p01-surface flex items-center justify-center text-p01-text-muted group-hover:text-p01-cyan transition-colors">
                     <option.icon size={24} />
@@ -114,7 +118,7 @@ export default function CTA() {
                       {option.description}
                     </div>
                   </div>
-                </a>
+                </div>
               ))}
             </motion.div>
 
@@ -126,7 +130,7 @@ export default function CTA() {
               className="flex flex-col sm:flex-row items-center justify-center gap-4"
             >
               <a
-                href="https://github.com/SectorCT/Protocol01"
+                href="https://github.com/IsSlashy/Protocol-01"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-p01-text-muted hover:text-white transition-colors"

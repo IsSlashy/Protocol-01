@@ -371,7 +371,7 @@ export default function RoadmapPage() {
           </p>
           <div className="flex items-center justify-center gap-4 flex-wrap">
             <a
-              href="https://github.com/SectorCT/Protocol01"
+              href="https://github.com/IsSlashy/Protocol-01"
               target="_blank"
               rel="noopener noreferrer"
               className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-lg transition-colors"
