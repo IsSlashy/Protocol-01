@@ -116,6 +116,10 @@ export function setPrivySigner(signer: PrivySignTransaction | null): void {
   console.log('[WalletStore] Privy signer', signer ? 'set' : 'cleared');
 }
 
+export function getPrivySigner(): PrivySignTransaction | null {
+  return privySigner;
+}
+
 export interface Token {
   mint: string;
   symbol: string;

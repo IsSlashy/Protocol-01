@@ -3,28 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   AlertCircle,
-  Shield,
   ShieldCheck,
-  ChevronRight,
   EyeOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useWalletStore } from '@/shared/store/wallet';
-import { usePrivacyStore, getPrivacyScoreColor, getPrivacyScoreLabel } from '@/shared/store/privacy';
 import { isValidSolanaAddress } from '@/shared/services/wallet';
 import { parseMetaAddress, generateStealthAddress } from '@/shared/services/stealth';
-import { calculatePrivacyScore } from '@/shared/services/privacyZone';
 import { cn } from '@/shared/utils';
 
 export default function Send() {
   const navigate = useNavigate();
   const { solBalance, network } = useWalletStore();
-  const { config: privacyConfig, walletPrivacyScore, protectTransaction } = usePrivacyStore();
 
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [localError, setLocalError] = useState('');
-  const [highPrivacy, setHighPrivacy] = useState(false);
 
   // Stealth address detection
   const [isStealthSend, setIsStealthSend] = useState(false);
@@ -49,20 +43,6 @@ export default function Send() {
       setStealthAddressValid(false);
     }
   }, [recipient]);
-
-  // Calculate estimated privacy score for current transaction
-  // Stealth sends get maximum privacy score
-  const estimatedPrivacyScore = amount && parseFloat(amount) > 0
-    ? isStealthSend && stealthAddressValid
-      ? 100 // Maximum privacy for stealth sends
-      : calculatePrivacyScore({
-          id: 'preview',
-          recipient: recipient || 'preview',
-          amount: parseFloat(amount),
-          timestamp: Date.now(),
-          priority: highPrivacy ? 'high' : 'normal',
-        }) + (highPrivacy ? 20 : 0)
-    : walletPrivacyScore;
 
   const handleContinue = async () => {
     setLocalError('');
@@ -96,11 +76,6 @@ export default function Send() {
       return;
     }
 
-    // Apply privacy protection if enabled (not needed for stealth)
-    if (!isStealthSend && (privacyConfig.enabled || highPrivacy)) {
-      protectTransaction(recipient, parseFloat(amount), highPrivacy);
-    }
-
     // For stealth sends, we need to generate the stealth address
     if (isStealthSend && stealthAddressValid) {
       try {
@@ -110,7 +85,6 @@ export default function Send() {
           state: {
             recipient: stealthAddress.toBase58(),
             amount: parseFloat(amount),
-            highPrivacy: true,
             isStealthSend: true,
             ephemeralPubKey: Array.from(ephemeralPubKey), // Convert to array for serialization
             originalMetaAddress: recipient,
@@ -121,7 +95,7 @@ export default function Send() {
       }
     } else {
       navigate('/send/confirm', {
-        state: { recipient, amount: parseFloat(amount), highPrivacy },
+        state: { recipient, amount: parseFloat(amount) },
       });
     }
   };
@@ -271,102 +245,6 @@ export default function Send() {
           <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span className="text-xs font-mono">{localError}</span>
-          </div>
-        )}
-
-        {/* Privacy Zone Section - Hidden for stealth sends */}
-        {!isStealthSend && (
-          <div className="bg-p01-surface border border-p01-border p-3 rounded-lg">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                {privacyConfig.enabled ? (
-                  <ShieldCheck className="w-4 h-4 text-p01-cyan" />
-                ) : (
-                  <Shield className="w-4 h-4 text-p01-chrome/60" />
-                )}
-                <span className="text-[10px] text-[#555560] font-mono tracking-wider">
-                  PRIVACY ZONE
-                </span>
-              </div>
-              <button
-                onClick={() => navigate('/privacy')}
-                className="flex items-center gap-1 text-[10px] text-p01-cyan hover:underline"
-              >
-                Settings
-                <ChevronRight className="w-3 h-3" />
-              </button>
-            </div>
-
-            {/* Privacy Score Preview */}
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-p01-chrome">Transaction Privacy Score</span>
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    'text-sm font-mono font-bold',
-                    getPrivacyScoreColor(Math.min(100, estimatedPrivacyScore))
-                  )}
-                >
-                  {Math.min(100, estimatedPrivacyScore)}
-                </span>
-                <span className="text-[10px] text-p01-chrome/60">
-                  ({getPrivacyScoreLabel(Math.min(100, estimatedPrivacyScore))})
-                </span>
-              </div>
-            </div>
-
-            {/* High Privacy Toggle */}
-            <button
-              onClick={() => setHighPrivacy(!highPrivacy)}
-              className={cn(
-                'w-full flex items-center justify-between p-2.5 rounded transition-colors',
-                highPrivacy
-                  ? 'bg-p01-cyan/20 border border-p01-cyan/40'
-                  : 'bg-p01-dark border border-p01-border hover:border-p01-cyan/30'
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <ShieldCheck
-                  className={cn('w-4 h-4', highPrivacy ? 'text-p01-cyan' : 'text-p01-chrome/60')}
-                />
-                <span
-                  className={cn('text-xs font-mono', highPrivacy ? 'text-p01-cyan' : 'text-p01-chrome')}
-                >
-                  HIGH PRIVACY MODE
-                </span>
-              </div>
-              <div
-                className={cn(
-                  'w-8 h-5 rounded-full transition-colors relative',
-                  highPrivacy ? 'bg-p01-cyan' : 'bg-p01-border'
-                )}
-              >
-                <motion.span
-                  layout
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  className={cn(
-                    'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-md',
-                    highPrivacy ? 'left-3.5' : 'left-0.5'
-                  )}
-                />
-              </div>
-            </button>
-
-            {highPrivacy && (
-              <motion.p
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="text-[10px] text-p01-cyan/80 mt-2"
-              >
-                Max decoys, mixing, and timing obfuscation will be applied
-              </motion.p>
-            )}
-
-            {!privacyConfig.enabled && !highPrivacy && (
-              <p className="text-[10px] text-p01-chrome/60 mt-2">
-                Enable Privacy Zone or High Privacy for enhanced protection
-              </p>
-            )}
           </div>
         )}
 

@@ -20,9 +20,6 @@ import {
   Zap,
   Clock,
   AlertTriangle,
-  Download,
-  Upload,
-  FileText,
   Scan,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
@@ -43,8 +40,6 @@ export default function ShieldedWallet() {
     refreshBalance,
     shield,
     unshield,
-    exportNotes,
-    importNotes,
     syncFromBlockchain,
     clearNotes,
     scanStealthPayments,
@@ -54,14 +49,11 @@ export default function ShieldedWallet() {
   const [showBalance, setShowBalance] = useState(true);
   const [copied, setCopied] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(false);
   const [actionModal, setActionModal] = useState<'shield' | 'unshield' | null>(null);
   const [amount, setAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
-  const [importData, setImportData] = useState('');
-  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -111,24 +103,6 @@ export default function ShieldedWallet() {
     }
   };
 
-  const handleExport = () => {
-    try {
-      const data = exportNotes();
-      // Create download link
-      const blob = new Blob([data], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `p01-shielded-notes-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
   const handleClearNotes = async () => {
     if (!confirm('Clear all notes? This cannot be undone. The Merkle tree will be preserved.')) {
       return;
@@ -138,43 +112,6 @@ export default function ShieldedWallet() {
       setSyncResult({ success: true, message: 'Notes cleared. Tree preserved.' });
     } catch (err) {
       setError((err as Error).message);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!importData.trim()) {
-      setError('Please paste the export data');
-      return;
-    }
-
-    setIsProcessing(true);
-    setError(null);
-    setImportResult(null);
-
-    try {
-      const result = await importNotes(importData);
-      setImportResult(result);
-      if (result.imported > 0) {
-        setImportData('');
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      setImportData(text);
-      setError(null);
-      setImportResult(null);
-    } catch (err) {
-      setError('Failed to read file');
     }
   };
 
@@ -298,21 +235,6 @@ export default function ShieldedWallet() {
             title="Sync from Blockchain"
           >
             <RefreshCw className={cn('w-5 h-5', isSyncing && 'animate-spin')} />
-          </button>
-          <button
-            onClick={handleExport}
-            disabled={notes.length === 0}
-            className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
-            title="Export Notes"
-          >
-            <Download className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => setShowImportModal(true)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
-            title="Import Notes"
-          >
-            <Upload className="w-5 h-5" />
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
@@ -536,15 +458,15 @@ export default function ShieldedWallet() {
           className="mx-4 mt-4"
         >
           <p className="text-p01-chrome/60 text-xs font-medium mb-2 tracking-wider px-1">
-            SHIELDED NOTES ({notes.length})
+            SHIELDED FUNDS ({notes.length})
           </p>
           <div className="bg-p01-surface rounded-xl overflow-hidden">
             {notes.length === 0 ? (
               <div className="p-6 text-center">
                 <Shield className="w-10 h-10 text-p01-chrome/30 mx-auto mb-2" />
-                <p className="text-p01-chrome text-sm">No shielded notes yet</p>
+                <p className="text-p01-chrome text-sm">No shielded funds yet</p>
                 <p className="text-p01-chrome/60 text-xs mt-1">
-                  Shield some SOL to create your first private note
+                  Shield some SOL to start using private transactions
                 </p>
               </div>
             ) : (
@@ -573,7 +495,7 @@ export default function ShieldedWallet() {
                 ))}
                 {notes.length > 5 && (
                   <button className="w-full p-3 text-center text-p01-cyan text-sm hover:bg-p01-void/50 transition-colors">
-                    View all {notes.length} notes
+                    View all {notes.length} entries
                   </button>
                 )}
               </div>
@@ -596,8 +518,7 @@ export default function ShieldedWallet() {
               <div>
                 <p className="text-white font-medium">ZK-SNARK Protection</p>
                 <p className="text-p01-chrome text-xs mt-1">
-                  Your shielded transactions use Groth16 zero-knowledge proofs.
-                  No one can see amounts, senders, or recipients on-chain.
+                  Your shielded transactions use Groth16 zero-knowledge proofs. No one can see amounts, senders, or recipients on-chain.
                 </p>
               </div>
             </div>
@@ -790,118 +711,6 @@ export default function ShieldedWallet() {
             >
               Got it
             </button>
-          </motion.div>
-        </div>
-      )}
-
-      {/* Import Modal */}
-      {showImportModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="w-full bg-p01-surface rounded-2xl p-5"
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-p01-cyan/20 flex items-center justify-center">
-                <Upload className="w-6 h-6 text-p01-cyan" />
-              </div>
-              <div>
-                <h3 className="text-lg font-display font-bold text-white">
-                  Import Notes
-                </h3>
-                <p className="text-sm text-p01-chrome/60">
-                  Import p01note: from transfer or backup
-                </p>
-              </div>
-            </div>
-
-            {/* File Upload */}
-            <div className="mb-4">
-              <label className="flex items-center justify-center gap-2 w-full py-3 bg-p01-void border border-dashed border-p01-border rounded-xl text-p01-chrome hover:border-p01-cyan transition-colors cursor-pointer">
-                <FileText className="w-5 h-5" />
-                <span className="text-sm">Choose file (.txt or .json)</span>
-                <input
-                  type="file"
-                  accept=".json,.txt,application/json,text/plain"
-                  onChange={handleFileImport}
-                  className="hidden"
-                />
-              </label>
-            </div>
-
-            {/* Paste Area */}
-            <div className="mb-4">
-              <label className="text-xs text-p01-chrome/60 mb-2 block">Or paste note data:</label>
-              <textarea
-                value={importData}
-                onChange={(e) => {
-                  setImportData(e.target.value);
-                  setError(null);
-                  setImportResult(null);
-                }}
-                placeholder="p01note:eyJhIjo... or JSON export"
-                className="w-full h-32 bg-p01-void border border-p01-border rounded-xl p-3 text-xs font-mono text-white placeholder-p01-chrome/40 resize-none focus:outline-none focus:border-p01-cyan"
-              />
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-400 text-xs">{error}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Success */}
-            {importResult && (
-              <div className="mb-4 p-3 bg-green-500/10 rounded-lg border border-green-500/30">
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-green-400 text-xs font-medium">Import complete</p>
-                    <p className="text-green-400/80 text-xs">
-                      {importResult.imported} notes imported, {importResult.skipped} skipped
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowImportModal(false);
-                  setImportData('');
-                  setError(null);
-                  setImportResult(null);
-                }}
-                disabled={isProcessing}
-                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-border transition-colors disabled:opacity-50"
-              >
-                Close
-              </button>
-              <button
-                onClick={handleImport}
-                disabled={isProcessing || !importData.trim()}
-                className="flex-1 py-3 bg-p01-cyan text-p01-void font-medium rounded-xl hover:bg-p01-cyan/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Importing...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-5 h-5" />
-                    Import
-                  </>
-                )}
-              </button>
-            </div>
           </motion.div>
         </div>
       )}

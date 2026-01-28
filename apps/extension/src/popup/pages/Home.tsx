@@ -19,7 +19,6 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
-import { usePrivacyStore } from '@/shared/store/privacy';
 import { useShieldedStore } from '@/shared/store/shielded';
 import { getSolscanUrl } from '@/shared/services/transactions';
 import {
@@ -47,7 +46,6 @@ export default function Home() {
     isLoadingTransactions,
     fetchTransactions,
   } = useWalletStore();
-  const { config: privacyConfig, walletPrivacyScore } = usePrivacyStore();
   const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
 
   const [copied, setCopied] = useState(false);
@@ -129,16 +127,6 @@ export default function Home() {
               <span className="px-2 py-0.5 bg-p01-cyan/20 text-p01-cyan text-[10px] font-mono font-bold rounded tracking-wider">
                 DEVNET
               </span>
-            )}
-            {/* Privacy Zone Badge */}
-            {privacyConfig.enabled && (
-              <button
-                onClick={() => navigate('/privacy')}
-                className="flex items-center gap-1 px-2 py-0.5 bg-p01-cyan/20 text-p01-cyan text-[10px] font-mono font-bold rounded tracking-wider hover:bg-p01-cyan/30 transition-colors"
-              >
-                <ShieldCheck className="w-3 h-3" />
-                <span>{walletPrivacyScore}</span>
-              </button>
             )}
           </div>
         </div>
