@@ -99,7 +99,7 @@ const swap = await p01.swap({
     color: "yellow",
     description: [
       "Buy SOL, USDC, and USDT directly with fiat currency.",
-      "Multiple payment providers including MoonPay, Transak, and Ramp Network.",
+      "Multiple payment providers including MoonPay and Ramp Network.",
     ],
     features: [
       "Credit/Debit card support",
