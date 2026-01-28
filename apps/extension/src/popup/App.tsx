@@ -102,30 +102,34 @@ function App() {
   // Wait for store hydration, verify storage state, and try auto-unlock
   useEffect(() => {
     const verifyAndHydrate = async () => {
-      // Skip storage verification for Privy wallets (no encrypted seed phrase)
-      if (!isPrivyWallet) {
-        try {
-          // Check if wallet data actually exists in storage
-          const result = await chrome.storage.local.get('p01-wallet');
-          const storedData = result['p01-wallet'];
+      try {
+        // Check storage state
+        const result = await chrome.storage.local.get('p01-wallet');
+        const storedData = result['p01-wallet'];
+        const parsed = storedData ? JSON.parse(storedData) : null;
+        const hasEncryptedSeed = parsed?.state?.encryptedSeedPhrase;
+        const storedIsPrivy = parsed?.state?.isPrivyWallet;
+        const storedIsInit = parsed?.state?.isInitialized;
 
-          if (storedData) {
-            const parsed = JSON.parse(storedData);
-            const hasWallet = parsed?.state?.encryptedSeedPhrase;
+        console.log('[Popup] Storage check:', { hasEncryptedSeed, storedIsPrivy, storedIsInit, privyAuthenticated });
 
-            // If store thinks wallet exists but storage doesn't have it, reset
-            if (isInitialized && !hasWallet) {
-              console.log('[Popup] Storage mismatch detected, resetting store');
-              await reset();
-            }
-          } else if (isInitialized) {
-            // Storage is empty but store thinks we're initialized
-            console.log('[Popup] No wallet in storage, resetting store');
-            await reset();
-          }
-        } catch (e) {
-          console.error('[Popup] Error verifying storage:', e);
+        // Case 1: Privy wallet but not authenticated → reset
+        if (storedIsPrivy && !privyAuthenticated) {
+          console.log('[Popup] Privy wallet but not authenticated, resetting');
+          await reset();
         }
+        // Case 2: Not Privy, claims initialized but no seed phrase → reset
+        else if (!storedIsPrivy && storedIsInit && !hasEncryptedSeed) {
+          console.log('[Popup] Legacy wallet claims initialized but no seed, resetting');
+          await reset();
+        }
+        // Case 3: No storage at all but store thinks initialized → reset
+        else if (!storedData && isInitialized) {
+          console.log('[Popup] No storage but store initialized, resetting');
+          await reset();
+        }
+      } catch (e) {
+        console.error('[Popup] Error verifying storage:', e);
       }
 
       // Try auto-unlock from session (10 minute timeout) — legacy wallets only
@@ -140,8 +144,11 @@ function App() {
       }, 50);
     };
 
-    verifyAndHydrate();
-  }, []);
+    // Wait for Privy to be ready before verifying
+    if (privyReady) {
+      verifyAndHydrate();
+    }
+  }, [privyReady]);
 
   // Show loading state while hydrating or while Privy SDK is initializing
   if (!isHydrated || !privyReady) {
