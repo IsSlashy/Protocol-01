@@ -56,8 +56,15 @@ export default function CreateWalletScreen() {
       updateStep(2, 'in_progress');
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
+      console.log('[CreateWallet] Creating wallet...');
       const walletInfo = await createWallet();
-      setMnemonic(walletInfo.mnemonic || null);
+      console.log('[CreateWallet] Wallet created, mnemonic length:', walletInfo.mnemonic?.split(' ').length);
+
+      if (!walletInfo.mnemonic || walletInfo.mnemonic.split(' ').length !== 12) {
+        throw new Error('Invalid mnemonic generated');
+      }
+
+      setMnemonic(walletInfo.mnemonic);
 
       await delay(STEP_DURATION);
       updateStep(2, 'completed');
@@ -68,9 +75,16 @@ export default function CreateWalletScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       // Store mnemonic temporarily for backup screen
-      if (walletInfo.mnemonic) {
-        await SecureStore.setItemAsync('p01_temp_mnemonic', walletInfo.mnemonic);
+      console.log('[CreateWallet] Storing mnemonic for backup screen...');
+      await SecureStore.setItemAsync('p01_temp_mnemonic', walletInfo.mnemonic);
+
+      // Verify it was stored correctly
+      const storedMnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic');
+      if (!storedMnemonic || storedMnemonic !== walletInfo.mnemonic) {
+        console.error('[CreateWallet] Mnemonic storage verification failed');
+        throw new Error('Failed to store mnemonic securely');
       }
+      console.log('[CreateWallet] Mnemonic stored and verified');
 
       await delay(STEP_DURATION);
       updateStep(3, 'completed');
@@ -85,13 +99,13 @@ export default function CreateWalletScreen() {
       }, 500);
 
     } catch (err: any) {
-      console.error('Wallet creation error:', err);
+      console.error('[CreateWallet] Wallet creation error:', err);
       setError(err.message || 'Failed to create wallet');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
       Alert.alert(
         'Error',
-        'Failed to create wallet. Please try again.',
+        err.message || 'Failed to create wallet. Please try again.',
         [{ text: 'Retry', onPress: () => startWalletCreation() }]
       );
     }

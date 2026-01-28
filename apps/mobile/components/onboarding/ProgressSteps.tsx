@@ -29,22 +29,22 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step, index }) => {
 
   useEffect(() => {
     if (step.status === 'in_progress') {
+      // Start spinner animation
+      rotation.value = 0; // Reset first
       rotation.value = withRepeat(
         withTiming(360, { duration: 1000, easing: Easing.linear }),
         -1,
         false
       );
-      opacity.value = withRepeat(
-        withSequence(
-          withTiming(1, { duration: 500 }),
-          withTiming(0.6, { duration: 500 })
-        ),
-        -1,
-        false
-      );
+      opacity.value = 1;
+    } else if (step.status === 'completed') {
+      // Stop animation immediately
+      rotation.value = withTiming(0, { duration: 100 });
+      opacity.value = withTiming(1, { duration: 300 });
     } else {
-      rotation.value = 0;
-      opacity.value = withTiming(step.status === 'completed' ? 1 : 0.4, { duration: 300 });
+      // Pending state
+      rotation.value = withTiming(0, { duration: 100 });
+      opacity.value = withTiming(0.4, { duration: 300 });
     }
   }, [step.status]);
 

@@ -57,7 +57,7 @@ const methodConfig: Record<LoginMethod, {
   google: { icon: 'logo-google', label: 'Continue with Google', color: '#4285F4' },
   apple: { icon: 'logo-apple', label: 'Continue with Apple', color: '#ffffff' },
   twitter: { icon: 'logo-twitter', label: 'Continue with X', color: '#1DA1F2' },
-  wallet: { icon: 'wallet', label: 'Connect Wallet', color: P01.pink },
+  wallet: { icon: 'wallet', label: 'Create New Wallet', color: P01.pink },
 };
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);

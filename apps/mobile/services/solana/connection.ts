@@ -10,14 +10,17 @@ let currentCluster: SolanaCluster = 'devnet';
 // Storage key for network setting
 const NETWORK_STORAGE_KEY = 'settings_network';
 
-// Custom RPC endpoints - using official Solana endpoints (most compatible)
+// Helius API key from environment (optional but recommended)
+const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
+
+// RPC endpoints - Helius first (if configured), then official Solana fallback
 const RPC_ENDPOINTS: Record<SolanaCluster, string[]> = {
-  'devnet': [
-    'https://api.devnet.solana.com',
-  ],
-  'mainnet-beta': [
-    'https://api.mainnet-beta.solana.com',
-  ],
+  'devnet': HELIUS_API_KEY
+    ? [`https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, 'https://api.devnet.solana.com']
+    : ['https://api.devnet.solana.com'],
+  'mainnet-beta': HELIUS_API_KEY
+    ? [`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, 'https://api.mainnet-beta.solana.com']
+    : ['https://api.mainnet-beta.solana.com'],
   'testnet': [
     'https://api.testnet.solana.com',
   ],

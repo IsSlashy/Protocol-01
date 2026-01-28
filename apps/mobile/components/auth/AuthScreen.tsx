@@ -184,13 +184,15 @@ export function AuthScreen({
 
               <AuthDivider />
 
-              {/* Wallet Connection */}
-              <PrivyLoginButton
-                method="wallet"
-                onPress={() => handleSocialLogin('wallet')}
-                loading={loading === 'wallet'}
-                variant="outline"
-              />
+              {/* Create Wallet - Local wallet with seed phrase */}
+              {onCreateWallet && (
+                <PrivyLoginButton
+                  method="wallet"
+                  onPress={onCreateWallet}
+                  loading={false}
+                  variant="outline"
+                />
+              )}
             </Animated.View>
 
             {/* Bottom Actions */}
@@ -198,19 +200,6 @@ export function AuthScreen({
               entering={FadeInUp.delay(500).duration(600)}
               style={styles.bottomActions}
             >
-              {onCreateWallet && (
-                <TouchableOpacity
-                  onPress={onCreateWallet}
-                  activeOpacity={0.7}
-                  style={styles.textButton}
-                >
-                  <Text style={styles.textButtonLabel}>
-                    New here?{' '}
-                    <Text style={styles.textButtonHighlight}>Create wallet</Text>
-                  </Text>
-                </TouchableOpacity>
-              )}
-
               {onImportWallet && (
                 <TouchableOpacity
                   onPress={onImportWallet}

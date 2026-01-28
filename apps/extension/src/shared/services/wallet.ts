@@ -22,10 +22,17 @@ import { Buffer } from 'buffer';
 // Solana derivation path (BIP44)
 const SOLANA_DERIVATION_PATH = "m/44'/501'/0'/0'";
 
-// RPC endpoints
+// Helius API key from environment (optional but recommended for better performance)
+const HELIUS_API_KEY = import.meta.env.VITE_HELIUS_API_KEY;
+
+// RPC endpoints - Helius first (if configured), then official Solana fallback
 const RPC_ENDPOINTS = {
-  devnet: clusterApiUrl('devnet'),
-  'mainnet-beta': 'https://api.mainnet-beta.solana.com',
+  devnet: HELIUS_API_KEY
+    ? `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+    : clusterApiUrl('devnet'),
+  'mainnet-beta': HELIUS_API_KEY
+    ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+    : 'https://api.mainnet-beta.solana.com',
 };
 
 export type NetworkType = 'devnet' | 'mainnet-beta';
