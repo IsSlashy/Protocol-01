@@ -193,7 +193,7 @@ export default function TokenSelector({
 
 // Helper functions
 function getSymbolFromMint(mint: string): string {
-  for (const [symbol, info] of Object.entries(KNOWN_TOKENS)) {
+  for (const [symbol, info] of Object.entries(KNOWN_TOKENS) as [string, { mint: string }][]) {
     if (info.mint === mint) {
       return symbol;
     }

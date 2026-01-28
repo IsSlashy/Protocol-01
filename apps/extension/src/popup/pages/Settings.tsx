@@ -17,14 +17,11 @@ import {
   HelpCircle,
   ExternalLink,
   Lock,
-  Shield,
-  ShieldCheck,
   X,
   AlertCircle,
   Loader2,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
-import { usePrivacyStore, getPrivacyScoreColor, getPrivacyScoreLabel } from '@/shared/store/privacy';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 import { decrypt, encrypt, verifyPassword, hashPassword } from '@/shared/services/crypto';
 import { usePrivy } from '@/shared/providers/PrivyProvider';
@@ -33,7 +30,6 @@ export default function Settings() {
   const navigate = useNavigate();
   const { publicKey, network, setNetwork, hideBalance, toggleHideBalance, lock, reset, logout: walletLogout, encryptedSeedPhrase, passwordHash, isPrivyWallet } =
     useWalletStore();
-  const { config: privacyConfig, walletPrivacyScore } = usePrivacyStore();
   const privy = usePrivy();
 
   const [copied, setCopied] = useState(false);
@@ -296,9 +292,7 @@ export default function Settings() {
             {/* Info */}
             <div className="flex-1 text-left">
               <p className="text-white font-medium mb-0.5">
-                {isPrivyWallet
-                  ? (privy.user?.email?.address || privy.user?.phone?.number || 'My Wallet')
-                  : 'My Wallet'}
+                My Wallet
               </p>
               <p className="text-p01-chrome text-sm font-mono">
                 {publicKey ? truncateAddress(publicKey, 6) : '----'}
@@ -387,41 +381,6 @@ export default function Settings() {
                 />
               </button>
             </div>
-
-            {/* Privacy Zone */}
-            <button
-              onClick={() => navigate('/privacy')}
-              className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  'w-9 h-9 rounded-lg flex items-center justify-center',
-                  privacyConfig.enabled ? 'bg-p01-cyan/20' : 'bg-p01-chrome/10'
-                )}>
-                  {privacyConfig.enabled ? (
-                    <ShieldCheck className="w-5 h-5 text-p01-cyan" />
-                  ) : (
-                    <Shield className="w-5 h-5 text-p01-chrome" />
-                  )}
-                </div>
-                <div className="text-left">
-                  <p className="text-white font-medium">Privacy Zone</p>
-                  <p className={cn('text-xs', privacyConfig.enabled ? 'text-p01-cyan' : 'text-p01-chrome/60')}>
-                    {privacyConfig.enabled
-                      ? `Active - Score: ${walletPrivacyScore}`
-                      : 'Tap to enable'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {privacyConfig.enabled && (
-                  <span className={cn('text-xs font-medium', getPrivacyScoreColor(walletPrivacyScore))}>
-                    {getPrivacyScoreLabel(walletPrivacyScore)}
-                  </span>
-                )}
-                <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
-              </div>
-            </button>
 
             {/* Notifications */}
             <button
@@ -522,7 +481,7 @@ export default function Settings() {
             </button>
 
             <a
-              href="https://twitter.com/protocol01"
+              href="https://x.com/Protocol01_"
               target="_blank"
               rel="noopener noreferrer"
               className="w-full flex items-center justify-between p-4 hover:bg-p01-void/50 transition-colors"

@@ -23,7 +23,6 @@ import Activity from './pages/Activity';
 import Settings from './pages/Settings';
 import Agent from './pages/Agent';
 import Buy from './pages/Buy';
-import PrivacyZone from './pages/PrivacyZone';
 import StealthPayments from './pages/StealthPayments';
 import ShieldedWallet from './pages/ShieldedWallet';
 import ShieldedTransfer from './pages/ShieldedTransfer';
@@ -190,7 +189,6 @@ function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/buy" element={<Buy />} />
           <Route path="/agent" element={<Agent />} />
-          <Route path="/privacy" element={<PrivacyZone />} />
           <Route path="/stealth-payments" element={<StealthPayments />} />
           <Route path="/shielded" element={<ShieldedWallet />} />
           <Route path="/shielded/transfer" element={<ShieldedTransfer />} />
