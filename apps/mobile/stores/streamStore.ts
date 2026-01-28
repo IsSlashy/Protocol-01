@@ -9,7 +9,9 @@ import {
   createStream,
   getStream,
   pauseStream,
+  pauseStreamOnChain,
   resumeStream,
+  resumeStreamOnChain,
   cancelStream,
   cancelStreamAndPublish,
   deleteStream,
@@ -48,7 +50,9 @@ interface StreamState {
   syncFromChain: (walletAddress: string) => Promise<{ newStreams: number; updatedStreams: number }>;
   createNewStream: (params: CreateStreamParams) => Promise<Stream>;
   pauseStream: (streamId: string) => Promise<void>;
+  pauseStreamWithSync: (streamId: string, keypair: Keypair) => Promise<string | null>;
   resumeStream: (streamId: string) => Promise<void>;
+  resumeStreamWithSync: (streamId: string, keypair: Keypair) => Promise<string | null>;
   cancelStream: (streamId: string) => Promise<void>;
   cancelStreamWithSync: (streamId: string, keypair: Keypair) => Promise<string | null>;
   deleteStream: (streamId: string) => Promise<void>;
@@ -209,7 +213,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     }
   },
 
-  // Pause stream
+  // Pause stream (local only)
   pauseStream: async (streamId: string) => {
     try {
       await pauseStream(streamId);
@@ -223,7 +227,25 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     }
   },
 
-  // Resume stream
+  // Pause stream and publish to blockchain (for on-chain subscriptions)
+  pauseStreamWithSync: async (streamId: string, keypair: Keypair) => {
+    try {
+      set({ loading: true, error: null });
+
+      const { signature } = await pauseStreamOnChain(streamId, keypair);
+
+      const streams = await loadStreams();
+      const stats = await getStreamStats();
+
+      set({ streams, stats, loading: false });
+      return signature;
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to pause stream', loading: false });
+      return null;
+    }
+  },
+
+  // Resume stream (local only)
   resumeStream: async (streamId: string) => {
     try {
       await resumeStream(streamId);
@@ -234,6 +256,24 @@ export const useStreamStore = create<StreamState>((set, get) => ({
       set({ streams, stats });
     } catch (error: any) {
       set({ error: error.message || 'Failed to resume stream' });
+    }
+  },
+
+  // Resume stream and publish to blockchain (for on-chain subscriptions)
+  resumeStreamWithSync: async (streamId: string, keypair: Keypair) => {
+    try {
+      set({ loading: true, error: null });
+
+      const { signature } = await resumeStreamOnChain(streamId, keypair);
+
+      const streams = await loadStreams();
+      const stats = await getStreamStats();
+
+      set({ streams, stats, loading: false });
+      return signature;
+    } catch (error: any) {
+      set({ error: error.message || 'Failed to resume stream', loading: false });
+      return null;
     }
   },
 
