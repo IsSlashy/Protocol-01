@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { PublicKey, Transaction, Keypair, SystemProgram } from '@solana/web3.js';
 import { getZkServiceExtension, ZkServiceExtension, ZkAddress, RecipientNoteData } from '../services/zk';
 import { getConnection } from '../services/wallet';
-import { useWalletStore } from './wallet';
+import { useWalletStore, getPrivySigner } from './wallet';
 import nacl from 'tweetnacl';
 
 // ============= STEALTH ADDRESS UTILITIES (X25519 ECDH) =============
@@ -299,37 +299,98 @@ interface ShieldedState {
 
 /**
  * Helper to get wallet data from wallet store
+ * Supports both legacy (keypair) and Privy (signer) wallets
  */
 function getWalletData() {
   const walletState = useWalletStore.getState();
+  const privySigner = getPrivySigner();
 
-  if (!walletState.publicKey || !walletState._keypair) {
+  if (!walletState.publicKey) {
     throw new Error('Wallet not unlocked. Please unlock your wallet first.');
   }
 
+  // For Privy wallets, we need privySigner; for legacy wallets, we need _keypair
+  if (walletState.isPrivyWallet) {
+    if (!privySigner) {
+      throw new Error('Privy signer not available. Please reconnect your wallet.');
+    }
+  } else {
+    if (!walletState._keypair) {
+      throw new Error('Wallet not unlocked. Please unlock your wallet first.');
+    }
+  }
+
   const walletPublicKey = new PublicKey(walletState.publicKey);
-  const keypair = walletState._keypair;
+  const keypair = walletState._keypair; // May be null for Privy wallets
   const network = walletState.network;
   const connection = getConnection(network);
 
-  // Sign transaction function
+  // Sign transaction function - use Privy signer or keypair
   const signTransaction = async (tx: Transaction): Promise<Transaction> => {
-    tx.sign(keypair);
-    return tx;
+    if (walletState.isPrivyWallet && privySigner) {
+      return await privySigner(tx);
+    } else if (keypair) {
+      tx.sign(keypair);
+      return tx;
+    }
+    throw new Error('No signing method available');
   };
 
   return { walletPublicKey, keypair, connection, signTransaction, network };
 }
 
+// Storage key for Privy users' ZK seed
+const PRIVY_ZK_SEED_KEY = 'p01_privy_zk_seed';
+
+/**
+ * Helper to get or generate ZK seed for Privy wallets
+ * Stored in chrome.storage.local, unique per wallet address
+ */
+async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
+  const storageKey = `${PRIVY_ZK_SEED_KEY}_${walletAddress}`;
+
+  try {
+    // Try to retrieve existing seed
+    const result = await chrome.storage.local.get(storageKey);
+    if (result[storageKey]) {
+      console.log('[Shielded] Retrieved existing ZK seed for Privy wallet');
+      return result[storageKey];
+    }
+
+    // Generate new seed (32 random bytes as hex)
+    const randomBytes = new Uint8Array(32);
+    crypto.getRandomValues(randomBytes);
+    const seedHex = Array.from(randomBytes)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Store for future use
+    await chrome.storage.local.set({ [storageKey]: seedHex });
+    console.log('[Shielded] Generated new ZK seed for Privy wallet');
+
+    return seedHex;
+  } catch (e) {
+    console.error('[Shielded] Failed to get/create Privy ZK seed:', e);
+    throw new Error('Failed to initialize ZK keys for Privy wallet');
+  }
+}
+
 /**
  * Helper to get seed phrase from wallet store (requires decryption)
+ * For Privy wallets, generates/retrieves a separate ZK seed
  */
 async function getSeedPhrase(): Promise<string> {
-  // The seed phrase is encrypted in the wallet store
-  // We need to access it through the encrypted storage
-  // For now, we'll derive it from the keypair's secret key
   const walletState = useWalletStore.getState();
 
+  // For Privy wallets, use a separate stored ZK seed
+  if (walletState.isPrivyWallet) {
+    if (!walletState.publicKey) {
+      throw new Error('Privy wallet not initialized');
+    }
+    return await getOrCreatePrivyZkSeed(walletState.publicKey);
+  }
+
+  // Legacy wallet - derive from keypair
   if (!walletState._keypair) {
     throw new Error('Wallet not unlocked');
   }

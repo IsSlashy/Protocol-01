@@ -9,12 +9,9 @@ import {
   Loader2,
   Copy,
   Check,
-  Download,
-  Share2,
 } from 'lucide-react';
 import { useShieldedStore } from '@/shared/store/shielded';
 import { cn, copyToClipboard } from '@/shared/utils';
-import { encodeP01Note, type RecipientNoteData } from '@/shared/services/zk';
 
 export default function ShieldedTransfer() {
   const navigate = useNavigate();
@@ -32,8 +29,6 @@ export default function ShieldedTransfer() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [recipientNoteData, setRecipientNoteData] = useState<RecipientNoteData | null>(null);
-  const [noteCopied, setNoteCopied] = useState(false);
 
   // Initialize if needed
   useEffect(() => {
@@ -97,41 +92,14 @@ export default function ShieldedTransfer() {
     setIsProcessing(true);
 
     try {
-      const result = await transfer(recipient, amountNum);
-      setSuccess(`Transfer successful!`);
-      setRecipientNoteData(result.recipientNote);
+      await transfer(recipient, amountNum);
+      setSuccess(`Transfer successful! Recipient can sweep funds automatically.`);
       // Don't clear recipient/amount so user can see what they sent
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setIsProcessing(false);
     }
-  };
-
-  const handleCopyNote = async () => {
-    if (!recipientNoteData) return;
-
-    // Use p01note format for mobile compatibility
-    const p01note = encodeP01Note(recipientNoteData);
-    await copyToClipboard(p01note);
-    setNoteCopied(true);
-    setTimeout(() => setNoteCopied(false), 2000);
-  };
-
-  const handleDownloadNote = () => {
-    if (!recipientNoteData) return;
-
-    // Use p01note format for mobile compatibility
-    const p01note = encodeP01Note(recipientNoteData);
-    const blob = new Blob([p01note], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `p01-note-${Date.now()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   const percentButtons = [25, 50, 75, 100];
@@ -321,48 +289,6 @@ export default function ShieldedTransfer() {
           </motion.div>
         )}
 
-        {/* Recipient Note Data - IMPORTANT for recipient to receive funds */}
-        {recipientNoteData && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-p01-cyan/10 border border-p01-cyan rounded-xl p-4"
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <Share2 className="w-5 h-5 text-p01-cyan" />
-              <h3 className="text-white font-display font-bold text-sm">Share with Recipient</h3>
-            </div>
-
-            <p className="text-p01-chrome text-xs mb-3">
-              The recipient MUST import this note data to access their funds. Send them this file or copy the data.
-            </p>
-
-            <div className="bg-p01-void rounded-lg p-3 mb-3">
-              <p className="text-p01-chrome text-[10px] font-mono mb-1">Amount: {(Number(recipientNoteData.amount) / 1e9).toFixed(4)} SOL</p>
-              <p className="text-p01-chrome text-[10px] font-mono mb-1">Leaf Index: {recipientNoteData.leafIndex}</p>
-              <p className="text-white text-[10px] font-mono mt-2 break-all select-all">
-                {encodeP01Note(recipientNoteData).slice(0, 60)}...
-              </p>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={handleCopyNote}
-                className="flex-1 py-2 bg-p01-surface border border-p01-border rounded-lg text-white text-xs font-medium flex items-center justify-center gap-2 hover:border-p01-cyan transition-colors"
-              >
-                {noteCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                {noteCopied ? 'Copied!' : 'Copy Note'}
-              </button>
-              <button
-                onClick={handleDownloadNote}
-                className="flex-1 py-2 bg-p01-cyan text-p01-void rounded-lg text-xs font-medium flex items-center justify-center gap-2 hover:bg-p01-cyan/90 transition-colors"
-              >
-                <Download className="w-4 h-4" />
-                Download
-              </button>
-            </div>
-          </motion.div>
-        )}
       </div>
 
       {/* Transfer Button */}
