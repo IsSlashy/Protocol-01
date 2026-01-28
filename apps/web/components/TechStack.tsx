@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
-import React, { useRef } from "react";
+import { useRef } from "react";
 import { Lock, Cpu, Server, Code, Zap, Shield } from "lucide-react";
 
 const technologies = [
@@ -50,53 +50,24 @@ const technologies = [
 
 const architectureLayers = [
   {
-    name: "Client Layer",
-    color: "cyan" as const,
-    hex: "#39c5bb",
-    nodes: [
-      { label: "MOBILE APP", sub: "React Native" },
-      { label: "EXTENSION", sub: "Chrome / Brave" },
-      { label: "SDK", sub: "TypeScript" },
-    ],
+    name: "Application Layer",
+    description: "Wallet, Streams, Agent",
+    color: "p01-cyan",
   },
   {
-    name: "ZK-SDK",
-    color: "pink" as const,
-    hex: "#ff77a8",
-    nodes: [
-      { label: "WASM Prover", sub: "Groth16" },
-      { label: "Poseidon", sub: "Hash Function" },
-      { label: "Note Mgmt", sub: "Encrypt / Decrypt" },
-    ],
+    name: "Privacy Layer",
+    description: "ZK Proofs, Stealth Addresses, Encryption",
+    color: "p01-pink",
   },
   {
-    name: "Protocol Layer",
-    color: "bright-cyan" as const,
-    hex: "#00ffe5",
-    nodes: [
-      { label: "STEALTH", sub: "ECDH Addresses" },
-      { label: "SHIELDED", sub: "Groth16 Pool" },
-      { label: "STREAMS", sub: "SPL Payments" },
-    ],
+    name: "Execution Layer",
+    description: "TEE Compute, Private Relayers",
+    color: "p01-bright-cyan",
   },
   {
-    name: "Relay Layer",
-    color: "pink" as const,
-    hex: "#ff77a8",
-    nodes: [
-      { label: "RELAYER", sub: "ZK Verify + Transfer" },
-      { label: "ON-CHAIN", sub: "Solana Program" },
-    ],
-  },
-  {
-    name: "Solana Blockchain",
-    color: "yellow" as const,
-    hex: "#ffcc00",
-    nodes: [
-      { label: "alt_bn128", sub: "Curve Ops" },
-      { label: "SPL Tokens", sub: "Token Standard" },
-      { label: "Anchor", sub: "Framework" },
-    ],
+    name: "Settlement Layer",
+    description: "Solana, SPL Tokens, Jupiter",
+    color: "p01-yellow",
   },
 ];
 
@@ -152,14 +123,30 @@ export default function TechStack() {
     return colors[color] || colors.cyan;
   };
 
-  const getLayerHex = (color: string) => {
-    const map: Record<string, string> = {
-      cyan: "#39c5bb",
-      pink: "#ff77a8",
-      "bright-cyan": "#00ffe5",
-      yellow: "#ffcc00",
+  const getLayerStyles = (color: string) => {
+    const styles: Record<string, { bg: string; border: string; dot: string }> = {
+      "p01-cyan": {
+        bg: "bg-p01-cyan/5",
+        border: "border-p01-cyan/30",
+        dot: "bg-p01-cyan",
+      },
+      "p01-pink": {
+        bg: "bg-p01-pink/5",
+        border: "border-p01-pink/30",
+        dot: "bg-p01-pink",
+      },
+      "p01-bright-cyan": {
+        bg: "bg-p01-bright-cyan/5",
+        border: "border-p01-bright-cyan/30",
+        dot: "bg-p01-bright-cyan",
+      },
+      "p01-yellow": {
+        bg: "bg-p01-yellow/5",
+        border: "border-p01-yellow/30",
+        dot: "bg-p01-yellow",
+      },
     };
-    return map[color] || map.cyan;
+    return styles[color] || styles["p01-cyan"];
   };
 
   return (
@@ -195,205 +182,37 @@ export default function TechStack() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mb-20"
         >
-          <div className="relative border border-[#2a2a30] bg-[#0a0a0c] p-6 sm:p-10 overflow-hidden">
-            {/* Injected CSS for diagram animations */}
-            <style dangerouslySetInnerHTML={{ __html: `
-              @keyframes arch-dataflow {
-                0% { transform: translateY(-100%); opacity: 0; }
-                10% { opacity: 1; }
-                90% { opacity: 1; }
-                100% { transform: translateY(800%); opacity: 0; }
-              }
-              @keyframes arch-scan {
-                0% { transform: translateY(-100%); }
-                100% { transform: translateY(100%); }
-              }
-              @keyframes arch-glow-pulse {
-                0%, 100% { opacity: 0.03; }
-                50% { opacity: 0.07; }
-              }
-              @keyframes arch-particle-drift {
-                0%, 100% { transform: translateY(0) translateX(0); opacity: 0.08; }
-                25% { transform: translateY(-15px) translateX(5px); opacity: 0.15; }
-                50% { transform: translateY(-8px) translateX(-3px); opacity: 0.1; }
-                75% { transform: translateY(-20px) translateX(8px); opacity: 0.18; }
-              }
-              @media (prefers-reduced-motion: reduce) {
-                .arch-animated { animation: none !important; }
-              }
-            `}} />
-
-            {/* BG Layer 1 — Perspective grid for depth */}
-            <div className="absolute inset-0 overflow-hidden">
-              <div className="absolute w-[200%] h-[120%] left-[-50%] top-[20%]" style={{
-                backgroundImage: `
-                  linear-gradient(rgba(57, 197, 187, 0.04) 1px, transparent 1px),
-                  linear-gradient(90deg, rgba(57, 197, 187, 0.025) 1px, transparent 1px)
-                `,
-                backgroundSize: '60px 60px',
-                transform: 'perspective(600px) rotateX(55deg)',
-                transformOrigin: 'center top',
-                maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 50%, transparent 90%)',
-                WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 50%, transparent 90%)',
-              }} />
+          <div className="card p-8">
+            <h3 className="text-xl font-bold font-display text-white text-center mb-8 uppercase tracking-wider">
+              Protocol Architecture
+            </h3>
+            <div className="space-y-4">
+              {architectureLayers.map((layer, index) => {
+                const styles = getLayerStyles(layer.color);
+                return (
+                  <motion.div
+                    key={layer.name}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={isInView ? { opacity: 1, x: 0 } : {}}
+                    transition={{ duration: 0.5, delay: 0.3 + index * 0.1 }}
+                    className={`flex items-center gap-6 p-4 rounded-xl border ${styles.border} ${styles.bg}`}
+                  >
+                    <div className={`w-3 h-3 rounded-full ${styles.dot}`} />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-white font-display">{layer.name}</span>
+                        <span className="text-p01-text-muted text-sm font-mono">
+                          {layer.description}
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
-
-            {/* BG Layer 2 — Radial glow pulse */}
-            <div className="absolute inset-0 arch-animated" style={{
-              background: `
-                radial-gradient(ellipse 60% 40% at 30% 20%, rgba(57, 197, 187, 0.06) 0%, transparent 60%),
-                radial-gradient(ellipse 50% 35% at 70% 80%, rgba(255, 119, 168, 0.04) 0%, transparent 60%)
-              `,
-              animation: 'arch-glow-pulse 6s ease-in-out infinite',
-            }} />
-
-            {/* BG Layer 3 — Vertical data flow lines */}
-            <div className="absolute inset-0 overflow-hidden">
-              {[15, 35, 55, 75, 90].map((x, i) => (
-                <div key={i} className="absolute arch-animated" style={{
-                  left: `${x}%`,
-                  top: 0,
-                  width: '1px',
-                  height: '12%',
-                  background: `linear-gradient(to bottom, transparent, ${i % 2 === 0 ? 'rgba(57,197,187,0.15)' : 'rgba(255,119,168,0.12)'}, transparent)`,
-                  animation: `arch-dataflow ${5 + i * 0.7}s linear infinite`,
-                  animationDelay: `${i * 1.2}s`,
-                }} />
-              ))}
-            </div>
-
-            {/* BG Layer 4 — Floating particles */}
-            <div className="absolute inset-0">
-              {[
-                { x: '10%', y: '15%', s: '+', c: '#39c5bb' },
-                { x: '85%', y: '25%', s: '◇', c: '#ff77a8' },
-                { x: '20%', y: '70%', s: '○', c: '#00ffe5' },
-                { x: '75%', y: '80%', s: '×', c: '#ffcc00' },
-                { x: '50%', y: '45%', s: '△', c: '#39c5bb' },
-                { x: '92%', y: '55%', s: '+', c: '#ff77a8' },
-              ].map((p, i) => (
-                <span key={i} className="absolute font-light select-none pointer-events-none arch-animated" style={{
-                  left: p.x, top: p.y,
-                  fontSize: 10 + (i % 3) * 2,
-                  color: p.c,
-                  animation: `arch-particle-drift ${7 + i}s ease-in-out infinite`,
-                  animationDelay: `${i * 1.1}s`,
-                }}>{p.s}</span>
-              ))}
-            </div>
-
-            {/* BG Layer 5 — Scanline */}
-            <div className="absolute left-0 right-0 h-[1px] arch-animated" style={{
-              background: 'linear-gradient(90deg, transparent 10%, rgba(57,197,187,0.08) 50%, transparent 90%)',
-              animation: 'arch-scan 8s linear infinite',
-            }} />
-
-            {/* BG Layer 6 — Vignette for depth */}
-            <div className="absolute inset-0 pointer-events-none" style={{
-              background: 'radial-gradient(ellipse 80% 70% at 50% 50%, transparent 20%, rgba(10,10,12,0.5) 80%, rgba(10,10,12,0.8) 100%)',
-            }} />
-
-            {/* BG Layer 7 — Noise texture */}
-            <div className="absolute inset-0 pointer-events-none opacity-[0.015] mix-blend-overlay" style={{
-              backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-            }} />
-
-            <div className="relative z-10">
-              <h3 className="text-xs font-mono text-[#555560] uppercase tracking-[0.3em] text-center mb-2">
-                System Architecture
-              </h3>
-              <h4 className="text-xl sm:text-2xl font-bold font-display text-white text-center mb-10 uppercase tracking-wider">
-                Protocol Stack
-              </h4>
-
-              <div className="flex flex-col items-center gap-0">
-                {architectureLayers.map((layer, layerIndex) => {
-                  const hex = getLayerHex(layer.color);
-                  return (
-                    <React.Fragment key={layer.name}>
-                      {/* Layer */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={isInView ? { opacity: 1, y: 0 } : {}}
-                        transition={{ duration: 0.5, delay: 0.3 + layerIndex * 0.12 }}
-                        className="w-full max-w-2xl"
-                      >
-                        {/* Layer label */}
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="w-1.5 h-1.5" style={{ backgroundColor: hex }} />
-                          <span className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em]" style={{ color: hex }}>
-                            {layer.name}
-                          </span>
-                          <div className="flex-1 h-px" style={{ backgroundColor: `${hex}15` }} />
-                        </div>
-
-                        {/* Nodes grid */}
-                        <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
-                          {layer.nodes.map((node) => (
-                            <div
-                              key={node.label}
-                              className="group relative bg-[#111114] border p-3 sm:p-4 text-center transition-all duration-300 hover:bg-[#151518]"
-                              style={{
-                                borderColor: `${hex}25`,
-                              }}
-                              onMouseEnter={(e) => {
-                                (e.currentTarget as HTMLElement).style.borderColor = `${hex}60`;
-                                (e.currentTarget as HTMLElement).style.boxShadow = `0 0 20px ${hex}10, inset 0 1px 0 ${hex}15`;
-                              }}
-                              onMouseLeave={(e) => {
-                                (e.currentTarget as HTMLElement).style.borderColor = `${hex}25`;
-                                (e.currentTarget as HTMLElement).style.boxShadow = 'none';
-                              }}
-                            >
-                              <div className="text-xs sm:text-sm font-bold font-mono tracking-wide" style={{ color: hex }}>
-                                {node.label}
-                              </div>
-                              <div className="text-[10px] sm:text-xs text-[#555560] mt-1 font-mono">
-                                {node.sub}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </motion.div>
-
-                      {/* Connector arrow between layers */}
-                      {layerIndex < architectureLayers.length - 1 && (
-                        <motion.div
-                          initial={{ opacity: 0, scaleY: 0 }}
-                          animate={isInView ? { opacity: 1, scaleY: 1 } : {}}
-                          transition={{ duration: 0.3, delay: 0.4 + layerIndex * 0.12 }}
-                          className="flex flex-col items-center py-2"
-                        >
-                          <div className="w-px h-4" style={{ backgroundColor: `${hex}40` }} />
-                          <div className="w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent" style={{ borderTopColor: `${hex}60` }} />
-                        </motion.div>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-              </div>
-
-              {/* Bottom status bar */}
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={isInView ? { opacity: 1 } : {}}
-                transition={{ duration: 0.5, delay: 1 }}
-                className="flex items-center justify-center gap-3 mt-8 pt-6 border-t border-[#2a2a30]"
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 bg-[#39c5bb] animate-pulse" />
-                  <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
-                    End-to-end encrypted
-                  </span>
-                </div>
-                <span className="text-[#2a2a30]">|</span>
-                <div className="flex items-center gap-2">
-                  <Zap size={12} className="text-[#39c5bb]" />
-                  <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
-                    From client to settlement
-                  </span>
-                </div>
-              </motion.div>
+            <div className="flex items-center justify-center mt-6 text-p01-text-dim text-sm font-mono">
+              <Zap size={16} className="mr-2 text-p01-cyan" />
+              End-to-end privacy from application to settlement
             </div>
           </div>
         </motion.div>
