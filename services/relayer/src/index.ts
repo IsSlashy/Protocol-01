@@ -869,7 +869,7 @@ app.listen(CONFIG.port, () => {
 // =============================================================================
 
 const SUBSCRIPTION_PROGRAM_ID = new PublicKey(
-  process.env.SUBSCRIPTION_PROGRAM_ID || 'Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS'
+  process.env.SUBSCRIPTION_PROGRAM_ID || '5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt'
 );
 
 // Subscription account structure (matches Anchor)

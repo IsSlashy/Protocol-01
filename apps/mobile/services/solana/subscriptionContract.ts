@@ -17,7 +17,7 @@ import { getConnection } from './connection';
 import CryptoJS from 'crypto-js';
 
 // Subscription program ID (from programs/subscription)
-const SUBSCRIPTION_PROGRAM_ID = new PublicKey('Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS');
+const SUBSCRIPTION_PROGRAM_ID = new PublicKey('5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt');
 
 /**
  * Derive the subscription PDA address
