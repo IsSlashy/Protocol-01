@@ -1,31 +1,46 @@
-# Protocol 01 (P-01)
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Protocol 01" width="100%" />
+</p>
 
-> The next-generation privacy-first Web3 wallet ecosystem built on Solana
+<h1 align="center">Protocol 01</h1>
 
-![Protocol 01 Banner](docs/assets/banner.png)
+<p align="center">
+  <strong>The privacy layer for Solana.</strong><br/>
+  Zero-knowledge proofs &middot; Stealth addresses &middot; Shielded transfers
+</p>
+
+<p align="center">
+  <a href="https://protocol-01.vercel.app">Website</a> &middot;
+  <a href="https://protocol-01.vercel.app/docs">Documentation</a> &middot;
+  <a href="https://x.com/Protocol01_">Twitter/X</a> &middot;
+  <a href="https://discord.gg/KfmhPFAHNH">Discord</a>
+</p>
 
 ---
 
-> **PROPRIETARY SOFTWARE - ALL RIGHTS RESERVED**
+> **PROPRIETARY SOFTWARE &mdash; ALL RIGHTS RESERVED**
 >
-> © 2026 Volta Team | Developed by Slashy Fx
+> &copy; 2026 Volta Team | Developed by Slashy Fx
 >
 > This repository is visible for **hackathon evaluation purposes only**.
-> **No license is granted** to use, copy, modify, fork, or distribute this code.
+> No license is granted to use, copy, modify, fork, or distribute this code.
 > See [LICENSE](./LICENSE) for details.
 
 ---
 
-## Overview
+## What is Protocol 01?
 
-Protocol 01 is a comprehensive Web3 wallet ecosystem designed for the Solana blockchain, focusing on privacy, seamless payments, and innovative features. The project includes a browser extension, mobile application, web platform, and SDK for developers.
+Protocol 01 is a privacy-first financial ecosystem on Solana. It combines **Groth16 zero-knowledge proofs**, **ECDH stealth addresses**, and a **private relay network** to deliver fully untraceable transactions.
 
-### Core Philosophy
+Unlike mixers or tumblers, P-01 provides **cryptographic privacy** at the protocol level &mdash; amounts, senders, and recipients are hidden by default through ZK circuits, not operational obfuscation.
 
-- **Privacy First**: Stealth addresses, encrypted transactions, and privacy scoring
-- **Seamless Payments**: Programmable payment streams for subscriptions and recurring payments
-- **Cross-Platform**: Available on web, mobile, and browser extension
-- **Developer Friendly**: Complete SDK for dApp integration
+```
+User creates ZK proof (Groth16)
+    -> Proof sent to relayer
+        -> Relayer verifies off-chain (snarkjs)
+            -> Funds sent to stealth address
+                -> No on-chain link between sender and recipient
+```
 
 ---
 
@@ -34,13 +49,82 @@ Protocol 01 is a comprehensive Web3 wallet ecosystem designed for the Solana blo
 ```
 protocol-01/
 ├── apps/
-│   ├── extension/     # Chrome/Brave browser extension
-│   ├── mobile/        # React Native (Expo) mobile app
-│   └── web/           # Next.js web application & SDK demo
+│   ├── extension/          # Chrome/Brave extension wallet
+│   ├── mobile/             # React Native (Expo) mobile wallet
+│   └── web/                # Next.js marketing site & SDK demo
 ├── packages/
-│   └── sdk/           # JavaScript/TypeScript SDK
-└── docs/              # Documentation
+│   ├── sdk/                # @p01/sdk — dApp integration
+│   ├── zk-sdk/             # @p01/zk-sdk — ZK proof generation (WASM)
+│   ├── specter-sdk/        # Stealth address operations
+│   └── specter-js/         # React hooks for dApp devs
+├── circuits/
+│   ├── transfer.circom     # Main ZK circuit (2-in-2-out, Merkle depth 20)
+│   ├── merkle.circom       # Merkle tree membership proof
+│   └── poseidon.circom     # ZK-friendly hash function
+├── programs/
+│   ├── zk_shielded/        # Anchor program — shielded pool (shield/transfer/unshield)
+│   ├── specter/            # Anchor program — stealth address registry
+│   └── stream/             # Anchor program — payment streams
+└── services/
+    └── relayer/            # Express.js — ZK verification + private transfers
 ```
+
+---
+
+## Privacy Stack
+
+### Zero-Knowledge Proofs (Groth16)
+
+Circuits written in **Circom**, proven with **snarkjs**, verified on-chain via Solana's native `alt_bn128` syscalls.
+
+| Parameter | Value |
+|-----------|-------|
+| Proving system | Groth16 (BN254) |
+| Hash function | Poseidon (ZK-native, ~300x fewer constraints than Keccak) |
+| Merkle tree depth | 20 (~1M notes capacity) |
+| Transfer model | 2-in-2-out (UTXO-style) |
+| On-chain verification | ~200K compute units |
+
+The circuit proves:
+1. **Ownership** &mdash; Prover holds the spending key for input notes
+2. **Membership** &mdash; Notes exist in the on-chain Merkle tree
+3. **Nullifiers** &mdash; Prevents double-spending without revealing which note was spent
+4. **Conservation** &mdash; Input amounts = output amounts + public amount
+
+### Stealth Addresses (ECDH)
+
+Adapted from Ethereum's EIP-5564 for Solana. Each payment creates a **unique one-time address** using Elliptic Curve Diffie-Hellman key exchange.
+
+```
+Sender: ephemeralKey = random()
+Shared secret = ECDH(ephemeralKey, recipientViewingKey)
+Stealth address = recipientSpendingKey + H(sharedSecret) * G
+```
+
+The recipient scans incoming payments using a **viewTag** (2-byte fast filter), then derives the private key to spend.
+
+### Shielded Pool
+
+On-chain Anchor program storing encrypted notes in a sparse Merkle tree.
+
+| Instruction | Description |
+|-------------|-------------|
+| `shield` | Deposit transparent SOL/SPL into the pool |
+| `transfer` | Private 2-in-2-out transfer within the pool |
+| `transfer_via_relayer` | Gasless private transfer via relay |
+| `unshield` | Withdraw from pool back to transparent balance |
+
+### Private Relay
+
+The relayer breaks the on-chain link between sender and recipient:
+
+1. User generates a ZK proof client-side
+2. User funds the relayer (amount + 0.5% fee + gas)
+3. Relayer verifies the proof off-chain (snarkjs)
+4. Relayer sends funds from its own wallet to the stealth address
+5. On-chain: only `Relayer -> Stealth Address` is visible
+
+The relayer network supports **health checks**, **load balancing**, and **random selection** for maximum privacy.
 
 ---
 
@@ -48,332 +132,167 @@ protocol-01/
 
 ### Browser Extension
 
-Full-featured Solana wallet as a Chrome/Brave extension.
+Full Solana wallet as a Chrome/Brave extension (Manifest V3).
 
-**Features:**
-- Wallet creation & import (BIP39 mnemonic)
-- SOL & SPL token management
-- Real-time price tracking (CoinGecko API)
-- Transaction history with Solscan integration
-- dApp connection (Wallet Standard compliant)
-- Network switching (Mainnet/Devnet)
-- Privacy Zone with stealth addresses
-- Payment Streams management
-- Secure password protection with AES-256 encryption
-
-**Tech Stack:**
-- React 18 + TypeScript
-- Zustand (state management)
-- Vite (build tool)
-- TailwindCSS
-- Chrome Extension Manifest V3
-- @solana/web3.js
-
-### Mobile Application
-
-Native mobile wallet for iOS and Android.
-
-**Features:**
-- Biometric authentication (Face ID / Fingerprint)
-- QR code scanning for payments
-- Push notifications for transactions
-- Offline transaction signing
-- Contact management with stealth addresses
-- AI-powered assistant
-- Mesh networking for peer-to-peer discovery
+- Wallet creation & import (BIP39)
+- SOL & SPL token management with real-time prices
+- Privacy Zone: stealth addresses + shielded transfers
 - Payment streams dashboard
+- dApp connection (Wallet Standard)
+- AES-256-GCM seed encryption (PBKDF2, 100K iterations)
 
-**Tech Stack:**
-- React Native + Expo
-- Expo Router (file-based navigation)
-- NativeWind (TailwindCSS for RN)
-- Reanimated 3 (animations)
-- Expo Secure Store
-- @solana/web3.js
+**Stack:** React 18, TypeScript, Zustand, Vite, TailwindCSS, @solana/web3.js
+
+### Mobile App
+
+Native wallet for iOS and Android.
+
+- Biometric authentication (Face ID / Fingerprint)
+- QR code payments
+- Push notifications
+- AI-powered assistant
+- Payment streams management
+- Cloud backup (Privy integration)
+
+**Stack:** React Native, Expo, Expo Router, NativeWind, Reanimated 3
 
 ### Web Application
 
-Marketing website and SDK demonstration platform.
+Marketing site, SDK demo, and documentation portal.
 
-**Features:**
-- Landing page with product showcase
-- Interactive SDK demo
-- dApp integration examples
-- Documentation portal
-- Devnet testing tools
+**Stack:** Next.js 16, TypeScript, TailwindCSS v4, Framer Motion
 
-**Tech Stack:**
-- Next.js 14 (App Router)
-- TypeScript
-- TailwindCSS
-- Framer Motion
-
-### SDK (@p01/sdk)
-
-JavaScript/TypeScript SDK for integrating Protocol 01 into any dApp.
+### SDK
 
 ```typescript
-import { P01SDK } from '@p01/sdk';
+import { P01Client } from '@p01/sdk';
 
-const p01 = new P01SDK();
+const client = new P01Client({ cluster: 'devnet' });
+const wallet = await P01Client.createWallet();
+await client.connect(wallet);
 
-// Connect wallet
-const wallet = await p01.connect();
+// Stealth transfer
+await client.sendPrivate(recipientStealthAddress, 1.5);
 
-// Request payment
-const signature = await p01.requestPayment({
-  amount: 1.5,
-  token: 'SOL',
-  recipient: 'your-address'
-});
+// Payment stream
+await client.createStream(recipient, 10, 30); // 10 SOL over 30 days
+```
 
-// Create subscription stream
-const stream = await p01.createStream({
-  recipient: 'merchant-address',
-  amount: 9.99,
-  interval: 'monthly',
-  token: 'USDC'
-});
+```typescript
+import { ShieldedClient } from '@p01/zk-sdk';
+
+const zk = new ShieldedClient({ connection, wallet });
+await zk.initialize(seedPhrase);
+
+await zk.shield(1_000_000_000n);               // Deposit 1 SOL
+await zk.transfer(zkAddress, 500_000_000n);     // Private transfer
+await zk.unshield(publicKey, 500_000_000n);     // Withdraw
 ```
 
 ---
 
-## Key Features
+## Security Model
 
-### Payment Streams (Streams)
+| Layer | Mechanism |
+|-------|-----------|
+| Seed phrase | AES-256-GCM, PBKDF2 (100K iterations) |
+| Note storage | XChaCha20-Poly1305 |
+| Key management | Keys never leave the device |
+| ZK soundness | Invalid proofs cannot be generated |
+| ZK completeness | Valid spends always produce valid proofs |
+| Zero-knowledge | Proofs reveal nothing beyond validity |
+| Double-spend | Nullifiers are unique per note, stored on-chain |
 
-The flagship feature - programmable recurring payments on Solana.
-
-**How it works:**
-1. User authorizes a stream with amount, interval, and duration
-2. Smart contract holds pre-authorized funds
-3. Merchant can claim payments at each interval
-4. User can cancel anytime, remaining funds returned
-
-**Use Cases:**
-- SaaS subscriptions
-- Content creator memberships
-- Rent payments
-- Salary streaming
-- DCA (Dollar Cost Averaging)
-
-**Stream Parameters:**
-- `amount`: Payment per interval
-- `interval`: weekly, monthly, yearly
-- `maxPayments`: Total number of payments (or unlimited)
-- `token`: SOL, USDC, or any SPL token
-
-### Privacy Zone
-
-Advanced privacy features for confidential transactions.
-
-**Stealth Addresses:**
-- Generate one-time addresses for receiving
-- Sender cannot link payment to your main wallet
-- Receiver scans for incoming stealth payments
-
-**Privacy Score:**
-- Analyzes your wallet's privacy level
-- Recommendations for improving anonymity
-- Tracks address reuse and patterns
-
-### AI Assistant
-
-Integrated AI agent for wallet operations.
-
-**Capabilities:**
-- Natural language transaction requests
-- Balance inquiries
-- Transaction explanations
-- DeFi recommendations
-- Security alerts
-
-### Mesh Networking (Mobile)
-
-Peer-to-peer discovery and communication.
-
-**Features:**
-- Bluetooth Low Energy discovery
-- Direct wallet-to-wallet connections
-- Offline payment requests
-- Contact exchange via proximity
-
----
-
-## Security
-
-### Encryption
-- AES-256-GCM for seed phrase encryption
-- PBKDF2 key derivation (100,000 iterations)
-- Secure random IV generation
-
-### Key Management
-- Private keys never leave the device
-- Seed phrase encrypted at rest
-- Memory cleared after use
-- No external key storage
-
-### Authentication
-- Password required for sensitive operations
-- Biometric support on mobile
-- Auto-lock after inactivity
+**Threat model:** Blockchain observers cannot link senders to recipients, track amounts, or analyze spending patterns within the shielded pool.
 
 ---
 
 ## Development
 
 ### Prerequisites
+
 - Node.js 18+
 - pnpm 8+
-- Chrome/Brave (for extension testing)
-- Expo Go app (for mobile testing)
+- Rust + Anchor CLI (for on-chain programs)
+- Circom 2.x (for circuit compilation)
 
-### Installation
+### Quick Start
 
 ```bash
-# Clone repository
-git clone https://github.com/your-username/protocol-01.git
-cd protocol-01
+git clone https://github.com/IsSlashy/Protocol-01.git
+cd Protocol-01
 
-# Install dependencies
 pnpm install
 
-# Start development
 pnpm dev           # All apps
 pnpm dev:web       # Web only
 pnpm dev:extension # Extension only
-pnpm dev:mobile    # Mobile only
+pnpm dev:mobile    # Mobile only (requires Expo Go)
 ```
 
-### Building
+### Build
 
 ```bash
-# Build all
-pnpm build
-
-# Build specific apps
-pnpm build:extension  # Chrome extension
-pnpm build:web        # Next.js app
-pnpm build:mobile     # Expo build
+pnpm build:extension    # -> apps/extension/dist
+pnpm build:web          # -> apps/web/.next
+pnpm build:mobile       # Expo EAS build
 ```
 
-### Extension Installation
+### Circuit Compilation
 
-1. Run `pnpm build:extension`
-2. Open Chrome → `chrome://extensions`
-3. Enable "Developer mode"
-4. Click "Load unpacked"
-5. Select `apps/extension/dist`
+```bash
+cd circuits
+circom transfer.circom --r1cs --wasm --sym -o build
+snarkjs groth16 setup build/transfer.r1cs pot_final.ptau transfer.zkey
+snarkjs zkey export verificationkey transfer.zkey vk.json
+```
 
 ---
 
 ## Roadmap
 
-### Current (v1.0)
-- [x] Browser extension
+### Shipped
+
+- [x] Chrome/Brave extension wallet
 - [x] Mobile app (iOS/Android)
-- [x] Web application
-- [x] SDK v1
-- [x] Payment streams
-- [x] Stealth addresses
-- [x] dApp connections
+- [x] ZK shielded pool (Groth16, Circom)
+- [x] Stealth addresses (ECDH)
+- [x] Private relay (off-chain ZK verification)
+- [x] Payment streams (SPL)
+- [x] Jupiter swap integration
+- [x] Fiat on-ramp (MoonPay, Ramp)
+- [x] SDK v1 (@p01/sdk, @p01/zk-sdk)
 
-### Coming Soon (v1.1)
-- [ ] CLI tool
-- [ ] Desktop app (Windows/macOS)
-- [ ] Hardware wallet support
-- [ ] Multi-signature wallets
-- [ ] NFT gallery
+### In Progress
 
-### Future (v2.0)
+- [ ] On-chain relayer (Anchor program)
+- [ ] Decentralized relayer network
+- [ ] Advanced privacy (decoy transactions)
+
+### Future
+
 - [ ] Cross-chain bridges
-- [ ] Fiat on-ramp
-- [ ] DeFi aggregator
+- [ ] Desktop app (Windows/macOS)
+- [ ] CLI tool
 - [ ] DAO governance
-- [ ] Mobile mesh payments
-
----
-
-## API Reference
-
-### Extension API
-
-The extension injects a `window.p01` provider:
-
-```typescript
-interface P01Provider {
-  // Connection
-  connect(): Promise<{ publicKey: string }>;
-  disconnect(): Promise<void>;
-
-  // Transactions
-  signTransaction(tx: Transaction): Promise<Transaction>;
-  signAllTransactions(txs: Transaction[]): Promise<Transaction[]>;
-  signMessage(message: Uint8Array): Promise<{ signature: Uint8Array }>;
-
-  // Streams
-  createStream(params: StreamParams): Promise<string>;
-  cancelStream(streamId: string): Promise<string>;
-
-  // Events
-  on(event: 'connect' | 'disconnect' | 'accountChanged', callback: Function): void;
-}
-```
-
-### SDK Methods
-
-```typescript
-class P01SDK {
-  // Wallet
-  connect(): Promise<WalletInfo>
-  disconnect(): Promise<void>
-  getBalance(): Promise<number>
-
-  // Payments
-  requestPayment(params: PaymentParams): Promise<string>
-
-  // Streams
-  createStream(params: StreamParams): Promise<StreamInfo>
-  getStreams(): Promise<StreamInfo[]>
-  cancelStream(id: string): Promise<string>
-
-  // Privacy
-  generateStealthAddress(): Promise<string>
-  scanStealthPayments(): Promise<Payment[]>
-}
-```
-
----
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Development Flow
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Write tests
-5. Submit a pull request
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+- [ ] Hardware wallet support
 
 ---
 
 ## Links
 
-- Website: [protocol01.xyz](https://protocol01.xyz)
-- Documentation: [docs.protocol01.xyz](https://docs.protocol01.xyz)
-- Twitter: [@protocol01](https://twitter.com/protocol01)
-- Discord: [discord.gg/protocol01](https://discord.gg/protocol01)
+| | |
+|---|---|
+| Website | [protocol-01.vercel.app](https://protocol-01.vercel.app) |
+| Documentation | [protocol-01.vercel.app/docs](https://protocol-01.vercel.app/docs) |
+| Roadmap | [protocol-01.vercel.app/roadmap](https://protocol-01.vercel.app/roadmap) |
+| Twitter/X | [@Protocol01_](https://x.com/Protocol01_) |
+| Discord | [discord.gg/KfmhPFAHNH](https://discord.gg/KfmhPFAHNH) |
+| GitHub | [IsSlashy/Protocol-01](https://github.com/IsSlashy/Protocol-01) |
 
 ---
 
 <p align="center">
-  <strong>Built on Solana</strong>
+  <strong>Built on Solana</strong><br/>
+  <sub>&copy; 2026 Volta Team &mdash; All rights reserved</sub>
 </p>
