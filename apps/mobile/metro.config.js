@@ -46,6 +46,38 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     };
   }
 
+  // Handle @noble/hashes subpath exports (sha256, sha3, ripemd160, utils, etc.)
+  if (moduleName.startsWith('@noble/hashes/')) {
+    const subpath = moduleName.replace('@noble/hashes/', '');
+    try {
+      const resolved = require.resolve(`@noble/hashes/esm/${subpath}.js`, { paths: [projectRoot, workspaceRoot] });
+      return { filePath: resolved, type: 'sourceFile' };
+    } catch (e) {
+      try {
+        const resolved = require.resolve(`@noble/hashes/${subpath}.js`, { paths: [projectRoot, workspaceRoot] });
+        return { filePath: resolved, type: 'sourceFile' };
+      } catch (e2) {
+        // Fallback to default resolution
+      }
+    }
+  }
+
+  // Handle @scure/bip39 subpath exports
+  if (moduleName.startsWith('@scure/bip39/')) {
+    const subpath = moduleName.replace('@scure/bip39/', '');
+    try {
+      const resolved = require.resolve(`@scure/bip39/esm/${subpath}.js`, { paths: [projectRoot, workspaceRoot] });
+      return { filePath: resolved, type: 'sourceFile' };
+    } catch (e) {
+      try {
+        const resolved = require.resolve(`@scure/bip39/${subpath}.js`, { paths: [projectRoot, workspaceRoot] });
+        return { filePath: resolved, type: 'sourceFile' };
+      } catch (e2) {
+        // Fallback to default resolution
+      }
+    }
+  }
+
   // Force jose to use browser version (not Node.js version)
   if (moduleName === 'jose') {
     return {
