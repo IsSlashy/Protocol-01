@@ -6,7 +6,10 @@
     "orientation": "portrait",
     "scheme": "p01",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/images/P-01.png",
     "splash": {
+      "image": "./assets/images/P-01.png",
+      "resizeMode": "contain",
       "backgroundColor": "#0a0a0c"
     },
     "assetBundlePatterns": [
@@ -26,6 +29,10 @@
       }
     },
     "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/P-01.png",
+        "backgroundColor": "#0a0a0c"
+      },
       "package": "com.protocol01.app",
       "permissions": [
         "USE_BIOMETRIC",

@@ -1404,7 +1404,7 @@ export class ZkService {
   private proverFunction: ((inputs: Record<string, string>) => Promise<Groth16Proof>) | null = null;
 
   // Backend prover URL (for mobile without bundled circuits)
-  private static BACKEND_PROVER_URL = 'https://corps-mag-distributed-ref.trycloudflare.com'; // Cloudflare tunnel to local relayer
+  private static BACKEND_PROVER_URL = 'https://p01-relayer-production.up.railway.app'; // Railway hosted relayer
 
   /**
    * Set the backend prover URL

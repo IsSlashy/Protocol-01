@@ -645,7 +645,7 @@ export const useShieldedStore = create<ShieldedState>()(
           }));
 
           // Step 3: Get relayer info
-          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://corps-mag-distributed-ref.trycloudflare.com';
+          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://p01-relayer-production.up.railway.app';
           let relayerAddress: string;
           let feeBps: number;
 
