@@ -70,23 +70,23 @@ const SystemStatus = memo(function SystemStatus() {
         [ SYSTEM STATUS ]
       </span>
 
-      {/* UNTRACEABLE - with chromatic glitch */}
+      {/* SUBSCRIBE PRIVATELY - with chromatic glitch */}
       <div className="relative h-[60px] flex items-center">
         {/* Cyan ghost layer - CSS animated */}
         <span
-          className="absolute text-[#39c5bb] text-4xl sm:text-5xl font-black tracking-wider status-glitch"
+          className="absolute text-[#39c5bb] text-3xl sm:text-4xl font-black tracking-wider status-glitch"
           style={{
             fontFamily: "var(--font-display)",
             animation: "chromatic-cyan 2.5s steps(1) infinite",
             willChange: "opacity, transform",
           }}
         >
-          UNTRACEABLE
+          SUBSCRIBE PRIVATELY
         </span>
 
         {/* Pink ghost layer - CSS animated */}
         <span
-          className="absolute text-[#ff2d7a] text-4xl sm:text-5xl font-black tracking-wider status-glitch"
+          className="absolute text-[#ff2d7a] text-3xl sm:text-4xl font-black tracking-wider status-glitch"
           style={{
             fontFamily: "var(--font-display)",
             animation: "chromatic-pink 2.5s steps(1) infinite",
@@ -94,19 +94,19 @@ const SystemStatus = memo(function SystemStatus() {
             willChange: "opacity, transform",
           }}
         >
-          UNTRACEABLE
+          SUBSCRIBE PRIVATELY
         </span>
 
         {/* Main text - CSS animated */}
         <span
-          className="text-white text-4xl sm:text-5xl font-black tracking-wider status-glitch"
+          className="text-white text-3xl sm:text-4xl font-black tracking-wider status-glitch"
           style={{
             fontFamily: "var(--font-display)",
             animation: "text-glitch-status 2.5s steps(1) infinite",
             willChange: "transform",
           }}
         >
-          UNTRACEABLE
+          SUBSCRIBE PRIVATELY
         </span>
       </div>
 
@@ -288,10 +288,10 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <p>Anonymous transactions.</p>
-              <p>Private streams.</p>
-              <p>Zero-knowledge communications.</p>
-              <p className="text-[#39c5bb]">Total invisibility.</p>
+              <p>Recurring private payments.</p>
+              <p>Anonymous subscriptions.</p>
+              <p>Stealth transfers on Solana.</p>
+              <p className="text-[#39c5bb]">Your finances, your privacy.</p>
             </div>
 
             {/* CTA Buttons - sharp edges, no soft shadows */}
@@ -338,9 +338,9 @@ function Hero() {
               }}
             >
               {[
-                { value: "0", label: "Data Leaks", color: "text-[#39c5bb]" },
-                { value: "100%", label: "Anonymous", color: "text-[#ff2d7a]" },
-                { value: "ZK", label: "Verified", color: "text-[#00ffe5]" },
+                { value: "∞", label: "Recurring", color: "text-[#39c5bb]" },
+                { value: "100%", label: "Private", color: "text-[#ff2d7a]" },
+                { value: "0", label: "Traces", color: "text-[#00ffe5]" },
               ].map((stat, index) => (
                 <div key={index} className="text-left">
                   <div

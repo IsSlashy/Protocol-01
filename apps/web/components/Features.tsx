@@ -8,11 +8,41 @@ import { Wallet, Radio, ArrowLeftRight, ShoppingCart, Shield, ArrowRight, Check 
 
 const modules = [
   {
+    id: "streams",
+    icon: Radio,
+    name: "Private Subscriptions",
+    tagline: "Recurring payments without traces",
+    color: "cyan",
+    description: [
+      "Set up recurring private payments for subscriptions, memberships, and services.",
+      "Automatic monthly/weekly transfers with full privacy.",
+      "Perfect for creators, SaaS, and any subscription-based business.",
+    ],
+    features: [
+      "Automated recurring payments",
+      "Customizable intervals",
+      "Cancel anytime",
+      "100% private & untraceable",
+    ],
+    docsLink: "/docs#subscriptions",
+    codePreview: `// Create a private subscription
+const subscription = await p01.subscribe({
+  to: "p01:creator...",
+  amount: "9.99 USDC",
+  interval: "monthly",
+  privacy: "stealth" // Untraceable payments
+});
+
+// Manage subscription
+await subscription.pause();
+await subscription.cancel();`,
+  },
+  {
     id: "wallet",
     icon: Wallet,
-    name: "Stealth Wallet",
-    tagline: "Invisible transactions on Solana",
-    color: "cyan",
+    name: "Stealth Transfers",
+    tagline: "Send & receive without traces",
+    color: "pink",
     description: [
       "Send and receive SOL and SPL tokens without leaving a trace.",
       "Stealth addresses ensure each transaction is completely unlinkable.",
@@ -22,48 +52,15 @@ const modules = [
       "One-time stealth addresses",
       "Devnet & Mainnet support",
       "SOL & SPL tokens (USDC, USDT...)",
-      "Private balance hiding",
+      "Instant private transfers",
     ],
     docsLink: "/docs#stealth-addresses",
-    codePreview: `// Send anonymously
-const tx = await p01.wallet.send({
+    codePreview: `// Send privately
+const tx = await p01.send({
   to: "p01:7xK9...",
   amount: "100",
   token: "USDC",
-  network: "mainnet", // or "devnet"
-  privacy: "maximum"
-});`,
-  },
-  {
-    id: "streams",
-    icon: Radio,
-    name: "Stream Payments SDK",
-    tagline: "Serverless B2B SDK for subscriptions",
-    color: "pink",
-    description: [
-      "Serverless SDK for businesses and developers to build subscription solutions.",
-      "On-chain verification via smart contracts - no centralized server.",
-      "Recipients must use Protocol 01 wallet.",
-      "Closed ecosystem.",
-    ],
-    features: [
-      "100% Serverless / On-chain",
-      "Smart contract verification",
-      "NFT-gated developer access",
-      "P01 wallet required (closed circuit)",
-    ],
-    docsLink: "/docs#client-sdk",
-    codePreview: `// Serverless SDK - On-chain verification
-const p01 = new P01SDK({
-  wallet: connectedWallet, // Your P01 wallet
-  network: "mainnet"
-});
-
-// Smart contract verifies you hold dev NFT
-const stream = await p01.streams.create({
-  recipient: "p01:7xK9...", // Must have P01 wallet
-  amount: "9.99 USDC/month",
-  programId: STREAM_PROGRAM_ID // On-chain program
+  privacy: "stealth" // One-time address
 });`,
   },
   {
@@ -120,7 +117,7 @@ const purchase = await p01.buy({
     id: "security",
     icon: Shield,
     name: "Zero-Knowledge Proofs",
-    tagline: "Maximum privacy",
+    tagline: "Maximum privacy with ZK",
     color: "pink",
     description: [
       "Advanced cryptography ensures your transactions and identity remain private.",
@@ -206,11 +203,11 @@ export default function Features() {
         >
           <span className="badge-cyan mb-4">Features</span>
           <h2 className="section-title">
-            Five modules.{" "}
-            <span className="text-[#39c5bb]">Complete privacy.</span>
+            Private payments.{" "}
+            <span className="text-[#39c5bb]">Recurring or one-time.</span>
           </h2>
           <div className="section-subtitle space-y-1">
-            <p>Protocol 01 provides a comprehensive suite of privacy tools, all working together seamlessly.</p>
+            <p>Subscribe to services, pay creators, and transfer funds—all without leaving traces.</p>
             <p>Works on Devnet for testing and Mainnet for real transactions.</p>
           </div>
         </motion.div>
