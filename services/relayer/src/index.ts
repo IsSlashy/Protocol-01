@@ -32,10 +32,16 @@ const logger = winston.createLogger({
   ],
 });
 
+// Helius RPC (if configured) for better performance
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const DEFAULT_RPC = HELIUS_API_KEY
+  ? `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+  : 'https://api.devnet.solana.com';
+
 // Configuration
 const CONFIG = {
   port: parseInt(process.env.PORT || '3000'),
-  rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+  rpcUrl: process.env.SOLANA_RPC_URL || DEFAULT_RPC,
   programId: new PublicKey(process.env.ZK_PROGRAM_ID || '8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY'),
   feeRecipient: process.env.FEE_RECIPIENT_PUBKEY,
   feeBps: parseInt(process.env.FEE_BPS || '50'), // 0.5% default - covers relayer gas costs
