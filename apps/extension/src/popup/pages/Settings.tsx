@@ -27,12 +27,14 @@ import { useWalletStore } from '@/shared/store/wallet';
 import { usePrivacyStore, getPrivacyScoreColor, getPrivacyScoreLabel } from '@/shared/store/privacy';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 import { decrypt, encrypt, verifyPassword, hashPassword } from '@/shared/services/crypto';
+import { usePrivy } from '@/shared/providers/PrivyProvider';
 
 export default function Settings() {
   const navigate = useNavigate();
-  const { publicKey, network, setNetwork, hideBalance, toggleHideBalance, lock, reset, encryptedSeedPhrase, passwordHash } =
+  const { publicKey, network, setNetwork, hideBalance, toggleHideBalance, lock, reset, logout: walletLogout, encryptedSeedPhrase, passwordHash, isPrivyWallet } =
     useWalletStore();
   const { config: privacyConfig, walletPrivacyScore } = usePrivacyStore();
+  const privy = usePrivy();
 
   const [copied, setCopied] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -99,12 +101,33 @@ export default function Settings() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleLock = () => {
-    lock();
-    navigate('/unlock');
+  const handleLock = async () => {
+    if (isPrivyWallet) {
+      // Privy users: sign out of Privy + reset wallet store
+      await privy.logout();
+      walletLogout();
+      navigate('/welcome');
+    } else {
+      lock();
+      navigate('/unlock');
+    }
   };
 
   const handleReset = async () => {
+    if (isPrivyWallet) {
+      // Privy users: sign out + reset (no password needed)
+      setResetLoading(true);
+      try {
+        await privy.logout();
+        walletLogout();
+        navigate('/welcome');
+      } catch (e) {
+        setResetError('Failed to sign out');
+        setResetLoading(false);
+      }
+      return;
+    }
+
     if (!passwordHash) return;
 
     setResetLoading(true);
@@ -272,7 +295,11 @@ export default function Settings() {
 
             {/* Info */}
             <div className="flex-1 text-left">
-              <p className="text-white font-medium mb-0.5">My Wallet</p>
+              <p className="text-white font-medium mb-0.5">
+                {isPrivyWallet
+                  ? (privy.user?.email?.address || privy.user?.phone?.number || 'My Wallet')
+                  : 'My Wallet'}
+              </p>
               <p className="text-p01-chrome text-sm font-mono">
                 {publicKey ? truncateAddress(publicKey, 6) : '----'}
               </p>
@@ -421,39 +448,43 @@ export default function Settings() {
             SECURITY
           </p>
           <div className="bg-p01-surface rounded-xl overflow-hidden">
-            {/* Backup Seed Phrase */}
-            <button
-              onClick={() => setShowBackupModal(true)}
-              className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-p01-pink/20 flex items-center justify-center">
-                  <Key className="w-5 h-5 text-p01-pink" />
+            {/* Backup Seed Phrase — hidden for Privy users */}
+            {!isPrivyWallet && (
+              <button
+                onClick={() => setShowBackupModal(true)}
+                className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-p01-pink/20 flex items-center justify-center">
+                    <Key className="w-5 h-5 text-p01-pink" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-white font-medium">Backup Seed Phrase</p>
+                    <p className="text-p01-chrome/60 text-xs">View your recovery phrase</p>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <p className="text-white font-medium">Backup Seed Phrase</p>
-                  <p className="text-p01-chrome/60 text-xs">View your recovery phrase</p>
-                </div>
-              </div>
-              <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
-            </button>
+                <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
+              </button>
+            )}
 
-            {/* Change Password */}
-            <button
-              onClick={() => setShowPasswordModal(true)}
-              className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-green-500/20 flex items-center justify-center">
-                  <Lock className="w-5 h-5 text-green-400" />
+            {/* Change Password — hidden for Privy users */}
+            {!isPrivyWallet && (
+              <button
+                onClick={() => setShowPasswordModal(true)}
+                className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-green-500/20 flex items-center justify-center">
+                    <Lock className="w-5 h-5 text-green-400" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-white font-medium">Change Password</p>
+                    <p className="text-p01-chrome/60 text-xs">Update your password</p>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <p className="text-white font-medium">Change Password</p>
-                  <p className="text-p01-chrome/60 text-xs">Update your password</p>
-                </div>
-              </div>
-              <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
-            </button>
+                <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
+              </button>
+            )}
 
             {/* Connected Sites */}
             <button
@@ -514,7 +545,7 @@ export default function Settings() {
             className="w-full flex items-center justify-center gap-3 py-4 bg-p01-cyan text-p01-void font-bold text-base rounded-xl hover:bg-p01-cyan-dim transition-colors"
           >
             <LogOut className="w-6 h-6" />
-            Disconnect Wallet
+            {isPrivyWallet ? 'Sign Out' : 'Disconnect Wallet'}
           </button>
         </div>
 
