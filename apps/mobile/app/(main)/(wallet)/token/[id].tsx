@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { formatUSD, formatPriceChange } from '@/utils/format/currency';
+import { useWalletStore } from '@/stores/walletStore';
 
 const { width } = Dimensions.get('window');
 
@@ -44,14 +45,12 @@ interface TokenTransaction {
   isPrivate: boolean;
 }
 
-// Mock data
-const TOKENS: Record<string, TokenDetail> = {
+// Default token metadata (market info is placeholder until API integration)
+const TOKEN_METADATA: Record<string, Partial<TokenDetail>> = {
   sol: {
     id: 'sol',
     symbol: 'SOL',
     name: 'Solana',
-    balance: 12.5432,
-    usdValue: 2508.64,
     price: 200.0,
     priceChange24h: 5.23,
     priceChange7d: 12.8,
@@ -63,8 +62,6 @@ const TOKENS: Record<string, TokenDetail> = {
     id: 'usdc',
     symbol: 'USDC',
     name: 'USD Coin',
-    balance: 1250.0,
-    usdValue: 1250.0,
     price: 1.0,
     priceChange24h: 0.01,
     priceChange7d: -0.02,
@@ -77,8 +74,6 @@ const TOKENS: Record<string, TokenDetail> = {
     id: 'bonk',
     symbol: 'BONK',
     name: 'Bonk',
-    balance: 15000000,
-    usdValue: 450.0,
     price: 0.00003,
     priceChange24h: -2.15,
     priceChange7d: 25.4,
@@ -134,13 +129,83 @@ export default function TokenDetailScreen() {
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('24h');
   const [balanceHidden, setBalanceHidden] = useState(false);
 
-  const token = TOKENS[id || 'sol'];
+  // Get real balance from wallet store
+  const walletBalance = useWalletStore((state) => state.balance);
+  const refreshBalance = useWalletStore((state) => state.refreshBalance);
+
+  // Build token data with real balance
+  const token = useMemo((): TokenDetail | null => {
+    const tokenId = id?.toLowerCase() || 'sol';
+    const metadata = TOKEN_METADATA[tokenId];
+
+    if (!metadata) {
+      // Unknown token - try to find in wallet tokens
+      const walletToken = walletBalance?.tokens?.find(
+        (t) => t.symbol?.toLowerCase() === tokenId || t.mint === id
+      );
+      if (walletToken) {
+        return {
+          id: tokenId,
+          symbol: walletToken.symbol || 'Unknown',
+          name: walletToken.name || walletToken.symbol || 'Unknown Token',
+          balance: walletToken.balance || 0,
+          usdValue: walletToken.usdValue || 0,
+          price: 0,
+          priceChange24h: 0,
+          priceChange7d: 0,
+          marketCap: 0,
+          volume24h: 0,
+          icon: 'cube-outline',
+          contractAddress: walletToken.mint,
+        };
+      }
+      return null;
+    }
+
+    // Get real balance
+    let realBalance = 0;
+    let usdValue = 0;
+
+    if (tokenId === 'sol') {
+      realBalance = walletBalance?.sol ?? 0;
+      usdValue = realBalance * (metadata.price || 0);
+    } else {
+      // Find token in wallet balance
+      const walletToken = walletBalance?.tokens?.find(
+        (t) => t.symbol?.toLowerCase() === tokenId
+      );
+      if (walletToken) {
+        realBalance = walletToken.balance || 0;
+        usdValue = walletToken.usdValue || realBalance * (metadata.price || 0);
+      }
+    }
+
+    return {
+      ...metadata,
+      id: tokenId,
+      symbol: metadata.symbol || tokenId.toUpperCase(),
+      name: metadata.name || tokenId,
+      balance: realBalance,
+      usdValue: usdValue,
+      price: metadata.price || 0,
+      priceChange24h: metadata.priceChange24h || 0,
+      priceChange7d: metadata.priceChange7d || 0,
+      marketCap: metadata.marketCap || 0,
+      volume24h: metadata.volume24h || 0,
+      icon: metadata.icon || 'cube-outline',
+      contractAddress: metadata.contractAddress,
+    } as TokenDetail;
+  }, [id, walletBalance]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      await refreshBalance();
+    } catch (error) {
+      console.error('Failed to refresh balance:', error);
+    }
     setRefreshing(false);
-  }, []);
+  }, [refreshBalance]);
 
   const formatTimeAgo = (date: Date): string => {
     const now = new Date();

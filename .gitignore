@@ -51,3 +51,8 @@ nul
 
 .vercel
 *.ptau
+# Generated TypeScript declarations
+**/*.d.ts
+*.timestamp-*.mts
+*.timestamp-*.mjs
+**/vercel_out.txt
