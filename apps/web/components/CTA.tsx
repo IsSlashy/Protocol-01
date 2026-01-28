@@ -87,7 +87,7 @@ export default function CTA() {
               className="text-lg text-p01-text-muted max-w-2xl mx-auto mb-12 space-y-1"
             >
               <p>Download Protocol 01 and take back control of your financial privacy.</p>
-              <p>Free to use, open source, and built for everyone.</p>
+              <p>Free to use. Self-custody. Built for everyone.</p>
             </motion.div>
 
             {/* Download Buttons */}
@@ -158,7 +158,7 @@ export default function CTA() {
           className="mt-16 grid grid-cols-3 gap-8"
         >
           {[
-            { value: "100%", label: "Open Source" },
+            { value: "100%", label: "Self-Custody" },
             { value: "0", label: "KYC Required" },
             { value: "∞", label: "Privacy" },
           ].map((stat) => (
