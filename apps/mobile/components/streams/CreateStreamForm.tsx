@@ -14,6 +14,7 @@ import {
   detectServiceFromName,
   CATEGORY_CONFIG,
 } from '../../services/subscriptions/serviceRegistry';
+import { useWalletStore } from '@/stores/walletStore';
 
 // Protocol 01 Color System
 const COLORS = {
@@ -84,11 +85,12 @@ const FREQUENCY_OPTIONS: { label: string; value: PaymentFrequency }[] = [
   { label: 'Monthly', value: 'monthly' },
 ];
 
-const TOKEN_OPTIONS = [
-  { symbol: 'SOL', name: 'Solana', balance: 12.5 },
-  { symbol: 'USDC', name: 'USD Coin', balance: 1500.0 },
-  { symbol: 'USDT', name: 'Tether', balance: 800.0 },
-];
+interface TokenOption {
+  symbol: string;
+  name: string;
+  balance: number;
+  mint?: string;
+}
 
 export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   balance,
@@ -101,9 +103,43 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   submitLabel = 'Create Stream',
   hideServiceSelector = false,
 }) => {
+  // Get real balance from wallet store
+  const walletBalance = useWalletStore((state) => state.balance);
+
+  // Build token options dynamically from real wallet balance
+  const tokenOptions: TokenOption[] = useMemo(() => {
+    const options: TokenOption[] = [];
+
+    // Add SOL as primary option
+    const solBalance = walletBalance?.sol ?? 0;
+    options.push({
+      symbol: 'SOL',
+      name: 'Solana',
+      balance: solBalance,
+    });
+
+    // Add any SPL tokens from wallet
+    if (walletBalance?.tokens && walletBalance.tokens.length > 0) {
+      for (const token of walletBalance.tokens) {
+        options.push({
+          symbol: token.symbol || 'Unknown',
+          name: token.name || token.symbol || 'Unknown Token',
+          balance: token.balance || 0,
+          mint: token.mint,
+        });
+      }
+    }
+
+    return options;
+  }, [walletBalance]);
+
   const [recipient, setRecipient] = useState('');
   const [name, setName] = useState('');
-  const [selectedToken, setSelectedToken] = useState(TOKEN_OPTIONS[0]);
+  const [selectedToken, setSelectedToken] = useState<TokenOption>(() => ({
+    symbol: 'SOL',
+    name: 'Solana',
+    balance: walletBalance?.sol ?? 0,
+  }));
   const [amount, setAmount] = useState('');
   const [selectedDuration, setSelectedDuration] = useState(DURATION_OPTIONS[1].value);
   const [customDuration, setCustomDuration] = useState('');
@@ -113,6 +149,14 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   const [errors, setErrors] = useState<{ recipient?: string; amount?: string }>({});
   const [selectedService, setSelectedService] = useState<ServiceInfo | null>(null);
   const [autoDetectedService, setAutoDetectedService] = useState<ServiceInfo | null>(null);
+
+  // Sync selectedToken balance when wallet balance changes
+  useEffect(() => {
+    const currentOption = tokenOptions.find(t => t.symbol === selectedToken.symbol);
+    if (currentOption && currentOption.balance !== selectedToken.balance) {
+      setSelectedToken(currentOption);
+    }
+  }, [tokenOptions, selectedToken.symbol]);
 
   // Auto-detect service from name (only if service selector is visible)
   useEffect(() => {
@@ -402,7 +446,7 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
                 overflow: 'hidden',
               }}
             >
-              {TOKEN_OPTIONS.map((token, index) => (
+              {tokenOptions.map((token, index) => (
                 <TouchableOpacity
                   key={token.symbol}
                   onPress={() => {
@@ -414,7 +458,7 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
                     flexDirection: 'row',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    borderBottomWidth: index < TOKEN_OPTIONS.length - 1 ? 1 : 0,
+                    borderBottomWidth: index < tokenOptions.length - 1 ? 1 : 0,
                     borderBottomColor: COLORS.border,
                     backgroundColor: selectedToken.symbol === token.symbol ? 'rgba(255, 119, 168, 0.1)' : 'transparent',
                   }}
