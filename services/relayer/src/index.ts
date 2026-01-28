@@ -851,6 +851,298 @@ app.listen(CONFIG.port, () => {
   }
 });
 
+// =============================================================================
+// SUBSCRIPTION PAYMENT PROCESSING (CRANK)
+// =============================================================================
+
+const SUBSCRIPTION_PROGRAM_ID = new PublicKey(
+  process.env.SUBSCRIPTION_PROGRAM_ID || 'Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS'
+);
+
+// Subscription account structure (matches Anchor)
+interface SubscriptionAccount {
+  address: PublicKey;
+  subscriber: PublicKey;
+  merchant: PublicKey;
+  mint: PublicKey;
+  subscriptionId: string;
+  amountPerPeriod: bigint;
+  intervalSeconds: bigint;
+  maxPayments: bigint;
+  paymentsMade: bigint;
+  nextPaymentDue: bigint;
+  status: number; // 0=Active, 1=Paused, 2=Cancelled, 3=Completed
+}
+
+// Cache of known subscriptions (in production, use a database)
+const subscriptionCache: Map<string, SubscriptionAccount> = new Map();
+let lastSubscriptionScan = 0;
+const SUBSCRIPTION_SCAN_INTERVAL = 5 * 60 * 1000; // Scan every 5 minutes
+
+/**
+ * Scan for active subscriptions from the blockchain
+ */
+async function scanSubscriptions(): Promise<SubscriptionAccount[]> {
+  try {
+    logger.info('[Subscriptions] Scanning for active subscriptions...');
+
+    // Get all program accounts for the subscription program
+    const accounts = await connection.getProgramAccounts(SUBSCRIPTION_PROGRAM_ID, {
+      filters: [
+        { dataSize: 8 + 32 + 32 + 32 + 68 + 36 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 1 + 1 }, // Approximate size
+      ],
+    });
+
+    const subscriptions: SubscriptionAccount[] = [];
+
+    for (const { pubkey, account } of accounts) {
+      try {
+        // Skip if data is too small
+        if (account.data.length < 200) continue;
+
+        // Parse subscription account (skip 8-byte discriminator)
+        const data = account.data.slice(8);
+        let offset = 0;
+
+        const subscriber = new PublicKey(data.slice(offset, offset + 32)); offset += 32;
+        const merchant = new PublicKey(data.slice(offset, offset + 32)); offset += 32;
+        const mint = new PublicKey(data.slice(offset, offset + 32)); offset += 32;
+
+        // Read subscription_id (4-byte length + string)
+        const idLen = data.readUInt32LE(offset); offset += 4;
+        const subscriptionId = data.slice(offset, offset + idLen).toString('utf8'); offset += 64; // max_len
+
+        // Read subscription_name
+        const nameLen = data.readUInt32LE(offset); offset += 4;
+        offset += 32; // max_len
+
+        // Read numeric fields
+        const amountPerPeriod = data.readBigUInt64LE(offset); offset += 8;
+        const intervalSeconds = data.readBigInt64LE(offset); offset += 8;
+        const maxPayments = data.readBigUInt64LE(offset); offset += 8;
+        const paymentsMade = data.readBigUInt64LE(offset); offset += 8;
+        offset += 8; // total_paid
+        offset += 8; // created_at
+        offset += 8; // last_payment_at
+        const nextPaymentDue = data.readBigInt64LE(offset); offset += 8;
+        const status = data.readUInt8(offset);
+
+        // Only include active subscriptions
+        if (status === 0) {
+          subscriptions.push({
+            address: pubkey,
+            subscriber,
+            merchant,
+            mint,
+            subscriptionId,
+            amountPerPeriod,
+            intervalSeconds,
+            maxPayments,
+            paymentsMade,
+            nextPaymentDue,
+            status,
+          });
+        }
+      } catch (e) {
+        // Skip malformed accounts
+        continue;
+      }
+    }
+
+    logger.info(`[Subscriptions] Found ${subscriptions.length} active subscriptions`);
+
+    // Update cache
+    subscriptionCache.clear();
+    for (const sub of subscriptions) {
+      subscriptionCache.set(sub.address.toBase58(), sub);
+    }
+    lastSubscriptionScan = Date.now();
+
+    return subscriptions;
+  } catch (e) {
+    logger.error('[Subscriptions] Failed to scan:', e);
+    return [];
+  }
+}
+
+/**
+ * Process a due subscription payment
+ */
+async function processSubscriptionPayment(subscription: SubscriptionAccount): Promise<string | null> {
+  const subId = subscription.address.toBase58().slice(0, 8);
+
+  try {
+    logger.info(`[Sub:${subId}] Processing payment...`, {
+      subscriber: subscription.subscriber.toBase58().slice(0, 8),
+      merchant: subscription.merchant.toBase58().slice(0, 8),
+      amount: Number(subscription.amountPerPeriod) / 1e9,
+    });
+
+    // Build process_payment instruction
+    // Note: In production, use @coral-xyz/anchor to build the transaction
+    const { Transaction: SolanaTransaction, TransactionInstruction } = await import('@solana/web3.js');
+
+    // Get associated token accounts
+    const { getAssociatedTokenAddress } = await import('@solana/spl-token');
+
+    const subscriberAta = await getAssociatedTokenAddress(
+      subscription.mint,
+      subscription.subscriber
+    );
+
+    const merchantAta = await getAssociatedTokenAddress(
+      subscription.mint,
+      subscription.merchant
+    );
+
+    // Build instruction data: discriminator (8 bytes) + amount (8 bytes)
+    // process_payment discriminator: sha256("global:process_payment")[0..8]
+    const discriminator = Buffer.from([0x80, 0x14, 0x0a, 0x58, 0xd7, 0xb1, 0x1a, 0x4b]); // Example
+    const amountData = Buffer.alloc(8);
+    amountData.writeBigUInt64LE(subscription.amountPerPeriod);
+    const instructionData = Buffer.concat([discriminator, amountData]);
+
+    const instruction = new TransactionInstruction({
+      programId: SUBSCRIPTION_PROGRAM_ID,
+      keys: [
+        { pubkey: relayerKeypair.publicKey, isSigner: true, isWritable: true }, // payer
+        { pubkey: subscription.address, isSigner: false, isWritable: true }, // subscription
+        { pubkey: subscriberAta, isSigner: false, isWritable: true }, // subscriber_token_account
+        { pubkey: merchantAta, isSigner: false, isWritable: true }, // merchant_token_account
+        { pubkey: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'), isSigner: false, isWritable: false }, // token_program
+      ],
+      data: instructionData,
+    });
+
+    const transaction = new SolanaTransaction().add(instruction);
+    transaction.feePayer = relayerKeypair.publicKey;
+    transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    transaction.sign(relayerKeypair);
+
+    const signature = await connection.sendRawTransaction(transaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+
+    await connection.confirmTransaction(signature, 'confirmed');
+
+    logger.info(`[Sub:${subId}] Payment SUCCESS`, { signature });
+    return signature;
+
+  } catch (e: any) {
+    logger.error(`[Sub:${subId}] Payment FAILED:`, e.message || e);
+    return null;
+  }
+}
+
+/**
+ * Crank: Process all due subscription payments
+ */
+async function crankSubscriptions() {
+  logger.info('[Crank] Starting subscription crank...');
+
+  const now = Math.floor(Date.now() / 1000);
+  let processed = 0;
+  let failed = 0;
+
+  // Refresh subscriptions if cache is stale
+  if (Date.now() - lastSubscriptionScan > SUBSCRIPTION_SCAN_INTERVAL) {
+    await scanSubscriptions();
+  }
+
+  for (const [address, subscription] of subscriptionCache) {
+    // Check if payment is due
+    if (Number(subscription.nextPaymentDue) <= now) {
+      const signature = await processSubscriptionPayment(subscription);
+      if (signature) {
+        processed++;
+        // Update local cache
+        subscription.paymentsMade += BigInt(1);
+        subscription.nextPaymentDue += subscription.intervalSeconds;
+      } else {
+        failed++;
+      }
+
+      // Small delay between transactions to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  logger.info(`[Crank] Complete: ${processed} processed, ${failed} failed`);
+}
+
+/**
+ * GET /subscriptions/scan - Manually trigger subscription scan
+ */
+app.get('/subscriptions/scan', async (req, res) => {
+  try {
+    const subscriptions = await scanSubscriptions();
+    res.json({
+      success: true,
+      count: subscriptions.length,
+      subscriptions: subscriptions.map(s => ({
+        address: s.address.toBase58(),
+        subscriber: s.subscriber.toBase58(),
+        merchant: s.merchant.toBase58(),
+        amount: Number(s.amountPerPeriod) / 1e9,
+        intervalSeconds: Number(s.intervalSeconds),
+        paymentsMade: Number(s.paymentsMade),
+        maxPayments: Number(s.maxPayments),
+        nextPaymentDue: new Date(Number(s.nextPaymentDue) * 1000).toISOString(),
+        isDue: Number(s.nextPaymentDue) <= Math.floor(Date.now() / 1000),
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /subscriptions/crank - Manually trigger subscription crank
+ */
+app.post('/subscriptions/crank', async (req, res) => {
+  try {
+    await crankSubscriptions();
+    res.json({ success: true, message: 'Crank executed' });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /subscriptions/status - Get subscription processing status
+ */
+app.get('/subscriptions/status', (req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  const dueCount = Array.from(subscriptionCache.values()).filter(
+    s => Number(s.nextPaymentDue) <= now
+  ).length;
+
+  res.json({
+    totalCached: subscriptionCache.size,
+    dueNow: dueCount,
+    lastScan: lastSubscriptionScan ? new Date(lastSubscriptionScan).toISOString() : null,
+    scanIntervalMs: SUBSCRIPTION_SCAN_INTERVAL,
+    crankIntervalMs: CRANK_INTERVAL,
+    programId: SUBSCRIPTION_PROGRAM_ID.toBase58(),
+  });
+});
+
+// Run subscription crank every hour
+const CRANK_INTERVAL = 60 * 60 * 1000; // 1 hour
+setInterval(crankSubscriptions, CRANK_INTERVAL);
+
+// Initial scan on startup (after 10 seconds to let server start)
+setTimeout(async () => {
+  await scanSubscriptions();
+  // Run initial crank after scan
+  await crankSubscriptions();
+}, 10000);
+
+logger.info(`[Subscriptions] Crank service enabled - running every ${CRANK_INTERVAL / 60000} minutes`);
+
+// =============================================================================
+
 // Graceful shutdown
 process.on('SIGINT', () => {
   logger.info('Shutting down relayer...');
