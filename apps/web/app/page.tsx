@@ -59,7 +59,7 @@ export default function Home() {
             {/* Social & CTA */}
             <div className="flex items-center gap-3">
               <a
-                href="https://x.com/AnonMusic_NFT"
+                href="https://x.com/Protocol01_"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hidden sm:flex w-9 h-9 items-center justify-center text-p01-text-muted hover:text-white transition-colors"
@@ -70,7 +70,7 @@ export default function Home() {
                 </svg>
               </a>
               <a
-                href="https://github.com/SectorCT/Protocol01"
+                href="https://github.com/IsSlashy/Protocol-01"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hidden sm:flex w-9 h-9 items-center justify-center text-p01-text-muted hover:text-white transition-colors"
