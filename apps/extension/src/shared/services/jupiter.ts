@@ -78,6 +78,74 @@ let tokenListCache: JupiterToken[] | null = null;
 let tokenListCacheTime = 0;
 const TOKEN_LIST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Fallback tokens when API fails
+const FALLBACK_TOKENS: JupiterToken[] = [
+  {
+    address: 'So11111111111111111111111111111111111111112',
+    chainId: 101,
+    decimals: 9,
+    name: 'Solana',
+    symbol: 'SOL',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+  },
+  {
+    address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    chainId: 101,
+    decimals: 6,
+    name: 'USD Coin',
+    symbol: 'USDC',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+  },
+  {
+    address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    chainId: 101,
+    decimals: 6,
+    name: 'USDT',
+    symbol: 'USDT',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg',
+  },
+  {
+    address: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+    chainId: 101,
+    decimals: 5,
+    name: 'Bonk',
+    symbol: 'BONK',
+    logoURI: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I',
+  },
+  {
+    address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+    chainId: 101,
+    decimals: 6,
+    name: 'Jupiter',
+    symbol: 'JUP',
+    logoURI: 'https://static.jup.ag/jup/icon.png',
+  },
+  {
+    address: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+    chainId: 101,
+    decimals: 6,
+    name: 'Raydium',
+    symbol: 'RAY',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R/logo.png',
+  },
+  {
+    address: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
+    chainId: 101,
+    decimals: 6,
+    name: 'Pyth Network',
+    symbol: 'PYTH',
+    logoURI: 'https://pyth.network/token.svg',
+  },
+  {
+    address: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+    chainId: 101,
+    decimals: 6,
+    name: 'Orca',
+    symbol: 'ORCA',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE/logo.png',
+  },
+];
+
 export interface JupiterToken {
   address: string;
   chainId: number;
@@ -196,7 +264,9 @@ export async function fetchTokenList(): Promise<JupiterToken[]> {
     if (tokenListCache) {
       return tokenListCache;
     }
-    throw error;
+    // Return fallback tokens instead of throwing
+    console.warn('[Jupiter] Returning fallback tokens');
+    return FALLBACK_TOKENS;
   }
 }
 
@@ -221,12 +291,26 @@ export async function getTokenBySymbol(symbol: string): Promise<JupiterToken | u
  * Get popular/common tokens for the swap UI
  */
 export async function getPopularTokens(): Promise<JupiterToken[]> {
-  const tokens = await fetchTokenList();
-  const popularMints = Object.values(TOKEN_MINTS);
+  try {
+    const tokens = await fetchTokenList();
+    const popularMints = Object.values(TOKEN_MINTS);
 
-  return popularMints
-    .map(mint => tokens.find(t => t.address === mint))
-    .filter((t): t is JupiterToken => t !== undefined);
+    const result = popularMints
+      .map(mint => tokens.find(t => t.address === mint))
+      .filter((t): t is JupiterToken => t !== undefined);
+
+    // If we got tokens from API, return them
+    if (result.length > 0) {
+      return result;
+    }
+
+    // Fallback to hardcoded tokens
+    console.warn('[Jupiter] Using fallback tokens');
+    return FALLBACK_TOKENS;
+  } catch (error) {
+    console.error('[Jupiter] Failed to fetch tokens, using fallback:', error);
+    return FALLBACK_TOKENS;
+  }
 }
 
 /**

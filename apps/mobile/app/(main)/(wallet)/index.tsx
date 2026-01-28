@@ -45,6 +45,7 @@ const P01 = {
 import { isDevnet } from '@/services/solana/connection';
 import { formatTxDate } from '@/services/solana/transactions';
 import { formatBalance } from '@/services/solana/balance';
+import TokenIcon from '@/components/TokenIcon';
 
 export default function WalletHomeScreen() {
   const router = useRouter();
@@ -466,13 +467,8 @@ export default function WalletHomeScreen() {
           {/* SOL Asset */}
           <TouchableOpacity style={styles.assetRow} activeOpacity={0.7}>
             <View style={styles.assetLeft}>
-              <LinearGradient
-                colors={[P01.cyan, '#00ffe5']}
-                style={styles.assetIcon}
-              >
-                <Text style={styles.assetIconText}>◎</Text>
-              </LinearGradient>
-              <View style={styles.assetInfo}>
+              <TokenIcon symbol="SOL" size={44} />
+              <View style={[styles.assetInfo, { marginLeft: Spacing.md }]}>
                 <Text style={styles.assetName}>Solana</Text>
                 <Text style={styles.assetSymbol}>SOL</Text>
               </View>
@@ -491,10 +487,8 @@ export default function WalletHomeScreen() {
           {balance?.tokens.map((token) => (
             <TouchableOpacity key={token.mint} style={styles.assetRow} activeOpacity={0.7}>
               <View style={styles.assetLeft}>
-                <View style={[styles.assetIcon, { backgroundColor: Colors.surfaceTertiary }]}>
-                  <Text style={styles.assetIconText}>{token.symbol[0]}</Text>
-                </View>
-                <View style={styles.assetInfo}>
+                <TokenIcon symbol={token.symbol} logoURI={token.logoURI} size={44} />
+                <View style={[styles.assetInfo, { marginLeft: Spacing.md }]}>
                   <Text style={styles.assetName}>{token.name}</Text>
                   <Text style={styles.assetSymbol}>{token.symbol}</Text>
                 </View>

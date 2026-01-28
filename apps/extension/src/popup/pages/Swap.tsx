@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, ArrowDownUp, ChevronDown, Settings2, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { VersionedTransaction } from '@solana/web3.js';
 import { useWalletStore } from '@/shared/store/wallet';
+import TokenIcon from '@/popup/components/TokenIcon';
 import {
   getQuote,
   getSwapTransaction,
@@ -235,13 +236,11 @@ export default function Swap() {
               onClick={() => setShowFromSelect(true)}
               className="flex items-center gap-2 px-3 py-2 bg-p01-border rounded-lg hover:bg-p01-elevated transition-colors"
             >
-              {fromToken?.logoURI ? (
-                <img src={fromToken.logoURI} alt="" className="w-6 h-6 rounded-full" />
+              {fromToken ? (
+                <TokenIcon symbol={fromToken.symbol} logoURI={fromToken.logoURI} size="sm" />
               ) : (
                 <div className="w-6 h-6 rounded-full bg-p01-elevated flex items-center justify-center">
-                  <span className="text-xs font-bold text-p01-chrome">
-                    {fromToken?.symbol.slice(0, 2) || '??'}
-                  </span>
+                  <span className="text-xs font-bold text-p01-chrome">??</span>
                 </div>
               )}
               <span className="text-sm font-medium text-white">
@@ -301,13 +300,11 @@ export default function Swap() {
               onClick={() => setShowToSelect(true)}
               className="flex items-center gap-2 px-3 py-2 bg-p01-border rounded-lg hover:bg-p01-elevated transition-colors"
             >
-              {toToken?.logoURI ? (
-                <img src={toToken.logoURI} alt="" className="w-6 h-6 rounded-full" />
+              {toToken ? (
+                <TokenIcon symbol={toToken.symbol} logoURI={toToken.logoURI} size="sm" />
               ) : (
                 <div className="w-6 h-6 rounded-full bg-p01-elevated flex items-center justify-center">
-                  <span className="text-xs font-bold text-p01-chrome">
-                    {toToken?.symbol.slice(0, 2) || '??'}
-                  </span>
+                  <span className="text-xs font-bold text-p01-chrome">??</span>
                 </div>
               )}
               <span className="text-sm font-medium text-white">
@@ -453,15 +450,7 @@ export default function Swap() {
                   }}
                   className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-p01-elevated transition-colors"
                 >
-                  {token.logoURI ? (
-                    <img src={token.logoURI} alt="" className="w-10 h-10 rounded-full" />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-p01-border flex items-center justify-center">
-                      <span className="text-sm font-bold text-p01-chrome">
-                        {token.symbol.slice(0, 2)}
-                      </span>
-                    </div>
-                  )}
+                  <TokenIcon symbol={token.symbol} logoURI={token.logoURI} size="md" />
                   <div className="flex-1 text-left">
                     <p className="text-sm font-medium text-white">
                       {token.symbol}
