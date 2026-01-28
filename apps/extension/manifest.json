@@ -45,7 +45,14 @@
   "host_permissions": [
     "https://*.solana.com/*",
     "https://*.helius.dev/*",
-    "https://*.triton.one/*"
+    "https://*.triton.one/*",
+    "https://*.jup.ag/*",
+    "https://quote-api.jup.ag/*",
+    "https://token.jup.ag/*",
+    "https://raw.githubusercontent.com/*",
+    "https://arweave.net/*",
+    "https://static.jup.ag/*",
+    "https://assets.coingecko.com/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
