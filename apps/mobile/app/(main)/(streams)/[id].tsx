@@ -352,6 +352,33 @@ export default function StreamDetailScreen() {
           </View>
         </Card>
 
+        {/* Automatic Payments Info */}
+        {stream.status === 'active' && (
+          <View
+            className="p-4 rounded-2xl mb-4"
+            style={{
+              backgroundColor: 'rgba(0, 255, 136, 0.08)',
+              borderWidth: 1,
+              borderColor: 'rgba(0, 255, 136, 0.2)',
+            }}
+          >
+            <View className="flex-row items-center gap-3">
+              <View
+                className="w-10 h-10 rounded-full items-center justify-center"
+                style={{ backgroundColor: 'rgba(0, 255, 136, 0.15)' }}
+              >
+                <Ionicons name="flash" size={20} color="#00ff88" />
+              </View>
+              <View className="flex-1">
+                <Text className="text-white font-semibold text-sm">Automatic Payments Enabled</Text>
+                <Text className="text-gray-400 text-xs mt-0.5">
+                  Payments are processed automatically by the protocol
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Next Payment Card */}
         {stream.status === 'active' && (
           <View
