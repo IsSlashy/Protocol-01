@@ -29,6 +29,7 @@ import {
   cn,
 } from '@/shared/utils';
 import { getSolPrice } from '@/shared/services/price';
+import TokenIcon from '@/popup/components/TokenIcon';
 import type { TransactionRecord } from '@/shared/types';
 
 export default function Home() {
@@ -186,9 +187,7 @@ export default function Home() {
             </div>
             <div className="flex items-center justify-center gap-2 mt-2 text-p01-chrome">
               {/* Solana Icon */}
-              <div className="w-4 h-4 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                <span className="text-[8px] text-white font-bold">S</span>
-              </div>
+              <TokenIcon symbol="SOL" size="sm" />
               <span>{solBalance.toFixed(4)} SOL</span>
             </div>
           </div>
@@ -299,9 +298,7 @@ export default function Home() {
             className="bg-p01-surface rounded-xl p-4 flex items-center justify-between mb-2"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                <span className="text-white font-bold text-sm">S</span>
-              </div>
+              <TokenIcon symbol="SOL" size="md" />
               <div>
                 <p className="text-white font-medium">Solana</p>
                 <p className="text-p01-chrome text-xs">SOL</p>
@@ -323,11 +320,7 @@ export default function Home() {
               className="bg-p01-surface rounded-xl p-4 flex items-center justify-between mb-2"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-cyan-700 flex items-center justify-center">
-                  <span className="text-white font-bold text-xs">
-                    {token.symbol.slice(0, 2)}
-                  </span>
-                </div>
+                <TokenIcon symbol={token.symbol} size="md" />
                 <div>
                   <p className="text-white font-medium">{token.symbol}</p>
                   <p className="text-p01-chrome text-xs">{truncateAddress(token.mint, 4)}</p>
