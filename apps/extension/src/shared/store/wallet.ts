@@ -165,11 +165,11 @@ export interface WalletState {
   createWallet: (password: string) => Promise<string[]>;
   importWallet: (seedPhrase: string[], password: string) => Promise<void>;
   initializeWithPrivy: (address: string) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   unlock: (password: string) => Promise<boolean>;
   tryAutoUnlock: () => Promise<boolean>;
   lock: () => void;
-  reset: () => void;
+  reset: () => Promise<void>;
   refreshBalance: () => Promise<void>;
   sendTransaction: (toAddress: string, amountSol: number) => Promise<string>;
   requestFaucet: (amountSol?: number) => Promise<string>;
@@ -290,8 +290,15 @@ export const useWalletStore = create<WalletState>()(
       },
 
       // Logout (for Privy users — full reset)
-      logout: () => {
+      logout: async () => {
         clearSession();
+        // Clear chrome storage directly to ensure clean state
+        try {
+          await chrome.storage.local.remove('p01-wallet');
+          console.log('[WalletStore] Chrome storage cleared');
+        } catch (e) {
+          console.error('[WalletStore] Failed to clear chrome storage:', e);
+        }
         set({
           isInitialized: false,
           isUnlocked: false,
@@ -422,7 +429,15 @@ export const useWalletStore = create<WalletState>()(
       },
 
       // Reset wallet completely
-      reset: () => {
+      reset: async () => {
+        clearSession();
+        // Clear chrome storage directly to ensure clean state
+        try {
+          await chrome.storage.local.remove('p01-wallet');
+          console.log('[WalletStore] Chrome storage cleared on reset');
+        } catch (e) {
+          console.error('[WalletStore] Failed to clear chrome storage:', e);
+        }
         set({
           isInitialized: false,
           isUnlocked: false,
@@ -435,6 +450,7 @@ export const useWalletStore = create<WalletState>()(
           tokens: [],
           transactions: [],
           _keypair: null,
+          isPrivyWallet: false,
         });
       },
 

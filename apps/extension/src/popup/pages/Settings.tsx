@@ -101,7 +101,7 @@ export default function Settings() {
     if (isPrivyWallet) {
       // Privy users: sign out of Privy + reset wallet store
       await privy.logout();
-      walletLogout();
+      await walletLogout();
       navigate('/welcome');
     } else {
       lock();
@@ -115,7 +115,7 @@ export default function Settings() {
       setResetLoading(true);
       try {
         await privy.logout();
-        walletLogout();
+        await walletLogout();
         navigate('/welcome');
       } catch (e) {
         setResetError('Failed to sign out');
@@ -137,7 +137,7 @@ export default function Settings() {
         return;
       }
 
-      reset();
+      await reset();
       navigate('/welcome');
     } catch (e) {
       setResetError('Verification failed');

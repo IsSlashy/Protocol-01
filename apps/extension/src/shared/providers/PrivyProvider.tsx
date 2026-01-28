@@ -54,6 +54,7 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
       // Not authenticated — clean up
       setPrivySigner(null);
       if (store.isPrivyWallet) {
+        // Fire and forget - the state change is synchronous, storage clearing is async
         store.logout();
       }
     }
