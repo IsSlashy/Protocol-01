@@ -116,12 +116,12 @@ function App() {
             // If store thinks wallet exists but storage doesn't have it, reset
             if (isInitialized && !hasWallet) {
               console.log('[Popup] Storage mismatch detected, resetting store');
-              reset();
+              await reset();
             }
           } else if (isInitialized) {
             // Storage is empty but store thinks we're initialized
             console.log('[Popup] No wallet in storage, resetting store');
-            reset();
+            await reset();
           }
         } catch (e) {
           console.error('[Popup] Error verifying storage:', e);
