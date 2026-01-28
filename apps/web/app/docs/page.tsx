@@ -264,99 +264,135 @@ await zkClient.unshield(publicKey, 500_000_000n);`,
   },
 ];
 
+const docsArchLayers = [
+  {
+    name: "Client Layer",
+    hex: "#39c5bb",
+    nodes: [
+      { label: "MOBILE APP", sub: "React Native" },
+      { label: "EXTENSION", sub: "Chrome / Brave" },
+      { label: "SDK", sub: "TypeScript" },
+    ],
+  },
+  {
+    name: "ZK-SDK",
+    hex: "#ff77a8",
+    nodes: [
+      { label: "WASM Prover", sub: "Groth16" },
+      { label: "Poseidon", sub: "Hash Function" },
+      { label: "Note Mgmt", sub: "Encrypt / Decrypt" },
+    ],
+  },
+  {
+    name: "Protocol Layer",
+    hex: "#00ffe5",
+    nodes: [
+      { label: "STEALTH", sub: "ECDH Addresses" },
+      { label: "SHIELDED", sub: "Groth16 Pool" },
+      { label: "STREAMS", sub: "SPL Payments" },
+    ],
+  },
+  {
+    name: "Relay Layer",
+    hex: "#ff77a8",
+    nodes: [
+      { label: "RELAYER", sub: "ZK Verify + Transfer" },
+      { label: "ON-CHAIN", sub: "Solana Program" },
+    ],
+  },
+  {
+    name: "Solana Blockchain",
+    hex: "#ffcc00",
+    nodes: [
+      { label: "alt_bn128", sub: "Curve Ops" },
+      { label: "SPL Tokens", sub: "Token Standard" },
+      { label: "Anchor", sub: "Framework" },
+    ],
+  },
+];
+
 const ArchitectureDiagram = () => (
-  <div className="bg-[#151518] border border-[#2a2a30] p-6 rounded-lg">
-    <div className="flex flex-col items-center gap-4">
-      {/* Client Layer */}
-      <div className="w-full">
-        <div className="text-xs text-[#555560] uppercase tracking-wider mb-2 text-center">Client Layer</div>
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-[#0a0a0c] border border-[#39c5bb]/30 p-3 rounded text-center">
-            <div className="text-[#39c5bb] font-bold text-sm">MOBILE APP</div>
-            <div className="text-[#555560] text-xs mt-1">React Native</div>
-          </div>
-          <div className="bg-[#0a0a0c] border border-[#39c5bb]/30 p-3 rounded text-center">
-            <div className="text-[#39c5bb] font-bold text-sm">EXTENSION</div>
-            <div className="text-[#555560] text-xs mt-1">Chrome</div>
-          </div>
-          <div className="bg-[#0a0a0c] border border-[#39c5bb]/30 p-3 rounded text-center">
-            <div className="text-[#39c5bb] font-bold text-sm">SDK</div>
-            <div className="text-[#555560] text-xs mt-1">TypeScript</div>
-          </div>
-        </div>
+  <div className="relative border border-[#2a2a30] bg-[#0a0a0c] p-6 sm:p-10 overflow-hidden">
+    {/* Subtle grid background */}
+    <div className="absolute inset-0 opacity-[0.03]" style={{
+      backgroundImage: `linear-gradient(#39c5bb 1px, transparent 1px), linear-gradient(90deg, #39c5bb 1px, transparent 1px)`,
+      backgroundSize: '40px 40px',
+    }} />
+
+    <div className="relative z-10">
+      <h3 className="text-xs font-mono text-[#555560] uppercase tracking-[0.3em] text-center mb-2">
+        System Architecture
+      </h3>
+      <h4 className="text-xl sm:text-2xl font-bold text-white text-center mb-10 uppercase tracking-wider">
+        Protocol Stack
+      </h4>
+
+      <div className="flex flex-col items-center gap-0">
+        {docsArchLayers.map((layer, layerIndex) => (
+          <React.Fragment key={layer.name}>
+            {/* Layer */}
+            <div className="w-full max-w-2xl">
+              {/* Layer label */}
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-1.5 h-1.5" style={{ backgroundColor: layer.hex }} />
+                <span className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em]" style={{ color: layer.hex }}>
+                  {layer.name}
+                </span>
+                <div className="flex-1 h-px" style={{ backgroundColor: `${layer.hex}15` }} />
+              </div>
+
+              {/* Nodes grid */}
+              <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                {layer.nodes.map((node) => (
+                  <div
+                    key={node.label}
+                    className="bg-[#111114] border p-3 sm:p-4 text-center transition-all duration-300 hover:bg-[#151518]"
+                    style={{ borderColor: `${layer.hex}25` }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = `${layer.hex}60`;
+                      (e.currentTarget as HTMLElement).style.boxShadow = `0 0 20px ${layer.hex}10, inset 0 1px 0 ${layer.hex}15`;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = `${layer.hex}25`;
+                      (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                    }}
+                  >
+                    <div className="text-xs sm:text-sm font-bold font-mono tracking-wide" style={{ color: layer.hex }}>
+                      {node.label}
+                    </div>
+                    <div className="text-[10px] sm:text-xs text-[#555560] mt-1 font-mono">
+                      {node.sub}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Connector arrow between layers */}
+            {layerIndex < docsArchLayers.length - 1 && (
+              <div className="flex flex-col items-center py-2">
+                <div className="w-px h-4" style={{ backgroundColor: `${layer.hex}40` }} />
+                <div className="w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent" style={{ borderTopColor: `${layer.hex}60` }} />
+              </div>
+            )}
+          </React.Fragment>
+        ))}
       </div>
 
-      {/* Arrow */}
-      <div className="text-[#39c5bb] text-2xl">↓</div>
-
-      {/* ZK-SDK Layer */}
-      <div className="w-full max-w-md">
-        <div className="bg-[#0a0a0c] border border-[#ff77a8]/30 p-4 rounded text-center">
-          <div className="text-[#ff77a8] font-bold">ZK-SDK (WASM)</div>
-          <div className="flex justify-center gap-4 mt-2 text-xs text-[#888892]">
-            <span>Prover</span>
-            <span>•</span>
-            <span>Poseidon</span>
-            <span>•</span>
-            <span>Note Mgmt</span>
-          </div>
+      {/* Bottom status bar */}
+      <div className="flex items-center justify-center gap-3 mt-8 pt-6 border-t border-[#2a2a30]">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-1.5 bg-[#39c5bb] animate-pulse" />
+          <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
+            End-to-end encrypted
+          </span>
         </div>
-      </div>
-
-      {/* Arrow */}
-      <div className="text-[#ff77a8] text-2xl">↓</div>
-
-      {/* Protocol Layer */}
-      <div className="w-full">
-        <div className="text-xs text-[#555560] uppercase tracking-wider mb-2 text-center">Protocol Layer</div>
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-[#0a0a0c] border border-[#00ffe5]/30 p-3 rounded text-center">
-            <div className="text-[#00ffe5] font-bold text-sm">STEALTH</div>
-            <div className="text-[#555560] text-xs mt-1">ECDH</div>
-          </div>
-          <div className="bg-[#0a0a0c] border border-[#00ffe5]/30 p-3 rounded text-center">
-            <div className="text-[#00ffe5] font-bold text-sm">SHIELDED</div>
-            <div className="text-[#555560] text-xs mt-1">Groth16</div>
-          </div>
-          <div className="bg-[#0a0a0c] border border-[#00ffe5]/30 p-3 rounded text-center">
-            <div className="text-[#00ffe5] font-bold text-sm">STREAMS</div>
-            <div className="text-[#555560] text-xs mt-1">SPL</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Arrow */}
-      <div className="text-[#00ffe5] text-2xl">↓</div>
-
-      {/* Relay Layer */}
-      <div className="w-full">
-        <div className="text-xs text-[#555560] uppercase tracking-wider mb-2 text-center">Relay Layer</div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-[#0a0a0c] border border-[#ff77a8]/30 p-3 rounded text-center">
-            <div className="text-[#ff77a8] font-bold text-sm">RELAYER</div>
-            <div className="text-[#555560] text-xs mt-1">ZK Verification + Private Transfers</div>
-          </div>
-          <div className="bg-[#0a0a0c] border border-[#ff77a8]/30 p-3 rounded text-center">
-            <div className="text-[#ff77a8] font-bold text-sm">ROADMAP</div>
-            <div className="text-[#555560] text-xs mt-1">On-chain Solana program</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Arrow */}
-      <div className="text-[#ff77a8] text-2xl">↓</div>
-
-      {/* Blockchain Layer */}
-      <div className="w-full max-w-md">
-        <div className="bg-[#0a0a0c] border border-[#ff2d7a]/30 p-4 rounded text-center">
-          <div className="text-[#ff2d7a] font-bold">SOLANA BLOCKCHAIN</div>
-          <div className="flex justify-center gap-4 mt-2 text-xs text-[#888892]">
-            <span>alt_bn128</span>
-            <span>•</span>
-            <span>SPL Tokens</span>
-            <span>•</span>
-            <span>Anchor</span>
-          </div>
+        <span className="text-[#2a2a30]">|</span>
+        <div className="flex items-center gap-2">
+          <Zap className="w-3 h-3 text-[#39c5bb]" />
+          <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
+            From client to settlement
+          </span>
         </div>
       </div>
     </div>
