@@ -1,28 +1,23 @@
-import { useState } from 'react';
 import { cn } from '@/shared/utils';
 
-// Local fallback logos for common tokens
-const TOKEN_LOGOS: Record<string, string> = {
-  SOL: 'https://assets.coingecko.com/coins/images/4128/small/solana.png',
-  USDC: 'https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png',
-  USDT: 'https://assets.coingecko.com/coins/images/325/small/Tether.png',
-  BONK: 'https://assets.coingecko.com/coins/images/28600/small/bonk.jpg',
-  JUP: 'https://assets.coingecko.com/coins/images/34188/small/jup.png',
-  RAY: 'https://assets.coingecko.com/coins/images/13928/small/PSigc4ie_400x400.jpg',
-  ORCA: 'https://assets.coingecko.com/coins/images/17547/small/Orca_Logo.png',
-  PYTH: 'https://assets.coingecko.com/coins/images/31924/small/pyth.png',
-  JTO: 'https://assets.coingecko.com/coins/images/33103/small/jto.png',
-  WIF: 'https://assets.coingecko.com/coins/images/33566/small/dogwifhat.jpg',
-  WSOL: 'https://assets.coingecko.com/coins/images/4128/small/solana.png',
+// Token colors for gradient fallback
+const TOKEN_COLORS: Record<string, [string, string]> = {
+  SOL: ['#9945FF', '#14F195'],
+  USDC: ['#2775CA', '#2775CA'],
+  USDT: ['#26A17B', '#26A17B'],
+  BONK: ['#F7931A', '#F7931A'],
+  JUP: ['#00D18C', '#00D18C'],
+  RAY: ['#5AC4BE', '#5AC4BE'],
+  ORCA: ['#FFD15C', '#FFD15C'],
+  PYTH: ['#E6DAFE', '#E6DAFE'],
 };
 
-// Gradient colors for fallback
-const GRADIENT_COLORS = [
-  'from-cyan-500 to-blue-600',
-  'from-purple-500 to-pink-600',
-  'from-orange-500 to-red-600',
-  'from-green-500 to-teal-600',
-  'from-yellow-500 to-orange-600',
+const DEFAULT_GRADIENTS: [string, string][] = [
+  ['#39c5bb', '#00ffe5'],
+  ['#9333ea', '#ec4899'],
+  ['#f97316', '#ef4444'],
+  ['#22c55e', '#14b8a6'],
+  ['#eab308', '#f97316'],
 ];
 
 interface TokenIconProps {
@@ -33,61 +28,33 @@ interface TokenIconProps {
 }
 
 export default function TokenIcon({ symbol, logoURI, size = 'md', className }: TokenIconProps) {
-  const [imageError, setImageError] = useState(false);
-
-  const sizeClasses = {
-    sm: 'w-6 h-6 text-[10px]',
-    md: 'w-10 h-10 text-sm',
-    lg: 'w-12 h-12 text-base',
+  const sizeConfig = {
+    sm: { container: 'w-6 h-6', text: 'text-[10px]' },
+    md: { container: 'w-10 h-10', text: 'text-sm' },
+    lg: { container: 'w-12 h-12', text: 'text-base' },
   };
 
-  // Try to get a working logo URL
-  const getLogoUrl = (): string | null => {
-    // First try the symbol lookup
-    const symbolUpper = symbol.toUpperCase();
-    if (TOKEN_LOGOS[symbolUpper]) {
-      return TOKEN_LOGOS[symbolUpper];
-    }
-    // Then try the provided logoURI
-    if (logoURI) {
-      return logoURI;
-    }
-    return null;
-  };
+  const config = sizeConfig[size];
+  const symbolUpper = symbol.toUpperCase();
 
-  const logoUrl = getLogoUrl();
-  const showImage = logoUrl && !imageError;
+  // Get colors for this token
+  const colors = TOKEN_COLORS[symbolUpper] || DEFAULT_GRADIENTS[symbol.charCodeAt(0) % DEFAULT_GRADIENTS.length];
 
-  // Get a consistent gradient based on symbol
-  const gradientIndex = symbol.charCodeAt(0) % GRADIENT_COLORS.length;
-  const gradient = GRADIENT_COLORS[gradientIndex];
-
-  if (showImage) {
-    return (
-      <img
-        src={logoUrl}
-        alt={symbol}
-        className={cn(
-          'rounded-full object-cover',
-          sizeClasses[size],
-          className
-        )}
-        onError={() => setImageError(true)}
-      />
-    );
-  }
-
-  // Fallback: gradient circle with symbol initials
+  // Always show gradient circle with first letter - no external images to avoid CORS
   return (
     <div
       className={cn(
-        'rounded-full flex items-center justify-center bg-gradient-to-br font-bold text-white',
-        gradient,
-        sizeClasses[size],
+        'rounded-full flex items-center justify-center flex-shrink-0',
+        config.container,
         className
       )}
+      style={{
+        background: `linear-gradient(135deg, ${colors[0]}, ${colors[1]})`,
+      }}
     >
-      {symbol.slice(0, 2).toUpperCase()}
+      <span className={cn('font-bold text-white', config.text)}>
+        {symbolUpper.charAt(0)}
+      </span>
     </div>
   );
 }
