@@ -77,13 +77,20 @@ const pendingTxs: Map<string, PendingTransaction> = new Map();
 const connection = new Connection(CONFIG.rpcUrl, 'confirmed');
 
 // Load relayer keypair (for paying gas)
+// Supports both base64 and JSON array formats
 let relayerKeypair: Keypair;
 try {
   const secretKey = process.env.RELAYER_SECRET_KEY;
   if (secretKey) {
-    relayerKeypair = Keypair.fromSecretKey(
-      Uint8Array.from(JSON.parse(secretKey))
-    );
+    let keyBytes: Uint8Array;
+    if (secretKey.startsWith('[')) {
+      // JSON array format: [189,5,151,...]
+      keyBytes = Uint8Array.from(JSON.parse(secretKey));
+    } else {
+      // Base64 format
+      keyBytes = Uint8Array.from(Buffer.from(secretKey, 'base64'));
+    }
+    relayerKeypair = Keypair.fromSecretKey(keyBytes);
     logger.info(`Relayer wallet: ${relayerKeypair.publicKey.toBase58()}`);
   } else {
     logger.warn('No RELAYER_SECRET_KEY provided, using random keypair (for testing only)');

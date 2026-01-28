@@ -809,9 +809,14 @@ function SubscriptionCard({
             </Text>
           </View>
 
-          {/* Privacy badges */}
-          {hasPrivacyFeatures && isActive && (
+          {/* Auto + Privacy badges */}
+          {isActive && (
             <View style={{ flexDirection: 'row', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+              {/* Automatic payments badge */}
+              <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: 'rgba(0, 255, 136, 0.15)', borderRadius: 4, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                <Ionicons name="flash" size={8} color={COLORS.green} />
+                <Text style={{ color: COLORS.green, fontSize: 9, fontWeight: '500' }}>AUTO</Text>
+              </View>
               {sub.amountNoise > 0 && (
                 <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: `${accentColor}20`, borderRadius: 4 }}>
                   <Text style={{ color: accentColor, fontSize: 9 }}>+/-{sub.amountNoise}%</Text>
