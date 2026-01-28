@@ -30,6 +30,129 @@
 
 ---
 
+## 📱 Installation & Demo (For Jury)
+
+### Mobile App (Android)
+
+**Download APK:** [Protocol-01.apk](https://expo.dev/accounts/slashy/projects/p01-mobile/builds) *(or scan QR below)*
+
+#### Installation Steps:
+1. Download the APK on your Android device
+2. Open the file → Allow "Install from unknown sources" if prompted
+3. Tap "Install"
+4. Open Protocol 01
+
+#### First Launch:
+1. Tap **"Create Wallet"** to generate a new wallet
+2. **Save your seed phrase** (12 words) - this is your backup
+3. Set up biometric authentication (optional)
+4. You're ready to use P-01!
+
+<p align="center">
+  <img src="docs/assets/screenshots/mobile-onboarding.png" alt="Onboarding" width="200"/>
+  <img src="docs/assets/screenshots/mobile-home.png" alt="Home" width="200"/>
+  <img src="docs/assets/screenshots/mobile-send.png" alt="Send" width="200"/>
+</p>
+
+---
+
+### Browser Extension (Chrome/Brave)
+
+**Option 1 - Chrome Web Store:** *(Coming soon)*
+
+**Option 2 - Manual Install (Developer Mode):**
+
+1. Download the extension: [protocol-01-extension.zip](https://github.com/user-attachments/files/extension-dist.zip)
+2. Extract the ZIP file
+3. Open Chrome → `chrome://extensions/`
+4. Enable **"Developer mode"** (top right toggle)
+5. Click **"Load unpacked"**
+6. Select the extracted `dist` folder
+7. Protocol 01 icon appears in your toolbar!
+
+#### First Launch:
+1. Click the P-01 icon in toolbar
+2. **"Create Wallet"** or **"Import Wallet"**
+3. Set a password to encrypt your wallet
+4. Done!
+
+<p align="center">
+  <img src="docs/assets/screenshots/extension-home.png" alt="Extension Home" width="280"/>
+  <img src="docs/assets/screenshots/extension-send.png" alt="Extension Send" width="280"/>
+  <img src="docs/assets/screenshots/extension-privacy.png" alt="Privacy Zone" width="280"/>
+</p>
+
+---
+
+### 🎮 Demo Guide - Key Features
+
+#### 1. Private Transfer (ZK Shielded)
+
+Send crypto without anyone knowing who sent it or who received it.
+
+| Step | Action |
+|------|--------|
+| 1 | Go to **"Privacy Zone"** or **"Shield"** |
+| 2 | Deposit SOL into the shielded pool |
+| 3 | Tap **"Private Send"** |
+| 4 | Enter recipient address + amount |
+| 5 | Confirm → ZK proof is generated |
+| 6 | Transaction is completely private! |
+
+<p align="center">
+  <img src="docs/assets/screenshots/demo-shield.png" alt="Shield" width="200"/>
+  <img src="docs/assets/screenshots/demo-private-send.png" alt="Private Send" width="200"/>
+  <img src="docs/assets/screenshots/demo-success.png" alt="Success" width="200"/>
+</p>
+
+#### 2. Payment Streams (Recurring Payments)
+
+Set up automatic recurring payments with privacy.
+
+| Step | Action |
+|------|--------|
+| 1 | Go to **"Streams"** tab |
+| 2 | Tap **"Create Stream"** |
+| 3 | Enter recipient, amount, frequency |
+| 4 | Choose: Weekly / Bi-weekly / Monthly |
+| 5 | Enable **"Private Mode"** for stealth payments |
+| 6 | Confirm → Payments run automatically! |
+
+<p align="center">
+  <img src="docs/assets/screenshots/demo-streams-list.png" alt="Streams" width="200"/>
+  <img src="docs/assets/screenshots/demo-create-stream.png" alt="Create Stream" width="200"/>
+  <img src="docs/assets/screenshots/demo-stream-active.png" alt="Active Stream" width="200"/>
+</p>
+
+#### 3. Stealth Addresses
+
+Receive payments to unique one-time addresses.
+
+| Step | Action |
+|------|--------|
+| 1 | Go to **"Receive"** |
+| 2 | Tap **"Generate Stealth Address"** |
+| 3 | Share the address or QR code |
+| 4 | Each address is unique and unlinkable! |
+
+---
+
+### 🔧 For Developers - Test on Devnet
+
+```bash
+# Get devnet SOL
+solana airdrop 2 --url devnet
+
+# Smart Contracts (Devnet)
+ZK Shielded:      GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
+Subscription:     5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt
+Stream:           2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws
+Fee Splitter:     muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD
+Whitelist:        AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE
+```
+
+---
+
 ## What is Protocol 01?
 
 Protocol 01 is a privacy-first financial ecosystem on Solana.
