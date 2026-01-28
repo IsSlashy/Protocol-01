@@ -68,8 +68,8 @@ export default function Unlock() {
     setShowLogoutModal(true);
   };
 
-  const handleConfirmLogout = () => {
-    reset();
+  const handleConfirmLogout = async () => {
+    await reset();
     navigate('/welcome');
   };
 
