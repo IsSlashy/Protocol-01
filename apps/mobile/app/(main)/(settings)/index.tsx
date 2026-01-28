@@ -10,10 +10,12 @@ import { SettingsSection, SettingsRow, CurrencyModal } from '../../../components
 import { useWalletStore } from '../../../stores/walletStore';
 import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/settingsStore';
 import { getCluster } from '../../../services/solana/connection';
+import { useAuth } from '../../../providers/PrivyProvider';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { publicKey, logout, hasWallet } = useWalletStore();
+  const { publicKey, logout: walletLogout, hasWallet } = useWalletStore();
+  const { logout: privyLogout } = useAuth();
   const { currency, setCurrency, initialize: initSettings } = useSettingsStore();
   const [copied, setCopied] = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
@@ -61,6 +63,11 @@ export default function SettingsScreen() {
         {
           text: 'Déconnecter',
           onPress: async () => {
+            try {
+              await privyLogout();
+            } catch (e) {
+              console.warn('[Settings] Privy logout error:', e);
+            }
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             router.replace('/(auth)/lock');
           },
@@ -106,7 +113,8 @@ export default function SettingsScreen() {
                   style: 'destructive',
                   onPress: async () => {
                     try {
-                      await logout();
+                      await privyLogout();
+                      await walletLogout();
                       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                       router.replace('/');
                     } catch (error) {

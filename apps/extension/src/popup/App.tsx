@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useWalletStore } from '@/shared/store/wallet';
+import { usePrivy } from '@/shared/providers/PrivyProvider';
 
 // Layouts
 import MainLayout from './layouts/MainLayout';
@@ -34,7 +35,8 @@ import ConnectedSites from './pages/ConnectedSites';
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const { isInitialized, isUnlocked, reset, tryAutoUnlock } = useWalletStore();
+  const { isInitialized, isUnlocked, isPrivyWallet, reset, tryAutoUnlock } = useWalletStore();
+  const { ready: privyReady, authenticated: privyAuthenticated } = usePrivy();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -101,31 +103,34 @@ function App() {
   // Wait for store hydration, verify storage state, and try auto-unlock
   useEffect(() => {
     const verifyAndHydrate = async () => {
-      try {
-        // Check if wallet data actually exists in storage
-        const result = await chrome.storage.local.get('p01-wallet');
-        const storedData = result['p01-wallet'];
+      // Skip storage verification for Privy wallets (no encrypted seed phrase)
+      if (!isPrivyWallet) {
+        try {
+          // Check if wallet data actually exists in storage
+          const result = await chrome.storage.local.get('p01-wallet');
+          const storedData = result['p01-wallet'];
 
-        if (storedData) {
-          const parsed = JSON.parse(storedData);
-          const hasWallet = parsed?.state?.encryptedSeedPhrase;
+          if (storedData) {
+            const parsed = JSON.parse(storedData);
+            const hasWallet = parsed?.state?.encryptedSeedPhrase;
 
-          // If store thinks wallet exists but storage doesn't have it, reset
-          if (isInitialized && !hasWallet) {
-            console.log('[Popup] Storage mismatch detected, resetting store');
+            // If store thinks wallet exists but storage doesn't have it, reset
+            if (isInitialized && !hasWallet) {
+              console.log('[Popup] Storage mismatch detected, resetting store');
+              reset();
+            }
+          } else if (isInitialized) {
+            // Storage is empty but store thinks we're initialized
+            console.log('[Popup] No wallet in storage, resetting store');
             reset();
           }
-        } else if (isInitialized) {
-          // Storage is empty but store thinks we're initialized
-          console.log('[Popup] No wallet in storage, resetting store');
-          reset();
+        } catch (e) {
+          console.error('[Popup] Error verifying storage:', e);
         }
-      } catch (e) {
-        console.error('[Popup] Error verifying storage:', e);
       }
 
-      // Try auto-unlock from session (10 minute timeout)
-      if (isInitialized && !isUnlocked) {
+      // Try auto-unlock from session (10 minute timeout) — legacy wallets only
+      if (isInitialized && !isUnlocked && !isPrivyWallet) {
         console.log('[Popup] Trying auto-unlock from session...');
         await tryAutoUnlock();
       }
@@ -139,8 +144,8 @@ function App() {
     verifyAndHydrate();
   }, []);
 
-  // Show loading state while hydrating
-  if (!isHydrated) {
+  // Show loading state while hydrating or while Privy SDK is initializing
+  if (!isHydrated || !privyReady) {
     return (
       <div className="w-[360px] h-[600px] bg-p01-void flex items-center justify-center">
         <div className="text-center">
@@ -172,7 +177,7 @@ function App() {
         {/* Main app routes - protected, require unlock */}
         <Route element={<MainLayout />}>
           <Route path="/" element={
-            isInitialized && !isUnlocked ? <Navigate to="/unlock" replace /> : <Home />
+            isInitialized && !isUnlocked && !isPrivyWallet && !privyAuthenticated ? <Navigate to="/unlock" replace /> : <Home />
           } />
           <Route path="/send" element={<Send />} />
           <Route path="/send/confirm" element={<SendConfirm />} />
@@ -198,7 +203,7 @@ function App() {
         <Route path="/approve-subscription" element={<ApproveSubscription />} />
 
         {/* Fallback */}
-        <Route path="*" element={<Navigate to={isInitialized ? (isUnlocked ? "/" : "/unlock") : "/welcome"} replace />} />
+        <Route path="*" element={<Navigate to={isInitialized ? ((isUnlocked || isPrivyWallet || privyAuthenticated) ? "/" : "/unlock") : "/welcome"} replace />} />
       </Routes>
     </div>
   );

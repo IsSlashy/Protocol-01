@@ -20,7 +20,7 @@ export const privyConfig: PrivyClientConfig = {
   appearance: {
     theme: 'dark',
     accentColor: '#22d3ee', // Cyan to match Specter branding
-    logo: '/icons/icon128.png',
+    logo: '/icons/icon-128.png',
     showWalletLoginFirst: false, // Show email/social first for easier onboarding
   },
 

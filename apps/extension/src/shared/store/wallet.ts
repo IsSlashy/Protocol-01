@@ -18,7 +18,15 @@ import {
 // Re-export TokenBalance for use in components
 export type { TokenBalance };
 import { getRecentTransactions } from '../services/transactions';
-import { Keypair } from '@solana/web3.js';
+import {
+  Keypair,
+  Transaction,
+  Connection,
+  PublicKey,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+  clusterApiUrl,
+} from '@solana/web3.js';
 import type { TransactionRecord } from '../types';
 
 // Session timeout in milliseconds (10 minutes)
@@ -99,6 +107,15 @@ async function tryRestoreSession(): Promise<Keypair | null> {
   }
 }
 
+// --- Privy wallet support ---
+type PrivySignTransaction = (transaction: Transaction) => Promise<Transaction>;
+let privySigner: PrivySignTransaction | null = null;
+
+export function setPrivySigner(signer: PrivySignTransaction | null): void {
+  privySigner = signer;
+  console.log('[WalletStore] Privy signer', signer ? 'set' : 'cleared');
+}
+
 export interface Token {
   mint: string;
   symbol: string;
@@ -134,12 +151,17 @@ export interface WalletState {
   network: NetworkType;
   hideBalance: boolean;
 
+  // Privy wallet flag
+  isPrivyWallet: boolean;
+
   // In-memory only (never persisted)
   _keypair: Keypair | null;
 
   // Actions
   createWallet: (password: string) => Promise<string[]>;
   importWallet: (seedPhrase: string[], password: string) => Promise<void>;
+  initializeWithPrivy: (address: string) => void;
+  logout: () => void;
   unlock: (password: string) => Promise<boolean>;
   tryAutoUnlock: () => Promise<boolean>;
   lock: () => void;
@@ -171,6 +193,7 @@ export const useWalletStore = create<WalletState>()(
       isLoadingTransactions: false,
       network: 'devnet',
       hideBalance: false,
+      isPrivyWallet: false,
       _keypair: null,
 
       // Create a new wallet
@@ -245,6 +268,40 @@ export const useWalletStore = create<WalletState>()(
           set({ isLoading: false, error: (error as Error).message });
           throw error;
         }
+      },
+
+      // Initialize with Privy wallet (no seed phrase, no password)
+      initializeWithPrivy: (address: string) => {
+        set({
+          isInitialized: true,
+          isUnlocked: true,
+          publicKey: address,
+          isPrivyWallet: true,
+          isLoading: false,
+          error: null,
+        });
+        // Fetch balance and transactions
+        get().refreshBalance();
+        get().fetchTransactions();
+      },
+
+      // Logout (for Privy users — full reset)
+      logout: () => {
+        clearSession();
+        set({
+          isInitialized: false,
+          isUnlocked: false,
+          isLoading: false,
+          error: null,
+          publicKey: null,
+          encryptedSeedPhrase: null,
+          passwordHash: null,
+          solBalance: 0,
+          tokens: [],
+          transactions: [],
+          _keypair: null,
+          isPrivyWallet: false,
+        });
       },
 
       // Unlock wallet with password
@@ -406,11 +463,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Send SOL transaction
       sendTransaction: async (toAddress: string, amountSol: number) => {
-        const { _keypair, network } = get();
-
-        if (!_keypair) {
-          throw new Error('Wallet not unlocked');
-        }
+        const { _keypair, network, isPrivyWallet, publicKey } = get();
 
         if (!isValidSolanaAddress(toAddress)) {
           throw new Error('Invalid recipient address');
@@ -419,7 +472,41 @@ export const useWalletStore = create<WalletState>()(
         set({ isLoading: true, error: null });
 
         try {
-          const signature = await sendSol(_keypair, toAddress, amountSol, network);
+          let signature: string;
+
+          if (isPrivyWallet) {
+            // Privy wallet path — use privySigner (no raw keypair available)
+            if (!privySigner || !publicKey) {
+              throw new Error('Privy wallet not ready');
+            }
+
+            const rpcUrl = network === 'devnet'
+              ? clusterApiUrl('devnet')
+              : 'https://api.mainnet-beta.solana.com';
+            const connection = new Connection(rpcUrl);
+
+            const transaction = new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: new PublicKey(publicKey),
+                toPubkey: new PublicKey(toAddress),
+                lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
+              })
+            );
+
+            const { blockhash } = await connection.getLatestBlockhash();
+            transaction.recentBlockhash = blockhash;
+            transaction.feePayer = new PublicKey(publicKey);
+
+            const signedTx = await privySigner(transaction);
+            signature = await connection.sendRawTransaction(signedTx.serialize());
+            await connection.confirmTransaction(signature);
+          } else {
+            // Legacy path — use raw keypair
+            if (!_keypair) {
+              throw new Error('Wallet not unlocked');
+            }
+            signature = await sendSol(_keypair, toAddress, amountSol, network);
+          }
 
           // Refresh balance and transactions after transaction
           await get().refreshBalance();
@@ -507,6 +594,7 @@ export const useWalletStore = create<WalletState>()(
         passwordHash: state.passwordHash,
         network: state.network,
         hideBalance: state.hideBalance,
+        isPrivyWallet: state.isPrivyWallet,
       }),
     }
   )

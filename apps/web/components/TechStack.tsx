@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
-import { useRef } from "react";
+import React, { useRef } from "react";
 import { Lock, Cpu, Server, Code, Zap, Shield } from "lucide-react";
 
 const technologies = [
@@ -50,24 +50,53 @@ const technologies = [
 
 const architectureLayers = [
   {
-    name: "Application Layer",
-    description: "Wallet, Streams, Agent",
-    color: "p01-cyan",
+    name: "Client Layer",
+    color: "cyan" as const,
+    hex: "#39c5bb",
+    nodes: [
+      { label: "MOBILE APP", sub: "React Native" },
+      { label: "EXTENSION", sub: "Chrome / Brave" },
+      { label: "SDK", sub: "TypeScript" },
+    ],
   },
   {
-    name: "Privacy Layer",
-    description: "ZK Proofs, Stealth Addresses, Encryption",
-    color: "p01-pink",
+    name: "ZK-SDK",
+    color: "pink" as const,
+    hex: "#ff77a8",
+    nodes: [
+      { label: "WASM Prover", sub: "Groth16" },
+      { label: "Poseidon", sub: "Hash Function" },
+      { label: "Note Mgmt", sub: "Encrypt / Decrypt" },
+    ],
   },
   {
-    name: "Execution Layer",
-    description: "TEE Compute, Private Relayers",
-    color: "p01-bright-cyan",
+    name: "Protocol Layer",
+    color: "bright-cyan" as const,
+    hex: "#00ffe5",
+    nodes: [
+      { label: "STEALTH", sub: "ECDH Addresses" },
+      { label: "SHIELDED", sub: "Groth16 Pool" },
+      { label: "STREAMS", sub: "SPL Payments" },
+    ],
   },
   {
-    name: "Settlement Layer",
-    description: "Solana, SPL Tokens, Jupiter",
-    color: "p01-yellow",
+    name: "Relay Layer",
+    color: "pink" as const,
+    hex: "#ff77a8",
+    nodes: [
+      { label: "RELAYER", sub: "ZK Verify + Transfer" },
+      { label: "ON-CHAIN", sub: "Solana Program" },
+    ],
+  },
+  {
+    name: "Solana Blockchain",
+    color: "yellow" as const,
+    hex: "#ffcc00",
+    nodes: [
+      { label: "alt_bn128", sub: "Curve Ops" },
+      { label: "SPL Tokens", sub: "Token Standard" },
+      { label: "Anchor", sub: "Framework" },
+    ],
   },
 ];
 
@@ -123,30 +152,14 @@ export default function TechStack() {
     return colors[color] || colors.cyan;
   };
 
-  const getLayerStyles = (color: string) => {
-    const styles: Record<string, { bg: string; border: string; dot: string }> = {
-      "p01-cyan": {
-        bg: "bg-p01-cyan/5",
-        border: "border-p01-cyan/30",
-        dot: "bg-p01-cyan",
-      },
-      "p01-pink": {
-        bg: "bg-p01-pink/5",
-        border: "border-p01-pink/30",
-        dot: "bg-p01-pink",
-      },
-      "p01-bright-cyan": {
-        bg: "bg-p01-bright-cyan/5",
-        border: "border-p01-bright-cyan/30",
-        dot: "bg-p01-bright-cyan",
-      },
-      "p01-yellow": {
-        bg: "bg-p01-yellow/5",
-        border: "border-p01-yellow/30",
-        dot: "bg-p01-yellow",
-      },
+  const getLayerHex = (color: string) => {
+    const map: Record<string, string> = {
+      cyan: "#39c5bb",
+      pink: "#ff77a8",
+      "bright-cyan": "#00ffe5",
+      yellow: "#ffcc00",
     };
-    return styles[color] || styles["p01-cyan"];
+    return map[color] || map.cyan;
   };
 
   return (
@@ -182,37 +195,109 @@ export default function TechStack() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mb-20"
         >
-          <div className="card p-8">
-            <h3 className="text-xl font-bold font-display text-white text-center mb-8 uppercase tracking-wider">
-              Protocol Architecture
-            </h3>
-            <div className="space-y-4">
-              {architectureLayers.map((layer, index) => {
-                const styles = getLayerStyles(layer.color);
-                return (
-                  <motion.div
-                    key={layer.name}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={isInView ? { opacity: 1, x: 0 } : {}}
-                    transition={{ duration: 0.5, delay: 0.3 + index * 0.1 }}
-                    className={`flex items-center gap-6 p-4 rounded-xl border ${styles.border} ${styles.bg}`}
-                  >
-                    <div className={`w-3 h-3 rounded-full ${styles.dot}`} />
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white font-display">{layer.name}</span>
-                        <span className="text-p01-text-muted text-sm font-mono">
-                          {layer.description}
-                        </span>
-                      </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-center mt-6 text-p01-text-dim text-sm font-mono">
-              <Zap size={16} className="mr-2 text-p01-cyan" />
-              End-to-end privacy from application to settlement
+          <div className="relative border border-[#2a2a30] bg-[#0a0a0c] p-6 sm:p-10 overflow-hidden">
+            {/* Subtle grid background */}
+            <div className="absolute inset-0 opacity-[0.03]" style={{
+              backgroundImage: `linear-gradient(#39c5bb 1px, transparent 1px), linear-gradient(90deg, #39c5bb 1px, transparent 1px)`,
+              backgroundSize: '40px 40px',
+            }} />
+
+            <div className="relative z-10">
+              <h3 className="text-xs font-mono text-[#555560] uppercase tracking-[0.3em] text-center mb-2">
+                System Architecture
+              </h3>
+              <h4 className="text-xl sm:text-2xl font-bold font-display text-white text-center mb-10 uppercase tracking-wider">
+                Protocol Stack
+              </h4>
+
+              <div className="flex flex-col items-center gap-0">
+                {architectureLayers.map((layer, layerIndex) => {
+                  const hex = getLayerHex(layer.color);
+                  return (
+                    <React.Fragment key={layer.name}>
+                      {/* Layer */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={isInView ? { opacity: 1, y: 0 } : {}}
+                        transition={{ duration: 0.5, delay: 0.3 + layerIndex * 0.12 }}
+                        className="w-full max-w-2xl"
+                      >
+                        {/* Layer label */}
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="w-1.5 h-1.5" style={{ backgroundColor: hex }} />
+                          <span className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em]" style={{ color: hex }}>
+                            {layer.name}
+                          </span>
+                          <div className="flex-1 h-px" style={{ backgroundColor: `${hex}15` }} />
+                        </div>
+
+                        {/* Nodes grid */}
+                        <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                          {layer.nodes.map((node) => (
+                            <div
+                              key={node.label}
+                              className="group relative bg-[#111114] border p-3 sm:p-4 text-center transition-all duration-300 hover:bg-[#151518]"
+                              style={{
+                                borderColor: `${hex}25`,
+                              }}
+                              onMouseEnter={(e) => {
+                                (e.currentTarget as HTMLElement).style.borderColor = `${hex}60`;
+                                (e.currentTarget as HTMLElement).style.boxShadow = `0 0 20px ${hex}10, inset 0 1px 0 ${hex}15`;
+                              }}
+                              onMouseLeave={(e) => {
+                                (e.currentTarget as HTMLElement).style.borderColor = `${hex}25`;
+                                (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                              }}
+                            >
+                              <div className="text-xs sm:text-sm font-bold font-mono tracking-wide" style={{ color: hex }}>
+                                {node.label}
+                              </div>
+                              <div className="text-[10px] sm:text-xs text-[#555560] mt-1 font-mono">
+                                {node.sub}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+
+                      {/* Connector arrow between layers */}
+                      {layerIndex < architectureLayers.length - 1 && (
+                        <motion.div
+                          initial={{ opacity: 0, scaleY: 0 }}
+                          animate={isInView ? { opacity: 1, scaleY: 1 } : {}}
+                          transition={{ duration: 0.3, delay: 0.4 + layerIndex * 0.12 }}
+                          className="flex flex-col items-center py-2"
+                        >
+                          <div className="w-px h-4" style={{ backgroundColor: `${hex}40` }} />
+                          <div className="w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent" style={{ borderTopColor: `${hex}60` }} />
+                        </motion.div>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+
+              {/* Bottom status bar */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={isInView ? { opacity: 1 } : {}}
+                transition={{ duration: 0.5, delay: 1 }}
+                className="flex items-center justify-center gap-3 mt-8 pt-6 border-t border-[#2a2a30]"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 bg-[#39c5bb] animate-pulse" />
+                  <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
+                    End-to-end encrypted
+                  </span>
+                </div>
+                <span className="text-[#2a2a30]">|</span>
+                <div className="flex items-center gap-2">
+                  <Zap size={12} className="text-[#39c5bb]" />
+                  <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
+                    From client to settlement
+                  </span>
+                </div>
+              </motion.div>
             </div>
           </div>
         </motion.div>
@@ -263,16 +348,16 @@ export default function TechStack() {
           className="mt-16 flex flex-wrap items-center justify-center gap-6"
         >
           <div className="flex items-center gap-2 px-4 py-2 bg-p01-surface rounded-lg border border-p01-border">
-            <Code size={18} className="text-p01-cyan" />
-            <span className="text-sm text-p01-text-muted font-mono">Open Source</span>
+            <Lock size={18} className="text-p01-cyan" />
+            <span className="text-sm text-p01-text-muted font-mono">Self-Custody</span>
           </div>
           <div className="flex items-center gap-2 px-4 py-2 bg-p01-surface rounded-lg border border-p01-border">
             <Shield size={18} className="text-p01-pink" />
-            <span className="text-sm text-p01-text-muted font-mono">Audited by Trail of Bits</span>
+            <span className="text-sm text-p01-text-muted font-mono">ZK-Powered</span>
           </div>
           <div className="flex items-center gap-2 px-4 py-2 bg-p01-surface rounded-lg border border-p01-border">
-            <Lock size={18} className="text-p01-bright-cyan" />
-            <span className="text-sm text-p01-text-muted font-mono">Formally Verified</span>
+            <Zap size={18} className="text-p01-bright-cyan" />
+            <span className="text-sm text-p01-text-muted font-mono">Solana Native</span>
           </div>
         </motion.div>
       </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogOut, X } from 'lucide-react';
@@ -8,7 +8,14 @@ import { cn } from '@/shared/utils';
 
 export default function Unlock() {
   const navigate = useNavigate();
-  const { unlock, isLoading, error, clearError, reset } = useWalletStore();
+  const { unlock, isLoading, error, clearError, reset, isPrivyWallet } = useWalletStore();
+
+  // Privy users should never see the unlock page — redirect to home
+  useEffect(() => {
+    if (isPrivyWallet) {
+      navigate('/', { replace: true });
+    }
+  }, [isPrivyWallet, navigate]);
 
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
