@@ -313,10 +313,106 @@ const docsArchLayers = [
 
 const ArchitectureDiagram = () => (
   <div className="relative border border-[#2a2a30] bg-[#0a0a0c] p-6 sm:p-10 overflow-hidden">
-    {/* Subtle grid background */}
-    <div className="absolute inset-0 opacity-[0.03]" style={{
-      backgroundImage: `linear-gradient(#39c5bb 1px, transparent 1px), linear-gradient(90deg, #39c5bb 1px, transparent 1px)`,
-      backgroundSize: '40px 40px',
+    {/* Injected CSS for diagram animations */}
+    <style dangerouslySetInnerHTML={{ __html: `
+      @keyframes doc-dataflow {
+        0% { transform: translateY(-100%); opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { transform: translateY(800%); opacity: 0; }
+      }
+      @keyframes doc-scan {
+        0% { transform: translateY(-100%); }
+        100% { transform: translateY(100%); }
+      }
+      @keyframes doc-glow-pulse {
+        0%, 100% { opacity: 0.03; }
+        50% { opacity: 0.07; }
+      }
+      @keyframes doc-particle-drift {
+        0%, 100% { transform: translateY(0) translateX(0); opacity: 0.08; }
+        25% { transform: translateY(-15px) translateX(5px); opacity: 0.15; }
+        50% { transform: translateY(-8px) translateX(-3px); opacity: 0.1; }
+        75% { transform: translateY(-20px) translateX(8px); opacity: 0.18; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .doc-animated { animation: none !important; }
+      }
+    `}} />
+
+    {/* BG Layer 1 — Perspective grid */}
+    <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute w-[200%] h-[120%] left-[-50%] top-[20%]" style={{
+        backgroundImage: `
+          linear-gradient(rgba(57, 197, 187, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(57, 197, 187, 0.025) 1px, transparent 1px)
+        `,
+        backgroundSize: '60px 60px',
+        transform: 'perspective(600px) rotateX(55deg)',
+        transformOrigin: 'center top',
+        maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 50%, transparent 90%)',
+        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 50%, transparent 90%)',
+      }} />
+    </div>
+
+    {/* BG Layer 2 — Radial glow pulse */}
+    <div className="absolute inset-0 doc-animated" style={{
+      background: `
+        radial-gradient(ellipse 60% 40% at 30% 20%, rgba(57, 197, 187, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 35% at 70% 80%, rgba(255, 119, 168, 0.04) 0%, transparent 60%)
+      `,
+      animation: 'doc-glow-pulse 6s ease-in-out infinite',
+    }} />
+
+    {/* BG Layer 3 — Vertical data flow lines */}
+    <div className="absolute inset-0 overflow-hidden">
+      {[15, 35, 55, 75, 90].map((x, i) => (
+        <div key={i} className="absolute doc-animated" style={{
+          left: `${x}%`,
+          top: 0,
+          width: '1px',
+          height: '12%',
+          background: `linear-gradient(to bottom, transparent, ${i % 2 === 0 ? 'rgba(57,197,187,0.15)' : 'rgba(255,119,168,0.12)'}, transparent)`,
+          animation: `doc-dataflow ${5 + i * 0.7}s linear infinite`,
+          animationDelay: `${i * 1.2}s`,
+        }} />
+      ))}
+    </div>
+
+    {/* BG Layer 4 — Floating particles */}
+    <div className="absolute inset-0">
+      {[
+        { x: '10%', y: '15%', s: '+', c: '#39c5bb' },
+        { x: '85%', y: '25%', s: '◇', c: '#ff77a8' },
+        { x: '20%', y: '70%', s: '○', c: '#00ffe5' },
+        { x: '75%', y: '80%', s: '×', c: '#ffcc00' },
+        { x: '50%', y: '45%', s: '△', c: '#39c5bb' },
+        { x: '92%', y: '55%', s: '+', c: '#ff77a8' },
+      ].map((p, i) => (
+        <span key={i} className="absolute font-light select-none pointer-events-none doc-animated" style={{
+          left: p.x, top: p.y,
+          fontSize: 10 + (i % 3) * 2,
+          color: p.c,
+          animation: `doc-particle-drift ${7 + i}s ease-in-out infinite`,
+          animationDelay: `${i * 1.1}s`,
+        }}>{p.s}</span>
+      ))}
+    </div>
+
+    {/* BG Layer 5 — Scanline */}
+    <div className="absolute left-0 right-0 h-[1px] doc-animated" style={{
+      background: 'linear-gradient(90deg, transparent 10%, rgba(57,197,187,0.08) 50%, transparent 90%)',
+      animation: 'doc-scan 8s linear infinite',
+    }} />
+
+    {/* BG Layer 6 — Vignette */}
+    <div className="absolute inset-0 pointer-events-none" style={{
+      background: 'radial-gradient(ellipse 80% 70% at 50% 50%, transparent 20%, rgba(10,10,12,0.5) 80%, rgba(10,10,12,0.8) 100%)',
+    }} />
+
+    {/* BG Layer 7 — Noise texture */}
+    <div className="absolute inset-0 pointer-events-none opacity-[0.015] mix-blend-overlay" style={{
+      backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
     }} />
 
     <div className="relative z-10">
