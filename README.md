@@ -79,7 +79,6 @@
 <p align="center">
   <img src="docs/assets/screenshots/extension-home.png" alt="Extension Home" width="280"/>
   <img src="docs/assets/screenshots/extension-send.png" alt="Extension Send" width="280"/>
-  <img src="docs/assets/screenshots/extension-privacy.png" alt="Privacy Zone" width="280"/>
 </p>
 
 ---
