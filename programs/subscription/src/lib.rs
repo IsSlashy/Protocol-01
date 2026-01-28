@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer, Approve, Revoke};
 
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
@@ -23,6 +23,9 @@ pub mod p01_subscription {
     ///
     /// The subscriber authorizes the merchant to charge up to `amount_per_period`
     /// every `interval_seconds` for up to `max_payments` times.
+    ///
+    /// This also delegates tokens to the subscription PDA, allowing automatic
+    /// payment execution by any crank/relayer without subscriber signature.
     pub fn create_subscription(
         ctx: Context<CreateSubscription>,
         subscription_id: String,
@@ -48,7 +51,7 @@ pub mod p01_subscription {
         subscription.subscriber = ctx.accounts.subscriber.key();
         subscription.merchant = ctx.accounts.merchant.key();
         subscription.mint = ctx.accounts.mint.key();
-        subscription.subscription_id = subscription_id;
+        subscription.subscription_id = subscription_id.clone();
         subscription.subscription_name = subscription_name;
         subscription.amount_per_period = amount_per_period;
         subscription.interval_seconds = interval_seconds;
@@ -63,6 +66,28 @@ pub mod p01_subscription {
         subscription.timing_noise = timing_noise;
         subscription.use_stealth_address = use_stealth_address;
         subscription.bump = ctx.bumps.subscription;
+
+        // Calculate total delegation amount (for max_payments, or large amount for unlimited)
+        let delegation_amount = if max_payments > 0 {
+            amount_per_period.checked_mul(max_payments).ok_or(SubscriptionError::Overflow)?
+        } else {
+            // For unlimited subscriptions, delegate a large amount (can be re-approved later)
+            amount_per_period.checked_mul(120).ok_or(SubscriptionError::Overflow)? // ~10 years monthly
+        };
+
+        // Delegate tokens to the subscription PDA
+        // This allows the relayer to execute payments without subscriber signature
+        token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.subscriber_token_account.to_account_info(),
+                    delegate: subscription.to_account_info(),
+                    authority: ctx.accounts.subscriber.to_account_info(),
+                },
+            ),
+            delegation_amount,
+        )?;
 
         emit!(SubscriptionCreated {
             subscription: subscription.key(),
@@ -79,7 +104,8 @@ pub mod p01_subscription {
 
     /// Process a payment for an active subscription
     ///
-    /// Can be called by the merchant or an authorized crank.
+    /// Can be called by ANYONE (relayer/crank) - no signature required from subscriber.
+    /// The subscription PDA acts as delegate authority for the token transfer.
     /// Validates that payment is within the subscription limits.
     pub fn process_payment(
         ctx: Context<ProcessPayment>,
@@ -114,15 +140,30 @@ pub mod p01_subscription {
             );
         }
 
-        // Execute the payment transfer
+        // Build PDA signer seeds
+        let subscriber_key = subscription.subscriber;
+        let merchant_key = subscription.merchant;
+        let subscription_id = subscription.subscription_id.as_bytes();
+        let bump = subscription.bump;
+        let seeds = &[
+            b"subscription".as_ref(),
+            subscriber_key.as_ref(),
+            merchant_key.as_ref(),
+            subscription_id,
+            &[bump],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        // Execute the payment transfer using PDA as delegate authority
         token::transfer(
-            CpiContext::new(
+            CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 Transfer {
                     from: ctx.accounts.subscriber_token_account.to_account_info(),
                     to: ctx.accounts.merchant_token_account.to_account_info(),
-                    authority: ctx.accounts.subscriber.to_account_info(),
+                    authority: subscription.to_account_info(),
                 },
+                signer_seeds,
             ),
             payment_amount,
         )?;
@@ -211,7 +252,8 @@ pub mod p01_subscription {
     /// Cancel subscription permanently (subscriber only)
     ///
     /// No further payments can be processed. This action is irreversible.
-    pub fn cancel_subscription(ctx: Context<SubscriberAction>) -> Result<()> {
+    /// Also revokes the token delegation.
+    pub fn cancel_subscription(ctx: Context<CancelSubscription>) -> Result<()> {
         let subscription = &mut ctx.accounts.subscription;
 
         require!(
@@ -221,12 +263,65 @@ pub mod p01_subscription {
 
         subscription.status = SubscriptionStatus::Cancelled;
 
+        // Revoke token delegation
+        token::revoke(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Revoke {
+                    source: ctx.accounts.subscriber_token_account.to_account_info(),
+                    authority: ctx.accounts.subscriber.to_account_info(),
+                },
+            ),
+        )?;
+
         emit!(SubscriptionCancelled {
             subscription: subscription.key(),
             subscriber: subscription.subscriber,
             merchant: subscription.merchant,
             payments_made: subscription.payments_made,
             total_paid: subscription.total_paid,
+        });
+
+        Ok(())
+    }
+
+    /// Renew/extend token delegation for subscription
+    ///
+    /// Call this when delegated amount is running low (e.g., for unlimited subscriptions)
+    pub fn renew_delegation(
+        ctx: Context<RenewDelegation>,
+        additional_payments: u64,
+    ) -> Result<()> {
+        let subscription = &ctx.accounts.subscription;
+
+        require!(
+            subscription.status == SubscriptionStatus::Active ||
+            subscription.status == SubscriptionStatus::Paused,
+            SubscriptionError::SubscriptionNotActive
+        );
+
+        let delegation_amount = subscription
+            .amount_per_period
+            .checked_mul(additional_payments)
+            .ok_or(SubscriptionError::Overflow)?;
+
+        // Approve additional tokens
+        token::approve(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Approve {
+                    to: ctx.accounts.subscriber_token_account.to_account_info(),
+                    delegate: subscription.to_account_info(),
+                    authority: ctx.accounts.subscriber.to_account_info(),
+                },
+            ),
+            delegation_amount,
+        )?;
+
+        emit!(DelegationRenewed {
+            subscription: subscription.key(),
+            subscriber: subscription.subscriber,
+            additional_amount: delegation_amount,
         });
 
         Ok(())
@@ -293,6 +388,14 @@ pub struct CreateSubscription<'info> {
     /// CHECK: Token mint
     pub mint: AccountInfo<'info>,
 
+    /// Subscriber's token account - will be delegated to subscription PDA
+    #[account(
+        mut,
+        constraint = subscriber_token_account.owner == subscriber.key() @ SubscriptionError::InvalidTokenAccount,
+        constraint = subscriber_token_account.mint == mint.key() @ SubscriptionError::InvalidMint
+    )]
+    pub subscriber_token_account: Account<'info, TokenAccount>,
+
     #[account(
         init,
         payer = subscriber,
@@ -307,20 +410,19 @@ pub struct CreateSubscription<'info> {
     )]
     pub subscription: Account<'info, Subscription>,
 
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct ProcessPayment<'info> {
-    /// The subscriber must sign to authorize the transfer
-    pub subscriber: Signer<'info>,
-
-    /// Merchant or authorized crank can trigger the payment
-    pub payment_authority: Signer<'info>,
+    /// Anyone can trigger payment execution (relayer/crank)
+    /// No signature required - the subscription PDA acts as delegate
+    #[account(mut)]
+    pub payer: Signer<'info>,
 
     #[account(
         mut,
-        constraint = subscription.merchant == payment_authority.key() @ SubscriptionError::UnauthorizedPaymentAuthority,
         seeds = [
             b"subscription",
             subscription.subscriber.as_ref(),
@@ -331,13 +433,17 @@ pub struct ProcessPayment<'info> {
     )]
     pub subscription: Account<'info, Subscription>,
 
+    /// Subscriber's token account - delegated to subscription PDA
     #[account(
         mut,
-        constraint = subscriber_token_account.owner == subscriber.key() @ SubscriptionError::InvalidTokenAccount,
-        constraint = subscriber_token_account.mint == subscription.mint @ SubscriptionError::InvalidMint
+        constraint = subscriber_token_account.owner == subscription.subscriber @ SubscriptionError::InvalidTokenAccount,
+        constraint = subscriber_token_account.mint == subscription.mint @ SubscriptionError::InvalidMint,
+        constraint = subscriber_token_account.delegate.is_some() @ SubscriptionError::NoDelegation,
+        constraint = subscriber_token_account.delegate.unwrap() == subscription.key() @ SubscriptionError::InvalidDelegation
     )]
     pub subscriber_token_account: Account<'info, TokenAccount>,
 
+    /// Merchant's token account to receive payment
     #[account(
         mut,
         constraint = merchant_token_account.owner == subscription.merchant @ SubscriptionError::InvalidTokenAccount,
@@ -364,6 +470,59 @@ pub struct SubscriberAction<'info> {
         bump = subscription.bump
     )]
     pub subscription: Account<'info, Subscription>,
+}
+
+#[derive(Accounts)]
+pub struct CancelSubscription<'info> {
+    pub subscriber: Signer<'info>,
+
+    #[account(
+        mut,
+        constraint = subscription.subscriber == subscriber.key() @ SubscriptionError::UnauthorizedSubscriber,
+        seeds = [
+            b"subscription",
+            subscription.subscriber.as_ref(),
+            subscription.merchant.as_ref(),
+            subscription.subscription_id.as_bytes()
+        ],
+        bump = subscription.bump
+    )]
+    pub subscription: Account<'info, Subscription>,
+
+    #[account(
+        mut,
+        constraint = subscriber_token_account.owner == subscriber.key() @ SubscriptionError::InvalidTokenAccount,
+        constraint = subscriber_token_account.mint == subscription.mint @ SubscriptionError::InvalidMint
+    )]
+    pub subscriber_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct RenewDelegation<'info> {
+    pub subscriber: Signer<'info>,
+
+    #[account(
+        constraint = subscription.subscriber == subscriber.key() @ SubscriptionError::UnauthorizedSubscriber,
+        seeds = [
+            b"subscription",
+            subscription.subscriber.as_ref(),
+            subscription.merchant.as_ref(),
+            subscription.subscription_id.as_bytes()
+        ],
+        bump = subscription.bump
+    )]
+    pub subscription: Account<'info, Subscription>,
+
+    #[account(
+        mut,
+        constraint = subscriber_token_account.owner == subscriber.key() @ SubscriptionError::InvalidTokenAccount,
+        constraint = subscriber_token_account.mint == subscription.mint @ SubscriptionError::InvalidMint
+    )]
+    pub subscriber_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -513,6 +672,15 @@ pub enum SubscriptionError {
 
     #[msg("Cannot close an active subscription")]
     CannotCloseActiveSubscription,
+
+    #[msg("Token account has no delegation - subscription not properly initialized")]
+    NoDelegation,
+
+    #[msg("Token account delegation does not match subscription PDA")]
+    InvalidDelegation,
+
+    #[msg("Insufficient delegated amount for payment")]
+    InsufficientDelegation,
 }
 
 // ============ Events ============
@@ -571,4 +739,11 @@ pub struct PrivacySettingsUpdated {
 pub struct SubscriptionClosed {
     pub subscription: Pubkey,
     pub subscriber: Pubkey,
+}
+
+#[event]
+pub struct DelegationRenewed {
+    pub subscription: Pubkey,
+    pub subscriber: Pubkey,
+    pub additional_amount: u64,
 }
