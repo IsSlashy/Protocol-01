@@ -24,15 +24,18 @@
 >
 > This repository is visible for **hackathon evaluation purposes only**.
 > No license is granted to use, copy, modify, fork, or distribute this code.
+>
 > See [LICENSE](./LICENSE) for details.
 
 ---
 
 ## What is Protocol 01?
 
-Protocol 01 is a privacy-first financial ecosystem on Solana. It combines **Groth16 zero-knowledge proofs**, **ECDH stealth addresses**, and a **private relay network** to deliver fully untraceable transactions.
+Protocol 01 is a privacy-first financial ecosystem on Solana.
+It combines **Groth16 zero-knowledge proofs**, **ECDH stealth addresses**, and a **private relay network** to deliver fully untraceable transactions.
 
-Unlike mixers or tumblers, P-01 provides **cryptographic privacy** at the protocol level &mdash; amounts, senders, and recipients are hidden by default through ZK circuits, not operational obfuscation.
+Unlike mixers or tumblers, P-01 provides **cryptographic privacy** at the protocol level.
+Amounts, senders, and recipients are hidden by default through ZK circuits, not operational obfuscation.
 
 ```
 User creates ZK proof (Groth16)
@@ -75,7 +78,8 @@ protocol-01/
 
 ### Zero-Knowledge Proofs (Groth16)
 
-Circuits written in **Circom**, proven with **snarkjs**, verified on-chain via Solana's native `alt_bn128` syscalls.
+Circuits written in **Circom**, proven with **snarkjs**.
+Verified on-chain via Solana's native `alt_bn128` syscalls.
 
 | Parameter | Value |
 |-----------|-------|
@@ -93,7 +97,8 @@ The circuit proves:
 
 ### Stealth Addresses (ECDH)
 
-Adapted from Ethereum's EIP-5564 for Solana. Each payment creates a **unique one-time address** using Elliptic Curve Diffie-Hellman key exchange.
+Adapted from Ethereum's EIP-5564 for Solana.
+Each payment creates a **unique one-time address** using Elliptic Curve Diffie-Hellman key exchange.
 
 ```
 Sender: ephemeralKey = random()
@@ -101,11 +106,13 @@ Shared secret = ECDH(ephemeralKey, recipientViewingKey)
 Stealth address = recipientSpendingKey + H(sharedSecret) * G
 ```
 
-The recipient scans incoming payments using a **viewTag** (2-byte fast filter), then derives the private key to spend.
+The recipient scans incoming payments using a **viewTag** (2-byte fast filter).
+Then derives the private key to spend.
 
 ### Shielded Pool
 
-On-chain Anchor program storing encrypted notes in a sparse Merkle tree.
+On-chain Anchor program.
+Stores encrypted notes in a sparse Merkle tree.
 
 | Instruction | Description |
 |-------------|-------------|
@@ -124,7 +131,8 @@ The relayer breaks the on-chain link between sender and recipient:
 4. Relayer sends funds from its own wallet to the stealth address
 5. On-chain: only `Relayer -> Stealth Address` is visible
 
-The relayer network supports **health checks**, **load balancing**, and **random selection** for maximum privacy.
+The relayer network supports **health checks**, **load balancing**, and **random selection**.
+Maximum privacy through relay diversity.
 
 ---
 
@@ -132,7 +140,8 @@ The relayer network supports **health checks**, **load balancing**, and **random
 
 ### Browser Extension
 
-Full Solana wallet as a Chrome/Brave extension (Manifest V3).
+Full Solana wallet as a Chrome/Brave extension.
+Built on Manifest V3.
 
 - Wallet creation & import (BIP39)
 - SOL & SPL token management with real-time prices
@@ -146,6 +155,7 @@ Full Solana wallet as a Chrome/Brave extension (Manifest V3).
 ### Mobile App
 
 Native wallet for iOS and Android.
+Privacy on the go.
 
 - Biometric authentication (Face ID / Fingerprint)
 - QR code payments
@@ -159,6 +169,7 @@ Native wallet for iOS and Android.
 ### Web Application
 
 Marketing site, SDK demo, and documentation portal.
+Built with Next.js 16 and Framer Motion.
 
 **Stack:** Next.js 16, TypeScript, TailwindCSS v4, Framer Motion
 
@@ -203,7 +214,10 @@ await zk.unshield(publicKey, 500_000_000n);     // Withdraw
 | Zero-knowledge | Proofs reveal nothing beyond validity |
 | Double-spend | Nullifiers are unique per note, stored on-chain |
 
-**Threat model:** Blockchain observers cannot link senders to recipients, track amounts, or analyze spending patterns within the shielded pool.
+**Threat model:**
+Blockchain observers cannot link senders to recipients.
+Amounts are hidden within the shielded pool.
+Spending patterns cannot be analyzed.
 
 ---
 
