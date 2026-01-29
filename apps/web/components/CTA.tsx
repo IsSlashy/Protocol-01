@@ -3,22 +3,24 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
-import { Github, Smartphone, Chrome } from "lucide-react";
+import { Github, Smartphone, Chrome, Download } from "lucide-react";
 
 const downloadOptions = [
   {
     platform: "Android",
     icon: Smartphone,
-    description: "Download APK v0.1.1",
-    available: true,
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.1.1/P01-Mobile-v0.1.1.apk",
+    description: "Instant Download APK",
+    filename: "P01-Mobile-v0.1.1.apk",
+    link: "/downloads/P01-Mobile-v0.1.1.apk",
+    size: "72 MB",
   },
   {
     platform: "Chrome Extension",
     icon: Chrome,
-    description: "Download v0.1.1",
-    available: true,
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.1.1/P01-Extension-v0.1.1.zip",
+    description: "Instant Download ZIP",
+    filename: "P01-Extension-v0.1.1.zip",
+    link: "/downloads/P01-Extension-v0.1.1.zip",
+    size: "9.6 MB",
   },
 ];
 
@@ -98,27 +100,25 @@ export default function CTA() {
               className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto mb-12"
             >
               {downloadOptions.map((option) => (
-                <div
+                <a
                   key={option.platform}
-                  className={`group flex items-center gap-4 p-4 rounded-xl bg-p01-void border border-p01-border transition-all duration-300 ${
-                    option.available
-                      ? "hover:border-p01-cyan/50 cursor-pointer"
-                      : "opacity-50 cursor-not-allowed"
-                  }`}
-                  onClick={() => option.available && option.link !== "#" && window.open(option.link)}
+                  href={option.link}
+                  download={option.filename}
+                  className="group flex items-center gap-4 p-4 rounded-xl bg-p01-void border border-p01-border transition-all duration-300 hover:border-p01-cyan/50 cursor-pointer no-underline"
                 >
                   <div className="w-12 h-12 rounded-xl bg-p01-surface flex items-center justify-center text-p01-text-muted group-hover:text-p01-cyan transition-colors">
                     <option.icon size={24} />
                   </div>
-                  <div className="text-left">
+                  <div className="text-left flex-1">
                     <div className="font-semibold text-white group-hover:text-p01-cyan transition-colors font-display">
                       {option.platform}
                     </div>
                     <div className="text-sm text-p01-text-dim">
-                      {option.description}
+                      {option.description} ({option.size})
                     </div>
                   </div>
-                </div>
+                  <Download size={20} className="text-p01-text-muted group-hover:text-p01-cyan transition-colors" />
+                </a>
               ))}
             </motion.div>
 
