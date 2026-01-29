@@ -1,212 +1,146 @@
 "use client";
 
-import { memo } from "react";
+import { useState, useEffect, memo } from "react";
+import { motion } from "framer-motion";
 
 /**
- * GlitchLogo01 - Cinematic ULTRAKILL-style glitch on 01-miku.png
- * PNG now has transparent background - no blend mode hacks needed.
+ * GlitchLogo01 - Same glitch as extension's GlitchLogo
+ * JS-driven chaotic random displacement, not CSS keyframes.
  */
-
 function GlitchLogo01() {
+  const [glitchState, setGlitchState] = useState({
+    cyanX: 0,
+    cyanY: 0,
+    pinkX: 0,
+    pinkY: 0,
+    mainX: 0,
+    mainY: 0,
+    rotation: 0,
+    scale: 1,
+    showSlice: false,
+    sliceY: 0,
+    sliceX: 0,
+  });
+
+  useEffect(() => {
+    const logoGlitchLoop = () => {
+      const intensity = Math.random();
+      if (intensity > 0.3) {
+        setGlitchState({
+          cyanX: (Math.random() - 0.5) * 12,
+          cyanY: (Math.random() - 0.5) * 8,
+          pinkX: (Math.random() - 0.5) * 10,
+          pinkY: (Math.random() - 0.5) * 6,
+          mainX: (Math.random() - 0.5) * 4,
+          mainY: (Math.random() - 0.5) * 3,
+          rotation: (Math.random() - 0.5) * 2,
+          scale: 0.98 + Math.random() * 0.04,
+          showSlice: intensity > 0.7,
+          sliceY: Math.random() * 80,
+          sliceX: (Math.random() - 0.5) * 40,
+        });
+
+        setTimeout(() => {
+          setGlitchState((prev) => ({
+            ...prev,
+            cyanX: (Math.random() - 0.5) * 4,
+            cyanY: (Math.random() - 0.5) * 2,
+            pinkX: (Math.random() - 0.5) * 3,
+            pinkY: (Math.random() - 0.5) * 2,
+            mainX: 0,
+            mainY: 0,
+            rotation: 0,
+            scale: 1,
+            showSlice: false,
+          }));
+        }, 50 + Math.random() * 100);
+      }
+    };
+
+    const scheduleLogoGlitch = () => {
+      const delay = 100 + Math.random() * 400;
+      return setTimeout(() => {
+        logoGlitchLoop();
+        logoTimerId = scheduleLogoGlitch();
+      }, delay);
+    };
+
+    let logoTimerId = scheduleLogoGlitch();
+
+    return () => {
+      clearTimeout(logoTimerId);
+    };
+  }, []);
+
   return (
-    <div className="relative w-[300px] md:w-[400px] lg:w-[500px]">
-      <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes gl01-cyan {
-          0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.6; }
-          10% { transform: translate(-4px, 2px); opacity: 0.7; }
-          25% { transform: translate(3px, -2px); opacity: 0.5; }
-          40% { transform: translate(-2px, 1px); opacity: 0.6; }
-          58% { transform: translate(-12px, 6px); opacity: 1; }
-          60% { transform: translate(10px, -5px); opacity: 0.9; }
-          62% { transform: translate(-7px, 3px); opacity: 1; }
-          64% { transform: translate(4px, -2px); opacity: 0.8; }
-          66% { transform: translate(-2px, 1px); opacity: 0.7; }
-        }
-
-        @keyframes gl01-pink {
-          0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.5; }
-          8% { transform: translate(3px, -2px); opacity: 0.6; }
-          22% { transform: translate(-3px, 2px); opacity: 0.4; }
-          38% { transform: translate(2px, -1px); opacity: 0.5; }
-          58% { transform: translate(11px, -6px); opacity: 1; }
-          60% { transform: translate(-9px, 4px); opacity: 0.9; }
-          62% { transform: translate(6px, -3px); opacity: 1; }
-          64% { transform: translate(-3px, 2px); opacity: 0.7; }
-          66% { transform: translate(1px, -1px); opacity: 0.6; }
-        }
-
-        @keyframes gl01-shake {
-          0%, 54%, 70%, 100% { transform: translate(0, 0) skewX(0deg) scale(1); }
-          15% { transform: translate(1px, 0) skewX(0deg) scale(1); }
-          30% { transform: translate(-1px, 0) skewX(0deg) scale(1); }
-          56% { transform: translate(5px, -3px) skewX(2deg) scale(1.01); }
-          58% { transform: translate(-7px, 2px) skewX(-4deg) scale(0.99); }
-          60% { transform: translate(6px, -1px) skewX(3deg) scale(1.02); }
-          62% { transform: translate(-4px, 3px) skewX(-2deg) scale(0.98); }
-          64% { transform: translate(3px, -2px) skewX(1deg) scale(1.01); }
-          66% { transform: translate(-1px, 1px) skewX(-0.5deg) scale(1); }
-          68% { transform: translate(0, 0) skewX(0deg) scale(1); }
-        }
-
-        @keyframes gl01-tear {
-          0%, 54%, 70%, 100% {
-            clip-path: inset(0 0 100% 0);
-            transform: translateX(0);
-            opacity: 0;
-          }
-          57% { clip-path: inset(12% 0 78% 0); transform: translateX(20px); opacity: 1; }
-          58% { clip-path: inset(12% 0 78% 0); transform: translateX(-15px); opacity: 1; }
-          60% { clip-path: inset(35% 0 53% 0); transform: translateX(25px); opacity: 1; }
-          61% { clip-path: inset(35% 0 53% 0); transform: translateX(-10px); opacity: 1; }
-          63% { clip-path: inset(62% 0 25% 0); transform: translateX(18px); opacity: 1; }
-          64% { clip-path: inset(62% 0 25% 0); transform: translateX(-22px); opacity: 1; }
-          66% { clip-path: inset(0 0 100% 0); transform: translateX(0); opacity: 0; }
-        }
-
-        @keyframes gl01-tear-2 {
-          0%, 56%, 68%, 100% {
-            clip-path: inset(0 0 100% 0);
-            transform: translateX(0);
-            opacity: 0;
-          }
-          58% { clip-path: inset(22% 0 68% 0); transform: translateX(-18px); opacity: 1; }
-          60% { clip-path: inset(48% 0 40% 0); transform: translateX(14px); opacity: 1; }
-          62% { clip-path: inset(5% 0 85% 0); transform: translateX(-24px); opacity: 1; }
-          64% { clip-path: inset(75% 0 12% 0); transform: translateX(16px); opacity: 1; }
-          66% { clip-path: inset(0 0 100% 0); transform: translateX(0); opacity: 0; }
-        }
-
-        @keyframes gl01-flicker {
-          0%, 100% { opacity: 1; }
-          12.4% { opacity: 0.82; }
-          12.8% { opacity: 1; }
-          42.3% { opacity: 0.88; }
-          42.6% { opacity: 1; }
-          56.5% { opacity: 0.6; }
-          57% { opacity: 0.95; }
-          58% { opacity: 0.5; }
-          58.5% { opacity: 0.9; }
-          59% { opacity: 0.65; }
-          60% { opacity: 1; }
-          61% { opacity: 0.75; }
-          62% { opacity: 1; }
-        }
-
-        @keyframes gl01-noise {
-          0%, 55%, 67%, 100% { opacity: 0; height: 0; }
-          57% { opacity: 0.5; height: 3px; top: 18%; }
-          59% { opacity: 0.7; height: 2px; top: 52%; }
-          61% { opacity: 0.4; height: 4px; top: 35%; }
-          63% { opacity: 0.6; height: 2px; top: 70%; }
-          65% { opacity: 0.3; height: 3px; top: 10%; }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .gl01-layer { animation: none !important; }
-        }
-      `}} />
-
-      {/* Flicker */}
-      <div
-        className="gl01-layer"
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.3 }}
+      className="relative w-[300px] h-[240px] md:w-[400px] md:h-[321px] lg:w-[500px] lg:h-[401px]"
+      style={{
+        transform: `translate(${glitchState.mainX}px, ${glitchState.mainY}px) rotate(${glitchState.rotation}deg) scale(${glitchState.scale})`,
+      }}
+    >
+      {/* Cyan channel */}
+      <img
+        src="/01-miku.png"
+        alt=""
+        className="absolute top-0 left-0 w-full h-full pointer-events-none"
         style={{
-          animation: "gl01-flicker 4s steps(1) infinite",
-          willChange: "opacity",
+          opacity: 0.6,
+          filter: 'brightness(0) saturate(100%) invert(68%) sepia(62%) saturate(449%) hue-rotate(127deg) brightness(93%) contrast(91%)',
+          mixBlendMode: 'screen',
+          transform: `translate(${glitchState.cyanX}px, ${glitchState.cyanY}px)`,
         }}
-      >
-        {/* Shake */}
+      />
+
+      {/* Pink channel */}
+      <img
+        src="/01-miku.png"
+        alt=""
+        className="absolute top-0 left-0 w-full h-full pointer-events-none"
+        style={{
+          opacity: 0.5,
+          filter: 'brightness(0) saturate(100%) invert(35%) sepia(98%) saturate(5765%) hue-rotate(328deg) brightness(99%) contrast(106%)',
+          mixBlendMode: 'screen',
+          transform: `translate(${glitchState.pinkX}px, ${glitchState.pinkY}px)`,
+        }}
+      />
+
+      {/* Main image */}
+      <img
+        src="/01-miku.png"
+        alt="01"
+        className="absolute top-0 left-0 w-full h-full"
+      />
+
+      {/* Slice glitch */}
+      {glitchState.showSlice && (
         <div
-          className="gl01-layer"
+          className="absolute left-0 w-full overflow-hidden z-10"
           style={{
-            animation: "gl01-shake 4s steps(1) infinite",
-            willChange: "transform",
+            top: `${glitchState.sliceY}%`,
+            height: 15,
+            transform: `translateX(${glitchState.sliceX}px)`,
           }}
         >
-          {/* Cyan chromatic aberration */}
-          <div
-            className="absolute inset-0 gl01-layer"
+          <img
+            src="/01-miku.png"
+            alt=""
+            className="w-full"
             style={{
-              animation: "gl01-cyan 4s steps(2) infinite",
-              willChange: "transform, opacity",
-            }}
-          >
-            <img
-              src="/01-miku.png"
-              alt=""
-              className="w-full h-auto opacity-60"
-              style={{ filter: "brightness(1.3) sepia(1) saturate(5) hue-rotate(130deg)" }}
-            />
-          </div>
-
-          {/* Pink chromatic aberration */}
-          <div
-            className="absolute inset-0 gl01-layer"
-            style={{
-              animation: "gl01-pink 4s steps(2) infinite",
-              willChange: "transform, opacity",
-            }}
-          >
-            <img
-              src="/01-miku.png"
-              alt=""
-              className="w-full h-auto opacity-50"
-              style={{ filter: "brightness(1.2) sepia(1) saturate(5) hue-rotate(300deg)" }}
-            />
-          </div>
-
-          {/* Main image */}
-          <div className="relative">
-            <img
-              src="/01-miku.png"
-              alt="01"
-              className="w-full h-auto"
-            />
-          </div>
-
-          {/* Screen tear 1 */}
-          <div
-            className="absolute inset-0 gl01-layer pointer-events-none"
-            style={{
-              animation: "gl01-tear 4s steps(1) infinite",
-              willChange: "clip-path, transform, opacity",
-            }}
-          >
-            <img
-              src="/01-miku.png"
-              alt=""
-              className="w-full h-auto"
-              style={{ filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(130deg)" }}
-            />
-          </div>
-
-          {/* Screen tear 2 */}
-          <div
-            className="absolute inset-0 gl01-layer pointer-events-none"
-            style={{
-              animation: "gl01-tear-2 4s steps(1) infinite",
-              willChange: "clip-path, transform, opacity",
-            }}
-          >
-            <img
-              src="/01-miku.png"
-              alt=""
-              className="w-full h-auto"
-              style={{ filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(300deg)" }}
-            />
-          </div>
-
-          {/* Noise bar - no persistent bg class, controlled entirely by animation */}
-          <div
-            className="absolute left-0 w-full gl01-layer pointer-events-none"
-            style={{
-              backgroundColor: "rgba(57,197,187,0.5)",
-              animation: "gl01-noise 4s steps(1) infinite",
-              willChange: "opacity, height, top",
+              height: '100%',
+              marginTop: `-${glitchState.sliceY}%`,
+              filter:
+                Math.random() > 0.5
+                  ? 'brightness(0) saturate(100%) invert(68%) sepia(62%) saturate(449%) hue-rotate(127deg) brightness(93%) contrast(91%)'
+                  : 'brightness(0) saturate(100%) invert(35%) sepia(98%) saturate(5765%) hue-rotate(328deg) brightness(99%) contrast(106%)',
             }}
           />
         </div>
-      </div>
-    </div>
+      )}
+    </motion.div>
   );
 }
 
