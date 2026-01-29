@@ -4,8 +4,8 @@ import { memo } from "react";
 import Image from "next/image";
 
 /**
- * GlitchLogo01 - Cinematic glitch on 01-miku.png
- * PNG is pink-on-white, so we invert (→ cyan-on-black) + screen blend to kill the background.
+ * GlitchLogo01 - Cinematic ULTRAKILL-style glitch on 01-miku.png
+ * PNG now has transparent background - no blend mode hacks needed.
  */
 
 function GlitchLogo01() {
@@ -13,15 +13,27 @@ function GlitchLogo01() {
     <div className="relative w-[300px] md:w-[400px] lg:w-[500px]">
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes gl01-cyan {
+          0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.6; }
+          10% { transform: translate(-4px, 2px); opacity: 0.7; }
+          25% { transform: translate(3px, -2px); opacity: 0.5; }
+          40% { transform: translate(-2px, 1px); opacity: 0.6; }
+          58% { transform: translate(-12px, 6px); opacity: 1; }
+          60% { transform: translate(10px, -5px); opacity: 0.9; }
+          62% { transform: translate(-7px, 3px); opacity: 1; }
+          64% { transform: translate(4px, -2px); opacity: 0.8; }
+          66% { transform: translate(-2px, 1px); opacity: 0.7; }
+        }
+
+        @keyframes gl01-pink {
           0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.5; }
-          10% { transform: translate(-4px, 2px); opacity: 0.6; }
-          25% { transform: translate(3px, -2px); opacity: 0.4; }
-          40% { transform: translate(-2px, 1px); opacity: 0.5; }
-          58% { transform: translate(-12px, 6px); opacity: 0.9; }
-          60% { transform: translate(10px, -5px); opacity: 0.8; }
-          62% { transform: translate(-7px, 3px); opacity: 0.9; }
-          64% { transform: translate(4px, -2px); opacity: 0.7; }
-          66% { transform: translate(-2px, 1px); opacity: 0.5; }
+          8% { transform: translate(3px, -2px); opacity: 0.6; }
+          22% { transform: translate(-3px, 2px); opacity: 0.4; }
+          38% { transform: translate(2px, -1px); opacity: 0.5; }
+          58% { transform: translate(11px, -6px); opacity: 1; }
+          60% { transform: translate(-9px, 4px); opacity: 0.9; }
+          62% { transform: translate(6px, -3px); opacity: 1; }
+          64% { transform: translate(-3px, 2px); opacity: 0.7; }
+          66% { transform: translate(1px, -1px); opacity: 0.6; }
         }
 
         @keyframes gl01-shake {
@@ -37,7 +49,7 @@ function GlitchLogo01() {
           68% { transform: translate(0, 0) skewX(0deg) scale(1); }
         }
 
-        @keyframes gl01-tear-1 {
+        @keyframes gl01-tear {
           0%, 54%, 70%, 100% {
             clip-path: inset(0 0 100% 0);
             transform: translateX(0);
@@ -63,14 +75,6 @@ function GlitchLogo01() {
           62% { clip-path: inset(5% 0 85% 0); transform: translateX(-24px); opacity: 1; }
           64% { clip-path: inset(75% 0 12% 0); transform: translateX(16px); opacity: 1; }
           66% { clip-path: inset(0 0 100% 0); transform: translateX(0); opacity: 0; }
-        }
-
-        @keyframes gl01-glow {
-          0%, 100% { opacity: 0.3; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.05); }
-          58% { opacity: 0.9; transform: scale(1.15); }
-          62% { opacity: 0.15; transform: scale(0.95); }
-          68% { opacity: 0.35; transform: scale(1); }
         }
 
         @keyframes gl01-flicker {
@@ -100,11 +104,10 @@ function GlitchLogo01() {
 
         @media (prefers-reduced-motion: reduce) {
           .gl01-layer { animation: none !important; }
-          .gl01-glow-bg { animation: none !important; opacity: 0.3 !important; }
         }
       `}} />
 
-      {/* Flicker wrapper */}
+      {/* Flicker */}
       <div
         className="gl01-layer"
         style={{
@@ -112,122 +115,114 @@ function GlitchLogo01() {
           willChange: "opacity",
         }}
       >
-        {/* Ambient cyan glow behind */}
+        {/* Shake */}
         <div
-          className="absolute inset-0 gl01-glow-bg pointer-events-none"
+          className="gl01-layer"
           style={{
-            background: "radial-gradient(ellipse 60% 70% at 50% 50%, rgba(57, 197, 187, 0.4) 0%, rgba(57, 197, 187, 0.1) 40%, transparent 70%)",
-            animation: "gl01-glow 4s ease-in-out infinite",
-            willChange: "opacity, transform",
+            animation: "gl01-shake 4s steps(1) infinite",
+            willChange: "transform",
           }}
-        />
-
-        <div className="relative">
-          {/* Shake container */}
+        >
+          {/* Cyan chromatic aberration */}
           <div
-            className="gl01-layer"
+            className="absolute inset-0 gl01-layer"
             style={{
-              animation: "gl01-shake 4s steps(1) infinite",
-              willChange: "transform",
+              animation: "gl01-cyan 4s steps(2) infinite",
+              willChange: "transform, opacity",
             }}
           >
-            {/* Cyan chromatic aberration layer */}
-            <div
-              className="absolute inset-0 gl01-layer"
-              style={{
-                animation: "gl01-cyan 4s steps(2) infinite",
-                mixBlendMode: "screen",
-                willChange: "transform, opacity",
-              }}
-            >
-              <Image
-                src="/01-miku.png"
-                alt=""
-                width={500}
-                height={300}
-                className="w-full h-auto"
-                style={{
-                  filter: "invert(1) brightness(1.4)",
-                  mixBlendMode: "screen",
-                }}
-              />
-            </div>
-
-            {/* Main image: invert (pink→cyan, white→black) + screen (black=invisible) */}
-            <div className="relative">
-              <Image
-                src="/01-miku.png"
-                alt="01"
-                width={500}
-                height={300}
-                className="w-full h-auto"
-                style={{
-                  filter: "invert(1) brightness(1.1)",
-                  mixBlendMode: "screen",
-                }}
-                priority
-              />
-            </div>
-
-            {/* Screen tear slice 1 */}
-            <div
-              className="absolute inset-0 gl01-layer pointer-events-none"
-              style={{
-                animation: "gl01-tear-1 4s steps(1) infinite",
-                willChange: "clip-path, transform, opacity",
-              }}
-            >
-              <Image
-                src="/01-miku.png"
-                alt=""
-                width={500}
-                height={300}
-                className="w-full h-auto"
-                style={{
-                  filter: "invert(1) brightness(1.8)",
-                  mixBlendMode: "screen",
-                }}
-              />
-            </div>
-
-            {/* Screen tear slice 2 */}
-            <div
-              className="absolute inset-0 gl01-layer pointer-events-none"
-              style={{
-                animation: "gl01-tear-2 4s steps(1) infinite",
-                willChange: "clip-path, transform, opacity",
-              }}
-            >
-              <Image
-                src="/01-miku.png"
-                alt=""
-                width={500}
-                height={300}
-                className="w-full h-auto"
-                style={{
-                  filter: "invert(1) brightness(1.5)",
-                  mixBlendMode: "screen",
-                }}
-              />
-            </div>
-
-            {/* Noise bar */}
-            <div
-              className="absolute left-0 w-full bg-[#39c5bb]/50 gl01-layer pointer-events-none"
-              style={{
-                animation: "gl01-noise 4s steps(1) infinite",
-                willChange: "opacity, height, top",
-              }}
-            />
-
-            {/* Scanlines */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: `repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(57,197,187,0.03) 2px, rgba(57,197,187,0.03) 4px)`,
-              }}
+            <Image
+              src="/01-miku.png"
+              alt=""
+              width={500}
+              height={300}
+              className="w-full h-auto opacity-60"
+              style={{ filter: "brightness(1.3) sepia(1) saturate(5) hue-rotate(130deg)" }}
             />
           </div>
+
+          {/* Pink chromatic aberration */}
+          <div
+            className="absolute inset-0 gl01-layer"
+            style={{
+              animation: "gl01-pink 4s steps(2) infinite",
+              willChange: "transform, opacity",
+            }}
+          >
+            <Image
+              src="/01-miku.png"
+              alt=""
+              width={500}
+              height={300}
+              className="w-full h-auto opacity-50"
+              style={{ filter: "brightness(1.2) sepia(1) saturate(5) hue-rotate(300deg)" }}
+            />
+          </div>
+
+          {/* Main image */}
+          <div className="relative">
+            <Image
+              src="/01-miku.png"
+              alt="01"
+              width={500}
+              height={300}
+              className="w-full h-auto"
+              priority
+            />
+          </div>
+
+          {/* Screen tear 1 */}
+          <div
+            className="absolute inset-0 gl01-layer pointer-events-none"
+            style={{
+              animation: "gl01-tear 4s steps(1) infinite",
+              willChange: "clip-path, transform, opacity",
+            }}
+          >
+            <Image
+              src="/01-miku.png"
+              alt=""
+              width={500}
+              height={300}
+              className="w-full h-auto"
+              style={{ filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(130deg)" }}
+            />
+          </div>
+
+          {/* Screen tear 2 */}
+          <div
+            className="absolute inset-0 gl01-layer pointer-events-none"
+            style={{
+              animation: "gl01-tear-2 4s steps(1) infinite",
+              willChange: "clip-path, transform, opacity",
+            }}
+          >
+            <Image
+              src="/01-miku.png"
+              alt=""
+              width={500}
+              height={300}
+              className="w-full h-auto"
+              style={{ filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(300deg)" }}
+            />
+          </div>
+
+          {/* Noise bar */}
+          <div
+            className="absolute left-0 w-full bg-[#39c5bb]/50 gl01-layer pointer-events-none"
+            style={{
+              animation: "gl01-noise 4s steps(1) infinite",
+              willChange: "opacity, height, top",
+            }}
+          />
+
+          {/* Scanlines */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(57,197,187,0.03) 2px, rgba(57,197,187,0.03) 4px)",
+            }}
+          />
         </div>
       </div>
     </div>
