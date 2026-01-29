@@ -22,7 +22,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "PROTOCOL -01",
+  title: "PROTOCOL-01",
   description:
     "The ultimate privacy-first protocol for secure transactions, private communications, and anonymous interactions. Powered by zero-knowledge proofs.",
   keywords: [
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
     apple: "/01-miku.png",
   },
   openGraph: {
-    title: "PROTOCOL -01",
+    title: "PROTOCOL-01",
     description:
       "The ultimate privacy-first protocol for secure transactions, private communications, and anonymous interactions.",
     type: "website",
@@ -52,13 +52,13 @@ export const metadata: Metadata = {
         url: "/01-miku.png",
         width: 512,
         height: 512,
-        alt: "Protocol -01",
+        alt: "Protocol-01",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "PROTOCOL -01",
+    title: "PROTOCOL-01",
     description:
       "The ultimate privacy-first protocol for secure transactions, private communications, and anonymous interactions.",
     images: ["/01-miku.png"],
