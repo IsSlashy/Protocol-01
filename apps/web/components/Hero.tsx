@@ -3,7 +3,7 @@
 import { memo } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import GlitchLogo01 from "./GlitchLogo01";
+import GlitchText01 from "./GlitchText01";
 import PhoneMockup from "./PhoneMockup";
 
 /**
@@ -258,7 +258,7 @@ function Hero() {
               </span>
             </div>
 
-            {/* Massive 01 - Using PNG image with ULTRAKILL glitch */}
+            {/* Massive 01 - Cinematic cyan glitch text */}
             <div
               className="mb-2 hero-animate"
               style={{
@@ -266,7 +266,7 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <GlitchLogo01 />
+              <GlitchText01 />
             </div>
 
             {/* Terminal-style system status */}
@@ -302,7 +302,12 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <button className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors">
+              <button
+                onClick={() => {
+                  document.getElementById('problem')?.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors"
+              >
                 <svg
                   className="w-5 h-5"
                   viewBox="0 0 24 24"
