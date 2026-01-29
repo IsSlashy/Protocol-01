@@ -10,7 +10,7 @@ import Image from "next/image";
 
 function GlitchLogo01() {
   return (
-    <div className="relative w-[300px] md:w-[400px] lg:w-[500px]">
+    <div className="relative w-[300px] md:w-[400px] lg:w-[500px]" style={{ mixBlendMode: "lighten" }}>
       <style dangerouslySetInnerHTML={{ __html: `
         /* === CHROMATIC ABERRATION - subtle drift + violent burst === */
         @keyframes gl01-cyan {
