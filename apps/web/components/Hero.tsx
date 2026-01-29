@@ -3,7 +3,7 @@
 import { memo } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import GlitchText01 from "./GlitchText01";
+import GlitchLogo01 from "./GlitchLogo01";
 import PhoneMockup from "./PhoneMockup";
 
 /**
@@ -258,7 +258,7 @@ function Hero() {
               </span>
             </div>
 
-            {/* Massive 01 - Cinematic cyan glitch text */}
+            {/* Massive 01 - PNG image with cinematic glitch */}
             <div
               className="mb-2 hero-animate"
               style={{
@@ -266,7 +266,7 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <GlitchText01 />
+              <GlitchLogo01 />
             </div>
 
             {/* Terminal-style system status */}
