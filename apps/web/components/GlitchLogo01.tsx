@@ -1,7 +1,6 @@
 "use client";
 
 import { memo } from "react";
-import Image from "next/image";
 
 /**
  * GlitchLogo01 - Cinematic ULTRAKILL-style glitch on 01-miku.png
@@ -131,11 +130,9 @@ function GlitchLogo01() {
               willChange: "transform, opacity",
             }}
           >
-            <Image
+            <img
               src="/01-miku.png"
               alt=""
-              width={500}
-              height={300}
               className="w-full h-auto opacity-60"
               style={{ filter: "brightness(1.3) sepia(1) saturate(5) hue-rotate(130deg)" }}
             />
@@ -149,11 +146,9 @@ function GlitchLogo01() {
               willChange: "transform, opacity",
             }}
           >
-            <Image
+            <img
               src="/01-miku.png"
               alt=""
-              width={500}
-              height={300}
               className="w-full h-auto opacity-50"
               style={{ filter: "brightness(1.2) sepia(1) saturate(5) hue-rotate(300deg)" }}
             />
@@ -161,13 +156,10 @@ function GlitchLogo01() {
 
           {/* Main image */}
           <div className="relative">
-            <Image
+            <img
               src="/01-miku.png"
               alt="01"
-              width={500}
-              height={300}
               className="w-full h-auto"
-              priority
             />
           </div>
 
@@ -179,11 +171,9 @@ function GlitchLogo01() {
               willChange: "clip-path, transform, opacity",
             }}
           >
-            <Image
+            <img
               src="/01-miku.png"
               alt=""
-              width={500}
-              height={300}
               className="w-full h-auto"
               style={{ filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(130deg)" }}
             />
@@ -197,30 +187,21 @@ function GlitchLogo01() {
               willChange: "clip-path, transform, opacity",
             }}
           >
-            <Image
+            <img
               src="/01-miku.png"
               alt=""
-              width={500}
-              height={300}
               className="w-full h-auto"
               style={{ filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(300deg)" }}
             />
           </div>
 
-          {/* Noise bar */}
+          {/* Noise bar - no persistent bg class, controlled entirely by animation */}
           <div
-            className="absolute left-0 w-full bg-[#39c5bb]/50 gl01-layer pointer-events-none"
+            className="absolute left-0 w-full gl01-layer pointer-events-none"
             style={{
+              backgroundColor: "rgba(57,197,187,0.5)",
               animation: "gl01-noise 4s steps(1) infinite",
               willChange: "opacity, height, top",
-            }}
-          />
-
-          {/* Scanlines */}
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              background: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(57,197,187,0.03) 2px, rgba(57,197,187,0.03) 4px)",
             }}
           />
         </div>
