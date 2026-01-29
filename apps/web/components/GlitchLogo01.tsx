@@ -26,19 +26,6 @@ function GlitchLogo01() {
           66% { transform: translate(-2px, 1px); opacity: 0.7; }
         }
 
-        @keyframes gl01-pink {
-          0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.5; }
-          8% { transform: translate(3px, -2px); opacity: 0.6; }
-          22% { transform: translate(-3px, 2px); opacity: 0.4; }
-          38% { transform: translate(2px, -1px); opacity: 0.5; }
-          /* BURST */
-          58% { transform: translate(11px, -6px); opacity: 1; }
-          60% { transform: translate(-9px, 4px); opacity: 0.9; }
-          62% { transform: translate(6px, -3px); opacity: 1; }
-          64% { transform: translate(-3px, 2px); opacity: 0.7; }
-          66% { transform: translate(1px, -1px); opacity: 0.6; }
-        }
-
         /* === MAIN SHAKE - calm then violent === */
         @keyframes gl01-shake {
           0%, 54%, 70%, 100% { transform: translate(0, 0) skewX(0deg) scale(1); }
@@ -182,27 +169,6 @@ function GlitchLogo01() {
               />
             </div>
 
-            {/* Pink channel layer */}
-            <div
-              className="absolute inset-0 gl01-layer"
-              style={{
-                animation: "gl01-pink 4s steps(2) infinite",
-                mixBlendMode: "screen",
-                willChange: "transform, opacity",
-              }}
-            >
-              <Image
-                src="/01-miku.png"
-                alt=""
-                width={500}
-                height={300}
-                className="w-full h-auto opacity-50"
-                style={{
-                  filter: "brightness(1.2) sepia(1) saturate(5) hue-rotate(300deg)",
-                }}
-              />
-            </div>
-
             {/* Main image layer - tinted cyan */}
             <div className="relative">
               <Image
@@ -238,7 +204,7 @@ function GlitchLogo01() {
               />
             </div>
 
-            {/* Screen tear slice 2 - pink */}
+            {/* Screen tear slice 2 - cyan offset */}
             <div
               className="absolute inset-0 gl01-layer pointer-events-none"
               style={{
@@ -253,7 +219,7 @@ function GlitchLogo01() {
                 height={300}
                 className="w-full h-auto"
                 style={{
-                  filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(300deg)",
+                  filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(130deg)",
                 }}
               />
             </div>
@@ -266,15 +232,6 @@ function GlitchLogo01() {
                 willChange: "opacity, height, top",
               }}
             />
-            <div
-              className="absolute left-0 w-full bg-[#ff2d7a]/30 gl01-layer pointer-events-none"
-              style={{
-                animation: "gl01-noise 4s steps(1) infinite",
-                animationDelay: "0.15s",
-                willChange: "opacity, height, top",
-              }}
-            />
-
             {/* Scanline overlay */}
             <div
               className="absolute inset-0 pointer-events-none"
