@@ -9,16 +9,16 @@ const downloadOptions = [
   {
     platform: "Android",
     icon: Smartphone,
-    description: "Coming Soon",
-    available: false,
-    link: "#",
+    description: "Download APK v0.1.1",
+    available: true,
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.1.1/P01-Mobile-v0.1.1.apk",
   },
   {
     platform: "Chrome Extension",
     icon: Chrome,
-    description: "Coming Soon",
-    available: false,
-    link: "#",
+    description: "Download v0.1.1",
+    available: true,
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.1.1/P01-Extension-v0.1.1.zip",
   },
 ];
 
