@@ -4,34 +4,30 @@ import { memo } from "react";
 import Image from "next/image";
 
 /**
- * GlitchLogo01 - Cinematic ULTRAKILL-style glitch on 01-miku.png
- * Cyan glow, chromatic aberration, screen tearing, flicker bursts
+ * GlitchLogo01 - Cinematic glitch on 01-miku.png
+ * PNG is pink-on-white, so we invert (→ cyan-on-black) + screen blend to kill the background.
  */
 
 function GlitchLogo01() {
   return (
-    <div className="relative w-[300px] md:w-[400px] lg:w-[500px]" style={{ mixBlendMode: "lighten" }}>
+    <div className="relative w-[300px] md:w-[400px] lg:w-[500px]">
       <style dangerouslySetInnerHTML={{ __html: `
-        /* === CHROMATIC ABERRATION - subtle drift + violent burst === */
         @keyframes gl01-cyan {
-          0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.6; }
-          10% { transform: translate(-4px, 2px); opacity: 0.7; }
-          25% { transform: translate(3px, -2px); opacity: 0.5; }
-          40% { transform: translate(-2px, 1px); opacity: 0.6; }
-          /* BURST */
-          58% { transform: translate(-12px, 6px); opacity: 1; }
-          60% { transform: translate(10px, -5px); opacity: 0.9; }
-          62% { transform: translate(-7px, 3px); opacity: 1; }
-          64% { transform: translate(4px, -2px); opacity: 0.8; }
-          66% { transform: translate(-2px, 1px); opacity: 0.7; }
+          0%, 55%, 75%, 100% { transform: translate(0, 0); opacity: 0.5; }
+          10% { transform: translate(-4px, 2px); opacity: 0.6; }
+          25% { transform: translate(3px, -2px); opacity: 0.4; }
+          40% { transform: translate(-2px, 1px); opacity: 0.5; }
+          58% { transform: translate(-12px, 6px); opacity: 0.9; }
+          60% { transform: translate(10px, -5px); opacity: 0.8; }
+          62% { transform: translate(-7px, 3px); opacity: 0.9; }
+          64% { transform: translate(4px, -2px); opacity: 0.7; }
+          66% { transform: translate(-2px, 1px); opacity: 0.5; }
         }
 
-        /* === MAIN SHAKE - calm then violent === */
         @keyframes gl01-shake {
           0%, 54%, 70%, 100% { transform: translate(0, 0) skewX(0deg) scale(1); }
           15% { transform: translate(1px, 0) skewX(0deg) scale(1); }
           30% { transform: translate(-1px, 0) skewX(0deg) scale(1); }
-          /* VIOLENT BURST */
           56% { transform: translate(5px, -3px) skewX(2deg) scale(1.01); }
           58% { transform: translate(-7px, 2px) skewX(-4deg) scale(0.99); }
           60% { transform: translate(6px, -1px) skewX(3deg) scale(1.02); }
@@ -41,7 +37,6 @@ function GlitchLogo01() {
           68% { transform: translate(0, 0) skewX(0deg) scale(1); }
         }
 
-        /* === SCREEN TEAR SLICES === */
         @keyframes gl01-tear-1 {
           0%, 54%, 70%, 100% {
             clip-path: inset(0 0 100% 0);
@@ -70,7 +65,6 @@ function GlitchLogo01() {
           66% { clip-path: inset(0 0 100% 0); transform: translateX(0); opacity: 0; }
         }
 
-        /* === AMBIENT GLOW PULSE (radial, not drop-shadow) === */
         @keyframes gl01-glow {
           0%, 100% { opacity: 0.3; transform: scale(1); }
           50% { opacity: 0.5; transform: scale(1.05); }
@@ -79,17 +73,12 @@ function GlitchLogo01() {
           68% { opacity: 0.35; transform: scale(1); }
         }
 
-        /* === FLICKER === */
         @keyframes gl01-flicker {
           0%, 100% { opacity: 1; }
-          12% { opacity: 1; }
           12.4% { opacity: 0.82; }
           12.8% { opacity: 1; }
-          42% { opacity: 1; }
           42.3% { opacity: 0.88; }
           42.6% { opacity: 1; }
-          /* BURST flicker */
-          56% { opacity: 1; }
           56.5% { opacity: 0.6; }
           57% { opacity: 0.95; }
           58% { opacity: 0.5; }
@@ -100,7 +89,6 @@ function GlitchLogo01() {
           62% { opacity: 1; }
         }
 
-        /* === NOISE BARS === */
         @keyframes gl01-noise {
           0%, 55%, 67%, 100% { opacity: 0; height: 0; }
           57% { opacity: 0.5; height: 3px; top: 18%; }
@@ -111,17 +99,12 @@ function GlitchLogo01() {
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .gl01-layer {
-            animation: none !important;
-          }
-          .gl01-glow-bg {
-            animation: none !important;
-            opacity: 0.3 !important;
-          }
+          .gl01-layer { animation: none !important; }
+          .gl01-glow-bg { animation: none !important; opacity: 0.3 !important; }
         }
       `}} />
 
-      {/* Outer flicker wrapper */}
+      {/* Flicker wrapper */}
       <div
         className="gl01-layer"
         style={{
@@ -129,7 +112,7 @@ function GlitchLogo01() {
           willChange: "opacity",
         }}
       >
-        {/* Ambient cyan glow - radial gradient behind the image */}
+        {/* Ambient cyan glow behind */}
         <div
           className="absolute inset-0 gl01-glow-bg pointer-events-none"
           style={{
@@ -148,7 +131,7 @@ function GlitchLogo01() {
               willChange: "transform",
             }}
           >
-            {/* Cyan channel layer */}
+            {/* Cyan chromatic aberration layer */}
             <div
               className="absolute inset-0 gl01-layer"
               style={{
@@ -162,14 +145,15 @@ function GlitchLogo01() {
                 alt=""
                 width={500}
                 height={300}
-                className="w-full h-auto opacity-60"
+                className="w-full h-auto"
                 style={{
-                  filter: "brightness(1.3) sepia(1) saturate(5) hue-rotate(130deg)",
+                  filter: "invert(1) brightness(1.4)",
+                  mixBlendMode: "screen",
                 }}
               />
             </div>
 
-            {/* Main image layer - tinted cyan */}
+            {/* Main image: invert (pink→cyan, white→black) + screen (black=invisible) */}
             <div className="relative">
               <Image
                 src="/01-miku.png"
@@ -178,13 +162,14 @@ function GlitchLogo01() {
                 height={300}
                 className="w-full h-auto"
                 style={{
-                  filter: "brightness(1.1) sepia(0.3) saturate(2) hue-rotate(130deg)",
+                  filter: "invert(1) brightness(1.1)",
+                  mixBlendMode: "screen",
                 }}
                 priority
               />
             </div>
 
-            {/* Screen tear slice 1 - cyan */}
+            {/* Screen tear slice 1 */}
             <div
               className="absolute inset-0 gl01-layer pointer-events-none"
               style={{
@@ -199,12 +184,13 @@ function GlitchLogo01() {
                 height={300}
                 className="w-full h-auto"
                 style={{
-                  filter: "brightness(1.6) sepia(1) saturate(5) hue-rotate(130deg)",
+                  filter: "invert(1) brightness(1.8)",
+                  mixBlendMode: "screen",
                 }}
               />
             </div>
 
-            {/* Screen tear slice 2 - cyan offset */}
+            {/* Screen tear slice 2 */}
             <div
               className="absolute inset-0 gl01-layer pointer-events-none"
               style={{
@@ -219,12 +205,13 @@ function GlitchLogo01() {
                 height={300}
                 className="w-full h-auto"
                 style={{
-                  filter: "brightness(1.5) sepia(1) saturate(5) hue-rotate(130deg)",
+                  filter: "invert(1) brightness(1.5)",
+                  mixBlendMode: "screen",
                 }}
               />
             </div>
 
-            {/* Horizontal noise bars */}
+            {/* Noise bar */}
             <div
               className="absolute left-0 w-full bg-[#39c5bb]/50 gl01-layer pointer-events-none"
               style={{
@@ -232,17 +219,12 @@ function GlitchLogo01() {
                 willChange: "opacity, height, top",
               }}
             />
-            {/* Scanline overlay */}
+
+            {/* Scanlines */}
             <div
               className="absolute inset-0 pointer-events-none"
               style={{
-                background: `repeating-linear-gradient(
-                  0deg,
-                  transparent,
-                  transparent 2px,
-                  rgba(57, 197, 187, 0.03) 2px,
-                  rgba(57, 197, 187, 0.03) 4px
-                )`,
+                background: `repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(57,197,187,0.03) 2px, rgba(57,197,187,0.03) 4px)`,
               }}
             />
           </div>
