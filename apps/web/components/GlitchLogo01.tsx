@@ -83,34 +83,13 @@ function GlitchLogo01() {
           66% { clip-path: inset(0 0 100% 0); transform: translateX(0); opacity: 0; }
         }
 
-        /* === CYAN GLOW PULSE === */
+        /* === AMBIENT GLOW PULSE (radial, not drop-shadow) === */
         @keyframes gl01-glow {
-          0%, 100% {
-            filter: drop-shadow(0 0 15px rgba(57, 197, 187, 0.4))
-                    drop-shadow(0 0 30px rgba(57, 197, 187, 0.2))
-                    drop-shadow(0 0 60px rgba(57, 197, 187, 0.1));
-          }
-          50% {
-            filter: drop-shadow(0 0 20px rgba(57, 197, 187, 0.6))
-                    drop-shadow(0 0 45px rgba(57, 197, 187, 0.3))
-                    drop-shadow(0 0 80px rgba(57, 197, 187, 0.15));
-          }
-          /* FLASH */
-          58% {
-            filter: drop-shadow(0 0 30px rgba(57, 197, 187, 1))
-                    drop-shadow(0 0 60px rgba(57, 197, 187, 0.7))
-                    drop-shadow(0 0 100px rgba(57, 197, 187, 0.4))
-                    drop-shadow(0 0 160px rgba(57, 197, 187, 0.2));
-          }
-          62% {
-            filter: drop-shadow(0 0 8px rgba(57, 197, 187, 0.2))
-                    drop-shadow(0 0 15px rgba(57, 197, 187, 0.1));
-          }
-          68% {
-            filter: drop-shadow(0 0 18px rgba(57, 197, 187, 0.5))
-                    drop-shadow(0 0 35px rgba(57, 197, 187, 0.25))
-                    drop-shadow(0 0 70px rgba(57, 197, 187, 0.12));
-          }
+          0%, 100% { opacity: 0.3; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.05); }
+          58% { opacity: 0.9; transform: scale(1.15); }
+          62% { opacity: 0.15; transform: scale(0.95); }
+          68% { opacity: 0.35; transform: scale(1); }
         }
 
         /* === FLICKER === */
@@ -148,8 +127,9 @@ function GlitchLogo01() {
           .gl01-layer {
             animation: none !important;
           }
-          .gl01-glow-wrap {
-            filter: drop-shadow(0 0 15px rgba(57, 197, 187, 0.4)) !important;
+          .gl01-glow-bg {
+            animation: none !important;
+            opacity: 0.3 !important;
           }
         }
       `}} />
@@ -162,14 +142,17 @@ function GlitchLogo01() {
           willChange: "opacity",
         }}
       >
-        {/* Glow wrapper - cyan drop-shadow on the whole image */}
+        {/* Ambient cyan glow - radial gradient behind the image */}
         <div
-          className="gl01-glow-wrap"
+          className="absolute inset-0 gl01-glow-bg pointer-events-none"
           style={{
+            background: "radial-gradient(ellipse 60% 70% at 50% 50%, rgba(57, 197, 187, 0.4) 0%, rgba(57, 197, 187, 0.1) 40%, transparent 70%)",
             animation: "gl01-glow 4s ease-in-out infinite",
-            willChange: "filter",
+            willChange: "opacity, transform",
           }}
-        >
+        />
+
+        <div className="relative">
           {/* Shake container */}
           <div
             className="gl01-layer"
