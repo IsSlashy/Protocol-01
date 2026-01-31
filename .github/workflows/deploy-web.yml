@@ -43,10 +43,7 @@ jobs:
           cache: pnpm
 
       - name: Install Vercel CLI
-        run: pnpm add -g vercel@latest
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm i -g vercel@latest
 
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
