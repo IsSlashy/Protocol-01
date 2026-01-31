@@ -434,3 +434,7 @@ interface P01Provider {
   on(event: string, callback: (...args: unknown[]) => void): void;
   off(event: string, callback: (...args: unknown[]) => void): void;
 }
+
+// Aliases for backward compatibility
+export { P01 as Specter };
+export type { P01Config as SpecterConfig };
