@@ -162,5 +162,5 @@ export function validateMnemonic(mnemonic: string): boolean {
  * Get word list for mnemonic generation
  */
 export function getWordList(): string[] {
-  return bip39.wordlists.english;
+  return bip39.wordlists.english ?? [];
 }
