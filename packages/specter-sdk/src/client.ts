@@ -142,7 +142,7 @@ export class P01Client {
       (this as any)._keypair = wallet;
     } else {
       // External wallet adapter
-      this.externalWallet = wallet;
+      this.externalWallet = wallet as WalletAdapter;
       this.walletState = null;
     }
 
