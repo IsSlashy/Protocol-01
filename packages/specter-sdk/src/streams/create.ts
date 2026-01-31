@@ -105,7 +105,7 @@ export async function createStream(params: CreateStreamOptions): Promise<Stream>
 
   // Get sender public key
   const senderPubKey =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
 
   // Determine recipient address
   let recipientPubKey: PublicKey;
