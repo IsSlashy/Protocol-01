@@ -68,5 +68,5 @@ jobs:
         run: pnpm turbo run build
 
       - name: Test
-        run: pnpm test --continue
+        run: pnpm turbo run test --continue
         continue-on-error: true
