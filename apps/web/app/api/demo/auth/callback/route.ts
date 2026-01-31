@@ -19,11 +19,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { sessionId, wallet, signature, publicKey, timestamp, subscriptionProof } = body;
 
-      sessionId,
-      wallet: wallet?.slice(0, 8) + '...',
-      timestamp: new Date(timestamp).toISOString(),
-    });
-
     // Basic validation
     if (!sessionId || !wallet || !signature || !publicKey) {
       return NextResponse.json(
