@@ -28,7 +28,6 @@ import {
 
 const PRIVY_SDK_AVAILABLE = true;
 
-console.log('[Privy] SDK imported successfully, PRIVY_ENABLED:', PRIVY_ENABLED, 'APP_ID:', PRIVY_APP_ID);
 
 // Types
 export interface PrivyUser {
@@ -98,7 +97,6 @@ interface PrivyProviderProps {
 export function P01PrivyProvider({ children }: PrivyProviderProps) {
   // Use real Privy if SDK is available and configured
   if (PRIVY_SDK_AVAILABLE && PRIVY_ENABLED) {
-    console.log('[Privy] Using real Privy SDK with App ID:', PRIVY_APP_ID);
     return (
       <PrivySDKProvider
         appId={PRIVY_APP_ID}
@@ -109,7 +107,6 @@ export function P01PrivyProvider({ children }: PrivyProviderProps) {
     );
   }
 
-  console.log('[Privy] Using mock implementation (SDK not available or not configured)');
   // Fallback to mock implementation
   return <MockPrivyProvider>{children}</MockPrivyProvider>;
 }
@@ -123,7 +120,6 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
 
   // Debug: log privy initialization
   useEffect(() => {
-    console.log('[PrivyBridge] Initialized, isReady:', privy?.isReady, 'user:', !!privy?.user);
   }, [privy?.isReady, privy?.user]);
 
   // Email login hook
@@ -146,7 +142,6 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     const wallets = (solanaWallet as any)?.wallets;
     if (wallets && Array.isArray(wallets) && wallets.length > 0) {
       const wallet = wallets[0];
-      console.log('[PrivyBridge] Found wallets array:', wallets.length, 'wallets');
       return wallet;
     }
     // Fallback to wallet property (singular)
@@ -168,12 +163,10 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
   // Sync Privy wallet with wallet store
   useEffect(() => {
     if (solanaWalletFromArray?.address) {
-      console.log('[Privy] Wallet synced:', solanaWalletFromArray.address);
       // Use initializeWithPrivy to properly sync the Privy wallet address
       walletStore.initializeWithPrivy(solanaWalletFromArray.address);
       // Set the Privy signer for transactions
       setPrivySigner(createSignTransaction);
-      console.log('[Privy] Signer connected to walletStore');
     } else {
       setPrivySigner(null);
     }
@@ -184,14 +177,11 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     if (!solanaWalletFromArray) {
       throw new Error('No Privy wallet available for signing');
     }
-    console.log('[PrivyBridge] signTransaction called, getting provider...');
     const provider = await solanaWalletFromArray.getProvider();
-    console.log('[PrivyBridge] Got provider, signing transaction...');
     const { signedTransaction } = await provider.request({
       method: 'signTransaction',
       params: { transaction: tx },
     });
-    console.log('[PrivyBridge] Transaction signed successfully');
     return signedTransaction;
   }, [solanaWalletFromArray]);
 
@@ -208,7 +198,6 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
   }, [solanaWalletFromArray]);
 
   // Debug: log privy state
-  console.log('[PrivyBridge] privy state:', {
     isReady: privy?.isReady,
     ready: (privy as any)?.ready,
     user: !!privy?.user
@@ -241,8 +230,6 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
 
     login: {
       email: async (email: string) => {
-        console.log('[Privy] Sending OTP to email:', email);
-        console.log('[Privy] isReady:', privy?.isReady, 'emailLogin:', !!emailLogin, 'sendCode:', !!emailLogin?.sendCode);
         if (!privy?.isReady) {
           throw new Error('Privy not ready yet. Please wait.');
         }
@@ -250,31 +237,25 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
         await emailLogin?.sendCode?.({ email });
       },
       phone: async (phone: string) => {
-        console.log('[Privy] Sending OTP to phone:', phone);
         setPendingOtpType('sms');
         await smsLogin?.sendCode?.({ phone });
       },
       google: async () => {
-        console.log('[Privy] Login with Google');
         await oauthLogin?.login?.({ provider: 'google' });
       },
       apple: async () => {
-        console.log('[Privy] Login with Apple');
         await oauthLogin?.login?.({ provider: 'apple' });
       },
       twitter: async () => {
-        console.log('[Privy] Login with Twitter');
         await oauthLogin?.login?.({ provider: 'twitter' });
       },
       wallet: async () => {
-        console.log('[Privy] Connect wallet');
         // For connecting external wallets
         await privy?.connectWallet?.();
       },
     },
 
     verifyOtp: async (otp: string) => {
-      console.log('[Privy] Verifying OTP, type:', pendingOtpType);
       if (pendingOtpType === 'email') {
         await emailLogin?.loginWithCode?.({ code: otp });
       } else if (pendingOtpType === 'sms') {
@@ -284,13 +265,11 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     },
 
     logout: async () => {
-      console.log('[Privy] Logging out');
       await privy?.logout?.();
       await walletStore.logout();
     },
 
     createWallet: async () => {
-      console.log('[Privy] Creating embedded wallet');
       const wallet = await solanaWallet?.create?.();
       if (wallet?.address) {
         await walletStore.initialize();
@@ -299,27 +278,22 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     },
 
     exportWallet: async () => {
-      console.log('[Privy] Exporting wallet');
       return await solanaWallet?.wallet?.export?.() ?? '';
     },
 
     linkEmail: async (email: string) => {
-      console.log('[Privy] Linking email:', email);
       await privy?.linkEmail?.(email);
     },
 
     linkPhone: async (phone: string) => {
-      console.log('[Privy] Linking phone:', phone);
       await privy?.linkPhone?.(phone);
     },
 
     linkWallet: async () => {
-      console.log('[Privy] Linking wallet');
       await privy?.linkWallet?.();
     },
 
     unlinkAccount: async (accountId: string) => {
-      console.log('[Privy] Unlinking account:', accountId);
       await privy?.unlinkAccount?.(accountId);
     },
   }), [privy, solanaWallet, solanaWalletFromArray, privyWalletAddress, createSignTransaction, createSignMessage, isAuthenticated, emailLogin, smsLogin, oauthLogin, pendingOtpType, walletStore]);
@@ -353,7 +327,6 @@ function MockPrivyProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const mockLogin = useCallback(async (type: string, value?: string) => {
-    console.log(`[MockPrivy] Login with ${type}:`, value);
 
     if (type === 'email') {
       setPendingEmail(value || null);
@@ -387,7 +360,6 @@ function MockPrivyProvider({ children }: { children: React.ReactNode }) {
   }, [walletStore]);
 
   const mockVerifyOtp = useCallback(async (otp: string) => {
-    console.log('[MockPrivy] Verify OTP:', otp);
 
     // Simulate OTP verification
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -453,7 +425,6 @@ function MockPrivyProvider({ children }: { children: React.ReactNode }) {
     },
 
     exportWallet: async () => {
-      console.log('[MockPrivy] Export wallet not available in mock mode');
       return '';
     },
 

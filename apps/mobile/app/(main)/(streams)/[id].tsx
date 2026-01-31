@@ -494,7 +494,6 @@ export default function StreamDetailScreen() {
               <TouchableOpacity
                 key={payment.id}
                 onPress={() => {
-                  console.log('[StreamDetail] Payment clicked:', payment.id, 'signature:', payment.signature ? 'yes' : 'no');
                   if (payment.signature) {
                     openExplorer(payment.signature);
                   } else {

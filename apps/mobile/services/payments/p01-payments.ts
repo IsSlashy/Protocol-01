@@ -154,7 +154,6 @@ export async function getCryptoPrices(): Promise<Record<string, number>> {
           prices,
           timestamp: Date.now(),
         };
-        console.log('[P01Payments] Prices from Jupiter:', prices);
         return prices;
       }
     }
@@ -191,7 +190,6 @@ export async function getCryptoPrices(): Promise<Record<string, number>> {
       timestamp: Date.now(),
     };
 
-    console.log('[P01Payments] Prices from CoinGecko:', prices);
     return prices;
   } catch (error) {
     console.error('[P01Payments] Error fetching prices:', error);
@@ -207,7 +205,6 @@ export async function getCryptoPrices(): Promise<Record<string, number>> {
       USDC: 1,
       USDT: 1,
     };
-    console.log('[P01Payments] Using fallback prices:', fallbackPrices);
     return fallbackPrices;
   }
 }

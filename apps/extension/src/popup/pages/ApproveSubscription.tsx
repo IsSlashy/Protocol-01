@@ -230,22 +230,18 @@ export default function ApproveSubscription() {
       });
 
       // Publish to blockchain for cross-device sync (if enabled and wallet unlocked)
-      console.log('[ApproveSubscription] Sync check:', { syncToChain, hasKeypair: !!_keypair });
       if (syncToChain && _keypair) {
         setSyncStatus('syncing');
         try {
-          console.log('[ApproveSubscription] Publishing to blockchain...');
           const keypair = Keypair.fromSecretKey(_keypair.secretKey);
           await publishSubscription(subscription, keypair, 'devnet');
           setSyncStatus('synced');
-          console.log('[ApproveSubscription] Subscription synced to blockchain');
         } catch (syncErr) {
           console.warn('[ApproveSubscription] Failed to sync to chain:', syncErr);
           setSyncStatus('error');
           // Don't fail the whole operation, local subscription is still created
         }
       } else {
-        console.log('[ApproveSubscription] Skipping blockchain sync - wallet locked or sync disabled');
       }
 
       // Notify background of approval
@@ -258,7 +254,6 @@ export default function ApproveSubscription() {
       });
 
       // Delay close to see logs (debug)
-      console.log('[ApproveSubscription] Closing in 3 seconds...');
       setTimeout(() => window.close(), 3000);
     } catch (err) {
       console.error('Failed to approve subscription:', err);

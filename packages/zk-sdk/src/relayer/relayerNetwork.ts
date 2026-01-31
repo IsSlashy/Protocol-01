@@ -386,7 +386,6 @@ export class RelayerNetwork {
         // Try fallback relayer
         const fallback = this.selectBestRelayer();
         if (fallback && fallback.id !== relayer.id) {
-          console.log(`[RelayerNetwork] Falling back to ${fallback.name}`);
           return this.submitTransaction(request, fallback.id);
         }
 
@@ -427,7 +426,6 @@ export class RelayerNetwork {
       // Try fallback
       const fallback = this.selectBestRelayer();
       if (fallback && fallback.id !== relayer.id) {
-        console.log(`[RelayerNetwork] Falling back to ${fallback.name}`);
         return this.submitTransaction(request, fallback.id);
       }
 

@@ -186,11 +186,9 @@ export async function deriveKeypairFromMnemonic(mnemonic: string): Promise<Keypa
  * Create a new wallet and store it securely
  */
 export async function createWallet(): Promise<WalletInfo> {
-  console.log('[Wallet] Creating new wallet...');
   const mnemonic = generateMnemonic();
   const keypair = await deriveKeypairFromMnemonic(mnemonic);
 
-  console.log('[Wallet] Storing wallet data...');
   await SecureStore.setItemAsync(STORAGE_KEYS.MNEMONIC, mnemonic, SECURE_OPTIONS);
   await SecureStore.setItemAsync(
     STORAGE_KEYS.PRIVATE_KEY,
@@ -203,7 +201,6 @@ export async function createWallet(): Promise<WalletInfo> {
     SECURE_OPTIONS
   );
   await SecureStore.setItemAsync(STORAGE_KEYS.WALLET_EXISTS, 'true', SECURE_OPTIONS);
-  console.log('[Wallet] Wallet created successfully, publicKey:', keypair.publicKey.toBase58());
 
   return {
     publicKey: keypair.publicKey.toBase58(),
@@ -238,9 +235,7 @@ export async function importWallet(mnemonic: string): Promise<WalletInfo> {
     throw new Error('Invalid mnemonic phrase. Please check the words and their order.');
   }
 
-  console.log('[Wallet] Deriving keypair from mnemonic...');
   const keypair = await deriveKeypairFromMnemonic(normalizedMnemonic);
-  console.log('[Wallet] Derived publicKey:', keypair.publicKey.toBase58());
 
   await SecureStore.setItemAsync(STORAGE_KEYS.MNEMONIC, normalizedMnemonic, SECURE_OPTIONS);
   await SecureStore.setItemAsync(
@@ -266,7 +261,6 @@ export async function importWallet(mnemonic: string): Promise<WalletInfo> {
 export async function walletExists(): Promise<boolean> {
   try {
     const exists = await SecureStore.getItemAsync(STORAGE_KEYS.WALLET_EXISTS, SECURE_OPTIONS);
-    console.log('[Wallet] walletExists check - raw value:', exists);
     return exists === 'true';
   } catch (error) {
     console.error('[Wallet] walletExists error:', error);
@@ -432,7 +426,6 @@ export async function sendSplToken(params: {
   const signature = await connection.sendRawTransaction(transaction.serialize());
   await connection.confirmTransaction(signature, 'confirmed');
 
-  console.log('[Wallet] SPL token transfer successful:', signature);
   return signature;
 }
 

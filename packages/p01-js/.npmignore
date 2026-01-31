@@ -1,0 +1,32 @@
+# Source files (dist is published, not src)
+src/
+tsup.config.ts
+tsup.config.d.ts
+tsconfig.json
+vitest.unit.config.ts
+
+# Storybook
+.storybook/
+storybook-static/
+
+# Tests
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+__tests__/
+
+# Development
+.turbo/
+.eslintrc*
+.prettierrc*
+.editorconfig
+.vscode/
+
+# Build artifacts
+*.tsbuildinfo
+node_modules/
+
+# Misc
+.DS_Store
+*.log

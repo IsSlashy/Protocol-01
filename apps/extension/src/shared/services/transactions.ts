@@ -26,7 +26,6 @@ async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promis
                         errorMsg.includes('timeout');
 
     if (retries > 0 && shouldRetry) {
-      console.log(`[Transactions] RPC rate limit, retrying in ${RETRY_DELAY}ms...`);
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       return withRetry(fn, retries - 1);
     }

@@ -177,7 +177,6 @@ window.addEventListener('message', (event) => {
         // Store mapping from approval requestId to original requestId
         // Don't resolve yet - wait for APPROVAL_RESULT
         approvalToOriginal.set(payload.requestId, requestId);
-        console.log('[Protocol 01] Waiting for approval:', payload.requestId);
         return;
       }
 
@@ -706,7 +705,6 @@ function injectProvider() {
     // Wallet standard registration is optional
   }
 
-  console.log('[Protocol 01] Wallet provider injected');
 }
 
 // Only inject on http/https pages

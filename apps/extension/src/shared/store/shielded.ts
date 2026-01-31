@@ -99,8 +99,6 @@ async function scanStealthPayment(
   expectedViewTag?: string
 ): Promise<{ found: boolean; stealthAddress?: string; privateKey?: Uint8Array }> {
   try {
-    console.log('[Stealth] Scanning with ephemeral:', ephemeralPublicKey.slice(0, 16) + '...');
-
     // Decode ephemeral X25519 public key
     let ephemeralX25519Public: Uint8Array;
     try {
@@ -108,14 +106,12 @@ async function scanStealthPayment(
       const decoded = new Uint8Array(Buffer.from(ephemeralPublicKey, 'base64'));
       if (decoded.length === 32) {
         ephemeralX25519Public = decoded;
-        console.log('[Stealth] Decoded ephemeral as base64 X25519');
       } else {
         throw new Error('Invalid length');
       }
     } catch {
       // Fallback: try as base58 Solana public key (old format - won't work with new algorithm)
       try {
-        console.log('[Stealth] Ephemeral appears to be old base58 format - cannot scan with X25519');
         return { found: false };
       } catch {
         console.error('[Stealth] Failed to decode ephemeral public key');
@@ -130,14 +126,11 @@ async function scanStealthPayment(
 
     // Compute shared secret using X25519 ECDH
     const sharedSecret = computeX25519SharedSecret(viewingX25519Secret, ephemeralX25519Public);
-    console.log('[Stealth] X25519 shared secret computed');
 
     // Check view tag for quick rejection
     if (expectedViewTag) {
       const computedViewTag = await generateViewTag(sharedSecret);
-      console.log('[Stealth] View tag: expected=', expectedViewTag, 'computed=', computedViewTag);
       if (computedViewTag !== expectedViewTag) {
-        console.log('[Stealth] View tag mismatch - not for us');
         return { found: false };
       }
     }
@@ -147,7 +140,6 @@ async function scanStealthPayment(
 
     // Derive the corresponding keypair
     const stealthKeypair = Keypair.fromSeed(stealthPrivateKeySeed);
-    console.log('[Stealth] Derived stealth address:', stealthKeypair.publicKey.toBase58());
 
     return {
       found: true,
@@ -353,7 +345,6 @@ async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
     // Try to retrieve existing seed
     const result = await chrome.storage.local.get(storageKey);
     if (result[storageKey]) {
-      console.log('[Shielded] Retrieved existing ZK seed for Privy wallet');
       return result[storageKey];
     }
 
@@ -366,7 +357,6 @@ async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
 
     // Store for future use
     await chrome.storage.local.set({ [storageKey]: seedHex });
-    console.log('[Shielded] Generated new ZK seed for Privy wallet');
 
     return seedHex;
   } catch (e) {
@@ -431,7 +421,6 @@ export const useShieldedStore = create<ShieldedState>()(
 
         // Already initialized
         if (isInitialized && _zkService) {
-          console.log('[Shielded] Already initialized');
           return;
         }
 
@@ -465,7 +454,6 @@ export const useShieldedStore = create<ShieldedState>()(
             _seedPhrase: seedPhrase,
           });
 
-          console.log('[Shielded] Initialized with ZK address:', zkAddress.encoded);
         } catch (error) {
           console.error('[Shielded] Initialize error:', error);
           set({ isLoading: false });
@@ -551,7 +539,6 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Shielded] Shield successful:', signature);
           return signature;
         } catch (error) {
           console.error('[Shielded] Shield error:', error);
@@ -623,7 +610,6 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Shielded] Unshield successful:', signature);
           return signature;
         } catch (error) {
           console.error('[Shielded] Unshield error:', error);
@@ -674,9 +660,6 @@ export const useShieldedStore = create<ShieldedState>()(
           encoded: recipient,
         };
 
-        console.log('[Private Transfer] Using relayer for sender privacy');
-        console.log('[Private Transfer] Amount:', amount, 'SOL');
-
         set(state => ({
           pendingTransactions: [
             ...state.pendingTransactions,
@@ -693,11 +676,9 @@ export const useShieldedStore = create<ShieldedState>()(
         try {
           // Step 1: Generate stealth address for recipient
           const stealth = await generateStealthAddressForRecipient(receivingPubkeyBytes, viewingKeyBytes);
-          console.log('[Private Transfer] Stealth address:', stealth.address.slice(0, 16) + '...');
 
           // Step 2: Generate ZK proof for relayer
           const proofData = await _zkService.generateTransferProofForRelayer(amountLamports);
-          console.log('[Private Transfer] Proof generated');
 
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
@@ -728,9 +709,6 @@ export const useShieldedStore = create<ShieldedState>()(
           const gasEstimate = BigInt(10000);
           const totalFunding = amountLamports + feeLamports + gasEstimate + rentExempt;
 
-          console.log('[Private Transfer] Funding relayer:', relayerAddress);
-          console.log('[Private Transfer] Total:', Number(totalFunding) / 1e9, 'SOL (amount + fee + gas + rent)');
-
           const fundingTx = new Transaction().add(
             SystemProgram.transfer({
               fromPubkey: walletPublicKey,
@@ -747,7 +725,6 @@ export const useShieldedStore = create<ShieldedState>()(
             preflightCommitment: 'confirmed',
           });
           await connection.confirmTransaction(fundingSignature, 'confirmed');
-          console.log('[Private Transfer] Funding confirmed:', fundingSignature);
 
           // Step 5: Send proof + stealth info to relayer
           const response = await fetch(`${RELAYER_URL}/relay/private-transfer`, {
@@ -771,7 +748,6 @@ export const useShieldedStore = create<ShieldedState>()(
           }
 
           const result = await response.json();
-          console.log('[Private Transfer] Relayer response:', result);
 
           // Step 6: Mark notes as spent
           await _zkService.markNoteSpent(proofData.nullifier);
@@ -791,12 +767,10 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Private Transfer] SUCCESS - Sender hidden, recipient at stealth address');
           return { signature: result.signature, recipientNote: {} as RecipientNoteData };
 
         } catch (relayerError) {
           console.error('[Private Transfer] Relayer failed:', relayerError);
-          console.log('[Private Transfer] Falling back to direct on-chain transfer...');
 
           // Fallback: direct on-chain ZK transfer (sender visible but still works)
           try {
@@ -822,7 +796,6 @@ export const useShieldedStore = create<ShieldedState>()(
               }));
             }, 5000);
 
-            console.log('[Private Transfer] Fallback successful (sender visible):', directResult.signature);
             return directResult;
           } catch (fallbackError) {
             console.error('[Private Transfer] Fallback also failed:', fallbackError);
@@ -861,9 +834,6 @@ export const useShieldedStore = create<ShieldedState>()(
             isLoading: false,
           });
 
-          if (found > 0) {
-            console.log(`[Shielded] Found ${found} new incoming notes`);
-          }
         } catch (error) {
           console.error('[Shielded] Scan notes error:', error);
           // Fall back to just refreshing local balance
@@ -962,24 +932,20 @@ export const useShieldedStore = create<ShieldedState>()(
           notes: [],
         });
 
-        console.log('[Shielded] Notes cleared');
       },
 
       // ============= STEALTH PAYMENT RECOVERY =============
 
       // Scan for stealth payments from relayer
       scanStealthPayments: async () => {
-        console.log('[Shielded] Starting stealth payment scan...');
         const { isInitialized, _zkService } = get();
         if (!isInitialized || !_zkService) {
-          console.log('[Shielded] ZK service not initialized, skipping scan');
           return { found: 0, amount: 0, payments: [] };
         }
 
         try {
           // Use the relayer URL from environment or default
           const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'http://localhost:3000';
-          console.log('[Shielded] Fetching from relayer:', RELAYER_URL);
           const response = await fetch(`${RELAYER_URL}/relay/stealth-payments?limit=100`);
 
           if (!response.ok) {
@@ -989,10 +955,8 @@ export const useShieldedStore = create<ShieldedState>()(
 
           const data = await response.json();
           const payments = data.payments || [];
-          console.log('[Shielded] Relayer returned', payments.length, 'payments');
 
           if (payments.length === 0) {
-            console.log('[Shielded] No payments to scan');
             return { found: 0, amount: 0, payments: [] };
           }
 
@@ -1044,18 +1008,12 @@ export const useShieldedStore = create<ShieldedState>()(
               }
 
               // Try to scan this payment with our keys
-              console.log('[Shielded] Scanning payment:', payment.stealthAddress.slice(0, 16) + '...', 'viewTag:', payment.viewTag);
               const result = await scanStealthPayment(
                 payment.ephemeralPublicKey,
                 viewingKey,
                 spendingKey,
                 payment.viewTag
               );
-
-              console.log('[Shielded] Scan result:', result.found ? 'found' : 'not found',
-                'derived:', result.stealthAddress?.slice(0, 16) + '...',
-                'expected:', payment.stealthAddress.slice(0, 16) + '...',
-                'match:', result.stealthAddress === payment.stealthAddress);
 
               if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
                 // Check on-chain balance — skip if already swept
@@ -1064,12 +1022,10 @@ export const useShieldedStore = create<ShieldedState>()(
                 const onChainBalance = await conn.getBalance(new PublicKey(payment.stealthAddress));
 
                 if (onChainBalance === 0) {
-                  console.log('[Shielded] Stealth payment already swept (0 balance), skipping:', payment.stealthAddress.slice(0, 16) + '...');
                   continue;
                 }
 
                 const actualAmount = onChainBalance / 1e9;
-                console.log('[Shielded] Found stealth payment!', actualAmount, 'SOL (on-chain:', onChainBalance, 'lamports)');
                 found++;
                 totalAmount += actualAmount;
 
@@ -1099,8 +1055,6 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }
 
-          console.log('[Shielded] Found', found, 'stealth payments totaling', totalAmount, 'SOL');
-
           return {
             found,
             amount: totalAmount,
@@ -1123,7 +1077,6 @@ export const useShieldedStore = create<ShieldedState>()(
 
       // Sweep a single stealth payment
       sweepStealthPayment: async (stealthAddress: string, recipientAddress: string) => {
-        console.log('[Shielded] Sweeping stealth payment from', stealthAddress.slice(0, 16) + '...');
 
         try {
           // Find the stealth payment with private key
@@ -1146,7 +1099,6 @@ export const useShieldedStore = create<ShieldedState>()(
 
           // Get balance of stealth address
           const balance = await connection.getBalance(stealthKeypair.publicKey);
-          console.log('[Shielded] Stealth address balance:', balance / 1e9, 'SOL');
 
           if (balance === 0) {
             return { success: false, error: 'Stealth address has no balance' };
@@ -1182,9 +1134,6 @@ export const useShieldedStore = create<ShieldedState>()(
 
           await connection.confirmTransaction(signature, 'confirmed');
 
-          console.log('[Shielded] Sweep successful! Signature:', signature);
-          console.log('[Shielded] Transferred', amountToSend / 1e9, 'SOL to', recipientAddress.slice(0, 16) + '...');
-
           // Remove the swept payment from pending list
           set(state => ({
             _foundStealthPayments: state._foundStealthPayments.filter(p => p.stealthAddress !== stealthAddress),
@@ -1199,7 +1148,6 @@ export const useShieldedStore = create<ShieldedState>()(
 
       // Sweep all stealth payments
       sweepAllStealthPayments: async (recipientAddress: string) => {
-        console.log('[Shielded] Sweeping all stealth payments...');
 
         const results = {
           success: true,
@@ -1227,7 +1175,6 @@ export const useShieldedStore = create<ShieldedState>()(
           results.success = false;
         }
 
-        console.log('[Shielded] Sweep complete:', results.swept, 'payments,', results.totalAmount, 'SOL');
         return results;
       },
 

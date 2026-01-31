@@ -132,8 +132,6 @@ export async function fetchSubscriptionsFromChain(
 ): Promise<Stream[]> {
   const connection = getConnection();
 
-  console.log('[OnChainSync] Fetching subscriptions for wallet:', walletAddress);
-  console.log('[OnChainSync] RPC endpoint:', connection.rpcEndpoint);
 
   try {
     const pubkey = new PublicKey(walletAddress);
@@ -142,11 +140,9 @@ export async function fetchSubscriptionsFromChain(
     const signatures = await connection.getSignaturesForAddress(pubkey, { limit });
 
     if (signatures.length === 0) {
-      console.log('[OnChainSync] No transactions found for wallet:', walletAddress);
       return [];
     }
 
-    console.log(`[OnChainSync] Found ${signatures.length} transactions, scanning for subscriptions...`);
 
     const subscriptionMap = new Map<string, OnChainSubscription>();
     const updates: { id: string; status: string; timestamp: number }[] = [];
@@ -161,18 +157,15 @@ export async function fetchSubscriptionsFromChain(
           await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-        console.log(`[OnChainSync] Parsing tx ${i + 1}/${signatures.length}: ${sigInfo.signature.substring(0, 20)}...`);
 
         const tx = await connection.getParsedTransaction(sigInfo.signature, {
           maxSupportedTransactionVersion: 0,
         });
 
         if (!tx?.transaction?.message?.instructions) {
-          console.log('[OnChainSync] No instructions in tx');
           continue;
         }
 
-        console.log(`[OnChainSync] Found ${tx.transaction.message.instructions.length} instructions`);
 
         // Look for memo instructions
         for (const instruction of tx.transaction.message.instructions) {
@@ -186,7 +179,6 @@ export async function fetchSubscriptionsFromChain(
               parsed: string | object;
             };
 
-            console.log('[OnChainSync] Parsed instruction:', parsedInstruction.program, parsedInstruction.programId);
 
             // Check if it's a parsed memo instruction (spl-memo)
             if (parsedInstruction.program === 'spl-memo' ||
@@ -195,7 +187,6 @@ export async function fetchSubscriptionsFromChain(
               memoText = typeof parsedInstruction.parsed === 'string'
                 ? parsedInstruction.parsed
                 : JSON.stringify(parsedInstruction.parsed);
-              console.log('[OnChainSync] Found PARSED memo:', memoText.substring(0, 100));
             } else {
               continue; // Skip other parsed instructions
             }
@@ -206,14 +197,12 @@ export async function fetchSubscriptionsFromChain(
               data: string;
             };
 
-            console.log('[OnChainSync] Raw instruction programId:', rawInstruction.programId.toString());
 
             // Check if it's a memo program instruction
             if (!rawInstruction.programId.equals(MEMO_PROGRAM_ID)) {
               continue;
             }
 
-            console.log('[OnChainSync] Found RAW memo instruction! Data:', rawInstruction.data.substring(0, 50));
 
             // Decode memo data
             try {
@@ -221,16 +210,12 @@ export async function fetchSubscriptionsFromChain(
               const bs58 = await import('bs58');
               const dataBuffer = Buffer.from(bs58.default.decode(rawInstruction.data));
               memoText = dataBuffer.toString('utf-8');
-              console.log('[OnChainSync] Decoded memo (bs58):', memoText.substring(0, 100));
             } catch (e) {
-              console.log('[OnChainSync] bs58 decode failed:', e);
               // Try base64 as fallback
               try {
                 const dataBuffer = Buffer.from(rawInstruction.data, 'base64');
                 memoText = dataBuffer.toString('utf-8');
-                console.log('[OnChainSync] Decoded memo (base64):', memoText.substring(0, 100));
               } catch (e2) {
-                console.log('[OnChainSync] base64 decode also failed:', e2);
                 continue;
               }
             }
@@ -238,19 +223,16 @@ export async function fetchSubscriptionsFromChain(
 
           if (!memoText) continue;
 
-          console.log('[OnChainSync] Processing memo:', memoText.substring(0, 100));
 
           // Check for subscription memo
           if (memoText.startsWith(MEMO_PREFIX)) {
             try {
               const jsonStr = memoText.slice(MEMO_PREFIX.length);
-              console.log('[OnChainSync] Parsing subscription JSON:', jsonStr.substring(0, 200));
               const encoded = JSON.parse(jsonStr) as OnChainSubscription;
 
               // Store by ID (earlier entries are more recent in the signatures list)
               if (!subscriptionMap.has(encoded.id)) {
                 subscriptionMap.set(encoded.id, encoded);
-                console.log(`[OnChainSync] Found subscription: ${encoded.n} (ID: ${encoded.id})`);
               }
             } catch (e) {
               console.warn('[OnChainSync] Failed to parse subscription memo:', e);
@@ -275,7 +257,6 @@ export async function fetchSubscriptionsFromChain(
       } catch (error: any) {
         const msg = error?.message || '';
         if (msg.includes('429')) {
-          console.log('[OnChainSync] Rate limited, waiting 2s...');
           await new Promise(resolve => setTimeout(resolve, 2000));
           // Don't retry, just skip this tx and continue
         } else {
@@ -298,7 +279,6 @@ export async function fetchSubscriptionsFromChain(
       .map(sub => convertToStream(sub, walletAddress))
       .sort((a, b) => b.createdAt - a.createdAt);
 
-    console.log(`[OnChainSync] Found ${streams.length} subscriptions on-chain`);
     return streams;
   } catch (error) {
     console.error('[OnChainSync] Failed to fetch subscriptions from chain:', error);
@@ -392,7 +372,6 @@ export async function publishStatusUpdate(
   };
 
   const memoData = 'P01_SUB_UPD:' + JSON.stringify(updateData);
-  console.log('[OnChainSync] Publishing status update:', memoData);
 
   const transaction = new Transaction();
   transaction.add(createMemoInstruction(memoData, keypair.publicKey));
@@ -410,6 +389,5 @@ export async function publishStatusUpdate(
     lastValidBlockHeight,
   });
 
-  console.log(`[OnChainSync] Published status update for ${subscriptionId}: ${signature}`);
   return signature;
 }

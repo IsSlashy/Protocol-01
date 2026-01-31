@@ -49,7 +49,6 @@ export function getNotificationsModule(): typeof import('expo-notifications') | 
   _loadAttempted = true;
 
   if (isExpoGo) {
-    console.log('[Notifications] Skipping load in Expo Go - push notifications not available');
     return null;
   }
 
@@ -72,7 +71,6 @@ export async function scheduleNotification(
 ): Promise<string> {
   const Notifications = getNotificationsModule();
   if (!Notifications) {
-    console.log('[Notifications] Module not available, skipping notification');
     return '';
   }
 

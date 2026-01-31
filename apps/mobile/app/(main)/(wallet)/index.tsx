@@ -83,7 +83,6 @@ export default function WalletHomeScreen() {
   // Sync Privy wallet to store on mount
   useEffect(() => {
     if (privyWalletAddress && !hasLocalWallet) {
-      console.log('[WalletHome] Syncing Privy wallet to store:', privyWalletAddress);
       initializeWithPrivy(privyWalletAddress);
     }
   }, [privyWalletAddress, hasLocalWallet, initializeWithPrivy]);
@@ -105,7 +104,6 @@ export default function WalletHomeScreen() {
       if (initialized && !loading && hasWallet && transactions.length === 0) {
         // Only fetch if we're done loading AND still have no transactions
         // This gives the cache time to load first
-        console.log('[WalletHome] Screen focused with empty transactions after init, fetching...');
         refreshTransactions();
       }
     }, [initialized, loading, hasWallet, transactions.length, refreshTransactions])
@@ -229,7 +227,6 @@ export default function WalletHomeScreen() {
   // No wallet - redirect to onboarding (this page should not be accessible without a wallet)
   useEffect(() => {
     if (initialized && !loading && !hasWallet) {
-      console.log('[WalletHome] No wallet found, redirecting to onboarding');
       router.replace('/(onboarding)');
     }
   }, [initialized, loading, hasWallet, router]);

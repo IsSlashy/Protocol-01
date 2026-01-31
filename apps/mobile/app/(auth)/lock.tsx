@@ -24,13 +24,11 @@ export default function LockScreen() {
 
   const checkSecurityMethod = async () => {
     const method = await SecureStore.getItemAsync('security_method');
-    console.log('[Lock] Security method:', method);
     setSecurityMethod(method);
 
     if (method === 'biometrics') {
       const compatible = await LocalAuthentication.hasHardwareAsync();
       const enrolled = await LocalAuthentication.isEnrolledAsync();
-      console.log('[Lock] Biometrics - compatible:', compatible, 'enrolled:', enrolled);
       setIsBiometricSupported(compatible && enrolled);
 
       if (compatible && enrolled) {
@@ -41,7 +39,6 @@ export default function LockScreen() {
       setShowPinEntry(true);
     } else if (method === 'none' || !method) {
       // No security, go directly to wallet
-      console.log('[Lock] No security, navigating to wallet...');
       router.replace('/(main)/(wallet)');
     }
   };
@@ -67,11 +64,9 @@ export default function LockScreen() {
 
   const verifyPin = async (enteredPin: string) => {
     const storedPin = await SecureStore.getItemAsync('wallet_pin');
-    console.log('[Lock] Verifying PIN...');
 
     if (enteredPin === storedPin) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      console.log('[Lock] PIN correct, navigating to wallet...');
       router.replace('/(main)/(wallet)');
     } else {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -84,7 +79,6 @@ export default function LockScreen() {
   const authenticate = async () => {
     if (isAuthenticating) return;
 
-    console.log('[Lock] Starting biometric authentication...');
     setIsAuthenticating(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -96,14 +90,11 @@ export default function LockScreen() {
         fallbackLabel: 'Use Passcode',
       });
 
-      console.log('[Lock] Authentication result:', result.success);
       if (result.success) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        console.log('[Lock] Authentication successful, navigating to wallet...');
         router.replace('/(main)/(wallet)');
       } else {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        console.log('[Lock] Authentication failed or cancelled');
       }
     } catch (error) {
       console.error('[Lock] Authentication error:', error);

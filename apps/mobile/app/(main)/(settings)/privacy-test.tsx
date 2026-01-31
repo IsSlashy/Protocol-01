@@ -61,7 +61,6 @@ export default function PrivacyTestScreen() {
       fractionalSecondDigits: 3,
     });
     setLogs(prev => [...prev, { timestamp, message, type }]);
-    console.log(`[PrivacyTest] ${message}`);
   }, []);
 
   const clearLogs = () => setLogs([]);

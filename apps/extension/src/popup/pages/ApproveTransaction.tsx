@@ -104,7 +104,6 @@ export default function ApproveTransaction() {
         // Convert signature to base64 for transport
         const signatureBase64 = uint8ArrayToBase64(signature);
 
-        console.log('[ApproveTransaction] Message signed, signature length:', signature.length);
 
         // Return the signature
         await approveRequest(request.id, {
@@ -156,12 +155,10 @@ export default function ApproveTransaction() {
             preflightCommitment: 'confirmed',
           });
 
-          console.log('[ApproveTransaction] Transaction sent:', signature);
 
           // Wait for confirmation
           await connection.confirmTransaction(signature, 'confirmed');
 
-          console.log('[ApproveTransaction] Transaction confirmed:', signature);
 
           await approveRequest(request.id, {
             signature,

@@ -174,16 +174,12 @@ export const useShieldedStore = create<ShieldedState>()(
               phrase = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS) || undefined;
 
               if (phrase) {
-                console.log('[Shielded] Using ZK-specific seed phrase');
               } else {
                 // Generate a new ZK seed for Privy users
-                console.log('[Shielded] Generating new ZK seed for Privy wallet...');
                 phrase = generateMnemonic(wordlist, 128); // 12 words
                 await SecureStore.setItemAsync(ZK_SEED_KEY, phrase, SECURE_OPTIONS);
-                console.log('[Shielded] ZK seed created and stored');
               }
             } else {
-              console.log('[Shielded] Retrieved seed phrase from SecureStore');
             }
           }
 
@@ -195,9 +191,7 @@ export const useShieldedStore = create<ShieldedState>()(
           const envRelayerUrl = process.env.EXPO_PUBLIC_RELAYER_URL;
           if (envRelayerUrl) {
             ZkService.setBackendProverUrl(envRelayerUrl);
-            console.log('[Shielded] Backend prover configured from env:', envRelayerUrl);
           } else {
-            console.log('[Shielded] Using default backend prover URL');
           }
 
           // Initialize with user's seed phrase
@@ -228,7 +222,6 @@ export const useShieldedStore = create<ShieldedState>()(
             _zkService: zkService,
           });
 
-          console.log('[Shielded] Initialized with ZK address:', zkAddress.encoded);
         } catch (error) {
           console.error('[Shielded] Initialize error:', error);
           set({ isLoading: false });
@@ -246,7 +239,6 @@ export const useShieldedStore = create<ShieldedState>()(
         }
 
         // Try to initialize from SecureStore (handles app restart and post-migration cases)
-        console.log('[Shielded] Initializing ZK service from SecureStore...');
         try {
           await get().initialize();
           return get()._zkService !== null;
@@ -350,7 +342,6 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Shielded] Shield successful:', signature);
           return signature;
         } catch (error) {
           console.error('[Shielded] Shield error:', error);
@@ -436,7 +427,6 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Shielded] Unshield successful:', signature);
           return signature;
         } catch (error) {
           console.error('[Shielded] Unshield error:', error);
@@ -487,8 +477,6 @@ export const useShieldedStore = create<ShieldedState>()(
         const viewingX25519Secret = nacl.hash(new Uint8Array(viewingKeyBytes)).slice(0, 32);
         const recipientViewingX25519Pub = nacl.box.keyPair.fromSecretKey(viewingX25519Secret).publicKey;
 
-        console.log('[Private Transfer] Using automatic privacy via relayer');
-        console.log('[Private Transfer] Amount:', amount, 'SOL');
 
         set(state => ({
           pendingTransactions: [
@@ -507,7 +495,6 @@ export const useShieldedStore = create<ShieldedState>()(
           // Step 1: Generate stealth address for recipient
           const { generateStealthAddress } = await import('../utils/crypto/stealth');
           const stealth = await generateStealthAddress(recipientSpendingPubKey, recipientViewingPubKey, recipientViewingX25519Pub);
-          console.log('[Private Transfer] Generated stealth address:', stealth.address.slice(0, 16) + '...');
 
           // Step 2: Generate ZK proof showing we have funds
           // Use the unshield proof generation (proves ownership, creates nullifier)
@@ -518,7 +505,6 @@ export const useShieldedStore = create<ShieldedState>()(
           }));
 
           const proofData = await _zkService.generateTransferProofForRelayer(amountLamports);
-          console.log('[Private Transfer] Proof generated');
 
           // Step 3: Fund the relayer (amount + fee + gas)
           set(state => ({
@@ -550,9 +536,6 @@ export const useShieldedStore = create<ShieldedState>()(
           const gasEstimate = BigInt(10000); // ~0.00001 SOL for tx fees
           const totalFunding = amountLamports + feeLamports + gasEstimate + rentExempt;
 
-          console.log('[Private Transfer] Funding relayer:', relayerAddress);
-          console.log('[Private Transfer] Amount:', Number(amountLamports) / 1e9, 'SOL + Fee:', Number(feeLamports) / 1e9, 'SOL + Gas:', Number(gasEstimate) / 1e9, 'SOL + Rent:', Number(rentExempt) / 1e9, 'SOL');
-          console.log('[Private Transfer] Total funding:', Number(totalFunding) / 1e9, 'SOL');
 
           // Send funding tx: User → Relayer
           const { Connection, PublicKey: SolPubKey, Transaction: SolTx, SystemProgram: SolSystem } = await import('@solana/web3.js');
@@ -577,10 +560,8 @@ export const useShieldedStore = create<ShieldedState>()(
           });
           await conn.confirmTransaction(fundingSignature, 'confirmed');
 
-          console.log('[Private Transfer] Funding tx confirmed:', fundingSignature);
 
           // Step 4: Send proof + funding signature to relayer
-          console.log('[Private Transfer] Sending proof to relayer:', RELAYER_URL);
 
           const response = await fetch(`${RELAYER_URL}/relay/private-transfer`, {
             method: 'POST',
@@ -603,7 +584,6 @@ export const useShieldedStore = create<ShieldedState>()(
           }
 
           const result = await response.json();
-          console.log('[Private Transfer] Relayer response:', result);
 
           // Step 4: Update local state - mark note as spent
           await _zkService.markNoteSpent(proofData.nullifier);
@@ -631,15 +611,12 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          console.log('[Private Transfer] SUCCESS - Sender hidden, recipient at stealth address');
-          console.log('[Private Transfer] On-chain shows: Relayer →', stealth.address.slice(0, 16) + '...');
           return result.signature;
 
         } catch (error) {
           console.error('[Private Transfer] Error:', error);
 
           // Fallback to direct transfer if relayer fails
-          console.log('[Private Transfer] Falling back to direct transfer...');
 
           try {
             // Parse ZK address again for direct transfer
@@ -684,7 +661,6 @@ export const useShieldedStore = create<ShieldedState>()(
               }));
             }, 5000);
 
-            console.log('[Private Transfer] Fallback successful (sender visible):', signature);
             return signature;
           } catch (fallbackError) {
             console.error('[Private Transfer] Fallback also failed:', fallbackError);
@@ -727,7 +703,6 @@ export const useShieldedStore = create<ShieldedState>()(
           });
 
           if (found > 0) {
-            console.log(`[Shielded] Found ${found} new incoming notes`);
           }
         } catch (error) {
           console.error('[Shielded] Scan notes error:', error);
@@ -759,7 +734,6 @@ export const useShieldedStore = create<ShieldedState>()(
           // Refresh balance
           await get().refreshBalance();
 
-          console.log('[Shielded] Imported note:', amountSOL, 'SOL');
         } finally {
           set({ isLoading: false });
         }
@@ -794,7 +768,6 @@ export const useShieldedStore = create<ShieldedState>()(
 
         await _zkService.clearNotes();
         set({ shieldedBalance: 0, notes: [] });
-        console.log('[Shielded] Notes cleared');
       },
 
       // Reset state
@@ -1014,9 +987,7 @@ export const useShieldedStore = create<ShieldedState>()(
           return { found: 0, amount: 0, payments: [] };
         }
 
-        console.log('[Store] Scanning for stealth payments...');
         const result = await _zkService.scanStealthPayments();
-        console.log('[Store] Scan result:', result.found, 'payments,', result.amount, 'SOL');
         return result;
       },
 
@@ -1041,7 +1012,6 @@ export const useShieldedStore = create<ShieldedState>()(
           return { success: false, error: 'ZK service not available' };
         }
 
-        console.log('[Store] Sweeping stealth payment from', stealthAddress.slice(0, 16) + '...');
         return await _zkService.sweepStealthPayment(stealthAddress, recipientAddress);
       },
 
@@ -1057,7 +1027,6 @@ export const useShieldedStore = create<ShieldedState>()(
           return { success: false, swept: 0, totalAmount: 0, signatures: [], errors: ['ZK service not available'] };
         }
 
-        console.log('[Store] Sweeping all stealth payments to', recipientAddress.slice(0, 16) + '...');
         return await _zkService.sweepAllStealthPayments(recipientAddress);
       },
     }),
@@ -1075,9 +1044,7 @@ export const useShieldedStore = create<ShieldedState>()(
       }),
       // Migration: reset on version change (key derivation fix)
       migrate: (persistedState: any, version: number) => {
-        console.log('[Shielded] Migration check: stored version', version, '-> current version 2');
         if (version < 2) {
-          console.log('[Shielded] Resetting shielded wallet due to key derivation fix');
           // Also clear ZK service SecureStore notes (async, fire-and-forget)
           ZkService.resetStorage().catch(err =>
             console.error('[Shielded] Failed to reset ZK storage:', err)

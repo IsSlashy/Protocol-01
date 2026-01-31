@@ -121,7 +121,6 @@ export function useRealtimeSync(options: UseRealtimeSyncOptions = {}): UseRealti
     }
 
     if (isStartingRef.current) {
-      console.log('[useRealtimeSync] Already starting, ignoring');
       return;
     }
 
@@ -203,7 +202,6 @@ export function useRealtimeSync(options: UseRealtimeSyncOptions = {}): UseRealti
   // Auto-start when wallet becomes available
   useEffect(() => {
     if (autoStart && hasWallet && publicKey) {
-      console.log('[useRealtimeSync] Auto-starting sync service for wallet:', publicKey);
       start();
     }
 
@@ -214,7 +212,6 @@ export function useRealtimeSync(options: UseRealtimeSyncOptions = {}): UseRealti
         const currentWallet = service.getWalletAddress();
         // Only stop if wallet changed or component unmounted
         if (!publicKey || (currentWallet && currentWallet !== publicKey)) {
-          console.log('[useRealtimeSync] Stopping sync service on cleanup');
           stop();
         }
       }

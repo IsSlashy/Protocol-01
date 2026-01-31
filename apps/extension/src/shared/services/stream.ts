@@ -368,11 +368,6 @@ export async function executeSubscriptionPayment(
   keypair: Keypair,
   network: NetworkType
 ): Promise<{ signature: string; payment: PaymentRecord }> {
-  console.log('[StreamPayment] Starting payment execution...');
-  console.log('[StreamPayment] Subscription:', sub.name, sub.id);
-  console.log('[StreamPayment] Recipient:', sub.recipient);
-  console.log('[StreamPayment] Amount:', sub.amount, 'SOL');
-  console.log('[StreamPayment] Network:', network);
 
   // Check if subscription is active
   if (sub.status !== 'active') {
@@ -386,11 +381,9 @@ export async function executeSubscriptionPayment(
 
   // Calculate payment with noise
   const calculatedPayment = calculateNextPayment(sub, keypair);
-  console.log('[StreamPayment] Calculated payment:', calculatedPayment);
 
   // Get connection
   const connection = getConnection(network);
-  console.log('[StreamPayment] Got connection for', network);
 
   let signature: string;
 
@@ -408,7 +401,6 @@ export async function executeSubscriptionPayment(
     // Native SOL payment
     const recipientPubkey = new PublicKey(calculatedPayment.recipient);
     const lamports = Math.round(calculatedPayment.amount * LAMPORTS_PER_SOL);
-    console.log('[StreamPayment] Sending', lamports, 'lamports to', calculatedPayment.recipient);
 
     const transaction = new Transaction().add(
       SystemProgram.transfer({
@@ -419,26 +411,20 @@ export async function executeSubscriptionPayment(
     );
 
     // Sign and send transaction
-    console.log('[StreamPayment] Getting blockhash...');
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = keypair.publicKey;
 
-    console.log('[StreamPayment] Signing transaction...');
     transaction.sign(keypair);
 
-    console.log('[StreamPayment] Sending transaction...');
     signature = await connection.sendRawTransaction(transaction.serialize());
-    console.log('[StreamPayment] Sent! Signature:', signature);
 
     // Wait for confirmation
-    console.log('[StreamPayment] Waiting for confirmation...');
     await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight,
     });
-    console.log('[StreamPayment] Confirmed!');
   }
 
   // Create payment record

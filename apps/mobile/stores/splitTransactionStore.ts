@@ -307,7 +307,6 @@ TaskManager.defineTask(SPLIT_FORWARD_TASK, async () => {
     // Note: In production, we'd need to securely retrieve the keypair
     // This is a simplified version - real implementation would use
     // secure storage and biometric auth
-    console.log('[SplitStore] Background task running...');
 
     // Return success - actual processing happens when user opens app
     return BackgroundFetch.BackgroundFetchResult.NewData;

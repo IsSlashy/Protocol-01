@@ -12,16 +12,12 @@ import { Logo } from '../../components/onboarding';
 import { useAuth } from '@/providers/PrivyProvider';
 
 export default function WelcomeScreen() {
-  console.log('[Onboarding] WelcomeScreen rendering');
   const router = useRouter();
   const { isReady, isAuthenticated, hasWallet } = useAuth();
-  console.log('[Onboarding] Auth state:', { isReady, isAuthenticated, hasWallet });
 
   // Redirect if already authenticated with wallet
   useEffect(() => {
-    console.log('[Onboarding] useEffect check:', { isReady, isAuthenticated, hasWallet });
     if (isReady && isAuthenticated && hasWallet) {
-      console.log('[Onboarding] Redirecting to main wallet...');
       try {
         router.replace('/(main)/(wallet)');
       } catch (err) {

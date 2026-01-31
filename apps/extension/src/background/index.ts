@@ -105,11 +105,9 @@ async function initSubscriptionScheduler() {
     periodInMinutes: SUBSCRIPTION_CHECK_INTERVAL_MINUTES,
     delayInMinutes: 1,
   });
-  console.log('[Stream Secure] Subscription scheduler initialized');
 }
 
 async function checkDueSubscriptions() {
-  console.log('[Stream Secure] Checking for due subscriptions...');
 
   try {
     const result = await chrome.storage.local.get('p01-subscriptions');
@@ -118,7 +116,6 @@ async function checkDueSubscriptions() {
       : null;
 
     if (!storedData?.state?.subscriptions) {
-      console.log('[Stream Secure] No subscriptions found');
       return;
     }
 
@@ -126,11 +123,8 @@ async function checkDueSubscriptions() {
     const dueSubscriptions = subscriptions.filter(isPaymentDue);
 
     if (dueSubscriptions.length === 0) {
-      console.log('[Stream Secure] No payments due');
       return;
     }
-
-    console.log(`[Stream Secure] ${dueSubscriptions.length} payment(s) due`);
 
     const walletResult = await chrome.storage.local.get('p01-wallet');
     const walletState = walletResult['p01-wallet']
@@ -138,7 +132,6 @@ async function checkDueSubscriptions() {
       : null;
 
     if (!walletState?.state?.publicKey) {
-      console.log('[Stream Secure] Wallet not initialized, skipping payments');
       return;
     }
 
@@ -177,7 +170,6 @@ async function processPendingPayments() {
     return;
   }
 
-  console.log(`[Stream Secure] Processing ${pendingPayments.length} pending payment(s)`);
 
   try {
     await chrome.runtime.sendMessage({
@@ -185,7 +177,6 @@ async function processPendingPayments() {
       subscriptionIds: pendingPayments.map((p) => p.subscriptionId),
     });
   } catch {
-    console.log('[Stream Secure] Could not send message to popup');
   }
 }
 
@@ -196,7 +187,6 @@ async function notifyPendingPayment(sub: StreamSubscription) {
     });
 
     if (!permission) {
-      console.log('[Stream Secure] Notification permission not granted');
       return;
     }
 
@@ -287,7 +277,6 @@ async function createApprovalRequest(
 
   state.pendingApprovals.set(id, approval);
   await chrome.storage.session.set({ currentApproval: approval });
-  console.log('[Background] Created approval request:', id, approval);
 
   return id;
 }
@@ -313,12 +302,10 @@ async function openApprovalPopup(
   try {
     if (chrome.action?.openPopup) {
       await chrome.action.openPopup();
-      console.log('[Background] Opened native extension popup');
     }
   } catch (e) {
     // openPopup() may fail in some contexts - that's OK
     // The user can click on the extension icon manually
-    console.log('[Background] Could not auto-open popup, user should click extension icon:', e);
 
     // Show a badge to indicate pending approval
     try {
@@ -1027,9 +1014,7 @@ chrome.runtime.onMessage.addListener(
 // ============ Alarm Handler ============
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'keepAlive') {
-    console.log('[Protocol 01] Keepalive ping');
-  } else if (alarm.name === SUBSCRIPTION_CHECK_ALARM) {
+  if (alarm.name === SUBSCRIPTION_CHECK_ALARM) {
     checkDueSubscriptions();
   }
 });
@@ -1039,8 +1024,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 initBackgroundMessageListener();
 initSubscriptionScheduler();
 
-console.log('[Protocol 01] Background service worker initialized');
-console.log('[Stream Secure] Privacy-enhanced recurring payments enabled');
 
 // Keep service worker alive
 chrome.alarms.create('keepAlive', { periodInMinutes: 1 });
@@ -1052,12 +1035,4 @@ setTimeout(() => {
 
 // Handle extension install/update
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install') {
-    console.log('[Protocol 01] Extension installed');
-  } else if (details.reason === 'update') {
-    console.log(
-      '[Protocol 01] Extension updated to version',
-      chrome.runtime.getManifest().version
-    );
-  }
 });

@@ -16,7 +16,6 @@ export default function Index() {
     try {
       // Check if user has a wallet
       const hasExistingWallet = await walletExists();
-      console.log('[Index] walletExists:', hasExistingWallet);
       setHasWallet(hasExistingWallet);
     } catch (error) {
       console.error('[Index] Error checking app state:', error);
@@ -28,7 +27,6 @@ export default function Index() {
   // Navigate after loading completes
   useEffect(() => {
     if (!isLoading) {
-      console.log('[Index] Navigating, hasWallet:', hasWallet);
       if (hasWallet) {
         router.replace('/(auth)/lock');
       } else {

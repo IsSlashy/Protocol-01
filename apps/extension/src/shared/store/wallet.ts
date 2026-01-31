@@ -47,7 +47,6 @@ async function saveSession(secretKey: Uint8Array): Promise<void> {
       [SESSION_KEYS.SECRET_KEY]: Array.from(secretKey),
       [SESSION_KEYS.TIMESTAMP]: Date.now(),
     });
-    console.log('[Session] Saved unlock session');
   } catch (e) {
     console.warn('[Session] Failed to save session:', e);
   }
@@ -59,7 +58,6 @@ async function saveSession(secretKey: Uint8Array): Promise<void> {
 async function clearSession(): Promise<void> {
   try {
     await chrome.storage.local.remove([SESSION_KEYS.SECRET_KEY, SESSION_KEYS.TIMESTAMP]);
-    console.log('[Session] Cleared session');
   } catch (e) {
     console.warn('[Session] Failed to clear session:', e);
   }
@@ -76,17 +74,13 @@ async function tryRestoreSession(): Promise<Keypair | null> {
     const secretKeyArray = result[SESSION_KEYS.SECRET_KEY];
     const timestamp = result[SESSION_KEYS.TIMESTAMP];
 
-    console.log('[Session] Checking session:', { hasKey: !!secretKeyArray, timestamp });
-
     if (!secretKeyArray || !timestamp) {
-      console.log('[Session] No session found');
       return null;
     }
 
     // Check if session has expired
     const elapsed = Date.now() - timestamp;
     if (elapsed > SESSION_TIMEOUT_MS) {
-      console.log('[Session] Session expired after', Math.round(elapsed / 1000), 'seconds');
       await clearSession();
       return null;
     }
@@ -94,8 +88,6 @@ async function tryRestoreSession(): Promise<Keypair | null> {
     // Restore keypair from secret key
     const secretKey = new Uint8Array(secretKeyArray);
     const keypair = Keypair.fromSecretKey(secretKey);
-
-    console.log('[Session] Restored session, expires in', Math.round((SESSION_TIMEOUT_MS - elapsed) / 1000), 'seconds');
 
     // Refresh session timestamp on successful restore
     await chrome.storage.local.set({ [SESSION_KEYS.TIMESTAMP]: Date.now() });
@@ -113,7 +105,6 @@ let privySigner: PrivySignTransaction | null = null;
 
 export function setPrivySigner(signer: PrivySignTransaction | null): void {
   privySigner = signer;
-  console.log('[WalletStore] Privy signer', signer ? 'set' : 'cleared');
 }
 
 export function getPrivySigner(): PrivySignTransaction | null {
@@ -295,8 +286,7 @@ export const useWalletStore = create<WalletState>()(
         // Clear chrome storage directly to ensure clean state
         try {
           await chrome.storage.local.remove('p01-wallet');
-          console.log('[WalletStore] Chrome storage cleared');
-        } catch (e) {
+          } catch (e) {
           console.error('[WalletStore] Failed to clear chrome storage:', e);
         }
         set({
@@ -317,11 +307,9 @@ export const useWalletStore = create<WalletState>()(
 
       // Unlock wallet with password
       unlock: async (password: string) => {
-        console.log('[WalletStore] unlock called');
         const { encryptedSeedPhrase, passwordHash } = get();
 
         if (!encryptedSeedPhrase || !passwordHash) {
-          console.log('[WalletStore] No encrypted seed phrase or password hash');
           set({ error: 'Wallet not initialized' });
           return false;
         }
@@ -330,30 +318,23 @@ export const useWalletStore = create<WalletState>()(
 
         try {
           // Verify password
-          console.log('[WalletStore] Verifying password...');
           const isValid = await verifyPassword(password, passwordHash);
-          console.log('[WalletStore] Password valid:', isValid);
           if (!isValid) {
             set({ isLoading: false, error: 'Invalid password' });
             return false;
           }
 
           // Decrypt seed phrase
-          console.log('[WalletStore] Decrypting seed phrase...');
           const mnemonic = await decrypt(encryptedSeedPhrase, password);
-          console.log('[WalletStore] Seed phrase decrypted');
 
           // Derive keypair
-          console.log('[WalletStore] Deriving keypair...');
           const keypair = await deriveKeypairFromMnemonic(mnemonic);
-          console.log('[WalletStore] Keypair derived');
 
           set({
             isUnlocked: true,
             _keypair: keypair,
             isLoading: false,
           });
-          console.log('[WalletStore] State updated, unlocked');
 
           // Save session for auto-unlock (10 minute timeout)
           await saveSession(keypair.secretKey);
@@ -379,19 +360,15 @@ export const useWalletStore = create<WalletState>()(
           return isUnlocked;
         }
 
-        console.log('[WalletStore] Trying auto-unlock from session...');
-
         try {
           const keypair = await tryRestoreSession();
 
           if (!keypair) {
-            console.log('[WalletStore] No valid session found');
             return false;
           }
 
           // Verify the keypair matches our stored public key
           if (keypair.publicKey.toBase58() !== publicKey) {
-            console.log('[WalletStore] Session keypair mismatch, clearing...');
             await clearSession();
             return false;
           }
@@ -400,8 +377,6 @@ export const useWalletStore = create<WalletState>()(
             isUnlocked: true,
             _keypair: keypair,
           });
-
-          console.log('[WalletStore] Auto-unlocked from session');
 
           // Fetch balance and transactions
           get().refreshBalance();
@@ -434,7 +409,6 @@ export const useWalletStore = create<WalletState>()(
         // Clear chrome storage directly to ensure clean state
         try {
           await chrome.storage.local.remove('p01-wallet');
-          console.log('[WalletStore] Chrome storage cleared on reset');
         } catch (e) {
           console.error('[WalletStore] Failed to clear chrome storage:', e);
         }
@@ -457,22 +431,18 @@ export const useWalletStore = create<WalletState>()(
       // Refresh balance from blockchain
       refreshBalance: async () => {
         const { publicKey, network, isUnlocked } = get();
-        console.log('[WalletStore] refreshBalance called', { publicKey, network, isUnlocked });
 
         if (!publicKey || !isUnlocked) {
-          console.log('[WalletStore] Skipping refresh - not unlocked or no publicKey');
           return;
         }
 
         set({ isRefreshing: true });
 
         try {
-          console.log('[WalletStore] Fetching balance for', publicKey, 'on', network);
           const [solBalance, tokens] = await Promise.all([
             getSolBalance(publicKey, network),
             getTokenBalances(publicKey, network),
           ]);
-          console.log('[WalletStore] Balance fetched:', solBalance, 'SOL');
 
           set({ solBalance, tokens, isRefreshing: false });
         } catch (error) {

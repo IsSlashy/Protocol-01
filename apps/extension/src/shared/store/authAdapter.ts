@@ -134,7 +134,6 @@ export function useAuthAdapter(): AuthState {
       if (walletStore.publicKey !== privySolanaWallet.address) {
         // Note: We're not updating the full wallet state here
         // Just ensuring publicKey is available for display purposes
-        console.log('[AuthAdapter] Privy wallet synced:', privySolanaWallet.address);
       }
     }
   }, [privy.authenticated, privySolanaWallet, walletStore.publicKey]);

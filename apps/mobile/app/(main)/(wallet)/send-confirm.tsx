@@ -135,7 +135,6 @@ export default function SendConfirmScreen() {
       // Check if user has Privy wallet with signing capability
       const isPrivyUser = !!privyWalletAddress && typeof privySignTransaction === 'function';
 
-      console.log('[SendConfirm] Wallet check:', {
         privyWalletAddress,
         hasSignTransaction: typeof privySignTransaction === 'function',
         isPrivyUser,
@@ -148,7 +147,6 @@ export default function SendConfirmScreen() {
         // Private transaction with decoys (local wallet only)
         setStatus('sending_decoys');
 
-        console.log(`[SendConfirm] Starting private transaction with ${privacyInfo.decoys} decoys`);
 
         const result = await sendPrivateTransaction(
           recipient,
@@ -171,8 +169,6 @@ export default function SendConfirmScreen() {
         txHash = result.signature;
         decoyCount = result.decoyResult.decoys.length;
 
-        console.log(`[SendConfirm] Private transaction complete: ${txHash}`);
-        console.log(`[SendConfirm] Decoys sent: ${decoyCount}, Total fees: ${result.decoyResult.totalFeesSOL} SOL`);
 
       } else {
         // Regular transaction (no decoys) - works with both Privy and local wallets
@@ -183,7 +179,6 @@ export default function SendConfirmScreen() {
 
         let result;
         if (isPrivyUser && privyWalletAddress && privySignTransaction) {
-          console.log('[SendConfirm] Using Privy wallet for transaction');
           result = await sendSolWithSigner(
             recipient,
             parseFloat(amount),
@@ -191,7 +186,6 @@ export default function SendConfirmScreen() {
             privySignTransaction
           );
         } else {
-          console.log('[SendConfirm] Using local wallet for transaction');
           result = await sendSol(recipient, parseFloat(amount));
         }
 

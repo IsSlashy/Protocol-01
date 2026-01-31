@@ -189,7 +189,6 @@ export async function publishSubscription(
     lastValidBlockHeight,
   });
 
-  console.log(`Published subscription ${subscription.id} to blockchain: ${signature}`);
   return signature;
 }
 

@@ -14,6 +14,17 @@ const dirname =
 export default defineConfig({
   test: {
     projects: [
+      // Unit tests for SDK core
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          include: ['src/**/*.test.ts'],
+          environment: 'node',
+          globals: true,
+        },
+      },
+      // Storybook component tests
       {
         extends: true,
         plugins: [

@@ -118,14 +118,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           transactions: cachedTransactions,
         });
 
-        console.log('[WalletStore] INSTANT: Loaded cached balance:', cachedBalance?.sol || 0, 'SOL,', cachedTransactions.length, 'transactions');
 
         // BACKGROUND: Refresh balance (update cache)
         setTimeout(async () => {
-          console.log('[WalletStore] Background refresh: fetching fresh balance...');
           try {
             const balance = await getWalletBalance(publicKey);
-            console.log('[WalletStore] Fresh balance fetched:', balance.sol, 'SOL');
             set({ balance });
           } catch (err: any) {
             console.warn('[WalletStore] Failed to fetch fresh balance:', err?.message || err);
@@ -135,10 +132,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
         // BACKGROUND: Fetch fresh transactions (will update cache)
         setTimeout(async () => {
-          console.log('[WalletStore] Background refresh: fetching fresh transactions...');
           try {
             const transactions = await getTransactionHistory(publicKey);
-            console.log('[WalletStore] Fresh transactions fetched:', transactions.length);
             set({ transactions });
           } catch (err: any) {
             console.warn('[WalletStore] Failed to fetch fresh transactions:', err?.message || err);
@@ -160,7 +155,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   // Initialize with Privy embedded wallet
   initializeWithPrivy: async (address: string) => {
     try {
-      console.log('[WalletStore] Initializing with Privy wallet:', address);
       set({ loading: true, error: null });
 
       // Initialize connection
@@ -182,13 +176,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         loading: false,
       });
 
-      console.log('[WalletStore] Privy wallet initialized:', address);
 
       // Background refresh balance
       setTimeout(async () => {
         try {
           const balance = await getWalletBalance(address);
-          console.log('[WalletStore] Privy wallet balance:', balance.sol, 'SOL');
           set({ balance });
         } catch (err: any) {
           console.warn('[WalletStore] Failed to fetch Privy wallet balance:', err?.message);
@@ -248,7 +240,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       // Clear old wallet data from state
       const oldPublicKey = get().publicKey;
       if (oldPublicKey) {
-        console.log('[WalletStore] Clearing old wallet caches...');
         await Promise.all([
           clearBalanceCache(oldPublicKey),
           clearTransactionCache(oldPublicKey),
@@ -267,7 +258,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         error: null,
       });
 
-      console.log('[WalletStore] Wallet imported:', wallet.publicKey);
 
       // Refresh balance for new wallet
       get().refreshBalance();
@@ -342,7 +332,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
 
       // Use Privy signer if available (for Privy wallets)
       if (get().isPrivyWallet && privySigner && get().publicKey) {
-        console.log('[WalletStore] Using Privy signer for transaction');
         const fromPubkey = new PublicKey(get().publicKey!);
         result = await sendSolWithSigner(to, amount, fromPubkey, privySigner);
       } else {

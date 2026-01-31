@@ -354,7 +354,6 @@ export interface LightProtocolConfig {
 export async function initializeLightProtocol(
   config: LightProtocolConfig
 ): Promise<boolean> {
-  console.log('Light Protocol integration:', config.programId);
   // In production, this would:
   // 1. Connect to Light Protocol's compressed token program
   // 2. Initialize the Merkle tree for storing commitments

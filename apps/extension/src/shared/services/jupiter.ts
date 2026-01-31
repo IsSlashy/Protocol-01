@@ -283,8 +283,6 @@ export async function getQuote(params: {
     url.searchParams.set('platformFeeBps', PLATFORM_FEE_CONFIG.feeBps.toString());
   }
 
-  console.log('[Jupiter] Fetching quote:', url.toString());
-
   const response = await fetch(url.toString());
 
   if (!response.ok) {
@@ -294,12 +292,6 @@ export async function getQuote(params: {
   }
 
   const quote: QuoteResponse = await response.json();
-  console.log('[Jupiter] Quote received:', {
-    inAmount: quote.inAmount,
-    outAmount: quote.outAmount,
-    priceImpact: quote.priceImpactPct,
-    routes: quote.routePlan.length,
-  });
 
   return quote;
 }
@@ -336,8 +328,6 @@ export async function getSwapTransaction(params: {
     feeAccount,
   };
 
-  console.log('[Jupiter] Getting swap transaction...', feeAccount ? `(fee -> ${feeAccount})` : '');
-
   const response = await fetch(JUPITER_SWAP_API, {
     method: 'POST',
     headers: {
@@ -367,26 +357,18 @@ export async function getSwapTransaction(params: {
 export async function executeSwap(params: ExecuteSwapParams): Promise<string> {
   const { connection, swapTransaction, signTransaction } = params;
 
-  console.log('[Jupiter] Deserializing transaction...');
-
   // Deserialize the transaction
   const transactionBuf = Buffer.from(swapTransaction, 'base64');
   const transaction = VersionedTransaction.deserialize(transactionBuf);
 
-  console.log('[Jupiter] Signing transaction...');
-
   // Sign the transaction
   const signedTx = await signTransaction(transaction);
-
-  console.log('[Jupiter] Sending transaction...');
 
   // Send the transaction
   const signature = await connection.sendRawTransaction(signedTx.serialize(), {
     skipPreflight: false,
     maxRetries: 2,
   });
-
-  console.log('[Jupiter] Transaction sent:', signature);
 
   // Wait for confirmation
   const latestBlockhash = await connection.getLatestBlockhash();
@@ -395,8 +377,6 @@ export async function executeSwap(params: ExecuteSwapParams): Promise<string> {
     blockhash: latestBlockhash.blockhash,
     lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
   });
-
-  console.log('[Jupiter] Transaction confirmed:', signature);
 
   return signature;
 }

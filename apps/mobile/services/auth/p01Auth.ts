@@ -191,13 +191,11 @@ export async function requestBiometricAuth(
   try {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     if (!hasHardware) {
-      console.log('[P01Auth] No biometric hardware available');
       return true; // Allow without biometrics if not available
     }
 
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
     if (!isEnrolled) {
-      console.log('[P01Auth] No biometrics enrolled');
       return true; // Allow without biometrics if not enrolled
     }
 
@@ -281,7 +279,6 @@ export async function sendAuthCallback(
         : undefined,
     };
 
-    console.log('[P01Auth] Sending callback to:', payload.callback);
 
     const response = await fetch(payload.callback, {
       method: 'POST',

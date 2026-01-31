@@ -26,13 +26,10 @@ export default function BackupScreen() {
 
   const loadMnemonic = async () => {
     try {
-      console.log('[Backup] Loading mnemonic from secure storage...');
       const mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic');
-      console.log('[Backup] Mnemonic retrieved, length:', mnemonic?.length, 'word count:', mnemonic?.split(' ').length);
 
       if (mnemonic && mnemonic.trim()) {
         const words = mnemonic.trim().split(' ').filter(w => w.length > 0);
-        console.log('[Backup] Parsed words:', words.length, 'First word:', words[0]);
 
         if (words.length === 12) {
           setSeedPhrase(words);

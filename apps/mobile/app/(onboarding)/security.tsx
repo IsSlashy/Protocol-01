@@ -113,11 +113,9 @@ export default function SecurityScreen() {
   }, [selectedMethod]);
 
   const completeOnboarding = async () => {
-    console.log('[Security] Completing onboarding...');
     await SecureStore.setItemAsync('p01_onboarded', 'true');
     // Clean up temp mnemonic
     await SecureStore.deleteItemAsync('p01_temp_mnemonic');
-    console.log('[Security] Navigating to lock screen...');
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // Navigate directly to lock screen (which handles security method and redirects to wallet)
     router.replace('/(auth)/lock');

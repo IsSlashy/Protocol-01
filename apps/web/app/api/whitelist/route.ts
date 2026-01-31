@@ -17,7 +17,6 @@ function getResend() {
 // Send approval email to developer
 async function sendApprovalEmail(email: string, wallet: string, projectName?: string) {
   if (!process.env.RESEND_API_KEY || process.env.RESEND_API_KEY === 're_YOUR_API_KEY_HERE') {
-    console.log('Resend API key not configured, skipping email');
     return;
   }
 
@@ -70,7 +69,6 @@ async function sendApprovalEmail(email: string, wallet: string, projectName?: st
         </div>
       `,
     });
-    console.log('Approval email sent to:', email);
   } catch (error) {
     console.error('Failed to send approval email:', error);
   }
@@ -80,7 +78,6 @@ async function sendApprovalEmail(email: string, wallet: string, projectName?: st
 async function sendApprovalDiscord(wallet: string, email?: string, projectName?: string) {
   const webhookUrl = process.env.DISCORD_WEBHOOK;
   if (!webhookUrl) {
-    console.log('Discord webhook not configured, skipping notification');
     return;
   }
 
@@ -102,7 +99,6 @@ async function sendApprovalDiscord(wallet: string, email?: string, projectName?:
         }],
       }),
     });
-    console.log('Discord approval notification sent');
   } catch (error) {
     console.error('Failed to send Discord notification:', error);
   }
