@@ -67,7 +67,7 @@ importers:
         version: 1.8.0
       '@p01/sdk':
         specifier: workspace:*
-        version: link:../../packages/specter-sdk
+        version: link:../../packages/sdk
       '@privy-io/react-auth':
         specifier: ^2.0.0
         version: 2.25.0(@solana/kit@5.4.0)(@solana/spl-token@0.4.14)(@solana/web3.js@1.98.4)(@types/react@18.3.27)(bs58@5.0.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@18.3.1)(react@18.3.1)(typescript@5.9.3)
