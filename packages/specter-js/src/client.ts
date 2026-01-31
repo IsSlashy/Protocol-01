@@ -105,7 +105,7 @@ export class P01 {
       );
     }
 
-    this.provider = (window as Window & { specter?: P01Provider })[P01_PROVIDER_KEY] as P01Provider;
+    this.provider = (window as unknown as Record<string, P01Provider>)[P01_PROVIDER_KEY];
 
     try {
       const result = await this.provider.connect();
@@ -149,7 +149,7 @@ export class P01 {
   async getWalletInfo(): Promise<WalletInfo | null> {
     if (!P01.isInstalled()) return null;
 
-    const provider = (window as Window & { specter?: P01Provider })[P01_PROVIDER_KEY] as P01Provider;
+    const provider = (window as unknown as Record<string, P01Provider>)[P01_PROVIDER_KEY];
     return {
       publicKey: this.publicKey || '',
       isP01: provider.isP01,
