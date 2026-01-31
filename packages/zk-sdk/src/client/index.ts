@@ -680,5 +680,3 @@ export class ShieldedClient {
     return signature;
   }
 }
-
-export type { ShieldedClientConfig };
