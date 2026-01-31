@@ -234,6 +234,10 @@ describe('Wallet Store -- Core Wallet Management', () => {
         transactions: [{ signature: 'old', timestamp: 0, type: 'send', status: 'confirmed' }] as any,
       });
 
+      // Mock zero balance for this test to verify old cached values are cleared
+      const { getWalletBalance } = await import('../services/solana/balance');
+      (getWalletBalance as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ sol: 0, tokens: [], totalUsd: 0 });
+
       await useWalletStore.getState().importExistingWallet(VALID_MNEMONIC);
 
       const state = useWalletStore.getState();
