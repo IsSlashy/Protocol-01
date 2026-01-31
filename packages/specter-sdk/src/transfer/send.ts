@@ -111,7 +111,7 @@ export async function sendPrivate(options: SendOptions): Promise<TransferResult>
 
   // Get sender public key
   const senderPubKey =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
 
   // Check balance
   await validateBalance(connection, senderPubKey, amountLamports, tokenMint);
@@ -169,7 +169,7 @@ async function sendSingleTransfer(
   if (tokenMint) {
     // SPL Token transfer
     const senderPubKey =
-      'publicKey' in sender ? sender.publicKey : sender.publicKey;
+      sender.publicKey;
     const senderAta = await getAssociatedTokenAddress(tokenMint, senderPubKey);
     const stealthAta = await getAssociatedTokenAddress(
       tokenMint,
@@ -189,7 +189,7 @@ async function sendSingleTransfer(
   } else {
     // SOL transfer
     const senderPubKey =
-      'publicKey' in sender ? sender.publicKey : sender.publicKey;
+      sender.publicKey;
 
     transaction.add(
       SystemProgram.transfer({
@@ -217,7 +217,7 @@ async function sendSingleTransfer(
     await connection.getLatestBlockhash();
   transaction.recentBlockhash = blockhash;
   transaction.feePayer =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
 
   // Sign and send
   let signature: string;
@@ -317,7 +317,7 @@ export async function sendPublic(
 
   const recipientPubKey = new PublicKey(recipient);
   const senderPubKey =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
   const amountLamports = tokenMint
     ? BigInt(Math.round(amount * 1e9))
     : solToLamports(amount);
