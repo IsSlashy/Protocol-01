@@ -77,12 +77,10 @@ export class RealtimeSyncService {
    */
   async start(walletAddress: string): Promise<void> {
     if (this.isStarting) {
-      console.log('[RealtimeSync] Already starting, ignoring duplicate call');
       return;
     }
 
     if (this.status === 'connected' && this.walletAddress === walletAddress) {
-      console.log('[RealtimeSync] Already connected to same wallet');
       return;
     }
 
@@ -97,7 +95,6 @@ export class RealtimeSyncService {
       this.walletAddress = walletAddress;
       this.setStatus('connecting');
 
-      console.log('[RealtimeSync] Starting sync service for wallet:', walletAddress);
 
       // Load existing streams to track known IDs
       await this.loadKnownStreams();
@@ -122,7 +119,6 @@ export class RealtimeSyncService {
       this.setStatus('connected');
       this.reconnectAttempts = 0;
 
-      console.log('[RealtimeSync] Service started successfully');
     } catch (error) {
       console.error('[RealtimeSync] Failed to start:', error);
       this.setStatus('error');
@@ -141,7 +137,6 @@ export class RealtimeSyncService {
    * Stop the real-time sync service
    */
   async stop(): Promise<void> {
-    console.log('[RealtimeSync] Stopping sync service...');
 
     // Clear reconnect timeout
     if (this.reconnectTimeout) {
@@ -170,7 +165,6 @@ export class RealtimeSyncService {
     this.knownStreamIds.clear();
     this.setStatus('disconnected');
 
-    console.log('[RealtimeSync] Service stopped');
   }
 
   /**
@@ -234,7 +228,6 @@ export class RealtimeSyncService {
     try {
       const streams = await loadStreams();
       this.knownStreamIds = new Set(streams.map(s => s.id));
-      console.log('[RealtimeSync] Loaded', this.knownStreamIds.size, 'known streams');
     } catch (error) {
       console.warn('[RealtimeSync] Failed to load known streams:', error);
     }
@@ -254,7 +247,6 @@ export class RealtimeSyncService {
       }
     } catch (error) {
       // Silently fail in Expo Go
-      console.log('[RealtimeSync] Notifications not available (Expo Go)');
     }
   }
 
@@ -274,7 +266,6 @@ export class RealtimeSyncService {
       'confirmed'
     );
 
-    console.log('[RealtimeSync] Subscribed to logs, subscription ID:', this.subscriptionId);
   }
 
   private async handleLogs(logs: Logs, context: Context): Promise<void> {
@@ -294,7 +285,6 @@ export class RealtimeSyncService {
       );
 
       if (hasSubscriptionMemo) {
-        console.log('[RealtimeSync] Detected subscription activity, triggering sync...');
         // Delay sync slightly to allow transaction to be confirmed
         setTimeout(() => this.performSync(), 2000);
       }
@@ -311,12 +301,10 @@ export class RealtimeSyncService {
     this.setStatus('syncing');
 
     try {
-      console.log('[RealtimeSync] Performing sync...');
 
       // Sync from blockchain
       const result = await syncFromBlockchain(this.walletAddress);
 
-      console.log('[RealtimeSync] Sync result:', result);
 
       // Refresh the stream store (don't pass wallet to avoid double sync)
       const streamStore = useStreamStore.getState();
@@ -384,10 +372,8 @@ export class RealtimeSyncService {
         trigger: null,
       });
 
-      console.log('[RealtimeSync] Notification sent for subscription:', stream.name);
     } catch (error) {
       // Silently fail in Expo Go
-      console.log('[RealtimeSync] New subscription (notif unavailable):', stream.name);
     }
   }
 
@@ -415,14 +401,12 @@ export class RealtimeSyncService {
 
     this.syncIntervalId = setInterval(() => {
       if (this.status === 'connected' && this.walletAddress) {
-        console.log('[RealtimeSync] Periodic sync triggered');
         this.performSync().catch(err => {
           console.error('[RealtimeSync] Periodic sync failed:', err);
         });
       }
     }, this.config.syncInterval);
 
-    console.log('[RealtimeSync] Periodic sync started, interval:', this.config.syncInterval, 'ms');
   }
 
   private scheduleReconnect(): void {
@@ -431,7 +415,6 @@ export class RealtimeSyncService {
     }
 
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-      console.log('[RealtimeSync] Max reconnection attempts reached');
       this.emitEvent({
         type: 'error',
         error: 'Max reconnection attempts reached',
@@ -443,11 +426,9 @@ export class RealtimeSyncService {
     this.reconnectAttempts++;
     const delay = this.config.reconnectDelay * this.reconnectAttempts;
 
-    console.log(`[RealtimeSync] Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
 
     this.reconnectTimeout = setTimeout(async () => {
       if (this.walletAddress && this.status !== 'connected') {
-        console.log('[RealtimeSync] Attempting reconnection...');
         await this.start(this.walletAddress);
       }
     }, delay);

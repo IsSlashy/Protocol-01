@@ -72,9 +72,7 @@ export default function CreateSubscription() {
       });
 
       // Execute first payment immediately
-      console.log('[CreateSub] Executing first payment...');
       await processPayment(subscription.id, _keypair, network);
-      console.log('[CreateSub] First payment successful!');
 
       navigate(`/subscriptions/${subscription.id}`);
     } catch (err) {

@@ -99,7 +99,6 @@ export function switchEndpoint(): void {
       disableRetryOnRateLimit: true,
     }
   );
-  console.log(`Switched to RPC endpoint: ${endpoints[currentEndpointIndex]}`);
 }
 
 /**
@@ -156,7 +155,6 @@ export async function requestAirdrop(publicKey: string, amount: number = 1): Pro
   // Cap amount to 1 SOL to avoid rate limit issues
   const cappedAmount = Math.min(amount, 1);
 
-  console.log(`Requesting airdrop of ${cappedAmount} SOL to ${publicKey}...`);
 
   // Use a fresh connection with retry disabled to fail fast
   const { Connection } = await import('@solana/web3.js');
@@ -173,14 +171,11 @@ export async function requestAirdrop(publicKey: string, amount: number = 1): Pro
       cappedAmount * LAMPORTS_PER_SOL
     );
 
-    console.log(`Airdrop signature: ${signature}`);
 
     // Quick confirmation check (don't wait too long)
     try {
       await connection.confirmTransaction(signature, 'confirmed');
-      console.log('Airdrop confirmed!');
     } catch {
-      console.log('Airdrop sent, confirmation pending...');
     }
 
     return signature;

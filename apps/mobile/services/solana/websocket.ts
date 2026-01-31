@@ -195,7 +195,6 @@ export class SolanaWebSocket extends EventEmitter {
    */
   async connect(): Promise<void> {
     if (this.connectionState === 'connected' || this.connectionState === 'connecting') {
-      console.log('[WebSocket] Already connected or connecting');
       return;
     }
 
@@ -205,7 +204,6 @@ export class SolanaWebSocket extends EventEmitter {
 
     try {
       const wsEndpoint = this.getWsEndpoint();
-      console.log(`[WebSocket] Connecting to ${wsEndpoint}...`);
 
       // Create connection with WebSocket commitment
       this.connection = new Connection(wsEndpoint, {
@@ -219,7 +217,6 @@ export class SolanaWebSocket extends EventEmitter {
       this.connectionState = 'connected';
       this.reconnectAttempts = 0;
       this.emit('state_change', this.connectionState);
-      console.log('[WebSocket] Connected successfully');
 
       // Re-subscribe if we have a wallet address
       if (this.walletAddress) {
@@ -253,7 +250,6 @@ export class SolanaWebSocket extends EventEmitter {
     this.connection = null;
     this.connectionState = 'disconnected';
     this.emit('state_change', this.connectionState);
-    console.log('[WebSocket] Disconnected');
   }
 
   /**
@@ -274,18 +270,15 @@ export class SolanaWebSocket extends EventEmitter {
       const pubkey = new PublicKey(walletAddress);
 
       // Subscribe to account changes
-      console.log(`[WebSocket] Subscribing to account: ${walletAddress}`);
       this.subscriptionId = this.connection.onAccountChange(
         pubkey,
         (accountInfo, context) => {
-          console.log('[WebSocket] Account changed:', context.slot);
           this.emit('account_change', { accountInfo, context });
         },
         'confirmed'
       );
 
       // Subscribe to transaction logs mentioning this wallet
-      console.log(`[WebSocket] Subscribing to logs for: ${walletAddress}`);
       this.logsSubscriptionId = this.connection.onLogs(
         pubkey,
         (logs, context) => {
@@ -294,7 +287,6 @@ export class SolanaWebSocket extends EventEmitter {
         'confirmed'
       );
 
-      console.log(`[WebSocket] Subscribed with IDs: account=${this.subscriptionId}, logs=${this.logsSubscriptionId}`);
     } catch (error) {
       console.error('[WebSocket] Subscription failed:', error);
       this.emit('error', error);
@@ -310,13 +302,11 @@ export class SolanaWebSocket extends EventEmitter {
     try {
       if (this.subscriptionId !== null) {
         await this.connection.removeAccountChangeListener(this.subscriptionId);
-        console.log(`[WebSocket] Unsubscribed from account: ${this.subscriptionId}`);
         this.subscriptionId = null;
       }
 
       if (this.logsSubscriptionId !== null) {
         await this.connection.removeOnLogsListener(this.logsSubscriptionId);
-        console.log(`[WebSocket] Unsubscribed from logs: ${this.logsSubscriptionId}`);
         this.logsSubscriptionId = null;
       }
     } catch (error) {
@@ -331,7 +321,6 @@ export class SolanaWebSocket extends EventEmitter {
     const { signature, logs: logMessages, err } = logs;
 
     if (err) {
-      console.log(`[WebSocket] Transaction ${signature} failed:`, err);
       return;
     }
 
@@ -374,7 +363,6 @@ export class SolanaWebSocket extends EventEmitter {
         timestamp: Date.now(),
       };
 
-      console.log(`[WebSocket] New subscription detected: ${stream.name}`);
       this.emit('subscription_added', event);
       this.emit('subscription_event', event);
     } catch (error) {
@@ -433,7 +421,6 @@ export class SolanaWebSocket extends EventEmitter {
         timestamp: Date.now(),
       };
 
-      console.log(`[WebSocket] Subscription ${eventType}: ${update.id}`);
       this.emit(eventType, event);
       this.emit('subscription_event', event);
     } catch (error) {
@@ -446,7 +433,6 @@ export class SolanaWebSocket extends EventEmitter {
    */
   private scheduleReconnect(): void {
     if (this.isManualDisconnect) {
-      console.log('[WebSocket] Manual disconnect - not reconnecting');
       return;
     }
 
@@ -459,7 +445,6 @@ export class SolanaWebSocket extends EventEmitter {
     this.reconnectAttempts++;
     const delay = RECONNECT_DELAY_MS * Math.min(this.reconnectAttempts, 5);
 
-    console.log(`[WebSocket] Scheduling reconnect attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
 
     this.connectionState = 'reconnecting';
     this.emit('state_change', this.connectionState);

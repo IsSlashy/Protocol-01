@@ -56,9 +56,7 @@ export default function CreateWalletScreen() {
       updateStep(2, 'in_progress');
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      console.log('[CreateWallet] Creating wallet...');
       const walletInfo = await createWallet();
-      console.log('[CreateWallet] Wallet created, mnemonic length:', walletInfo.mnemonic?.split(' ').length);
 
       if (!walletInfo.mnemonic || walletInfo.mnemonic.split(' ').length !== 12) {
         throw new Error('Invalid mnemonic generated');
@@ -75,7 +73,6 @@ export default function CreateWalletScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       // Store mnemonic temporarily for backup screen
-      console.log('[CreateWallet] Storing mnemonic for backup screen...');
       await SecureStore.setItemAsync('p01_temp_mnemonic', walletInfo.mnemonic);
 
       // Verify it was stored correctly
@@ -84,7 +81,6 @@ export default function CreateWalletScreen() {
         console.error('[CreateWallet] Mnemonic storage verification failed');
         throw new Error('Failed to store mnemonic securely');
       }
-      console.log('[CreateWallet] Mnemonic stored and verified');
 
       await delay(STEP_DURATION);
       updateStep(3, 'completed');

@@ -412,7 +412,6 @@ document.getElementById('qr').innerHTML = qrCodeSvg;
 // Attendre la complétion
 const result = await auth.waitForCompletion(sessionId);
 if (result.success) {
-  console.log('Connecté:', result.wallet);
 }`}</code>
           </pre>
         </div>

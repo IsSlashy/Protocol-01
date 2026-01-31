@@ -7,23 +7,32 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     },
     "./react": {
+      "types": "./dist/react/index.d.ts",
       "import": "./dist/react/index.mjs",
-      "require": "./dist/react/index.js",
-      "types": "./dist/react/index.d.ts"
+      "require": "./dist/react/index.js"
     },
     "./registry": {
+      "types": "./dist/registry.d.ts",
       "import": "./dist/registry.mjs",
-      "require": "./dist/registry.js",
-      "types": "./dist/registry.d.ts"
+      "require": "./dist/registry.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "react": ["dist/react/index.d.ts"],
+      "registry": ["dist/registry.d.ts"]
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "sideEffects": false,
   "scripts": {
@@ -32,6 +41,9 @@
     "lint": "eslint src --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist",
+    "test": "vitest run --config vitest.unit.config.ts",
+    "test:watch": "vitest --config vitest.unit.config.ts",
+    "prepublishOnly": "pnpm run build && pnpm run test",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },
@@ -48,10 +60,16 @@
     "stream-secure",
     "usdc",
     "react",
-    "widget"
+    "widget",
+    "web3",
+    "defi",
+    "sdk"
   ],
-  "author": "Protocol 01",
+  "author": "Protocol 01 <contact@protocol01.com> (https://protocol01.com)",
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "peerDependencies": {
     "react": ">=17.0.0"
   },
@@ -75,7 +93,8 @@
     "storybook": "^10.1.11",
     "tsup": "^8.0.1",
     "typescript": "^5.3.3",
-    "vite": "^5.1.0"
+    "vite": "^5.1.0",
+    "vitest": "^1.6.0"
   },
   "dependencies": {
     "@noble/curves": "^1.3.0",
@@ -87,10 +106,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/protocol01/p01-js"
+    "url": "https://github.com/IsSlashy/protocol-01.git",
+    "directory": "packages/p01-js"
   },
   "bugs": {
-    "url": "https://github.com/protocol01/p01-js/issues"
+    "url": "https://github.com/IsSlashy/protocol-01/issues"
   },
   "homepage": "https://protocol01.com"
 }

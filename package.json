@@ -10,9 +10,15 @@
     "dev:web": "turbo run dev --filter=web",
     "dev:mobile": "turbo run dev --filter=mobile",
     "build:sdk": "turbo run build --filter=p01-sdk",
+    "test": "turbo run test",
     "test:zk": "ts-mocha -p tsconfig.test.json tests/zk-shielded.test.ts --timeout 120000",
     "test:zk-transfer": "ts-mocha -p tsconfig.test.json tests/zk-transfer.test.ts --timeout 180000",
-    "test:zk-e2e": "ts-mocha -p tsconfig.test.json tests/zk-e2e.test.ts --timeout 300000"
+    "test:zk-e2e": "ts-mocha -p tsconfig.test.json tests/zk-e2e.test.ts --timeout 300000",
+    "test:e2e-stealth": "ts-mocha -p tsconfig.test.json tests/e2e-stealth-payments.test.ts --timeout 300000",
+    "test:e2e-stream": "ts-mocha -p tsconfig.test.json tests/e2e-stream-secure.test.ts --timeout 300000",
+    "test:e2e-auth": "ts-mocha -p tsconfig.test.json tests/e2e-auth-flow.test.ts --timeout 120000",
+    "test:e2e-privacy": "ts-mocha -p tsconfig.test.json tests/e2e-privacy-modes.test.ts --timeout 300000",
+    "test:e2e": "ts-mocha -p tsconfig.test.json tests/e2e-*.test.ts --timeout 300000"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",

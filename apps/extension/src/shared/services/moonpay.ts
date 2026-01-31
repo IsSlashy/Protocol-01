@@ -92,7 +92,6 @@ class MoonPayService {
    */
   initialize(config: MoonPayConfig): void {
     this.config = config;
-    console.log('[MoonPay] Initialized in', config.environment, 'mode');
   }
 
   private getWidgetUrl(): string {
@@ -161,7 +160,6 @@ class MoonPayService {
    */
   async openBuyWidget(params: BuyWidgetParams = {}): Promise<void> {
     const url = this.buildBuyUrl(params);
-    console.log('[MoonPay] Opening buy widget:', url);
     window.open(url, '_blank');
   }
 
@@ -170,7 +168,6 @@ class MoonPayService {
    */
   openBuyWidgetPopup(params: BuyWidgetParams = {}): Window | null {
     const url = this.buildBuyUrl(params);
-    console.log('[MoonPay] Opening buy widget popup:', url);
     return window.open(
       url,
       'moonpay-buy',
@@ -217,7 +214,6 @@ class MoonPayService {
    */
   async openSellWidget(params: SellWidgetParams = {}): Promise<void> {
     const url = this.buildSellUrl(params);
-    console.log('[MoonPay] Opening sell widget:', url);
     window.open(url, '_blank');
   }
 
@@ -226,7 +222,6 @@ class MoonPayService {
    */
   openSellWidgetPopup(params: SellWidgetParams = {}): Window | null {
     const url = this.buildSellUrl(params);
-    console.log('[MoonPay] Opening sell widget popup:', url);
     return window.open(
       url,
       'moonpay-sell',

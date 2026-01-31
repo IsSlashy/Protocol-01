@@ -87,7 +87,6 @@ async function initializeAndroidChannels(): Promise<void> {
 export async function registerForPushNotifications(): Promise<PushToken | null> {
   // Skip in Expo Go
   if (isExpoGo) {
-    console.log('[Notifications] Push notifications not available in Expo Go');
     serviceState.lastError = 'Push notifications not available in Expo Go';
     return null;
   }
@@ -154,7 +153,6 @@ export async function registerForPushNotifications(): Promise<PushToken | null> 
     serviceState.isInitialized = true;
     serviceState.lastError = null;
 
-    console.log('Push notification token registered:', pushToken.token);
     return pushToken;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -231,7 +229,6 @@ export function setupNotificationListeners(
   // Listener for notifications received while app is foregrounded
   const receivedSubscription = Notifications.addNotificationReceivedListener(
     (notification) => {
-      console.log('Notification received:', notification.request.identifier);
       if (onReceived) {
         onReceived({
           request: {
@@ -250,7 +247,6 @@ export function setupNotificationListeners(
   // Listener for user interaction with notifications
   const responseSubscription =
     Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log('Notification response:', response.notification.request.identifier);
       if (onResponse) {
         onResponse({
           notification: {

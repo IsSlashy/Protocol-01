@@ -118,14 +118,12 @@ export async function generateStealthAddress(
     if (recipientViewingX25519Pub && recipientViewingX25519Pub.length === 32) {
       // Use provided X25519 public key directly (new format)
       recipientX25519Public = recipientViewingX25519Pub;
-      console.log('[Stealth] Using provided X25519 viewing public key');
     } else {
       // Derive X25519 from Ed25519 viewing key (legacy fallback)
       // Note: This uses the Ed25519 public key bytes as seed, which must match recipient's derivation
       const viewingPubBytes = new PublicKey(recipientViewingPubKey).toBytes();
       const recipientX25519Keypair = seedToX25519Keypair(viewingPubBytes);
       recipientX25519Public = recipientX25519Keypair.publicKey;
-      console.log('[Stealth] Derived X25519 from Ed25519 viewing public key (legacy)');
     }
 
     // Compute shared secret using X25519 ECDH
@@ -179,7 +177,6 @@ export async function scanStealthPayment(
       const decoded = Buffer.from(ephemeralPublicKey, 'base64');
       if (decoded.length === 32) {
         ephemeralX25519Public = new Uint8Array(decoded);
-        console.log('[Stealth] Decoded ephemeral key as base64 X25519');
       } else {
         throw new Error('Invalid length');
       }
@@ -189,7 +186,6 @@ export async function scanStealthPayment(
         const ephemeralPubBytes = new PublicKey(ephemeralPublicKey).toBytes();
         const ephemeralX25519 = seedToX25519Keypair(ephemeralPubBytes);
         ephemeralX25519Public = ephemeralX25519.publicKey;
-        console.log('[Stealth] Decoded ephemeral key as Ed25519 (legacy)');
       } catch {
         console.error('[Stealth] Failed to decode ephemeral public key');
         return { found: false };
@@ -212,7 +208,6 @@ export async function scanStealthPayment(
     // Check view tag for quick rejection
     if (expectedViewTag) {
       const computedViewTag = await generateViewTag(sharedSecret);
-      console.log('[Stealth] View tag: expected=', expectedViewTag, 'computed=', computedViewTag);
       if (computedViewTag !== expectedViewTag) {
         return { found: false };
       }
@@ -226,7 +221,6 @@ export async function scanStealthPayment(
 
     // Derive the corresponding keypair
     const stealthKeypair = Keypair.fromSeed(stealthPrivateKey);
-    console.log('[Stealth] Derived stealth address:', stealthKeypair.publicKey.toBase58());
 
     return {
       found: true,

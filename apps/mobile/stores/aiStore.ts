@@ -107,10 +107,6 @@ export const useAIStore = create<AIState>((set, get) => ({
       const streamStore = useStreamStore.getState();
       const walletStore = useWalletStore.getState();
 
-      console.log('[AI] Stream count:', streamStore.streams.length);
-      console.log('[AI] Streams:', streamStore.streams.map(s => ({ name: s.name, status: s.status })));
-      console.log('[AI] Wallet balance object:', JSON.stringify(walletStore.balance));
-      console.log('[AI] Balance SOL:', walletStore.balance?.sol);
 
       const context: AIContext = {
         streams: streamStore.streams,

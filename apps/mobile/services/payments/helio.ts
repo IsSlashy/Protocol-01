@@ -87,7 +87,6 @@ class HelioService {
    */
   initialize(config: HelioConfig): void {
     this.config = config;
-    console.log('[Helio] Initialized on', config.network);
   }
 
   private getBaseUrl(): string {

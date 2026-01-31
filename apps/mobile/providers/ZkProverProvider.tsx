@@ -27,13 +27,11 @@ async function loadCircuitData(): Promise<boolean> {
   circuitLoadPromise = new Promise((resolve) => {
     // Wait for interactions to complete before loading heavy data
     InteractionManager.runAfterInteractions(async () => {
-      console.log('[ZK Prover] Loading circuit data on demand...');
       try {
         // Dynamic import - only loads when this function is called
         const circuitModule = await import('../assets/circuits/circuitData');
         TRANSFER_WASM_BASE64 = circuitModule.TRANSFER_WASM_BASE64;
         TRANSFER_ZKEY_BASE64 = circuitModule.TRANSFER_ZKEY_BASE64;
-        console.log('[ZK Prover] Circuit data loaded successfully');
         resolve(true);
       } catch (err) {
         console.error('[ZK Prover] Failed to load circuit data:', err);
@@ -132,7 +130,6 @@ const PROVER_WEBVIEW_HTML = `
         throw new Error('Circuit files not loaded');
       }
 
-      console.log('[WebView] Starting proof generation...');
       const startTime = performance.now();
 
       // Parse JSON array inputs
@@ -153,7 +150,6 @@ const PROVER_WEBVIEW_HTML = `
       );
 
       const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-      console.log('[WebView] Proof generated in ' + duration + 's');
 
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'proof',
@@ -267,7 +263,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
       const data = JSON.parse(event.nativeEvent.data);
 
       if (data.type === 'ready') {
-        console.log('[ZK Prover] WebView ready');
         webViewReadyRef.current = true;
         setIsReady(true);
         webViewReadyPromise.current?.resolve();
@@ -275,7 +270,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
       }
 
       if (data.type === 'circuitLoaded') {
-        console.log('[ZK Prover] Circuit loaded:', data.success);
         isCircuitLoadedRef.current = data.success;
         setIsCircuitLoaded(data.success);
         if (!data.success && data.error) {
@@ -285,7 +279,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
           // Connect prover to ZK service
           const zkService = getZkService();
           zkService.setProver(generateProofViaWebView);
-          console.log('[ZK Prover] Connected to ZK service');
         }
         return;
       }
@@ -331,7 +324,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
   // Load circuit files into WebView
   const loadCircuitFiles = async () => {
     try {
-      console.log('[ZK Prover] Loading circuit files...');
       setError('Loading ZK circuits...');
 
       // Load the circuit data (uses InteractionManager internally)
@@ -344,9 +336,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
         return false;
       }
 
-      console.log('[ZK Prover] Using embedded circuit data...');
-      console.log(`[ZK Prover] WASM size: ${(TRANSFER_WASM_BASE64.length * 0.75 / 1024 / 1024).toFixed(2)} MB`);
-      console.log(`[ZK Prover] ZKEY size: ${(TRANSFER_ZKEY_BASE64.length * 0.75 / 1024 / 1024).toFixed(2)} MB`);
 
       // Send to WebView
       const message = JSON.stringify({
@@ -355,7 +344,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
         zkey: TRANSFER_ZKEY_BASE64,
       });
 
-      console.log('[ZK Prover] Sending circuits to WebView...');
       webViewRefCurrent.current?.injectJavaScript(`
         window.postMessage(${JSON.stringify(message)}, '*');
         true;
@@ -373,11 +361,9 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
 
   // Start the prover (enables WebView and loads circuits)
   const startProver = useCallback(async (): Promise<boolean> => {
-    console.log('[ZK Prover] Starting prover...');
 
     // Enable WebView if not already
     if (!webViewEnabled) {
-      console.log('[ZK Prover] Enabling WebView...');
       setWebViewEnabled(true);
       // Wait a frame for React to render the WebView
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -485,7 +471,6 @@ export function useZkProver(): ZkProverContextType {
   if (!context) {
     // Return mock context instead of throwing - allows app to work without ZK features
     if (!_zkProverWarnedOnce) {
-      console.log('[ZK Prover] Provider not in tree - using backend prover');
       _zkProverWarnedOnce = true;
     }
     return {

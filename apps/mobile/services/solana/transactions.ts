@@ -69,14 +69,11 @@ export interface TransactionHistory {
  */
 export async function getCachedTransactions(publicKey: string): Promise<TransactionHistory[]> {
   try {
-    console.log('[Transactions] Loading cache for:', publicKey.slice(0, 8) + '...');
     const cached = await AsyncStorage.getItem(TX_CACHE_KEY + publicKey);
     if (cached) {
       const data = JSON.parse(cached);
-      console.log('[Transactions] ✓ CACHE HIT:', data.length, 'transactions loaded instantly');
       return data;
     } else {
-      console.log('[Transactions] ✗ CACHE MISS: No cached transactions found');
     }
   } catch (error) {
     console.warn('[Transactions] Failed to load cache:', error);
@@ -90,7 +87,6 @@ export async function getCachedTransactions(publicKey: string): Promise<Transact
 async function cacheTransactions(publicKey: string, transactions: TransactionHistory[]): Promise<void> {
   try {
     await AsyncStorage.setItem(TX_CACHE_KEY + publicKey, JSON.stringify(transactions));
-    console.log('[Transactions] Cached', transactions.length, 'transactions');
   } catch (error) {
     console.warn('[Transactions] Failed to cache:', error);
   }
@@ -102,7 +98,6 @@ async function cacheTransactions(publicKey: string, transactions: TransactionHis
 export async function clearTransactionCache(publicKey: string): Promise<void> {
   try {
     await AsyncStorage.removeItem(TX_CACHE_KEY + publicKey);
-    console.log('[Transactions] Cache cleared for:', publicKey.slice(0, 8) + '...');
   } catch (error) {
     console.warn('[Transactions] Failed to clear cache:', error);
   }
@@ -160,7 +155,6 @@ export async function sendSolWithSigner(
           lamports: feeAmount,
         })
       );
-      console.log(`[P-01 Fee] ${feeAmount} lamports (${P01_FEE_BPS / 100}%) to ${P01_FEE_WALLET.slice(0, 8)}...`);
     }
 
     // Get recent blockhash
@@ -169,15 +163,12 @@ export async function sendSolWithSigner(
     transaction.feePayer = fromPubkey;
 
     // Sign transaction with provided signer
-    console.log('[SendSolWithSigner] Signing transaction...');
     const signedTransaction = await signTransaction(transaction);
 
     // Send and confirm
-    console.log('[SendSolWithSigner] Sending raw transaction...');
     const signature = await connection.sendRawTransaction(signedTransaction.serialize());
     await connection.confirmTransaction(signature, 'confirmed');
 
-    console.log(`[Send] Success: ${amount} SOL to ${toAddress.slice(0, 8)}... (fee: ${feeAmount / LAMPORTS_PER_SOL} SOL)`);
 
     return {
       signature,
@@ -239,7 +230,6 @@ export async function sendSol(
           lamports: feeAmount,
         })
       );
-      console.log(`[P-01 Fee] ${feeAmount} lamports (${P01_FEE_BPS / 100}%) to ${P01_FEE_WALLET.slice(0, 8)}...`);
     }
 
     // Get recent blockhash
@@ -255,7 +245,6 @@ export async function sendSol(
       { commitment: 'confirmed' }
     );
 
-    console.log(`[Send] Success: ${amount} SOL to ${toAddress.slice(0, 8)}... (fee: ${feeAmount / LAMPORTS_PER_SOL} SOL)`);
 
     return {
       signature,
@@ -282,7 +271,6 @@ export async function getTransactionHistory(
   limit: number = 20 // Need 20 to include older SOL transfers past memo transactions
 ): Promise<TransactionHistory[]> {
   try {
-    console.log('=== [Transactions] Fetching history for:', publicKey, '===');
     const connection = getConnection();
     const pubkey = new PublicKey(publicKey);
 
@@ -296,7 +284,6 @@ export async function getTransactionHistory(
       } catch (sigError: any) {
         const errMsg = sigError?.message || String(sigError);
         if (errMsg.includes('500') || errMsg.includes('502') || errMsg.includes('503') || errMsg.includes('429')) {
-          console.log(`[Transactions] Server error getting signatures, retrying in 3s... (${retries} left)`);
           await new Promise(resolve => setTimeout(resolve, 3000));
           retries--;
           if (retries === 0) throw sigError;
@@ -307,14 +294,11 @@ export async function getTransactionHistory(
     }
 
     if (!signatures) {
-      console.log('[Transactions] Failed to get signatures after retries');
       return [];
     }
 
-    console.log('[Transactions] Found', signatures.length, 'signatures');
 
     if (signatures.length === 0) {
-      console.log('[Transactions] No signatures found');
       return [];
     }
 
@@ -342,7 +326,6 @@ export async function getTransactionHistory(
 
         // Include all transactions with SOL changes (skip memo-only)
         if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
-          console.log('[Transactions] Adding:', parsed.type, parsed.amount?.toFixed(4), parsed.token);
           history.push({
             signature: sig.signature,
             timestamp: sig.blockTime,
@@ -358,7 +341,6 @@ export async function getTransactionHistory(
 
         if (isRateLimit || isServerError) {
           const errorType = isRateLimit ? 'Rate limited' : 'Server error';
-          console.log(`[Transactions] ${errorType} (${msg.slice(0, 50)}), waiting 5s and retrying...`);
           await new Promise(resolve => setTimeout(resolve, 5000));
           // Retry this transaction once
           try {
@@ -368,7 +350,6 @@ export async function getTransactionHistory(
             if (tx) {
               const parsed = parseTransaction(tx, publicKey);
               if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
-                console.log('[Transactions] Retry successful:', parsed.type, parsed.amount?.toFixed(4));
                 history.push({
                   signature: sig.signature,
                   timestamp: sig.blockTime,
@@ -378,13 +359,11 @@ export async function getTransactionHistory(
               }
             }
           } catch {
-            console.log('[Transactions] Retry also failed, skipping...');
           }
         }
       }
     }
 
-    console.log('[Transactions] Total:', history.length, 'transactions returned');
 
     // Cache the results for instant loading next time
     if (history.length > 0) {

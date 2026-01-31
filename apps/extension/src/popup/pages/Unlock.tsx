@@ -31,29 +31,22 @@ export default function Unlock() {
     setLocalError('');
     clearError();
 
-    console.log('[Unlock] Starting unlock...');
     const success = await unlock(password);
-    console.log('[Unlock] Unlock result:', success);
 
     if (success) {
       // Check if there's a pending approval path to redirect to
       try {
-        console.log('[Unlock] Checking for afterUnlockPath...');
         const result = await chrome.storage.session.get('afterUnlockPath');
-        console.log('[Unlock] afterUnlockPath:', result.afterUnlockPath);
         if (result.afterUnlockPath) {
           await chrome.storage.session.remove('afterUnlockPath');
-          console.log('[Unlock] Navigating to:', result.afterUnlockPath);
           navigate(result.afterUnlockPath);
           return;
         }
       } catch (e) {
         console.error('[Unlock] Error checking afterUnlockPath:', e);
       }
-      console.log('[Unlock] Navigating to home');
       navigate('/');
     } else {
-      console.log('[Unlock] Unlock failed');
       setLocalError('Invalid password');
     }
   };

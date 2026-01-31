@@ -8,8 +8,6 @@ import process from 'process';
 (globalThis as any).process = process;
 (window as any).process = process;
 
-console.log('[P01] Polyfills loaded');
-
 // Now import everything else
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -19,7 +17,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { P01PrivyProvider } from '../shared/providers/PrivyProvider';
 import './styles/globals.css';
 
-console.log('[P01] Mounting React...');
 const rootElement = document.getElementById('root');
 
 if (!rootElement) {
@@ -38,7 +35,6 @@ if (!rootElement) {
         </ErrorBoundary>
       </React.StrictMode>
     );
-    console.log('[P01] React mounted with Privy');
   } catch (e) {
     console.error('[P01] Mount error:', e);
   }
