@@ -109,8 +109,24 @@ try {
 
 // Express app setup
 const app = express();
-app.use(cors()); // Enable CORS for mobile app
+app.use(cors({
+  origin: [
+    'https://protocol-01.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:8081',
+  ],
+}));
 app.use(express.json({ limit: '10mb' })); // Increased limit for proof inputs
+
+// TODO: Add rate limiting - install express-rate-limit and apply:
+//   /prove endpoint: 5 requests per minute
+//   /relay/* endpoints: 20 requests per minute
+// Example: import rateLimit from 'express-rate-limit';
+//   const proveLimiter = rateLimit({ windowMs: 60000, max: 5 });
+//   const relayLimiter = rateLimit({ windowMs: 60000, max: 20 });
+//   app.use('/prove', proveLimiter);
+//   app.use('/relay', relayLimiter);
 
 /**
  * Health check endpoint
@@ -792,8 +808,8 @@ async function verifyProofOffChain(proof: any, publicInputs: string[]): Promise<
   try {
     // Check if we have a verification key loaded
     if (!verificationKey) {
-      logger.warn('No verification key loaded - using mock verification (INSECURE)');
-      return true; // Fallback for development
+      logger.error('No verification key loaded - rejecting proof (verification key required)');
+      return false;
     }
 
     // Validate proof format
