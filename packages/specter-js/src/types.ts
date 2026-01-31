@@ -165,3 +165,7 @@ export enum P01ErrorCode {
   TIMEOUT = 'TIMEOUT',
   UNKNOWN = 'UNKNOWN',
 }
+
+// Aliases for backward compatibility
+export { P01Error as SpecterError };
+export { P01ErrorCode as SpecterErrorCode };
