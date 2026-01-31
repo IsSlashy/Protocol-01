@@ -25,6 +25,13 @@ jobs:
           git config --global user.name "${{ env.GIT_USER_NAME }}"
           git config --global user.email "${{ env.GIT_USER_EMAIL }}"
 
+      - name: Set commit message
+        id: msg
+        run: |
+          # Use first line of commit message only, sanitized for shell safety
+          MSG=$(git log -1 --pretty=%s | head -c 200 | tr -d '"' | tr -d "'" | tr -d '`')
+          echo "msg=Sync: ${MSG}" >> $GITHUB_OUTPUT
+
       - name: Detect changes
         id: changes
         run: |
@@ -47,7 +54,7 @@ jobs:
           rm -rf .git 2>/dev/null || true
           git init
           git add -A
-          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git commit -m "${{ steps.msg.outputs.msg }}"
           git branch -M main
           git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-web.git
           git push -f origin main
@@ -61,7 +68,7 @@ jobs:
           rm -rf .git node_modules android/app/build android/.gradle .expo 2>/dev/null || true
           git init
           git add -A
-          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git commit -m "${{ steps.msg.outputs.msg }}"
           git branch -M main
           git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-mobile.git
           git push -f origin main
@@ -75,7 +82,7 @@ jobs:
           rm -rf .git node_modules dist 2>/dev/null || true
           git init
           git add -A
-          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git commit -m "${{ steps.msg.outputs.msg }}"
           git branch -M main
           git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-extension.git
           git push -f origin main
@@ -99,7 +106,7 @@ jobs:
           cd /tmp/p01-sdk
           git init
           git add -A
-          git commit -m "Sync: ${{ github.event.head_commit.message || 'Manual sync' }}"
+          git commit -m "${{ steps.msg.outputs.msg }}"
           git branch -M main
           git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-sdk.git
           git push -f origin main
