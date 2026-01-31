@@ -20,6 +20,3 @@ export { P01AuthClient, type P01AuthClientConfig, type CreateSessionResult } fro
 // Server SDK (for backend verification)
 export { P01AuthServer, type P01AuthServerConfig } from './server';
 
-// Default exports
-export { default as P01AuthClient } from './client';
-export { default as P01AuthServer } from './server';
