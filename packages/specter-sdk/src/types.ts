@@ -490,3 +490,4 @@ export type P01EventListener = (event: P01Event) => void;
 // Aliases for backward compatibility
 export { P01Error as SpecterError };
 export { P01ErrorCode as SpecterErrorCode };
+export type { P01Wallet as SpecterWallet };
