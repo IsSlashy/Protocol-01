@@ -25,8 +25,7 @@
   "scripts": {
     "build": "tsup src/index.ts src/client.ts src/server.ts --format cjs,esm --dts",
     "dev": "tsup src/index.ts src/client.ts src/server.ts --format cjs,esm --dts --watch",
-    "test": "vitest",
-    "lint": "eslint src/"
+    "test": "vitest"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
