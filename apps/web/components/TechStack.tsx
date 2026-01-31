@@ -61,7 +61,7 @@ const architectureLayers = [
   },
   {
     name: "Execution Layer",
-    description: "TEE Compute, Private Relayers",
+    description: "Private Relayer, Subscription Crank",
     color: "p01-bright-cyan",
   },
   {
@@ -171,7 +171,7 @@ export default function TechStack() {
             </span>
           </h2>
           <div className="section-subtitle space-y-1">
-            <p>We combine the latest advances in zero-knowledge proofs, trusted execution environments, and privacy-preserving protocols.</p>
+            <p>We combine the latest advances in zero-knowledge proofs, stealth addressing, and privacy-preserving protocols on Solana.</p>
           </div>
         </motion.div>
 
