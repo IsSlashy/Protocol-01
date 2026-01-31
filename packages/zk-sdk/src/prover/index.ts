@@ -26,6 +26,7 @@ export interface Groth16Proof {
  * Proof inputs for the transfer circuit
  */
 export interface ProofInputs {
+  [key: string]: string | string[];
   // Public inputs
   merkle_root: string;
   nullifier_1: string;
@@ -264,4 +265,4 @@ export async function generateProof(
 }
 
 // Re-export types
-export type { ProofInputs, FullProofInputs };
+export type { FullProofInputs };
