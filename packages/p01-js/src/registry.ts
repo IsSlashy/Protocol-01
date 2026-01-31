@@ -667,6 +667,39 @@ export const KNOWN_SERVICES: Record<string, ServiceInfo> = {
   },
 };
 
+// ============ Type Aliases ============
+
+/** Alias for ServiceInfo */
+export type RegisteredService = ServiceInfo;
+
+/** Result of a service lookup */
+export interface ServiceLookupResult {
+  service: ServiceInfo | null;
+  domain: string;
+  verified: boolean;
+}
+
+/** Service registry class for looking up known services */
+export class ServiceRegistry {
+  static detect(origin: string): ServiceLookupResult {
+    const domain = extractDomain(origin);
+    const service = KNOWN_SERVICES[domain] ?? null;
+    return { service, domain, verified: service?.verified === true };
+  }
+
+  static isVerified(origin: string): boolean {
+    return isVerifiedService(origin);
+  }
+
+  static getByCategory(category: MerchantCategory): Array<[string, ServiceInfo]> {
+    return getServicesByCategory(category);
+  }
+
+  static search(query: string): Array<[string, ServiceInfo]> {
+    return searchServices(query);
+  }
+}
+
 // ============ Detection Functions ============
 
 /**
