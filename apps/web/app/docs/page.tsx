@@ -68,13 +68,13 @@ const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);`,
     title: "Zero-Knowledge Proofs (Groth16)",
     icon: <Shield className="w-6 h-6" />,
     description:
-      "ZK-SNARKs enable private transfers where amounts and participants are hidden. We use Groth16 proofs verified on-chain using Solana's native alt_bn128 syscalls.",
+      "ZK-SNARKs hide basic transfers on-chain — amounts, senders, and recipients are invisible. This applies to direct private transfers only. Streams and subscriptions use a separate obscurement module (noise). Proofs are verified on-chain using Solana's native alt_bn128 syscalls.",
     details: [
+      "Used for private transfers only (not streams or subscriptions)",
       "Circom circuits with ~12,000 constraints for efficient proving",
       "Poseidon hash function (ZK-friendly) for commitments and Merkle trees",
       "Groth16 verification using Solana's native BN254 pairing precompiles",
       "Proof generation takes <2 seconds on modern devices",
-      "Trusted setup completed with secure MPC ceremony",
     ],
     codeExample: `// Generate ZK proof for private transfer
 const { proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -85,24 +85,28 @@ const { proof, publicSignals } = await snarkjs.groth16.fullProve(
   },
   {
     id: "shielded-pool",
-    title: "Shielded Pool Architecture",
+    title: "Shielded Pool & Relayer",
     icon: <Lock className="w-6 h-6" />,
     description:
-      "The shielded pool stores encrypted notes in a Merkle tree. Users can deposit (shield), transfer privately, and withdraw (unshield) while maintaining complete privacy.",
+      "Private transfers go through the relayer. The user generates a ZK proof client-side, funds the relayer, and the relayer executes the transfer to a stealth address. On-chain, only the relayer-to-stealth-address link is visible — the original sender is completely hidden.",
     details: [
-      "Note = Hash(amount, owner_pubkey, randomness, token_mint)",
-      "Sparse Merkle tree with depth 20 (~1M notes capacity)",
-      "Nullifiers prevent double-spending without revealing which note was spent",
-      "Historical roots accepted for concurrent transactions",
+      "User generates Groth16 proof locally (sender never revealed)",
+      "User funds relayer with amount + 0.5% fee + gas",
+      "Relayer verifies proof off-chain, then sends to stealth address",
+      "On-chain visibility: Relayer → Stealth Address only",
+      "Sparse Merkle tree with depth 20 for commitment tracking",
       "Supports SOL and any SPL token",
     ],
-    codeExample: `// Shielded note structure
-Note = {
-  amount: u64,           // Hidden from observers
-  owner_pubkey: [u8; 32], // Derived from spending key
-  randomness: [u8; 32],   // Blinding factor
-  commitment: Poseidon(amount, owner, randomness, mint)
-}`,
+    codeExample: `// Private transfer flow via relayer
+// 1. User generates ZK proof client-side
+const { proof, publicSignals } = await generateProof(inputs);
+
+// 2. User funds relayer (amount + fee + gas)
+await fundRelayer(amount, feeBps: 50, gasCost);
+
+// 3. Relayer verifies & sends to stealth address
+// On-chain: only "Relayer → StealthAddress" is visible
+const tx = await relayer.privateSend(proof, stealthAddress);`,
   },
   {
     id: "poseidon-hash",
@@ -113,12 +117,12 @@ Note = {
     details: [
       "Operates natively over prime fields (BN254 scalar field)",
       "~300x fewer constraints than Keccak in Circom circuits",
-      "Used for note commitments and Merkle tree hashing",
+      "Used for commitments, nullifiers, and Merkle tree hashing",
       "Parameters: BN254 curve, x^5 S-box, 8 full rounds",
       "Compatible with circomlib implementation",
     ],
-    codeExample: `// Poseidon hash in circuit
-template NoteCommitment() {
+    codeExample: `// Poseidon commitment in circuit
+template Commitment() {
     signal input amount;
     signal input ownerPubkey;
     signal input randomness;
@@ -137,10 +141,10 @@ template NoteCommitment() {
     title: "Merkle Tree Proofs",
     icon: <GitBranch className="w-6 h-6" />,
     description:
-      "A Merkle tree stores all note commitments, allowing users to prove membership without revealing which note they own. The root is stored on-chain and updated with each deposit.",
+      "A Merkle tree stores all commitments, allowing users to prove they have funds in the shielded pool without revealing which commitment they own. The root is stored on-chain and updated with each deposit.",
     details: [
       "Binary tree with Poseidon hash at each node",
-      "Depth 20 = 2^20 = ~1 million notes capacity",
+      "Depth 20 = 2^20 = ~1 million commitments capacity",
       "Proof size: 20 siblings + 20 path indices",
       "Incremental insertions for gas efficiency",
       "Precomputed zero values for empty subtrees",
@@ -158,13 +162,13 @@ root === computedRoot; // Must match on-chain root`,
     title: "Nullifier Mechanism",
     icon: <Key className="w-6 h-6" />,
     description:
-      "Nullifiers are unique identifiers that prevent double-spending without revealing which note was spent. Each note can only produce one valid nullifier.",
+      "Nullifiers are unique identifiers that prevent double-spending without revealing which commitment was spent. Each commitment can only produce one valid nullifier.",
     details: [
       "Nullifier = Poseidon(commitment, spending_key_hash)",
       "Stored on-chain in a set (prevents reuse)",
-      "Cannot be linked back to the original note",
+      "Cannot be linked back to the original commitment",
       "Spending key proves ownership without revealing identity",
-      "Bloom filter optimization for gas efficiency",
+      "Tracked by the relayer to prevent replay attacks",
     ],
     codeExample: `// Nullifier computation
 const spendingKeyHash = Poseidon([spendingKey]);
@@ -219,6 +223,32 @@ const fundTx = await fundRelayer(amount, fee, gasCost, rentCost);
   amount           // Transfer amount
 }
 // Result: recipient receives funds with no link to sender`,
+  },
+  {
+    id: "streams-privacy",
+    title: "Streams & Subscriptions Privacy",
+    icon: <Layers className="w-6 h-6" />,
+    description:
+      "Streams and subscriptions do NOT use ZK proofs. They are separate modules with their own privacy model based on obscurement. Users can add noise to amounts and timing to make payments harder to analyze, but they are not fully hidden like ZK transfers.",
+    details: [
+      "Streams: time-locked escrow payments (P2P or P2B) — visible on-chain",
+      "Subscriptions: delegated recurring payments via crank — visible on-chain",
+      "Amount noise: 0-20% random variation on each payment",
+      "Timing noise: 0-24 hours random delay on payment execution",
+      "Optional stealth address for recipient obscurement",
+      "Privacy level: obscurement (not full anonymity like ZK transfers)",
+    ],
+    codeExample: `// Subscription with privacy noise (not ZK)
+await p01.createSubscription({
+  amount: 9.99,
+  interval: 'monthly',
+  privacyOptions: {
+    amountNoise: 10,    // ±10% random variation
+    timingNoise: 12,    // ±12 hours random delay
+    useStealth: true    // Pay to ephemeral address
+  }
+});
+// On-chain: payment is visible but harder to correlate`,
   },
   {
     id: "client-sdk",
@@ -661,7 +691,7 @@ export default function DocsPage() {
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>No double-spending: Nullifiers are unique per note</span>
+                  <span>No double-spending: Nullifiers are unique per commitment</span>
                 </li>
               </ul>
             </div>
@@ -674,7 +704,7 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto">
           <h2 className="text-2xl font-bold text-white mb-6">Quick Navigation</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {technologies.slice(0, 8).map((tech) => (
+            {technologies.map((tech) => (
               <a
                 key={tech.id}
                 href={`#${tech.id}`}
