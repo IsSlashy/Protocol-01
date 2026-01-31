@@ -85,9 +85,7 @@ export async function claimStealth(options: ClaimOptions): Promise<ClaimResult> 
     const destinationPubKey =
       destination ||
       (destinationWallet
-        ? 'publicKey' in destinationWallet
-          ? destinationWallet.publicKey
-          : destinationWallet.publicKey
+        ? destinationWallet.publicKey
         : stealthKeypair.publicKey);
 
     // Get current balance at stealth address

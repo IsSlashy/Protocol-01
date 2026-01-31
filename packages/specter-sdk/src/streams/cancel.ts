@@ -81,7 +81,7 @@ export async function cancelStream(options: CancelOptions): Promise<{
 
   // Get sender public key
   const senderPubKey =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
 
   // Verify sender is the stream creator
   if (!senderPubKey.equals(stream.sender)) {
@@ -182,7 +182,7 @@ export async function pauseStream(
   }
 
   const senderPubKey =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
 
   if (!senderPubKey.equals(stream.sender)) {
     throw new SpecterError(
@@ -248,7 +248,7 @@ export async function resumeStream(
   }
 
   const senderPubKey =
-    'publicKey' in sender ? sender.publicKey : sender.publicKey;
+    sender.publicKey;
 
   if (!senderPubKey.equals(stream.sender)) {
     throw new SpecterError(
@@ -393,9 +393,7 @@ export async function closeExpiredStream(
   }
 
   const authorityPubKey =
-    'publicKey' in closeAuthority
-      ? closeAuthority.publicKey
-      : closeAuthority.publicKey;
+    closeAuthority.publicKey;
 
   const transaction = new Transaction();
 

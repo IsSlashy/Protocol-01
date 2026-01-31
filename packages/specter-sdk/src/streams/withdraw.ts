@@ -84,7 +84,7 @@ export async function withdrawStream(options: WithdrawOptions): Promise<{
 
   // Get recipient public key
   const recipientPubKey =
-    'publicKey' in recipient ? recipient.publicKey : recipient.publicKey;
+    recipient.publicKey;
 
   // Verify recipient matches stream
   if (!recipientPubKey.equals(stream.recipient)) {
