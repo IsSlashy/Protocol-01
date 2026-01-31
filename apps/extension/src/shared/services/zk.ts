@@ -271,7 +271,6 @@ class MerkleTree {
       for (let i = ZERO_VALUE_BYTES.length - 1; i >= 0; i--) {
         baseZero = (baseZero << BigInt(8)) | BigInt(ZERO_VALUE_BYTES[i]);
       }
-      console.log('[MerkleTree] Base zero value:', baseZero.toString().slice(0, 20) + '...');
 
       this._zeroValues = [baseZero];
       for (let i = 1; i <= this.depth; i++) {
@@ -365,11 +364,8 @@ class ClientProver {
 
   async initialize(): Promise<void> {
     // Load circuit files
-    console.log('[Prover] Loading circuit files...');
     const wasmUrl = chrome.runtime.getURL(CIRCUIT_WASM_PATH);
     const zkeyUrl = chrome.runtime.getURL(CIRCUIT_ZKEY_PATH);
-    console.log('[Prover] WASM URL:', wasmUrl);
-    console.log('[Prover] ZKEY URL:', zkeyUrl);
 
     try {
       const [wasmResponse, zkeyResponse] = await Promise.all([
@@ -388,13 +384,10 @@ class ClientProver {
         return;
       }
 
-      console.log('[Prover] Circuit files loaded, reading buffers...');
       this.circuitWasm = await wasmResponse.arrayBuffer();
       this.circuitZkey = await zkeyResponse.arrayBuffer();
-      console.log('[Prover] WASM size:', this.circuitWasm.byteLength, 'ZKEY size:', this.circuitZkey.byteLength);
 
       // Create Web Worker
-      console.log('[Prover] Creating Web Worker...');
       this.worker = new Worker(
         new URL('../workers/zkProver.worker.ts', import.meta.url),
         { type: 'module' }
@@ -412,7 +405,6 @@ class ClientProver {
           if (type === 'ready') {
             clearTimeout(timeout);
             this._isReady = true;
-            console.log('[Prover] Web Worker ready');
             resolve();
             return;
           }
@@ -619,7 +611,6 @@ export class ZkServiceExtension {
     // Initialize client-side prover (Web Worker)
     try {
       await this.prover.initialize();
-      console.log('[ZK] Client-side prover initialized');
     } catch (error) {
       console.warn('[ZK] Prover initialization failed, transfer/unshield will be unavailable:', error);
     }
@@ -803,7 +794,6 @@ export class ZkServiceExtension {
         tokenMint: tokenMintField,
         commitment: dummyCommitment,
       };
-      console.log('[ZK Transfer] Created dummy input note with randomness:', dummyRandomness.toString().slice(0, 20) + '...');
     }
 
     // Generate proofs
@@ -822,10 +812,6 @@ export class ZkServiceExtension {
       : [notesToSpend[0], dummyInputNote!];
 
     // Verify Merkle proofs locally before sending to circuit
-    console.log('[ZK Transfer] Verifying Merkle proof locally...');
-    console.log('[ZK Transfer] Note 1 commitment:', notesToSpend[0].commitment.toString().slice(0, 20) + '...');
-    console.log('[ZK Transfer] Note 1 leafIndex:', notesToSpend[0].leafIndex);
-    console.log('[ZK Transfer] Merkle root:', merkleRoot.toString().slice(0, 20) + '...');
 
     // Verify proof1 locally
     let computedRoot = notesToSpend[0].commitment;
@@ -838,15 +824,11 @@ export class ZkServiceExtension {
         computedRoot = poseidonHash(computedRoot, sibling);
       }
     }
-    console.log('[ZK Transfer] Computed root from proof1:', computedRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Transfer] Roots match:', computedRoot === merkleRoot);
 
     if (computedRoot !== merkleRoot) {
       console.error('[ZK Transfer] Local Merkle proof verification FAILED!');
       console.error('[ZK Transfer] This indicates the local Merkle tree state is inconsistent');
       // Try to dump tree state for debugging
-      console.log('[ZK Transfer] Tree leaf count:', this.merkleTree.leafCount);
-      console.log('[ZK Transfer] Note count:', this.notes.length);
     }
 
     // Request proof from client-side prover
@@ -905,8 +887,6 @@ export class ZkServiceExtension {
       ...bigintToLeBytes(newRoot),     // New merkle root for tree update
     ]);
 
-    console.log('[ZK Transfer] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Transfer] New root after insertion:', newRoot.toString().slice(0, 20) + '...');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
@@ -992,7 +972,6 @@ export class ZkServiceExtension {
       throw new Error('ZK Service not initialized');
     }
 
-    console.log('[ZK] Generating transfer proof for relayer, amount:', Number(amount) / 1e9, 'SOL');
 
     // Select notes to spend
     const { notesToSpend, totalValue } = this.selectNotes(amount);
@@ -1083,7 +1062,6 @@ export class ZkServiceExtension {
     };
 
     // Generate raw proof via client-side prover
-    console.log('[ZK] Generating raw proof client-side for relayer...');
     const startTime = performance.now();
 
     if (!this.prover.isReady) {
@@ -1092,7 +1070,6 @@ export class ZkServiceExtension {
 
     const { proof, publicSignals } = await this.prover.generateProofRaw(circuitInputs);
     const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-    console.log(`[ZK] Raw proof generated in ${duration}s`);
 
     // Store pending notes for later marking
     this._pendingSpendNotes = notesToSpend;
@@ -1117,7 +1094,6 @@ export class ZkServiceExtension {
    * Mark notes as spent after relayer confirms the transfer
    */
   async markNoteSpent(nullifier: string): Promise<void> {
-    console.log('[ZK] Marking notes as spent after relayer confirmation');
 
     if (this._pendingSpendNotes.length > 0) {
       this.removeSpentNotes(this._pendingSpendNotes);
@@ -1126,12 +1102,10 @@ export class ZkServiceExtension {
 
     if (this._pendingChangeNote && this._pendingChangeNote.amount > BigInt(0)) {
       this.notes.push(this._pendingChangeNote);
-      console.log('[ZK] Change note added:', Number(this._pendingChangeNote.amount) / 1e9, 'SOL');
       this._pendingChangeNote = null;
     }
 
     await this.saveNotes();
-    console.log('[ZK] Notes updated, new balance:', Number(this.getShieldedBalance()) / 1e9, 'SOL');
   }
 
   /**
@@ -1182,7 +1156,6 @@ export class ZkServiceExtension {
         tokenMint: tokenMintField,
         commitment: dummyCommitment,
       };
-      console.log('[ZK Unshield] Created dummy input note with randomness:', dummyRandomness.toString().slice(0, 20) + '...');
     }
 
     // Generate proofs
@@ -1284,9 +1257,6 @@ export class ZkServiceExtension {
       ...bigintToLeBytes(newRoot),               // New merkle root for tree update
     ]);
 
-    console.log('[ZK Unshield] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Unshield] Recipient:', recipient.toBase58());
-    console.log('[ZK Unshield] Amount:', amount.toString(), 'lamports');
 
     const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
@@ -1435,7 +1405,6 @@ export class ZkServiceExtension {
       spending_key: inputs.spendingKey.toString(),
     };
 
-    console.log('[ZK] Generating proof client-side...');
     const startTime = performance.now();
 
     try {
@@ -1447,7 +1416,6 @@ export class ZkServiceExtension {
 
       const proof = await this.prover.generateProof(circuitInputs);
       const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-      console.log(`[ZK] Proof generated in ${duration}s`);
       return proof;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -1479,7 +1447,6 @@ export class ZkServiceExtension {
         'zk_tree_leaves': JSON.stringify(treeLeaves),
       });
 
-      console.log('[ZK] Saved', this.notes.length, 'notes and', treeLeaves.length, 'tree leaves');
     } catch (error) {
       console.error('[ZK] Failed to save notes:', error);
     }
@@ -1495,21 +1462,16 @@ export class ZkServiceExtension {
       // First, rebuild the full Merkle tree from saved leaves
       if (result.zk_tree_leaves) {
         const treeLeaves = JSON.parse(result.zk_tree_leaves);
-        console.log('[ZK] Restoring Merkle tree with', treeLeaves.length, 'leaves');
 
         // DEBUG: Dump all commitments for comparison with mobile
-        console.log('[ZK] ======= EXTENSION COMMITMENT DUMP START =======');
         for (let i = 0; i < treeLeaves.length; i++) {
-          console.log(`[ZK] C[${i.toString().padStart(2, '0')}]: ${treeLeaves[i]}`);
         }
-        console.log('[ZK] ======= EXTENSION COMMITMENT DUMP END =======');
 
         for (const leafStr of treeLeaves) {
           this.merkleTree.insert(BigInt(leafStr));
         }
 
         // DEBUG: Log computed root from stored leaves
-        console.log('[ZK] Computed root from stored leaves:', this.merkleTree.root.toString());
 
         // Store tree leaves for note index validation
         const treeLeavesSet = new Map<string, number>();
@@ -1558,8 +1520,6 @@ export class ZkServiceExtension {
         }
       }
 
-      console.log('[ZK] Loaded', this.notes.length, 'notes, tree has', this.merkleTree.leafCount, 'leaves');
-      console.log('[ZK] Current Merkle root:', this.merkleTree.root.toString().slice(0, 20) + '...');
     } catch (error) {
       console.error('[ZK] Failed to load notes:', error);
       this.notes = [];
@@ -1576,7 +1536,6 @@ export class ZkServiceExtension {
       throw new Error('Connection not set');
     }
 
-    console.log('[ZK Sync] Starting blockchain sync...');
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -1606,11 +1565,6 @@ export class ZkServiceExtension {
     const onChainDepth = merkleTreeAccount.data[depthOffset];
 
     // Log raw bytes for debugging
-    console.log('[ZK Sync] Account data length:', merkleTreeAccount.data.length);
-    console.log('[ZK Sync] Discriminator (hex):', Buffer.from(discriminator).toString('hex'));
-    console.log('[ZK Sync] Pool pubkey:', new PublicKey(poolBytes).toBase58());
-    console.log('[ZK Sync] Root bytes (first 8, hex):', Buffer.from(rootBytes.slice(0, 8)).toString('hex'));
-    console.log('[ZK Sync] On-chain depth:', onChainDepth);
 
     // Convert on-chain root to bigint (little-endian)
     let onChainRoot = BigInt(0);
@@ -1618,8 +1572,6 @@ export class ZkServiceExtension {
       onChainRoot = (onChainRoot << BigInt(8)) | BigInt(rootBytes[i]);
     }
 
-    console.log('[ZK Sync] On-chain leaf count:', onChainLeafCount);
-    console.log('[ZK Sync] On-chain root (full):', onChainRoot.toString());
 
     // Also fetch pool's merkle_root for comparison
     try {
@@ -1631,8 +1583,6 @@ export class ZkServiceExtension {
         for (let i = 31; i >= 0; i--) {
           poolRoot = (poolRoot << BigInt(8)) | BigInt(poolRootBytes[i]);
         }
-        console.log('[ZK Sync] Pool merkle_root:', poolRoot.toString());
-        console.log('[ZK Sync] Tree root == Pool root:', onChainRoot === poolRoot);
       }
     } catch (e) {
       console.warn('[ZK Sync] Could not read pool root:', e);
@@ -1655,7 +1605,6 @@ export class ZkServiceExtension {
       if (signatures.length > 500) break;
     }
 
-    console.log('[ZK Sync] Found', signatures.length, 'transactions to process');
 
     // Process in chronological order (oldest first)
     signatures.sort((a, b) => a.slot - b.slot);
@@ -1678,7 +1627,6 @@ export class ZkServiceExtension {
           });
         } catch (error: any) {
           if (error?.message?.includes('429') || error?.toString?.()?.includes('429')) {
-            console.log(`[ZK Sync] Rate limited (attempt ${attempt + 1}/${maxRetries}), waiting...`);
             await delay(2000 * (attempt + 1));
           } else {
             throw error;
@@ -1744,7 +1692,6 @@ export class ZkServiceExtension {
           }
         } else if (txMessage.instructions) {
           // Fallback for legacy instruction format
-          console.log('[ZK Sync] Using legacy instructions path');
           for (const ix of txMessage.instructions) {
             // Check if this instruction is for our program
             const ixProgramId = ix.programId || (ix.programIdIndex !== undefined ? txMessage.accountKeys?.[ix.programIdIndex] : null);
@@ -1807,7 +1754,6 @@ export class ZkServiceExtension {
             commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
           }
           commitmentMap.set(leafIndex, commitment);
-          console.log('[ZK Sync] Shield commitment at index', leafIndex);
         }
 
         if (isUnshield && leafIndex !== null && ixData.length > 400) {
@@ -1819,7 +1765,6 @@ export class ZkServiceExtension {
             commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[i]);
           }
           commitmentMap.set(leafIndex, commitment);
-          console.log('[ZK Sync] Unshield commitment at index', leafIndex);
         }
 
         if (isTransfer && transferIndices && ixData.length > 400) {
@@ -1835,7 +1780,6 @@ export class ZkServiceExtension {
               commitment = (commitment << BigInt(8)) | BigInt(commitmentBytes[j]);
             }
             commitmentMap.set(transferIndices[i], commitment);
-            console.log('[ZK Sync] Transfer commitment', i + 1, 'at index', transferIndices[i]);
           }
         }
       } catch (error) {
@@ -1843,7 +1787,6 @@ export class ZkServiceExtension {
       }
     }
 
-    console.log('[ZK Sync] Extracted', commitmentMap.size, 'commitments');
 
     // Build ordered commitment array
     const commitments: bigint[] = [];
@@ -1856,20 +1799,14 @@ export class ZkServiceExtension {
     }
 
     // DEBUG: Dump extracted commitments for comparison
-    console.log('[ZK Sync] ======= EXTRACTED COMMITMENTS DUMP START =======');
     for (let i = 0; i < commitments.length; i++) {
-      console.log(`[ZK Sync] C[${i.toString().padStart(2, '0')}]: ${commitments[i].toString()}`);
     }
-    console.log('[ZK Sync] ======= EXTRACTED COMMITMENTS DUMP END =======');
 
     // DEBUG: Compare stored vs extracted commitments
     try {
       const storedResult = await chrome.storage.local.get('zk_tree_leaves');
       if (storedResult.zk_tree_leaves) {
         const storedLeaves = JSON.parse(storedResult.zk_tree_leaves);
-        console.log('[ZK Sync] ======= COMMITMENT COMPARISON START =======');
-        console.log('[ZK Sync] Stored leaf count:', storedLeaves.length);
-        console.log('[ZK Sync] Extracted leaf count:', commitments.length);
 
         const minLen = Math.min(storedLeaves.length, commitments.length);
         let firstMismatch = -1;
@@ -1878,17 +1815,11 @@ export class ZkServiceExtension {
           const extracted = commitments[i].toString();
           if (stored !== extracted) {
             if (firstMismatch === -1) firstMismatch = i;
-            console.log(`[ZK Sync] MISMATCH at [${i}]:`);
-            console.log(`[ZK Sync]   Stored:    ${stored}`);
-            console.log(`[ZK Sync]   Extracted: ${extracted}`);
           }
         }
         if (firstMismatch === -1) {
-          console.log('[ZK Sync] First', minLen, 'commitments MATCH!');
         } else {
-          console.log('[ZK Sync] First mismatch at index:', firstMismatch);
         }
-        console.log('[ZK Sync] ======= COMMITMENT COMPARISON END =======');
       }
     } catch (e) {
       console.warn('[ZK Sync] Could not compare commitments:', e);
@@ -1900,13 +1831,10 @@ export class ZkServiceExtension {
       newTree.insert(commitment);
     }
 
-    console.log('[ZK Sync] Rebuilt tree with', newTree.leafCount, 'leaves');
-    console.log('[ZK Sync] Local root:', newTree.root.toString().slice(0, 20) + '...');
 
     const rootMatches = newTree.root === onChainRoot;
 
     if (rootMatches) {
-      console.log('[ZK Sync] SUCCESS! Root matches on-chain');
     } else {
       console.warn('[ZK Sync] ⚠️ Root mismatch detected - on-chain root is stale');
       console.warn('[ZK Sync] Correct tree root:', newTree.root.toString());
@@ -1930,20 +1858,16 @@ export class ZkServiceExtension {
       const noteCommitmentStr = note.commitment.toString();
       const onChainIndex = commitments.findIndex(c => c.toString() === noteCommitmentStr);
       if (onChainIndex !== -1 && note.leafIndex !== onChainIndex) {
-        console.log(`[ZK Sync] Correcting note index: ${note.leafIndex} -> ${onChainIndex}`);
         note.leafIndex = onChainIndex;
         notesUpdated++;
       }
     }
 
     if (notesUpdated > 0) {
-      console.log(`[ZK Sync] Updated ${notesUpdated} note indices`);
     }
 
     await this.saveNotes();
 
-    console.log('[ZK Sync] Local tree updated with', newTree.leafCount, 'commitments');
-    console.log('[ZK Sync] New local root:', newTree.root.toString().slice(0, 20) + '...');
 
     return {
       success: true, // Always succeed if we extracted all commitments
@@ -1961,7 +1885,6 @@ export class ZkServiceExtension {
       throw new Error('ZK Service not initialized');
     }
 
-    console.log('[ZK] Scanning for incoming notes...');
 
     // Get the pool PDA to find relevant transactions
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -1984,7 +1907,6 @@ export class ZkServiceExtension {
         }
       );
 
-      console.log(`[ZK] Found ${signatures.length} transactions to scan`);
 
       let foundCount = 0;
       const existingCommitments = new Set(this.notes.map(n => n.commitment.toString()));
@@ -2024,7 +1946,6 @@ export class ZkServiceExtension {
               const isOurNote = await this.tryDecryptNote(commitment, amount, leafIndex);
 
               if (isOurNote) {
-                console.log(`[ZK] Found incoming note: ${amount} lamports at index ${leafIndex}`);
                 foundCount++;
                 existingCommitments.add(commitment.toString());
               }
@@ -2048,7 +1969,6 @@ export class ZkServiceExtension {
                 const isOurNote = await this.checkOutputCommitment(commitment);
 
                 if (isOurNote) {
-                  console.log(`[ZK] Found incoming transfer note`);
                   foundCount++;
                   existingCommitments.add(commitment.toString());
                 }
@@ -2066,7 +1986,6 @@ export class ZkServiceExtension {
       }
 
       const newBalance = this.getShieldedBalance();
-      console.log(`[ZK] Scan complete: found ${foundCount} new notes, balance: ${newBalance}`);
 
       return { found: foundCount, newBalance };
     } catch (error) {
@@ -2177,7 +2096,6 @@ export class ZkServiceExtension {
 
     // Handle p01note: format (mobile app compatible)
     if (trimmedData.startsWith('p01note:')) {
-      console.log('[ZK Import] Importing p01note format');
       try {
         const noteData = decodeP01Note(trimmedData);
         return this.processNoteImport({
@@ -2200,7 +2118,6 @@ export class ZkServiceExtension {
 
     // Handle single recipient note format (extension format)
     if (parsedData.type === 'recipient_note' && parsedData.note) {
-      console.log('[ZK Import] Importing single recipient note (extension format)');
       const noteData = parsedData.note;
 
       // Convert to array format
@@ -2245,14 +2162,11 @@ export class ZkServiceExtension {
 
     // Check if any note has a leafIndex beyond our current tree
     const maxLeafIndex = Math.max(...importData.notes.map(n => n.leafIndex ?? -1));
-    console.log(`[ZK Import] Max leaf index in import: ${maxLeafIndex}, current tree size: ${this.merkleTree.leafCount}`);
 
     // If we need more leaves, sync from blockchain first
     if (maxLeafIndex >= this.merkleTree.leafCount) {
-      console.log('[ZK Import] Need to sync from blockchain to get commitments up to index', maxLeafIndex);
       try {
         await this.syncFromBlockchain();
-        console.log('[ZK Import] Sync complete, tree now has', this.merkleTree.leafCount, 'leaves');
       } catch (error) {
         console.error('[ZK Import] Failed to sync from blockchain:', error);
         // Continue anyway - we'll verify the commitment below
@@ -2307,7 +2221,6 @@ export class ZkServiceExtension {
           const treeCommitment = allLeaves[note.leafIndex];
           if (treeCommitment === note.commitment) {
             foundIndex = note.leafIndex;
-            console.log(`[ZK Import] Verified commitment at claimed index ${note.leafIndex}`);
           } else {
             console.warn(`[ZK Import] Commitment mismatch at claimed index ${note.leafIndex}, searching tree...`);
             console.warn(`[ZK Import] Claimed: ${note.commitment}`);
@@ -2319,7 +2232,6 @@ export class ZkServiceExtension {
         if (foundIndex === -1) {
           foundIndex = allLeaves.findIndex(l => l === note.commitment);
           if (foundIndex >= 0) {
-            console.log(`[ZK Import] Found commitment in tree at index ${foundIndex} (claimed: ${note.leafIndex})`);
             note.leafIndex = foundIndex;
           }
         }
@@ -2346,7 +2258,6 @@ export class ZkServiceExtension {
     // Save updated notes
     await this.saveNotes();
 
-    console.log(`[ZK Import] Imported ${imported} notes, skipped ${skipped}`);
     return { imported, skipped };
   }
 
@@ -2364,7 +2275,6 @@ export class ZkServiceExtension {
   async clearNotes(): Promise<void> {
     this.notes = [];
     await chrome.storage.local.remove('zk_notes');
-    console.log('[ZK] Cleared all notes. Tree remains with', this.merkleTree.leafCount, 'leaves');
   }
 
   /**

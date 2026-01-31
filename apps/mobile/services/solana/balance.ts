@@ -29,7 +29,6 @@ async function withRetry<T>(fn: () => Promise<T>, retries = MAX_RETRIES): Promis
                         errorMsg.includes('timeout');
 
     if (retries > 0 && shouldRetry) {
-      console.log(`RPC error (${errorMsg.slice(0, 50)}...), retrying in ${RETRY_DELAY}ms...`);
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       return withRetry(fn, retries - 1);
     }
@@ -172,14 +171,11 @@ export async function getCachedBalance(publicKey: string): Promise<WalletBalance
   try {
     const cacheKey = getBalanceCacheKey(publicKey);
     const cluster = getCluster();
-    console.log('[Balance] Loading cache for:', publicKey.slice(0, 8) + '...', 'on', cluster);
     const cached = await AsyncStorage.getItem(cacheKey);
     if (cached) {
       const data = JSON.parse(cached);
-      console.log('[Balance] ✓ CACHE HIT:', data.sol, 'SOL loaded instantly on', cluster);
       return data;
     } else {
-      console.log('[Balance] ✗ CACHE MISS: No cached balance found for', cluster);
     }
   } catch (error) {
     console.warn('[Balance] Failed to load cache:', error);
@@ -195,7 +191,6 @@ async function cacheBalance(publicKey: string, balance: WalletBalance): Promise<
     const cacheKey = getBalanceCacheKey(publicKey);
     const cluster = getCluster();
     await AsyncStorage.setItem(cacheKey, JSON.stringify(balance));
-    console.log('[Balance] Cached balance:', balance.sol, 'SOL on', cluster);
   } catch (error) {
     console.warn('[Balance] Failed to cache:', error);
   }
@@ -209,7 +204,6 @@ export async function clearBalanceCache(publicKey: string): Promise<void> {
     const cacheKey = getBalanceCacheKey(publicKey);
     const cluster = getCluster();
     await AsyncStorage.removeItem(cacheKey);
-    console.log('[Balance] Cache cleared for:', publicKey.slice(0, 8) + '...', 'on', cluster);
   } catch (error) {
     console.warn('[Balance] Failed to clear cache:', error);
   }

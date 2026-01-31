@@ -79,13 +79,11 @@ export default function ActivityScreen() {
   // Open transaction in Solana Explorer
   const openExplorer = useCallback((signature: string) => {
     const url = getExplorerUrl(signature, 'tx');
-    console.log('[Activity] Opening explorer:', url);
     Linking.openURL(url);
   }, []);
 
   // Handle transaction click
   const handleTransactionPress = useCallback((tx: Transaction) => {
-    console.log('[Activity] Transaction clicked:', tx.id, 'type:', tx.type);
 
     // Check if this is a valid blockchain transaction signature
     // Real Solana signatures are ~88 chars base58 (no underscores, no 'payment_' prefix)
@@ -95,7 +93,6 @@ export default function ActivityScreen() {
       !tx.id.includes('_') &&
       !tx.id.startsWith('payment');
 
-    console.log('[Activity] Is valid signature:', isValidSignature, 'length:', tx.id?.length);
 
     if (isValidSignature) {
       openExplorer(tx.id);

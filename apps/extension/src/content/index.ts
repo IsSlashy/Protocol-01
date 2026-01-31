@@ -275,7 +275,6 @@ function initialize(): void {
     '*'
   );
 
-  console.log('[Protocol 01] Content script initialized');
 }
 
 // Run initialization

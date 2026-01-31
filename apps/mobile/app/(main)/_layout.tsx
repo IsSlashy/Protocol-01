@@ -19,10 +19,8 @@ export default function MainLayout() {
   // Real-time sync for subscriptions from extension
   useRealtimeSync({
     onSubscriptionAdded: (stream) => {
-      console.log('[RealtimeSync] New subscription added:', stream.name);
     },
     onSyncComplete: (result) => {
-      console.log('[RealtimeSync] Sync complete:', result.newStreams, 'new streams');
     },
     onError: (error) => {
       console.error('[RealtimeSync] Error:', error);

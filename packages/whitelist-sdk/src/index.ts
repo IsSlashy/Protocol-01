@@ -3,7 +3,7 @@ import * as nacl from 'tweetnacl';
 import * as naclUtil from 'tweetnacl-util';
 
 // Program ID - will be updated after deployment
-export const WHITELIST_PROGRAM_ID = new PublicKey('P01WL1stxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+export const WHITELIST_PROGRAM_ID = PublicKey.default;
 
 // Admin public key for encrypting emails (Volta Team)
 // This is the public key that can decrypt the email data

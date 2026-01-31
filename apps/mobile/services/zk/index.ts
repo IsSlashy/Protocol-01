@@ -273,7 +273,6 @@ class MerkleTree {
       for (let i = ZERO_VALUE_BYTES.length - 1; i >= 0; i--) {
         baseZero = (baseZero << BigInt(8)) | BigInt(ZERO_VALUE_BYTES[i]);
       }
-      console.log('[MerkleTree] Base zero value:', baseZero.toString().slice(0, 20) + '...');
 
       this._zeroValues = [baseZero];
       for (let i = 1; i <= this.depth; i++) {
@@ -382,7 +381,6 @@ export class ZkService {
     this.ownerPubkey = keys.ownerPubkey;
     this.viewingKey = bigintToLeBytes(keys.ownerPubkey);
 
-    console.log('[ZK] Service initialized');
 
     // Load persisted notes
     await this.loadNotes();
@@ -449,7 +447,6 @@ export class ZkService {
       // Fetch account data
       const accountInfo = await this.connection.getAccountInfo(nullifierSetPDA);
       if (!accountInfo) {
-        console.log('[ZK] Nullifier set account not found');
         return false;
       }
 
@@ -527,7 +524,6 @@ export class ZkService {
     }
 
     if (removedCount > 0) {
-      console.log(`[ZK] Removed ${removedCount} zombie notes (already spent on-chain)`);
       await this.saveNotes();
     }
 
@@ -556,7 +552,6 @@ export class ZkService {
     walletPublicKey: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
   ): Promise<string> {
-    console.log('[ZK Shield] Starting shield...');
 
     if (!this.ownerPubkey) {
       throw new Error('ZK Service not initialized');
@@ -571,7 +566,6 @@ export class ZkService {
 
     // Get current leaf count before insertion
     const leafIndexBeforeInsert = this.merkleTree.leafCount;
-    console.log('[ZK Shield] Inserting at leaf index:', leafIndexBeforeInsert);
 
     // Update local Merkle tree
     const newRoot = this.merkleTree.insert(note.commitment);
@@ -584,7 +578,6 @@ export class ZkService {
     note.merkleRoot = newRoot;
     note.leafIndex = leafIndexBeforeInsert;
     note.isOnChain = true; // Will be confirmed after tx
-    console.log('[ZK Shield] Merkle path stored, root:', newRoot.toString().slice(0, 20) + '...');
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -650,7 +643,6 @@ export class ZkService {
         await new Promise(r => setTimeout(r, 5000));
         const status = await this.connection.getSignatureStatus(signature);
         if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-          console.log('[ZK Shield] Transaction confirmed after retry check');
         } else if (status.value?.err) {
           throw new Error(`Shield transaction failed: ${JSON.stringify(status.value.err)}`);
         } else {
@@ -661,7 +653,6 @@ export class ZkService {
       }
     }
 
-    console.log('[ZK Shield] Transaction confirmed:', signature);
 
     // Note already has leafIndex and merkle path set from before insertion
     // Just verify the on-chain state matches our expectation
@@ -721,7 +712,6 @@ export class ZkService {
     }
 
     // Sync Merkle tree with on-chain state before generating proofs
-    console.log('[ZK Transfer] Syncing Merkle tree with on-chain state...');
     await this.syncMerkleTree();
 
     // Select notes to spend
@@ -759,8 +749,6 @@ export class ZkService {
         tokenMint: tokenMintField,
         commitment: dummyCommitment,
       };
-      console.log('[ZK Transfer] Created unique dummy input note with randomness:', dummyRandomness.toString().slice(0, 20) + '...');
-      console.log('[ZK Transfer] Dummy nullifier_2:', nullifier2.toString().slice(0, 20) + '...');
     }
 
     // Generate Merkle proofs
@@ -844,8 +832,6 @@ export class ZkService {
       bigintToLeBytes(newRoot),     // New merkle root for tree update
     ]);
 
-    console.log('[ZK Transfer] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Transfer] New root after insertion:', newRoot.toString().slice(0, 20) + '...');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
@@ -895,7 +881,6 @@ export class ZkService {
       preflightCommitment: 'confirmed',
     });
 
-    console.log('[ZK Transfer] Transaction sent:', signature);
 
     // Wait for confirmation with timeout handling
     try {
@@ -905,14 +890,12 @@ export class ZkService {
         console.error('[ZK Transfer] Error:', JSON.stringify(confirmation.value.err));
         throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
-      console.log('[ZK Transfer] Transaction confirmed successfully:', signature);
     } catch (e: any) {
       if (e.message?.includes('timeout') || e.message?.includes('expired')) {
         console.warn('[ZK Transfer] Confirmation timed out, checking status...');
         await new Promise(r => setTimeout(r, 5000));
         const status = await this.connection.getSignatureStatus(signature);
         if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-          console.log('[ZK Transfer] Transaction confirmed after retry');
         } else if (status.value?.err) {
           throw new Error(`Transfer failed: ${JSON.stringify(status.value.err)}`);
         } else {
@@ -944,7 +927,6 @@ export class ZkService {
       leafIndex: recipientLeafIndex,
     };
 
-    console.log('[ZK Transfer] Note to share with recipient:', this._lastSentNote.noteString.slice(0, 50) + '...');
 
     return signature;
   }
@@ -963,7 +945,6 @@ export class ZkService {
     }
 
     // Sync Merkle tree with on-chain state before generating proofs
-    console.log('[ZK Unshield] Syncing Merkle tree with on-chain state...');
     await this.syncMerkleTree();
 
     // Select notes to spend
@@ -973,12 +954,10 @@ export class ZkService {
     }
 
     // Validate selected notes are not already spent on-chain (detect zombie notes)
-    console.log('[ZK Unshield] Validating selected notes are not already spent...');
     const validNotes = await this.validateNotesNotSpent(notesToSpend);
 
     // If any notes were removed as zombies, re-select
     if (validNotes.length < notesToSpend.length) {
-      console.log('[ZK Unshield] Some notes were zombie (already spent), re-selecting...');
       const reselection = this.selectNotes(amount);
       notesToSpend = reselection.notesToSpend;
       totalValue = reselection.totalValue;
@@ -996,7 +975,6 @@ export class ZkService {
     } else {
       notesToSpend = validNotes;
     }
-    console.log('[ZK Unshield] All selected notes validated as unspent');
 
     const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
 
@@ -1016,7 +994,6 @@ export class ZkService {
         tokenMint: tokenMintField,
         commitment: dummyCommitment,
       };
-      console.log('[ZK Unshield] Created dummy change note with commitment:', dummyCommitment.toString().slice(0, 20) + '...');
     }
 
     // Compute nullifiers
@@ -1043,14 +1020,10 @@ export class ZkService {
         tokenMint: tokenMintField,
         commitment: dummyCommitment,
       };
-      console.log('[ZK Unshield] Created unique dummy input note with randomness:', dummyRandomness.toString().slice(0, 20) + '...');
-      console.log('[ZK Unshield] Dummy commitment:', dummyCommitment.toString().slice(0, 20) + '...');
-      console.log('[ZK Unshield] Dummy nullifier_2:', nullifier2.toString().slice(0, 20) + '...');
     }
 
     // Generate proofs from synced tree
     // NOTE: Historical roots are not supported on-chain, so we MUST use current root
-    console.log('[ZK Unshield] Generating merkle proofs from synced tree (current root required)');
 
     const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
     // IMPORTANT: We must use the LOCAL tree root because the proof siblings come from the local tree.
@@ -1067,12 +1040,6 @@ export class ZkService {
       ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
       : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
 
-    console.log('[ZK Unshield] Using current merkle root:', merkleRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Unshield] Note 1 at leaf index:', notesToSpend[0].leafIndex);
-    console.log('[ZK Unshield] Note 1 commitment:', notesToSpend[0].commitment.toString().slice(0, 20) + '...');
-    console.log('[ZK Unshield] Merkle tree leaf count:', this.merkleTree.leafCount);
-    console.log('[ZK Unshield] Proof1 pathIndices (first 5):', proof1.pathIndices.slice(0, 5));
-    console.log('[ZK Unshield] Proof1 pathElements (first 3):', proof1.pathElements.slice(0, 3).map(e => e.toString().slice(0, 15) + '...'));
 
     // Verify the proof locally before sending to circuit
     let computedRoot = notesToSpend[0].commitment;
@@ -1083,8 +1050,6 @@ export class ZkService {
         ? poseidonHash(sibling, computedRoot)
         : poseidonHash(computedRoot, sibling);
     }
-    console.log('[ZK Unshield] Locally computed root:', computedRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Unshield] Roots match:', computedRoot === merkleRoot);
 
     // Create dummy second output note (amount=0)
     const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
@@ -1168,9 +1133,6 @@ export class ZkService {
       bigintToLeBytes(newRoot),    // new_root for merkle tree update
     ]);
 
-    console.log('[ZK Unshield] Building tx with merkle_root:', merkleRoot.toString().slice(0, 20) + '...');
-    console.log('[ZK Unshield] Recipient:', recipient.toBase58());
-    console.log('[ZK Unshield] Amount:', amount.toString(), 'lamports');
 
     // For native SOL, we still need to pass optional accounts as None
     // Anchor expects all accounts in order, optional ones can be the program ID as placeholder
@@ -1233,14 +1195,12 @@ export class ZkService {
         console.error('[ZK Unshield] Transaction failed on-chain:', confirmation.value.err);
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
-      console.log('[ZK Unshield] Transaction confirmed successfully:', signature);
     } catch (e: any) {
       if (e.message?.includes('timeout') || e.message?.includes('expired')) {
         console.warn('[ZK Unshield] Confirmation timed out, checking status...');
         await new Promise(r => setTimeout(r, 5000));
         const status = await this.connection.getSignatureStatus(signature);
         if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-          console.log('[ZK Unshield] Transaction confirmed after retry');
         } else if (status.value?.err) {
           throw new Error(`Unshield failed: ${JSON.stringify(status.value.err)}`);
         } else {
@@ -1289,7 +1249,6 @@ export class ZkService {
     walletPublicKey: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
   ): Promise<StealthUnshieldResult> {
-    console.log('[ZK Stealth Unshield] Generating stealth address for recipient...');
 
     // Generate one-time stealth address
     const stealthData: StealthAddress = await generateStealthAddress(
@@ -1297,9 +1256,6 @@ export class ZkService {
       recipientViewingPubKey
     );
 
-    console.log('[ZK Stealth Unshield] Stealth address:', stealthData.address);
-    console.log('[ZK Stealth Unshield] Ephemeral pubkey:', stealthData.ephemeralPublicKey);
-    console.log('[ZK Stealth Unshield] View tag:', stealthData.viewTag);
 
     // Convert stealth address to PublicKey
     const stealthRecipient = new PublicKey(stealthData.address);
@@ -1312,8 +1268,6 @@ export class ZkService {
       signTransaction
     );
 
-    console.log('[ZK Stealth Unshield] Complete! Tx:', signature);
-    console.log('[ZK Stealth Unshield] Recipient should scan with viewing key to find funds');
 
     return {
       signature,
@@ -1333,7 +1287,6 @@ export class ZkService {
     // Notes with merkle paths but not on-chain are from failed shield transactions
     const spendableNotes = this.notes.filter(note => note.isOnChain === true);
 
-    console.log('[ZK] Spendable notes:', spendableNotes.length, 'of', this.notes.length);
 
     if (spendableNotes.length === 0) {
       console.warn('[ZK] No spendable notes! All notes must be synced with on-chain state.');
@@ -1381,7 +1334,6 @@ export class ZkService {
     if (existingNote) {
       // If same commitment, it's a duplicate - skip silently
       if (existingNote.commitment.toString() === note.commitment.toString()) {
-        console.log('[ZK] Note already exists at index', note.leafIndex, '- skipping duplicate');
         return false;
       }
 
@@ -1396,7 +1348,6 @@ export class ZkService {
 
     // Valid - add the note
     this.notes.push(note);
-    console.log('[ZK] Added note at leafIndex', note.leafIndex, 'amount:', note.amount.toString());
     return true;
   }
 
@@ -1411,7 +1362,6 @@ export class ZkService {
    */
   static setBackendProverUrl(url: string): void {
     ZkService.BACKEND_PROVER_URL = url;
-    console.log('[ZK] Backend prover URL set to:', url);
   }
 
   /**
@@ -1426,7 +1376,6 @@ export class ZkService {
    */
   setProver(prover: (inputs: Record<string, string>) => Promise<Groth16Proof>): void {
     this.proverFunction = prover;
-    console.log('[ZK] Client-side prover connected');
   }
 
   /**
@@ -1434,8 +1383,6 @@ export class ZkService {
    * This is the preferred method for mobile as it doesn't require bundling 19MB circuits
    */
   private async generateProofViaBackend(inputs: Record<string, string>): Promise<Groth16Proof> {
-    console.log('[ZK] Requesting proof from backend prover...');
-    console.log('[ZK] Backend URL:', ZkService.BACKEND_PROVER_URL);
 
     try {
       const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
@@ -1457,7 +1404,6 @@ export class ZkService {
         throw new Error(result.message || 'Backend prover returned invalid response');
       }
 
-      console.log('[ZK] Backend proof generated in', result.proofTimeMs, 'ms');
 
       // Convert snarkjs proof format to our Groth16Proof format
       return this.convertSnarkjsProof(result.proof);
@@ -1475,8 +1421,6 @@ export class ZkService {
     proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
     publicSignals: string[];
   }> {
-    console.log('[ZK] Requesting raw proof from backend prover...');
-    console.log('[ZK] Backend URL:', ZkService.BACKEND_PROVER_URL);
 
     try {
       const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
@@ -1498,7 +1442,6 @@ export class ZkService {
         throw new Error(result.message || 'Backend prover returned invalid response');
       }
 
-      console.log('[ZK] Backend raw proof generated in', result.proofTimeMs, 'ms');
 
       // Return raw snarkjs format (string arrays, not byte arrays)
       return {
@@ -1579,7 +1522,6 @@ export class ZkService {
     let publicAmountField = inputs.publicAmount ?? BigInt(0);
     if (publicAmountField < BigInt(0)) {
       publicAmountField = FIELD_MODULUS + publicAmountField;
-      console.log('[ZK] Converting negative public_amount to field representation:', publicAmountField.toString().slice(0, 20) + '...');
     }
 
     const circuitInputs: Record<string, string> = {
@@ -1618,7 +1560,6 @@ export class ZkService {
       spending_key: inputs.spendingKey.toString(),
     };
 
-    console.log('[ZK] Generating proof...');
 
     // Verify commitment matches (critical for proof validity)
     const circuitComputedCommitment1 = poseidonHash(
@@ -1634,13 +1575,10 @@ export class ZkService {
 
     // Try backend prover first (preferred for mobile - no 19MB circuit bundling)
     try {
-      console.log('[ZK] Trying backend prover...');
       const proof = await this.generateProofViaBackend(circuitInputs);
-      console.log('[ZK] Backend proof generated successfully');
       return proof;
     } catch (backendError: any) {
       console.warn('[ZK] Backend prover failed:', backendError.message);
-      console.log('[ZK] Falling back to client-side prover...');
     }
 
     // Fall back to client-side prover
@@ -1654,7 +1592,6 @@ export class ZkService {
 
     try {
       const proof = await this.proverFunction(circuitInputs);
-      console.log('[ZK] Client-side proof generated successfully');
       return proof;
     } catch (error) {
       console.error('[ZK] Client-side proof generation failed:', error);
@@ -1676,7 +1613,6 @@ export class ZkService {
       throw new Error('ZK Service not initialized');
     }
 
-    console.log('[ZK] Scanning for incoming notes...');
 
     // Get merkle tree PDA
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -1720,7 +1656,6 @@ export class ZkService {
               const matched = await this.tryDecryptNote(commitment, amount);
               if (matched) {
                 foundCount++;
-                console.log('[ZK] Found incoming note:', {
                   amount: amount.toString(),
                   commitment: commitment.toString(16).slice(0, 16) + '...',
                 });
@@ -1738,7 +1673,6 @@ export class ZkService {
       await this.setLastScannedSignature(signatures[0].signature);
     }
 
-    console.log(`[ZK] Scan complete. Found ${foundCount} notes.`);
 
     return {
       found: foundCount,
@@ -1916,15 +1850,12 @@ export class ZkService {
         }
 
         if (duplicatesRemoved > 0) {
-          console.log(`[ZK] Removed ${duplicatesRemoved} corrupted/duplicate notes`);
         }
 
-        console.log('[ZK] Valid notes after filter:', deduplicatedNotes.length);
 
         // Check if we need to save cleaned up notes
         const needsSave = deduplicatedNotes.length < allNotes.length || duplicatesRemoved > 0;
         if (needsSave) {
-          console.log(`[ZK] Cleaned up ${allNotes.length - deduplicatedNotes.length} notes total`);
           // Save only valid deduplicated notes
           if (deduplicatedNotes.length > 0) {
             const serialized = deduplicatedNotes.map((note: Note) => ({
@@ -1966,7 +1897,6 @@ export class ZkService {
       await SecureStore.deleteItemAsync('zk_all_commitments');
       await SecureStore.deleteItemAsync('zk_global_commitments');
       await SecureStore.deleteItemAsync('zk_last_scanned_sig');
-      console.log('[ZK] Storage fully reset - all notes and caches cleared');
     } catch (error) {
       console.error('[ZK] Failed to reset storage:', error);
     }
@@ -1977,7 +1907,6 @@ export class ZkService {
    * This fetches all commitments from the blockchain and rebuilds the tree
    */
   async syncMerkleTree(): Promise<void> {
-    console.log('[ZK] Syncing Merkle tree with on-chain state...');
 
     try {
       // Get the MerkleTree PDA
@@ -1993,7 +1922,6 @@ export class ZkService {
       // Fetch the on-chain merkle tree state
       const merkleTreeAccount = await this.connection.getAccountInfo(merkleTreePDA);
       if (!merkleTreeAccount) {
-        console.log('[ZK] Merkle tree account not found - pool may not be initialized');
         return;
       }
 
@@ -2009,12 +1937,9 @@ export class ZkService {
         onChainRoot = (onChainRoot << BigInt(8)) | BigInt(rootBytes[i]);
       }
 
-      console.log('[ZK] On-chain leaf count:', onChainLeafCount);
-      console.log('[ZK] On-chain root:', onChainRoot.toString().slice(0, 20) + '...');
 
       // Fetch all commitments from blockchain
       // We always fetch fresh to ensure consistency with on-chain state
-      console.log('[ZK] Fetching commitments from blockchain...');
       const allCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
 
       // Rebuild the merkle tree from all commitments
@@ -2023,8 +1948,6 @@ export class ZkService {
         this.merkleTree.insert(commitment);
       }
 
-      console.log('[ZK] Merkle tree rebuilt with', this.merkleTree.leafCount, 'leaves');
-      console.log('[ZK] Local root:', this.merkleTree.root.toString().slice(0, 20) + '...');
 
       // Verify local root matches on-chain root
       if (this.merkleTree.root !== onChainRoot) {
@@ -2035,7 +1958,6 @@ export class ZkService {
 
         // IMPORTANT: Backup user notes before clearing - we need to preserve imported notes!
         const backupNotes = [...this.notes];
-        console.log('[ZK] Backed up', backupNotes.length, 'notes before rebuild');
 
         // ROOT MISMATCH - clear local cache but KEEP global cache as fallback
         // Global cache is needed when some transactions can't be fetched due to rate limiting
@@ -2050,7 +1972,6 @@ export class ZkService {
           this.merkleTree.insert(commitment);
         }
 
-        console.log('[ZK] Fresh rebuild - Local root:', this.merkleTree.root.toString().slice(0, 20) + '...');
 
         // Check if fresh rebuild matches
         if (this.merkleTree.root !== onChainRoot) {
@@ -2066,20 +1987,17 @@ export class ZkService {
           // Using on-chain root with local siblings causes proof failure!
           this._onChainRoot = onChainRoot;
         } else {
-          console.log('[ZK] Fresh rebuild successful! Root now matches on-chain.');
           this._onChainRoot = null;
         }
 
         // Restore backed up notes - don't lose imported notes!
         this.notes = backupNotes;
-        console.log('[ZK] Restored', this.notes.length, 'notes after rebuild');
 
         if (this.merkleTree.leafCount !== onChainLeafCount) {
           console.error('[ZK] Leaf count mismatch after fresh rebuild! Local:', this.merkleTree.leafCount, 'On-chain:', onChainLeafCount);
           throw new Error('Merkle tree leaf count mismatch - some commitments could not be extracted');
         }
       } else {
-        console.log('[ZK] Root matches on-chain! Tree synced successfully.');
       }
 
       // Update leaf indices for user's notes and mark which are on-chain
@@ -2105,10 +2023,8 @@ export class ZkService {
         if (onChainIndex !== -1) {
           note.isOnChain = true;
           if (note.leafIndex !== onChainIndex) {
-            console.log('[ZK] Updating note leaf index:', note.leafIndex, '->', onChainIndex);
             note.leafIndex = onChainIndex;
           }
-          console.log('[ZK] Note verified on-chain at index', onChainIndex, 'amount:', note.amount.toString());
         } else {
           note.isOnChain = false;
           console.warn('[ZK] Note commitment not found in on-chain tree:', noteCommitmentStr.slice(0, 20));
@@ -2118,7 +2034,6 @@ export class ZkService {
       // Remove notes that are not on-chain (they failed to shield)
       const validNotes = this.notes.filter(note => note.isOnChain === true);
       if (validNotes.length < this.notes.length) {
-        console.log(`[ZK] Removing ${this.notes.length - validNotes.length} invalid notes (not on-chain)`);
         this.notes = validNotes;
       }
 
@@ -2136,7 +2051,6 @@ export class ZkService {
    * IMPORTANT: Blockchain is the source of truth - stored notes are used as fallback only
    */
   private async fetchCommitmentsFromChain(merkleTreePDA: PublicKey, expectedCount: number): Promise<bigint[]> {
-    console.log('[ZK] Fetching commitments from blockchain...');
 
     // Map of leafIndex -> commitment (blockchain data takes priority)
     const commitmentMap = new Map<number, bigint>();
@@ -2146,7 +2060,6 @@ export class ZkService {
     for (const note of this.notes) {
       if (note.leafIndex !== undefined && note.commitment) {
         storedNotesFallback.set(note.leafIndex, note.commitment);
-        console.log('[ZK] Stored note fallback at index', note.leafIndex, ':', note.commitment.toString().slice(0, 20) + '...');
       }
     }
 
@@ -2170,7 +2083,6 @@ export class ZkService {
       if (signatures.length > 500) break;
     }
 
-    console.log('[ZK] Found', signatures.length, 'transactions to process');
 
     // Process in chronological order (oldest first)
     signatures.sort((a, b) => a.slot - b.slot);
@@ -2186,7 +2098,6 @@ export class ZkService {
         } catch (e: any) {
           if (e?.message?.includes('429') || e?.message?.includes('rate') || e?.message?.includes('Too many')) {
             const delay = Math.pow(2, i) * 1500; // Exponential backoff: 1.5s, 3s, 6s, 12s, 24s
-            console.log(`[ZK] Rate limited, waiting ${delay}ms before retry ${i + 1}/${retries}`);
             await new Promise(resolve => setTimeout(resolve, delay));
           } else {
             throw e;
@@ -2238,7 +2149,6 @@ export class ZkService {
               if (ix.programIdIndex === pi && ix.data.length >= 80) {
                 const commitment = extractCommitmentBytes(Buffer.from(ix.data), 16);
                 commitmentMap.set(leafIndex, commitment);
-                console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
                 break;
               }
             }
@@ -2249,7 +2159,6 @@ export class ZkService {
             if (ix.programId.equals(this.programId) && ixDataRaw.length >= 80) {
               const commitment = extractCommitmentBytes(ixDataRaw, 16);
               commitmentMap.set(leafIndex, commitment);
-              console.log('[ZK] Found shield commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
               break;
             }
           }
@@ -2265,7 +2174,6 @@ export class ZkService {
               if (ix.programIdIndex === pi && ix.data.length > 400) {
                 const commitment = extractCommitmentBytes(Buffer.from(ix.data), OFFSET);
                 commitmentMap.set(leafIndex, commitment);
-                console.log('[ZK] Found unshield change commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
                 break;
               }
             }
@@ -2276,7 +2184,6 @@ export class ZkService {
             if (ix.programId.equals(this.programId) && ixDataRaw.length > 400) {
               const commitment = extractCommitmentBytes(ixDataRaw, OFFSET);
               commitmentMap.set(leafIndex, commitment);
-              console.log('[ZK] Found unshield change commitment at index', leafIndex, ':', commitment.toString().slice(0, 20) + '...');
               break;
             }
           }
@@ -2293,7 +2200,6 @@ export class ZkService {
               if (ix.programIdIndex === pi && ix.data.length > 400) {
                 commitmentMap.set(transferIndices[0], extractCommitmentBytes(ix.data, OFF1));
                 commitmentMap.set(transferIndices[1], extractCommitmentBytes(ix.data, OFF2));
-                console.log('[ZK] Found transfer commitments at indices', transferIndices[0], transferIndices[1]);
                 break;
               }
             }
@@ -2304,7 +2210,6 @@ export class ZkService {
             if (ix.programId.equals(this.programId) && ixDataRaw.length > 400) {
               commitmentMap.set(transferIndices[0], extractCommitmentBytes(ixDataRaw, OFF1));
               commitmentMap.set(transferIndices[1], extractCommitmentBytes(ixDataRaw, OFF2));
-              console.log('[ZK] Found transfer commitments at indices', transferIndices[0], transferIndices[1]);
               break;
             }
           }
@@ -2319,7 +2224,6 @@ export class ZkService {
       if (cached) {
         const parsed = JSON.parse(cached);
         globalCommitmentCache = new Map(Object.entries(parsed).map(([k, v]) => [parseInt(k), v as string]));
-        console.log('[ZK] Loaded', globalCommitmentCache.size, 'cached commitments');
       }
     } catch (e) {
       console.warn('[ZK] Failed to load commitment cache');
@@ -2351,7 +2255,6 @@ export class ZkService {
 
     // Second pass: retry failed fetches with longer delays
     if (failedSignatures.length > 0) {
-      console.log('[ZK] Retrying', failedSignatures.length, 'failed fetches after cooldown...');
       await new Promise(resolve => setTimeout(resolve, 5000)); // 5s cooldown
 
       for (const sig of failedSignatures) {
@@ -2367,7 +2270,6 @@ export class ZkService {
       }
     }
 
-    console.log('[ZK] Extracted', commitmentMap.size, 'commitments');
 
     // Save extracted commitments to global cache
     for (const [index, commitment] of commitmentMap) {
@@ -2381,7 +2283,6 @@ export class ZkService {
         cacheObj[k.toString()] = v;
       }
       await SecureStore.setItemAsync('zk_global_commitments', JSON.stringify(cacheObj));
-      console.log('[ZK] Saved', globalCommitmentCache.size, 'commitments to global cache');
     } catch (e) {
       console.warn('[ZK] Failed to save commitment cache');
     }
@@ -2398,14 +2299,12 @@ export class ZkService {
         // Layer 1: Try stored notes fallback (our own notes)
         const fallbackCommitment = storedNotesFallback.get(i);
         if (fallbackCommitment) {
-          console.log('[ZK] Using stored note fallback for index', i, ':', fallbackCommitment.toString().slice(0, 20) + '...');
           commitments.push(fallbackCommitment);
           missingCount++;
         } else {
           // Layer 2: Try global commitment cache (all commitments ever seen)
           const cachedCommitment = globalCommitmentCache.get(i);
           if (cachedCommitment) {
-            console.log('[ZK] Using global cache for index', i, ':', cachedCommitment.slice(0, 20) + '...');
             commitments.push(BigInt(cachedCommitment));
             cacheHits++;
           } else {
@@ -2431,7 +2330,6 @@ export class ZkService {
   async clearNotes(): Promise<void> {
     this.notes = [];
     await SecureStore.deleteItemAsync('zk_notes');
-    console.log('[ZK] Cleared all notes. Tree remains with', this.merkleTree.leafCount, 'leaves');
   }
 
   /**
@@ -2476,8 +2374,6 @@ export class ZkService {
    * Verifies the commitment matches before adding
    */
   async importNote(noteString: string): Promise<Note> {
-    console.log('[ZK Import] Starting import...');
-    console.log('[ZK Import] Note string length:', noteString.length);
 
     if (!noteString.startsWith('p01note:')) {
       console.error('[ZK Import] Invalid format - does not start with p01note:');
@@ -2485,14 +2381,12 @@ export class ZkService {
     }
 
     const base64 = noteString.slice(8);
-    console.log('[ZK Import] Base64 length:', base64.length);
 
     let json: string;
     let noteData: any;
     try {
       json = Buffer.from(base64, 'base64').toString('utf8');
       noteData = JSON.parse(json);
-      console.log('[ZK Import] Parsed note data successfully');
     } catch (e) {
       console.error('[ZK Import] Failed to parse note:', e);
       throw new Error('Invalid note format: could not decode');
@@ -2507,8 +2401,6 @@ export class ZkService {
       leafIndex: noteData.i,
     };
 
-    console.log('[ZK Import] Note details:');
-    console.log('[ZK Import]   amount:', note.amount.toString());
     // Verify the commitment matches
     const computedCommitment = poseidonHash(note.amount, note.ownerPubkey, note.randomness, note.tokenMint);
     if (computedCommitment !== note.commitment) {
@@ -2534,7 +2426,6 @@ export class ZkService {
       .map((_, i) => this.merkleTree.getLeaf(i))
       .findIndex(leaf => leaf === note.commitment);
 
-    console.log('[ZK Import] Found at index:', onChainIndex);
 
     if (onChainIndex === -1) {
       console.error('[ZK Import] Note not found in merkle tree. Tree has', this.merkleTree.leafCount, 'leaves');
@@ -2554,14 +2445,12 @@ export class ZkService {
         console.error('[ZK Import] Note has already been spent (nullifier in bloom filter)');
         throw new Error('This note has already been spent and cannot be imported.');
       }
-      console.log('[ZK Import] Nullifier check passed - note is unspent');
     }
 
     // Add to local notes
     this.addNote(note);
     await this.saveNotes();
 
-    console.log('[ZK Import] SUCCESS! Imported note at index', onChainIndex, 'amount:', note.amount.toString());
     return note;
   }
 
@@ -2651,7 +2540,6 @@ export class ZkService {
     viewTag?: string;
     error?: string;
   }> {
-    console.log('[ZK Private Send] Starting true ZK transfer...');
 
     // Fixed denominations (must match relayer)
     const DENOMINATIONS = [
@@ -2665,7 +2553,6 @@ export class ZkService {
     }
 
     const amount = BigInt(DENOMINATIONS[denominationIndex]);
-    console.log('[ZK Private Send] Denomination:', DENOMINATIONS[denominationIndex] / 1e9, 'SOL');
 
     try {
       // 1. Decode recipient's stealth keys
@@ -2681,24 +2568,20 @@ export class ZkService {
         recipientSpendingPubKey = new PublicKey(keyBuffer.slice(0, 32)).toBase58();
         recipientViewingPubKey = new PublicKey(keyBuffer.slice(32, 64)).toBase58();
         recipientViewingX25519Pub = new Uint8Array(keyBuffer.slice(64, 96));
-        console.log('[ZK Private Send] Using new stealth format with X25519 key');
       } else if (keyBuffer.length === 64) {
         // Old format: spending(32) + viewing(32)
         recipientSpendingPubKey = new PublicKey(keyBuffer.slice(0, 32)).toBase58();
         recipientViewingPubKey = new PublicKey(keyBuffer.slice(32, 64)).toBase58();
-        console.log('[ZK Private Send] Using legacy stealth format (64 bytes)');
       } else {
         return { success: false, error: `Invalid stealth keys format (got ${keyBuffer.length} bytes)` };
       }
 
       // 2. Generate stealth address for recipient
-      console.log('[ZK Private Send] Generating stealth address...');
       const stealthData = await generateStealthAddress(
         recipientSpendingPubKey,
         recipientViewingPubKey,
         recipientViewingX25519Pub
       );
-      console.log('[ZK Private Send] Stealth address:', stealthData.address);
 
       // 3. Select notes for the exact denomination
       if (!this.spendingKey || !this.spendingKeyHash) {
@@ -2717,7 +2600,6 @@ export class ZkService {
       }
 
       // 4. Generate ZK proof
-      console.log('[ZK Private Send] Generating ZK proof...');
       const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
       const merkleRoot = this.merkleTree.root;
 
@@ -2780,7 +2662,6 @@ export class ZkService {
         spendingKey: this.spendingKey,
       });
 
-      console.log('[ZK Private Send] Proof generated, sending to relayer...');
 
       // 5. Create request for relayer
       const requestBody = {
@@ -2821,8 +2702,6 @@ export class ZkService {
 
       // Relayer returns 'signature' not 'txSignature'
       const txSignature = result.signature || result.txSignature;
-      console.log('[ZK Private Send] SUCCESS! Tx:', txSignature);
-      console.log('[ZK Private Send] Stealth address:', result.stealthAddress);
 
       // 7. Mark notes as spent locally and add change note
       this.removeSpentNotes(notesToSpend);
@@ -2866,7 +2745,6 @@ export class ZkService {
       throw new Error('ZK Service not initialized');
     }
 
-    console.log('[ZK] Generating transfer proof for relayer, amount:', Number(amount) / 1e9, 'SOL');
 
     // Sync merkle tree first
     await this.syncMerkleTree();
@@ -2971,7 +2849,6 @@ export class ZkService {
     // Generate proof using backend (returns raw snarkjs format for relayer)
     const { proof: snarkjsProof } = await this.generateProofViaBackendRaw(circuitInputs);
 
-    console.log('[ZK] Raw snarkjs proof generated for relayer');
 
     // Store change note data (will be applied after relayer confirms)
     const changeNoteData = changeAmount > BigInt(0) ? {
@@ -3011,7 +2888,6 @@ export class ZkService {
    * @param nullifier - The nullifier string from the proof
    */
   async markNoteSpent(nullifier: string): Promise<void> {
-    console.log('[ZK] Marking notes as spent after relayer confirmation');
 
     // Remove the spent notes
     if (this._pendingSpendNotes.length > 0) {
@@ -3025,12 +2901,10 @@ export class ZkService {
       // For now, we track it locally - the next sync will pick it up
       this._pendingChangeNote.isOnChain = false; // Will be confirmed on next sync
       this.addNote(this._pendingChangeNote);
-      console.log('[ZK] Change note added:', Number(this._pendingChangeNote.amount) / 1e9, 'SOL');
       this._pendingChangeNote = null;
     }
 
     await this.saveNotes();
-    console.log('[ZK] Notes updated, new balance:', Number(this.getShieldedBalance()) / 1e9, 'SOL');
   }
 
   /**
@@ -3051,7 +2925,6 @@ export class ZkService {
     amount: number;
     payments: Array<{ stealthAddress: string; amount: number; signature: string }>;
   }> {
-    console.log('[ZK] Scanning for stealth payments...');
 
     try {
       const RELAYER_URL = ZkService.BACKEND_PROVER_URL;
@@ -3095,7 +2968,6 @@ export class ZkService {
           );
 
           if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
-            console.log('[ZK] Found stealth payment!', payment.amount, 'SOL at', payment.stealthAddress.slice(0, 16) + '...');
             found++;
             totalAmount += payment.amount;
 
@@ -3120,7 +2992,6 @@ export class ZkService {
       }
 
       if (found > 0) {
-        console.log('[ZK] Found', found, 'stealth payments totaling', totalAmount, 'SOL');
       }
 
       return { found, amount: totalAmount, payments: foundPayments };
@@ -3149,7 +3020,6 @@ export class ZkService {
     stealthAddress: string,
     recipientAddress: string
   ): Promise<{ success: boolean; signature?: string; error?: string }> {
-    console.log('[ZK] Sweeping stealth payment from', stealthAddress.slice(0, 16) + '...');
 
     try {
       // Find the stealth payment with private key
@@ -3168,7 +3038,6 @@ export class ZkService {
 
       // Get balance of stealth address
       const balance = await this.connection.getBalance(stealthKeypair.publicKey);
-      console.log('[ZK] Stealth address balance:', balance / 1e9, 'SOL');
 
       if (balance === 0) {
         return { success: false, error: 'Stealth address has no balance' };
@@ -3204,8 +3073,6 @@ export class ZkService {
 
       await this.connection.confirmTransaction(signature, 'confirmed');
 
-      console.log('[ZK] Sweep successful! Signature:', signature);
-      console.log('[ZK] Transferred', amountToSend / 1e9, 'SOL to', recipientAddress.slice(0, 16) + '...');
 
       // Remove the swept payment from pending list
       this._foundStealthPayments = this._foundStealthPayments.filter(p => p.stealthAddress !== stealthAddress);
@@ -3227,7 +3094,6 @@ export class ZkService {
     signatures: string[];
     errors: string[];
   }> {
-    console.log('[ZK] Sweeping all stealth payments...');
 
     const results = {
       success: true,
@@ -3255,7 +3121,6 @@ export class ZkService {
       results.success = false;
     }
 
-    console.log('[ZK] Sweep complete:', results.swept, 'payments,', results.totalAmount, 'SOL');
     return results;
   }
 }

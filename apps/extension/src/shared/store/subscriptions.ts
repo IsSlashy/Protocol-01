@@ -270,11 +270,8 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
         set({ isLoading: true, error: null });
 
         try {
-          console.log('[SubscriptionsStore] Syncing from blockchain...');
-
           // Fetch subscriptions from chain
           const chainSubscriptions = await fetchSubscriptionsFromChain(walletAddress, network);
-          console.log(`[SubscriptionsStore] Found ${chainSubscriptions.length} subscriptions on-chain`);
 
           if (chainSubscriptions.length === 0) {
             set({ isLoading: false });
@@ -313,7 +310,6 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
             isLoading: false,
           });
 
-          console.log(`[SubscriptionsStore] Sync complete: ${newCount} new, ${updatedCount} updated`);
           return { newCount, updatedCount };
         } catch (error) {
           console.error('[SubscriptionsStore] Sync failed:', error);

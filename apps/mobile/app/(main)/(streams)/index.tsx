@@ -451,7 +451,6 @@ export default function StreamsDashboard() {
                       subscription={stream}
                       index={index}
                       onPress={() => {
-                        console.log('[Streams] Navigating to stream detail:', stream.id);
                         router.push({
                           pathname: '/(main)/(streams)/[id]',
                           params: { id: stream.id },
@@ -552,7 +551,6 @@ export default function StreamsDashboard() {
                     subscription={stream}
                     index={index}
                     onPress={() => {
-                      console.log('[Streams] Navigating to stream detail:', stream.id);
                       router.push({
                         pathname: '/(main)/(streams)/[id]',
                         params: { id: stream.id },
@@ -705,7 +703,6 @@ function SubscriptionCard({
   const isPaused = sub.status === 'paused';
 
   const handlePress = () => {
-    console.log('[SubscriptionCard] Pressed stream:', sub.id, sub.name);
     onPress();
   };
 

@@ -94,7 +94,6 @@ export async function pauseSubscriptionOnChain(
   const signature = await connection.sendRawTransaction(transaction.serialize());
   await connection.confirmTransaction(signature, 'confirmed');
 
-  console.log('[Subscription] Paused on-chain:', signature);
   return signature;
 }
 
@@ -140,7 +139,6 @@ export async function resumeSubscriptionOnChain(
   const signature = await connection.sendRawTransaction(transaction.serialize());
   await connection.confirmTransaction(signature, 'confirmed');
 
-  console.log('[Subscription] Resumed on-chain:', signature);
   return signature;
 }
 
@@ -195,7 +193,6 @@ export async function cancelSubscriptionOnChain(
   const signature = await connection.sendRawTransaction(transaction.serialize());
   await connection.confirmTransaction(signature, 'confirmed');
 
-  console.log('[Subscription] Cancelled on-chain:', signature);
   return signature;
 }
 

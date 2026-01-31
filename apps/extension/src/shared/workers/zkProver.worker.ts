@@ -48,9 +48,6 @@ self.onmessage = async (event: MessageEvent<ProveRequest>) => {
   }
 
   try {
-    console.log('[ZK Worker] Starting proof generation...');
-    console.log('[ZK Worker] Input keys:', Object.keys(inputs));
-    console.log('[ZK Worker] WASM size:', circuitWasm.byteLength, 'ZKEY size:', circuitZkey.byteLength);
     const startTime = performance.now();
 
     // Generate the proof using snarkjs
@@ -61,7 +58,6 @@ self.onmessage = async (event: MessageEvent<ProveRequest>) => {
     );
 
     const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-    console.log(`[ZK Worker] Proof generated in ${duration}s`);
 
     // Send proof back to main thread
     self.postMessage({

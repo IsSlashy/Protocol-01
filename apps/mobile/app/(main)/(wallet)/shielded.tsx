@@ -136,7 +136,6 @@ export default function ShieldedWalletScreen() {
 
       // Use Privy signer if available, otherwise fall back to local keypair
       if (isPrivyWallet && privyWallet) {
-        console.log('[Shielded] Using Privy wallet for signing');
         walletPubkey = new PublicKey(privyWallet.address);
         signTransaction = privyWallet.signTransaction;
       } else {
@@ -228,7 +227,6 @@ export default function ShieldedWalletScreen() {
 
       // Use Privy signer if available, otherwise fall back to local keypair
       if (isPrivyWallet && privyWallet) {
-        console.log('[Shielded] Using Privy wallet for unshield signing');
         walletPubkey = new PublicKey(privyWallet.address);
         signTransaction = privyWallet.signTransaction;
       } else {

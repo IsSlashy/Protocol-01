@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.next
+.expo
+.turbo
+target
+*.wasm
+*.zkey
+pnpm-lock.yaml

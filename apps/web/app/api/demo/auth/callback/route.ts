@@ -19,7 +19,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { sessionId, wallet, signature, publicKey, timestamp, subscriptionProof } = body;
 
-    console.log('[P01 Auth Callback]', {
       sessionId,
       wallet: wallet?.slice(0, 8) + '...',
       timestamp: new Date(timestamp).toISOString(),

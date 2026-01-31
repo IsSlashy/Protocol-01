@@ -93,9 +93,7 @@ export default function Subscriptions() {
     setIsSyncing(true);
     try {
       const result = await syncFromChain(publicKey, network);
-      console.log('[Streams] Sync complete:', result);
       if (result.newCount > 0 || result.updatedCount > 0) {
-        console.log(`Found ${result.newCount} new, ${result.updatedCount} updated streams`);
       }
     } catch (error) {
       console.error('[Streams] Sync failed:', error);

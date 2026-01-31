@@ -73,11 +73,11 @@ export function validateSeedPhrase(words: string[] | string): ValidationResult {
   }
 
   // Check each word is in the wordlist
-  const words = wordlist;
+  const wl = wordlist;
   const invalidWords: string[] = [];
 
   for (const word of wordArray) {
-    if (!words.includes(word.toLowerCase())) {
+    if (!wl.includes(word.toLowerCase())) {
       invalidWords.push(word);
     }
   }

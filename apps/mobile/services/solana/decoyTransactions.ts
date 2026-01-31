@@ -181,7 +181,6 @@ export async function sendDecoyTransactions(
   const errors: string[] = [];
   let totalFeesLamports = 0;
 
-  console.log(`[Decoy] Starting ${config.decoyCount} decoy transactions for privacy level: ${privacyLevel}`);
 
   onProgress?.({
     current: 0,
@@ -213,7 +212,6 @@ export async function sendDecoyTransactions(
     try {
       // Apply timing delay before sending
       if (i > 0 && config.useTimingObfuscation) {
-        console.log(`[Decoy] Waiting ${delay}ms before next decoy...`);
         await sleep(delay);
       }
 
@@ -237,7 +235,6 @@ export async function sendDecoyTransactions(
       transaction.feePayer = keypair.publicKey;
 
       // Sign and send
-      console.log(`[Decoy] Sending decoy ${i + 1}/${config.decoyCount}: ${amount} SOL to ${destination.toBase58().slice(0, 8)}...`);
 
       const signature = await sendAndConfirmTransaction(
         connection,
@@ -246,7 +243,6 @@ export async function sendDecoyTransactions(
         { commitment: 'confirmed' }
       );
 
-      console.log(`[Decoy] Decoy ${i + 1} confirmed: ${signature.slice(0, 16)}...`);
 
       // Estimate fee (5000 lamports = 0.000005 SOL typical)
       const txFee = 5000;
@@ -287,7 +283,6 @@ export async function sendDecoyTransactions(
     errors,
   };
 
-  console.log(`[Decoy] Completed ${decoys.length}/${config.decoyCount} decoys. Total fees: ${result.totalFeesSOL} SOL`);
 
   return result;
 }
@@ -325,7 +320,6 @@ export async function sendPrivateTransaction(
     throw new Error('No wallet found');
   }
 
-  console.log(`[Privacy] Starting private transaction: ${amount} SOL to ${toAddress.slice(0, 8)}... with ${privacyLevel} privacy`);
 
   // Step 1: Send decoy transactions
   let decoyResult: DecoyBatchResult;
@@ -345,7 +339,6 @@ export async function sendPrivateTransaction(
   // Step 2: Add final delay before real transaction
   if (config.useTimingObfuscation) {
     const finalDelay = randomDelay(config.minDelay, config.maxDelay);
-    console.log(`[Privacy] Final delay before real transaction: ${finalDelay}ms`);
     await sleep(finalDelay);
   }
 
@@ -372,7 +365,6 @@ export async function sendPrivateTransaction(
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = keypair.publicKey;
 
-    console.log(`[Privacy] Sending real transaction: ${amount} SOL`);
 
     const signature = await sendAndConfirmTransaction(
       connection,
@@ -381,7 +373,6 @@ export async function sendPrivateTransaction(
       { commitment: 'confirmed' }
     );
 
-    console.log(`[Privacy] Real transaction confirmed: ${signature}`);
 
     onProgress?.({
       current: config.decoyCount,
@@ -441,8 +432,6 @@ export async function validatePrivateTransactionBalance(
   const networkFee = BASE_TX_FEE; // Fee for the real transaction
   const requiredBalance = amount + decoyFees + networkFee;
 
-  console.log(`[Privacy] Balance check: ${balanceSOL} SOL available, ${requiredBalance} SOL required`);
-  console.log(`[Privacy] Breakdown: ${amount} SOL amount + ${decoyFees} SOL decoy fees (${decoyCount} decoys) + ${networkFee} SOL network fee`);
 
   if (balanceSOL < requiredBalance) {
     return {

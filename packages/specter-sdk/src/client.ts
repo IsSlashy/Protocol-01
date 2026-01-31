@@ -97,7 +97,6 @@ export class P01Client {
     );
 
     if (this.config.debug) {
-      console.log('[P01Client] Initialized with config:', this.config);
     }
   }
 
@@ -157,7 +156,6 @@ export class P01Client {
     }
 
     if (this.config.debug) {
-      console.log('[P01Client] Wallet connected:', this.publicKey?.toBase58());
     }
   }
 
@@ -176,7 +174,6 @@ export class P01Client {
     }
 
     if (this.config.debug) {
-      console.log('[P01Client] Wallet disconnected');
     }
   }
 
@@ -355,7 +352,6 @@ export class P01Client {
     });
 
     if (this.config.debug) {
-      console.log('[P01Client] Private transfer sent:', result.signature);
     }
 
     return result.signature;
@@ -427,7 +423,6 @@ export class P01Client {
     });
 
     if (this.config.debug) {
-      console.log('[P01Client] Stealth payment claimed:', result.signature);
     }
 
     return result.signature;
@@ -473,7 +468,6 @@ export class P01Client {
     });
 
     if (this.config.debug) {
-      console.log('[P01Client] Stream created:', stream.id.toBase58());
     }
 
     return stream;
@@ -502,7 +496,6 @@ export class P01Client {
     });
 
     if (this.config.debug) {
-      console.log('[P01Client] Stream withdrawal:', result.signature);
     }
 
     return result.signature;
@@ -526,7 +519,6 @@ export class P01Client {
     });
 
     if (this.config.debug) {
-      console.log('[P01Client] Stream cancelled:', result.signature);
     }
 
     return result.signature;

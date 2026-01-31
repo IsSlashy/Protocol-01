@@ -141,7 +141,6 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
       const provider = p01 || (solana?.isProtocol01 ? solana : null);
 
       const available = !!provider?.isProtocol01;
-      console.log("[P-01 SDK] Wallet check:", {
         protocol01: !!p01,
         solana: !!solana,
         isP01: provider?.isProtocol01,
@@ -166,7 +165,6 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
 
     // Listen for wallet injection
     const handleInit = () => {
-      console.log("[P-01 SDK] Wallet initialized event received");
       checkWallet();
     };
     window.addEventListener("protocol01#initialized", handleInit);
@@ -709,10 +707,8 @@ function DevnetSection() {
 // Check whitelist via API (admin-managed)
 async function checkWhitelistAPI(walletAddress: string): Promise<boolean> {
   try {
-    console.log("[P-01 SDK] Checking whitelist for:", walletAddress);
     const res = await fetch(`/api/whitelist?wallet=${walletAddress}`);
     const data = await res.json();
-    console.log("[P-01 SDK] Whitelist response:", data);
     return data.approved === true;
   } catch (error) {
     console.error("[P-01 SDK] Whitelist check failed:", error);
@@ -745,10 +741,8 @@ function StreamSDKSection() {
   // Check whitelist via API
   useEffect(() => {
     if (connected && publicKey) {
-      console.log("[P-01 SDK] Wallet connected, checking whitelist for:", publicKey);
       setHasDevAccess(null); // Loading state
       checkWhitelistAPI(publicKey).then((approved) => {
-        console.log("[P-01 SDK] Whitelist check result:", approved);
         setHasDevAccess(approved);
       });
     } else {
@@ -1155,7 +1149,6 @@ const activeStreams = await p01.streams.query({
 
 // Verify subscription with locked price
 const subscription = await p01.streams.get(streamId);
-console.log("Locked price:", subscription.amount); // Never changes!
 
 // ✅ ONLY subscriber can cancel (from their wallet)
 // Developer CANNOT cancel or modify!
@@ -1923,7 +1916,6 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
       });
 
       if (result) {
-        console.log("Subscription created:", result);
         setSubscriptionId(result.subscriptionId);
         setSubscribed(true);
 
@@ -1935,7 +1927,6 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       if (errorMessage.includes("rejected")) {
         // User rejected - no error alert needed
-        console.log("User rejected subscription request");
       } else if (errorMessage.includes("permission")) {
         alert("Missing subscription permission. Please reconnect your wallet and approve the subscription permission.");
       } else {

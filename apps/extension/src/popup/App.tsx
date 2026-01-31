@@ -83,15 +83,12 @@ function App() {
       if (!isOnApprovalPage && !isOnAuthPage) {
         // If wallet is locked, go to unlock first, then to approval
         if (isInitialized && !isUnlocked) {
-          console.log('[Popup] Wallet locked, showing unlock page first');
           // Store the pending path for after unlock
           chrome.storage.session.set({ afterUnlockPath: pendingPath });
           navigate('/unlock');
         } else if (!isInitialized) {
-          console.log('[Popup] Wallet not initialized, showing welcome');
           navigate('/welcome');
         } else {
-          console.log('[Popup] Redirecting to pending approval:', pendingPath);
           navigate(pendingPath);
         }
         setPendingPath(null);
@@ -111,21 +108,16 @@ function App() {
         const storedIsPrivy = parsed?.state?.isPrivyWallet;
         const storedIsInit = parsed?.state?.isInitialized;
 
-        console.log('[Popup] Storage check:', { hasEncryptedSeed, storedIsPrivy, storedIsInit, privyAuthenticated });
-
         // Case 1: Privy wallet but not authenticated → reset
         if (storedIsPrivy && !privyAuthenticated) {
-          console.log('[Popup] Privy wallet but not authenticated, resetting');
           await reset();
         }
         // Case 2: Not Privy, claims initialized but no seed phrase → reset
         else if (!storedIsPrivy && storedIsInit && !hasEncryptedSeed) {
-          console.log('[Popup] Legacy wallet claims initialized but no seed, resetting');
           await reset();
         }
         // Case 3: No storage at all but store thinks initialized → reset
         else if (!storedData && isInitialized) {
-          console.log('[Popup] No storage but store initialized, resetting');
           await reset();
         }
       } catch (e) {
@@ -134,7 +126,6 @@ function App() {
 
       // Try auto-unlock from session (10 minute timeout) — legacy wallets only
       if (isInitialized && !isUnlocked && !isPrivyWallet) {
-        console.log('[Popup] Trying auto-unlock from session...');
         await tryAutoUnlock();
       }
 

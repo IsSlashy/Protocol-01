@@ -49,14 +49,10 @@ export default function ConnectDapp() {
   useEffect(() => {
     const loadRequest = async () => {
       try {
-        console.log('[ConnectDapp] Loading currentApproval from storage...');
         const result = await chrome.storage.session.get('currentApproval');
-        console.log('[ConnectDapp] Storage result:', result);
         if (result.currentApproval) {
-          console.log('[ConnectDapp] Found approval request:', result.currentApproval);
           setRequest(result.currentApproval);
         } else {
-          console.log('[ConnectDapp] No approval request found in storage');
         }
       } catch (error) {
         console.error('[ConnectDapp] Failed to load approval request:', error);
