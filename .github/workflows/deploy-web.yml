@@ -1,15 +1,7 @@
 name: Deploy Web to Vercel
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - 'apps/web/**'
-      - 'packages/ui/**'
-      - 'packages/p01-js/**'
-      - 'packages/specter-sdk/**'
-      - 'packages/auth-sdk/**'
+  workflow_dispatch:  # Manual trigger only until Vercel project is configured
 
 concurrency:
   group: deploy-web-${{ github.ref }}
