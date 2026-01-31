@@ -173,7 +173,7 @@ export function deriveKeyFromPassword(
 
   // Simple iterative hashing (use proper PBKDF2 in production)
   for (let i = 0; i < Math.min(KDF_ITERATIONS, 10000); i++) {
-    key = sha256(key) as Uint8Array;
+    key = new Uint8Array(sha256(key));
   }
 
   return key;
