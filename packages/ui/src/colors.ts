@@ -27,6 +27,7 @@ export const colors = {
   // BORDERS - Subtle separators
   // ═══════════════════════════════════════════════════════════════
   border: '#2a2a30',
+  borderLight: '#3a3a42',
   borderHover: '#3a3a42',
   borderFocus: '#39c5bb',
 
@@ -39,6 +40,11 @@ export const colors = {
   cyanGlow: 'rgba(57, 197, 187, 0.15)',
   cyanGlow2: 'rgba(57, 197, 187, 0.3)',
   cyanGlow3: 'rgba(57, 197, 187, 0.5)',
+
+  // Aliases for shadow/glow system (maps to cyan primary)
+  green: '#39c5bb',
+  greenGlow: 'rgba(57, 197, 187, 0.15)',
+  greenGlow2: 'rgba(57, 197, 187, 0.3)',
 
   // ═══════════════════════════════════════════════════════════════
   // SECONDARY - P-01 Pink (KAngel inspired)
