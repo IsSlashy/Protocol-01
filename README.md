@@ -144,6 +144,7 @@ solana airdrop 2 --url devnet
 
 # Smart Contracts (Devnet)
 ZK Shielded:      GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
+Specter:          2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp
 Subscription:     5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt
 Stream:           2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws
 Fee Splitter:     muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD
@@ -175,24 +176,31 @@ User creates ZK proof (Groth16)
 ```
 protocol-01/
 ├── apps/
-│   ├── extension/          # Chrome/Brave extension wallet
+│   ├── extension/          # Chrome/Brave extension wallet (Manifest V3)
 │   ├── mobile/             # React Native (Expo) mobile wallet
 │   └── web/                # Next.js marketing site & SDK demo
 ├── packages/
-│   ├── sdk/                # @p01/sdk — dApp integration
-│   ├── zk-sdk/             # @p01/zk-sdk — ZK proof generation (WASM)
-│   ├── specter-sdk/        # Stealth address operations
-│   └── specter-js/         # React hooks for dApp devs
+│   ├── p01-js/             # @p01/sdk — Merchant integration (Protocol01 client)
+│   ├── specter-sdk/        # @p01/specter-sdk — Stealth wallets & transfers (P01Client)
+│   ├── zk-sdk/             # @p01/zk-sdk — ZK proof generation (ShieldedClient)
+│   ├── auth-sdk/           # @p01/auth-sdk — "Login with P-01" authentication
+│   ├── whitelist-sdk/      # @p01/whitelist-sdk — On-chain developer whitelist
+│   ├── specter-js/         # @p01/js — Pay button & browser SDK
+│   ├── ui/                 # @p01/ui — Shared design system & components
+│   └── sdk/                # @p01/stream — Payment stream utilities
 ├── circuits/
 │   ├── transfer.circom     # Main ZK circuit (2-in-2-out, Merkle depth 20)
 │   ├── merkle.circom       # Merkle tree membership proof
 │   └── poseidon.circom     # ZK-friendly hash function
 ├── programs/
-│   ├── zk_shielded/        # Anchor program — shielded pool (shield/transfer/unshield)
-│   ├── specter/            # Anchor program — stealth address registry
-│   └── stream/             # Anchor program — payment streams
+│   ├── zk_shielded/        # Shielded pool — shield/transfer/unshield with Groth16
+│   ├── specter/            # Stealth address registry + private streams
+│   ├── subscription/       # Recurring payments with delegated authority
+│   ├── stream/             # Time-locked payment streaming (escrow)
+│   ├── whitelist/          # Developer access control
+│   └── p01-fee-splitter/   # Fee routing (0.5% protocol fee)
 └── services/
-    └── relayer/            # Express.js — ZK verification + private transfers
+    └── relayer/            # Express.js — ZK verification, proof gen, subscription crank
 ```
 
 ---
@@ -299,28 +307,38 @@ Built with Next.js 16 and Framer Motion.
 ### SDK
 
 ```typescript
-import { P01Client } from '@p01/sdk';
+// @p01/specter-sdk — Stealth wallets & private transfers
+import { P01Client, createWallet, sendPrivate } from '@p01/specter-sdk';
 
 const client = new P01Client({ cluster: 'devnet' });
-const wallet = await P01Client.createWallet();
+const wallet = await createWallet();
 await client.connect(wallet);
 
-// Stealth transfer
-await client.sendPrivate(recipientStealthAddress, 1.5);
+// Send to stealth address (recipient unlinkable on-chain)
+await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 
-// Payment stream
-await client.createStream(recipient, 10, 30); // 10 SOL over 30 days
+// Create payment stream (time-locked escrow)
+await client.createStream({ recipient, amount: 10, duration: 30 * 86400 });
 ```
 
 ```typescript
+// @p01/zk-sdk — Shielded pool with Groth16 ZK proofs
 import { ShieldedClient } from '@p01/zk-sdk';
 
-const zk = new ShieldedClient({ connection, wallet });
-await zk.initialize(seedPhrase);
+const zkClient = new ShieldedClient({ rpcUrl, programId });
 
-await zk.shield(1_000_000_000n);               // Deposit 1 SOL
-await zk.transfer(zkAddress, 500_000_000n);     // Private transfer
-await zk.unshield(publicKey, 500_000_000n);     // Withdraw
+await zkClient.shield(1_000_000_000n, notes);      // Deposit 1 SOL to private pool
+await zkClient.transfer(proofInputs);               // Private transfer (amount hidden)
+await zkClient.unshield(outputNotes, 500_000_000n); // Withdraw to public address
+```
+
+```typescript
+// @p01/sdk — Merchant integration & subscriptions
+import { Protocol01 } from '@p01/sdk';
+
+const p01 = new Protocol01({ merchantId: 'my-saas', merchantName: 'My App' });
+await p01.requestPayment({ amount: 29.99, description: 'Pro Plan' });
+await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 ```
 
 ---

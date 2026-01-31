@@ -225,42 +225,46 @@ const fundTx = await fundRelayer(amount, fee, gasCost, rentCost);
     title: "Client SDK Architecture",
     icon: <Code className="w-6 h-6" />,
     description:
-      "Two SDKs for different privacy levels. SpecterClient for stealth addresses, ShieldedClient for ZK proofs. Both run client-side for maximum privacy.",
+      "Three SDKs for different use cases. P01Client for stealth wallets & transfers, ShieldedClient for ZK proofs, and Protocol01 for merchant integration. All run client-side for maximum privacy.",
     details: [
-      "TypeScript/JavaScript SDK with full type definitions",
-      "WASM-compiled circuits for browser compatibility",
-      "Web Worker isolation for proof generation",
-      "Automatic note management and encryption",
-      "Streaming payments with SPL token support",
+      "TypeScript SDKs with full type definitions",
+      "Stealth address generation & scanning (ECDH)",
+      "Groth16 proof generation for shielded transfers",
+      "Payment streams & recurring subscriptions",
+      "React hooks for wallet, streams and subscriptions",
     ],
-    codeExample: `// === P-01 SDK - Stealth Addresses ===
-import { P01Client } from '@p01/sdk';
+    codeExample: `// === @p01/specter-sdk — Stealth Wallets & Transfers ===
+import { P01Client, createWallet, sendPrivate } from '@p01/specter-sdk';
 
 const client = new P01Client({ cluster: 'devnet' });
-const wallet = await P01Client.createWallet();
+const wallet = await createWallet();
 await client.connect(wallet);
 
-// Send private transfer (stealth address)
-await client.sendPrivate(recipientStealthAddress, 1.5);
+// Send to stealth address (recipient unlinkable on-chain)
+await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 
-// Create payment stream
-await client.createStream(recipient, 10, 30); // 10 SOL over 30 days
+// Create payment stream (time-locked escrow)
+await client.createStream({ recipient, amount: 10, duration: 30 * 86400 });
 
-// === P-01 SDK - ZK Shielded Pool ===
-import { ShieldedClient } from '@p01/sdk/zk';
+// === @p01/zk-sdk — ZK Shielded Pool ===
+import { ShieldedClient } from '@p01/zk-sdk';
 
-const zkClient = new ShieldedClient({ connection, wallet });
-await zkClient.initialize(seedPhrase);
+const zkClient = new ShieldedClient({ rpcUrl, programId });
 
-// Shield tokens (deposit to private pool)
-await zkClient.shield(1_000_000_000n); // 1 SOL
+// Shield tokens (deposit into private Merkle tree pool)
+await zkClient.shield(1_000_000_000n, notes);
 
-// Private ZK transfer
-const zkAddress = ShieldedClient.decodeZkAddress("zk:...");
-await zkClient.transfer(zkAddress, 500_000_000n);
+// Private transfer (Groth16 proof — amount hidden on-chain)
+await zkClient.transfer(proofInputs);
 
-// Unshield (withdraw to public)
-await zkClient.unshield(publicKey, 500_000_000n);`,
+// Unshield (withdraw back to public address)
+await zkClient.unshield(outputNotes, 500_000_000n);
+
+// === @p01/sdk — Merchant Integration ===
+import { Protocol01 } from '@p01/sdk';
+
+const p01 = new Protocol01({ merchantId: 'my-saas', merchantName: 'My App' });
+await p01.createSubscription({ amount: 9.99, interval: 'monthly' });`,
   },
 ];
 
@@ -269,18 +273,18 @@ const docsArchLayers = [
     name: "Client Layer",
     hex: "#39c5bb",
     nodes: [
-      { label: "MOBILE APP", sub: "React Native" },
+      { label: "MOBILE APP", sub: "React Native / Expo" },
       { label: "EXTENSION", sub: "Chrome / Brave" },
-      { label: "SDK", sub: "TypeScript" },
+      { label: "WEB APP", sub: "Next.js" },
     ],
   },
   {
-    name: "ZK-SDK",
+    name: "SDK Layer",
     hex: "#ff77a8",
     nodes: [
-      { label: "WASM Prover", sub: "Groth16" },
-      { label: "Poseidon", sub: "Hash Function" },
-      { label: "Note Mgmt", sub: "Encrypt / Decrypt" },
+      { label: "@p01/sdk", sub: "Merchant Integration" },
+      { label: "@p01/specter-sdk", sub: "Stealth & Wallets" },
+      { label: "@p01/zk-sdk", sub: "Groth16 Prover" },
     ],
   },
   {
@@ -288,8 +292,8 @@ const docsArchLayers = [
     hex: "#00ffe5",
     nodes: [
       { label: "STEALTH", sub: "ECDH Addresses" },
-      { label: "SHIELDED", sub: "Groth16 Pool" },
-      { label: "STREAMS", sub: "SPL Payments" },
+      { label: "SHIELDED", sub: "ZK Pool + Merkle Tree" },
+      { label: "PAYMENTS", sub: "Streams & Subscriptions" },
     ],
   },
   {
@@ -297,16 +301,16 @@ const docsArchLayers = [
     hex: "#ff77a8",
     nodes: [
       { label: "RELAYER", sub: "ZK Verify + Transfer" },
-      { label: "ON-CHAIN", sub: "Solana Program" },
+      { label: "CRANK", sub: "Auto Subscription Payments" },
     ],
   },
   {
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "alt_bn128", sub: "Curve Ops" },
+      { label: "7 PROGRAMS", sub: "Anchor / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
-      { label: "Anchor", sub: "Framework" },
+      { label: "alt_bn128", sub: "ZK Curve Ops" },
     ],
   },
 ];
