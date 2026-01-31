@@ -141,11 +141,6 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
       const provider = p01 || (solana?.isProtocol01 ? solana : null);
 
       const available = !!provider?.isProtocol01;
-        protocol01: !!p01,
-        solana: !!solana,
-        isP01: provider?.isProtocol01,
-        available
-      });
 
       setWalletAvailable(available);
 
