@@ -21,6 +21,7 @@ export const colors = {
   dark: '#0f0f12',
   surface: '#151518',
   surface2: '#1a1a1e',
+  surface3: '#25252b',
   elevated: '#1f1f24',
 
   // ═══════════════════════════════════════════════════════════════
@@ -43,6 +44,8 @@ export const colors = {
 
   // Aliases for shadow/glow system (maps to cyan primary)
   green: '#39c5bb',
+  greenDim: '#2a9d95',
+  greenDark: '#1e8a82',
   greenGlow: 'rgba(57, 197, 187, 0.15)',
   greenGlow2: 'rgba(57, 197, 187, 0.3)',
 
@@ -125,6 +128,7 @@ export const colors = {
   // ═══════════════════════════════════════════════════════════════
   // UTILITY COLORS
   // ═══════════════════════════════════════════════════════════════
+  black: '#000000',
   transparent: 'transparent',
   white: '#ffffff',
   whiteAlpha10: 'rgba(255, 255, 255, 0.1)',
