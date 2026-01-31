@@ -1,5 +1,5 @@
 {
-  "name": "@p01/sdk",
+  "name": "@p01/specter-sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for interacting with Protocol 01 - Privacy-preserving payments on Solana",
   "main": "dist/index.js",
