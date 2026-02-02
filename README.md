@@ -34,7 +34,7 @@
 
 ### Mobile App (Android)
 
-**Download APK:** [Protocol-01.apk](https://expo.dev/accounts/slashy/projects/p01-mobile/builds) *(or scan QR below)*
+**Download APK:** [Protocol-01.apk](https://expo.dev/accounts/slashy/projects/p01-mobile/builds)*
 
 #### Installation Steps:
 1. Download the APK on your Android device
