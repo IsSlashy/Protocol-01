@@ -406,6 +406,7 @@ export enum P01ErrorCode {
   TRANSFER_FAILED = 3002,
   CLAIM_FAILED = 3003,
   INVALID_RECIPIENT = 3004,
+  INVALID_AMOUNT = 3005,
 
   // Stream errors (4xxx)
   STREAM_NOT_FOUND = 4001,

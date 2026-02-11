@@ -12,6 +12,8 @@ import {
   Ban,
   ChevronDown,
   Check,
+  EyeOff,
+  Lock,
   Music,
   Bot,
   Gamepad2,
@@ -270,6 +272,28 @@ export default function SubscriptionDetails() {
                 </p>
               </div>
             )}
+          </motion.div>
+        )}
+
+        {/* ZK Private Payment Badge */}
+        {subscription.useZkPool && (
+          <motion.div
+            initial={{ y: 10, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="bg-p01-pink/10 rounded-xl p-4 border border-p01-pink/30"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <EyeOff className="w-5 h-5 text-p01-pink" />
+              <span className="text-sm font-semibold text-p01-pink">
+                ZK Private Payment
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <Lock className="w-3 h-3 text-p01-pink flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-p01-chrome/60">
+                Payments are routed through the ZK shielded pool. Your identity is fully hidden from the merchant and on-chain observers.
+              </p>
+            </div>
           </motion.div>
         )}
 
