@@ -3,7 +3,6 @@ name = "zk_shielded"
 version = "0.1.0"
 description = "Protocol 01 - ZK Shielded Pool with Groth16 verification"
 edition = "2021"
-rust-version = "1.75"
 
 [lib]
 crate-type = ["cdylib", "lib"]
@@ -15,28 +14,24 @@ no-idl = []
 no-log-ix-name = []
 cpi = ["no-entrypoint"]
 default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
-anchor-spl = "0.30.1"
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = "0.32.1"
 
-# Solana program for alt_bn128 operations
-solana-program = "1.18"
+# BN254 alt_bn128 operations for Groth16 verification (syscalls)
+solana-bn254 = "2"
 
 # Hash function for verification key hashing
 sha3 = "0.10"
 
-# Poseidon hash for Merkle tree
-# NOTE: Disabled until Poseidon syscall is enabled on devnet/mainnet
-# solana-poseidon = "2.2"
-
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }
 
-# Note: Groth16 verification uses Solana's native alt_bn128 syscall
-# This eliminates heavy ark-* dependencies and stack overflow issues
-
-[dev-dependencies]
-solana-program-test = "1.18"
-solana-sdk = "1.18"
-tokio = { version = "1", features = ["full"] }
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = [
+    'cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))',
+    'cfg(target_os, values("solana"))',
+]

@@ -9,6 +9,7 @@ use crate::state::{P01Wallet, StreamAccount};
 /// Funds are locked in an escrow and released linearly to the recipient
 /// over the specified duration.
 #[derive(Accounts)]
+#[instruction(total_amount: u64, duration_seconds: i64, is_private: bool, stream_timestamp: i64)]
 pub struct CreateStream<'info> {
     /// The sender creating the stream
     #[account(mut)]
@@ -35,7 +36,7 @@ pub struct CreateStream<'info> {
             StreamAccount::SEED_PREFIX,
             sender.key().as_ref(),
             recipient.key().as_ref(),
-            &Clock::get()?.unix_timestamp.to_le_bytes()
+            &stream_timestamp.to_le_bytes()
         ],
         bump
     )]
@@ -72,6 +73,7 @@ pub fn handler(
     total_amount: u64,
     duration_seconds: i64,
     is_private: bool,
+    stream_timestamp: i64,
 ) -> Result<()> {
     // Validate amount
     if total_amount == 0 {
@@ -93,9 +95,13 @@ pub fn handler(
         return Err(P01Error::InsufficientBalance.into());
     }
 
-    // Get current timestamp
+    // Validate timestamp matches on-chain clock (within 30s tolerance)
     let clock = Clock::get()?;
     let start_time = clock.unix_timestamp;
+    require!(
+        (start_time - stream_timestamp).abs() <= 30,
+        P01Error::InvalidStreamDuration
+    );
     let end_time = start_time
         .checked_add(duration_seconds)
         .ok_or(P01Error::ArithmeticOverflow)?;

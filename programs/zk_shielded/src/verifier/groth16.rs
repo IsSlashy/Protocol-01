@@ -1,9 +1,10 @@
 use anchor_lang::prelude::*;
 use crate::{errors::ZkShieldedError, Groth16Proof};
 
-// Use Solana's built-in alt_bn128 operations
+// Use Solana's built-in alt_bn128 operations via solana-bn254 crate
 #[cfg(target_os = "solana")]
-use solana_program::alt_bn128::prelude::{
+#[allow(deprecated)]
+use solana_bn254::prelude::{
     alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing,
 };
 

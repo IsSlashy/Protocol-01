@@ -1,14 +1,17 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/zk_shielded",
+    "programs/specter",
+    "programs/stream",
+    "programs/subscription",
+    "programs/whitelist",
+    "programs/p01-fee-splitter",
 ]
 
 resolver = "2"
 
-# CRITICAL: Set minimum Rust version for MSRV-aware resolver
-# This tells Cargo to prefer crate versions compatible with Rust 1.75
 [workspace.package]
-rust-version = "1.75"
+rust-version = "1.89"
 
 [profile.release]
 overflow-checks = true
@@ -21,32 +24,15 @@ incremental = false
 codegen-units = 1
 
 # =============================================================================
-# SOLANA COMPATIBILITY PATCHES
-# =============================================================================
-# These patches force older versions of crates that don't require edition 2024.
-# Edition 2024 requires Cargo 1.85+, but Solana platform-tools uses Cargo 1.84.
-#
-# This patch section is the result of extensive research and testing.
-# Add more crates here as needed when you encounter edition 2024 errors.
-# =============================================================================
-
-# Patches handled by .cargo/config.toml MSRV-aware resolver
-
-# =============================================================================
 # WORKSPACE DEPENDENCIES
 # =============================================================================
-# Define shared dependencies with specific versions to ensure consistency
 
 [workspace.dependencies]
-# Anchor dependencies pinned to 0.30.1 (compatible with Solana 1.18)
-anchor-lang = "0.30.1"
-anchor-spl = "0.30.1"
+# Anchor dependencies - 0.32.1 (compatible with Solana v2 / Agave)
+anchor-lang = "0.32.1"
+anchor-spl = "0.32.1"
 
-# Solana dependencies
-solana-program = "1.18.17"
-solana-sdk = "1.18.17"
-
-# Serialization - borsh version compatible with Anchor 0.30.1
+# Serialization - borsh version compatible with Anchor 0.32.1
 borsh = "1.5"
 
 # Common utilities

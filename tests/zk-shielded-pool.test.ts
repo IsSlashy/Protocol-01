@@ -11,7 +11,7 @@
  *   - Nullifier double-spend prevention (Bloom filter)
  *   - Merkle tree operations
  *
- * Program ID: 8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY
+ * Program ID: GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -32,7 +32,7 @@ import { expect } from 'chai';
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const PROGRAM_ID = new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY');
+const PROGRAM_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 
 const DEFAULT_TREE_DEPTH = 20;
 const MAX_HISTORICAL_ROOTS = 100;
