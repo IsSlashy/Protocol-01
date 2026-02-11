@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendSol } from './transactions';
 import { getConnection } from './connection';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { processZkStreamPayment } from './privateSubscription';
 import {
   applyAmountNoise,
   NoiseAdjustment,
@@ -51,6 +52,7 @@ export interface Stream {
   amountNoise: number;       // Amount variation +/- % (0-20)
   timingNoise: number;       // Timing variation +/- hours (0-24)
   useStealthAddress: boolean; // Use unique derived address per payment
+  useZkPool?: boolean; // Pay from ZK shielded pool (fully untraceable)
 
   // Amount noise tracking (for balancing over time)
   noiseAdjustment?: NoiseAdjustment; // Tracks cumulative overpay/underpay from noise
@@ -101,6 +103,7 @@ export interface CreateStreamParams {
   amountNoise?: number;
   timingNoise?: number;
   useStealthAddress?: boolean;
+  useZkPool?: boolean;
   // Service info (optional)
   serviceId?: string;
   serviceName?: string;
@@ -325,6 +328,7 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     const rawNoisyTime = await applyTimingNoise(firstPaymentDate, timingNoise);
     // Ensure noise doesn't push first payment past the interval
     noisyPaymentDate = ensurePaymentNotSkipped(rawNoisyTime, firstPaymentDate, intervalMs);
+    console.log(
       `[Streams] Applied initial timing noise: ` +
       `base=${new Date(firstPaymentDate).toISOString()}, ` +
       `noisy=${new Date(noisyPaymentDate).toISOString()}, ` +
@@ -355,6 +359,7 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     amountNoise: params.amountNoise ?? 0,
     timingNoise,
     useStealthAddress: params.useStealthAddress ?? false,
+    useZkPool: params.useZkPool ?? false,
     // Service info
     serviceId: params.serviceId,
     serviceName: params.serviceName,
@@ -451,6 +456,7 @@ export async function resumeStream(streamId: string): Promise<Stream | null> {
   if (stream.timingNoise > 0) {
     const rawNoisyTime = await applyTimingNoise(nextPaymentDate, stream.timingNoise);
     noisyPaymentDate = ensurePaymentNotSkipped(rawNoisyTime, nextPaymentDate, intervalMs);
+    console.log(
       `[Streams] Applied timing noise on resume for ${stream.name}: ` +
       `base=${new Date(nextPaymentDate).toISOString()}, ` +
       `noisy=${new Date(noisyPaymentDate).toISOString()}`
@@ -576,7 +582,7 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
       amountToSend = noiseResult.adjustedAmount;
       noiseDelta = noiseResult.noiseDelta;
       newNoiseAdjustment = updateNoiseAdjustment(newNoiseAdjustment, noiseDelta);
-
+      console.log(
         `[Streams] Applied amount noise to ${stream.name}: ` +
         `${stream.amountPerPayment} -> ${amountToSend.toFixed(9)} SOL ` +
         `(delta: ${noiseDelta >= 0 ? '+' : ''}${noiseDelta.toFixed(9)}, ` +
@@ -584,8 +590,13 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
       );
     }
 
-    // Execute the payment with potentially noise-adjusted amount
-    const result = await sendSol(stream.recipientAddress, amountToSend);
+    // Execute the payment — route through ZK pool if enabled, otherwise direct transfer
+    let result: { success: boolean; signature?: string; error?: string };
+    if (stream.useZkPool) {
+      result = await processZkStreamPayment(stream, amountToSend);
+    } else {
+      result = await sendSol(stream.recipientAddress, amountToSend);
+    }
 
     if (!result.success) {
       throw new Error(result.error || 'Payment failed');
@@ -616,6 +627,7 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
         nextPaymentDate,
         intervalMs
       );
+      console.log(
         `[Streams] Applied timing noise to ${stream.name}: ` +
         `base=${new Date(nextPaymentDate).toISOString()}, ` +
         `noisy=${new Date(noisyPaymentDate).toISOString()}, ` +

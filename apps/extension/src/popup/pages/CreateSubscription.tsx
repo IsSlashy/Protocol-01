@@ -7,10 +7,13 @@ import {
   Loader2,
   ChevronDown,
   Zap,
+  EyeOff,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
 import { useWalletStore } from '@/shared/store/wallet';
+import { useShieldedStore } from '@/shared/store/shielded';
 import { validateRecipient, SubscriptionInterval } from '@/shared/services/stream';
 
 const INTERVALS: { value: SubscriptionInterval; label: string; days: number }[] = [
@@ -24,6 +27,7 @@ export default function CreateSubscription() {
   const navigate = useNavigate();
   const { addSubscription, processPayment } = useSubscriptionsStore();
   const { _keypair, network, isUnlocked } = useWalletStore();
+  const { shieldedBalance } = useShieldedStore();
 
   // Form state
   const [name, setName] = useState('');
@@ -31,11 +35,13 @@ export default function CreateSubscription() {
   const [amount, setAmount] = useState('');
   const [interval, setInterval] = useState<SubscriptionInterval>('monthly');
   const [maxPayments, setMaxPayments] = useState('12');
-
+  const [useZkPool, setUseZkPool] = useState(false);
 
   // UI state
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const parsedAmount = parseFloat(amount) || 0;
 
   // Validation
   const isValidRecipient = recipient.length === 0 || validateRecipient(recipient);
@@ -219,6 +225,64 @@ export default function CreateSubscription() {
           </div>
         </div>
 
+        {/* ZK Private Payment Toggle */}
+        <button
+          type="button"
+          onClick={() => setUseZkPool(!useZkPool)}
+          className={cn(
+            'w-full rounded-xl p-4 border text-left transition-colors',
+            useZkPool
+              ? 'bg-p01-pink/10 border-p01-pink/40'
+              : 'bg-p01-surface border-p01-border hover:border-p01-border/80'
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0',
+              useZkPool ? 'bg-p01-pink/20' : 'bg-p01-border/50'
+            )}>
+              <EyeOff className={cn('w-5 h-5', useZkPool ? 'text-p01-pink' : 'text-p01-chrome/60')} />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-white">ZK Private Payment</p>
+              <p className="text-xs text-p01-chrome/60 mt-0.5">
+                Pay from shielded pool — fully untraceable
+              </p>
+            </div>
+            <div className={cn(
+              'w-10 h-5 rounded-full transition-colors flex items-center px-0.5',
+              useZkPool ? 'bg-p01-pink justify-end' : 'bg-p01-border justify-start'
+            )}>
+              <div className="w-4 h-4 rounded-full bg-white" />
+            </div>
+          </div>
+
+          {useZkPool && (
+            <div className="mt-3 pt-3 border-t border-p01-pink/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-p01-chrome/60">Shielded Balance</span>
+                <span className={cn(
+                  'text-xs font-semibold',
+                  shieldedBalance >= parsedAmount ? 'text-green-400' : 'text-red-400'
+                )}>
+                  {shieldedBalance.toFixed(4)} SOL
+                </span>
+              </div>
+              {shieldedBalance < parsedAmount && parsedAmount > 0 && (
+                <p className="text-xs text-red-400">
+                  Insufficient shielded balance. Shield more SOL first.
+                </p>
+              )}
+              <div className="flex items-start gap-2 p-2 bg-p01-pink/5 rounded-lg">
+                <Lock className="w-3 h-3 text-p01-pink flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] text-p01-chrome/60">
+                  ZK proof hides your identity. Neither the merchant nor anyone on-chain can trace this payment back to you.
+                </p>
+              </div>
+            </div>
+          )}
+        </button>
+
         {/* Error */}
         {error && (
           <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30">
@@ -234,18 +298,23 @@ export default function CreateSubscription() {
       <div className="p-4 border-t border-p01-border">
         <button
           onClick={handleCreate}
-          disabled={!canSubmit || isCreating}
-          className="w-full py-3.5 bg-p01-cyan text-p01-void font-semibold rounded-xl hover:bg-p01-cyan-dim transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          disabled={!canSubmit || isCreating || (useZkPool && shieldedBalance < parsedAmount)}
+          className={cn(
+            'w-full py-3.5 font-semibold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2',
+            useZkPool
+              ? 'bg-p01-pink text-p01-void hover:bg-p01-pink/90'
+              : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
+          )}
         >
           {isCreating ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Sending first payment...
+              {useZkPool ? 'Sending privately...' : 'Sending first payment...'}
             </>
           ) : (
             <>
-              <Zap className="w-5 h-5" />
-              Start & Pay Now
+              {useZkPool ? <EyeOff className="w-5 h-5" /> : <Zap className="w-5 h-5" />}
+              {useZkPool ? 'Subscribe Privately' : 'Start & Pay Now'}
             </>
           )}
         </button>

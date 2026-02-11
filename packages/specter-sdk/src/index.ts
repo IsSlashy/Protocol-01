@@ -202,6 +202,18 @@ export {
 } from './streams';
 
 // ============================================================================
+// Subscription Module (ZK Private)
+// ============================================================================
+export {
+  createPrivateSubscription,
+  generatePrivatePaymentData,
+  type PrivateSubscriptionParams,
+  type PrivateSubscriptionResult,
+  type PrivatePaymentData,
+  type SubscriptionFrequency,
+} from './subscription';
+
+// ============================================================================
 // Utilities
 // ============================================================================
 export {

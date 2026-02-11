@@ -824,9 +824,15 @@ function SubscriptionCard({
                   <Text style={{ color: accentColor, fontSize: 9 }}>+/-{sub.timingNoise}h</Text>
                 </View>
               )}
-              {sub.useStealthAddress && (
+              {sub.useStealthAddress && !sub.useZkPool && (
                 <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: 'rgba(255, 119, 168, 0.2)', borderRadius: 4 }}>
                   <Text style={{ color: COLORS.pink, fontSize: 9 }}>Stealth</Text>
+                </View>
+              )}
+              {sub.useZkPool && (
+                <View style={{ paddingHorizontal: 5, paddingVertical: 1, backgroundColor: 'rgba(255, 119, 168, 0.25)', borderRadius: 4, flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                  <Ionicons name="eye-off" size={8} color={COLORS.pink} />
+                  <Text style={{ color: COLORS.pink, fontSize: 9, fontWeight: '500' }}>ZK PRIVATE</Text>
                 </View>
               )}
             </View>
