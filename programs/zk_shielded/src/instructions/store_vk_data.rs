@@ -120,7 +120,7 @@ pub fn handler_init(ctx: Context<InitVkData>, vk_size: u32) -> Result<()> {
     } else if vk_account.data_len() != required_space {
         // Resize if needed
         msg!("Resizing VK data account to {} bytes", required_space);
-        vk_account.realloc(required_space, false)?;
+        vk_account.resize(required_space)?;
 
         // Adjust lamports
         if required_lamports > current_lamports {

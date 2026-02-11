@@ -9,7 +9,7 @@
  *   - Delegation renewal
  *   - Account closing
  *
- * Program ID: Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS
+ * Program ID: 5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -26,7 +26,7 @@ import { expect } from 'chai';
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const PROGRAM_ID = new PublicKey('Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS');
+const PROGRAM_ID = new PublicKey('5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt');
 
 const SEEDS = {
   SUBSCRIPTION: Buffer.from('subscription'),

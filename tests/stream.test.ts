@@ -7,7 +7,7 @@
  *   - Stream cancellation with refund to sender
  *   - Stream lifecycle and completion
  *
- * Program ID: 2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs
+ * Program ID: 2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -29,7 +29,7 @@ import { expect } from 'chai';
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const PROGRAM_ID = new PublicKey('2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs');
+const PROGRAM_ID = new PublicKey('2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws');
 
 const SEEDS = {
   STREAM: Buffer.from('stream'),

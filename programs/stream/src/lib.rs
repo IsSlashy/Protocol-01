@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs");
+declare_id!("2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws");
 
 #[program]
 pub mod p01_stream {
