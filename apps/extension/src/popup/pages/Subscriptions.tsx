@@ -678,9 +678,15 @@ function SubscriptionCard({
                 +/-{sub.timingNoise}h
               </span>
             )}
-            {sub.useStealthAddress && (
+            {sub.useStealthAddress && !sub.useZkPool && (
               <span className="px-1.5 py-0.5 text-[9px] bg-p01-pink/20 text-p01-pink rounded">
                 Stealth
+              </span>
+            )}
+            {sub.useZkPool && (
+              <span className="px-1.5 py-0.5 text-[9px] bg-p01-pink/25 text-p01-pink rounded font-medium flex items-center gap-0.5">
+                <EyeOff className="w-2 h-2" />
+                ZK PRIVATE
               </span>
             )}
           </div>

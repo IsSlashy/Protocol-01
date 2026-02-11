@@ -50,6 +50,7 @@ export interface StreamSubscription {
   amountNoise: number;             // +/- X% variation on amount (0-20)
   timingNoise: number;             // +/- X hours variation on timing (0-24)
   useStealthAddress: boolean;      // Use stealth addresses for privacy
+  useZkPool?: boolean;             // Pay from ZK shielded pool (fully untraceable)
 
   // Limits
   maxPayments: number;             // 0 = unlimited
