@@ -88,7 +88,6 @@
       if (pending) {
         if (payload?.pending && payload?.requestId) {
           approvalToOriginal.set(payload.requestId, requestId);
-          console.log("[Protocol 01] Waiting for approval:", payload.requestId);
           return;
         }
         clearTimeout(pending.timeout);
@@ -467,7 +466,6 @@
       window.dispatchEvent(event);
     } catch (e) {
     }
-    console.log("[Protocol 01] Wallet provider injected");
   }
   if (window.location.protocol === "https:" || window.location.protocol === "http:") {
     injectProvider();
