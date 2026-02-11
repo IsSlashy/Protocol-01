@@ -5,6 +5,7 @@ pub mod create_stream;
 pub mod withdraw_stream;
 pub mod cancel_stream;
 
+#[allow(ambiguous_glob_reexports)]
 pub use init_wallet::*;
 pub use send_private::*;
 pub use claim_stealth::*;

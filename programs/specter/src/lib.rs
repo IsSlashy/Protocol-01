@@ -46,8 +46,9 @@ pub mod p01 {
         total_amount: u64,
         duration_seconds: i64,
         is_private: bool,
+        stream_timestamp: i64,
     ) -> Result<()> {
-        instructions::create_stream::handler(ctx, total_amount, duration_seconds, is_private)
+        instructions::create_stream::handler(ctx, total_amount, duration_seconds, is_private, stream_timestamp)
     }
 
     /// Withdraw available funds from an active stream

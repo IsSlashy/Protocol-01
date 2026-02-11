@@ -6,6 +6,7 @@ pub mod unshield;
 pub mod update_vk;
 pub mod transfer_via_relayer;
 
+#[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
 pub use shield::*;
 pub use store_vk_data::*;

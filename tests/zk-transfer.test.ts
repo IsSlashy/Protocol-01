@@ -26,7 +26,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 
 // Program ID (deployed on devnet)
-const ZK_SHIELDED_PROGRAM_ID = new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY');
+const ZK_SHIELDED_PROGRAM_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 
 // PDA Seeds
 const SEEDS = {
@@ -74,7 +74,7 @@ const DISCRIMINATORS = {
 };
 
 describe('ZK Transfer Full Test', () => {
-  const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+  const connection = new Connection(process.env.ANCHOR_PROVIDER_URL || 'https://api.devnet.solana.com', 'confirmed');
 
   let wallet: Wallet;
   let provider: AnchorProvider;
@@ -150,20 +150,19 @@ describe('ZK Transfer Full Test', () => {
 
       console.log(`VK Hash: ${vkHash.toString('hex')}`);
 
-      const data = Buffer.concat([DISCRIMINATORS.initialize_pool, vkHash]);
+      const data = Buffer.concat([DISCRIMINATORS.initialize_pool, vkHash, tokenMint.toBuffer()]);
 
       const tx = new anchor.web3.Transaction()
         .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }))
         .add({
           programId: ZK_SHIELDED_PROGRAM_ID,
           keys: [
-            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-            { pubkey: tokenMint, isSigner: false, isWritable: false },
-            { pubkey: poolPDA, isSigner: false, isWritable: true },
-            { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-            { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-            { pubkey: anchor.web3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },            // authority
+            { pubkey: poolPDA, isSigner: false, isWritable: true },                    // shielded_pool
+            { pubkey: merkleTreePDA, isSigner: false, isWritable: true },              // merkle_tree
+            { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },            // nullifier_set
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },   // system_program
+            { pubkey: anchor.web3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false }, // rent
           ],
           data,
         });
@@ -256,19 +255,24 @@ describe('ZK Transfer Full Test', () => {
       const amountBuffer = Buffer.alloc(8);
       amountBuffer.writeBigUInt64LE(amount);
 
-      const data = Buffer.concat([DISCRIMINATORS.shield, amountBuffer, commitment]);
+      // new_root: dummy Merkle root after shield (computed off-chain in production)
+      const newRoot = Buffer.alloc(32);
+      newRoot.fill(0xAA);
+
+      const data = Buffer.concat([DISCRIMINATORS.shield, amountBuffer, commitment, newRoot]);
 
       const tx = new anchor.web3.Transaction()
-        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }))
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
         .add({
           programId: ZK_SHIELDED_PROGRAM_ID,
           keys: [
-            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-            { pubkey: poolPDA, isSigner: false, isWritable: true },
-            { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-            { pubkey: userTokenAccount, isSigner: false, isWritable: true },
-            { pubkey: poolVault, isSigner: false, isWritable: true },
-            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            { pubkey: payer.publicKey, isSigner: true, isWritable: true },     // depositor
+            { pubkey: poolPDA, isSigner: false, isWritable: true },            // shielded_pool
+            { pubkey: merkleTreePDA, isSigner: false, isWritable: true },      // merkle_tree
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },  // token_program (optional)
+            { pubkey: userTokenAccount, isSigner: false, isWritable: true },   // user_token_account (optional)
+            { pubkey: poolVault, isSigner: false, isWritable: true },          // pool_vault (optional)
           ],
           data,
         });
