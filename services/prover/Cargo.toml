@@ -1,0 +1,53 @@
+[package]
+name = "p01-prover"
+version = "0.1.0"
+edition = "2021"
+description = "Native Groth16 prover for Protocol 01 ZK shielded pool"
+
+# Not part of the Anchor workspace — targets Linux x86_64, not BPF
+[workspace]
+
+[[bin]]
+name = "p01-prover"
+path = "src/main.rs"
+
+[dependencies]
+# Arkworks proving stack
+ark-bn254 = "0.5"
+ark-circom = "0.5.0"
+ark-groth16 = { version = "0.5", features = ["parallel"] }
+ark-crypto-primitives = { version = "0.5", features = ["snark"] }
+ark-ec = "0.5"
+ark-ff = "0.5"
+ark-relations = "0.5"
+ark-serialize = "0.5"
+ark-std = { version = "0.5", features = ["parallel"] }
+
+# BigInt for parsing decimal signal inputs
+num-bigint = "0.4"
+num-traits = "0.2"
+
+# HTTP server
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Parallelism (MSM/NTT use rayon internally via ark-std parallel feature)
+rayon = "1.10"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

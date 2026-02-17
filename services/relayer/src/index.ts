@@ -131,7 +131,25 @@ app.use(express.json({ limit: '10mb' })); // Increased limit for proof inputs
 /**
  * Health check endpoint
  */
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  // Check Rust prover health
+  const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
+  let rustProverStatus = 'unknown';
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const r = await fetch(`${rustProverUrl}/health`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (r.ok) {
+      const data = await r.json() as any;
+      rustProverStatus = data.proverReady ? 'ready' : 'degraded';
+    } else {
+      rustProverStatus = 'error';
+    }
+  } catch {
+    rustProverStatus = 'offline';
+  }
+
   res.json({
     status: 'ok',
     relayer: relayerKeypair.publicKey.toBase58(),
@@ -140,6 +158,7 @@ app.get('/health', (req, res) => {
     zkVerification: verificationKey ? 'enabled' : 'disabled (mock)',
     vkProtocol: verificationKey?.protocol || null,
     vkNPublic: verificationKey?.nPublic || null,
+    rustProver: rustProverStatus,
   });
 });
 
@@ -203,6 +222,60 @@ app.post('/prove', async (req, res) => {
       inputKeys: Object.keys(inputs),
     });
 
+    // Strategy: Try Rust prover first, fall back to snarkjs
+    // 1. Rust native prover (localhost:3001) — fast (~3-8s)
+    // 2. snarkjs local (last resort) — slow (30-120s)
+
+    const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
+
+    // --- Attempt 1: Rust native prover ---
+    try {
+      logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}...`);
+      const rustStart = Date.now();
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+      const rustResponse = await fetch(`${rustProverUrl}/prove`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (rustResponse.ok) {
+        const result = await rustResponse.json() as any;
+        if (result.success && result.proof) {
+          const totalTime = Date.now() - startTime;
+          logger.info(`[${reqId}] Rust prover succeeded`, {
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            publicSignalsCount: result.publicSignals?.length,
+            prover: 'rust-native',
+          });
+
+          return res.json({
+            success: true,
+            proof: result.proof,
+            publicSignals: result.publicSignals,
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            prover: 'rust-native',
+          });
+        }
+      }
+
+      const rustError = await rustResponse.text().catch(() => 'unknown');
+      logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
+    } catch (rustErr: any) {
+      logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+    }
+
+    // --- Attempt 2: snarkjs fallback ---
+    logger.info(`[${reqId}] Falling back to snarkjs...`);
+
     // Check if circuit files exist
     if (!fs.existsSync(CONFIG.wasmPath)) {
       logger.error(`WASM file not found at ${CONFIG.wasmPath}`);
@@ -227,7 +300,7 @@ app.post('/prove', async (req, res) => {
       }
     }
 
-    logger.info(`[${reqId}] Starting proof generation...`);
+    logger.info(`[${reqId}] Starting snarkjs proof generation...`);
     const proofStart = Date.now();
 
     // Generate proof using snarkjs
@@ -240,10 +313,11 @@ app.post('/prove', async (req, res) => {
     const proofTime = Date.now() - proofStart;
     const totalTime = Date.now() - startTime;
 
-    logger.info(`[${reqId}] Proof generated successfully`, {
+    logger.info(`[${reqId}] snarkjs proof generated successfully`, {
       proofTimeMs: proofTime,
       totalTimeMs: totalTime,
       publicSignalsCount: publicSignals.length,
+      prover: 'snarkjs',
     });
 
     res.json({
@@ -252,6 +326,7 @@ app.post('/prove', async (req, res) => {
       publicSignals,
       proofTimeMs: proofTime,
       totalTimeMs: totalTime,
+      prover: 'snarkjs',
     });
 
   } catch (e: any) {
