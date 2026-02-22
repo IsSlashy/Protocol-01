@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
 use ark_bn254::{Bn254, Fr};
-use ark_circom::{CircomBuilder, CircomConfig};
+use ark_circom::{CircomBuilder, CircomConfig, CircomReduction};
 use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_crypto_primitives::snark::SNARK;
+
+/// Use CircomReduction instead of the default LibsnarkReduction.
+/// Circom >= 2.0.7 uses a different R1CS-to-QAP mapping.
+/// Without this, proofs are structurally valid (on-curve) but
+/// mathematically wrong (fail verification).
+/// See: https://github.com/arkworks-rs/circom-compat/issues/35
+type GrothBn = Groth16<Bn254, CircomReduction>;
 use ark_std::rand::thread_rng;
 use num_bigint::BigInt;
 use num_traits::Num;
@@ -34,7 +41,7 @@ impl ProverContext {
         // Load R1CS to get constraint count
         info!("Loading circuit config (WASM + R1CS)...");
         let cfg = CircomConfig::<Fr>::new(wasm_path, r1cs_path)
-            .context("Failed to load CircomConfig (WASM + R1CS)")?;
+            .map_err(|e| anyhow::anyhow!("Failed to load CircomConfig (WASM + R1CS): {e:#}"))?;
         let num_constraints = cfg.r1cs.constraints.len();
         // Drop cfg — we'll reload it per-proof
         drop(cfg);
@@ -46,7 +53,7 @@ impl ProverContext {
                     .with_context(|| format!("Cannot open zkey: {}", zkey_path.display()))?,
             ),
         )
-        .context("Failed to read zkey")?;
+        .map_err(|e| anyhow::anyhow!("Failed to read zkey: {e}"))?;
 
         let vk = params.vk.clone();
 
@@ -78,7 +85,7 @@ impl ProverContext {
     ) -> Result<(Proof<Bn254>, Vec<Fr>)> {
         // Reload circuit config (WASM + R1CS) — fast
         let cfg = CircomConfig::<Fr>::new(&self.wasm_path, &self.r1cs_path)
-            .context("Failed to reload CircomConfig for proving")?;
+            .map_err(|e| anyhow::anyhow!("Failed to reload CircomConfig: {e:#}"))?;
 
         // Build witness
         let mut builder = CircomBuilder::new(cfg);
@@ -89,7 +96,7 @@ impl ProverContext {
             }
         }
 
-        let circuit = builder.build().context("Failed to build witness")?;
+        let circuit = builder.build().map_err(|e| anyhow::anyhow!("Failed to build witness: {e:#}"))?;
         let public_inputs = circuit.get_public_inputs().unwrap_or_default();
 
         info!(
@@ -97,9 +104,9 @@ impl ProverContext {
             public_inputs.len()
         );
 
-        // Generate proof (rayon parallelism via ark-std parallel feature)
+        // Generate proof using CircomReduction (required for circom >= 2.0.7)
         let mut rng = thread_rng();
-        let proof = Groth16::<Bn254>::prove(&self.params, circuit, &mut rng)
+        let proof = GrothBn::prove(&self.params, circuit, &mut rng)
             .context("Groth16::prove failed")?;
 
         Ok((proof, public_inputs))
@@ -107,7 +114,7 @@ impl ProverContext {
 
     /// Verify a proof against the loaded verification key.
     pub fn verify(&self, proof: &Proof<Bn254>, public_inputs: &[Fr]) -> Result<bool> {
-        let valid = Groth16::<Bn254>::verify(&self.vk, public_inputs, proof)
+        let valid = GrothBn::verify(&self.vk, public_inputs, proof)
             .context("Groth16::verify failed")?;
         Ok(valid)
     }

@@ -9,6 +9,7 @@ import {
   JetBrainsMono_400Regular,
   JetBrainsMono_500Medium,
 } from '@expo-google-fonts/jetbrains-mono';
+import { Ionicons } from '@expo/vector-icons';
 
 export function useLoadFonts() {
   const [fontsLoaded, fontError] = useFonts({
@@ -18,6 +19,7 @@ export function useLoadFonts() {
     'Inter-Bold': Inter_700Bold,
     'JetBrainsMono-Regular': JetBrainsMono_400Regular,
     'JetBrainsMono-Medium': JetBrainsMono_500Medium,
+    ...Ionicons.font,
   });
 
   return {

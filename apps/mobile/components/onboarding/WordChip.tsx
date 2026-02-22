@@ -4,8 +4,6 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   useSharedValue,
-  withTiming,
-  runOnJS,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
@@ -55,25 +53,27 @@ export const WordChip: React.FC<WordChipProps> = ({
     switch (variant) {
       case 'selected':
         return {
-          container: 'bg-[#39c5bb]/20 border-[#39c5bb]',
-          text: 'text-[#39c5bb]',
+          bg: 'rgba(57, 197, 187, 0.2)',
+          border: '#39c5bb',
+          text: '#39c5bb',
         };
       case 'correct':
         return {
-          container: 'bg-[#39c5bb]/30 border-[#39c5bb]',
-          text: 'text-[#39c5bb]',
+          bg: 'rgba(57, 197, 187, 0.3)',
+          border: '#39c5bb',
+          text: '#39c5bb',
         };
       case 'incorrect':
         return {
-          container: 'bg-red-500/20 border-red-500',
-          text: 'text-red-500',
+          bg: 'rgba(239, 68, 68, 0.2)',
+          border: '#ef4444',
+          text: '#ef4444',
         };
       default:
         return {
-          container: selected
-            ? 'bg-[#2a2a30] border-[#2a2a30] opacity-50'
-            : 'bg-[#151518] border-[#2a2a30]',
-          text: selected ? 'text-[#555560]' : 'text-white',
+          bg: selected ? '#2a2a30' : '#151518',
+          border: '#2a2a30',
+          text: selected ? '#555560' : '#ffffff',
         };
     }
   };
@@ -82,22 +82,33 @@ export const WordChip: React.FC<WordChipProps> = ({
 
   return (
     <AnimatedPressable
-      style={animatedStyle}
+      style={[
+        animatedStyle,
+        {
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          borderRadius: 12,
+          borderWidth: 1,
+          margin: 4,
+          backgroundColor: styles.bg,
+          borderColor: styles.border,
+          opacity: disabled || selected ? 0.5 : 1,
+        },
+      ]}
       onPress={handlePress}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       disabled={disabled || selected}
-      className={`
-        px-4 py-2.5 rounded-xl border m-1
-        ${styles.container}
-        ${disabled ? 'opacity-50' : ''}
-      `}
     >
-      <View className="flex-row items-center">
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         {showIndex && index !== undefined && (
-          <Text className="text-[#39c5bb] text-xs mr-2">{index + 1}.</Text>
+          <Text style={{ color: '#39c5bb', fontSize: 11, marginRight: 8 }}>
+            {index + 1}.
+          </Text>
         )}
-        <Text className={`font-medium ${styles.text}`}>{word}</Text>
+        <Text style={{ fontWeight: '500', color: styles.text, fontSize: 14 }}>
+          {word}
+        </Text>
       </View>
     </AnimatedPressable>
   );

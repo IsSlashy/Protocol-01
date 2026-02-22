@@ -5,7 +5,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   withRepeat,
-  withSequence,
   Easing,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,17 +19,15 @@ export interface Step {
 
 interface ProgressStepsProps {
   steps: Step[];
-  className?: string;
 }
 
-const StepItem: React.FC<{ step: Step; index: number }> = ({ step, index }) => {
+const StepItem: React.FC<{ step: Step; index: number }> = ({ step }) => {
   const rotation = useSharedValue(0);
   const opacity = useSharedValue(step.status === 'pending' ? 0.4 : 1);
 
   useEffect(() => {
     if (step.status === 'in_progress') {
-      // Start spinner animation
-      rotation.value = 0; // Reset first
+      rotation.value = 0;
       rotation.value = withRepeat(
         withTiming(360, { duration: 1000, easing: Easing.linear }),
         -1,
@@ -38,11 +35,9 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step, index }) => {
       );
       opacity.value = 1;
     } else if (step.status === 'completed') {
-      // Stop animation immediately
       rotation.value = withTiming(0, { duration: 100 });
       opacity.value = withTiming(1, { duration: 300 });
     } else {
-      // Pending state
       rotation.value = withTiming(0, { duration: 100 });
       opacity.value = withTiming(0.4, { duration: 300 });
     }
@@ -60,37 +55,68 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step, index }) => {
     switch (step.status) {
       case 'completed':
         return (
-          <View className="w-6 h-6 rounded-full bg-[#39c5bb] items-center justify-center">
+          <View
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              backgroundColor: '#39c5bb',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <Ionicons name="checkmark" size={16} color="#0a0a0c" />
           </View>
         );
       case 'in_progress':
         return (
           <Animated.View style={spinStyle}>
-            <View className="w-6 h-6 rounded-full border-2 border-[#39c5bb] border-t-transparent" />
+            <View
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 12,
+                borderWidth: 2,
+                borderColor: '#39c5bb',
+                borderTopColor: 'transparent',
+              }}
+            />
           </Animated.View>
         );
       default:
         return (
-          <View className="w-6 h-6 rounded-full border-2 border-[#2a2a30]" />
+          <View
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              borderWidth: 2,
+              borderColor: '#2a2a30',
+            }}
+          />
         );
     }
   };
 
   return (
     <Animated.View
-      style={containerStyle}
-      className="flex-row items-center py-3"
+      style={[
+        containerStyle,
+        { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+      ]}
     >
       {getIcon()}
       <Text
-        className={`ml-4 text-base ${
-          step.status === 'completed'
-            ? 'text-[#39c5bb]'
-            : step.status === 'in_progress'
-            ? 'text-white'
-            : 'text-[#555560]'
-        }`}
+        style={{
+          marginLeft: 16,
+          fontSize: 16,
+          color:
+            step.status === 'completed'
+              ? '#39c5bb'
+              : step.status === 'in_progress'
+              ? '#ffffff'
+              : '#555560',
+        }}
       >
         {step.label}
       </Text>
@@ -98,9 +124,9 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step, index }) => {
   );
 };
 
-export const ProgressSteps: React.FC<ProgressStepsProps> = ({ steps, className }) => {
+export const ProgressSteps: React.FC<ProgressStepsProps> = ({ steps }) => {
   return (
-    <View className={`${className || ''}`}>
+    <View>
       {steps.map((step, index) => (
         <StepItem key={step.id} step={step} index={index} />
       ))}

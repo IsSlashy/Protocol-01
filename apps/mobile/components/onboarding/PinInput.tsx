@@ -1,12 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, TextInput, Pressable } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSequence,
   withTiming,
   withSpring,
-  Easing,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
@@ -33,7 +32,6 @@ export const PinInput: React.FC<PinInputProps> = ({
 
   useEffect(() => {
     if (error) {
-      // Shake animation
       shakeX.value = withSequence(
         withTiming(-10, { duration: 50 }),
         withTiming(10, { duration: 50 }),
@@ -46,7 +44,6 @@ export const PinInput: React.FC<PinInputProps> = ({
   }, [error]);
 
   useEffect(() => {
-    // Animate the current dot
     if (value.length > 0 && value.length <= length) {
       const index = value.length - 1;
       dotScales[index].value = withSequence(
@@ -75,7 +72,7 @@ export const PinInput: React.FC<PinInputProps> = ({
   }));
 
   return (
-    <View className="w-full">
+    <View style={{ width: '100%' }}>
       {/* Hidden input */}
       <TextInput
         ref={inputRef}
@@ -84,15 +81,22 @@ export const PinInput: React.FC<PinInputProps> = ({
         keyboardType="number-pad"
         maxLength={length}
         autoFocus
-        className="absolute opacity-0 w-0 h-0"
+        style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
         caretHidden
       />
 
       {/* Visual PIN display */}
       <Pressable onPress={handlePress}>
         <Animated.View
-          style={containerStyle}
-          className="flex-row justify-center items-center gap-3"
+          style={[
+            containerStyle,
+            {
+              flexDirection: 'row',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 12,
+            },
+          ]}
         >
           {Array(length)
             .fill(null)
@@ -104,33 +108,54 @@ export const PinInput: React.FC<PinInputProps> = ({
                 transform: [{ scale: dotScales[index].value }],
               }));
 
+              const getBorderColor = () => {
+                if (error) return '#ef4444';
+                if (isFilled) return '#39c5bb';
+                if (isActive) return 'rgba(57, 197, 187, 0.5)';
+                return '#2a2a30';
+              };
+
+              const getBgColor = () => {
+                if (error) return 'rgba(239, 68, 68, 0.2)';
+                if (isFilled) return 'rgba(57, 197, 187, 0.2)';
+                return '#151518';
+              };
+
               return (
                 <Animated.View
                   key={index}
-                  style={dotAnimStyle}
-                  className={`
-                    w-14 h-14 rounded-2xl items-center justify-center
-                    ${error
-                      ? 'bg-red-500/20 border-2 border-red-500'
-                      : isFilled
-                        ? 'bg-[#39c5bb]/20 border-2 border-[#39c5bb]'
-                        : isActive
-                          ? 'bg-[#151518] border-2 border-[#39c5bb]/50'
-                          : 'bg-[#151518] border-2 border-[#2a2a30]'
-                    }
-                  `}
+                  style={[
+                    dotAnimStyle,
+                    {
+                      width: 56,
+                      height: 56,
+                      borderRadius: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: getBgColor(),
+                      borderWidth: 2,
+                      borderColor: getBorderColor(),
+                    },
+                  ]}
                 >
                   {isFilled && (
                     secureEntry ? (
                       <View
-                        className={`w-4 h-4 rounded-full ${
-                          error ? 'bg-red-500' : 'bg-[#39c5bb]'
-                        }`}
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 8,
+                          backgroundColor: error ? '#ef4444' : '#39c5bb',
+                        }}
                       />
                     ) : (
-                      <Text className={`text-2xl font-bold ${
-                        error ? 'text-red-500' : 'text-[#39c5bb]'
-                      }`}>
+                      <Text
+                        style={{
+                          fontSize: 24,
+                          fontWeight: 'bold',
+                          color: error ? '#ef4444' : '#39c5bb',
+                        }}
+                      >
                         {value[index]}
                       </Text>
                     )
@@ -142,7 +167,7 @@ export const PinInput: React.FC<PinInputProps> = ({
       </Pressable>
 
       {/* Keypad hint */}
-      <Text className="text-center text-[#555560] text-sm mt-6">
+      <Text style={{ textAlign: 'center', color: '#555560', fontSize: 14, marginTop: 24 }}>
         Enter a {length}-digit PIN
       </Text>
     </View>

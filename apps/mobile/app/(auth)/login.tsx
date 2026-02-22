@@ -89,8 +89,8 @@ export default function LoginScreen() {
   }, [verifyOtp]);
 
   const handleCreateWallet = useCallback(() => {
-    // Navigate to the manual wallet creation flow
-    router.push('/(onboarding)/create-wallet');
+    // Navigate to the manual wallet creation flow — replace to avoid stack remnants
+    router.replace('/(onboarding)/create-wallet');
   }, [router]);
 
   const handleImportWallet = useCallback(() => {

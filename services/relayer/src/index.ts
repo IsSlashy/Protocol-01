@@ -16,6 +16,8 @@ import winston from 'winston';
 import dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
+import { CommitmentIndexer } from './commitment-indexer';
+import { WebSocketServer } from 'ws';
 
 dotenv.config();
 
@@ -128,6 +130,67 @@ app.use(express.json({ limit: '10mb' })); // Increased limit for proof inputs
 //   app.use('/prove', proveLimiter);
 //   app.use('/relay', relayLimiter);
 
+// =============================================================================
+// COMMITMENT INDEXER — serves commitments to mobile clients for fast tree sync
+// =============================================================================
+
+// Derive MerkleTree PDA for the SOL pool (tokenMint = SystemProgram.programId)
+const SOL_MINT = PublicKey.default; // 11111111111111111111111111111111
+const [indexerPoolPDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from('shielded_pool'), SOL_MINT.toBytes()],
+  CONFIG.programId
+);
+const [indexerMerkleTreePDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from('merkle_tree'), indexerPoolPDA.toBytes()],
+  CONFIG.programId
+);
+
+const commitmentIndexer = new CommitmentIndexer(
+  connection,
+  CONFIG.programId,
+  indexerMerkleTreePDA,
+  logger
+);
+
+// Start indexer in background (non-blocking)
+commitmentIndexer.start().catch(e => {
+  logger.error('[Indexer] Failed to start:', e);
+});
+
+/**
+ * GET /pool/state - Current pool state (root, leafCount, indexer status)
+ */
+app.get('/pool/state', (req, res) => {
+  res.json({
+    root: commitmentIndexer.root,
+    leafCount: commitmentIndexer.leafCount,
+    indexerStatus: commitmentIndexer.status,
+  });
+});
+
+/**
+ * GET /pool/commitments - All commitments from a given index
+ * Query params:
+ *   from: starting leaf index (default 0)
+ */
+app.get('/pool/commitments', (req, res) => {
+  const from = parseInt(req.query.from as string) || 0;
+
+  if (commitmentIndexer.status !== 'synced') {
+    return res.status(503).json({
+      error: 'Indexer not ready',
+      status: commitmentIndexer.status,
+    });
+  }
+
+  const data = commitmentIndexer.getCommitments(from);
+  res.json({
+    ...data,
+    root: commitmentIndexer.root,
+    leafCount: commitmentIndexer.leafCount,
+  });
+});
+
 /**
  * Health check endpoint
  */
@@ -159,6 +222,8 @@ app.get('/health', async (req, res) => {
     vkProtocol: verificationKey?.protocol || null,
     vkNPublic: verificationKey?.nPublic || null,
     rustProver: rustProverStatus,
+    commitmentIndexer: commitmentIndexer.status,
+    indexedCommitments: commitmentIndexer.leafCount,
   });
 });
 
@@ -248,22 +313,29 @@ app.post('/prove', async (req, res) => {
       if (rustResponse.ok) {
         const result = await rustResponse.json() as any;
         if (result.success && result.proof) {
-          const totalTime = Date.now() - startTime;
-          logger.info(`[${reqId}] Rust prover succeeded`, {
-            proofTimeMs: result.proofTimeMs,
-            totalTimeMs: totalTime,
-            publicSignalsCount: result.publicSignals?.length,
-            prover: 'rust-native',
-          });
+          // Verify Rust proof before returning (catches CircomReduction bugs)
+          const proofValid = await verifyProofOffChain(result.proof, result.publicSignals);
+          if (!proofValid) {
+            logger.warn(`[${reqId}] Rust prover returned INVALID proof — falling back to snarkjs`);
+            // Fall through to snarkjs fallback
+          } else {
+            const totalTime = Date.now() - startTime;
+            logger.info(`[${reqId}] Rust prover succeeded (verified)`, {
+              proofTimeMs: result.proofTimeMs,
+              totalTimeMs: totalTime,
+              publicSignalsCount: result.publicSignals?.length,
+              prover: 'rust-native',
+            });
 
-          return res.json({
-            success: true,
-            proof: result.proof,
-            publicSignals: result.publicSignals,
-            proofTimeMs: result.proofTimeMs,
-            totalTimeMs: totalTime,
-            prover: 'rust-native',
-          });
+            return res.json({
+              success: true,
+              proof: result.proof,
+              publicSignals: result.publicSignals,
+              proofTimeMs: result.proofTimeMs,
+              totalTimeMs: totalTime,
+              prover: 'rust-native',
+            });
+          }
         }
       }
 
@@ -336,6 +408,23 @@ app.post('/prove', async (req, res) => {
       error: 'Proof generation failed',
       message: e.message || 'Unknown error',
     });
+  }
+});
+
+/**
+ * Verify a ZK proof off-chain (for debugging)
+ * Request body: { proof: { pi_a, pi_b, pi_c }, publicSignals: string[] }
+ */
+app.post('/verify', async (req, res) => {
+  try {
+    const { proof, publicSignals } = req.body;
+    if (!proof || !publicSignals) {
+      return res.status(400).json({ error: 'Missing proof or publicSignals' });
+    }
+    const isValid = await verifyProofOffChain(proof, publicSignals);
+    res.json({ valid: isValid });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -943,8 +1032,8 @@ function cleanupPendingTxs() {
 // Run cleanup every minute
 setInterval(cleanupPendingTxs, 60000);
 
-// Start server
-app.listen(CONFIG.port, () => {
+// Start server with WebSocket support
+const server = app.listen(CONFIG.port, () => {
   logger.info(`Relayer started on port ${CONFIG.port}`);
   logger.info(`Program ID: ${CONFIG.programId.toBase58()}`);
   logger.info(`Relayer wallet: ${relayerKeypair.publicKey.toBase58()}`);
@@ -954,6 +1043,14 @@ app.listen(CONFIG.port, () => {
     logger.info(`VK: protocol=${verificationKey.protocol}, curve=${verificationKey.curve}, nPublic=${verificationKey.nPublic}`);
   }
 });
+
+// WebSocket server for real-time commitment updates
+// Clients connect to ws://host:port/pool/ws
+const wss = new WebSocketServer({ server, path: '/pool/ws' });
+wss.on('connection', (ws) => {
+  commitmentIndexer.addWsClient(ws);
+});
+logger.info('[WebSocket] Pool commitment stream available at /pool/ws');
 
 // =============================================================================
 // SUBSCRIPTION PAYMENT PROCESSING (CRANK)
@@ -1250,10 +1347,12 @@ logger.info(`[Subscriptions] Crank service enabled - running every ${CRANK_INTER
 // Graceful shutdown
 process.on('SIGINT', () => {
   logger.info('Shutting down relayer...');
+  commitmentIndexer.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   logger.info('Shutting down relayer...');
+  commitmentIndexer.stop();
   process.exit(0);
 });
