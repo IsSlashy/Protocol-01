@@ -10,9 +10,9 @@ const downloadOptions = [
     platform: "Android",
     icon: Smartphone,
     description: "Instant Download APK",
-    filename: "P01-Mobile-v0.1.1.apk",
-    link: "/downloads/P01-Mobile-v0.1.1.apk",
-    size: "72 MB",
+    filename: "Protocol-01-v0.2.apk",
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.2.0/Protocol-01-v0.2.apk",
+    size: "224 MB",
   },
   {
     platform: "Chrome Extension",
