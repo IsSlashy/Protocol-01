@@ -135,11 +135,6 @@ export default function SendConfirmScreen() {
       // Check if user has Privy wallet with signing capability
       const isPrivyUser = !!privyWalletAddress && typeof privySignTransaction === 'function';
 
-        privyWalletAddress,
-        hasSignTransaction: typeof privySignTransaction === 'function',
-        isPrivyUser,
-      });
-
       // Decoy transactions only work with local wallets (need keypair)
       const canUseDecoys = privacyInfo.decoys > 0 && token === 'SOL' && !isPrivyUser;
 

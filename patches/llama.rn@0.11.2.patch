@@ -1,0 +1,53 @@
+diff --git a/app.plugin.js b/app.plugin.js
+index 429345ee82f02e7cbe5cda0699b88b2f0114ceb6..15940a8cf327fc3e3e0fd3194e70634aed7ff3ec 100644
+--- a/app.plugin.js
++++ b/app.plugin.js
+@@ -1 +1 @@
+-module.exports = require("./lib/module/expo-plugin/withLlamaRN")
+\ No newline at end of file
++module.exports = require("./lib/commonjs/expo-plugin/withLlamaRN")
+diff --git a/lib/commonjs/expo-plugin/withLlamaRN.js b/lib/commonjs/expo-plugin/withLlamaRN.js
+index 47bb21efb1dfc46f5b82adda7d9bb67dde5b76d2..3f130af20834accce4dba6e7ea90d10724b2aa5d 100644
+--- a/lib/commonjs/expo-plugin/withLlamaRN.js
++++ b/lib/commonjs/expo-plugin/withLlamaRN.js
+@@ -4,7 +4,7 @@ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+ exports.default = void 0;
+-var _configPlugins = _interopRequireDefault(require("@expo/config-plugins"));
++var _configPlugins = require("@expo/config-plugins");
+ var fs = _interopRequireWildcard(require("fs"));
+ var path = _interopRequireWildcard(require("path"));
+ function _interopRequireWildcard(e, t) { if ("function" == typeof WeakMap) var r = new WeakMap(), n = new WeakMap(); return (_interopRequireWildcard = function (e, t) { if (!t && e && e.__esModule) return e; var o, i, f = { __proto__: null, default: e }; if (null === e || "object" != typeof e && "function" != typeof e) return f; if (o = t ? n : r) { if (o.has(e)) return o.get(e); o.set(e, f); } for (const t in e) "default" !== t && {}.hasOwnProperty.call(e, t) && ((i = (o = Object.defineProperty) && Object.getOwnPropertyDescriptor(e, t)) && (i.get || i.set) ? o(f, t, i) : f[t] = e[t]); return f; })(e, t); }
+@@ -18,7 +18,7 @@ const {
+   withXcodeProject,
+   withAndroidManifest,
+   createRunOncePlugin
+-} = _configPlugins.default;
++} = _configPlugins;
+ const withLlamaRn = (config, options = {}) => {
+   const {
+     enableEntitlements = true,
+diff --git a/lib/module/expo-plugin/withLlamaRN.js b/lib/module/expo-plugin/withLlamaRN.js
+index f7c73edc72a21e436f48c2701cf14788553a3151..7f1573019bc37986d4793f923457cc9c69e7e4b7 100644
+--- a/lib/module/expo-plugin/withLlamaRN.js
++++ b/lib/module/expo-plugin/withLlamaRN.js
+@@ -1,17 +1,11 @@
+ "use strict";
+ 
+ // eslint-disable-next-line import/no-extraneous-dependencies
+-import pkg from '@expo/config-plugins';
++import { withDangerousMod, withXcodeProject, withAndroidManifest, createRunOncePlugin } from '@expo/config-plugins';
+ import * as fs from 'fs';
+ import * as path from 'path';
+ const PLUGIN_NAME = 'llama-rn-plugin';
+ const PLUGIN_VERSION = '1.0.0';
+-const {
+-  withDangerousMod,
+-  withXcodeProject,
+-  withAndroidManifest,
+-  createRunOncePlugin
+-} = pkg;
+ const withLlamaRn = (config, options = {}) => {
+   const {
+     enableEntitlements = true,

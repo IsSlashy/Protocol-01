@@ -2,6 +2,18 @@ mod prover;
 mod serialize;
 mod types;
 
+// Provide __rust_probestack stub for wasmer_vm compatibility on x86_64 Linux.
+// Rust 1.85+ uses inline stack probing and no longer emits this symbol in
+// compiler_builtins, but wasmer_vm still references it. The symbol is never
+// actually called (inline probing handles it), so a simple ret suffices.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+core::arch::global_asm!(
+    ".globl __rust_probestack",
+    ".type __rust_probestack, @function",
+    "__rust_probestack:",
+    "ret",
+);
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,7 +27,7 @@ use axum::{
 };
 use tokio::sync::Semaphore;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::prover::ProverContext;
 use crate::types::*;
@@ -195,6 +207,23 @@ async fn prove_handler(
 
     let (proof, public_inputs) = result;
     let proof_time_ms = proof_start.elapsed().as_millis() as u64;
+
+    // Self-verify the proof before returning (catches circuit/witness bugs immediately)
+    let self_verified = match prover.verify(&proof, &public_inputs) {
+        Ok(valid) => {
+            if valid {
+                info!("Self-verification: PASS");
+            } else {
+                warn!("Self-verification: FAIL — proof is invalid!");
+            }
+            valid
+        }
+        Err(e) => {
+            warn!("Self-verification error: {e}");
+            false
+        }
+    };
+
     let total_time_ms = total_start.elapsed().as_millis() as u64;
 
     // Convert to snarkjs format
@@ -202,10 +231,11 @@ async fn prove_handler(
     let public_signals = serialize::public_signals_to_strings(&public_inputs);
 
     info!(
-        "Proof generated in {}ms (total {}ms), {} public signals",
+        "Proof generated in {}ms (total {}ms), {} public signals, verified={}",
         proof_time_ms,
         total_time_ms,
-        public_signals.len()
+        public_signals.len(),
+        self_verified
     );
 
     Ok(Json(ProveResponse {
@@ -214,6 +244,7 @@ async fn prove_handler(
         public_signals,
         proof_time_ms,
         total_time_ms,
+        self_verified: Some(self_verified),
     }))
 }
 
@@ -251,7 +282,7 @@ async fn verify_handler(
         .map(|s| {
             use ark_ff::PrimeField;
             ark_bn254::Fr::from_bigint(
-                s.parse().map_err(|e| anyhow::anyhow!("invalid public signal: {e}"))?,
+                s.parse().map_err(|_| anyhow::anyhow!("invalid public signal"))?,
             )
             .ok_or_else(|| anyhow::anyhow!("public signal not in field"))
         })

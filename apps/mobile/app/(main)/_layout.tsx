@@ -1,13 +1,12 @@
 import { useEffect } from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
-import { Colors, FontFamily } from '../../constants/theme';
+import { Colors } from '../../constants/theme';
 import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
 import { useRealtimeSync } from '../../hooks/sync';
+import { LiquidGlassTabBar } from '../../components/navigation/LiquidGlassTabBar';
 
 export default function MainLayout() {
   const { initialize, initialized } = useWalletStore();
@@ -27,11 +26,6 @@ export default function MainLayout() {
     },
   });
 
-  // Calculate tab bar height based on safe area
-  const TAB_BAR_HEIGHT = 60;
-  const bottomPadding = Math.max(insets.bottom, 10);
-  const totalHeight = TAB_BAR_HEIGHT + bottomPadding;
-
   // Initialize wallet
   useEffect(() => {
     if (!initialized) {
@@ -39,38 +33,20 @@ export default function MainLayout() {
     }
   }, [initialized, initialize]);
 
-  const handleTabPress = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-  };
-
   return (
     <Tabs
+      tabBar={(props) => <LiquidGlassTabBar {...props} />}
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: Colors.surface,
-          borderTopColor: Colors.border,
-          borderTopWidth: 1,
-          height: totalHeight,
-          paddingTop: 8,
-          paddingBottom: bottomPadding,
-          paddingHorizontal: 10,
+          position: 'absolute',
+          backgroundColor: 'transparent',
+          borderTopWidth: 0,
+          elevation: 0,
+          height: 64 + 16 + insets.bottom,
         },
         tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.textTertiary,
-        tabBarLabelStyle: {
-          fontFamily: FontFamily.medium,
-          fontSize: 11,
-          marginTop: 4,
-        },
-        tabBarIconStyle: {
-          marginTop: 0,
-        },
-      }}
-      screenListeners={{
-        tabPress: handleTabPress,
       }}
     >
       <Tabs.Screen

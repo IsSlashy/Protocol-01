@@ -69,7 +69,7 @@ export default function SettingsScreen() {
               console.warn('[Settings] Privy logout error:', e);
             }
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            router.replace('/(auth)/lock');
+            router.replace('/(auth)/login');
           },
         },
       ]

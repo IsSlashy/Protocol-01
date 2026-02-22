@@ -1,227 +1,597 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  RefreshControl,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
+import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { AgentAvatar } from '@/components/agent';
+import { AgentAvatar, ChatBubble, SuggestionChip, QuickActionButton } from '@/components/agent';
+import { VoiceButton } from '@/components/agent/VoiceButton';
+import { useAIStore, DisplayMessage } from '@/stores/aiStore';
+import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
+import * as VoiceService from '@/services/ai/voiceService';
 
-// App theme colors
-const COLORS = {
-  primary: '#00ff88',
-  cyan: '#00D1FF',
-  purple: '#9945FF',
-  background: '#050505',
-  surface: '#0a0a0a',
-  surfaceSecondary: '#111111',
-  border: '#1f1f1f',
-  borderLight: '#2a2a2a',
-  text: '#ffffff',
-  textSecondary: '#a0a0a0',
-  textTertiary: '#666666',
-};
-
-// Features coming soon
-const UPCOMING_FEATURES = [
-  {
-    icon: 'analytics-outline',
-    title: 'Smart Analysis',
-    desc: 'Analyze your streams and optimize spending',
-    color: COLORS.cyan,
-  },
-  {
-    icon: 'cash-outline',
-    title: 'Recommendations',
-    desc: 'Personalized savings suggestions',
-    color: COLORS.primary,
-  },
-  {
-    icon: 'notifications-outline',
-    title: 'Proactive Alerts',
-    desc: 'Renewal notifications and anomaly detection',
-    color: COLORS.purple,
-  },
-  {
-    icon: 'chatbubbles-outline',
-    title: 'AI Assistant',
-    desc: 'Ask questions in natural language',
-    color: COLORS.cyan,
-  },
-  {
-    icon: 'shield-checkmark-outline',
-    title: 'On-device Security',
-    desc: 'Local AI for maximum privacy',
-    color: COLORS.primary,
-  },
-  {
-    icon: 'flash-outline',
-    title: 'Quick Actions',
-    desc: 'Execute transactions by voice',
-    color: COLORS.purple,
-  },
+const QUICK_ACTIONS = [
+  { icon: 'trending-up-outline' as const, label: 'SOL Price', color: Colors.primary },
+  { icon: 'pulse-outline' as const, label: 'Fear & Greed', color: Colors.yellow },
+  { icon: 'wallet-outline' as const, label: 'My Portfolio', color: Colors.primary },
+  { icon: 'analytics-outline' as const, label: 'Analyze Streams', color: Colors.pink },
+  { icon: 'globe-outline' as const, label: 'Market Summary', color: Colors.primary },
+  { icon: 'help-circle-outline' as const, label: 'Help', color: Colors.textSecondary },
 ];
 
 export default function AgentDashboard() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const flatListRef = useRef<FlatList>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  const [inputText, setInputText] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  const {
+    messages,
+    isLoading,
+    error,
+    isConnected,
+    marketData,
+    streamingMessage,
+    activeConversationId,
+    initialize,
+    sendMessageStreaming,
+    sendMessage,
+    clearError,
+    clearMessages,
+    refreshMarketData,
+    createConversation,
+    config,
+    isRecording,
+    isTranscribing,
+    setRecording,
+    setTranscribing,
+  } = useAIStore();
+
+  useEffect(() => {
+    initialize();
+  }, []);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [messages.length, isLoading, streamingMessage]);
+
+  const handleSend = useCallback(async () => {
+    const text = inputText.trim();
+    if (!text || isLoading) return;
+
+    setInputText('');
+    // Use streaming for cloud providers, regular for local
+    const useStreaming = config.provider === 'groq' || config.provider === 'gemma-cloud' || config.provider === 'gemma';
+    if (useStreaming) {
+      await sendMessageStreaming(text);
+    } else {
+      await sendMessage(text);
+    }
+  }, [inputText, isLoading, sendMessage, sendMessageStreaming, config.provider]);
+
+  const handleQuickAction = useCallback((label: string) => {
+    const useStreaming = config.provider === 'groq' || config.provider === 'gemma-cloud' || config.provider === 'gemma';
+    if (useStreaming) {
+      sendMessageStreaming(label);
+    } else {
+      sendMessage(label);
+    }
+  }, [sendMessage, sendMessageStreaming, config.provider]);
+
+  const handleSuggestionPress = useCallback((suggestion: string) => {
+    handleQuickAction(suggestion);
+  }, [handleQuickAction]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshMarketData();
+    setRefreshing(false);
+  }, [refreshMarketData]);
+
+  const handleStartRecording = useCallback(async () => {
+    const started = await VoiceService.startRecording();
+    if (started) {
+      setRecording(true);
+    }
+  }, [setRecording]);
+
+  const handleStopRecording = useCallback(async () => {
+    setRecording(false);
+    const uri = await VoiceService.stopRecording();
+    if (!uri) return;
+
+    const groqKey = config.groqApiKey || process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
+    if (!groqKey) {
+      // No API key — can't transcribe
+      return;
+    }
+
+    setTranscribing(true);
+    try {
+      const text = await VoiceService.transcribe(uri, groqKey);
+      if (text) {
+        setInputText(text);
+        // Auto-send if configured
+        if (config.voiceAutoSend) {
+          setTimeout(() => {
+            const useStreaming = config.provider === 'groq' || config.provider === 'gemma-cloud' || config.provider === 'gemma';
+            if (useStreaming) {
+              sendMessageStreaming(text);
+            } else {
+              sendMessage(text);
+            }
+            setInputText('');
+          }, 100);
+        }
+      }
+    } catch (err: any) {
+      console.error('[Voice] Transcription failed:', err);
+    } finally {
+      setTranscribing(false);
+    }
+  }, [config, setRecording, setTranscribing, sendMessage, sendMessageStreaming]);
+
+  const handleNewChat = useCallback(() => {
+    clearMessages();
+    createConversation();
+  }, [clearMessages, createConversation]);
+
+  const hasMessages = messages.length > 0;
+
+  const latestSuggestions = messages.length > 0
+    ? [...messages].reverse().find(m => m.role === 'assistant' && m.suggestions)?.suggestions
+    : undefined;
+
+  // Find active conversation title
+  const conversations = useAIStore((s) => s.conversations);
+  const activeConv = conversations.find((c: any) => c.id === activeConversationId);
+  const chatTitle = activeConv?.title && activeConv.title !== 'New Chat'
+    ? activeConv.title
+    : 'P-01 Agent';
+
+  const renderMessage = useCallback(({ item, index }: { item: DisplayMessage; index: number }) => {
+    const isLastAssistant = item.role === 'assistant' && index === messages.length - 1;
+    return (
+      <View style={{ paddingHorizontal: Spacing.lg }}>
+        <ChatBubble
+          type={item.role === 'user' ? 'user' : 'agent'}
+          content={item.content}
+          timestamp={new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          showAvatar={item.role === 'assistant'}
+          isStreaming={isLastAssistant && streamingMessage !== null}
+        />
+      </View>
+    );
+  }, [messages.length, streamingMessage]);
 
   return (
-    <View className="flex-1 bg-p01-void">
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
       {/* Background gradient */}
       <LinearGradient
-        colors={['rgba(0, 209, 255, 0.05)', 'rgba(153, 69, 255, 0.02)', 'transparent']}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 350,
-        }}
+        colors={['rgba(57, 197, 187, 0.04)', 'transparent']}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 200 }}
       />
 
-      <ScrollView
-        className="flex-1"
-        contentContainerStyle={{
-          paddingTop: insets.top,
-          paddingBottom: insets.bottom + 40,
-        }}
-        showsVerticalScrollIndicator={false}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={0}
       >
-        {/* Header */}
-        <Animated.View
-          entering={FadeInDown.delay(100).springify()}
-          className="flex-row items-center justify-between px-6 py-4"
-        >
-          <View className="flex-row items-center">
-            <Ionicons name="sparkles" size={24} color={COLORS.cyan} />
-            <Text className="text-white text-xl font-bold ml-2 tracking-wide">
-              P-01 AGENT
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            className="w-10 h-10 rounded-full items-center justify-center"
-            style={{ backgroundColor: 'rgba(255, 255, 255, 0.08)' }}
-          >
-            <Ionicons name="close" size={20} color={COLORS.textSecondary} />
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Agent Status Card - Coming Soon */}
-        <Animated.View
-          entering={FadeInDown.delay(200).springify()}
-          className="px-6 mb-8"
-        >
-          <LinearGradient
-            colors={[COLORS.surfaceSecondary, COLORS.surface]}
+        {/* Glass Header */}
+        <View style={{ overflow: 'hidden' }}>
+          <BlurView
+            intensity={30}
+            tint="dark"
             style={{
-              borderRadius: 24,
-              padding: 32,
-              borderWidth: 1,
-              borderColor: 'rgba(0, 209, 255, 0.2)',
+              paddingTop: insets.top + 4,
+              paddingBottom: 10,
+              paddingHorizontal: Spacing.lg,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: 'rgba(10, 10, 12, 0.75)',
+              borderBottomWidth: 1,
+              borderBottomColor: 'rgba(57, 197, 187, 0.1)',
             }}
           >
-            <View className="items-center">
-              <AgentAvatar size="xl" isActive={false} />
-
-              <View
-                className="mt-5 px-4 py-1.5 rounded-full"
-                style={{ backgroundColor: 'rgba(0, 209, 255, 0.15)' }}
-              >
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <AgentAvatar size="sm" isActive={isConnected} />
+              <View style={{ marginLeft: 10, flex: 1 }}>
                 <Text
-                  className="text-sm font-semibold tracking-wider"
-                  style={{ color: COLORS.cyan }}
+                  style={{
+                    color: Colors.text,
+                    fontFamily: FontFamily.semibold,
+                    fontSize: FontSize.md,
+                  }}
+                  numberOfLines={1}
                 >
-                  COMING SOON
+                  {chatTitle}
+                </Text>
+                <Text
+                  style={{
+                    color: isConnected ? Colors.primary : Colors.textTertiary,
+                    fontSize: FontSize.xs,
+                  }}
+                >
+                  {isConnected ? 'Online' : 'Offline'}
                 </Text>
               </View>
-
-              <Text className="text-white text-2xl font-bold mt-4 mb-2">
-                P-01 Agent
-              </Text>
-
-              <Text
-                className="text-center px-4 leading-relaxed"
-                style={{ color: COLORS.textSecondary }}
-              >
-                Your personal AI assistant to analyze your subscriptions and optimize your crypto finances.
-              </Text>
             </View>
-          </LinearGradient>
-        </Animated.View>
 
-        {/* Upcoming Features */}
-        <Animated.View
-          entering={FadeInDown.delay(300).springify()}
-          className="px-6"
-        >
-          <Text
-            className="text-sm font-semibold tracking-wider uppercase mb-4"
-            style={{ color: COLORS.textTertiary }}
-          >
-            Upcoming Features
-          </Text>
-
-          <LinearGradient
-            colors={[COLORS.surfaceSecondary, COLORS.surface]}
-            style={{
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: COLORS.borderLight,
-              overflow: 'hidden',
-            }}
-          >
-            {UPCOMING_FEATURES.map((item, index) => (
-              <View
-                key={item.title}
-                className="flex-row items-center p-4"
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {/* New Chat */}
+              {hasMessages && (
+                <TouchableOpacity
+                  onPress={handleNewChat}
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 19,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                  }}
+                >
+                  <Ionicons name="add-outline" size={22} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+              {/* History */}
+              <TouchableOpacity
+                onPress={() => router.push('/(main)/(agent)/history')}
                 style={{
-                  borderBottomWidth: index < UPCOMING_FEATURES.length - 1 ? 1 : 0,
-                  borderBottomColor: COLORS.borderLight,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 19,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
                 }}
               >
-                <View
-                  className="w-10 h-10 rounded-xl items-center justify-center mr-4"
-                  style={{ backgroundColor: item.color + '15' }}
-                >
-                  <Ionicons name={item.icon as any} size={20} color={item.color} />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-white font-medium">{item.title}</Text>
-                  <Text
-                    className="text-xs mt-0.5"
-                    style={{ color: COLORS.textTertiary }}
-                  >
-                    {item.desc}
-                  </Text>
-                </View>
-                <Ionicons name="checkmark" size={18} color={item.color} />
-              </View>
-            ))}
-          </LinearGradient>
-        </Animated.View>
+                <Ionicons name="time-outline" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+              {/* Settings */}
+              <TouchableOpacity
+                onPress={() => router.push('/(main)/(agent)/settings')}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 19,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                }}
+              >
+                <Ionicons name="settings-outline" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          </BlurView>
+        </View>
 
-        {/* Bottom info */}
-        <Animated.View
-          entering={FadeInDown.delay(400).springify()}
-          className="px-6 mt-8"
-        >
-          <View
-            className="flex-row items-center p-4 rounded-xl"
-            style={{ backgroundColor: 'rgba(153, 69, 255, 0.1)' }}
+        {/* Content */}
+        {!hasMessages ? (
+          // Welcome state
+          <FlatList
+            data={[]}
+            renderItem={() => null}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={Colors.primary}
+              />
+            }
+            ListHeaderComponent={
+              <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 32 }}>
+                {/* Avatar + Greeting */}
+                <Animated.View
+                  entering={FadeInDown.delay(100).springify()}
+                  style={{ alignItems: 'center', marginBottom: 32 }}
+                >
+                  <AgentAvatar size="lg" isActive={true} />
+                  <Text
+                    style={{
+                      color: Colors.text,
+                      fontSize: FontSize.xl,
+                      fontFamily: FontFamily.bold,
+                      marginTop: Spacing.lg,
+                    }}
+                  >
+                    Hey, I'm P-01 Agent
+                  </Text>
+                  <Text
+                    style={{
+                      color: Colors.textSecondary,
+                      textAlign: 'center',
+                      marginTop: 6,
+                      fontSize: FontSize.sm,
+                      lineHeight: 20,
+                    }}
+                  >
+                    Your crypto assistant. Ask me about prices,{'\n'}market sentiment, or your portfolio.
+                  </Text>
+
+                  {/* Market snapshot */}
+                  {marketData?.prices?.SOL && (
+                    <Animated.View
+                      entering={FadeIn.delay(400)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginTop: Spacing.lg,
+                        paddingHorizontal: Spacing.lg,
+                        paddingVertical: Spacing.sm,
+                        borderRadius: 999,
+                        backgroundColor: Colors.primaryDim,
+                        borderWidth: 1,
+                        borderColor: 'rgba(57, 197, 187, 0.2)',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: Colors.primary,
+                          fontSize: FontSize.sm,
+                          fontFamily: FontFamily.medium,
+                        }}
+                      >
+                        SOL ${marketData.prices.SOL.toFixed(2)}
+                      </Text>
+                      {marketData.fearGreed && (
+                        <>
+                          <View
+                            style={{
+                              width: 1,
+                              height: 14,
+                              backgroundColor: 'rgba(57, 197, 187, 0.3)',
+                              marginHorizontal: 10,
+                            }}
+                          />
+                          <Text
+                            style={{
+                              color: Colors.primary,
+                              fontSize: FontSize.sm,
+                              fontFamily: FontFamily.medium,
+                            }}
+                          >
+                            F&G {marketData.fearGreed.value}/100
+                          </Text>
+                        </>
+                      )}
+                    </Animated.View>
+                  )}
+                </Animated.View>
+
+                {/* Quick Actions Grid */}
+                <Animated.View entering={FadeInUp.delay(200).springify()}>
+                  <Text
+                    style={{
+                      fontSize: FontSize.xs,
+                      fontFamily: FontFamily.semibold,
+                      letterSpacing: 1,
+                      textTransform: 'uppercase',
+                      marginBottom: 10,
+                      color: Colors.textTertiary,
+                    }}
+                  >
+                    Quick Actions
+                  </Text>
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                    }}
+                  >
+                    {QUICK_ACTIONS.map((action) => (
+                      <View key={action.label} style={{ width: '48%' }}>
+                        <QuickActionButton
+                          icon={action.icon}
+                          label={action.label}
+                          color={action.color}
+                          onPress={() => handleQuickAction(action.label)}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                </Animated.View>
+              </View>
+            }
+          />
+        ) : (
+          // Chat state
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            renderItem={renderMessage}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={{ paddingTop: 12, paddingBottom: 8 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor={Colors.primary}
+              />
+            }
+            ListFooterComponent={
+              <>
+                {/* Typing indicator (non-streaming loading) */}
+                {isLoading && streamingMessage === null && (
+                  <View style={{ paddingHorizontal: Spacing.lg }}>
+                    <ChatBubble type="agent" content="" isTyping={true} />
+                  </View>
+                )}
+
+                {/* Error */}
+                {error && (
+                  <TouchableOpacity
+                    onPress={clearError}
+                    style={{
+                      marginHorizontal: Spacing.lg,
+                      marginVertical: 8,
+                      padding: 12,
+                      borderRadius: 14,
+                      backgroundColor: Colors.errorDim,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 51, 102, 0.3)',
+                    }}
+                  >
+                    <Text style={{ color: Colors.error, fontSize: FontSize.sm }}>
+                      {error}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Suggestion chips */}
+                {latestSuggestions && latestSuggestions.length > 0 && !isLoading && (
+                  <Animated.View
+                    entering={FadeIn.delay(200)}
+                    style={{ paddingHorizontal: Spacing.lg, marginTop: 4, marginBottom: 8 }}
+                  >
+                    <FlatList
+                      horizontal
+                      data={latestSuggestions}
+                      keyExtractor={(item) => item}
+                      showsHorizontalScrollIndicator={false}
+                      renderItem={({ item, index }) => (
+                        <SuggestionChip
+                          label={item}
+                          onPress={() => handleSuggestionPress(item)}
+                          index={index}
+                        />
+                      )}
+                    />
+                  </Animated.View>
+                )}
+              </>
+            }
+          />
+        )}
+
+        {/* Glass Input Bar */}
+        <View style={{ overflow: 'hidden' }}>
+          <BlurView
+            intensity={25}
+            tint="dark"
+            style={{
+              paddingBottom: insets.bottom || 8,
+              backgroundColor: 'rgba(10, 10, 12, 0.8)',
+              borderTopWidth: 1,
+              borderTopColor: 'rgba(57, 197, 187, 0.08)',
+            }}
           >
-            <Ionicons name="information-circle" size={24} color={COLORS.purple} />
-            <Text
-              className="flex-1 ml-3 text-sm"
-              style={{ color: COLORS.textSecondary }}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-end',
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                gap: 8,
+              }}
             >
-              P-01 Agent will use on-device AI to ensure the privacy of your financial data.
-            </Text>
-          </View>
-        </Animated.View>
-      </ScrollView>
+              <View
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'flex-end',
+                  borderRadius: 22,
+                  paddingHorizontal: 16,
+                  backgroundColor: 'rgba(21, 21, 24, 0.8)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(57, 197, 187, 0.12)',
+                  minHeight: 44,
+                  maxHeight: 120,
+                }}
+              >
+                <TextInput
+                  ref={inputRef}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  placeholder="Ask anything..."
+                  placeholderTextColor={Colors.textTertiary}
+                  multiline
+                  maxLength={1000}
+                  style={{
+                    flex: 1,
+                    color: Colors.text,
+                    fontSize: FontSize.md,
+                    fontFamily: FontFamily.regular,
+                    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+                    maxHeight: 100,
+                  }}
+                  onSubmitEditing={handleSend}
+                  blurOnSubmit={false}
+                  returnKeyType="send"
+                  editable={!isLoading}
+                />
+              </View>
+
+              {/* Mic / Send toggle */}
+              {isTranscribing ? (
+                <View
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: Colors.primaryDim,
+                  }}
+                >
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                </View>
+              ) : inputText.trim() ? (
+                <TouchableOpacity
+                  onPress={handleSend}
+                  disabled={isLoading}
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: isLoading
+                      ? Colors.primaryDim
+                      : Colors.primary,
+                  }}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <Ionicons name="arrow-up" size={22} color={Colors.background} />
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <VoiceButton
+                  isRecording={isRecording}
+                  onStartRecording={handleStartRecording}
+                  onStopRecording={handleStopRecording}
+                  disabled={isLoading}
+                />
+              )}
+            </View>
+          </BlurView>
+        </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }

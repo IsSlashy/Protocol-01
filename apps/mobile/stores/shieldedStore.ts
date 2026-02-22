@@ -82,6 +82,8 @@ interface ShieldedState {
   importNote: (noteString: string) => Promise<void>;
   getLastSentNote: () => { noteString: string; amount: number; leafIndex: number } | null;
   clearNotes: () => Promise<void>;
+  cleanUpNotes: () => Promise<number>;
+  dismissPendingTransaction: (id: string) => void;
   reset: () => void;
   // Stealth address methods
   getStealthKeys: () => { spendingPublicKey: string; viewingPublicKey: string; encoded: string } | null;
@@ -768,6 +770,29 @@ export const useShieldedStore = create<ShieldedState>()(
 
         await _zkService.clearNotes();
         set({ shieldedBalance: 0, notes: [] });
+      },
+
+      // Clean up only 0-amount notes (safe alternative to clearNotes)
+      cleanUpNotes: async () => {
+        const { notes } = get();
+
+        // Find 0-amount notes to remove
+        const zeroNotes = notes.filter(n => Number(n.amount) === 0);
+        if (zeroNotes.length === 0) return 0;
+
+        // Update store - keep only non-zero notes
+        const remaining = notes.filter(n => Number(n.amount) > 0);
+        const newBalance = remaining.reduce((sum, n) => sum + Number(n.amount), 0) / 1e9;
+        set({ notes: remaining, shieldedBalance: newBalance });
+
+        return zeroNotes.length;
+      },
+
+      // Dismiss a pending transaction (remove from list)
+      dismissPendingTransaction: (id: string) => {
+        set(state => ({
+          pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== id),
+        }));
       },
 
       // Reset state

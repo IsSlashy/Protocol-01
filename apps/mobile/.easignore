@@ -1,0 +1,21 @@
+# Force EAS to run prebuild by excluding existing native dirs
+android/
+ios/
+
+# Exclude unnecessary files from upload
+.expo/
+*.apk
+*.aab
+*.ipa
+dist/
+tmp-apk/
+
+# Exclude non-mobile workspace packages
+../../programs/
+../../circuits/
+../../services/prover/
+../../services/relayer/
+../../apps/extension/
+../../apps/web/
+../../tests/
+../../target/

@@ -23,6 +23,9 @@ pub struct ProveResponse {
     pub public_signals: Vec<String>,
     pub proof_time_ms: u64,
     pub total_time_ms: u64,
+    /// Self-verification result — true means proof verified locally before returning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub self_verified: Option<bool>,
 }
 
 /// Proof in snarkjs JSON format (decimal strings for BN254 field elements).

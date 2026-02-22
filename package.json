@@ -18,7 +18,9 @@
     "test:e2e-stream": "ts-mocha -p tsconfig.test.json tests/e2e-stream-secure.test.ts --timeout 300000",
     "test:e2e-auth": "ts-mocha -p tsconfig.test.json tests/e2e-auth-flow.test.ts --timeout 120000",
     "test:e2e-privacy": "ts-mocha -p tsconfig.test.json tests/e2e-privacy-modes.test.ts --timeout 300000",
-    "test:e2e": "ts-mocha -p tsconfig.test.json tests/e2e-*.test.ts --timeout 300000"
+    "test:e2e": "ts-mocha -p tsconfig.test.json tests/e2e-*.test.ts --timeout 300000",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",
@@ -40,5 +42,15 @@
   "packageManager": "pnpm@8.15.0",
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "expo": "~54.0.32",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "llama.rn@0.11.2": "patches/llama.rn@0.11.2.patch"
+    }
   }
 }

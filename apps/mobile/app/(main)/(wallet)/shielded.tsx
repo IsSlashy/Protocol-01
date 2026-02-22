@@ -10,6 +10,8 @@ import {
   TextInput,
   Modal,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -57,7 +59,8 @@ export default function ShieldedWalletScreen() {
     shield,
     unshield,
     importNote,
-    clearNotes,
+    cleanUpNotes,
+    dismissPendingTransaction,
     scanStealthPayments,
     sweepAllStealthPayments,
     getPendingStealthPayments,
@@ -85,6 +88,20 @@ export default function ShieldedWalletScreen() {
   const [progressStep, setProgressStep] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
   const [progressOperation, setProgressOperation] = useState<'shield' | 'unshield' | 'import' | null>(null);
+
+  // Auto-remove failed pending transactions after 15s
+  useEffect(() => {
+    const failedTxs = pendingTransactions.filter(tx => tx.status === 'failed');
+    if (failedTxs.length === 0) return;
+
+    const timers = failedTxs.map(tx => {
+      const age = Date.now() - tx.createdAt;
+      const remaining = Math.max(0, 15000 - age);
+      return setTimeout(() => dismissPendingTransaction(tx.id), remaining);
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [pendingTransactions]);
 
   // Initialize on mount - handles both first init and app restart
   useEffect(() => {
@@ -154,24 +171,21 @@ export default function ShieldedWalletScreen() {
       setProgressStep(20);
       setProgressMessage('Generating commitment...');
 
-      // Start progress animation with proper closure handling
+      // Start progress animation — fast intervals matching ~3s operations
       let currentStep = 20;
       const progressInterval = setInterval(() => {
         if (currentStep >= 85) {
           currentStep = 85;
         } else {
-          const increment = currentStep < 50 ? 8 : currentStep < 70 ? 5 : 2;
+          const increment = currentStep < 50 ? 6 : currentStep < 70 ? 4 : 2;
           currentStep = Math.min(currentStep + increment, 85);
         }
         setProgressStep(currentStep);
 
-        // Update status message based on current step
-        if (currentStep < 30) setProgressMessage('Generating commitment...');
-        else if (currentStep < 50) setProgressMessage('Connecting to ZK prover...');
-        else if (currentStep < 70) setProgressMessage('Generating ZK proof...');
-        else if (currentStep < 85) setProgressMessage('Building transaction...');
-        else setProgressMessage('Submitting to Solana...');
-      }, 800);
+        if (currentStep < 40) setProgressMessage('Computing commitment...');
+        else if (currentStep < 65) setProgressMessage('Signing transaction...');
+        else setProgressMessage('Confirming on Solana...');
+      }, 200);
 
       await shield(parseFloat(amount), walletPubkey, signTransaction);
 
@@ -245,7 +259,7 @@ export default function ShieldedWalletScreen() {
       setProgressStep(15);
       setProgressMessage('Selecting notes...');
 
-      // Start progress animation with proper closure handling
+      // Start progress animation — fast intervals matching ~3s operations
       let currentStep = 15;
       const progressInterval = setInterval(() => {
         if (currentStep >= 85) {
@@ -256,14 +270,11 @@ export default function ShieldedWalletScreen() {
         }
         setProgressStep(currentStep);
 
-        // Update status message based on current step
-        if (currentStep < 25) setProgressMessage('Selecting notes...');
-        else if (currentStep < 40) setProgressMessage('Building Merkle proof...');
-        else if (currentStep < 55) setProgressMessage('Connecting to ZK prover...');
-        else if (currentStep < 70) setProgressMessage('Generating ZK proof...');
-        else if (currentStep < 85) setProgressMessage('Building transaction...');
-        else setProgressMessage('Submitting to Solana...');
-      }, 600);
+        if (currentStep < 30) setProgressMessage('Preparing proof...');
+        else if (currentStep < 50) setProgressMessage('Generating ZK proof...');
+        else if (currentStep < 70) setProgressMessage('Signing transaction...');
+        else setProgressMessage('Confirming on Solana...');
+      }, 200);
 
       // Unshield to own wallet
       await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction);
@@ -360,20 +371,24 @@ export default function ShieldedWalletScreen() {
     }
   };
 
-  const handleClearNotes = () => {
+  const handleCleanUpNotes = () => {
+    const zeroCount = notes.filter(n => Number(n.amount) === 0).length;
+    if (zeroCount === 0) {
+      Alert.alert('Nothing to clean', 'No empty notes found.');
+      return;
+    }
     Alert.alert(
-      'Clear All Notes',
-      'This will permanently delete all your shielded notes. This cannot be undone. Are you sure?',
+      'Clean Up Notes',
+      `Remove ${zeroCount} empty (0-amount) note${zeroCount > 1 ? 's' : ''}? Your real notes will not be affected.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear',
-          style: 'destructive',
+          text: 'Clean Up',
           onPress: async () => {
             try {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-              await clearNotes();
-              Alert.alert('Cleared', 'All shielded notes have been cleared.');
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              const removed = await cleanUpNotes();
+              Alert.alert('Done', `Removed ${removed} empty note${removed > 1 ? 's' : ''}.`);
             } catch (err) {
               Alert.alert('Error', (err as Error).message);
             }
@@ -643,16 +658,41 @@ export default function ShieldedWalletScreen() {
           <Animated.View entering={FadeInDown.delay(350)}>
             <Text style={styles.sectionTitle}>PENDING</Text>
             {pendingTransactions.map((tx) => (
-              <View key={tx.id} style={styles.pendingCard}>
-                <View style={styles.pendingIcon}>
-                  <ActivityIndicator color="#fbbf24" size="small" />
+              <View key={tx.id} style={[
+                styles.pendingCard,
+                tx.status === 'failed' && { borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' },
+              ]}>
+                <View style={[
+                  styles.pendingIcon,
+                  tx.status === 'failed' && { backgroundColor: 'rgba(239, 68, 68, 0.2)' },
+                ]}>
+                  {tx.status === 'failed' ? (
+                    <Ionicons name="close-circle" size={22} color="#ef4444" />
+                  ) : (
+                    <ActivityIndicator color="#fbbf24" size="small" />
+                  )}
                 </View>
                 <View style={styles.pendingInfo}>
                   <Text style={styles.pendingType}>{tx.type}</Text>
-                  <Text style={styles.pendingStatus}>
-                    {tx.status === 'generating_proof' ? 'Generating ZK proof...' : 'Processing...'}
+                  <Text style={[
+                    styles.pendingStatus,
+                    tx.status === 'failed' && { color: '#ef4444' },
+                  ]}>
+                    {tx.status === 'failed'
+                      ? (tx.error || 'Transaction failed')
+                      : tx.status === 'generating_proof'
+                        ? 'Generating ZK proof...'
+                        : 'Processing...'}
                   </Text>
                 </View>
+                {tx.status === 'failed' && (
+                  <TouchableOpacity
+                    onPress={() => dismissPendingTransaction(tx.id)}
+                    style={styles.dismissButton}
+                  >
+                    <Ionicons name="close" size={18} color={Colors.textTertiary} />
+                  </TouchableOpacity>
+                )}
               </View>
             ))}
           </Animated.View>
@@ -660,40 +700,48 @@ export default function ShieldedWalletScreen() {
 
         {/* Shielded Notes */}
         <Animated.View entering={FadeInDown.delay(400)}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>SHIELDED NOTES ({notes.length})</Text>
-            {notes.length > 0 && (
-              <TouchableOpacity onPress={handleClearNotes} style={styles.clearButton}>
-                <Ionicons name="trash-outline" size={14} color="#ef4444" />
-                <Text style={styles.clearText}>Clear</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <View style={styles.notesContainer}>
-            {notes.length === 0 ? (
-              <View style={styles.emptyNotes}>
-                <Ionicons name="shield-outline" size={40} color={Colors.textTertiary} />
-                <Text style={styles.emptyText}>No shielded notes yet</Text>
-                <Text style={styles.emptySubtext}>
-                  Shield some SOL to create your first private note
-                </Text>
-              </View>
-            ) : (
-              notes.slice(0, 5).map((note, index) => (
-                <View key={index} style={styles.noteCard}>
-                  <View style={styles.noteIcon}>
-                    <Ionicons name="lock-closed" size={18} color={P01.cyan} />
-                  </View>
-                  <View style={styles.noteInfo}>
-                    <Text style={styles.noteAmount}>
-                      {showBalance ? `${(Number(note.amount) / 1e9).toFixed(4)} SOL` : '****'}
-                    </Text>
-                    <Text style={styles.noteIndex}>Index: {note.leafIndex ?? 'pending'}</Text>
-                  </View>
+          {(() => {
+            const displayNotes = notes.filter(n => Number(n.amount) > 0);
+            const hasZeroNotes = notes.length > displayNotes.length;
+            return (
+              <>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>SHIELDED NOTES ({displayNotes.length})</Text>
+                  {hasZeroNotes && (
+                    <TouchableOpacity onPress={handleCleanUpNotes} style={styles.clearButton}>
+                      <Ionicons name="sparkles-outline" size={14} color={Colors.textTertiary} />
+                      <Text style={[styles.clearText, { color: Colors.textTertiary }]}>Clean Up</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-              ))
-            )}
-          </View>
+                <View style={styles.notesContainer}>
+                  {displayNotes.length === 0 ? (
+                    <View style={styles.emptyNotes}>
+                      <Ionicons name="shield-outline" size={40} color={Colors.textTertiary} />
+                      <Text style={styles.emptyText}>No active notes</Text>
+                      <Text style={styles.emptySubtext}>
+                        Shield some SOL to create your first private note
+                      </Text>
+                    </View>
+                  ) : (
+                    displayNotes.slice(0, 5).map((note, index) => (
+                      <View key={index} style={styles.noteCard}>
+                        <View style={styles.noteIcon}>
+                          <Ionicons name="lock-closed" size={18} color={P01.cyan} />
+                        </View>
+                        <View style={styles.noteInfo}>
+                          <Text style={styles.noteAmount}>
+                            {showBalance ? `${(Number(note.amount) / 1e9).toFixed(4)} SOL` : '****'}
+                          </Text>
+                          <Text style={styles.noteIndex}>Index: {note.leafIndex ?? 'pending'}</Text>
+                        </View>
+                      </View>
+                    ))
+                  )}
+                </View>
+              </>
+            );
+          })()}
         </Animated.View>
 
         {/* Privacy Info */}
@@ -725,7 +773,10 @@ export default function ShieldedWalletScreen() {
         transparent
         onRequestClose={() => setActionModal(null)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <View style={[
@@ -779,15 +830,6 @@ export default function ShieldedWalletScreen() {
               </View>
             </View>
 
-            {actionModal === 'shield' && notes.length === 0 && (
-              <View style={styles.warningBox}>
-                <Ionicons name="warning" size={20} color="#fbbf24" />
-                <Text style={styles.warningText}>
-                  Proof generation may take 30-60 seconds on first use.
-                </Text>
-              </View>
-            )}
-
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={styles.cancelButton}
@@ -817,7 +859,7 @@ export default function ShieldedWalletScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Info Modal */}
@@ -1185,10 +1227,10 @@ export default function ShieldedWalletScreen() {
               </View>
             </View>
 
-            {/* Warning text */}
-            {progressOperation !== 'import' && progressStep < 100 && (
+            {/* Keep app open reminder */}
+            {progressStep < 100 && (
               <Text style={styles.progressWarning}>
-                Please keep the app open. This may take 30-60 seconds.
+                Please keep the app open
               </Text>
             )}
           </View>
@@ -1417,6 +1459,10 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
   },
+  dismissButton: {
+    padding: 8,
+    marginLeft: 4,
+  },
   notesContainer: {
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.md,
@@ -1511,6 +1557,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     padding: Spacing.lg,
+    paddingBottom: Spacing.lg + 40,
   },
   modalHeader: {
     flexDirection: 'row',

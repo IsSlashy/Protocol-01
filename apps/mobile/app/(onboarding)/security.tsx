@@ -1,13 +1,8 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeInUp,
-  FadeOut,
-} from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -27,7 +22,6 @@ export default function SecurityScreen() {
   const [biometricsAvailable, setBiometricsAvailable] = useState(false);
   const [biometricType, setBiometricType] = useState<'face' | 'fingerprint'>('fingerprint');
 
-  // Check biometrics availability
   React.useEffect(() => {
     checkBiometrics();
   }, []);
@@ -53,7 +47,6 @@ export default function SecurityScreen() {
     if (method === 'pin') {
       setShowPinSetup(true);
     } else if (method === 'biometrics') {
-      // Test biometric authentication
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Authenticate to enable biometrics',
         cancelLabel: 'Cancel',
@@ -69,18 +62,14 @@ export default function SecurityScreen() {
 
   const handlePinComplete = useCallback((enteredPin: string) => {
     if (!isConfirming) {
-      // First PIN entry
       setPin(enteredPin);
       setIsConfirming(true);
       setConfirmPin('');
     } else {
-      // Confirming PIN
       if (enteredPin === pin) {
-        // PINs match - save and continue
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         savePinAndContinue(enteredPin);
       } else {
-        // PINs don't match
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setPinError(true);
         setConfirmPin('');
@@ -114,11 +103,11 @@ export default function SecurityScreen() {
 
   const completeOnboarding = async () => {
     await SecureStore.setItemAsync('p01_onboarded', 'true');
-    // Clean up temp mnemonic
     await SecureStore.deleteItemAsync('p01_temp_mnemonic');
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    // Navigate directly to lock screen (which handles security method and redirects to wallet)
-    router.replace('/(auth)/lock');
+    // Go directly to wallet — user just authenticated during onboarding
+    // Lock screen is for app re-opens, not first-time setup
+    router.replace('/(main)/(wallet)');
   };
 
   const handleSkip = useCallback(() => {
@@ -142,8 +131,8 @@ export default function SecurityScreen() {
   // PIN Setup View
   if (showPinSetup) {
     return (
-      <SafeAreaView className="flex-1 bg-[#0a0a0c]">
-        <View className="flex-1 px-8 pt-20">
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+        <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
           {/* Back Button */}
           <TouchableOpacity
             onPress={() => {
@@ -154,8 +143,8 @@ export default function SecurityScreen() {
               setIsConfirming(false);
               setPinError(false);
             }}
-            className="absolute top-20 left-6 z-10"
             activeOpacity={0.7}
+            style={{ position: 'absolute', top: 80, left: 24, zIndex: 10 }}
           >
             <Ionicons name="arrow-back" size={24} color="#39c5bb" />
           </TouchableOpacity>
@@ -163,23 +152,25 @@ export default function SecurityScreen() {
           {/* Header */}
           <Animated.View
             entering={FadeInDown.delay(200).duration(600)}
-            className="items-center mb-12 mt-8"
+            style={{ alignItems: 'center', marginBottom: 48, marginTop: 32 }}
           >
             <View
-              className="w-16 h-16 rounded-full bg-[#39c5bb]/20 items-center justify-center mb-4"
               style={{
-                shadowColor: '#39c5bb',
-                shadowOpacity: 0.3,
-                shadowRadius: 15,
-                shadowOffset: { width: 0, height: 0 },
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: 'rgba(57, 197, 187, 0.2)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 16,
               }}
             >
               <Ionicons name="keypad" size={32} color="#39c5bb" />
             </View>
-            <Text className="text-white text-2xl font-bold text-center mb-2">
+            <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
               {isConfirming ? 'Confirm Your PIN' : 'Create a PIN'}
             </Text>
-            <Text className="text-[#a0a0a0] text-base text-center">
+            <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
               {isConfirming
                 ? 'Enter your PIN again to confirm'
                 : 'Choose a 6-digit PIN to secure your wallet'}
@@ -189,7 +180,7 @@ export default function SecurityScreen() {
           {/* PIN Input */}
           <Animated.View
             entering={FadeIn.delay(400).duration(600)}
-            className="items-center"
+            style={{ alignItems: 'center' }}
           >
             <PinInput
               length={6}
@@ -203,7 +194,7 @@ export default function SecurityScreen() {
             {pinError && (
               <Animated.Text
                 entering={FadeIn}
-                className="text-red-400 text-center mt-4"
+                style={{ color: '#f87171', textAlign: 'center', marginTop: 16 }}
               >
                 PINs don't match. Please try again.
               </Animated.Text>
@@ -215,50 +206,64 @@ export default function SecurityScreen() {
   }
 
   // Main Security Selection View
+  const canContinue = selectedMethod !== 'none' && selectedMethod !== 'pin';
+
   return (
-    <SafeAreaView className="flex-1 bg-[#0a0a0c]">
-      <View className="flex-1 px-8 pt-20">
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+      <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
         {/* Header */}
         <Animated.View
           entering={FadeInDown.delay(200).duration(600)}
-          className="items-center mb-10"
+          style={{ alignItems: 'center', marginBottom: 40 }}
         >
           <View
-            className="w-16 h-16 rounded-full bg-[#39c5bb]/20 items-center justify-center mb-4"
             style={{
-              shadowColor: '#39c5bb',
-              shadowOpacity: 0.3,
-              shadowRadius: 15,
-              shadowOffset: { width: 0, height: 0 },
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: 'rgba(57, 197, 187, 0.2)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 16,
             }}
           >
             <Ionicons name="lock-closed" size={32} color="#39c5bb" />
           </View>
-          <Text className="text-white text-2xl font-bold text-center mb-2">
+          <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
             Secure Your Wallet
           </Text>
-          <Text className="text-[#a0a0a0] text-base text-center">
+          <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
             Add an extra layer of protection
           </Text>
         </Animated.View>
 
         {/* Security Options */}
-        <View className="space-y-4">
+        <View style={{ gap: 16 }}>
           {/* PIN Code Option */}
           <Animated.View entering={FadeInDown.delay(400).duration(600)}>
             <TouchableOpacity
               onPress={() => handleSelectMethod('pin')}
               activeOpacity={0.8}
-              className={`flex-row items-center p-5 rounded-2xl border ${
-                selectedMethod === 'pin'
-                  ? 'bg-[#39c5bb]/10 border-[#39c5bb]'
-                  : 'bg-[#0f0f12] border-[#2a2a30]'
-              }`}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 20,
+                borderRadius: 16,
+                borderWidth: 1,
+                backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.1)' : '#0f0f12',
+                borderColor: selectedMethod === 'pin' ? '#39c5bb' : '#2a2a30',
+              }}
             >
               <View
-                className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${
-                  selectedMethod === 'pin' ? 'bg-[#39c5bb]/20' : 'bg-[#151518]'
-                }`}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 16,
+                  backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.2)' : '#151518',
+                }}
               >
                 <Ionicons
                   name="keypad"
@@ -266,9 +271,9 @@ export default function SecurityScreen() {
                   color={selectedMethod === 'pin' ? '#39c5bb' : '#555560'}
                 />
               </View>
-              <View className="flex-1">
-                <Text className="text-white text-lg font-semibold">PIN Code</Text>
-                <Text className="text-[#a0a0a0] text-sm">6-digit security code</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>PIN Code</Text>
+                <Text style={{ color: '#a0a0a0', fontSize: 14 }}>6-digit security code</Text>
               </View>
               {selectedMethod === 'pin' && (
                 <Ionicons name="checkmark-circle" size={24} color="#39c5bb" />
@@ -282,18 +287,35 @@ export default function SecurityScreen() {
               onPress={() => handleSelectMethod('biometrics')}
               activeOpacity={0.8}
               disabled={!biometricsAvailable}
-              className={`flex-row items-center p-5 rounded-2xl border ${
-                !biometricsAvailable
-                  ? 'bg-[#0a0a0c] border-[#151518] opacity-50'
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: 20,
+                borderRadius: 16,
+                borderWidth: 1,
+                opacity: biometricsAvailable ? 1 : 0.5,
+                backgroundColor: !biometricsAvailable
+                  ? '#0a0a0c'
                   : selectedMethod === 'biometrics'
-                  ? 'bg-[#39c5bb]/10 border-[#39c5bb]'
-                  : 'bg-[#0f0f12] border-[#2a2a30]'
-              }`}
+                  ? 'rgba(57, 197, 187, 0.1)'
+                  : '#0f0f12',
+                borderColor: !biometricsAvailable
+                  ? '#151518'
+                  : selectedMethod === 'biometrics'
+                  ? '#39c5bb'
+                  : '#2a2a30',
+              }}
             >
               <View
-                className={`w-12 h-12 rounded-full items-center justify-center mr-4 ${
-                  selectedMethod === 'biometrics' ? 'bg-[#39c5bb]/20' : 'bg-[#151518]'
-                }`}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 16,
+                  backgroundColor: selectedMethod === 'biometrics' ? 'rgba(57, 197, 187, 0.2)' : '#151518',
+                }}
               >
                 <Ionicons
                   name={biometricType === 'face' ? 'scan' : 'finger-print'}
@@ -301,11 +323,11 @@ export default function SecurityScreen() {
                   color={selectedMethod === 'biometrics' ? '#39c5bb' : '#555560'}
                 />
               </View>
-              <View className="flex-1">
-                <Text className="text-white text-lg font-semibold">
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>
                   {biometricType === 'face' ? 'Face ID' : 'Fingerprint'}
                 </Text>
-                <Text className="text-[#a0a0a0] text-sm">
+                <Text style={{ color: '#a0a0a0', fontSize: 14 }}>
                   {biometricsAvailable
                     ? 'Quick and secure authentication'
                     : 'Not available on this device'}
@@ -320,19 +342,19 @@ export default function SecurityScreen() {
       </View>
 
       {/* Bottom Buttons */}
-      <View className="px-6 pb-8">
+      <View style={{ paddingHorizontal: 24, paddingBottom: 32 }}>
         <Animated.View entering={FadeInUp.delay(700).duration(600)}>
           <TouchableOpacity
             onPress={handleContinue}
             activeOpacity={0.8}
-            disabled={selectedMethod === 'none' || selectedMethod === 'pin'}
-            className={`py-4 rounded-xl items-center mb-4 ${
-              selectedMethod !== 'none' && selectedMethod !== 'pin'
-                ? 'bg-[#39c5bb]'
-                : 'bg-[#2a2a30]'
-            }`}
-            style={
-              selectedMethod !== 'none' && selectedMethod !== 'pin'
+            disabled={!canContinue}
+            style={{
+              paddingVertical: 16,
+              borderRadius: 12,
+              alignItems: 'center',
+              marginBottom: 16,
+              backgroundColor: canContinue ? '#39c5bb' : '#2a2a30',
+              ...(canContinue
                 ? {
                     shadowColor: '#39c5bb',
                     shadowOpacity: 0.4,
@@ -340,15 +362,15 @@ export default function SecurityScreen() {
                     shadowOffset: { width: 0, height: 4 },
                     elevation: 8,
                   }
-                : {}
-            }
+                : {}),
+            }}
           >
             <Text
-              className={`text-lg font-bold ${
-                selectedMethod !== 'none' && selectedMethod !== 'pin'
-                  ? 'text-white'
-                  : 'text-[#555560]'
-              }`}
+              style={{
+                fontSize: 17,
+                fontWeight: 'bold',
+                color: canContinue ? '#ffffff' : '#555560',
+              }}
             >
               CONTINUE
             </Text>
@@ -357,9 +379,9 @@ export default function SecurityScreen() {
           <TouchableOpacity
             onPress={handleSkip}
             activeOpacity={0.7}
-            className="py-3 items-center"
+            style={{ paddingVertical: 12, alignItems: 'center' }}
           >
-            <Text className="text-[#555560] text-base">Skip for now</Text>
+            <Text style={{ color: '#555560', fontSize: 16 }}>Skip for now</Text>
           </TouchableOpacity>
         </Animated.View>
       </View>

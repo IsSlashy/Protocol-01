@@ -3,3 +3,4 @@
  */
 
 export { SwipeableTabWrapper } from './SwipeableTabWrapper';
+export { LiquidGlassTabBar } from './LiquidGlassTabBar';

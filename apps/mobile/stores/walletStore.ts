@@ -96,28 +96,33 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     try {
       set({ loading: true, error: null });
 
-      // Initialize connection with stored network setting
-      await initializeConnection();
+      // Initialize connection — non-fatal, wallet can still load without network
+      try {
+        await initializeConnection();
+      } catch (connErr: any) {
+        console.warn('[WalletStore] Connection init failed (non-fatal):', connErr?.message);
+      }
 
       const exists = await walletExists();
       if (exists) {
         const publicKey = await getPublicKey();
 
         // INSTANT: Load cached data immediately (like Phantom)
-        const [cachedBalance, cachedTransactions] = await Promise.all([
-          getCachedBalance(publicKey),
-          getCachedTransactions(publicKey),
-        ]);
+        let cachedBalance = null;
+        let cachedTransactions: any[] = [];
+        try {
+          [cachedBalance, cachedTransactions] = await Promise.all([
+            getCachedBalance(publicKey),
+            getCachedTransactions(publicKey),
+          ]);
+        } catch {}
 
         set({
           hasWallet: true,
           publicKey,
-          // Load cached balance or default
           balance: cachedBalance || { sol: 0, tokens: [], totalUsd: 0 },
-          // Load cached transactions instantly
-          transactions: cachedTransactions,
+          transactions: cachedTransactions || [],
         });
-
 
         // BACKGROUND: Refresh balance (update cache)
         setTimeout(async () => {
@@ -126,7 +131,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
             set({ balance });
           } catch (err: any) {
             console.warn('[WalletStore] Failed to fetch fresh balance:', err?.message || err);
-            // Keep cached balance on error
           }
         }, 500);
 
@@ -137,13 +141,20 @@ export const useWalletStore = create<WalletState>((set, get) => ({
             set({ transactions });
           } catch (err: any) {
             console.warn('[WalletStore] Failed to fetch fresh transactions:', err?.message || err);
-            // Keep cached transactions on error
           }
-        }, 3000); // Refresh in background after 3s
+        }, 3000);
       }
 
       set({ initialized: true, loading: false });
     } catch (error: any) {
+      // Even if init fails, check for wallet existence so we don't lose it
+      try {
+        const exists = await walletExists();
+        if (exists) {
+          const publicKey = await getPublicKey();
+          set({ hasWallet: true, publicKey });
+        }
+      } catch {}
       set({
         error: error.message || 'Failed to initialize wallet',
         loading: false,
