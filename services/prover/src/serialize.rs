@@ -87,9 +87,9 @@ pub fn snarkjs_to_proof(
 /// Parse decimal strings into a G1Affine point.
 fn strings_to_g1(coords: &[String]) -> Result<G1Affine> {
     anyhow::ensure!(coords.len() >= 2, "G1 point needs at least 2 coordinates");
-    let x = Fq::from_bigint(coords[0].parse().map_err(|e| anyhow::anyhow!("invalid Fq x: {e}"))?)
+    let x = Fq::from_bigint(coords[0].parse().map_err(|_| anyhow::anyhow!("invalid Fq x"))?)
         .ok_or_else(|| anyhow::anyhow!("Fq x not in field"))?;
-    let y = Fq::from_bigint(coords[1].parse().map_err(|e| anyhow::anyhow!("invalid Fq y: {e}"))?)
+    let y = Fq::from_bigint(coords[1].parse().map_err(|_| anyhow::anyhow!("invalid Fq y"))?)
         .ok_or_else(|| anyhow::anyhow!("Fq y not in field"))?;
     Ok(G1Affine::new_unchecked(x, y))
 }
@@ -98,15 +98,15 @@ fn strings_to_g1(coords: &[String]) -> Result<G1Affine> {
 fn strings_to_g2(coords: &[Vec<String>]) -> Result<G2Affine> {
     anyhow::ensure!(coords.len() >= 2, "G2 point needs at least 2 coordinate pairs");
     let x = Fq2::new(
-        Fq::from_bigint(coords[0][0].parse().map_err(|e| anyhow::anyhow!("invalid Fq2 x.c0: {e}"))?)
+        Fq::from_bigint(coords[0][0].parse().map_err(|_| anyhow::anyhow!("invalid Fq2 x.c0"))?)
             .ok_or_else(|| anyhow::anyhow!("Fq2 x.c0 not in field"))?,
-        Fq::from_bigint(coords[0][1].parse().map_err(|e| anyhow::anyhow!("invalid Fq2 x.c1: {e}"))?)
+        Fq::from_bigint(coords[0][1].parse().map_err(|_| anyhow::anyhow!("invalid Fq2 x.c1"))?)
             .ok_or_else(|| anyhow::anyhow!("Fq2 x.c1 not in field"))?,
     );
     let y = Fq2::new(
-        Fq::from_bigint(coords[1][0].parse().map_err(|e| anyhow::anyhow!("invalid Fq2 y.c0: {e}"))?)
+        Fq::from_bigint(coords[1][0].parse().map_err(|_| anyhow::anyhow!("invalid Fq2 y.c0"))?)
             .ok_or_else(|| anyhow::anyhow!("Fq2 y.c0 not in field"))?,
-        Fq::from_bigint(coords[1][1].parse().map_err(|e| anyhow::anyhow!("invalid Fq2 y.c1: {e}"))?)
+        Fq::from_bigint(coords[1][1].parse().map_err(|_| anyhow::anyhow!("invalid Fq2 y.c1"))?)
             .ok_or_else(|| anyhow::anyhow!("Fq2 y.c1 not in field"))?,
     );
     Ok(G2Affine::new_unchecked(x, y))

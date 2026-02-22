@@ -197,12 +197,6 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     return signature;
   }, [solanaWalletFromArray]);
 
-  // Debug: log privy state
-    isReady: privy?.isReady,
-    ready: (privy as any)?.ready,
-    user: !!privy?.user
-  });
-
   const contextValue = useMemo<PrivyContextType>(() => ({
     ready: privy?.isReady ?? (privy as any)?.ready ?? !!privy?.user,
     authenticated: isAuthenticated,

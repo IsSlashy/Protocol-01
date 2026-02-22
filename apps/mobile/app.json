@@ -6,9 +6,9 @@
     "orientation": "portrait",
     "scheme": "p01",
     "userInterfaceStyle": "dark",
-    "icon": "./assets/images/P-01.png",
+    "icon": "./assets/images/Protocol.png",
     "splash": {
-      "image": "./assets/images/P-01.png",
+      "image": "./assets/images/Protocol.png",
       "resizeMode": "contain",
       "backgroundColor": "#0a0a0c"
     },
@@ -30,7 +30,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/P-01.png",
+        "foregroundImage": "./assets/images/Protocol.png",
         "backgroundColor": "#0a0a0c"
       },
       "package": "com.protocol01.app",
@@ -48,7 +48,8 @@
         "android.permission.USE_FINGERPRINT",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT"
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "notification": {
@@ -61,7 +62,6 @@
       "output": "static"
     },
     "plugins": [
-      "expo-dev-client",
       "expo-notifications",
       "expo-router",
       "expo-secure-store",
@@ -75,6 +75,20 @@
             "central"
           ],
           "bluetoothAlwaysPermission": "P-01 uses Bluetooth to discover nearby users for mesh networking"
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "P-01 needs microphone access for voice input to the AI agent."
+        }
+      ],
+      [
+        "llama.rn",
+        {
+          "enableEntitlements": true,
+          "forceCxx20": true,
+          "enableOpenCLAndHexagon": true
         }
       ]
     ],

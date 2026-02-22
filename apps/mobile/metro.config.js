@@ -157,6 +157,16 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     }
   }
 
+  // Force @privy-io packages to use their own bundled zod (v3), not root zod (v4)
+  if (moduleName === 'zod' && context.originModulePath && context.originModulePath.includes('@privy-io')) {
+    const privyZodPath = findInNodeModules('zod/index.js', [
+      path.join(path.dirname(context.originModulePath).split('@privy-io')[0], '@privy-io', context.originModulePath.split('@privy-io')[1].split(/[\\\/]/)[1], 'node_modules'),
+    ], context.originModulePath);
+    if (privyZodPath) {
+      return { filePath: privyZodPath, type: 'sourceFile' };
+    }
+  }
+
   // Use default resolver for everything else
   if (originalResolveRequest) {
     return originalResolveRequest(context, moduleName, platform);

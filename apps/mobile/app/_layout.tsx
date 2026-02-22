@@ -8,28 +8,44 @@ import '../global.css';
 
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
-import { View } from 'react-native';
+import { useCallback, useEffect } from 'react';
+import { Text, TextInput, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { P01PrivyProvider } from '../providers/PrivyProvider';
+import React from 'react';
 // ZkProverProvider DISABLED - 19MB circuit file freezes app even with lazy loading
 // Metro bundler includes the file in bundle regardless of dynamic import
 // TODO: Host circuits on CDN or use backend prover
 import { AlertProvider } from '../providers/AlertProvider';
+import { useLoadFonts } from '../hooks/useLoadFonts';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
+// Disable font scaling globally to prevent "zoomed" UI
+if ((Text as any).defaultProps == null) (Text as any).defaultProps = {};
+(Text as any).defaultProps.allowFontScaling = false;
+if ((TextInput as any).defaultProps == null) (TextInput as any).defaultProps = {};
+(TextInput as any).defaultProps.allowFontScaling = false;
+
 export default function RootLayout() {
+  const { fontsLoaded, fontError } = useLoadFonts();
+
+  const onLayoutReady = useCallback(async () => {
+    if (fontsLoaded || fontError) {
+      await SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
   useEffect(() => {
-    // Hide splash screen after a short delay
-    const timer = setTimeout(() => {
-      SplashScreen.hideAsync();
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
+    onLayoutReady();
+  }, [onLayoutReady]);
+
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#050505' }}>

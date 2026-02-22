@@ -11,7 +11,7 @@ import { Buffer } from 'buffer';
 // Jupiter API endpoints
 const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
 const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
-const JUPITER_TOKENS_API = 'https://token.jup.ag/all';
+const JUPITER_TOKENS_API = 'https://token.jup.ag/strict';
 
 // Common token mints on Solana
 export const TOKEN_MINTS = {
@@ -25,6 +25,15 @@ export const TOKEN_MINTS = {
   ORCA: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
   MNGO: 'MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac',
   STEP: 'StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT',
+  WBTC: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh',
+  WETH: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',
+  MSOL: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
+  JITOSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
+  WIF: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+  RENDER: 'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof',
+  HNT: 'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux',
+  PYUSD: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo',
+  EURC: 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr',
 };
 
 // ============== PLATFORM FEE CONFIG ==============
@@ -300,11 +309,6 @@ export async function getQuote(params: {
   }
 
   const quote: QuoteResponse = await response.json();
-    inAmount: quote.inAmount,
-    outAmount: quote.outAmount,
-    priceImpact: quote.priceImpactPct,
-    routes: quote.routePlan.length,
-  });
 
   return quote;
 }
@@ -487,6 +491,58 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
   const [whole, fraction = ''] = amount.split('.');
   const paddedFraction = fraction.padEnd(decimals, '0').slice(0, decimals);
   return BigInt(whole + paddedFraction);
+}
+
+// ============== PRICE API ==============
+const JUPITER_PRICE_API = 'https://price.jup.ag/v6/price';
+
+// Price cache
+let priceCache: { prices: Record<string, number>; timestamp: number } | null = null;
+const PRICE_CACHE_TTL = 30000; // 30 seconds
+
+// Popular token IDs for price fetching
+const PRICE_TOKEN_IDS = ['SOL', 'USDC', 'USDT', 'JUP', 'BONK', 'RAY', 'ORCA', 'PYTH', 'HNT', 'RENDER', 'WIF', 'JitoSOL', 'mSOL', 'WBTC', 'WETH'];
+
+export interface TokenPrice {
+  id: string;
+  mintSymbol: string;
+  price: number;
+}
+
+/**
+ * Fetch real-time prices for popular tokens from Jupiter Price API
+ */
+export async function getTokenPrices(): Promise<Record<string, number>> {
+  // Check cache
+  if (priceCache && Date.now() - priceCache.timestamp < PRICE_CACHE_TTL) {
+    return priceCache.prices;
+  }
+
+  try {
+    const ids = PRICE_TOKEN_IDS.join(',');
+    const response = await fetch(`${JUPITER_PRICE_API}?ids=${ids}`);
+
+    if (!response.ok) {
+      throw new Error(`Price API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const prices: Record<string, number> = {};
+
+    if (data.data) {
+      for (const [symbol, info] of Object.entries(data.data)) {
+        prices[symbol] = (info as any).price || 0;
+      }
+    }
+
+    priceCache = { prices, timestamp: Date.now() };
+    return prices;
+  } catch (error) {
+    console.error('[Jupiter] Price fetch error:', error);
+    // Return cached if available
+    if (priceCache) return priceCache.prices;
+    return {};
+  }
 }
 
 /**

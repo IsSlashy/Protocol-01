@@ -46,6 +46,19 @@ import { isDevnet } from '@/services/solana/connection';
 import { formatTxDate } from '@/services/solana/transactions';
 import { formatBalance } from '@/services/solana/balance';
 import TokenIcon from '@/components/TokenIcon';
+import { getTokenPrices, TOKEN_MINTS } from '@/services/jupiter';
+
+// Popular tokens to always display in assets
+const DISPLAY_TOKENS = [
+  { symbol: 'USDC', name: 'USD Coin', mint: TOKEN_MINTS.USDC, decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
+  { symbol: 'USDT', name: 'Tether USD', mint: TOKEN_MINTS.USDT, decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png' },
+  { symbol: 'JUP', name: 'Jupiter', mint: TOKEN_MINTS.JUP, decimals: 6, logoURI: 'https://static.jup.ag/jup/icon.png' },
+  { symbol: 'BONK', name: 'Bonk', mint: TOKEN_MINTS.BONK, decimals: 5, logoURI: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I' },
+  { symbol: 'WIF', name: 'dogwifhat', mint: TOKEN_MINTS.WIF, decimals: 6 },
+  { symbol: 'RAY', name: 'Raydium', mint: TOKEN_MINTS.RAY, decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R/logo.png' },
+  { symbol: 'JitoSOL', name: 'Jito Staked SOL', mint: TOKEN_MINTS.JITOSOL, decimals: 9, logoURI: 'https://storage.googleapis.com/token-metadata/JitoSOL-256.png' },
+  { symbol: 'PYTH', name: 'Pyth Network', mint: TOKEN_MINTS.PYTH, decimals: 6, logoURI: 'https://pyth.network/token.svg' },
+];
 
 export default function WalletHomeScreen() {
   const router = useRouter();
@@ -129,7 +142,7 @@ export default function WalletHomeScreen() {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
-    await Promise.all([refreshBalance(), refreshTransactions()]);
+    await Promise.all([refreshBalance(), refreshTransactions(), fetchPrices()]);
   }, [refreshBalance, refreshTransactions]);
 
   const toggleBalanceVisibility = () => {
@@ -150,6 +163,25 @@ export default function WalletHomeScreen() {
       }
     }
   };
+
+  // Token prices state
+  const [tokenPrices, setTokenPrices] = useState<Record<string, number>>({});
+
+  // Fetch token prices on mount and on refresh
+  const fetchPrices = useCallback(async () => {
+    try {
+      const prices = await getTokenPrices();
+      setTokenPrices(prices);
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchPrices(); }, []);
+
+  // Refresh prices every 30s
+  useEffect(() => {
+    const interval = setInterval(fetchPrices, 30000);
+    return () => clearInterval(interval);
+  }, [fetchPrices]);
 
   const [airdropLoading, setAirdropLoading] = useState(false);
 
@@ -224,12 +256,8 @@ export default function WalletHomeScreen() {
     }
   };
 
-  // No wallet - redirect to onboarding (this page should not be accessible without a wallet)
-  useEffect(() => {
-    if (initialized && !loading && !hasWallet) {
-      router.replace('/(onboarding)');
-    }
-  }, [initialized, loading, hasWallet, router]);
+  // NOTE: No wallet redirect removed — app/index.tsx handles "no wallet → onboarding" on startup.
+  // A redirect here caused a loop because walletStore.initialize() hadn't finished loading yet.
 
   // Loading state
   if (!initialized || loading) {
@@ -480,28 +508,73 @@ export default function WalletHomeScreen() {
             </View>
           </TouchableOpacity>
 
-          {/* Token Balances */}
-          {balance?.tokens.map((token) => (
-            <TouchableOpacity key={token.mint} style={styles.assetRow} activeOpacity={0.7}>
-              <View style={styles.assetLeft}>
-                <TokenIcon symbol={token.symbol} logoURI={token.logoURI} size={44} />
-                <View style={[styles.assetInfo, { marginLeft: Spacing.md }]}>
-                  <Text style={styles.assetName}>{token.name}</Text>
-                  <Text style={styles.assetSymbol}>{token.symbol}</Text>
-                </View>
-              </View>
-              <View style={styles.assetRight}>
-                <Text style={styles.assetBalance}>
-                  {balanceHidden ? '••••' : token.uiBalance}
-                </Text>
-                {token.usdValue && (
-                  <Text style={styles.assetUsd}>
-                    {balanceHidden ? '••••' : formatAmount(token.usdValue)}
-                  </Text>
-                )}
-              </View>
-            </TouchableOpacity>
-          ))}
+          {/* Token Balances — owned tokens first, then popular tokens */}
+          {(() => {
+            // Tokens the user actually holds (excluding SOL which is shown above)
+            const ownedTokens = balance?.tokens || [];
+            const ownedMints = new Set(ownedTokens.map(t => t.mint));
+
+            // Popular tokens not yet owned
+            const unownedPopular = DISPLAY_TOKENS.filter(t => !ownedMints.has(t.mint));
+
+            return (
+              <>
+                {/* Owned tokens */}
+                {ownedTokens.map((token) => (
+                  <TouchableOpacity key={token.mint} style={styles.assetRow} activeOpacity={0.7}>
+                    <View style={styles.assetLeft}>
+                      <TokenIcon symbol={token.symbol} logoURI={token.logoUri} size={44} />
+                      <View style={[styles.assetInfo, { marginLeft: Spacing.md }]}>
+                        <Text style={styles.assetName}>{token.name}</Text>
+                        <Text style={styles.assetSymbol}>{token.symbol}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.assetRight}>
+                      <Text style={styles.assetBalance}>
+                        {balanceHidden ? '••••' : token.uiBalance}
+                      </Text>
+                      {token.usdValue ? (
+                        <Text style={styles.assetUsd}>
+                          {balanceHidden ? '••••' : formatAmount(token.usdValue)}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+
+                {/* Popular tokens (not owned — show price only) */}
+                {unownedPopular.map((token) => {
+                  const price = tokenPrices[token.symbol];
+                  return (
+                    <TouchableOpacity
+                      key={token.mint}
+                      style={[styles.assetRow, { opacity: 0.6 }]}
+                      activeOpacity={0.7}
+                      onPress={() => router.push('/(main)/(wallet)/swap')}
+                    >
+                      <View style={styles.assetLeft}>
+                        <TokenIcon symbol={token.symbol} logoURI={token.logoURI} size={44} />
+                        <View style={[styles.assetInfo, { marginLeft: Spacing.md }]}>
+                          <Text style={styles.assetName}>{token.name}</Text>
+                          <Text style={styles.assetSymbol}>{token.symbol}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.assetRight}>
+                        <Text style={[styles.assetBalance, { color: Colors.textTertiary }]}>0</Text>
+                        {price ? (
+                          <Text style={styles.assetUsd}>
+                            ${price < 0.01 ? price.toFixed(6) : price < 1 ? price.toFixed(4) : price.toFixed(2)}
+                          </Text>
+                        ) : (
+                          <Text style={styles.assetUsd}>--</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </>
+            );
+          })()}
         </Animated.View>
 
         {/* Activity Section */}

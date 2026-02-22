@@ -1,44 +1,723 @@
-import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+  TextInput,
+  Switch,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+
+import { useAIStore } from '@/stores/aiStore';
+import { MODEL_INFO, isOnDeviceAvailable } from '@/services/ai/llamaService';
+import { DEFAULT_CONFIGS } from '@/services/ai/agent';
+import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
+
+type ProviderOption = {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+};
+
+const PROVIDERS: ProviderOption[] = [
+  { id: 'groq', label: 'Groq', description: 'Llama 3.3 70B — fastest cloud', icon: 'flash-outline' },
+  { id: 'gemma', label: 'Gemini', description: 'Google Gemini — free tier', icon: 'diamond-outline' },
+  { id: 'llama-local', label: 'On-Device', description: 'Gemma 3 1B — fully offline', icon: 'phone-portrait-outline' },
+  { id: 'custom', label: 'Custom', description: 'OpenAI, Anthropic, Ollama', icon: 'code-slash-outline' },
+];
 
 export default function AISettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const {
+    config, isConnected, messages, clearMessages, updateConfig,
+    modelStatus, modelDownloadProgress, modelLoadProgress, downloadError,
+    downloadModel, cancelDownload, initModel, releaseModel, deleteModel,
+    conversations, deleteConversation,
+  } = useAIStore();
+
+  const [temperature, setTemperature] = useState(config.temperature);
+  const [groqKey, setGroqKey] = useState(config.groqApiKey || '');
+  const [geminiKey, setGeminiKey] = useState(config.apiKey || '');
+  const [showGroqKey, setShowGroqKey] = useState(false);
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const nativeAvailable = isOnDeviceAvailable();
+
+  const handleProviderChange = (providerId: string) => {
+    if (providerId === 'custom') {
+      // Keep current provider but show custom options
+      return;
+    }
+    const defaults = DEFAULT_CONFIGS[providerId] || {};
+    updateConfig({
+      ...defaults,
+      groqApiKey: groqKey || config.groqApiKey,
+      apiKey: geminiKey || config.apiKey,
+      voiceEnabled: config.voiceEnabled,
+      voiceAutoSend: config.voiceAutoSend,
+    } as any);
+  };
+
+  const handleSaveGroqKey = () => {
+    updateConfig({ groqApiKey: groqKey });
+  };
+
+  const handleSaveGeminiKey = () => {
+    updateConfig({ apiKey: geminiKey });
+  };
+
+  const handleClearHistory = () => {
+    Alert.alert(
+      'Clear All Data',
+      'Delete all messages and conversations? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            clearMessages();
+            // Delete all conversations
+            conversations.forEach((c: any) => deleteConversation(c.id));
+            Alert.alert('Done', 'All chat data cleared.');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleTemperatureChange = (delta: number) => {
+    const newTemp = Math.max(0.1, Math.min(1.0, Math.round((temperature + delta) * 10) / 10));
+    setTemperature(newTemp);
+    updateConfig({ temperature: newTemp });
+  };
+
+  const handleDownloadModel = () => {
+    Alert.alert(
+      'Download Gemma 3 1B',
+      `This will download ~${MODEL_INFO.fileSizeMB}MB. Wi-Fi recommended.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Download', onPress: () => downloadModel() },
+      ]
+    );
+  };
+
+  const handleDeleteModel = () => {
+    Alert.alert(
+      'Delete Model',
+      `Free ~${MODEL_INFO.fileSizeMB}MB of storage?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteModel() },
+      ]
+    );
+  };
+
+  const currentProvider = config.provider === 'gemma-cloud' || (config.provider === 'gemma' && config.gemmaBackend === 'google-ai')
+    ? 'gemma'
+    : config.provider === 'gemma' && config.gemmaBackend === 'on-device'
+    ? 'llama-local'
+    : config.provider;
+
+  const providerLabel = (() => {
+    if (config.provider === 'groq') return 'Groq (Llama 3.3 70B)';
+    if (modelStatus === 'loaded') return 'On-device (Gemma 3 1B)';
+    if (config.provider === 'gemma' || config.provider === 'gemma-cloud') return 'Gemini Flash';
+    return config.provider;
+  })();
+
+  const modelStatusLabel = (() => {
+    switch (modelStatus) {
+      case 'not_downloaded': return 'Not downloaded';
+      case 'downloading': return `Downloading... ${modelDownloadProgress}%`;
+      case 'ready': return 'Downloaded (not loaded)';
+      case 'loading': return `Loading... ${modelLoadProgress}%`;
+      case 'loaded': return 'Loaded & Active';
+      case 'error': return 'Error';
+      default: return modelStatus;
+    }
+  })();
+
+  const modelStatusColor = (() => {
+    switch (modelStatus) {
+      case 'loaded': return Colors.success;
+      case 'ready': return Colors.primary;
+      case 'downloading':
+      case 'loading': return Colors.yellow;
+      case 'error': return Colors.error;
+      default: return Colors.textTertiary;
+    }
+  })();
 
   return (
-    <View className="flex-1 bg-p01-void" style={{ paddingTop: insets.top }}>
+    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top }}>
       {/* Header */}
-      <View className="flex-row items-center px-4 py-4">
-        <TouchableOpacity
-          onPress={() => router.back()}
-          className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+      <View style={{ overflow: 'hidden' }}>
+        <BlurView
+          intensity={30}
+          tint="dark"
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: Spacing.lg,
+            paddingVertical: 12,
+            backgroundColor: 'rgba(10, 10, 12, 0.75)',
+            borderBottomWidth: 1,
+            borderBottomColor: 'rgba(57, 197, 187, 0.1)',
+          }}
         >
-          <Ionicons name="arrow-back" size={20} color="#fff" />
-        </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold ml-3">P-01 Agent</Text>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'rgba(255, 255, 255, 0.06)',
+            }}
+          >
+            <Ionicons name="chevron-back" size={22} color={Colors.text} />
+          </TouchableOpacity>
+          <Text
+            style={{
+              color: Colors.text,
+              fontSize: FontSize.lg,
+              fontFamily: FontFamily.semibold,
+              marginLeft: 10,
+            }}
+          >
+            Agent Settings
+          </Text>
+        </BlurView>
       </View>
 
-      {/* Coming Soon */}
-      <View className="flex-1 items-center justify-center px-8">
-        <View
-          className="w-20 h-20 rounded-full items-center justify-center mb-4"
-          style={{ backgroundColor: 'rgba(34, 211, 238, 0.1)' }}
-        >
-          <Ionicons name="settings-outline" size={36} color="#22d3ee" />
-        </View>
-        <Text className="text-white text-xl font-semibold mb-2">
-          Configuration
-        </Text>
-        <Text className="text-cyan-400 text-base mb-4">
-          Coming Soon
-        </Text>
-        <Text className="text-p01-text-muted text-center text-sm">
-          AI agent settings will be available soon.
-        </Text>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: Spacing.xl, paddingBottom: insets.bottom + 40 }}
+      >
+        {/* AI Provider Selector */}
+        <Animated.View entering={FadeInDown.delay(100).springify()}>
+          <SectionTitle title="AI PROVIDER" />
+          <SettingsCard>
+            <SettingsRow icon="sparkles" label="Active" value={providerLabel} />
+            <Divider />
+            <SettingsRow
+              icon="wifi"
+              label="Status"
+              value={isConnected ? 'Connected' : 'Offline'}
+              valueColor={isConnected ? Colors.success : Colors.yellow}
+            />
+          </SettingsCard>
+
+          {/* Provider pills */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            {PROVIDERS.map((p) => {
+              const isActive = currentProvider === p.id || (p.id === 'groq' && config.provider === 'groq');
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => handleProviderChange(p.id)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    borderRadius: 14,
+                    backgroundColor: isActive ? Colors.primaryDim : 'rgba(21,21,24,0.8)',
+                    borderWidth: 1,
+                    borderColor: isActive ? 'rgba(57,197,187,0.3)' : Colors.border,
+                  }}
+                >
+                  <Ionicons
+                    name={p.icon as any}
+                    size={16}
+                    color={isActive ? Colors.primary : Colors.textSecondary}
+                  />
+                  <View style={{ marginLeft: 8 }}>
+                    <Text style={{ color: isActive ? Colors.primary : Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium }}>
+                      {p.label}
+                    </Text>
+                    <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
+                      {p.description}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </Animated.View>
+
+        {/* API Keys */}
+        <Animated.View entering={FadeInDown.delay(150).springify()}>
+          <SectionTitle title="API KEYS" />
+          <SettingsCard>
+            {/* Groq Key */}
+            <View style={{ padding: 14 }}>
+              <Text style={{ color: Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium, marginBottom: 6 }}>
+                Groq API Key
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    borderWidth: 1,
+                    borderColor: Colors.border,
+                    height: 40,
+                  }}
+                >
+                  <TextInput
+                    value={groqKey}
+                    onChangeText={setGroqKey}
+                    onBlur={handleSaveGroqKey}
+                    placeholder="gsk_..."
+                    placeholderTextColor={Colors.textTertiary}
+                    secureTextEntry={!showGroqKey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{
+                      flex: 1,
+                      color: Colors.text,
+                      fontSize: FontSize.sm,
+                      fontFamily: FontFamily.mono,
+                    }}
+                  />
+                  <TouchableOpacity onPress={() => setShowGroqKey(!showGroqKey)}>
+                    <Ionicons
+                      name={showGroqKey ? 'eye-off-outline' : 'eye-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 4 }}>
+                Free at console.groq.com — enables fast cloud AI + voice
+              </Text>
+            </View>
+
+            <Divider />
+
+            {/* Gemini Key */}
+            <View style={{ padding: 14 }}>
+              <Text style={{ color: Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium, marginBottom: 6 }}>
+                Gemini API Key
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View
+                  style={{
+                    flex: 1,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    borderRadius: 10,
+                    paddingHorizontal: 12,
+                    borderWidth: 1,
+                    borderColor: Colors.border,
+                    height: 40,
+                  }}
+                >
+                  <TextInput
+                    value={geminiKey}
+                    onChangeText={setGeminiKey}
+                    onBlur={handleSaveGeminiKey}
+                    placeholder="AI..."
+                    placeholderTextColor={Colors.textTertiary}
+                    secureTextEntry={!showGeminiKey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={{
+                      flex: 1,
+                      color: Colors.text,
+                      fontSize: FontSize.sm,
+                      fontFamily: FontFamily.mono,
+                    }}
+                  />
+                  <TouchableOpacity onPress={() => setShowGeminiKey(!showGeminiKey)}>
+                    <Ionicons
+                      name={showGeminiKey ? 'eye-off-outline' : 'eye-outline'}
+                      size={18}
+                      color={Colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 4 }}>
+                Free at aistudio.google.com — Gemini Flash fallback
+              </Text>
+            </View>
+          </SettingsCard>
+        </Animated.View>
+
+        {/* Voice Settings */}
+        <Animated.View entering={FadeInDown.delay(200).springify()}>
+          <SectionTitle title="VOICE INPUT" />
+          <SettingsCard>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <IconBox icon="mic-outline" color={Colors.primary} />
+                <Text style={{ color: Colors.text, fontSize: FontSize.md, marginLeft: 12 }}>
+                  Voice Input
+                </Text>
+              </View>
+              <Switch
+                value={config.voiceEnabled !== false}
+                onValueChange={(v) => updateConfig({ voiceEnabled: v })}
+                trackColor={{ false: Colors.border, true: 'rgba(57,197,187,0.3)' }}
+                thumbColor={config.voiceEnabled !== false ? Colors.primary : Colors.textTertiary}
+              />
+            </View>
+            <Divider />
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <IconBox icon="send-outline" color={Colors.yellow} />
+                <View style={{ marginLeft: 12 }}>
+                  <Text style={{ color: Colors.text, fontSize: FontSize.md }}>Auto-Send</Text>
+                  <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
+                    Send message after transcription
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={config.voiceAutoSend === true}
+                onValueChange={(v) => updateConfig({ voiceAutoSend: v })}
+                trackColor={{ false: Colors.border, true: 'rgba(255,204,0,0.3)' }}
+                thumbColor={config.voiceAutoSend ? Colors.yellow : Colors.textTertiary}
+              />
+            </View>
+          </SettingsCard>
+          <InfoBox text="Voice uses Groq Whisper for transcription. Requires Groq API key." />
+        </Animated.View>
+
+        {/* On-Device AI */}
+        <Animated.View entering={FadeInDown.delay(250).springify()}>
+          <SectionTitle title="ON-DEVICE AI" />
+          <SettingsCard>
+            <SettingsRow icon="hardware-chip-outline" label={MODEL_INFO.name} value={`${MODEL_INFO.quantization} | ${MODEL_INFO.fileSizeMB}MB`} />
+            <Divider />
+            <SettingsRow icon="radio-button-on" label="Status" value={modelStatusLabel} valueColor={modelStatusColor} />
+
+            {/* Progress bar */}
+            {(modelStatus === 'downloading' || modelStatus === 'loading') && (
+              <View style={{ paddingHorizontal: 14, paddingBottom: 10 }}>
+                <View
+                  style={{
+                    height: 4,
+                    borderRadius: 2,
+                    backgroundColor: Colors.primaryDim,
+                    marginLeft: 48,
+                  }}
+                >
+                  <View
+                    style={{
+                      height: 4,
+                      borderRadius: 2,
+                      backgroundColor: Colors.primary,
+                      width: `${modelStatus === 'downloading' ? modelDownloadProgress : modelLoadProgress}%`,
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+
+            {/* Download error */}
+            {downloadError && (
+              <View style={{ paddingHorizontal: 14, paddingBottom: 10, marginLeft: 48 }}>
+                <Text style={{ color: Colors.error, fontSize: FontSize.xs }}>{downloadError}</Text>
+              </View>
+            )}
+
+            <Divider />
+
+            {/* Action buttons */}
+            {modelStatus === 'not_downloaded' && (
+              <ActionButton icon="cloud-download-outline" label="Download Model" sublabel={`~${MODEL_INFO.fileSizeMB}MB | Works fully offline`} color={Colors.primary} onPress={handleDownloadModel} />
+            )}
+
+            {modelStatus === 'downloading' && (
+              <ActionButton icon="close-circle-outline" label={`Downloading... ${modelDownloadProgress}%`} sublabel="Tap to cancel" color={Colors.yellow} onPress={cancelDownload} />
+            )}
+
+            {modelStatus === 'ready' && (
+              <>
+                {!nativeAvailable && (
+                  <View style={{ paddingHorizontal: 14, paddingBottom: 10, marginLeft: 48 }}>
+                    <Text style={{ color: Colors.yellow, fontSize: FontSize.xs }}>
+                      Requires native build (EAS). Use Groq or Gemini instead.
+                    </Text>
+                  </View>
+                )}
+                <ActionButton
+                  icon="play-outline"
+                  label="Load Model"
+                  sublabel={nativeAvailable ? `Uses ~${MODEL_INFO.fileSizeMB}MB RAM` : 'Needs EAS build — not available'}
+                  color={nativeAvailable ? Colors.success : Colors.textTertiary}
+                  onPress={() => {
+                    if (!nativeAvailable) {
+                      Alert.alert('Native Build Required', 'On-device inference needs a full EAS build with llama.rn. Use Groq or Gemini cloud providers for now.');
+                    } else {
+                      initModel();
+                    }
+                  }}
+                />
+                <Divider />
+                <ActionButton icon="trash-outline" label="Delete Model" color={Colors.error} onPress={handleDeleteModel} />
+              </>
+            )}
+
+            {modelStatus === 'loading' && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.warningDim, marginRight: 12 }}>
+                  <ActivityIndicator size="small" color={Colors.yellow} />
+                </View>
+                <Text style={{ color: Colors.yellow, fontSize: FontSize.md }}>Loading... {modelLoadProgress}%</Text>
+              </View>
+            )}
+
+            {modelStatus === 'loaded' && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14 }}>
+                  <IconBox icon="checkmark-circle" color={Colors.success} />
+                  <View style={{ marginLeft: 12, flex: 1 }}>
+                    <Text style={{ color: Colors.success, fontSize: FontSize.md }}>Model Active</Text>
+                    <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>Processing queries on-device</Text>
+                  </View>
+                </View>
+                <Divider />
+                <ActionButton icon="pause-outline" label="Unload (Free RAM)" color={Colors.yellow} onPress={() => releaseModel()} />
+              </>
+            )}
+
+            {modelStatus === 'error' && (
+              <>
+                {!nativeAvailable && (
+                  <View style={{ paddingHorizontal: 14, paddingBottom: 10, marginLeft: 48 }}>
+                    <Text style={{ color: Colors.yellow, fontSize: FontSize.xs }}>
+                      Native module not found — needs EAS build. Use Groq or Gemini.
+                    </Text>
+                  </View>
+                )}
+                <ActionButton icon="refresh-outline" label="Retry Loading" color={Colors.error} onPress={() => {
+                  if (!nativeAvailable) {
+                    Alert.alert('Native Build Required', 'On-device inference needs a full EAS build with llama.rn. Use Groq or Gemini cloud providers for now.');
+                  } else {
+                    initModel();
+                  }
+                }} />
+              </>
+            )}
+          </SettingsCard>
+          <InfoBox text="On-device AI runs entirely on your phone. No data sent to servers. Works offline." />
+        </Animated.View>
+
+        {/* Generation Settings */}
+        <Animated.View entering={FadeInDown.delay(300).springify()}>
+          <SectionTitle title="GENERATION" />
+          <SettingsCard>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <IconBox icon="thermometer-outline" color={Colors.primary} />
+                <View style={{ marginLeft: 12 }}>
+                  <Text style={{ color: Colors.text, fontSize: FontSize.md }}>Temperature</Text>
+                  <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
+                    {temperature <= 0.3 ? 'Precise' : temperature <= 0.6 ? 'Balanced' : 'Creative'}
+                  </Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={() => handleTemperatureChange(-0.1)}
+                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
+                >
+                  <Ionicons name="remove" size={18} color={Colors.textSecondary} />
+                </TouchableOpacity>
+                <Text style={{ color: Colors.primary, fontSize: FontSize.lg, fontFamily: FontFamily.semibold, width: 32, textAlign: 'center' }}>
+                  {temperature.toFixed(1)}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => handleTemperatureChange(0.1)}
+                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
+                >
+                  <Ionicons name="add" size={18} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </SettingsCard>
+        </Animated.View>
+
+        {/* Chat Data */}
+        <Animated.View entering={FadeInDown.delay(350).springify()}>
+          <SectionTitle title="DATA" />
+          <SettingsCard>
+            <SettingsRow icon="chatbubbles-outline" label="Messages" value={`${messages.length} in current chat`} />
+            <Divider />
+            <SettingsRow icon="albums-outline" label="Conversations" value={`${conversations.length} saved`} />
+            <Divider />
+            <ActionButton icon="trash-outline" label="Clear All Chat Data" color={Colors.error} onPress={handleClearHistory} />
+          </SettingsCard>
+        </Animated.View>
+      </ScrollView>
+    </View>
+  );
+}
+
+// ---- Reusable sub-components ----
+
+function SectionTitle({ title }: { title: string }) {
+  return (
+    <Text
+      style={{
+        fontSize: FontSize.xs,
+        fontFamily: FontFamily.semibold,
+        letterSpacing: 1,
+        color: Colors.textTertiary,
+        marginBottom: 8,
+        marginTop: 24,
+      }}
+    >
+      {title}
+    </Text>
+  );
+}
+
+function SettingsCard({ children }: { children: React.ReactNode }) {
+  return (
+    <View
+      style={{
+        borderRadius: 16,
+        overflow: 'hidden',
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
+function SettingsRow({
+  icon,
+  label,
+  value,
+  valueColor,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  valueColor?: string;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
+        <IconBox icon={icon} color={Colors.primary} />
+        <Text style={{ color: Colors.text, fontSize: FontSize.md, marginLeft: 12 }}>{label}</Text>
       </View>
+      <Text
+        style={{
+          color: valueColor || Colors.textSecondary,
+          fontSize: FontSize.sm,
+          flexShrink: 1,
+          textAlign: 'right',
+        }}
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function IconBox({ icon, color }: { icon: string; color: string }) {
+  return (
+    <View
+      style={{
+        width: 36,
+        height: 36,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: `${color}18`,
+      }}
+    >
+      <Ionicons name={icon as any} size={18} color={color} />
+    </View>
+  );
+}
+
+function ActionButton({
+  icon,
+  label,
+  sublabel,
+  color,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  sublabel?: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={{ flexDirection: 'row', alignItems: 'center', padding: 14 }}
+    >
+      <IconBox icon={icon} color={color} />
+      <View style={{ marginLeft: 12, flex: 1 }}>
+        <Text style={{ color, fontSize: FontSize.md }}>{label}</Text>
+        {sublabel && (
+          <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>{sublabel}</Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function Divider() {
+  return <View style={{ height: 1, backgroundColor: Colors.border, marginLeft: 62 }} />;
+}
+
+function InfoBox({ text }: { text: string }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        padding: 12,
+        marginTop: 8,
+        borderRadius: 12,
+        backgroundColor: Colors.primaryDim,
+        borderWidth: 1,
+        borderColor: 'rgba(57, 197, 187, 0.15)',
+      }}
+    >
+      <Ionicons name="shield-checkmark-outline" size={16} color={Colors.primary} style={{ marginTop: 1 }} />
+      <Text
+        style={{
+          color: Colors.textTertiary,
+          fontSize: FontSize.xs,
+          lineHeight: 18,
+          marginLeft: 8,
+          flex: 1,
+        }}
+      >
+        {text}
+      </Text>
     </View>
   );
 }

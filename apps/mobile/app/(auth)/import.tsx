@@ -18,10 +18,12 @@ import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
-import { importWallet, validateMnemonic } from '../../services/solana/wallet';
+import { validateMnemonic } from '../../services/solana/wallet';
+import { useWalletStore } from '../../stores/walletStore';
 
 export default function ImportWalletScreen() {
   const router = useRouter();
+  const { importExistingWallet } = useWalletStore();
   const [mnemonic, setMnemonic] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,8 +51,9 @@ export default function ImportWalletScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const walletInfo = await importWallet(normalizedMnemonic);
+      await importExistingWallet(normalizedMnemonic);
 
+      const pubKey = useWalletStore.getState().publicKey || '';
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       // Mark as onboarded and go to security setup
@@ -58,7 +61,7 @@ export default function ImportWalletScreen() {
 
       Alert.alert(
         'Wallet Imported!',
-        `Your wallet has been successfully imported.\n\nAddress: ${walletInfo.publicKey.slice(0, 8)}...${walletInfo.publicKey.slice(-8)}`,
+        `Your wallet has been successfully imported.\n\nAddress: ${pubKey.slice(0, 8)}...${pubKey.slice(-8)}`,
         [
           {
             text: 'Set Up Security',

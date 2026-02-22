@@ -1,47 +1,54 @@
-import React from 'react';
-import { View, Text } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Avatar } from '../ui/Avatar';
+import { BlurView } from 'expo-blur';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Colors, FontSize, FontFamily } from '@/constants/theme';
+import { TypingIndicator } from './TypingIndicator';
+import { MarkdownBubble } from './MarkdownBubble';
 
 type BubbleType = 'agent' | 'user' | 'system';
-type MessageStatus = 'sending' | 'sent' | 'error';
 
 interface ChatBubbleProps {
   type: BubbleType;
   content: string;
   timestamp?: string;
   showAvatar?: boolean;
-  status?: MessageStatus;
   isTyping?: boolean;
-  className?: string;
+  isStreaming?: boolean;
 }
-
-const TypingIndicator: React.FC = () => (
-  <View className="flex-row items-center gap-1 py-1">
-    <View className="w-2 h-2 rounded-full bg-p01-cyan/60" />
-    <View className="w-2 h-2 rounded-full bg-p01-cyan/40" />
-    <View className="w-2 h-2 rounded-full bg-p01-cyan/20" />
-  </View>
-);
 
 export const ChatBubble: React.FC<ChatBubbleProps> = ({
   type,
   content,
   timestamp,
   showAvatar = true,
-  status = 'sent',
   isTyping = false,
-  className,
+  isStreaming = false,
 }) => {
   const isAgent = type === 'agent';
-  const isSystem = type === 'system';
   const isUser = type === 'user';
 
-  if (isSystem) {
+  const handleCopy = useCallback(async () => {
+    if (!content) return;
+    await Clipboard.setStringAsync(content);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [content]);
+
+  if (type === 'system') {
     return (
-      <View className={`items-center my-4 ${className || ''}`}>
-        <View className="bg-p01-surface/50 px-4 py-2 rounded-full">
-          <Text className="text-p01-text-secondary text-xs">
+      <View style={{ alignItems: 'center', marginVertical: 12 }}>
+        <View
+          style={{
+            backgroundColor: 'rgba(21,21,24,0.7)',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 999,
+          }}
+        >
+          <Text style={{ color: Colors.textSecondary, fontSize: FontSize.xs }}>
             {content}
           </Text>
         </View>
@@ -50,86 +57,129 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({
   }
 
   return (
-    <View
-      className={`
-        flex-row
-        ${isAgent ? 'justify-start' : 'justify-end'}
-        mb-3
-        ${className || ''}
-      `}
+    <Animated.View
+      entering={FadeInDown.duration(300).springify()}
+      style={{
+        flexDirection: 'row',
+        justifyContent: isAgent ? 'flex-start' : 'flex-end',
+        marginBottom: 12,
+      }}
     >
+      {/* Agent avatar */}
       {isAgent && showAvatar && (
-        <View className="mr-2">
+        <View style={{ marginRight: 8 }}>
           <View
-            className="w-8 h-8 rounded-full items-center justify-center"
             style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              alignItems: 'center',
+              justifyContent: 'center',
               backgroundColor: 'rgba(57, 197, 187, 0.1)',
               borderWidth: 1,
               borderColor: 'rgba(57, 197, 187, 0.3)',
             }}
           >
-            <Ionicons name="sparkles" size={16} color="#39c5bb" />
+            <Ionicons name="sparkles" size={16} color={Colors.primary} />
           </View>
         </View>
       )}
 
+      {/* Bubble */}
       <View
-        className={`
-          max-w-[75%]
-          rounded-2xl
-          px-4
-          py-3
-          ${isAgent ? 'rounded-tl-md' : 'rounded-tr-md'}
-        `}
         style={{
-          backgroundColor: isAgent
-            ? 'rgba(21, 21, 24, 0.9)'
-            : 'rgba(57, 197, 187, 0.1)',
+          maxWidth: '78%',
+          borderRadius: 18,
+          overflow: 'hidden',
           borderWidth: 1,
           borderColor: isAgent
-            ? 'rgba(42, 42, 48, 0.5)'
+            ? 'rgba(57, 197, 187, 0.15)'
             : 'rgba(57, 197, 187, 0.3)',
+          ...(isAgent
+            ? { borderTopLeftRadius: 6 }
+            : { borderTopRightRadius: 6 }),
         }}
       >
-        {isTyping ? (
-          <TypingIndicator />
+        {isAgent ? (
+          // Glass morphism for agent bubbles
+          <BlurView
+            intensity={20}
+            tint="dark"
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              backgroundColor: 'rgba(21, 21, 24, 0.7)',
+            }}
+          >
+            {isTyping ? (
+              <TypingIndicator />
+            ) : (
+              <>
+                <MarkdownBubble content={content} />
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginTop: 6,
+                  }}
+                >
+                  {timestamp && (
+                    <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
+                      {timestamp}
+                    </Text>
+                  )}
+                  {!isStreaming && content.length > 0 && (
+                    <TouchableOpacity
+                      onPress={handleCopy}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ padding: 2 }}
+                    >
+                      <Ionicons name="copy-outline" size={13} color={Colors.textTertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </>
+            )}
+          </BlurView>
         ) : (
-          <>
+          // User bubble
+          <View
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              backgroundColor: 'rgba(57, 197, 187, 0.1)',
+            }}
+          >
             <Text
-              className={`
-                text-base
-                ${isAgent ? 'text-white' : 'text-p01-cyan'}
-              `}
+              style={{
+                color: Colors.primary,
+                fontSize: FontSize.sm,
+                lineHeight: 20,
+              }}
             >
               {content}
             </Text>
-
-            <View className="flex-row items-center justify-end mt-1 gap-1">
-              {timestamp && (
-                <Text className="text-p01-text-secondary text-xs">
+            {timestamp && (
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 4 }}>
+                <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
                   {timestamp}
                 </Text>
-              )}
-              {isUser && (
-                <View>
-                  {status === 'sending' && (
-                    <Ionicons name="time-outline" size={12} color="#888892" />
-                  )}
-                  {status === 'sent' && (
-                    <Ionicons name="checkmark" size={12} color="#39c5bb" />
-                  )}
-                  {status === 'error' && (
-                    <Ionicons name="alert-circle" size={12} color="#ef4444" />
-                  )}
-                </View>
-              )}
-            </View>
-          </>
+                <Ionicons
+                  name="checkmark"
+                  size={12}
+                  color={Colors.primary}
+                  style={{ marginLeft: 4 }}
+                />
+              </View>
+            )}
+          </View>
         )}
       </View>
 
-      {isUser && showAvatar && <View className="w-8 ml-2" />}
-    </View>
+      {/* Spacer for user messages without avatar */}
+      {isUser && showAvatar && <View style={{ width: 32, marginLeft: 8 }} />}
+    </Animated.View>
   );
 };
 

@@ -82,17 +82,13 @@ impl MerkleTreeState {
             crate::errors::ZkShieldedError::MerkleTreeFull
         );
 
-        // Store the leaf position for reference
-        // The client has computed the new root - we trust it for now
-        // This is secure because:
-        // 1. Anyone can insert a commitment (their own funds at risk)
-        // 2. Transfers require valid ZK proofs against stored roots
-        // 3. Invalid roots cannot be used to steal others' funds
-
-        // Update filled subtree at level 0
+        // Update filled subtree at level 0 with the new leaf
         self.filled_subtrees[0] = leaf;
 
-        // Accept the client-computed root
+        // Accept the client-computed root (no Poseidon syscall available on-chain)
+        // Note: filled_subtrees at levels > 0 are NOT updated here because we can't
+        // compute Poseidon hashes on-chain. The client must account for this by
+        // recomputing subtrees locally when using readOnChainFilledSubtrees().
         self.root = new_root;
         self.leaf_count += 1;
 

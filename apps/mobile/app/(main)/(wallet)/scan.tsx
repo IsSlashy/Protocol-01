@@ -218,6 +218,8 @@ export default function ScanScreen() {
               style={{
                 position: 'absolute',
                 top: height * 0.15,
+                left: 0,
+                right: 0,
                 alignItems: 'center',
               }}
             >
