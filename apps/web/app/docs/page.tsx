@@ -74,14 +74,20 @@ const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);`,
       "Circom circuits with ~12,000 constraints for efficient proving",
       "Poseidon hash function (ZK-friendly) for commitments and Merkle trees",
       "Groth16 verification using Solana's native BN254 pairing precompiles",
-      "Proof generation takes <2 seconds on modern devices",
+      "Rust native Groth16 prover (ark-circom + axum) — 10x faster than snarkjs",
+      "Instant ZK operations: shield + unshield in ~3 seconds total",
     ],
     codeExample: `// Generate ZK proof for private transfer
+// Client-side (snarkjs fallback):
 const { proof, publicSignals } = await snarkjs.groth16.fullProve(
   { inputs, merkle_path, nullifiers },
   "transfer.wasm",
   "transfer.zkey"
-);`,
+);
+
+// Server-side (Rust native prover — 10x faster):
+// POST /prove { circuit, inputs }
+// → ark-circom Groth16 proof in ~300ms`,
   },
   {
     id: "shielded-pool",
@@ -95,6 +101,7 @@ const { proof, publicSignals } = await snarkjs.groth16.fullProve(
       "Relayer verifies proof off-chain, then sends to stealth address",
       "On-chain visibility: Relayer → Stealth Address only",
       "Sparse Merkle tree with depth 20 for commitment tracking",
+      "Instant shield/unshield (~3s) via filledSubtrees optimization — no full tree sync",
       "Supports SOL and any SPL token",
     ],
     codeExample: `// Private transfer flow via relayer
@@ -202,27 +209,29 @@ require!(pairing_result == 1, "Invalid proof");`,
       "User-funded relayer that verifies ZK proofs and executes private transfers to stealth addresses, breaking the on-chain link between sender and recipient.",
     details: [
       "User funds relayer with transfer amount + fee (0.5%) + gas + rent",
-      "Relayer verifies ZK proof server-side (Groth16 snarkjs verification)",
+      "Rust native Groth16 prover (ark-circom + axum) generates proofs in ~300ms",
+      "Dual verification: Rust prover generates, snarkjs verifies as safety net",
       "Relayer sends to stealth address — no on-chain link to the sender",
-      "Currently a self-hosted backend service (Node.js)",
+      "Node.js relayer + Rust prover deployed via Docker multi-stage build",
       "Roadmap: on-chain Solana program for fully decentralized relay",
     ],
     codeExample: `// Private relay flow
-// 1. User generates ZK proof client-side
-const { proof, publicSignals } = await generateProof(inputs);
+// 1. User generates ZK proof (Rust prover or snarkjs fallback)
+const { proof, publicSignals } = await relayer.prove(circuit, inputs);
+// Rust prover: ~300ms | snarkjs fallback: ~3s
 
 // 2. User funds relayer with amount + fee + gas
 const fundTx = await fundRelayer(amount, fee, gasCost, rentCost);
 
-// 3. Relayer verifies proof and sends to stealth address
+// 3. Relayer dual-verifies and sends to stealth address
 // POST /api/private-send
 {
-  proof,           // Groth16 ZK proof
+  proof,           // Groth16 ZK proof (Rust-generated)
   publicSignals,   // Nullifier + commitments
   recipient,       // Stealth address (unlinkable)
   amount           // Transfer amount
 }
-// Result: recipient receives funds with no link to sender`,
+// Safety: snarkjs re-verifies before on-chain submission`,
   },
   {
     id: "streams-privacy",
@@ -331,6 +340,7 @@ const docsArchLayers = [
     hex: "#ff77a8",
     nodes: [
       { label: "RELAYER", sub: "ZK Verify + Transfer" },
+      { label: "RUST PROVER", sub: "Native Groth16 (ark-circom)" },
       { label: "CRANK", sub: "Auto Subscription Payments" },
     ],
   },
@@ -338,7 +348,7 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "7 PROGRAMS", sub: "Anchor / Rust" },
+      { label: "6 PROGRAMS", sub: "Anchor / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
       { label: "alt_bn128", sub: "ZK Curve Ops" },
     ],
