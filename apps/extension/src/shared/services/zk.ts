@@ -1816,12 +1816,16 @@ export class ZkServiceExtension {
               merkleRoot: noteData.merkleRoot ? BigInt(noteData.merkleRoot) : undefined,
             };
 
-            // Validate and correct leaf index if needed
-            const commitmentStr = note.commitment.toString();
-            const correctIndex = treeLeavesSet.get(commitmentStr);
-            if (correctIndex !== undefined && correctIndex !== note.leafIndex) {
-              console.warn(`[ZK] Correcting note leaf index: ${note.leafIndex} -> ${correctIndex}`);
-              note.leafIndex = correctIndex;
+            // Only correct leaf index from local tree if note has NO saved proof
+            // Notes with saved merklePathElements have proofs consistent with their
+            // original leafIndex — overwriting it would break the proof
+            if (!note.merklePathElements) {
+              const commitmentStr = note.commitment.toString();
+              const correctIndex = treeLeavesSet.get(commitmentStr);
+              if (correctIndex !== undefined && correctIndex !== note.leafIndex) {
+                console.warn(`[ZK] Correcting note leaf index: ${note.leafIndex} -> ${correctIndex}`);
+                note.leafIndex = correctIndex;
+              }
             }
 
             return note;
