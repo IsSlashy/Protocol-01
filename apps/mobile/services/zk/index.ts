@@ -710,6 +710,16 @@ export class ZkService {
       data,
     });
 
+    // Pre-check wallet balance (shield needs SOL for amount + fees)
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const shieldAmount = Number(amount);
+    const estimatedFees = 15_000;
+    if (walletBalance < shieldAmount + estimatedFees) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      const need = ((shieldAmount + estimatedFees) / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL. Need ${need} SOL (${(shieldAmount / 1e9).toFixed(4)} to shield + fees), wallet has ${have} SOL.`);
+    }
+
     // Build and sign transaction with retry on dropped tx
     const MAX_RETRIES = 3;
     let signature: string = '';
@@ -743,7 +753,17 @@ export class ZkService {
         console.log(`[ZK Shield] Confirmed on attempt ${attempt}`);
         break;
       } catch (e: any) {
-        if (e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) {
+        const msg = e?.message || e?.toString() || '';
+        if (msg.includes('insufficient lamports')) {
+          const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        if (msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) {
           console.warn(`[ZK Shield] Attempt ${attempt} expired, tx dropped by network`);
           if (attempt < MAX_RETRIES) {
             console.log('[ZK Shield] Retrying with fresh blockhash...');
@@ -980,6 +1000,14 @@ export class ZkService {
       data: computePriceData,
     });
 
+    // Pre-check wallet balance for tx fees
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const requiredLamports = 100_000; // ~0.0001 SOL for fees + rent
+    if (walletBalance < requiredLamports) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL. Please fund your wallet first.`);
+    }
+
     let signature: string = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
@@ -1006,11 +1034,21 @@ export class ZkService {
         }
         break;
       } catch (e: any) {
-        if ((e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) && attempt < 3) {
+        const msg = e?.message || e?.toString() || '';
+        if (msg.includes('insufficient lamports')) {
+          const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        if ((msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) && attempt < 3) {
           console.warn(`[ZK Transfer] Attempt ${attempt} expired, retrying...`);
           continue;
         }
-        if (e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) {
+        if (msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) {
           const status = await this.connection.getSignatureStatus(signature);
           if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') break;
           throw new Error('Transfer transaction dropped after 3 attempts. Network may be congested.');
@@ -1310,6 +1348,13 @@ export class ZkService {
       data: computeLimitData,
     });
 
+    // Pre-check wallet balance for tx fees
+    const walletBalanceUnshield = await this.connection.getBalance(walletPublicKey);
+    if (walletBalanceUnshield < 100_000) {
+      const have = (walletBalanceUnshield / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL. Please fund your wallet first.`);
+    }
+
     let signature: string = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const tx = new Transaction().add(computeLimitIx).add(ix);
@@ -1326,6 +1371,16 @@ export class ZkService {
           maxRetries: 3,
         });
       } catch (err: any) {
+        const errMsg = err?.message || err?.toString() || '';
+        if (errMsg.includes('insufficient lamports')) {
+          const match = errMsg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
         console.error('[ZK Unshield] Preflight error:', err.message);
         if (err.logs) console.error('[ZK Unshield] Logs:', err.logs);
         throw err;
@@ -1342,11 +1397,21 @@ export class ZkService {
         }
         break;
       } catch (e: any) {
-        if ((e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) && attempt < 3) {
+        const msg = e?.message || e?.toString() || '';
+        if (msg.includes('insufficient lamports')) {
+          const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        if ((msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) && attempt < 3) {
           console.warn(`[ZK Unshield] Attempt ${attempt} expired, retrying...`);
           continue;
         }
-        if (e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) {
+        if (msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) {
           const status = await this.connection.getSignatureStatus(signature);
           if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') break;
           throw new Error('Unshield transaction dropped after 3 attempts. Network may be congested.');
