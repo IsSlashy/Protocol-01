@@ -4,6 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+neverBuiltDependencies:
+  - bigint-buffer
+  - blake-hash
+  - bufferutil
+  - cpu-features
+  - dtrace-provider
+  - ssh2
+  - tiny-secp256k1
+  - utf-8-validate
+
 patchedDependencies:
   llama.rn@0.11.2:
     hash: 7e4kaoecbfd7aep3cr3g5lncaq
@@ -72,8 +82,8 @@ importers:
   apps/extension:
     dependencies:
       '@coral-xyz/anchor':
-        specifier: ^0.29.0
-        version: 0.29.0(typescript@5.9.3)
+        specifier: ^0.32.1
+        version: 0.32.1(typescript@5.9.3)
       '@noble/curves':
         specifier: ^1.9.7
         version: 1.9.7
@@ -2137,7 +2147,6 @@ packages:
   /@coral-xyz/anchor-errors@0.31.1:
     resolution: {integrity: sha512-NhNEku4F3zzUSBtrYz84FzYWm48+9OvmT1Hhnwr6GnPQry2dsEqH/ti/7ASjjpoFTWRnPXrjAIT1qM6Isop+LQ==}
     engines: {node: '>=10'}
-    dev: true
 
   /@coral-xyz/anchor@0.29.0(typescript@5.9.3):
     resolution: {integrity: sha512-eny6QNG0WOwqV0zQ7cs/b1tIuzZGmP7U7EcH+ogt4Gdbl8HDmIYVMh/9aTmYZPaFWjtUaI8qSn73uYEXWfATdA==}
@@ -2212,7 +2221,6 @@ packages:
       - encoding
       - typescript
       - utf-8-validate
-    dev: true
 
   /@coral-xyz/borsh@0.29.0(@solana/web3.js@1.98.4):
     resolution: {integrity: sha512-s7VFVa3a0oqpkuRloWVPdCK7hMbAMY270geZOGfCnaqexrP5dTIpbEHL33req6IYPPJ0hYa71cdvJ1h6V55/oQ==}
@@ -2245,7 +2253,6 @@ packages:
       '@solana/web3.js': 1.98.4(encoding@0.1.13)(typescript@5.9.3)
       bn.js: 5.2.2
       buffer-layout: 1.2.2
-    dev: true
 
   /@crxjs/vite-plugin@2.3.0:
     resolution: {integrity: sha512-+0CNVGS4bB30OoaF1vUsHVwWU1Lm7MxI0XWY9Fd/Ob+ZVTZgEFNqJ1ZC69IVwQsoYhY0sMQLvpLWiFIuDz8htg==}
@@ -15002,7 +15009,6 @@ packages:
   /bigint-buffer@1.1.5:
     resolution: {integrity: sha512-trfYco6AoZ+rKhKnxA0hgX0HAbVP/s808/EuDSe2JDzUnCp/xAsli35Orvk67UrTEcwuxZqYZDmfA2RXJgxVvA==}
     engines: {node: '>= 10.0.0'}
-    requiresBuild: true
     dependencies:
       bindings: 1.5.0
 
@@ -15035,7 +15041,6 @@ packages:
   /blake-hash@2.0.0:
     resolution: {integrity: sha512-Igj8YowDu1PRkRsxZA7NVkdFNxH5rKv5cpLxQ0CVXSIA77pVYwCPRQJ2sMew/oneUpfuYRyjG6r8SmmmnbZb1w==}
     engines: {node: '>= 10'}
-    requiresBuild: true
     dependencies:
       node-addon-api: 3.2.1
       node-gyp-build: 4.8.4
@@ -15274,7 +15279,6 @@ packages:
   /bufferutil@4.1.0:
     resolution: {integrity: sha512-ZMANVnAixE6AWWnPzlW2KpUrxhm9woycYvPOo67jWHyFowASTEd9s+QN1EIMsSDtwhIxN4sWE1jotpuDUIgyIw==}
     engines: {node: '>=6.14.2'}
-    requiresBuild: true
     dependencies:
       node-gyp-build: 4.8.4
 
@@ -16303,7 +16307,7 @@ packages:
     peerDependencies:
       valtio: '*'
     dependencies:
-      valtio: 1.13.2(@types/react@19.1.17)(react@19.1.0)
+      valtio: 1.13.2(@types/react@18.3.27)(react@18.3.1)
     dev: false
 
   /des.js@1.1.0:
@@ -16479,7 +16483,6 @@ packages:
   /dtrace-provider@0.8.8:
     resolution: {integrity: sha512-b7Z7cNtHPhH9EJhNNbbeqTcXB8LGFFZhq1PGgEvpeHlzd36bhbdTWoE/Ba/YguqpBSlAPKnARWhVlhunCMwfxg==}
     engines: {node: '>=0.10'}
-    requiresBuild: true
     dependencies:
       nan: 2.25.0
     dev: true
@@ -25661,7 +25664,6 @@ packages:
   /tiny-secp256k1@1.1.7:
     resolution: {integrity: sha512-eb+F6NabSnjbLwNoC+2o5ItbmP1kg7HliWue71JgLegQt6A5mTN8YbvTLCazdlg6e5SV6A+r8OGvZYskdlmhqQ==}
     engines: {node: '>=6.0.0'}
-    requiresBuild: true
     dependencies:
       bindings: 1.5.0
       bn.js: 4.12.2
@@ -26584,7 +26586,6 @@ packages:
   /utf-8-validate@5.0.10:
     resolution: {integrity: sha512-Z6czzLq4u8fPOyx7TU6X3dvUZVvoJmxSQ+IcrlmagKhilxlhZgxPK6C5Jqbkw1IDUmFTM+cz9QDnnLTwDz/2gQ==}
     engines: {node: '>=6.14.2'}
-    requiresBuild: true
     dependencies:
       node-gyp-build: 4.8.4
 
