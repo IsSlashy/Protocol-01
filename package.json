@@ -41,7 +41,7 @@
   },
   "packageManager": "pnpm@8.15.0",
   "engines": {
-    "node": ">=18"
+    "node": "22.x"
   },
   "dependencies": {
     "expo": "~54.0.32",
@@ -51,6 +51,16 @@
   "pnpm": {
     "patchedDependencies": {
       "llama.rn@0.11.2": "patches/llama.rn@0.11.2.patch"
-    }
+    },
+    "neverBuiltDependencies": [
+      "bigint-buffer",
+      "tiny-secp256k1",
+      "dtrace-provider",
+      "utf-8-validate",
+      "bufferutil",
+      "blake-hash",
+      "cpu-features",
+      "ssh2"
+    ]
   }
 }
