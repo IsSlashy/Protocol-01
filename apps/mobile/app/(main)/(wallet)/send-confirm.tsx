@@ -264,6 +264,7 @@ export default function SendConfirmScreen() {
       <ScrollView
         className="flex-1 px-5"
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* Amount Summary */}
         <Card variant="glass" padding="lg" className="mb-6">
