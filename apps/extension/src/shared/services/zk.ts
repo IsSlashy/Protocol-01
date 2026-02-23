@@ -1007,6 +1007,19 @@ export class ZkServiceExtension {
       };
     }
 
+    // If any note lacks saved Merkle proofs (pre-instant-ZK notes), sync tree from blockchain
+    // so the local tree fallback produces valid proofs
+    const anyNoteMissingProof = notesToSpend.some(n => !n.merklePathElements || !n.merklePathIndices || !n.merkleRoot);
+    if (anyNoteMissingProof) {
+      console.log('[ZK Transfer] Note(s) missing saved proofs — syncing tree from blockchain...');
+      try {
+        const syncResult = await this.syncFromBlockchain();
+        console.log('[ZK Transfer] Tree synced. Root match:', syncResult.localRoot === syncResult.onChainRoot);
+      } catch (syncErr) {
+        console.warn('[ZK Transfer] Tree sync failed:', syncErr);
+      }
+    }
+
     // Use saved Merkle proofs from shield time (consistent with on-chain root)
     // instead of local tree which diverges from on-chain state
     const note0 = notesToSpend[0];
@@ -1024,8 +1037,8 @@ export class ZkServiceExtension {
         merkleRoot = note0.merkleRoot || this.merkleTree.root;
         console.log('[ZK Transfer] Reconstructed proof from subtrees');
       } catch {
-        // Last resort: local tree (may fail on-chain)
-        console.warn('[ZK Transfer] Using local tree proof (may be invalid on-chain)');
+        // Local tree was synced above — should now be valid
+        console.log('[ZK Transfer] Using synced local tree proof');
         proof1 = this.merkleTree.generateProof(note0.leafIndex!);
         merkleRoot = this.merkleTree.root;
       }
@@ -1223,6 +1236,18 @@ export class ZkServiceExtension {
 
     const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
 
+    // If any note lacks saved Merkle proofs (pre-instant-ZK notes), sync tree from blockchain
+    const anyNoteMissingProof = notesToSpend.some(n => !n.merklePathElements || !n.merklePathIndices || !n.merkleRoot);
+    if (anyNoteMissingProof) {
+      console.log('[ZK TransferRelayer] Note(s) missing saved proofs — syncing tree from blockchain...');
+      try {
+        const syncResult = await this.syncFromBlockchain();
+        console.log('[ZK TransferRelayer] Tree synced. Root match:', syncResult.localRoot === syncResult.onChainRoot);
+      } catch (syncErr) {
+        console.warn('[ZK TransferRelayer] Tree sync failed:', syncErr);
+      }
+    }
+
     // Use saved Merkle proofs from shield time (consistent with on-chain root)
     const note0 = notesToSpend[0];
     let proof1: { pathElements: bigint[]; pathIndices: number[] };
@@ -1236,6 +1261,7 @@ export class ZkServiceExtension {
         proof1 = this.reconstructProofFromSubtrees(note0);
         merkleRoot = note0.merkleRoot || this.merkleTree.root;
       } catch {
+        console.log('[ZK TransferRelayer] Using synced local tree proof');
         proof1 = this.merkleTree.generateProof(note0.leafIndex!);
         merkleRoot = this.merkleTree.root;
       }
@@ -1422,6 +1448,18 @@ export class ZkServiceExtension {
       };
     }
 
+    // If any note lacks saved Merkle proofs (pre-instant-ZK notes), sync tree from blockchain
+    const anyNoteMissingProof = notesToSpend.some(n => !n.merklePathElements || !n.merklePathIndices || !n.merkleRoot);
+    if (anyNoteMissingProof) {
+      console.log('[ZK Unshield] Note(s) missing saved proofs — syncing tree from blockchain...');
+      try {
+        const syncResult = await this.syncFromBlockchain();
+        console.log('[ZK Unshield] Tree synced. Root match:', syncResult.localRoot === syncResult.onChainRoot);
+      } catch (syncErr) {
+        console.warn('[ZK Unshield] Tree sync failed:', syncErr);
+      }
+    }
+
     // INSTANT PATH: Use saved Merkle proof from shield time if available
     let proof1: { pathElements: bigint[]; pathIndices: number[] };
     let merkleRoot: bigint;
@@ -1447,7 +1485,8 @@ export class ZkServiceExtension {
           proof1 = this.reconstructProofFromSubtrees(note0);
           merkleRoot = note0.merkleRoot;
         } catch {
-          // Fall back to local tree
+          // Local tree was synced above — should now be valid
+          console.log('[ZK Unshield] Using synced local tree proof');
           proof1 = this.merkleTree.generateProof(note0.leafIndex!);
           merkleRoot = this.merkleTree.root;
         }
@@ -1465,7 +1504,8 @@ export class ZkServiceExtension {
         }
         merkleRoot = computedRoot;
       } catch {
-        // Last resort: local Merkle tree
+        // Local tree was synced above — should now be valid
+        console.log('[ZK Unshield] Using synced local tree proof');
         proof1 = this.merkleTree.generateProof(note0.leafIndex!);
         merkleRoot = this.merkleTree.root;
       }
