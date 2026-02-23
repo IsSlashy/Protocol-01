@@ -72,14 +72,20 @@ export default function CreateWalletScreen() {
       updateStep(3, 'in_progress');
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      // Store mnemonic temporarily for backup screen
-      await SecureStore.setItemAsync('p01_temp_mnemonic', walletInfo.mnemonic);
+      // Store mnemonic temporarily for backup screen (use same keychainService)
+      const secOpts = { keychainService: 'protocol-01' };
+      await SecureStore.setItemAsync('p01_temp_mnemonic', walletInfo.mnemonic, secOpts);
 
-      // Verify it was stored correctly
-      const storedMnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic');
+      // Verify it was stored correctly (retry once on failure)
+      let storedMnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic', secOpts);
       if (!storedMnemonic || storedMnemonic !== walletInfo.mnemonic) {
-        console.error('[CreateWallet] Mnemonic storage verification failed');
-        throw new Error('Failed to store mnemonic securely');
+        await new Promise(r => setTimeout(r, 300));
+        await SecureStore.setItemAsync('p01_temp_mnemonic', walletInfo.mnemonic, secOpts);
+        storedMnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic', secOpts);
+        if (!storedMnemonic || storedMnemonic !== walletInfo.mnemonic) {
+          console.error('[CreateWallet] Mnemonic storage verification failed after retry');
+          throw new Error('Failed to store mnemonic securely');
+        }
       }
 
       await delay(STEP_DURATION);

@@ -103,7 +103,9 @@ export default function SecurityScreen() {
 
   const completeOnboarding = async () => {
     await SecureStore.setItemAsync('p01_onboarded', 'true');
-    await SecureStore.deleteItemAsync('p01_temp_mnemonic');
+    // Clean up temp mnemonic from both keychain services
+    await SecureStore.deleteItemAsync('p01_temp_mnemonic', { keychainService: 'protocol-01' }).catch(() => {});
+    await SecureStore.deleteItemAsync('p01_temp_mnemonic').catch(() => {});
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // Go directly to wallet — user just authenticated during onboarding
     // Lock screen is for app re-opens, not first-time setup
