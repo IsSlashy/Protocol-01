@@ -10,9 +10,9 @@ const downloadOptions = [
     platform: "Android",
     icon: Smartphone,
     description: "Instant Download APK",
-    filename: "P01-Mobile-v0.2.apk",
-    link: "/downloads/P01-Mobile-v0.2.apk",
-    size: "224 MB",
+    filename: "P01-Mobile-v0.3.apk",
+    link: "/downloads/P01-Mobile-v0.3.apk",
+    size: "212 MB",
   },
   {
     platform: "Chrome Extension",
