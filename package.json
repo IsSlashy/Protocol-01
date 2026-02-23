@@ -54,13 +54,13 @@
     },
     "neverBuiltDependencies": [
       "bigint-buffer",
-      "tiny-secp256k1",
-      "dtrace-provider",
-      "utf-8-validate",
-      "bufferutil",
       "blake-hash",
+      "bufferutil",
       "cpu-features",
-      "ssh2"
+      "dtrace-provider",
+      "ssh2",
+      "tiny-secp256k1",
+      "utf-8-validate"
     ]
   }
 }
