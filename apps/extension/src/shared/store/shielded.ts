@@ -797,16 +797,23 @@ export const useShieldedStore = create<ShieldedState>()(
             }, 5000);
 
             return directResult;
-          } catch (fallbackError) {
+          } catch (fallbackError: any) {
             console.error('[Private Transfer] Fallback also failed:', fallbackError);
+            // Show the most useful error: if fallback has a clear message, use it
+            const fallbackMsg = fallbackError?.message || '';
+            const relayerMsg = (relayerError as Error)?.message || '';
+            const displayError = fallbackMsg.includes('Insufficient SOL') ? fallbackMsg
+              : relayerMsg.includes('Insufficient SOL') ? relayerMsg
+              : fallbackMsg.includes('insufficient lamports') ? 'Insufficient SOL for transaction fees. Please fund your wallet.'
+              : relayerMsg || fallbackMsg || 'Transfer failed';
             set(state => ({
               pendingTransactions: state.pendingTransactions.map(tx =>
                 tx.id === txId
-                  ? { ...tx, status: 'failed', error: (relayerError as Error).message }
+                  ? { ...tx, status: 'failed', error: displayError }
                   : tx
               ),
             }));
-            throw relayerError;
+            throw new Error(displayError);
           }
         }
       },
