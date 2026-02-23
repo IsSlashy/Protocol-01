@@ -11,7 +11,7 @@ const downloadOptions = [
     icon: Smartphone,
     description: "Instant Download APK",
     filename: "P01-Mobile-v0.3.apk",
-    link: "/downloads/P01-Mobile-v0.3.apk",
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.3.0/p01-standalone.apk",
     size: "212 MB",
   },
   {
