@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import QRCode from 'react-qr-code';
 
 // Protocol constants
@@ -96,9 +97,9 @@ export default function AuthDemoPage() {
 
     setSession(newSession);
     setDeepLink(link);
-    log(`Session créée: ${sessionId.slice(0, 8)}...`);
+    log(`Session created: ${sessionId.slice(0, 8)}...`);
     log(`Challenge: ${challenge.slice(0, 16)}...`);
-    log(`Expire dans 5 minutes`);
+    log(`Expires in 5 minutes`);
 
     // Store session for callback (in real app, use server-side storage)
     if (typeof window !== 'undefined') {
@@ -118,7 +119,7 @@ export default function AuthDemoPage() {
       // Check if expired
       if (Date.now() > session.expiresAt) {
         setSession(prev => prev ? { ...prev, status: 'expired' } : null);
-        log('Session expirée');
+        log('Session expired');
         return;
       }
 
@@ -129,12 +130,12 @@ export default function AuthDemoPage() {
         if (updated.status !== session.status) {
           setSession(updated);
           if (updated.status === 'completed') {
-            log(`✅ Authentification réussie!`);
+            log(`AUTH SUCCESS`);
             log(`Wallet: ${updated.wallet}`);
           } else if (updated.status === 'scanned') {
-            log('📱 QR Code scanné...');
+            log('QR Code scanned...');
           } else if (updated.status === 'confirmed') {
-            log('👆 Biométrie confirmée...');
+            log('Biometric confirmed...');
           }
         }
       }
@@ -150,95 +151,117 @@ export default function AuthDemoPage() {
     const updated = { ...session, status: 'completed' as const, wallet };
     sessionStorage.setItem(`auth_session_${session.sessionId}`, JSON.stringify(updated));
     setSession(updated);
-    log(`✅ Callback reçu - Wallet: ${wallet.slice(0, 8)}...`);
+    log(`Callback received - Wallet: ${wallet.slice(0, 8)}...`);
   }, [session, log]);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white">
+    <div className="min-h-screen bg-[#0a0a0c] text-white">
       {/* Header */}
-      <header className="border-b border-white/10 px-6 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-cyan-400 to-pink-500 rounded-lg" />
-            <div>
-              <h1 className="font-bold">P01 Auth Demo</h1>
-              <p className="text-xs text-gray-400">Login with Protocol 01</p>
+      <header className="sticky top-0 z-50 backdrop-blur-lg border-b border-[#2a2a30]" style={{ backgroundColor: '#0a0a0ccc' }}>
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-sm text-[#888892] hover:text-white transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+              <span className="hidden sm:inline font-mono">Back</span>
+            </Link>
+            <div className="h-6 w-px bg-[#2a2a30]" />
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 flex items-center justify-center border border-[#39c5bb]/40" style={{ backgroundColor: '#39c5bb15' }}>
+                <span className="font-mono font-bold text-xs text-[#39c5bb]">P01</span>
+              </div>
+              <h1 className="text-lg font-bold font-display tracking-wider">AUTH DEMO</h1>
             </div>
           </div>
-          <a
-            href="/"
-            className="text-sm text-gray-400 hover:text-white transition"
+          <Link
+            href="/docs"
+            className="text-xs font-mono uppercase tracking-wider text-[#888892] hover:text-white transition-colors"
           >
-            ← Retour
-          </a>
+            Docs
+          </Link>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-12">
-        <div className="grid md:grid-cols-2 gap-8">
+      {/* Hero */}
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-8 text-center">
+        <p className="text-xs font-mono tracking-[0.2em] text-[#39c5bb] mb-4">
+          {"> PROTOCOL 01 // QR AUTH"}
+        </p>
+        <h2 className="text-3xl sm:text-4xl font-bold font-display tracking-wide mb-4">
+          Login with Protocol 01
+        </h2>
+        <p className="text-base max-w-2xl mx-auto text-[#888892]">
+          Scan a QR code with the P01 mobile app to authenticate. No passwords, no email — just your wallet.
+        </p>
+      </section>
+
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pb-24">
+        <div className="grid md:grid-cols-2 gap-6">
           {/* Left: Service Config */}
           <div className="space-y-6">
-            <div className="bg-white/5 rounded-2xl p-6 border border-white/10">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <span className="text-2xl">🎬</span>
-                Configuration Service
+            <div className="bg-[#151518] p-6 border border-[#2a2a30]">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-3 font-display">
+                <div className="w-8 h-8 bg-[#ff77a8]/10 border border-[#ff77a8]/30 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-[#ff77a8]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="15" rx="2" ry="2" /><polyline points="17 2 12 7 7 2" /></svg>
+                </div>
+                Service Configuration
               </h2>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">
-                    Nom du service
+                  <label className="block text-sm text-[#888892] mb-2 font-mono">
+                    Service Name
                   </label>
                   <input
                     type="text"
                     value={serviceName}
                     onChange={(e) => setServiceName(e.target.value)}
-                    className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2 text-white"
+                    className="w-full bg-[#0a0a0c] border border-[#2a2a30] px-4 py-2.5 text-white font-mono text-sm focus:border-[#39c5bb] focus:outline-none transition-colors"
                   />
                 </div>
 
                 <div className="flex items-center justify-between py-2">
                   <div>
-                    <p className="font-medium">Vérifier abonnement</p>
-                    <p className="text-sm text-gray-400">
-                      Requiert un token SPL actif
+                    <p className="font-medium text-sm">Verify Subscription</p>
+                    <p className="text-xs text-[#555560] font-mono">
+                      Requires active SPL token
                     </p>
                   </div>
                   <button
                     onClick={() => setRequireSubscription(!requireSubscription)}
-                    className={`w-12 h-6 rounded-full transition ${
-                      requireSubscription ? 'bg-cyan-500' : 'bg-gray-600'
-                    }`}
+                    className="w-12 h-6 transition-colors relative"
+                    style={{ backgroundColor: requireSubscription ? '#39c5bb' : '#2a2a30' }}
                   >
                     <div
-                      className={`w-5 h-5 bg-white rounded-full transition transform ${
-                        requireSubscription ? 'translate-x-6' : 'translate-x-0.5'
-                      }`}
+                      className="w-5 h-5 bg-white transition-transform absolute top-0.5"
+                      style={{ left: requireSubscription ? '26px' : '2px' }}
                     />
                   </button>
                 </div>
 
                 <button
                   onClick={createSession}
-                  className="w-full bg-gradient-to-r from-cyan-500 to-cyan-400 text-black font-semibold py-3 rounded-xl hover:opacity-90 transition"
+                  className="w-full bg-[#39c5bb] text-[#0a0a0c] font-bold py-3 font-display uppercase tracking-wider text-sm hover:bg-[#39c5bb]/90 transition-colors"
                 >
-                  Générer QR Code
+                  Generate QR Code
                 </button>
               </div>
             </div>
 
             {/* Logs */}
-            <div className="bg-white/5 rounded-2xl p-6 border border-white/10">
-              <h3 className="text-sm font-semibold text-gray-400 mb-3">
-                LOGS
+            <div className="bg-[#151518] p-6 border border-[#2a2a30]">
+              <h3 className="text-[10px] font-mono text-[#555560] uppercase tracking-[0.3em] mb-3">
+                Event Log
               </h3>
-              <div className="bg-black/50 rounded-lg p-4 h-48 overflow-y-auto font-mono text-xs space-y-1">
+              <div className="bg-[#0a0a0c] p-4 h-48 overflow-y-auto font-mono text-xs space-y-1 border border-[#2a2a30]/50">
                 {logs.length === 0 ? (
-                  <p className="text-gray-500">En attente...</p>
+                  <p className="text-[#555560]">Waiting for session...</p>
                 ) : (
-                  logs.map((log, i) => (
-                    <p key={i} className="text-gray-300">
-                      {log}
+                  logs.map((logEntry, i) => (
+                    <p key={i} className="text-[#888892]">
+                      {logEntry}
                     </p>
                   ))
                 )}
@@ -249,43 +272,47 @@ export default function AuthDemoPage() {
           {/* Right: QR Code */}
           <div className="space-y-6">
             {/* QR Display */}
-            <div className="bg-white/5 rounded-2xl p-6 border border-white/10">
-              <h2 className="text-lg font-semibold mb-4 text-center">
+            <div className="bg-[#151518] p-6 border border-[#2a2a30]">
+              <h2 className="text-sm font-mono text-center mb-4 uppercase tracking-wider">
                 {session?.status === 'completed'
-                  ? '✅ Connecté!'
+                  ? (<span className="text-[#39c5bb]">AUTHENTICATED</span>)
                   : session?.status === 'expired'
-                  ? '⏰ Expiré'
-                  : 'Scannez pour vous connecter'}
+                  ? (<span className="text-[#ff3366]">SESSION EXPIRED</span>)
+                  : (<span className="text-[#888892]">SCAN TO CONNECT</span>)}
               </h2>
 
               <div className="flex justify-center mb-6">
                 {!session ? (
-                  <div className="w-64 h-64 bg-white/10 rounded-xl flex items-center justify-center">
-                    <p className="text-gray-500 text-center px-4">
-                      Cliquez sur "Générer QR Code" pour commencer
+                  <div className="w-64 h-64 bg-[#0a0a0c] border border-[#2a2a30] flex items-center justify-center">
+                    <p className="text-[#555560] text-center px-4 font-mono text-xs">
+                      Click &quot;Generate QR Code&quot; to start
                     </p>
                   </div>
                 ) : session.status === 'completed' ? (
-                  <div className="w-64 h-64 bg-green-500/20 rounded-xl flex flex-col items-center justify-center">
-                    <span className="text-6xl mb-4">✓</span>
-                    <p className="text-green-400 font-semibold">Authentifié!</p>
-                    <p className="text-xs text-gray-400 mt-2 font-mono">
+                  <div className="w-64 h-64 bg-[#39c5bb]/10 border border-[#39c5bb]/30 flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 border border-[#39c5bb]/40 flex items-center justify-center mb-4" style={{ backgroundColor: '#39c5bb20' }}>
+                      <svg className="w-8 h-8 text-[#39c5bb]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7" /></svg>
+                    </div>
+                    <p className="text-[#39c5bb] font-bold font-display tracking-wider">Authenticated</p>
+                    <p className="text-xs text-[#888892] mt-2 font-mono">
                       {session.wallet?.slice(0, 8)}...{session.wallet?.slice(-8)}
                     </p>
                   </div>
                 ) : session.status === 'expired' ? (
-                  <div className="w-64 h-64 bg-red-500/20 rounded-xl flex flex-col items-center justify-center">
-                    <span className="text-6xl mb-4">⏰</span>
-                    <p className="text-red-400 font-semibold">Session expirée</p>
+                  <div className="w-64 h-64 bg-[#ff3366]/10 border border-[#ff3366]/30 flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 border border-[#ff3366]/40 flex items-center justify-center mb-4" style={{ backgroundColor: '#ff336620' }}>
+                      <svg className="w-8 h-8 text-[#ff3366]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                    </div>
+                    <p className="text-[#ff3366] font-bold font-display tracking-wider">Session Expired</p>
                     <button
                       onClick={createSession}
-                      className="mt-4 text-sm text-cyan-400 hover:underline"
+                      className="mt-4 text-sm text-[#39c5bb] hover:text-[#39c5bb]/80 font-mono transition-colors"
                     >
-                      Générer un nouveau QR
+                      Generate new QR
                     </button>
                   </div>
                 ) : (
-                  <div className="bg-white p-4 rounded-xl">
+                  <div className="bg-white p-4">
                     <QRCode
                       value={deepLink}
                       size={224}
@@ -299,12 +326,12 @@ export default function AuthDemoPage() {
 
               {session && session.status === 'pending' && (
                 <div className="text-center">
-                  <p className="text-sm text-gray-400 mb-2">
-                    Scannez avec l'app Protocol 01
+                  <p className="text-sm text-[#888892] mb-2 font-mono">
+                    Scan with Protocol 01 app
                   </p>
-                  <div className="flex items-center justify-center gap-2 text-xs text-gray-500">
-                    <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse" />
-                    En attente de connexion...
+                  <div className="flex items-center justify-center gap-2 text-xs text-[#555560]">
+                    <div className="w-2 h-2 bg-[#39c5bb] animate-pulse" />
+                    <span className="font-mono">Waiting for connection...</span>
                   </div>
                 </div>
               )}
@@ -312,43 +339,43 @@ export default function AuthDemoPage() {
 
             {/* Debug Info */}
             {session && session.status === 'pending' && (
-              <div className="bg-white/5 rounded-2xl p-6 border border-white/10">
-                <h3 className="text-sm font-semibold text-gray-400 mb-3">
-                  DEBUG - Simuler Callback
+              <div className="bg-[#151518] p-6 border border-[#2a2a30]">
+                <h3 className="text-[10px] font-mono text-[#555560] uppercase tracking-[0.3em] mb-3">
+                  Debug — Simulate Callback
                 </h3>
-                <p className="text-xs text-gray-500 mb-4">
-                  Pour tester sans l'app mobile, simulez un callback:
+                <p className="text-xs text-[#555560] mb-4 font-mono">
+                  To test without the mobile app, simulate a callback:
                 </p>
                 <button
                   onClick={() =>
                     simulateCallback('7nxQB4Hy9LmPdTJ3kYfPq8WvNs2jKmRt4xFc6dZe8fKm')
                   }
-                  className="w-full bg-white/10 hover:bg-white/20 text-white py-2 rounded-lg text-sm transition"
+                  className="w-full bg-[#1f1f24] border border-[#2a2a30] hover:border-[#39c5bb]/50 text-white py-2.5 text-sm font-mono transition-colors"
                 >
-                  Simuler Auth Réussie
+                  Simulate Auth Success
                 </button>
               </div>
             )}
 
             {/* Deep Link */}
             {deepLink && session?.status === 'pending' && (
-              <div className="bg-white/5 rounded-2xl p-6 border border-white/10">
-                <h3 className="text-sm font-semibold text-gray-400 mb-3">
-                  DEEP LINK
+              <div className="bg-[#151518] p-6 border border-[#2a2a30]">
+                <h3 className="text-[10px] font-mono text-[#555560] uppercase tracking-[0.3em] mb-3">
+                  Deep Link
                 </h3>
-                <div className="bg-black/50 rounded-lg p-3 overflow-x-auto">
-                  <code className="text-xs text-cyan-400 break-all">
+                <div className="bg-[#0a0a0c] p-3 overflow-x-auto border border-[#2a2a30]/50">
+                  <code className="text-xs text-[#39c5bb] break-all font-mono">
                     {deepLink}
                   </code>
                 </div>
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(deepLink);
-                    log('Deep link copié!');
+                    log('Deep link copied');
                   }}
-                  className="mt-3 text-sm text-cyan-400 hover:underline"
+                  className="mt-3 text-sm text-[#39c5bb] hover:text-[#39c5bb]/80 font-mono transition-colors"
                 >
-                  📋 Copier
+                  Copy
                 </button>
               </div>
             )}
@@ -356,66 +383,93 @@ export default function AuthDemoPage() {
         </div>
 
         {/* How it works */}
-        <div className="mt-12 bg-white/5 rounded-2xl p-8 border border-white/10">
-          <h2 className="text-xl font-bold mb-6">Comment ça marche?</h2>
+        <div className="mt-12 bg-[#151518] p-8 border border-[#2a2a30]">
+          <h2 className="text-xl font-bold mb-8 font-display tracking-wider text-center">How It Works</h2>
           <div className="grid md:grid-cols-4 gap-6">
             {[
               {
-                icon: '📱',
-                title: '1. Scanner',
-                desc: "L'utilisateur scanne le QR code avec l'app P01",
+                icon: (
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>
+                ),
+                color: '#39c5bb',
+                title: '1. Scan',
+                desc: 'User scans the QR code with the P01 app',
               },
               {
-                icon: '🔍',
-                title: '2. Vérifier',
-                desc: "L'app vérifie le statut d'abonnement on-chain",
+                icon: (
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                ),
+                color: '#ff77a8',
+                title: '2. Verify',
+                desc: 'The app verifies subscription status on-chain',
               },
               {
-                icon: '👆',
-                title: '3. Confirmer',
-                desc: "L'utilisateur confirme avec sa biométrie",
+                icon: (
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+                ),
+                color: '#00ffe5',
+                title: '3. Confirm',
+                desc: 'User confirms with biometric authentication',
               },
               {
-                icon: '✅',
-                title: '4. Connecté',
-                desc: 'Le service reçoit la signature et connecte',
+                icon: (
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7" /></svg>
+                ),
+                color: '#ffcc00',
+                title: '4. Connected',
+                desc: 'Service receives the signature and authenticates',
               },
             ].map((step, i) => (
               <div key={i} className="text-center">
-                <div className="text-4xl mb-3">{step.icon}</div>
-                <h3 className="font-semibold mb-1">{step.title}</h3>
-                <p className="text-sm text-gray-400">{step.desc}</p>
+                <div
+                  className="w-14 h-14 mx-auto mb-4 flex items-center justify-center border"
+                  style={{
+                    color: step.color,
+                    borderColor: `${step.color}40`,
+                    backgroundColor: `${step.color}10`,
+                  }}
+                >
+                  {step.icon}
+                </div>
+                <h3 className="font-semibold mb-1 font-display tracking-wider text-sm">{step.title}</h3>
+                <p className="text-sm text-[#888892]">{step.desc}</p>
               </div>
             ))}
           </div>
         </div>
 
         {/* Code Example */}
-        <div className="mt-8 bg-white/5 rounded-2xl p-8 border border-white/10">
-          <h2 className="text-xl font-bold mb-4">Intégration SDK</h2>
-          <pre className="bg-black/50 rounded-lg p-4 overflow-x-auto text-sm">
-            <code className="text-gray-300">{`import { P01AuthClient } from '@p01/auth-sdk';
+        <div className="mt-6 bg-[#151518] p-8 border border-[#2a2a30]">
+          <h2 className="text-xl font-bold mb-4 font-display tracking-wider">SDK Integration</h2>
+          <div className="bg-[#0a0a0c] p-4 overflow-x-auto border border-[#2a2a30]/50">
+            <pre>
+              <code className="text-sm text-[#888892] font-mono whitespace-pre">{`import { P01AuthClient } from '@p01/auth-sdk';
 
 const auth = new P01AuthClient({
   serviceId: 'my-service',
-  serviceName: 'Mon Service',
-  callbackUrl: 'https://monservice.com/auth/callback',
-  subscriptionMint: 'TOKEN_MINT_ADDRESS', // optionnel
+  serviceName: 'My Service',
+  callbackUrl: 'https://myservice.com/auth/callback',
+  subscriptionMint: 'TOKEN_MINT_ADDRESS', // optional
 });
 
-// Créer une session
+// Create a session
 const { qrCodeSvg, sessionId } = await auth.createSession();
 
-// Afficher le QR code
+// Display the QR code
 document.getElementById('qr').innerHTML = qrCodeSvg;
 
-// Attendre la complétion
+// Wait for completion
 const result = await auth.waitForCompletion(sessionId);
 if (result.success) {
+  console.log('Authenticated:', result.wallet);
 }`}</code>
-          </pre>
+            </pre>
+          </div>
         </div>
       </main>
+
+      {/* Bottom glow line */}
+      <div className="h-px" style={{ background: 'linear-gradient(to right, transparent, #39c5bb80, transparent)' }} />
     </div>
   );
 }

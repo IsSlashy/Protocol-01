@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   CheckCircle,
   Clock,
-  Sparkles,
   Shield,
   Zap,
   Code,
@@ -101,9 +100,9 @@ const roadmap: RoadmapPhase[] = [
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "Backend Relayer",
+        title: "Backend Relayer + Rust Prover",
         description:
-          "Relayer service that submits transactions on behalf of users, breaking the link between sender identity and on-chain activity.",
+          "Relayer service with Rust native Groth16 prover (ark-circom + axum). Dual verification: Rust generates proofs, snarkjs verifies as safety net. Docker multi-stage deploy.",
         icon: <Radio className="w-5 h-5" />,
       },
       {
@@ -119,16 +118,22 @@ const roadmap: RoadmapPhase[] = [
         icon: <Layers className="w-5 h-5" />,
       },
       {
-        title: "Fiat On-Ramp (Buy Crypto)",
-        description:
-          "Buy SOL, USDC, and USDT with credit card or bank transfer via MoonPay and Ramp Network integration.",
-        icon: <CreditCard className="w-5 h-5" />,
-      },
-      {
         title: "Mobile App + Browser Extension",
         description:
           "Full-featured Solana wallet available as a React Native mobile app and Chrome browser extension with dApp connectivity.",
         icon: <Wallet className="w-5 h-5" />,
+      },
+      {
+        title: "AI Agent",
+        description:
+          "On-device AI agent that manages private finances through natural language. Shield, transfer, and manage subscriptions by chatting — no data leaves your phone.",
+        icon: <Bot className="w-5 h-5" />,
+      },
+      {
+        title: "Instant ZK Operations",
+        description:
+          "Shield and unshield in ~3 seconds total via filledSubtrees optimization. Rust native Groth16 prover generates proofs 10x faster than snarkjs.",
+        icon: <Shield className="w-5 h-5" />,
       },
     ],
   },
@@ -156,6 +161,12 @@ const roadmap: RoadmapPhase[] = [
           "Configurable decoy transactions and timing noise to defeat chain analysis heuristics. Multiple privacy levels from standard to maximum.",
         icon: <Lock className="w-5 h-5" />,
       },
+      {
+        title: "Fiat On-Ramp (Buy Crypto)",
+        description:
+          "Buy SOL, USDC, and USDT with credit card or bank transfer. Direct fiat-to-crypto without leaving the app.",
+        icon: <CreditCard className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -164,12 +175,6 @@ const roadmap: RoadmapPhase[] = [
     title: "Future",
     subtitle: "On the horizon",
     items: [
-      {
-        title: "AI Agent Integration",
-        description:
-          "Autonomous AI agent that can execute transactions, manage streams, and optimize privacy settings on your behalf with confirmation controls.",
-        icon: <Bot className="w-5 h-5" />,
-      },
       {
         title: "Desktop App",
         description:
