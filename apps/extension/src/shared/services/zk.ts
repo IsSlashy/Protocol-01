@@ -938,12 +938,31 @@ export class ZkServiceExtension {
 
     const tx = new Transaction().add(ix);
     tx.feePayer = walletPublicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+
+    // Pre-check wallet balance (shield needs SOL for amount + fees)
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const shieldAmount = Number(amount);
+    const estimatedFees = 15_000;
+    if (walletBalance < shieldAmount + estimatedFees) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      const need = ((shieldAmount + estimatedFees) / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL. Need ${need} SOL (${(shieldAmount / 1e9).toFixed(4)} to shield + fees), wallet has ${have} SOL.`);
+    }
 
     const signedTx = await signTransaction(tx);
-    const signature = await this.connection.sendRawTransaction(signedTx.serialize());
-
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    let signature: string;
+    try {
+      signature = await this.connection.sendRawTransaction(signedTx.serialize());
+      await this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    } catch (err: any) {
+      const msg = err?.message || err?.toString() || '';
+      if (msg.includes('insufficient lamports')) {
+        throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+      }
+      throw err;
+    }
 
     // Also update local Merkle tree (for transfer proof generation)
     this.merkleTree.insert(note.commitment);
@@ -1182,12 +1201,38 @@ export class ZkServiceExtension {
 
     const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
     tx.feePayer = walletPublicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+
+    // Pre-check wallet balance for tx fees
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const estimatedFee = 10_000; // ~0.00001 SOL base fee
+    const rentExempt = 890_880; // rent for nullifier accounts
+    const requiredLamports = estimatedFee + rentExempt * 2;
+    if (walletBalance < requiredLamports) {
+      const needed = (requiredLamports / 1e9).toFixed(4);
+      const have = (walletBalance / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL for transaction fees. Need ~${needed} SOL, wallet has ${have} SOL. Please fund your wallet first.`);
+    }
 
     const signedTx = await signTransaction(tx);
-    const signature = await this.connection.sendRawTransaction(signedTx.serialize());
-
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    let signature: string;
+    try {
+      signature = await this.connection.sendRawTransaction(signedTx.serialize());
+      await this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    } catch (err: any) {
+      const msg = err?.message || err?.toString() || '';
+      if (msg.includes('insufficient lamports')) {
+        const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+        if (match) {
+          const have = (Number(match[1]) / 1e9).toFixed(4);
+          const need = (Number(match[2]) / 1e9).toFixed(4);
+          throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL. Please fund your wallet first.`);
+        }
+        throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+      }
+      throw err;
+    }
 
     // Update notes
     this.removeSpentNotes(notesToSpend);
@@ -1649,12 +1694,28 @@ export class ZkServiceExtension {
 
     const tx = new Transaction().add(computeLimitIx).add(ix);
     tx.feePayer = walletPublicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+
+    // Pre-check wallet balance for tx fees
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    if (walletBalance < 100_000) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL. Please fund your wallet first.`);
+    }
 
     const signedTx = await signTransaction(tx);
-    const signature = await this.connection.sendRawTransaction(signedTx.serialize());
-
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    let signature: string;
+    try {
+      signature = await this.connection.sendRawTransaction(signedTx.serialize());
+      await this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    } catch (err: any) {
+      const msg = err?.message || err?.toString() || '';
+      if (msg.includes('insufficient lamports')) {
+        throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+      }
+      throw err;
+    }
 
     // Update notes
     this.removeSpentNotes(notesToSpend);
