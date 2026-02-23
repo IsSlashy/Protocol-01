@@ -21,7 +21,10 @@ export default function VerifyScreen() {
 
   const loadMnemonic = async () => {
     try {
-      const mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic');
+      const secOpts = { keychainService: 'protocol-01' };
+      const mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic', secOpts)
+        || await SecureStore.getItemAsync('p01_temp_mnemonic')
+        || await SecureStore.getItemAsync('p01_mnemonic', secOpts);
       if (mnemonic) {
         setCorrectOrder(mnemonic.split(' '));
       }

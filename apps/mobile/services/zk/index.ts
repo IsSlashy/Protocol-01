@@ -710,37 +710,53 @@ export class ZkService {
       data,
     });
 
-    // Build and sign transaction
-    const tx = new Transaction().add(ix);
-    tx.feePayer = walletPublicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+    // Build and sign transaction with retry on dropped tx
+    const MAX_RETRIES = 3;
+    let signature: string = '';
+    let confirmed = false;
 
-    const signedTx = await signTransaction(tx);
-    const signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
-      skipPreflight: true,
-      preflightCommitment: 'confirmed',
-    });
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const tx = new Transaction().add(ix);
+      tx.feePayer = walletPublicKey;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
 
-    // Use 'processed' for faster confirmation, retry on timeout
-    try {
-      const confirmation = await this.connection.confirmTransaction(signature, 'processed');
-      if (confirmation.value.err) {
-        console.error('[ZK Shield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
-        throw new Error(`Shield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-      }
-    } catch (e: any) {
-      // Check if it's a timeout - the transaction might still succeed
-      if (e.message?.includes('timeout') || e.message?.includes('expired')) {
-        console.warn('[ZK Shield] Confirmation timed out, checking transaction status...');
-        await new Promise(r => setTimeout(r, 5000));
-        const status = await this.connection.getSignatureStatus(signature);
-        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-        } else if (status.value?.err) {
-          throw new Error(`Shield transaction failed: ${JSON.stringify(status.value.err)}`);
-        } else {
-          console.warn('[ZK Shield] Transaction status uncertain, proceeding optimistically. Check explorer:', signature);
+      const signedTx = await signTransaction(tx);
+      console.log(`[ZK Shield] Sending tx (attempt ${attempt}/${MAX_RETRIES})...`);
+      signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      });
+      console.log(`[ZK Shield] Tx sent: ${signature}`);
+
+      try {
+        const confirmation = await this.connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'processed'
+        );
+        if (confirmation.value.err) {
+          console.error('[ZK Shield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
+          throw new Error(`Shield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
         }
-      } else {
+        confirmed = true;
+        console.log(`[ZK Shield] Confirmed on attempt ${attempt}`);
+        break;
+      } catch (e: any) {
+        if (e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) {
+          console.warn(`[ZK Shield] Attempt ${attempt} expired, tx dropped by network`);
+          if (attempt < MAX_RETRIES) {
+            console.log('[ZK Shield] Retrying with fresh blockhash...');
+            continue;
+          }
+          // Last attempt — check status one more time
+          const status = await this.connection.getSignatureStatus(signature);
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+            confirmed = true;
+            break;
+          }
+          throw new Error(`Shield transaction dropped after ${MAX_RETRIES} attempts. Devnet may be congested — try again.`);
+        }
         throw e;
       }
     }
@@ -964,37 +980,41 @@ export class ZkService {
       data: computePriceData,
     });
 
-    const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
-    tx.feePayer = walletPublicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+    let signature: string = '';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
+      tx.feePayer = walletPublicKey;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
 
-    const signedTx = await signTransaction(tx);
-    const signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
-      skipPreflight: true,
-      preflightCommitment: 'confirmed',
-    });
+      const signedTx = await signTransaction(tx);
+      console.log(`[ZK Transfer] Sending tx (attempt ${attempt}/3)...`);
+      signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      });
 
-
-    // Wait for confirmation with timeout handling
-    try {
-      const confirmation = await this.connection.confirmTransaction(signature, 'processed');
-      if (confirmation.value.err) {
-        console.error('[ZK Transfer] Transaction FAILED:', signature);
-        console.error('[ZK Transfer] Error:', JSON.stringify(confirmation.value.err));
-        throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-      }
-    } catch (e: any) {
-      if (e.message?.includes('timeout') || e.message?.includes('expired')) {
-        console.warn('[ZK Transfer] Confirmation timed out, checking status...');
-        await new Promise(r => setTimeout(r, 5000));
-        const status = await this.connection.getSignatureStatus(signature);
-        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-        } else if (status.value?.err) {
-          throw new Error(`Transfer failed: ${JSON.stringify(status.value.err)}`);
-        } else {
-          console.warn('[ZK Transfer] Status uncertain, check explorer:', signature);
+      try {
+        const confirmation = await this.connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'processed'
+        );
+        if (confirmation.value.err) {
+          console.error('[ZK Transfer] Transaction FAILED:', signature);
+          throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
         }
-      } else {
+        break;
+      } catch (e: any) {
+        if ((e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) && attempt < 3) {
+          console.warn(`[ZK Transfer] Attempt ${attempt} expired, retrying...`);
+          continue;
+        }
+        if (e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) {
+          const status = await this.connection.getSignatureStatus(signature);
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') break;
+          throw new Error('Transfer transaction dropped after 3 attempts. Network may be congested.');
+        }
         throw e;
       }
     }
@@ -1290,44 +1310,47 @@ export class ZkService {
       data: computeLimitData,
     });
 
-    const tx = new Transaction().add(computeLimitIx).add(ix);
-    tx.feePayer = walletPublicKey;
-    tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+    let signature: string = '';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const tx = new Transaction().add(computeLimitIx).add(ix);
+      tx.feePayer = walletPublicKey;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
 
-    const signedTx = await signTransaction(tx);
-    let signature: string;
-    try {
-      signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: false, // Enable preflight to catch errors
-        preflightCommitment: 'confirmed',
-      });
-    } catch (err: any) {
-      console.error('[ZK Unshield] Preflight error:', err.message);
-      if (err.logs) {
-        console.error('[ZK Unshield] Logs:', err.logs);
+      const signedTx = await signTransaction(tx);
+      console.log(`[ZK Unshield] Sending tx (attempt ${attempt}/3)...`);
+      try {
+        signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'processed',
+          maxRetries: 3,
+        });
+      } catch (err: any) {
+        console.error('[ZK Unshield] Preflight error:', err.message);
+        if (err.logs) console.error('[ZK Unshield] Logs:', err.logs);
+        throw err;
       }
-      throw err;
-    }
 
-    // Wait for confirmation with timeout handling
-    try {
-      const confirmation = await this.connection.confirmTransaction(signature, 'processed');
-      if (confirmation.value.err) {
-        console.error('[ZK Unshield] Transaction failed on-chain:', confirmation.value.err);
-        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-      }
-    } catch (e: any) {
-      if (e.message?.includes('timeout') || e.message?.includes('expired')) {
-        console.warn('[ZK Unshield] Confirmation timed out, checking status...');
-        await new Promise(r => setTimeout(r, 5000));
-        const status = await this.connection.getSignatureStatus(signature);
-        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
-        } else if (status.value?.err) {
-          throw new Error(`Unshield failed: ${JSON.stringify(status.value.err)}`);
-        } else {
-          console.warn('[ZK Unshield] Status uncertain, check explorer:', signature);
+      try {
+        const confirmation = await this.connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'processed'
+        );
+        if (confirmation.value.err) {
+          console.error('[ZK Unshield] Transaction failed on-chain:', confirmation.value.err);
+          throw new Error(`Unshield failed: ${JSON.stringify(confirmation.value.err)}`);
         }
-      } else {
+        break;
+      } catch (e: any) {
+        if ((e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) && attempt < 3) {
+          console.warn(`[ZK Unshield] Attempt ${attempt} expired, retrying...`);
+          continue;
+        }
+        if (e.message?.includes('timeout') || e.message?.includes('expired') || e.message?.includes('block height exceeded')) {
+          const status = await this.connection.getSignatureStatus(signature);
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') break;
+          throw new Error('Unshield transaction dropped after 3 attempts. Network may be congested.');
+        }
         throw e;
       }
     }
@@ -3646,16 +3669,20 @@ export class ZkService {
       );
 
       transaction.feePayer = stealthKeypair.publicKey;
-      transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
       transaction.sign(stealthKeypair);
 
-      // Send transaction
       const signature = await this.connection.sendRawTransaction(transaction.serialize(), {
         skipPreflight: false,
-        preflightCommitment: 'confirmed',
+        preflightCommitment: 'processed',
+        maxRetries: 3,
       });
 
-      await this.connection.confirmTransaction(signature, 'confirmed');
+      await this.connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        'confirmed'
+      );
 
 
       // Remove the swept payment from pending list

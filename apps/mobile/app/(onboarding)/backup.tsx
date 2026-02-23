@@ -22,38 +22,25 @@ export default function BackupScreen() {
 
   const loadMnemonic = async () => {
     try {
-      const mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic');
+      const secOpts = { keychainService: 'protocol-01' };
+      // Try with keychainService first (new), then without (legacy), then permanent fallback
+      let mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic', secOpts)
+        || await SecureStore.getItemAsync('p01_temp_mnemonic');
+
+      if (!mnemonic || !mnemonic.trim()) {
+        console.warn('[Backup] No temp mnemonic, falling back to permanent storage');
+        mnemonic = await SecureStore.getItemAsync('p01_mnemonic', secOpts);
+      }
 
       if (mnemonic && mnemonic.trim()) {
         const words = mnemonic.trim().split(' ').filter(w => w.length > 0);
-
         if (words.length === 12) {
           setSeedPhrase(words);
         } else {
           console.error('[Backup] Invalid word count:', words.length);
-          const fallbackMnemonic = await SecureStore.getItemAsync('p01_mnemonic', {
-            keychainService: 'protocol-01',
-          });
-          if (fallbackMnemonic) {
-            const fallbackWords = fallbackMnemonic.trim().split(' ').filter(w => w.length > 0);
-            if (fallbackWords.length === 12) {
-              setSeedPhrase(fallbackWords);
-              await SecureStore.setItemAsync('p01_temp_mnemonic', fallbackMnemonic);
-            }
-          }
         }
       } else {
-        console.error('[Backup] No mnemonic found in temp storage');
-        const fallbackMnemonic = await SecureStore.getItemAsync('p01_mnemonic', {
-          keychainService: 'protocol-01',
-        });
-        if (fallbackMnemonic) {
-          const fallbackWords = fallbackMnemonic.trim().split(' ').filter(w => w.length > 0);
-          if (fallbackWords.length === 12) {
-            setSeedPhrase(fallbackWords);
-            await SecureStore.setItemAsync('p01_temp_mnemonic', fallbackMnemonic);
-          }
-        }
+        console.error('[Backup] No mnemonic found in any storage');
       }
     } catch (error) {
       console.error('[Backup] Error loading mnemonic:', error);

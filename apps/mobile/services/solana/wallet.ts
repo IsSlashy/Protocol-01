@@ -183,24 +183,37 @@ export async function deriveKeypairFromMnemonic(mnemonic: string): Promise<Keypa
 }
 
 /**
+ * Write to SecureStore with retry (some Android devices have transient failures)
+ */
+async function secureSetWithRetry(key: string, value: string, maxRetries = 3): Promise<void> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await SecureStore.setItemAsync(key, value, SECURE_OPTIONS);
+      // Verify the write succeeded
+      const stored = await SecureStore.getItemAsync(key, SECURE_OPTIONS);
+      if (stored === value) return;
+      console.warn(`[Wallet] SecureStore verify failed for ${key}, attempt ${attempt}`);
+    } catch (err) {
+      console.warn(`[Wallet] SecureStore write failed for ${key}, attempt ${attempt}:`, err);
+      if (attempt === maxRetries) throw err;
+    }
+    await new Promise(r => setTimeout(r, 200 * attempt));
+  }
+  throw new Error(`Failed to securely store ${key} after ${3} attempts`);
+}
+
+/**
  * Create a new wallet and store it securely
  */
 export async function createWallet(): Promise<WalletInfo> {
   const mnemonic = generateMnemonic();
   const keypair = await deriveKeypairFromMnemonic(mnemonic);
 
-  await SecureStore.setItemAsync(STORAGE_KEYS.MNEMONIC, mnemonic, SECURE_OPTIONS);
-  await SecureStore.setItemAsync(
-    STORAGE_KEYS.PRIVATE_KEY,
-    bs58.encode(keypair.secretKey),
-    SECURE_OPTIONS
-  );
-  await SecureStore.setItemAsync(
-    STORAGE_KEYS.PUBLIC_KEY,
-    keypair.publicKey.toBase58(),
-    SECURE_OPTIONS
-  );
-  await SecureStore.setItemAsync(STORAGE_KEYS.WALLET_EXISTS, 'true', SECURE_OPTIONS);
+  // Store all keys with retry + verification (atomic-ish: mnemonic first, flag last)
+  await secureSetWithRetry(STORAGE_KEYS.MNEMONIC, mnemonic);
+  await secureSetWithRetry(STORAGE_KEYS.PRIVATE_KEY, bs58.encode(keypair.secretKey));
+  await secureSetWithRetry(STORAGE_KEYS.PUBLIC_KEY, keypair.publicKey.toBase58());
+  await secureSetWithRetry(STORAGE_KEYS.WALLET_EXISTS, 'true');
 
   return {
     publicKey: keypair.publicKey.toBase58(),

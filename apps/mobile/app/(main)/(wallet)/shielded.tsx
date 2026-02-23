@@ -1279,7 +1279,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: Spacing.md,
-    paddingBottom: 32,
+    paddingBottom: 120,
   },
   balanceCard: {
     padding: Spacing.lg,
