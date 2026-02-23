@@ -157,7 +157,9 @@ export const AnimationConfig = {
 export const Layout = {
   screenPadding: 20,
   cardPadding: 16,
-  tabBarHeight: 85,
+  tabBarHeight: 64,
+  tabBarBottomMargin: 16,
+  tabBarTotalHeight: 80, // tabBarHeight + tabBarBottomMargin — add insets.bottom per screen
   headerHeight: 56,
   bottomSafeArea: 34,
 } as const;

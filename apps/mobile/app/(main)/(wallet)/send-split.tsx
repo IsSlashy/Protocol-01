@@ -792,7 +792,7 @@ const styles = StyleSheet.create({
   },
   bottomContainer: {
     padding: Spacing.md,
-    paddingBottom: Spacing.xl,
+    paddingBottom: 120,
     backgroundColor: Colors.background,
     borderTopWidth: 1,
     borderTopColor: Colors.border,

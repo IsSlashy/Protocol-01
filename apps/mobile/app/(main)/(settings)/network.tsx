@@ -126,7 +126,7 @@ export default function NetworkSettingsScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* SELECT NETWORK */}
         <SettingsSection title="Select Network">

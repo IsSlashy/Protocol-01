@@ -247,7 +247,7 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   return (
     <ScrollView
       style={{ flex: 1 }}
-      contentContainerStyle={{ paddingBottom: 40 }}
+      contentContainerStyle={{ paddingBottom: 120 }}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="always"
       keyboardDismissMode="on-drag"
