@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
 import Link from "next/link";
-import { Wallet, Radio, ArrowLeftRight, ShoppingCart, Shield, ArrowRight, Check } from "lucide-react";
+import { Wallet, Radio, ArrowLeftRight, Bot, Shield, ArrowRight, Check } from "lucide-react";
 
 const modules = [
   {
@@ -89,29 +89,33 @@ const swap = await p01.swap({
 });`,
   },
   {
-    id: "buy",
-    icon: ShoppingCart,
-    name: "Buy Crypto",
-    tagline: "Fiat to crypto on-ramp",
+    id: "agent",
+    icon: Bot,
+    name: "AI Agent",
+    tagline: "Your privacy assistant",
     color: "yellow",
     description: [
-      "Buy SOL, USDC, and USDT directly with fiat currency.",
-      "Multiple payment providers including MoonPay and Ramp Network.",
+      "Chat naturally to manage your private finances.",
+      "The on-device AI agent helps you shield, transfer, and manage subscriptions.",
+      "No data leaves your device — privacy-first by design.",
     ],
     features: [
-      "Credit/Debit card support",
-      "Bank transfer",
-      "Multiple providers",
-      "Competitive rates",
+      "Natural language commands",
+      "On-device LLM (no cloud)",
+      "Privacy-aware actions",
+      "Transaction management",
     ],
     docsLink: "/docs",
-    codePreview: `// Buy crypto with fiat
-const purchase = await p01.buy({
-  asset: "SOL",
-  amount: "100",
-  currency: "USD",
-  provider: "moonpay"
-});`,
+    codePreview: `// AI Agent interaction
+agent.send("Shield 100 USDC privately");
+// → Generates ZK proof client-side
+// → Deposits to shielded pool
+// → Confirms: "100 USDC shielded ✓"
+
+agent.send("Send 50 USDC to alice.sol");
+// → Creates stealth address
+// → Routes through private relayer
+// → Zero trace on-chain`,
   },
   {
     id: "security",
