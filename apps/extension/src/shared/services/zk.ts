@@ -1007,39 +1007,63 @@ export class ZkServiceExtension {
       };
     }
 
-    // Generate proofs
-    const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
-    const proof2 = notesToSpend[1]
-      ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
-      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+    // Use saved Merkle proofs from shield time (consistent with on-chain root)
+    // instead of local tree which diverges from on-chain state
+    const note0 = notesToSpend[0];
+    let proof1: { pathElements: bigint[]; pathIndices: number[] };
+    let merkleRoot: bigint;
 
-    // Save the current merkle root BEFORE inserting new commitments
-    // This is the root that will be used in the proof and validated on-chain
-    const merkleRoot = this.merkleTree.root;
+    if (note0.merklePathElements && note0.merklePathIndices && note0.merkleRoot) {
+      proof1 = { pathElements: note0.merklePathElements, pathIndices: note0.merklePathIndices };
+      merkleRoot = note0.merkleRoot;
+      console.log('[ZK Transfer] Using saved Merkle proof from shield time');
+    } else {
+      // Fallback: reconstruct from cached subtrees
+      try {
+        proof1 = this.reconstructProofFromSubtrees(note0);
+        merkleRoot = note0.merkleRoot || this.merkleTree.root;
+        console.log('[ZK Transfer] Reconstructed proof from subtrees');
+      } catch {
+        // Last resort: local tree (may fail on-chain)
+        console.warn('[ZK Transfer] Using local tree proof (may be invalid on-chain)');
+        proof1 = this.merkleTree.generateProof(note0.leafIndex!);
+        merkleRoot = this.merkleTree.root;
+      }
+    }
+
+    let proof2: { pathElements: bigint[]; pathIndices: number[] };
+    if (notesToSpend[1]) {
+      const note1 = notesToSpend[1];
+      if (note1.merklePathElements && note1.merklePathIndices && note1.merkleRoot) {
+        proof2 = { pathElements: note1.merklePathElements, pathIndices: note1.merklePathIndices };
+        // Both notes must share same merkle root — use note0's root
+        // If note1 has a different root, the circuit will fail, but this is expected
+        // as both proofs must be against the same tree state
+      } else {
+        try {
+          proof2 = this.reconstructProofFromSubtrees(note1);
+        } catch {
+          proof2 = this.merkleTree.generateProof(note1.leafIndex!);
+        }
+      }
+    } else {
+      proof2 = { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+    }
 
     // Build input notes array - use dummy for second slot if only one note
     const inputNotesForProof = notesToSpend[1]
       ? notesToSpend
       : [notesToSpend[0], dummyInputNote!];
 
-    // Verify Merkle proofs locally before sending to circuit
-
-    // Verify proof1 locally
-    let computedRoot = notesToSpend[0].commitment;
+    // Verify proof1 locally against merkleRoot
+    let computedRoot = note0.commitment;
     for (let i = 0; i < proof1.pathElements.length; i++) {
       const sibling = proof1.pathElements[i];
       const isRight = proof1.pathIndices[i] === 1;
-      if (isRight) {
-        computedRoot = poseidonHash(sibling, computedRoot);
-      } else {
-        computedRoot = poseidonHash(computedRoot, sibling);
-      }
+      computedRoot = isRight ? poseidonHash(sibling, computedRoot) : poseidonHash(computedRoot, sibling);
     }
-
     if (computedRoot !== merkleRoot) {
-      console.error('[ZK Transfer] Local Merkle proof verification FAILED!');
-      console.error('[ZK Transfer] This indicates the local Merkle tree state is inconsistent');
-      // Try to dump tree state for debugging
+      console.error('[ZK Transfer] Merkle proof verification FAILED! Root mismatch.');
     }
 
     // Request proof from client-side prover
@@ -1055,10 +1079,17 @@ export class ZkServiceExtension {
       spendingKey: this.spendingKey!,
     });
 
-    // Update local Merkle tree (after proof generation) and save the new root
-    this.merkleTree.insert(recipientNote.commitment);
-    this.merkleTree.insert(changeNote.commitment);
-    const newRoot = this.merkleTree.root;
+    // Compute new root from on-chain subtrees for the two new commitments
+    const onChainState = await this.readOnChainFilledSubtrees();
+    const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
+    const useSubtrees = localSubtrees || onChainState.filledSubtrees;
+
+    // Insert recipient note
+    const { newRoot: rootAfterRecipient, updatedSubtrees: subtreesAfterRecipient } =
+      this.computeNewRootFromSubtrees(useSubtrees, onChainState.leafCount, recipientNote.commitment, onChainState.depth);
+    // Insert change note
+    const { newRoot, updatedSubtrees } =
+      this.computeNewRootFromSubtrees(subtreesAfterRecipient, onChainState.leafCount + 1, changeNote.commitment, onChainState.depth);
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -1191,7 +1222,24 @@ export class ZkServiceExtension {
     }
 
     const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
-    const merkleRoot = this.merkleTree.root;
+
+    // Use saved Merkle proofs from shield time (consistent with on-chain root)
+    const note0 = notesToSpend[0];
+    let proof1: { pathElements: bigint[]; pathIndices: number[] };
+    let merkleRoot: bigint;
+
+    if (note0.merklePathElements && note0.merklePathIndices && note0.merkleRoot) {
+      proof1 = { pathElements: note0.merklePathElements, pathIndices: note0.merklePathIndices };
+      merkleRoot = note0.merkleRoot;
+    } else {
+      try {
+        proof1 = this.reconstructProofFromSubtrees(note0);
+        merkleRoot = note0.merkleRoot || this.merkleTree.root;
+      } catch {
+        proof1 = this.merkleTree.generateProof(note0.leafIndex!);
+        merkleRoot = this.merkleTree.root;
+      }
+    }
 
     // Compute nullifiers
     const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
@@ -1213,11 +1261,18 @@ export class ZkServiceExtension {
       };
     }
 
-    // Generate merkle proofs
-    const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
-    const proof2 = notesToSpend[1]
-      ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
-      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+    let proof2: { pathElements: bigint[]; pathIndices: number[] };
+    if (notesToSpend[1]) {
+      const note1 = notesToSpend[1];
+      if (note1.merklePathElements && note1.merklePathIndices) {
+        proof2 = { pathElements: note1.merklePathElements, pathIndices: note1.merklePathIndices };
+      } else {
+        try { proof2 = this.reconstructProofFromSubtrees(note1); }
+        catch { proof2 = this.merkleTree.generateProof(note1.leafIndex!); }
+      }
+    } else {
+      proof2 = { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+    }
 
     const inputNotesForCircuit = notesToSpend[1]
       ? notesToSpend

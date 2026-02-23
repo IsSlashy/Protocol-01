@@ -48,7 +48,12 @@
     "https://*.triton.one/*",
     "https://*.jup.ag/*",
     "https://token.jup.ag/*",
-    "https://quote-api.jup.ag/*"
+    "https://quote-api.jup.ag/*",
+    "https://p01-relayer-production.up.railway.app/*",
+    "https://api.alternative.me/*",
+    "https://price.jup.ag/*",
+    "https://api.groq.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
