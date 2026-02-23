@@ -11,7 +11,7 @@ const technologies = [
     icon: Lock,
     items: [
       { name: "Circom", description: "ZK circuit language" },
-      { name: "snarkjs", description: "Groth16 prover" },
+      { name: "ark-circom", description: "Rust native Groth16 prover" },
       { name: "Poseidon", description: "ZK-friendly hash" },
     ],
     color: "cyan",
@@ -30,9 +30,9 @@ const technologies = [
     category: "Private Relay",
     icon: Cpu,
     items: [
-      { name: "ZK Verification", description: "Off-chain proof check" },
+      { name: "Rust Prover", description: "Native Groth16 (10x faster)" },
       { name: "Stealth Transfers", description: "Sender-recipient unlinking" },
-      { name: "Nullifier Tracking", description: "Anti double-spend" },
+      { name: "Dual Verification", description: "Rust + snarkjs safety net" },
     ],
     color: "bright-cyan",
   },
@@ -61,7 +61,7 @@ const architectureLayers = [
   },
   {
     name: "Execution Layer",
-    description: "Private Relayer, Subscription Crank",
+    description: "Private Relayer, Rust Prover, Subscription Crank",
     color: "p01-bright-cyan",
   },
   {
