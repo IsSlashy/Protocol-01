@@ -33,6 +33,7 @@ export interface Conversation {
   messages: DisplayMessage[];
   createdAt: number;
   updatedAt: number;
+  walletAddress?: string; // Scoped to wallet — conversations without this are legacy/orphaned
 }
 
 const MAX_CONVERSATIONS = 50;
@@ -173,19 +174,33 @@ export const useAIStore = create<AIState>((set, get) => ({
         });
       });
 
-      // Load persisted conversations
+      // Load persisted conversations — scoped to current wallet
       const convState = useConversationStore.getState();
+      const walletStore = useWalletStore.getState();
+      const currentWallet = walletStore.publicKey || '';
+
+      // Filter conversations to current wallet (legacy convos without walletAddress are excluded)
+      const walletConversations = convState.conversations.filter(
+        c => c.walletAddress === currentWallet
+      );
+
+      // Only restore active conversation if it belongs to current wallet
+      const activeId = convState.activeConversationId;
+      const activeValid = activeId && walletConversations.some(c => c.id === activeId);
+
       set({
-        conversations: convState.conversations,
-        activeConversationId: convState.activeConversationId,
+        conversations: walletConversations,
+        activeConversationId: activeValid ? activeId : null,
       });
 
-      // If there's an active conversation, restore its messages
-      if (convState.activeConversationId) {
-        const active = convState.conversations.find(c => c.id === convState.activeConversationId);
+      // If there's a valid active conversation, restore its messages
+      if (activeValid) {
+        const active = walletConversations.find(c => c.id === activeId);
         if (active) {
           set({ messages: active.messages });
         }
+      } else {
+        set({ messages: [] });
       }
     } catch (error) {
       console.error('Failed to initialize AI:', error);
@@ -447,18 +462,26 @@ export const useAIStore = create<AIState>((set, get) => ({
 
   createConversation: () => {
     const id = conversationId();
+    const walletStore = useWalletStore.getState();
+    const currentWallet = walletStore.publicKey || '';
+
     const conv: Conversation = {
       id,
       title: 'New Chat',
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      walletAddress: currentWallet,
     };
 
     const { conversations } = get();
     const updated = [conv, ...conversations].slice(0, MAX_CONVERSATIONS);
     set({ conversations: updated, activeConversationId: id, messages: [] });
-    useConversationStore.setState({ conversations: updated, activeConversationId: id });
+
+    // Persist ALL conversations (including other wallets) so nothing is lost
+    const allConversations = useConversationStore.getState().conversations;
+    const allUpdated = [conv, ...allConversations.filter(c => c.id !== id)].slice(0, MAX_CONVERSATIONS * 2);
+    useConversationStore.setState({ conversations: allUpdated, activeConversationId: id });
     return id;
   },
 
@@ -493,8 +516,11 @@ export const useAIStore = create<AIState>((set, get) => ({
     }
 
     set(newState as any);
+
+    // Also remove from full persisted store
+    const allConversations = useConversationStore.getState().conversations;
     useConversationStore.setState({
-      conversations: updated,
+      conversations: allConversations.filter(c => c.id !== id),
       activeConversationId: activeConversationId === id ? null : activeConversationId,
     });
   },
@@ -515,6 +541,9 @@ export const useAIStore = create<AIState>((set, get) => ({
   // Internal: persist conversation messages
   _persistConversation: (msgs: DisplayMessage[], convId: string) => {
     const { conversations } = get();
+    const walletStore = useWalletStore.getState();
+    const currentWallet = walletStore.publicKey || '';
+
     const updated = conversations.map(c => {
       if (c.id === convId) {
         // Auto-title from first user message
@@ -522,11 +551,16 @@ export const useAIStore = create<AIState>((set, get) => ({
         const title = firstUserMsg
           ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
           : c.title;
-        return { ...c, messages: msgs, title, updatedAt: Date.now() };
+        return { ...c, messages: msgs, title, updatedAt: Date.now(), walletAddress: c.walletAddress || currentWallet };
       }
       return c;
     });
     set({ conversations: updated });
-    useConversationStore.setState({ conversations: updated });
+
+    // Merge into full persisted store (all wallets)
+    const allConversations = useConversationStore.getState().conversations;
+    const mergedIds = new Set(updated.map(c => c.id));
+    const otherWalletConvos = allConversations.filter(c => !mergedIds.has(c.id));
+    useConversationStore.setState({ conversations: [...updated, ...otherWalletConvos] });
   },
 } as any));

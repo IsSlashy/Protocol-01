@@ -368,7 +368,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: Spacing.md,
-    paddingBottom: 40,
+    paddingBottom: 120,
   },
   scoreCard: {
     backgroundColor: Colors.surface,

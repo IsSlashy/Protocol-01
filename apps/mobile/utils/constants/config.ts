@@ -12,10 +12,10 @@ export const APP_CONFIG = {
   buildNumber: 1,
   bundleId: 'com.protocol01.app',
   description: 'Privacy-focused Solana wallet with stealth addresses',
-  website: 'https://protocol01.dev',
+  website: 'https://protocol-01.vercel.app',
   support: 'support@protocol01.dev',
-  github: 'https://github.com/protocol01',
-  twitter: 'https://twitter.com/protocol01',
+  github: 'https://github.com/IsSlashy/Protocol-01',
+  twitter: 'https://x.com/Protocol01_',
   discord: 'https://discord.gg/protocol01',
 } as const;
 

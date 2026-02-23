@@ -14,8 +14,8 @@ import { useAuth } from '../../../providers/PrivyProvider';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { publicKey, logout: walletLogout, hasWallet } = useWalletStore();
-  const { logout: privyLogout } = useAuth();
+  const { publicKey: localPublicKey, logout: walletLogout, hasWallet: hasLocalWallet } = useWalletStore();
+  const { logout: privyLogout, walletAddress: privyWalletAddress } = useAuth();
   const { currency, setCurrency, initialize: initSettings } = useSettingsStore();
   const [copied, setCopied] = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
@@ -25,6 +25,8 @@ export default function SettingsScreen() {
     initSettings();
   }, []);
 
+  // Use Privy wallet if available, fallback to local
+  const publicKey = privyWalletAddress || localPublicKey;
   const walletAddress = publicKey || '';
   const truncatedAddress = walletAddress
     ? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
@@ -147,7 +149,7 @@ export default function SettingsScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* WALLET */}
         <SettingsSection title="Wallet">

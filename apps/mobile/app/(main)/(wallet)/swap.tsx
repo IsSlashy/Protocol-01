@@ -781,7 +781,7 @@ const styles = StyleSheet.create({
   bottomAction: {
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
-    paddingBottom: Spacing.xl + 12,
+    paddingBottom: 120,
   },
   swapButton: {
     backgroundColor: Colors.primary,

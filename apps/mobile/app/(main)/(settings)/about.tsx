@@ -53,19 +53,19 @@ export default function AboutScreen() {
     {
       icon: 'globe-outline' as const,
       label: 'Website',
-      url: 'https://protocol01.dev',
+      url: 'https://protocol-01.vercel.app',
       color: '#39c5bb',
     },
     {
       icon: 'logo-github' as const,
       label: 'GitHub',
-      url: 'https://github.com/protocol-01',
+      url: 'https://github.com/IsSlashy/Protocol-01',
       color: '#fff',
     },
     {
       icon: 'logo-twitter' as const,
       label: 'Twitter',
-      url: 'https://twitter.com/protocol01',
+      url: 'https://x.com/Protocol01_',
       color: '#1DA1F2',
     },
     {
@@ -93,7 +93,7 @@ export default function AboutScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* Logo and Version */}
         <View className="items-center py-8">
@@ -132,17 +132,17 @@ export default function AboutScreen() {
           <View className="bg-p01-surface rounded-2xl overflow-hidden">
             <LinkRow
               label="Privacy Policy"
-              onPress={() => Linking.openURL('https://protocol01.dev/privacy')}
+              onPress={() => Linking.openURL('https://protocol-01.vercel.app/privacy')}
             />
             <View className="h-px bg-p01-border mx-4" />
             <LinkRow
               label="Terms of Service"
-              onPress={() => Linking.openURL('https://protocol01.dev/terms')}
+              onPress={() => Linking.openURL('https://protocol-01.vercel.app/terms')}
             />
             <View className="h-px bg-p01-border mx-4" />
             <LinkRow
               label="Open Source Licenses"
-              onPress={() => Linking.openURL('https://protocol01.dev/licenses')}
+              onPress={() => Linking.openURL('https://protocol-01.vercel.app/licenses')}
             />
           </View>
         </View>

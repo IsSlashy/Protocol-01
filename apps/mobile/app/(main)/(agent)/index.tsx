@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { AgentAvatar, ChatBubble, SuggestionChip, QuickActionButton } from '@/components/agent';
 import { VoiceButton } from '@/components/agent/VoiceButton';
 import { useAIStore, DisplayMessage } from '@/stores/aiStore';
+import { useWalletStore } from '@/stores/walletStore';
 import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
 import * as VoiceService from '@/services/ai/voiceService';
 
@@ -63,9 +64,16 @@ export default function AgentDashboard() {
     setTranscribing,
   } = useAIStore();
 
+  // Re-initialize agent when wallet changes (scopes conversations to wallet)
+  const walletPublicKey = useWalletStore((s) => s.publicKey);
+  const lastWalletRef = useRef<string | null>(null);
+
   useEffect(() => {
-    initialize();
-  }, []);
+    if (lastWalletRef.current !== walletPublicKey) {
+      lastWalletRef.current = walletPublicKey;
+      initialize();
+    }
+  }, [walletPublicKey]);
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -493,7 +501,7 @@ export default function AgentDashboard() {
             intensity={25}
             tint="dark"
             style={{
-              paddingBottom: insets.bottom || 8,
+              paddingBottom: (insets.bottom || 8) + 92,
               backgroundColor: 'rgba(10, 10, 12, 0.8)',
               borderTopWidth: 1,
               borderTopColor: 'rgba(57, 197, 187, 0.08)',

@@ -93,12 +93,14 @@ export default function WalletHomeScreen() {
     ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`
     : localFormattedPublicKey;
 
-  // Sync Privy wallet to store on mount
+  // Sync Privy wallet to store on mount — only once per address
+  const lastSyncedRef = React.useRef<string | null>(null);
   useEffect(() => {
-    if (privyWalletAddress && !hasLocalWallet) {
+    if (privyWalletAddress && !hasLocalWallet && lastSyncedRef.current !== privyWalletAddress) {
+      lastSyncedRef.current = privyWalletAddress;
       initializeWithPrivy(privyWalletAddress);
     }
-  }, [privyWalletAddress, hasLocalWallet, initializeWithPrivy]);
+  }, [privyWalletAddress, hasLocalWallet]);
 
   // Compute formatted balance locally (Zustand getters don't trigger re-renders)
   const formattedSolBalance = balance ? formatBalance(balance.sol) : '0';
@@ -259,8 +261,9 @@ export default function WalletHomeScreen() {
   // NOTE: No wallet redirect removed — app/index.tsx handles "no wallet → onboarding" on startup.
   // A redirect here caused a loop because walletStore.initialize() hadn't finished loading yet.
 
-  // Loading state
-  if (!initialized || loading) {
+  // Loading state — only show spinner if we genuinely have no wallet data yet.
+  // Once hasWallet is true, skip the loading gate (balance refreshes happen in background).
+  if (!initialized || (loading && !hasWallet)) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>

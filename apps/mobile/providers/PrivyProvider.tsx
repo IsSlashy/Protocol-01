@@ -160,17 +160,23 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     return linkedWallet?.address || null;
   }, [solanaWalletFromArray?.address, privy?.user?.linkedAccounts]);
 
-  // Sync Privy wallet with wallet store
+  // Track last synced address to avoid re-initializing on every render
+  const lastSyncedAddress = React.useRef<string | null>(null);
+
+  // Sync Privy wallet with wallet store — only when address actually changes
   useEffect(() => {
     if (solanaWalletFromArray?.address) {
-      // Use initializeWithPrivy to properly sync the Privy wallet address
-      walletStore.initializeWithPrivy(solanaWalletFromArray.address);
-      // Set the Privy signer for transactions
+      if (lastSyncedAddress.current !== solanaWalletFromArray.address) {
+        lastSyncedAddress.current = solanaWalletFromArray.address;
+        walletStore.initializeWithPrivy(solanaWalletFromArray.address);
+      }
+      // Always update signer (cheap, no state change)
       setPrivySigner(createSignTransaction);
     } else {
+      lastSyncedAddress.current = null;
       setPrivySigner(null);
     }
-  }, [solanaWalletFromArray?.address, createSignTransaction]);
+  }, [solanaWalletFromArray?.address]);
 
   // Create proper signing functions that use Privy's provider pattern
   const createSignTransaction = useCallback(async (tx: any) => {

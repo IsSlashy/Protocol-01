@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
-    paddingBottom: Spacing['5xl'],
+    paddingBottom: 120,
   },
   qrSection: {
     alignItems: 'center',

@@ -136,7 +136,7 @@ export default function PrivacySettingsScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* DEFAULT PRIVACY LEVEL */}
         <SettingsSection title="Default Privacy Level">
