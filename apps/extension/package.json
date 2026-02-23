@@ -15,7 +15,7 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@coral-xyz/anchor": "^0.29.0",
+    "@coral-xyz/anchor": "^0.32.1",
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.4.0",
     "@p01/sdk": "workspace:*",
