@@ -35,13 +35,13 @@ describe('CTA -- Download section and conversion funnel', () => {
 
     it('displays Android APK file details with size', () => {
       expect(screen.getByText(/Instant Download APK/)).toBeInTheDocument();
-      expect(screen.getByText(/72 MB/)).toBeInTheDocument();
+      expect(screen.getByText(/229 MB/)).toBeInTheDocument();
     });
 
     it('links to the correct Android APK file', () => {
       const androidLink = screen.getByText('Android').closest('a');
-      expect(androidLink).toHaveAttribute('href', '/downloads/P01-Mobile-v0.1.1.apk');
-      expect(androidLink).toHaveAttribute('download', 'P01-Mobile-v0.1.1.apk');
+      expect(androidLink).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01/releases/download/v0.3.0/P01-Mobile-v0.4.apk');
+      expect(androidLink).toHaveAttribute('download', 'P01-Mobile-v0.4.apk');
     });
 
     it('renders the Chrome Extension download option', () => {
