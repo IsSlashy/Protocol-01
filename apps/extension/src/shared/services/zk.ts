@@ -39,6 +39,9 @@ export interface Note {
   tokenMint: bigint;
   commitment: bigint;
   leafIndex?: number;
+  merklePathElements?: bigint[];
+  merklePathIndices?: number[];
+  merkleRoot?: bigint;
 }
 
 /**
@@ -251,6 +254,10 @@ class MerkleTree {
 
   get leafCount(): number {
     return this.leaves.length;
+  }
+
+  getZeroValueForLevel(level: number): bigint {
+    return this.getZeroValue(level);
   }
 
   private getZeroValue(level: number): bigint {
@@ -658,6 +665,185 @@ export class ZkServiceExtension {
     };
   }
 
+  // Cached filledSubtrees for fast shield/unshield
+  private _cachedSubtrees: bigint[] | null = null;
+
+  /**
+   * Read on-chain Merkle tree state (root, leafCount, depth, filledSubtrees)
+   */
+  private async readOnChainFilledSubtrees(): Promise<{
+    root: bigint;
+    leafCount: number;
+    depth: number;
+    filledSubtrees: bigint[];
+  }> {
+    if (!this.connection) throw new Error('Connection not set');
+
+    const [poolPDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()],
+      this.programId
+    );
+    const [merkleTreePDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()],
+      this.programId
+    );
+
+    const account = await this.connection.getAccountInfo(merkleTreePDA);
+    if (!account) throw new Error('MerkleTree account not found on-chain');
+
+    const data = account.data;
+    let offset = 8; // skip discriminator
+
+    // pool: 32 bytes (skip)
+    offset += 32;
+
+    // root: 32 bytes (little-endian)
+    const rootBytes = data.slice(offset, offset + 32);
+    let root = BigInt(0);
+    for (let i = 31; i >= 0; i--) {
+      root = (root << BigInt(8)) | BigInt(rootBytes[i]);
+    }
+    offset += 32;
+
+    // leaf_count: u64 LE
+    const leafCount = Number(data.readBigUInt64LE(offset));
+    offset += 8;
+
+    // depth: u8
+    const depth = data[offset];
+    offset += 1;
+
+    // filled_subtrees: Borsh Vec<[u8; 32]>
+    const vecLen = data.readUInt32LE(offset);
+    offset += 4;
+
+    const filledSubtrees: bigint[] = [];
+    for (let i = 0; i < vecLen; i++) {
+      const bytes = data.slice(offset, offset + 32);
+      let val = BigInt(0);
+      for (let j = 31; j >= 0; j--) {
+        val = (val << BigInt(8)) | BigInt(bytes[j]);
+      }
+      filledSubtrees.push(val);
+      offset += 32;
+    }
+
+    return { root, leafCount, depth, filledSubtrees };
+  }
+
+  /**
+   * Compute new Merkle root from filledSubtrees after inserting a leaf.
+   * Also returns the Merkle proof for the inserted leaf and updated subtrees.
+   */
+  private computeNewRootFromSubtrees(
+    filledSubtrees: bigint[],
+    leafCount: number,
+    newLeaf: bigint,
+    depth: number = MERKLE_TREE_DEPTH
+  ): { newRoot: bigint; updatedSubtrees: bigint[]; pathElements: bigint[]; pathIndices: number[] } {
+    const subtrees = [...filledSubtrees];
+    let currentHash = newLeaf;
+    let currentIndex = leafCount;
+    const pathElements: bigint[] = [];
+    const pathIndices: number[] = [];
+
+    for (let level = 0; level < depth; level++) {
+      if (currentIndex % 2 === 1) {
+        // Odd index = right child, sibling is filledSubtrees[level]
+        pathElements.push(subtrees[level]);
+        pathIndices.push(1);
+        currentHash = poseidonHash(subtrees[level], currentHash);
+      } else {
+        // Even index = left child: UPDATE subtree, hash with zero
+        const zeroVal = this.merkleTree.getZeroValueForLevel(level);
+        pathElements.push(zeroVal);
+        pathIndices.push(0);
+        subtrees[level] = currentHash;
+        currentHash = poseidonHash(currentHash, zeroVal);
+      }
+      currentIndex = currentIndex >> 1;
+    }
+
+    return { newRoot: currentHash, updatedSubtrees: subtrees, pathElements, pathIndices };
+  }
+
+  /**
+   * Reconstruct Merkle proof from cached subtrees for a saved note.
+   */
+  private reconstructProofFromSubtrees(note: Note): { pathElements: bigint[]; pathIndices: number[] } {
+    if (note.leafIndex === undefined) {
+      throw new Error('Cannot reconstruct proof: note has no leafIndex');
+    }
+
+    const raw = this._cachedSubtrees;
+    if (!raw || raw.length === 0) {
+      throw new Error('Cannot reconstruct proof: no saved subtrees available');
+    }
+
+    const pathElements: bigint[] = [];
+    const pathIndices: number[] = [];
+    let currentIndex = note.leafIndex;
+
+    for (let level = 0; level < MERKLE_TREE_DEPTH; level++) {
+      if (currentIndex % 2 === 1) {
+        pathElements.push(raw[level]);
+        pathIndices.push(1);
+      } else {
+        pathElements.push(this.merkleTree.getZeroValueForLevel(level));
+        pathIndices.push(0);
+      }
+      currentIndex = currentIndex >> 1;
+    }
+
+    // Verify reconstruction
+    let verifyRoot = note.commitment;
+    for (let i = 0; i < MERKLE_TREE_DEPTH; i++) {
+      const sibling = pathElements[i];
+      const isRight = pathIndices[i] === 1;
+      verifyRoot = isRight
+        ? poseidonHash(sibling, verifyRoot)
+        : poseidonHash(verifyRoot, sibling);
+    }
+
+    if (note.merkleRoot && verifyRoot !== note.merkleRoot) {
+      throw new Error('Cannot reconstruct valid Merkle proof for this note');
+    }
+
+    return { pathElements, pathIndices };
+  }
+
+  /**
+   * Save/load cached subtrees to/from chrome.storage
+   */
+  private async saveLocalSubtrees(subtrees: bigint[], leafCount: number): Promise<void> {
+    this._cachedSubtrees = subtrees;
+    try {
+      await chrome.storage.local.set({
+        'zk_local_subtrees': JSON.stringify({
+          subtrees: subtrees.map(s => s.toString()),
+          leafCount,
+        }),
+      });
+    } catch (e) {
+      console.warn('[ZK] Failed to save local subtrees:', e);
+    }
+  }
+
+  private async loadLocalSubtrees(expectedLeafCount: number): Promise<bigint[] | null> {
+    try {
+      const result = await chrome.storage.local.get('zk_local_subtrees');
+      if (result.zk_local_subtrees) {
+        const data = JSON.parse(result.zk_local_subtrees);
+        if (data.leafCount === expectedLeafCount) {
+          const subtrees = data.subtrees.map((s: string) => BigInt(s));
+          this._cachedSubtrees = subtrees;
+          return subtrees;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
   /**
    * Get shielded balance
    */
@@ -666,7 +852,7 @@ export class ZkServiceExtension {
   }
 
   /**
-   * Shield tokens
+   * Shield tokens (instant path using filledSubtrees)
    */
   async shield(
     amount: bigint,
@@ -677,14 +863,38 @@ export class ZkServiceExtension {
       throw new Error('ZK Service not initialized');
     }
 
+    // Read on-chain state
+    const onChainState = await this.readOnChainFilledSubtrees();
+
+    // Prefer locally-stored correct subtrees over on-chain stale ones
+    const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
+    let useSubtrees: bigint[];
+    if (localSubtrees) {
+      useSubtrees = localSubtrees;
+    } else {
+      useSubtrees = onChainState.filledSubtrees;
+    }
+
     const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
 
     // Create note
     const note = await createNote(amount, this.ownerPubkey, tokenMintField);
 
-    // Update Merkle tree
-    const newRoot = this.merkleTree.insert(note.commitment);
+    // Compute new root + Merkle proof using subtrees (fast: ~20 hashes)
+    const leafIndexBeforeInsert = onChainState.leafCount;
+    const { newRoot, updatedSubtrees, pathElements, pathIndices } = this.computeNewRootFromSubtrees(
+      useSubtrees,
+      onChainState.leafCount,
+      note.commitment,
+      onChainState.depth
+    );
     const newRootBytes = bigintToLeBytes(newRoot);
+
+    // Save proof with note for instant unshield later
+    note.leafIndex = leafIndexBeforeInsert;
+    note.merkleRoot = newRoot;
+    note.merklePathElements = pathElements;
+    note.merklePathIndices = pathIndices;
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -697,7 +907,7 @@ export class ZkServiceExtension {
       this.programId
     );
 
-    // Build shield instruction - Anchor discriminator: sha256("global:shield")[0..8]
+    // Build shield instruction
     const discriminator = new Uint8Array([0xdc, 0xc6, 0xfd, 0xf6, 0xe7, 0x54, 0x93, 0x62]);
     const amountBuffer = new ArrayBuffer(8);
     new DataView(amountBuffer).setBigUint64(0, amount, true);
@@ -710,7 +920,6 @@ export class ZkServiceExtension {
       ...newRootBytes,
     ]);
 
-    // Token program ID for optional accounts (placeholder for native SOL)
     const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
     const ix = new TransactionInstruction({
@@ -720,16 +929,13 @@ export class ZkServiceExtension {
         { pubkey: poolPDA, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        // Optional accounts for SPL tokens (required by Anchor even if not used)
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-        // Use program ID as placeholder for optional token accounts (won't be accessed for SOL)
-        { pubkey: this.programId, isSigner: false, isWritable: false }, // user_token_account placeholder
-        { pubkey: this.programId, isSigner: false, isWritable: false }, // pool_vault placeholder
+        { pubkey: this.programId, isSigner: false, isWritable: false },
+        { pubkey: this.programId, isSigner: false, isWritable: false },
       ],
       data: Buffer.from(data),
     });
 
-    // Build and sign transaction
     const tx = new Transaction().add(ix);
     tx.feePayer = walletPublicKey;
     tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
@@ -739,8 +945,13 @@ export class ZkServiceExtension {
 
     await this.connection.confirmTransaction(signature, 'confirmed');
 
+    // Also update local Merkle tree (for transfer proof generation)
+    this.merkleTree.insert(note.commitment);
+
+    // Save updated subtrees for next operation
+    await this.saveLocalSubtrees(updatedSubtrees, onChainState.leafCount + 1);
+
     // Store note
-    note.leafIndex = this.merkleTree.leafCount - 1;
     this.notes.push(note);
     await this.saveNotes();
 
@@ -1109,7 +1320,7 @@ export class ZkServiceExtension {
   }
 
   /**
-   * Unshield tokens
+   * Unshield tokens (instant path using saved Merkle proofs)
    */
   async unshield(
     recipient: PublicKey,
@@ -1135,7 +1346,7 @@ export class ZkServiceExtension {
       ? await createNote(changeAmount, this.ownerPubkey, tokenMintField)
       : null;
 
-    // Compute nullifiers and handle dummy input note for single-note spends
+    // Compute nullifiers
     const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
     let nullifier2: bigint;
     let dummyInputNote: Note | undefined;
@@ -1143,8 +1354,6 @@ export class ZkServiceExtension {
     if (notesToSpend[1]) {
       nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
     } else {
-      // IMPORTANT: For dummy input note, we must use UNIQUE randomness each time!
-      // The circuit computes nullifier from the commitment, so we need a proper dummy note
       const dummyRandomness = randomFieldElement();
       const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
       nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
@@ -1158,16 +1367,60 @@ export class ZkServiceExtension {
       };
     }
 
-    // Generate proofs
-    const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
+    // INSTANT PATH: Use saved Merkle proof from shield time if available
+    let proof1: { pathElements: bigint[]; pathIndices: number[] };
+    let merkleRoot: bigint;
+
+    const note0 = notesToSpend[0];
+    if (note0.merklePathElements && note0.merklePathIndices && note0.merkleRoot) {
+      // Verify saved proof locally
+      let verifyRoot = note0.commitment;
+      for (let i = 0; i < note0.merklePathElements.length; i++) {
+        const sibling = note0.merklePathElements[i];
+        const isRight = note0.merklePathIndices![i] === 1;
+        verifyRoot = isRight ? poseidonHash(sibling, verifyRoot) : poseidonHash(verifyRoot, sibling);
+      }
+
+      if (verifyRoot === note0.merkleRoot) {
+        // Saved proof is valid - use it directly
+        proof1 = { pathElements: note0.merklePathElements, pathIndices: note0.merklePathIndices! };
+        merkleRoot = note0.merkleRoot;
+      } else {
+        // Saved proof invalid, try subtree reconstruction
+        console.warn('[ZK Unshield] Saved proof invalid, trying subtree reconstruction');
+        try {
+          proof1 = this.reconstructProofFromSubtrees(note0);
+          merkleRoot = note0.merkleRoot;
+        } catch {
+          // Fall back to local tree
+          proof1 = this.merkleTree.generateProof(note0.leafIndex!);
+          merkleRoot = this.merkleTree.root;
+        }
+      }
+    } else {
+      // No saved proof — try subtree reconstruction first
+      try {
+        proof1 = this.reconstructProofFromSubtrees(note0);
+        // Compute the root from the proof
+        let computedRoot = note0.commitment;
+        for (let i = 0; i < proof1.pathElements.length; i++) {
+          const sibling = proof1.pathElements[i];
+          const isRight = proof1.pathIndices[i] === 1;
+          computedRoot = isRight ? poseidonHash(sibling, computedRoot) : poseidonHash(computedRoot, sibling);
+        }
+        merkleRoot = computedRoot;
+      } catch {
+        // Last resort: local Merkle tree
+        proof1 = this.merkleTree.generateProof(note0.leafIndex!);
+        merkleRoot = this.merkleTree.root;
+      }
+    }
+
     const proof2 = notesToSpend[1]
       ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
       : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
 
-    // Save the current merkle root BEFORE inserting new commitments
-    const merkleRoot = this.merkleTree.root;
-
-    // Create dummy note for the second output slot (unshield only has change, not two outputs)
+    // Create dummy output notes
     const dummyOutputRandomness = randomFieldElement();
     const dummyOutputNote: Note = {
       amount: BigInt(0),
@@ -1177,7 +1430,6 @@ export class ZkServiceExtension {
       commitment: poseidonHash(BigInt(0), BigInt(0), dummyOutputRandomness, tokenMintField),
     };
 
-    // Create proper change note or dummy for first output
     let outputNote1: Note;
     if (changeNote) {
       outputNote1 = changeNote;
@@ -1192,14 +1444,13 @@ export class ZkServiceExtension {
       };
     }
 
-    // Build input notes array - use dummy for second slot if only one note
     const inputNotesForProof = notesToSpend[1]
       ? notesToSpend
       : [notesToSpend[0], dummyInputNote!];
 
-    // Request proof
+    // Generate ZK proof
     const zkProof = await this.generateProofClientSide({
-      merkleRoot: merkleRoot,
+      merkleRoot,
       nullifier1,
       nullifier2,
       outputCommitment1: outputNote1.commitment,
@@ -1211,11 +1462,23 @@ export class ZkServiceExtension {
       spendingKey: this.spendingKey!,
     });
 
-    // Update Merkle tree - ALWAYS insert outputNote1.commitment since on-chain will insert it
-    // The on-chain program only skips insertion if output_commitment_1 == [0u8; 32],
-    // but our dummy note has a Poseidon hash commitment which is NOT zero bytes.
-    // This ensures our local tree stays in sync with on-chain state.
-    const newRoot = this.merkleTree.insert(outputNote1.commitment);
+    // Compute new root for tree update using on-chain subtrees
+    const onChainState = await this.readOnChainFilledSubtrees();
+    const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
+    const useSubtrees = localSubtrees || onChainState.filledSubtrees;
+
+    const { newRoot: computedNewRoot, updatedSubtrees } = this.computeNewRootFromSubtrees(
+      useSubtrees,
+      onChainState.leafCount,
+      outputNote1.commitment,
+      onChainState.depth
+    );
+
+    // Also update local tree
+    this.merkleTree.insert(outputNote1.commitment);
+
+    // Save updated subtrees
+    await this.saveLocalSubtrees(updatedSubtrees, onChainState.leafCount + 1);
 
     // Get PDAs
     const [poolPDA] = PublicKey.findProgramAddressSync(
@@ -1238,7 +1501,7 @@ export class ZkServiceExtension {
       this.programId
     );
 
-    // Build unshield instruction - Anchor discriminator: sha256("global:unshield")[0..8]
+    // Build unshield instruction
     const discriminator = new Uint8Array([0x15, 0xe4, 0x37, 0x18, 0xc2, 0x0a, 0x15, 0x16]);
     const amountBuffer = new ArrayBuffer(8);
     new DataView(amountBuffer).setBigUint64(0, amount, true);
@@ -1250,39 +1513,38 @@ export class ZkServiceExtension {
       ...zkProof.pi_c,
       ...bigintToLeBytes(nullifier1),
       ...bigintToLeBytes(nullifier2),
-      ...bigintToLeBytes(outputNote1.commitment),  // output_commitment_1 (change note or dummy)
-      ...bigintToLeBytes(dummyOutputNote.commitment),    // output_commitment_2 (always dummy for unshield)
-      ...bigintToLeBytes(merkleRoot),            // Old merkle root for proof validation
+      ...bigintToLeBytes(outputNote1.commitment),
+      ...bigintToLeBytes(dummyOutputNote.commitment),
+      ...bigintToLeBytes(merkleRoot),
       ...new Uint8Array(amountBuffer),
-      ...bigintToLeBytes(newRoot),               // New merkle root for tree update
+      ...bigintToLeBytes(computedNewRoot),
     ]);
-
 
     const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: walletPublicKey, isSigner: true, isWritable: true },    // payer
-        { pubkey: recipient, isSigner: false, isWritable: true },          // recipient
-        { pubkey: poolPDA, isSigner: false, isWritable: true },            // shielded_pool
-        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },      // merkle_tree
-        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },    // nullifier_set
-        { pubkey: vkDataPDA, isSigner: false, isWritable: false },         // verification_key_data
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
-        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },  // token_program
-        { pubkey: this.programId, isSigner: false, isWritable: false },    // pool_vault (None placeholder)
-        { pubkey: this.programId, isSigner: false, isWritable: false },    // recipient_token_account (None placeholder)
+        { pubkey: walletPublicKey, isSigner: true, isWritable: true },
+        { pubkey: recipient, isSigner: false, isWritable: true },
+        { pubkey: poolPDA, isSigner: false, isWritable: true },
+        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
+        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: this.programId, isSigner: false, isWritable: false },
+        { pubkey: this.programId, isSigner: false, isWritable: false },
       ],
       data: Buffer.from(data),
     });
 
-    // Add compute budget instruction for Groth16 verification
+    // Compute budget for Groth16 verification
     const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
 
     const computeLimitData = new Uint8Array(5);
     computeLimitData[0] = 2;
-    new DataView(computeLimitData.buffer).setUint32(1, 1_400_000, true); // 1.4M compute units
+    new DataView(computeLimitData.buffer).setUint32(1, 1_400_000, true);
 
     const computeLimitIx = new TransactionInstruction({
       programId: COMPUTE_BUDGET_PROGRAM_ID,
@@ -1429,7 +1691,7 @@ export class ZkServiceExtension {
    */
   private async saveNotes(): Promise<void> {
     try {
-      // Save our notes
+      // Save our notes (including saved Merkle proofs for instant unshield)
       const serializedNotes = this.notes.map(note => ({
         amount: note.amount.toString(),
         ownerPubkey: note.ownerPubkey.toString(),
@@ -1437,6 +1699,9 @@ export class ZkServiceExtension {
         tokenMint: note.tokenMint.toString(),
         commitment: note.commitment.toString(),
         leafIndex: note.leafIndex,
+        merklePathElements: note.merklePathElements?.map(e => e.toString()),
+        merklePathIndices: note.merklePathIndices,
+        merkleRoot: note.merkleRoot?.toString(),
       }));
 
       // Save ALL tree leaves (commitments) to reconstruct the full tree
@@ -1484,13 +1749,16 @@ export class ZkServiceExtension {
           const parsed = JSON.parse(result.zk_notes);
 
           this.notes = parsed.map((noteData: any) => {
-            const note = {
+            const note: Note = {
               amount: BigInt(noteData.amount),
               ownerPubkey: BigInt(noteData.ownerPubkey),
               randomness: BigInt(noteData.randomness),
               tokenMint: BigInt(noteData.tokenMint),
               commitment: BigInt(noteData.commitment),
               leafIndex: noteData.leafIndex,
+              merklePathElements: noteData.merklePathElements?.map((e: string) => BigInt(e)),
+              merklePathIndices: noteData.merklePathIndices,
+              merkleRoot: noteData.merkleRoot ? BigInt(noteData.merkleRoot) : undefined,
             };
 
             // Validate and correct leaf index if needed
@@ -1516,6 +1784,9 @@ export class ZkServiceExtension {
             tokenMint: BigInt(noteData.tokenMint),
             commitment: BigInt(noteData.commitment),
             leafIndex: noteData.leafIndex,
+            merklePathElements: noteData.merklePathElements?.map((e: string) => BigInt(e)),
+            merklePathIndices: noteData.merklePathIndices,
+            merkleRoot: noteData.merkleRoot ? BigInt(noteData.merkleRoot) : undefined,
           }));
         }
       }
@@ -2293,7 +2564,8 @@ export class ZkServiceExtension {
     this.prover.terminate();
     this.prover = new ClientProver();
 
-    await chrome.storage.local.remove(['zk_notes', 'zk_tree_leaves', 'zk_last_scan_signature']);
+    this._cachedSubtrees = null;
+    await chrome.storage.local.remove(['zk_notes', 'zk_tree_leaves', 'zk_last_scan_signature', 'zk_local_subtrees']);
   }
 }
 

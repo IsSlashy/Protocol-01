@@ -18,8 +18,8 @@ const downloadOptions = [
     platform: "Chrome Extension",
     icon: Chrome,
     description: "Instant Download ZIP",
-    filename: "P01-Extension-v0.1.1.zip",
-    link: "/downloads/P01-Extension-v0.1.1.zip",
+    filename: "P01-Extension-v0.2.0.zip",
+    link: "/downloads/P01-Extension-v0.2.0.zip",
     size: "9.6 MB",
   },
 ];
