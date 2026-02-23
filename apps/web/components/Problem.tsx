@@ -2,33 +2,81 @@
 
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
-import { useRef } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Eye, Database, Network, AlertTriangle } from "lucide-react";
+
+// ─── CountUp Animation ───
+function CountUp({
+  end,
+  prefix = "",
+  suffix = "",
+  decimals = 0,
+  duration = 2000,
+  trigger,
+}: {
+  end: number;
+  prefix?: string;
+  suffix?: string;
+  decimals?: number;
+  duration?: number;
+  trigger: boolean;
+}) {
+  const [value, setValue] = useState(0);
+  const hasStarted = useRef(false);
+
+  useEffect(() => {
+    if (!trigger || hasStarted.current) return;
+    hasStarted.current = true;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+      setValue(eased * end);
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, [trigger, end, duration]);
+
+  return (
+    <>
+      {prefix}
+      {decimals > 0 ? value.toFixed(decimals) : Math.floor(value)}
+      {suffix}
+    </>
+  );
+}
 
 const stats = [
   {
     icon: Eye,
     value: "100%",
+    countUp: { end: 100, suffix: "%" },
     label: "of blockchain transactions are public",
-    description: "Every transfer you make is permanently recorded and visible to anyone",
+    description:
+      "Every transfer you make is permanently recorded and visible to anyone",
   },
   {
     icon: Database,
     value: "73%",
+    countUp: { end: 73, suffix: "%" },
     label: "of users have been deanonymized",
-    description: "Blockchain analytics can link your wallet to your real identity",
+    description:
+      "Blockchain analytics can link your wallet to your real identity",
   },
   {
     icon: Network,
     value: "24/7",
+    countUp: undefined,
     label: "surveillance by governments & corporations",
     description: "Your financial activity is constantly monitored and analyzed",
   },
   {
     icon: AlertTriangle,
     value: "$4.3B",
+    countUp: { end: 4.3, prefix: "$", suffix: "B", decimals: 1 },
     label: "stolen through wallet tracking",
-    description: "Bad actors use public data to target high-value wallets",
+    description:
+      "Bad actors use public data to target high-value wallets",
   },
 ];
 
@@ -78,7 +126,10 @@ export default function Problem() {
           </h2>
           <div className="section-subtitle space-y-1">
             <p>Traditional blockchains offer pseudonymity, not privacy.</p>
-            <p>Every transaction you make creates a permanent trail that can be traced back to you.</p>
+            <p>
+              Every transaction you make creates a permanent trail that can be
+              traced back to you.
+            </p>
           </div>
         </motion.div>
 
@@ -100,7 +151,11 @@ export default function Problem() {
                 <stat.icon size={24} />
               </div>
               <div className="text-4xl font-bold font-display text-white mb-2">
-                {stat.value}
+                {stat.countUp ? (
+                  <CountUp {...stat.countUp} trigger={isInView} />
+                ) : (
+                  stat.value
+                )}
               </div>
               <div className="text-p01-text-muted text-sm font-medium mb-2">
                 {stat.label}
@@ -168,11 +223,15 @@ export default function Problem() {
                   <div className="space-y-3 font-mono text-sm">
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />
-                      <span className="blur-sm">????...???? sent ??? SOL</span>
+                      <span className="blur-sm">
+                        ????...???? sent ??? SOL
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />
-                      <span className="blur-sm">????...???? received ??? USDC</span>
+                      <span className="blur-sm">
+                        ????...???? received ??? USDC
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />
