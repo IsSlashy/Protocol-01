@@ -55,8 +55,8 @@ describe('CTA -- Download section and conversion funnel', () => {
 
     it('links to the correct Chrome Extension ZIP file', () => {
       const chromeLink = screen.getByText('Chrome Extension').closest('a');
-      expect(chromeLink).toHaveAttribute('href', '/downloads/P01-Extension-v0.1.1.zip');
-      expect(chromeLink).toHaveAttribute('download', 'P01-Extension-v0.1.1.zip');
+      expect(chromeLink).toHaveAttribute('href', '/downloads/P01-Extension-v0.2.0.zip');
+      expect(chromeLink).toHaveAttribute('download', 'P01-Extension-v0.2.0.zip');
     });
   });
 
