@@ -945,7 +945,7 @@ export const useShieldedStore = create<ShieldedState>()(
 
         try {
           // Use the relayer URL from environment or default
-          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'http://localhost:3000';
+          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://p01-relayer-production.up.railway.app';
           const response = await fetch(`${RELAYER_URL}/relay/stealth-payments?limit=100`);
 
           if (!response.ok) {
