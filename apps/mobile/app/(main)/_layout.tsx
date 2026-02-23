@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,12 +26,14 @@ export default function MainLayout() {
     },
   });
 
-  // Initialize wallet
+  // Initialize wallet — only once
+  const initRef = React.useRef(false);
   useEffect(() => {
-    if (!initialized) {
+    if (!initialized && !initRef.current) {
+      initRef.current = true;
       initialize();
     }
-  }, [initialized, initialize]);
+  }, [initialized]);
 
   return (
     <Tabs
@@ -91,6 +93,7 @@ export default function MainLayout() {
       <Tabs.Screen
         name="(settings)"
         options={{
+          title: 'Settings',
           href: null, // Hide from tab bar, accessible via header button
         }}
       />

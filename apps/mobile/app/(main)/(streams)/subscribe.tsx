@@ -178,7 +178,7 @@ export default function SubscribeScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
       >
         {/* Service Card */}
@@ -565,7 +565,7 @@ export default function SubscribeScreen() {
       {/* Subscribe Button */}
       <View style={{
         padding: 16,
-        paddingBottom: insets.bottom + 16,
+        paddingBottom: insets.bottom + 100,
         borderTopWidth: 1,
         borderTopColor: COLORS.border,
         backgroundColor: COLORS.void,

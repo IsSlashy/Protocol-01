@@ -564,7 +564,7 @@ const styles = StyleSheet.create({
   bottomSection: {
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
-    paddingBottom: Spacing['3xl'],
+    paddingBottom: 120,
   },
   sendButton: {
     backgroundColor: Colors.primary,

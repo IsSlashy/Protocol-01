@@ -155,7 +155,7 @@ export default function SecuritySettingsScreen() {
       <ScrollView
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* AUTHENTICATION */}
         <SettingsSection title="Authentication">

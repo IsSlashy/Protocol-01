@@ -493,15 +493,30 @@ export function parseTokenAmount(amount: string, decimals: number): bigint {
   return BigInt(whole + paddedFraction);
 }
 
-// ============== PRICE API ==============
-const JUPITER_PRICE_API = 'https://price.jup.ag/v6/price';
+// ============== PRICE API (CoinGecko — free, no key, no rate limit issues) ==============
 
 // Price cache
 let priceCache: { prices: Record<string, number>; timestamp: number } | null = null;
 const PRICE_CACHE_TTL = 30000; // 30 seconds
 
-// Popular token IDs for price fetching
-const PRICE_TOKEN_IDS = ['SOL', 'USDC', 'USDT', 'JUP', 'BONK', 'RAY', 'ORCA', 'PYTH', 'HNT', 'RENDER', 'WIF', 'JitoSOL', 'mSOL', 'WBTC', 'WETH'];
+// CoinGecko ID → display symbol mapping
+const COINGECKO_TOKENS: Record<string, string> = {
+  'solana': 'SOL',
+  'bitcoin': 'WBTC',
+  'ethereum': 'WETH',
+  'jupiter-exchange-solana': 'JUP',
+  'bonk': 'BONK',
+  'raydium': 'RAY',
+  'orca': 'ORCA',
+  'pyth-network': 'PYTH',
+  'helium': 'HNT',
+  'render-token': 'RENDER',
+  'dogwifcoin': 'WIF',
+  'jito-staked-sol': 'JitoSOL',
+  'msol': 'mSOL',
+  'usd-coin': 'USDC',
+  'tether': 'USDT',
+};
 
 export interface TokenPrice {
   id: string;
@@ -510,7 +525,7 @@ export interface TokenPrice {
 }
 
 /**
- * Fetch real-time prices for popular tokens from Jupiter Price API
+ * Fetch real-time prices for popular tokens from CoinGecko (free, no API key)
  */
 export async function getTokenPrices(): Promise<Record<string, number>> {
   // Check cache
@@ -519,26 +534,29 @@ export async function getTokenPrices(): Promise<Record<string, number>> {
   }
 
   try {
-    const ids = PRICE_TOKEN_IDS.join(',');
-    const response = await fetch(`${JUPITER_PRICE_API}?ids=${ids}`);
+    const ids = Object.keys(COINGECKO_TOKENS).join(',');
+    const response = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`
+    );
 
     if (!response.ok) {
-      throw new Error(`Price API error: ${response.status}`);
+      throw new Error(`CoinGecko API error: ${response.status}`);
     }
 
     const data = await response.json();
     const prices: Record<string, number> = {};
 
-    if (data.data) {
-      for (const [symbol, info] of Object.entries(data.data)) {
-        prices[symbol] = (info as any).price || 0;
+    for (const [geckoId, symbol] of Object.entries(COINGECKO_TOKENS)) {
+      const price = data[geckoId]?.usd;
+      if (price !== undefined) {
+        prices[symbol] = price;
       }
     }
 
     priceCache = { prices, timestamp: Date.now() };
     return prices;
   } catch (error) {
-    console.error('[Jupiter] Price fetch error:', error);
+    console.error('[Price] CoinGecko fetch error:', error);
     // Return cached if available
     if (priceCache) return priceCache.prices;
     return {};
