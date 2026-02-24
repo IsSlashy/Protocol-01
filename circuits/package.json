@@ -1,16 +1,35 @@
 {
   "name": "@p01/circuits",
-  "version": "0.1.0",
-  "description": "Zero-knowledge circuits for Protocol 01 shielded transactions",
+  "version": "0.2.0",
+  "description": "Zero-knowledge circuits for Protocol 01 — shielded pool + zkSPL confidential balances",
   "scripts": {
-    "compile": "circom transfer.circom --r1cs --wasm --sym --c -o build",
-    "setup": "snarkjs groth16 setup build/transfer.r1cs pot20_final.ptau build/transfer_0000.zkey",
+    "compile": "circom transfer.circom --r1cs --wasm --sym --c -l node_modules -o build",
+    "setup": "snarkjs groth16 setup build/transfer.r1cs keys/pot20_final.ptau build/transfer_0000.zkey",
     "contribute": "snarkjs zkey contribute build/transfer_0000.zkey build/transfer_0001.zkey --name=\"First contribution\" -v",
     "finalize": "snarkjs zkey beacon build/transfer_0001.zkey build/transfer_final.zkey 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 10 -n=\"Final Beacon phase2\"",
     "export-vk": "snarkjs zkey export verificationkey build/transfer_final.zkey build/verification_key.json",
     "export-solidity": "snarkjs zkey export solidityverifier build/transfer_final.zkey build/verifier.sol",
     "test": "node test/transfer.test.js",
-    "build": "npm run compile && npm run setup && npm run contribute && npm run finalize && npm run export-vk"
+    "build": "npm run compile && npm run setup && npm run contribute && npm run finalize && npm run export-vk",
+
+    "compile:zkspl": "circom confidential_balance.circom --r1cs --wasm --sym -l node_modules -o build",
+    "setup:zkspl": "snarkjs groth16 setup build/confidential_balance.r1cs keys/pot20_final.ptau build/confidential_balance_0000.zkey",
+    "contribute:zkspl": "snarkjs zkey contribute build/confidential_balance_0000.zkey build/confidential_balance_0001.zkey --name=\"First contribution\" -v",
+    "finalize:zkspl": "snarkjs zkey beacon build/confidential_balance_0001.zkey build/confidential_balance_final.zkey 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 10 -n=\"Final Beacon phase2\"",
+    "export-vk:zkspl": "snarkjs zkey export verificationkey build/confidential_balance_final.zkey build/confidential_balance_vk.json",
+    "test:zkspl": "node test/confidential_balance.test.js",
+    "build:zkspl": "npm run compile:zkspl && npm run setup:zkspl && npm run contribute:zkspl && npm run finalize:zkspl && npm run export-vk:zkspl",
+
+    "compile:bproof": "circom balance_proof.circom --r1cs --wasm --sym -l node_modules -o build",
+    "setup:bproof": "snarkjs groth16 setup build/balance_proof.r1cs keys/pot20_final.ptau build/balance_proof_0000.zkey",
+    "contribute:bproof": "snarkjs zkey contribute build/balance_proof_0000.zkey build/balance_proof_0001.zkey --name=\"First contribution\" -v",
+    "finalize:bproof": "snarkjs zkey beacon build/balance_proof_0001.zkey build/balance_proof_final.zkey 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 10 -n=\"Final Beacon phase2\"",
+    "export-vk:bproof": "snarkjs zkey export verificationkey build/balance_proof_final.zkey build/balance_proof_vk.json",
+    "test:bproof": "node test/balance_proof.test.js",
+    "build:bproof": "npm run compile:bproof && npm run setup:bproof && npm run contribute:bproof && npm run finalize:bproof && npm run export-vk:bproof",
+
+    "build:all": "npm run build && npm run build:zkspl && npm run build:bproof",
+    "test:all": "npm run test && npm run test:zkspl && npm run test:bproof"
   },
   "devDependencies": {
     "circomlib": "^2.0.5",
@@ -22,7 +41,9 @@
     "circom",
     "poseidon",
     "merkle-tree",
-    "privacy"
+    "privacy",
+    "confidential-tokens",
+    "zkspl"
   ],
   "author": "Protocol 01 Team",
   "license": "MIT"

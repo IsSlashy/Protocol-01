@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
+import { useConfidentialStore } from '@/shared/store/confidential';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 
 export default function ShieldedWallet() {
@@ -45,6 +46,25 @@ export default function ShieldedWallet() {
     scanStealthPayments,
     sweepAllStealthPayments,
   } = useShieldedStore();
+
+  // Confidential (zkSPL) store
+  const {
+    isInitialized: confInitialized,
+    isLoading: confLoading,
+    displayBalance: confBalance,
+    hasAccount: confHasAccount,
+    pendingCredits: confPendingCredits,
+    initialize: confInitialize,
+  } = useConfidentialStore();
+
+  // Initialize confidential store alongside shielded
+  useEffect(() => {
+    if (publicKey) {
+      confInitialize().catch(err => {
+        console.warn('[ShieldedWallet] Confidential init error:', err);
+      });
+    }
+  }, [publicKey]);
 
   const [showBalance, setShowBalance] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -252,6 +272,69 @@ export default function ShieldedWallet() {
       </header>
 
       <div className="flex-1 overflow-y-auto pb-4">
+        {/* Confidential Balances Card (zkSPL) */}
+        <motion.div
+          initial={{ y: 10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="mx-4 mt-4 bg-gradient-to-r from-p01-cyan/10 to-p01-surface rounded-xl p-4 border border-p01-cyan/20 cursor-pointer hover:border-p01-cyan/40 transition-colors"
+          onClick={() => navigate('/confidential')}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
+                <Shield className="w-5 h-5 text-p01-cyan" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-white font-medium text-sm">Confidential Balances</p>
+                  <span className="text-[9px] font-mono font-medium text-p01-cyan bg-p01-cyan/10 px-1.5 py-0.5 rounded-full border border-p01-cyan/20">
+                    Quantum-Resistant
+                  </span>
+                </div>
+                <p className="text-p01-chrome text-xs mt-0.5">
+                  {confLoading ? (
+                    'Loading...'
+                  ) : confHasAccount ? (
+                    <>
+                      {showBalance ? `${confBalance.toFixed(4)} SOL` : '****'}
+                      {confPendingCredits > 0 && (
+                        <span className="text-p01-cyan ml-2">
+                          {confPendingCredits} pending
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    'zkSPL account-based privacy'
+                  )}
+                </p>
+              </div>
+            </div>
+            <div>
+              {confHasAccount ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('/confidential');
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-p01-void bg-p01-cyan rounded-lg hover:bg-p01-cyan/90 transition-colors"
+                >
+                  Manage
+                </button>
+              ) : (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('/confidential');
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-p01-cyan bg-p01-cyan/10 rounded-lg hover:bg-p01-cyan/20 transition-colors border border-p01-cyan/30"
+                >
+                  Set Up
+                </button>
+              )}
+            </div>
+          </div>
+        </motion.div>
+
         {/* Shielded Balance Card */}
         <motion.div
           initial={{ y: 10, opacity: 0 }}

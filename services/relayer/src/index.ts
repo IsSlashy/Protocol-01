@@ -412,6 +412,144 @@ app.post('/prove', async (req, res) => {
 });
 
 /**
+ * Generate ZK proof for zkSPL confidential_balance circuit
+ * Proxies to Rust prover /prove/zkspl, falls back to snarkjs
+ */
+app.post('/prove/zkspl', async (req, res) => {
+  const startTime = Date.now();
+  const reqId = `prove_zkspl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const { inputs } = req.body;
+    if (!inputs || typeof inputs !== 'object') {
+      return res.status(400).json({ error: 'Missing inputs object' });
+    }
+
+    logger.info(`[${reqId}] zkSPL proof request`, { inputKeys: Object.keys(inputs) });
+
+    const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
+
+    try {
+      logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}/prove/zkspl...`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+
+      const rustResponse = await fetch(`${rustProverUrl}/prove/zkspl`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (rustResponse.ok) {
+        const result = await rustResponse.json() as any;
+        if (result.success && result.proof) {
+          const totalTime = Date.now() - startTime;
+          logger.info(`[${reqId}] Rust prover succeeded for zkSPL`, {
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            publicSignalsCount: result.publicSignals?.length,
+            prover: 'rust-native',
+          });
+          return res.json({
+            success: true,
+            proof: result.proof,
+            publicSignals: result.publicSignals,
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            prover: 'rust-native',
+          });
+        }
+      }
+      const rustError = await rustResponse.text().catch(() => 'unknown');
+      logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
+    } catch (rustErr: any) {
+      logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+    }
+
+    // No snarkjs fallback for zkSPL — circuit files are only available to the Rust prover
+    return res.status(503).json({
+      error: 'Proof generation unavailable',
+      message: 'Rust prover is not available for zkSPL circuit',
+    });
+  } catch (e: any) {
+    const totalTime = Date.now() - startTime;
+    logger.error(`[${reqId}] zkSPL proof generation failed (${totalTime}ms):`, e);
+    res.status(500).json({ error: 'Proof generation failed', message: e.message || 'Unknown error' });
+  }
+});
+
+/**
+ * Generate ZK proof for balance_proof circuit
+ * Proxies to Rust prover /prove/balance-proof, falls back to snarkjs
+ */
+app.post('/prove/balance-proof', async (req, res) => {
+  const startTime = Date.now();
+  const reqId = `prove_bp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const { inputs } = req.body;
+    if (!inputs || typeof inputs !== 'object') {
+      return res.status(400).json({ error: 'Missing inputs object' });
+    }
+
+    logger.info(`[${reqId}] Balance proof request`, { inputKeys: Object.keys(inputs) });
+
+    const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
+
+    try {
+      logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}/prove/balance-proof...`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+
+      const rustResponse = await fetch(`${rustProverUrl}/prove/balance-proof`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (rustResponse.ok) {
+        const result = await rustResponse.json() as any;
+        if (result.success && result.proof) {
+          const totalTime = Date.now() - startTime;
+          logger.info(`[${reqId}] Rust prover succeeded for balance-proof`, {
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            publicSignalsCount: result.publicSignals?.length,
+            prover: 'rust-native',
+          });
+          return res.json({
+            success: true,
+            proof: result.proof,
+            publicSignals: result.publicSignals,
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            prover: 'rust-native',
+          });
+        }
+      }
+      const rustError = await rustResponse.text().catch(() => 'unknown');
+      logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
+    } catch (rustErr: any) {
+      logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+    }
+
+    // No snarkjs fallback for balance-proof — circuit files are only available to the Rust prover
+    return res.status(503).json({
+      error: 'Proof generation unavailable',
+      message: 'Rust prover is not available for balance-proof circuit',
+    });
+  } catch (e: any) {
+    const totalTime = Date.now() - startTime;
+    logger.error(`[${reqId}] Balance proof generation failed (${totalTime}ms):`, e);
+    res.status(500).json({ error: 'Proof generation failed', message: e.message || 'Unknown error' });
+  }
+});
+
+/**
  * Verify a ZK proof off-chain (for debugging)
  * Request body: { proof: { pi_a, pi_b, pi_c }, publicSignals: string[] }
  */

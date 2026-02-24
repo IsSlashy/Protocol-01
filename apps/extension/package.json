@@ -19,6 +19,7 @@
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.4.0",
     "@p01/sdk": "workspace:*",
+    "@p01/zkspl-sdk": "workspace:*",
     "@privy-io/react-auth": "^2.0.0",
     "@solana/spl-memo": "^0.2.5",
     "@solana/spl-token": "^0.4.14",

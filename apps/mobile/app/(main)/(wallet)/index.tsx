@@ -29,6 +29,7 @@ import Animated, {
 import { useWalletStore } from '@/stores/walletStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
+import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 import { useAuth } from '@/providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, Shadows } from '@/constants/theme';
@@ -106,6 +107,11 @@ export default function WalletHomeScreen() {
   const formattedSolBalance = balance ? formatBalance(balance.sol) : '0';
 
   const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
+  const {
+    balances: confidentialBalances,
+    isInitialized: confidentialInitialized,
+  } = useConfidentialStore();
+  const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
 
   // Initialize settings store
   useEffect(() => {
@@ -480,6 +486,37 @@ export default function WalletHomeScreen() {
               </View>
               <View style={styles.shieldedBadge}>
                 <Text style={styles.shieldedBadgeText}>ZK</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={P01.cyan} />
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* Confidential Balance Card */}
+        <Animated.View entering={FadeInUp.delay(375)}>
+          <TouchableOpacity
+            style={styles.confidentialCard}
+            onPress={() => router.push('/(main)/(wallet)/confidential')}
+          >
+            <LinearGradient
+              colors={['rgba(59, 130, 246, 0.15)', 'rgba(57, 197, 187, 0.05)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.confidentialGradient}
+            >
+              <View style={styles.confidentialIconContainer}>
+                <Ionicons name="lock-closed" size={24} color={P01.cyan} />
+              </View>
+              <View style={styles.confidentialContent}>
+                <Text style={styles.confidentialTitle}>Confidential Balance</Text>
+                <Text style={styles.confidentialSubtitle}>
+                  {confidentialInitialized
+                    ? `${confidentialSolBalance.toFixed(4)} SOL confidential`
+                    : 'Set up zkSPL privacy'}
+                </Text>
+              </View>
+              <View style={styles.confidentialBadge}>
+                <Text style={styles.confidentialBadgeText}>zkSPL</Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color={P01.cyan} />
             </LinearGradient>
@@ -939,6 +976,55 @@ const styles = StyleSheet.create({
     marginRight: Spacing.sm,
   },
   shieldedBadgeText: {
+    color: '#39c5bb',
+    fontSize: 10,
+    fontFamily: FontFamily.mono,
+    fontWeight: '600',
+  },
+  confidentialCard: {
+    marginBottom: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+  },
+  confidentialGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+  },
+  confidentialIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  confidentialContent: {
+    flex: 1,
+  },
+  confidentialTitle: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+  },
+  confidentialSubtitle: {
+    color: '#888892',
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    marginTop: 2,
+  },
+  confidentialBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: Spacing.sm,
+  },
+  confidentialBadgeText: {
     color: '#39c5bb',
     fontSize: 10,
     fontFamily: FontFamily.mono,

@@ -62,14 +62,26 @@ pub struct VerifyResponse {
     pub error: Option<String>,
 }
 
+/// Status of a single loaded circuit.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CircuitStatus {
+    pub loaded: bool,
+    pub num_constraints: Option<usize>,
+}
+
 /// Response body for GET /health
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
     pub status: String,
     pub prover_ready: bool,
+    /// Backward-compatible: true if the transfer circuit is loaded.
     pub circuit_loaded: bool,
+    /// Backward-compatible: constraint count for the transfer circuit.
     pub num_constraints: Option<usize>,
+    /// Per-circuit status for all loaded circuits.
+    pub circuits: HashMap<String, CircuitStatus>,
 }
 
 /// Error response
