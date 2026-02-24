@@ -1,0 +1,87 @@
+// ==========================================================================
+// @p01/zkspl-sdk — SDK for Protocol 01 zkSPL Confidential Token Balances
+// ==========================================================================
+
+// Core client
+export { ZkSplClient, type ZkSplClientConfig } from './client';
+
+// Crypto utilities
+export {
+  poseidonHash,
+  createBalanceCommitment,
+  createAmountCommitment,
+  deriveOwnerPubkey,
+  randomSalt,
+  fieldToBytes,
+  bytesToField,
+  pubkeyToField,
+  zeroAmountHash,
+} from './crypto';
+
+// Prover
+export {
+  ZkSplProver,
+  buildBalanceCircuitInputs,
+  buildProofCircuitInputs,
+  snarkjsProofToBytes,
+} from './prover';
+
+// Local state management
+export {
+  LocalStateManager,
+  InMemoryStateStore,
+  type StateStore,
+} from './state';
+
+// Types
+export type {
+  // Field / byte aliases
+  Bytes32,
+  FieldElement,
+
+  // Groth16
+  Groth16Proof,
+
+  // On-chain accounts
+  MintConfigAccount,
+  ConfidentialAccountData,
+  PendingCredit,
+
+  // Circuit inputs
+  ConfidentialBalancePublicInputs,
+  ConfidentialBalancePrivateInputs,
+  BalanceProofPublicInputs,
+  BalanceProofPrivateInputs,
+
+  // Local state
+  LocalAccountState,
+  KnownPendingCredit,
+
+  // Config
+  ProverConfig,
+
+  // Results
+  ZkSplTxResult,
+
+  // Events
+  AccountCreatedEvent,
+  DepositEvent,
+  WithdrawEvent,
+  TransferEvent,
+  ApplyPendingEvent,
+  BalanceProofEvent,
+} from './types';
+
+// Constants
+export {
+  FIELD_MODULUS,
+  ZKSPL_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  PDA_SEEDS,
+  VK_TYPE_BALANCE,
+  VK_TYPE_PROOF,
+  MAX_PENDING_CREDITS,
+  MAX_VIEWER_KEYS,
+  PROOF_GENERATION_TIMEOUT,
+  CIRCUIT_FILES,
+} from './constants';

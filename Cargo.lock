@@ -1184,6 +1184,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01_zkspl"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+ "bytemuck",
+ "sha3",
+ "solana-bn254",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

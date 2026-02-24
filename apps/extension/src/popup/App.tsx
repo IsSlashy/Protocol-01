@@ -26,6 +26,7 @@ import Buy from './pages/Buy';
 import StealthPayments from './pages/StealthPayments';
 import ShieldedWallet from './pages/ShieldedWallet';
 import ShieldedTransfer from './pages/ShieldedTransfer';
+import ConfidentialWallet from './pages/ConfidentialWallet';
 import ConnectDapp from './pages/ConnectDapp';
 import ApproveTransaction from './pages/ApproveTransaction';
 import ApproveSubscription from './pages/ApproveSubscription';
@@ -190,6 +191,7 @@ function App() {
           <Route path="/stealth-payments" element={<StealthPayments />} />
           <Route path="/shielded" element={<ShieldedWallet />} />
           <Route path="/shielded/transfer" element={<ShieldedTransfer />} />
+          <Route path="/confidential" element={<ConfidentialWallet />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />
         </Route>
 
