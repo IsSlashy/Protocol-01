@@ -6,6 +6,7 @@ members = [
     "programs/subscription",
     "programs/whitelist",
     "programs/p01-fee-splitter",
+    "programs/p01_zkspl",
 ]
 
 resolver = "2"

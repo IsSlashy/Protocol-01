@@ -8,6 +8,22 @@ export default function WalletLayout() {
         headerShown: false,
         contentStyle: { backgroundColor: '#0a0a0c' },
       }}
-    />
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="shielded" />
+      <Stack.Screen name="confidential" />
+      <Stack.Screen name="shielded-transfer" />
+      <Stack.Screen name="send" />
+      <Stack.Screen name="send-confirm" />
+      <Stack.Screen name="send-success" />
+      <Stack.Screen name="send-split" />
+      <Stack.Screen name="receive" />
+      <Stack.Screen name="swap" />
+      <Stack.Screen name="buy" />
+      <Stack.Screen name="scan" />
+      <Stack.Screen name="activity" />
+      <Stack.Screen name="view-keys" />
+      <Stack.Screen name="auth-confirm" />
+    </Stack>
   );
 }

@@ -50,10 +50,19 @@ COPY services/relayer/src/ ./src/
 COPY services/relayer/tsconfig.json ./
 
 # Copy circuit files from repo root
+# Transfer circuit (existing)
 COPY circuits/build/transfer_js/transfer.wasm ./circuits/transfer.wasm
 COPY circuits/build/transfer_final.zkey ./circuits/transfer_final.zkey
 COPY circuits/build/verification_key.json ./circuits/verification_key.json
 COPY circuits/build/transfer.r1cs ./circuits/transfer.r1cs
+# Confidential balance circuit (zkSPL)
+COPY circuits/build/confidential_balance_js/confidential_balance.wasm ./circuits/confidential_balance.wasm
+COPY circuits/build/confidential_balance_final.zkey ./circuits/confidential_balance_final.zkey
+COPY circuits/build/confidential_balance.r1cs ./circuits/confidential_balance.r1cs
+# Balance proof circuit (zkSPL)
+COPY circuits/build/balance_proof_js/balance_proof.wasm ./circuits/balance_proof.wasm
+COPY circuits/build/balance_proof_final.zkey ./circuits/balance_proof_final.zkey
+COPY circuits/build/balance_proof.r1cs ./circuits/balance_proof.r1cs
 
 # Build TypeScript
 RUN pnpm build
@@ -71,9 +80,17 @@ ENV PROVER_PORT=3001
 ENV WASM_PATH=/app/circuits/transfer.wasm
 ENV ZKEY_PATH=/app/circuits/transfer_final.zkey
 ENV VERIFICATION_KEY_PATH=/app/circuits/verification_key.json
+# Rust prover circuit paths (CIRCUITS_DIR provides base, per-circuit env overrides)
+ENV CIRCUITS_DIR=/app/circuits
 ENV CIRCUIT_WASM_PATH=/app/circuits/transfer.wasm
 ENV CIRCUIT_R1CS_PATH=/app/circuits/transfer.r1cs
 ENV CIRCUIT_ZKEY_PATH=/app/circuits/transfer_final.zkey
+ENV ZKSPL_WASM_PATH=/app/circuits/confidential_balance.wasm
+ENV ZKSPL_R1CS_PATH=/app/circuits/confidential_balance.r1cs
+ENV ZKSPL_ZKEY_PATH=/app/circuits/confidential_balance_final.zkey
+ENV BALANCE_PROOF_WASM_PATH=/app/circuits/balance_proof.wasm
+ENV BALANCE_PROOF_R1CS_PATH=/app/circuits/balance_proof.r1cs
+ENV BALANCE_PROOF_ZKEY_PATH=/app/circuits/balance_proof_final.zkey
 ENV RUST_PROVER_URL=http://localhost:3001
 ENV SOLANA_RPC_URL=https://api.devnet.solana.com
 
