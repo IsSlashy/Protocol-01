@@ -131,7 +131,7 @@ export default function AgentDashboard() {
 
     const groqKey = config.groqApiKey || process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
     if (!groqKey) {
-      // No API key — can't transcribe
+      Alert.alert('Voice Setup', 'Add a Groq API key in Agent Settings to enable voice transcription.');
       return;
     }
 
@@ -139,22 +139,22 @@ export default function AgentDashboard() {
     try {
       const text = await VoiceService.transcribe(uri, groqKey);
       if (text) {
-        setInputText(text);
-        // Auto-send if configured
+        // Auto-send: skip the text input entirely
         if (config.voiceAutoSend) {
-          setTimeout(() => {
-            const useStreaming = config.provider === 'groq' || config.provider === 'gemma-cloud' || config.provider === 'gemma';
-            if (useStreaming) {
-              sendMessageStreaming(text);
-            } else {
-              sendMessage(text);
-            }
-            setInputText('');
-          }, 100);
+          const useStreaming = config.provider === 'groq' || config.provider === 'gemma-cloud' || config.provider === 'gemma';
+          if (useStreaming) {
+            sendMessageStreaming(text);
+          } else {
+            sendMessage(text);
+          }
+        } else {
+          // Put text in input for user to review/edit before sending
+          setInputText(text);
         }
       }
     } catch (err: any) {
       console.error('[Voice] Transcription failed:', err);
+      Alert.alert('Transcription Failed', err?.message || 'Could not transcribe audio');
     } finally {
       setTranscribing(false);
     }

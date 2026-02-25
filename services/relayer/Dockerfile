@@ -59,10 +59,14 @@ COPY circuits/build/transfer.r1cs ./circuits/transfer.r1cs
 COPY circuits/build/confidential_balance_js/confidential_balance.wasm ./circuits/confidential_balance.wasm
 COPY circuits/build/confidential_balance_final.zkey ./circuits/confidential_balance_final.zkey
 COPY circuits/build/confidential_balance.r1cs ./circuits/confidential_balance.r1cs
+# Confidential balance verification key (zkSPL)
+COPY circuits/build/confidential_balance_vk.json ./circuits/confidential_balance_vk.json
 # Balance proof circuit (zkSPL)
 COPY circuits/build/balance_proof_js/balance_proof.wasm ./circuits/balance_proof.wasm
 COPY circuits/build/balance_proof_final.zkey ./circuits/balance_proof_final.zkey
 COPY circuits/build/balance_proof.r1cs ./circuits/balance_proof.r1cs
+# Balance proof verification key (zkSPL)
+COPY circuits/build/balance_proof_vk.json ./circuits/balance_proof_vk.json
 
 # Build TypeScript
 RUN pnpm build
@@ -91,6 +95,8 @@ ENV ZKSPL_ZKEY_PATH=/app/circuits/confidential_balance_final.zkey
 ENV BALANCE_PROOF_WASM_PATH=/app/circuits/balance_proof.wasm
 ENV BALANCE_PROOF_R1CS_PATH=/app/circuits/balance_proof.r1cs
 ENV BALANCE_PROOF_ZKEY_PATH=/app/circuits/balance_proof_final.zkey
+ENV ZKSPL_VK_PATH=/app/circuits/confidential_balance_vk.json
+ENV BALANCE_PROOF_VK_PATH=/app/circuits/balance_proof_vk.json
 ENV RUST_PROVER_URL=http://localhost:3001
 ENV SOLANA_RPC_URL=https://api.devnet.solana.com
 

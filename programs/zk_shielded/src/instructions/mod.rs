@@ -5,6 +5,9 @@ pub mod transfer;
 pub mod unshield;
 pub mod update_vk;
 pub mod transfer_via_relayer;
+pub mod init_denominated_pool;
+pub mod shield_denominated;
+pub mod unshield_denominated;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -14,3 +17,6 @@ pub use transfer::*;
 pub use unshield::*;
 pub use update_vk::*;
 pub use transfer_via_relayer::*;
+pub use init_denominated_pool::*;
+pub use shield_denominated::*;
+pub use unshield_denominated::*;

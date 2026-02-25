@@ -51,6 +51,14 @@ const CONFIG = {
   verificationKeyPath: process.env.VERIFICATION_KEY_PATH || path.resolve(__dirname, '../../../circuits/build/verification_key.json'),
   wasmPath: process.env.WASM_PATH || path.resolve(__dirname, '../../../circuits/build/transfer_js/transfer.wasm'),
   zkeyPath: process.env.ZKEY_PATH || path.resolve(__dirname, '../../../circuits/build/transfer_final.zkey'),
+  // zkSPL confidential_balance circuit
+  zkSplVkPath: process.env.ZKSPL_VK_PATH || path.resolve(__dirname, '../../../circuits/build/confidential_balance_vk.json'),
+  zkSplWasmPath: process.env.ZKSPL_WASM_PATH || path.resolve(__dirname, '../../../circuits/build/confidential_balance_js/confidential_balance.wasm'),
+  zkSplZkeyPath: process.env.ZKSPL_ZKEY_PATH || path.resolve(__dirname, '../../../circuits/build/confidential_balance_final.zkey'),
+  // zkSPL balance_proof circuit
+  balanceProofVkPath: process.env.BALANCE_PROOF_VK_PATH || path.resolve(__dirname, '../../../circuits/build/balance_proof_vk.json'),
+  balanceProofWasmPath: process.env.BALANCE_PROOF_WASM_PATH || path.resolve(__dirname, '../../../circuits/build/balance_proof_js/balance_proof.wasm'),
+  balanceProofZkeyPath: process.env.BALANCE_PROOF_ZKEY_PATH || path.resolve(__dirname, '../../../circuits/build/balance_proof_final.zkey'),
 };
 
 // Load verification key at startup
@@ -66,6 +74,32 @@ try {
   }
 } catch (e) {
   logger.error('Failed to load verification key:', e);
+}
+
+// Load zkSPL confidential_balance verification key
+let zkSplVk: any = null;
+try {
+  if (fs.existsSync(CONFIG.zkSplVkPath)) {
+    zkSplVk = JSON.parse(fs.readFileSync(CONFIG.zkSplVkPath, 'utf8'));
+    logger.info(`Loaded zkSPL VK from ${CONFIG.zkSplVkPath} (nPublic: ${zkSplVk.nPublic})`);
+  } else {
+    logger.warn(`zkSPL VK not found at ${CONFIG.zkSplVkPath}`);
+  }
+} catch (e) {
+  logger.error('Failed to load zkSPL VK:', e);
+}
+
+// Load balance_proof verification key
+let balanceProofVk: any = null;
+try {
+  if (fs.existsSync(CONFIG.balanceProofVkPath)) {
+    balanceProofVk = JSON.parse(fs.readFileSync(CONFIG.balanceProofVkPath, 'utf8'));
+    logger.info(`Loaded balance-proof VK from ${CONFIG.balanceProofVkPath} (nPublic: ${balanceProofVk.nPublic})`);
+  } else {
+    logger.warn(`Balance-proof VK not found at ${CONFIG.balanceProofVkPath}`);
+  }
+} catch (e) {
+  logger.error('Failed to load balance-proof VK:', e);
 }
 
 // Relayer state
@@ -221,6 +255,10 @@ app.get('/health', async (req, res) => {
     zkVerification: verificationKey ? 'enabled' : 'disabled (mock)',
     vkProtocol: verificationKey?.protocol || null,
     vkNPublic: verificationKey?.nPublic || null,
+    zkSplVerification: zkSplVk ? 'enabled' : 'disabled',
+    zkSplVkNPublic: zkSplVk?.nPublic || null,
+    balanceProofVerification: balanceProofVk ? 'enabled' : 'disabled',
+    balanceProofVkNPublic: balanceProofVk?.nPublic || null,
     rustProver: rustProverStatus,
     commitmentIndexer: commitmentIndexer.status,
     indexedCommitments: commitmentIndexer.leafCount,
@@ -411,12 +449,374 @@ app.post('/prove', async (req, res) => {
   }
 });
 
+// =============================================================================
+// zkSPL PROOF GENERATION INFRASTRUCTURE
+// =============================================================================
+
 /**
- * Generate ZK proof for zkSPL confidential_balance circuit
- * Proxies to Rust prover /prove/zkspl, falls back to snarkjs
+ * Verify a zkSPL confidential_balance proof off-chain using snarkjs.
+ * Returns true if verification passes, false otherwise.
+ */
+async function verifyZkSplProof(proof: any, publicSignals: string[]): Promise<boolean> {
+  try {
+    if (!zkSplVk) {
+      logger.warn('No zkSPL VK loaded — skipping verification');
+      return false;
+    }
+    if (!proof?.pi_a || !proof?.pi_b || !proof?.pi_c) {
+      logger.error('Invalid zkSPL proof format — missing pi_a, pi_b, or pi_c');
+      return false;
+    }
+    if (!Array.isArray(publicSignals) || publicSignals.length !== zkSplVk.nPublic) {
+      logger.error(`zkSPL public signals count mismatch: got ${publicSignals?.length}, expected ${zkSplVk.nPublic}`);
+      return false;
+    }
+    const valid = await snarkjs.groth16.verify(zkSplVk, publicSignals, proof);
+    logger.info(`zkSPL proof verification: ${valid ? 'VALID' : 'INVALID'}`);
+    return valid;
+  } catch (e) {
+    logger.error('zkSPL proof verification error:', e);
+    return false;
+  }
+}
+
+/**
+ * Verify a balance_proof proof off-chain using snarkjs.
+ */
+async function verifyBalanceProofOffChain(proof: any, publicSignals: string[]): Promise<boolean> {
+  try {
+    if (!balanceProofVk) {
+      logger.warn('No balance-proof VK loaded — skipping verification');
+      return false;
+    }
+    if (!proof?.pi_a || !proof?.pi_b || !proof?.pi_c) {
+      logger.error('Invalid balance-proof format — missing pi_a, pi_b, or pi_c');
+      return false;
+    }
+    if (!Array.isArray(publicSignals) || publicSignals.length !== balanceProofVk.nPublic) {
+      logger.error(`balance-proof public signals count mismatch: got ${publicSignals?.length}, expected ${balanceProofVk.nPublic}`);
+      return false;
+    }
+    const valid = await snarkjs.groth16.verify(balanceProofVk, publicSignals, proof);
+    logger.info(`balance-proof verification: ${valid ? 'VALID' : 'INVALID'}`);
+    return valid;
+  } catch (e) {
+    logger.error('balance-proof verification error:', e);
+    return false;
+  }
+}
+
+/**
+ * Parse circuit inputs: convert JSON-encoded arrays in string values.
+ */
+function parseCircuitInputs(inputs: Record<string, any>): Record<string, any> {
+  const parsed: Record<string, any> = {};
+  for (const [key, value] of Object.entries(inputs)) {
+    if (typeof value === 'string' && value.startsWith('[')) {
+      try { parsed[key] = JSON.parse(value); } catch { parsed[key] = value; }
+    } else {
+      parsed[key] = value;
+    }
+  }
+  return parsed;
+}
+
+/**
+ * Generate a snarkjs proof locally for the confidential_balance circuit.
+ * Used as a fallback when the Rust prover is unavailable.
+ */
+async function generateZkSplProofLocal(
+  inputs: Record<string, any>,
+  reqId: string
+): Promise<{ proof: any; publicSignals: string[]; proofTimeMs: number } | null> {
+  if (!fs.existsSync(CONFIG.zkSplWasmPath)) {
+    logger.warn(`[${reqId}] zkSPL WASM not found at ${CONFIG.zkSplWasmPath}`);
+    return null;
+  }
+  if (!fs.existsSync(CONFIG.zkSplZkeyPath)) {
+    logger.warn(`[${reqId}] zkSPL ZKEY not found at ${CONFIG.zkSplZkeyPath}`);
+    return null;
+  }
+
+  const parsedInputs = parseCircuitInputs(inputs);
+  logger.info(`[${reqId}] Starting snarkjs zkSPL proof generation...`);
+  const proofStart = Date.now();
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    parsedInputs,
+    CONFIG.zkSplWasmPath,
+    CONFIG.zkSplZkeyPath
+  );
+  const proofTimeMs = Date.now() - proofStart;
+  logger.info(`[${reqId}] snarkjs zkSPL proof generated in ${proofTimeMs}ms`);
+  return { proof, publicSignals, proofTimeMs };
+}
+
+/**
+ * Generate a snarkjs proof locally for the balance_proof circuit.
+ * Used as a fallback when the Rust prover is unavailable.
+ */
+async function generateBalanceProofLocal(
+  inputs: Record<string, any>,
+  reqId: string
+): Promise<{ proof: any; publicSignals: string[]; proofTimeMs: number } | null> {
+  if (!fs.existsSync(CONFIG.balanceProofWasmPath)) {
+    logger.warn(`[${reqId}] balance-proof WASM not found at ${CONFIG.balanceProofWasmPath}`);
+    return null;
+  }
+  if (!fs.existsSync(CONFIG.balanceProofZkeyPath)) {
+    logger.warn(`[${reqId}] balance-proof ZKEY not found at ${CONFIG.balanceProofZkeyPath}`);
+    return null;
+  }
+
+  const parsedInputs = parseCircuitInputs(inputs);
+  logger.info(`[${reqId}] Starting snarkjs balance-proof generation...`);
+  const proofStart = Date.now();
+  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+    parsedInputs,
+    CONFIG.balanceProofWasmPath,
+    CONFIG.balanceProofZkeyPath
+  );
+  const proofTimeMs = Date.now() - proofStart;
+  logger.info(`[${reqId}] snarkjs balance-proof generated in ${proofTimeMs}ms`);
+  return { proof, publicSignals, proofTimeMs };
+}
+
+/**
+ * Core handler for confidential_balance proof generation.
+ *
+ * Strategy:
+ *   1. Try Rust prover (fast, ~3-8s)
+ *   2. Verify Rust proof with snarkjs VK (safety net — catches CircomReduction bugs)
+ *   3. If Rust prover fails or proof is invalid, fall back to snarkjs (slower, 30-120s)
+ *
+ * Used by /prove/zkspl and /api/zkspl/prove/{deposit,withdraw,transfer}.
+ */
+async function handleZkSplProofRequest(
+  inputs: Record<string, any>,
+  reqId: string,
+  operationLabel: string
+): Promise<{
+  success: boolean;
+  proof?: any;
+  publicSignals?: string[];
+  proofTimeMs?: number;
+  totalTimeMs?: number;
+  prover?: string;
+  error?: string;
+  statusCode: number;
+}> {
+  const startTime = Date.now();
+
+  logger.info(`[${reqId}] zkSPL ${operationLabel} proof request`, {
+    inputKeys: Object.keys(inputs),
+  });
+
+  const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
+
+  // --- Attempt 1: Rust native prover ---
+  try {
+    logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}/prove/zkspl...`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    const rustResponse = await fetch(`${rustProverUrl}/prove/zkspl`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (rustResponse.ok) {
+      const result = await rustResponse.json() as any;
+      if (result.success && result.proof) {
+        // Safety net: verify Rust proof with snarkjs before returning
+        const proofValid = await verifyZkSplProof(result.proof, result.publicSignals);
+        if (!proofValid) {
+          logger.warn(`[${reqId}] Rust prover returned INVALID zkSPL proof — falling back to snarkjs`);
+          // Fall through to snarkjs fallback
+        } else {
+          const totalTime = Date.now() - startTime;
+          logger.info(`[${reqId}] Rust prover succeeded for zkSPL ${operationLabel} (verified)`, {
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            publicSignalsCount: result.publicSignals?.length,
+            prover: 'rust-native',
+          });
+          return {
+            success: true,
+            proof: result.proof,
+            publicSignals: result.publicSignals,
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            prover: 'rust-native',
+            statusCode: 200,
+          };
+        }
+      }
+    }
+
+    const rustError = await rustResponse.text().catch(() => 'unknown');
+    logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
+  } catch (rustErr: any) {
+    logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+  }
+
+  // --- Attempt 2: snarkjs fallback ---
+  logger.info(`[${reqId}] Falling back to snarkjs for zkSPL ${operationLabel}...`);
+  try {
+    const localResult = await generateZkSplProofLocal(inputs, reqId);
+    if (localResult) {
+      const totalTime = Date.now() - startTime;
+      logger.info(`[${reqId}] snarkjs zkSPL ${operationLabel} proof succeeded`, {
+        proofTimeMs: localResult.proofTimeMs,
+        totalTimeMs: totalTime,
+        publicSignalsCount: localResult.publicSignals.length,
+        prover: 'snarkjs',
+      });
+      return {
+        success: true,
+        proof: localResult.proof,
+        publicSignals: localResult.publicSignals,
+        proofTimeMs: localResult.proofTimeMs,
+        totalTimeMs: totalTime,
+        prover: 'snarkjs',
+        statusCode: 200,
+      };
+    }
+  } catch (snarkErr: any) {
+    logger.error(`[${reqId}] snarkjs zkSPL fallback failed: ${snarkErr.message}`);
+  }
+
+  return {
+    success: false,
+    error: 'Proof generation unavailable — both Rust prover and snarkjs fallback failed',
+    statusCode: 503,
+  };
+}
+
+/**
+ * Core handler for balance_proof proof generation.
+ *
+ * Strategy:
+ *   1. Try Rust prover (fast, ~3-8s)
+ *   2. Verify Rust proof with snarkjs VK (safety net)
+ *   3. If Rust prover fails or proof is invalid, fall back to snarkjs
+ *
+ * Used by /prove/balance-proof and /api/zkspl/prove/balance-proof.
+ */
+async function handleBalanceProofRequest(
+  inputs: Record<string, any>,
+  reqId: string
+): Promise<{
+  success: boolean;
+  proof?: any;
+  publicSignals?: string[];
+  proofTimeMs?: number;
+  totalTimeMs?: number;
+  prover?: string;
+  error?: string;
+  statusCode: number;
+}> {
+  const startTime = Date.now();
+
+  logger.info(`[${reqId}] balance-proof request`, {
+    inputKeys: Object.keys(inputs),
+  });
+
+  const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
+
+  // --- Attempt 1: Rust native prover ---
+  try {
+    logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}/prove/balance-proof...`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    const rustResponse = await fetch(`${rustProverUrl}/prove/balance-proof`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (rustResponse.ok) {
+      const result = await rustResponse.json() as any;
+      if (result.success && result.proof) {
+        // Safety net: verify Rust proof with snarkjs before returning
+        const proofValid = await verifyBalanceProofOffChain(result.proof, result.publicSignals);
+        if (!proofValid) {
+          logger.warn(`[${reqId}] Rust prover returned INVALID balance-proof — falling back to snarkjs`);
+          // Fall through to snarkjs fallback
+        } else {
+          const totalTime = Date.now() - startTime;
+          logger.info(`[${reqId}] Rust prover succeeded for balance-proof (verified)`, {
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            publicSignalsCount: result.publicSignals?.length,
+            prover: 'rust-native',
+          });
+          return {
+            success: true,
+            proof: result.proof,
+            publicSignals: result.publicSignals,
+            proofTimeMs: result.proofTimeMs,
+            totalTimeMs: totalTime,
+            prover: 'rust-native',
+            statusCode: 200,
+          };
+        }
+      }
+    }
+
+    const rustError = await rustResponse.text().catch(() => 'unknown');
+    logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
+  } catch (rustErr: any) {
+    logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+  }
+
+  // --- Attempt 2: snarkjs fallback ---
+  logger.info(`[${reqId}] Falling back to snarkjs for balance-proof...`);
+  try {
+    const localResult = await generateBalanceProofLocal(inputs, reqId);
+    if (localResult) {
+      const totalTime = Date.now() - startTime;
+      logger.info(`[${reqId}] snarkjs balance-proof succeeded`, {
+        proofTimeMs: localResult.proofTimeMs,
+        totalTimeMs: totalTime,
+        publicSignalsCount: localResult.publicSignals.length,
+        prover: 'snarkjs',
+      });
+      return {
+        success: true,
+        proof: localResult.proof,
+        publicSignals: localResult.publicSignals,
+        proofTimeMs: localResult.proofTimeMs,
+        totalTimeMs: totalTime,
+        prover: 'snarkjs',
+        statusCode: 200,
+      };
+    }
+  } catch (snarkErr: any) {
+    logger.error(`[${reqId}] snarkjs balance-proof fallback failed: ${snarkErr.message}`);
+  }
+
+  return {
+    success: false,
+    error: 'Proof generation unavailable — both Rust prover and snarkjs fallback failed',
+    statusCode: 503,
+  };
+}
+
+// =============================================================================
+// zkSPL PROOF ROUTES — Generic endpoints
+// =============================================================================
+
+/**
+ * POST /prove/zkspl — Generate proof for the confidential_balance circuit.
+ * Proxies to Rust prover, verifies with snarkjs, falls back to snarkjs.
  */
 app.post('/prove/zkspl', async (req, res) => {
-  const startTime = Date.now();
   const reqId = `prove_zkspl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   try {
@@ -425,67 +825,31 @@ app.post('/prove/zkspl', async (req, res) => {
       return res.status(400).json({ error: 'Missing inputs object' });
     }
 
-    logger.info(`[${reqId}] zkSPL proof request`, { inputKeys: Object.keys(inputs) });
+    const result = await handleZkSplProofRequest(inputs, reqId, 'generic');
 
-    const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
-
-    try {
-      logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}/prove/zkspl...`);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
-
-      const rustResponse = await fetch(`${rustProverUrl}/prove/zkspl`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (rustResponse.ok) {
-        const result = await rustResponse.json() as any;
-        if (result.success && result.proof) {
-          const totalTime = Date.now() - startTime;
-          logger.info(`[${reqId}] Rust prover succeeded for zkSPL`, {
-            proofTimeMs: result.proofTimeMs,
-            totalTimeMs: totalTime,
-            publicSignalsCount: result.publicSignals?.length,
-            prover: 'rust-native',
-          });
-          return res.json({
-            success: true,
-            proof: result.proof,
-            publicSignals: result.publicSignals,
-            proofTimeMs: result.proofTimeMs,
-            totalTimeMs: totalTime,
-            prover: 'rust-native',
-          });
-        }
-      }
-      const rustError = await rustResponse.text().catch(() => 'unknown');
-      logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
-    } catch (rustErr: any) {
-      logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+    if (!result.success) {
+      return res.status(result.statusCode).json({ error: result.error });
     }
 
-    // No snarkjs fallback for zkSPL — circuit files are only available to the Rust prover
-    return res.status(503).json({
-      error: 'Proof generation unavailable',
-      message: 'Rust prover is not available for zkSPL circuit',
+    return res.json({
+      success: true,
+      proof: result.proof,
+      publicSignals: result.publicSignals,
+      proofTimeMs: result.proofTimeMs,
+      totalTimeMs: result.totalTimeMs,
+      prover: result.prover,
     });
   } catch (e: any) {
-    const totalTime = Date.now() - startTime;
-    logger.error(`[${reqId}] zkSPL proof generation failed (${totalTime}ms):`, e);
+    logger.error(`[${reqId}] zkSPL proof generation failed:`, e);
     res.status(500).json({ error: 'Proof generation failed', message: e.message || 'Unknown error' });
   }
 });
 
 /**
- * Generate ZK proof for balance_proof circuit
- * Proxies to Rust prover /prove/balance-proof, falls back to snarkjs
+ * POST /prove/balance-proof — Generate proof for the balance_proof circuit.
+ * Proxies to Rust prover, verifies with snarkjs, falls back to snarkjs.
  */
 app.post('/prove/balance-proof', async (req, res) => {
-  const startTime = Date.now();
   const reqId = `prove_bp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   try {
@@ -494,58 +858,199 @@ app.post('/prove/balance-proof', async (req, res) => {
       return res.status(400).json({ error: 'Missing inputs object' });
     }
 
-    logger.info(`[${reqId}] Balance proof request`, { inputKeys: Object.keys(inputs) });
+    const result = await handleBalanceProofRequest(inputs, reqId);
 
-    const rustProverUrl = process.env.RUST_PROVER_URL || 'http://localhost:3001';
-
-    try {
-      logger.info(`[${reqId}] Trying Rust prover at ${rustProverUrl}/prove/balance-proof...`);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
-
-      const rustResponse = await fetch(`${rustProverUrl}/prove/balance-proof`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (rustResponse.ok) {
-        const result = await rustResponse.json() as any;
-        if (result.success && result.proof) {
-          const totalTime = Date.now() - startTime;
-          logger.info(`[${reqId}] Rust prover succeeded for balance-proof`, {
-            proofTimeMs: result.proofTimeMs,
-            totalTimeMs: totalTime,
-            publicSignalsCount: result.publicSignals?.length,
-            prover: 'rust-native',
-          });
-          return res.json({
-            success: true,
-            proof: result.proof,
-            publicSignals: result.publicSignals,
-            proofTimeMs: result.proofTimeMs,
-            totalTimeMs: totalTime,
-            prover: 'rust-native',
-          });
-        }
-      }
-      const rustError = await rustResponse.text().catch(() => 'unknown');
-      logger.warn(`[${reqId}] Rust prover returned non-OK (${rustResponse.status}): ${rustError}`);
-    } catch (rustErr: any) {
-      logger.warn(`[${reqId}] Rust prover unavailable: ${rustErr.message}`);
+    if (!result.success) {
+      return res.status(result.statusCode).json({ error: result.error });
     }
 
-    // No snarkjs fallback for balance-proof — circuit files are only available to the Rust prover
-    return res.status(503).json({
-      error: 'Proof generation unavailable',
-      message: 'Rust prover is not available for balance-proof circuit',
+    return res.json({
+      success: true,
+      proof: result.proof,
+      publicSignals: result.publicSignals,
+      proofTimeMs: result.proofTimeMs,
+      totalTimeMs: result.totalTimeMs,
+      prover: result.prover,
     });
   } catch (e: any) {
-    const totalTime = Date.now() - startTime;
-    logger.error(`[${reqId}] Balance proof generation failed (${totalTime}ms):`, e);
+    logger.error(`[${reqId}] Balance proof generation failed:`, e);
     res.status(500).json({ error: 'Proof generation failed', message: e.message || 'Unknown error' });
+  }
+});
+
+// =============================================================================
+// zkSPL OPERATION-SPECIFIC PROOF ROUTES — /api/zkspl/prove/*
+//
+// Called by the SDK's proveViaRelayer method. Each operation (deposit, withdraw,
+// transfer) uses the confidential_balance circuit; balance-proof uses the
+// balance_proof circuit.
+//
+// All routes share the same pattern:
+//   1. Try Rust prover -> verify with snarkjs VK -> return if valid
+//   2. Fall back to local snarkjs proof generation
+//
+// Request:  { inputs: Record<string, string> }
+// Response: { success, proof, publicSignals, proofTimeMs, totalTimeMs, prover, operation }
+// =============================================================================
+
+/**
+ * POST /api/zkspl/prove/deposit — Generate proof for a confidential deposit.
+ *
+ * Deposit: public_credit = deposit amount, public_debit = 0, amount = 0 (no private transfer).
+ * Uses the confidential_balance circuit.
+ */
+app.post('/api/zkspl/prove/deposit', async (req, res) => {
+  const reqId = `zkspl_deposit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const { inputs } = req.body;
+    if (!inputs || typeof inputs !== 'object') {
+      return res.status(400).json({ error: 'Missing inputs object' });
+    }
+
+    // Informational validation — the circuit will enforce the actual constraints
+    if (inputs.public_credit && inputs.public_credit !== '0' && inputs.public_debit && inputs.public_debit !== '0') {
+      logger.warn(`[${reqId}] Deposit should have public_debit=0, got ${inputs.public_debit}`);
+    }
+
+    const result = await handleZkSplProofRequest(inputs, reqId, 'deposit');
+
+    if (!result.success) {
+      return res.status(result.statusCode).json({ error: result.error });
+    }
+
+    return res.json({
+      success: true,
+      proof: result.proof,
+      publicSignals: result.publicSignals,
+      proofTimeMs: result.proofTimeMs,
+      totalTimeMs: result.totalTimeMs,
+      prover: result.prover,
+      operation: 'deposit',
+    });
+  } catch (e: any) {
+    logger.error(`[${reqId}] Deposit proof failed:`, e);
+    res.status(500).json({ error: 'Deposit proof generation failed', message: e.message || 'Unknown error' });
+  }
+});
+
+/**
+ * POST /api/zkspl/prove/withdraw — Generate proof for a confidential withdrawal.
+ *
+ * Withdraw: public_debit = withdraw amount, public_credit = 0, amount = 0 (no private transfer).
+ * Uses the confidential_balance circuit.
+ */
+app.post('/api/zkspl/prove/withdraw', async (req, res) => {
+  const reqId = `zkspl_withdraw_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const { inputs } = req.body;
+    if (!inputs || typeof inputs !== 'object') {
+      return res.status(400).json({ error: 'Missing inputs object' });
+    }
+
+    if (inputs.public_debit && inputs.public_debit !== '0' && inputs.public_credit && inputs.public_credit !== '0') {
+      logger.warn(`[${reqId}] Withdraw should have public_credit=0, got ${inputs.public_credit}`);
+    }
+
+    const result = await handleZkSplProofRequest(inputs, reqId, 'withdraw');
+
+    if (!result.success) {
+      return res.status(result.statusCode).json({ error: result.error });
+    }
+
+    return res.json({
+      success: true,
+      proof: result.proof,
+      publicSignals: result.publicSignals,
+      proofTimeMs: result.proofTimeMs,
+      totalTimeMs: result.totalTimeMs,
+      prover: result.prover,
+      operation: 'withdraw',
+    });
+  } catch (e: any) {
+    logger.error(`[${reqId}] Withdraw proof failed:`, e);
+    res.status(500).json({ error: 'Withdraw proof generation failed', message: e.message || 'Unknown error' });
+  }
+});
+
+/**
+ * POST /api/zkspl/prove/transfer — Generate proof for a confidential transfer.
+ *
+ * Transfer send side:    is_debit=1, amount = transfer amount, public_credit/debit = 0.
+ * Transfer receive side: is_debit=0, amount = transfer amount, public_credit/debit = 0.
+ * Uses the confidential_balance circuit.
+ */
+app.post('/api/zkspl/prove/transfer', async (req, res) => {
+  const reqId = `zkspl_transfer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const { inputs } = req.body;
+    if (!inputs || typeof inputs !== 'object') {
+      return res.status(400).json({ error: 'Missing inputs object' });
+    }
+
+    if (inputs.public_credit && inputs.public_credit !== '0') {
+      logger.warn(`[${reqId}] Transfer should have public_credit=0, got ${inputs.public_credit}`);
+    }
+    if (inputs.public_debit && inputs.public_debit !== '0') {
+      logger.warn(`[${reqId}] Transfer should have public_debit=0, got ${inputs.public_debit}`);
+    }
+
+    const result = await handleZkSplProofRequest(inputs, reqId, 'transfer');
+
+    if (!result.success) {
+      return res.status(result.statusCode).json({ error: result.error });
+    }
+
+    return res.json({
+      success: true,
+      proof: result.proof,
+      publicSignals: result.publicSignals,
+      proofTimeMs: result.proofTimeMs,
+      totalTimeMs: result.totalTimeMs,
+      prover: result.prover,
+      operation: 'transfer',
+    });
+  } catch (e: any) {
+    logger.error(`[${reqId}] Transfer proof failed:`, e);
+    res.status(500).json({ error: 'Transfer proof generation failed', message: e.message || 'Unknown error' });
+  }
+});
+
+/**
+ * POST /api/zkspl/prove/balance-proof — Generate a balance sufficiency proof.
+ *
+ * Proves balance >= threshold without revealing the actual balance.
+ * Uses the balance_proof circuit (separate from confidential_balance).
+ */
+app.post('/api/zkspl/prove/balance-proof', async (req, res) => {
+  const reqId = `zkspl_bproof_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    const { inputs } = req.body;
+    if (!inputs || typeof inputs !== 'object') {
+      return res.status(400).json({ error: 'Missing inputs object' });
+    }
+
+    const result = await handleBalanceProofRequest(inputs, reqId);
+
+    if (!result.success) {
+      return res.status(result.statusCode).json({ error: result.error });
+    }
+
+    return res.json({
+      success: true,
+      proof: result.proof,
+      publicSignals: result.publicSignals,
+      proofTimeMs: result.proofTimeMs,
+      totalTimeMs: result.totalTimeMs,
+      prover: result.prover,
+      operation: 'balance-proof',
+    });
+  } catch (e: any) {
+    logger.error(`[${reqId}] Balance proof failed:`, e);
+    res.status(500).json({ error: 'Balance proof generation failed', message: e.message || 'Unknown error' });
   }
 });
 
@@ -1180,6 +1685,9 @@ const server = app.listen(CONFIG.port, () => {
   if (verificationKey) {
     logger.info(`VK: protocol=${verificationKey.protocol}, curve=${verificationKey.curve}, nPublic=${verificationKey.nPublic}`);
   }
+  logger.info(`zkSPL VK: ${zkSplVk ? `LOADED (nPublic=${zkSplVk.nPublic})` : 'NOT LOADED'}`);
+  logger.info(`Balance-proof VK: ${balanceProofVk ? `LOADED (nPublic=${balanceProofVk.nPublic})` : 'NOT LOADED'}`);
+  logger.info(`zkSPL routes: /prove/zkspl, /prove/balance-proof, /api/zkspl/prove/{deposit,withdraw,transfer,balance-proof}`);
 });
 
 // WebSocket server for real-time commitment updates

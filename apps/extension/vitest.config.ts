@@ -9,6 +9,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/__tests__/setup.ts'],
+    environmentMatchGlobs: [
+      // ZK proof tests need Node.js Worker threads (snarkjs/ffjavascript)
+      ['src/shared/services/denominatedPool.test.ts', 'node'],
+    ],
     css: true,
     include: ['src/**/*.test.{ts,tsx}'],
     coverage: {

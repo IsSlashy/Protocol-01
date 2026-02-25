@@ -94,7 +94,7 @@ pub fn handler(
         0,  // public_debit = 0 (private transfer)
         &token_mint_bytes,
         sender_account.nonce,
-        &vk_data,
+        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
     )?;
 
     require!(is_valid, ZkSplError::InvalidProof);

@@ -77,7 +77,7 @@ pub fn handler(
         0,  // public_debit = 0
         &token_mint_bytes,
         account.nonce,
-        &vk_data,
+        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
     )?;
 
     require!(is_valid, ZkSplError::InvalidProof);

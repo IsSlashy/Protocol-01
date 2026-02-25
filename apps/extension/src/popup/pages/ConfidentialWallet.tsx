@@ -18,6 +18,12 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useConfidentialStore } from '@/shared/store/confidential';
+import {
+  NATIVE_SOL_MINT_STR,
+  SUPPORTED_TOKENS,
+  getTokenDecimals,
+  getTokenSymbol,
+} from '@/shared/services/zkspl';
 import { cn } from '@/shared/utils';
 
 export default function ConfidentialWallet() {
@@ -27,15 +33,28 @@ export default function ConfidentialWallet() {
     isInitialized,
     isLoading,
     displayBalance,
+    displayBalances,
+    balances,
     hasAccount,
+    accounts,
     pendingCredits,
+    pendingCreditsByToken,
     error: storeError,
+    selectedToken,
+    setSelectedToken,
     initialize,
     refreshBalance,
+    refreshAllBalances,
     deposit,
     withdraw,
     transfer,
   } = useConfidentialStore();
+
+  const tokenSymbol = getTokenSymbol(selectedToken);
+  const tokenDecimals = getTokenDecimals(selectedToken);
+  const currentDisplayBalance = displayBalances[selectedToken] ?? displayBalance;
+  const currentPendingCredits = pendingCreditsByToken[selectedToken] ?? pendingCredits;
+  const currentHasAccount = accounts[selectedToken] ?? hasAccount;
 
   const [showBalance, setShowBalance] = useState(true);
   const [showInfoModal, setShowInfoModal] = useState(false);
@@ -64,7 +83,7 @@ export default function ConfidentialWallet() {
       setError('Please enter a valid amount');
       return;
     }
-    if (val > solBalance) {
+    if (selectedToken === NATIVE_SOL_MINT_STR && val > solBalance) {
       setError('Insufficient SOL balance');
       return;
     }
@@ -74,7 +93,7 @@ export default function ConfidentialWallet() {
 
     try {
       const sig = await deposit(val);
-      setSuccessMsg(`Deposited ${val} SOL`);
+      setSuccessMsg(`Deposited ${val} ${tokenSymbol}`);
       setActionModal(null);
       setAmount('');
       setTimeout(() => setSuccessMsg(null), 4000);
@@ -91,8 +110,8 @@ export default function ConfidentialWallet() {
       setError('Please enter a valid amount');
       return;
     }
-    if (val > displayBalance) {
-      setError('Insufficient confidential balance');
+    if (val > currentDisplayBalance) {
+      setError(`Insufficient confidential ${tokenSymbol} balance`);
       return;
     }
 
@@ -101,7 +120,7 @@ export default function ConfidentialWallet() {
 
     try {
       const sig = await withdraw(val);
-      setSuccessMsg(`Withdrew ${val} SOL`);
+      setSuccessMsg(`Withdrew ${val} ${tokenSymbol}`);
       setActionModal(null);
       setAmount('');
       setTimeout(() => setSuccessMsg(null), 4000);
@@ -118,8 +137,8 @@ export default function ConfidentialWallet() {
       setError('Please enter a valid amount');
       return;
     }
-    if (val > displayBalance) {
-      setError('Insufficient confidential balance');
+    if (val > currentDisplayBalance) {
+      setError(`Insufficient confidential ${tokenSymbol} balance`);
       return;
     }
     if (!recipient || recipient.length < 32) {
@@ -132,7 +151,7 @@ export default function ConfidentialWallet() {
 
     try {
       const sig = await transfer(recipient, val);
-      setSuccessMsg(`Sent ${val} SOL confidentially`);
+      setSuccessMsg(`Sent ${val} ${tokenSymbol} confidentially`);
       setActionModal(null);
       setAmount('');
       setRecipient('');
@@ -145,19 +164,21 @@ export default function ConfidentialWallet() {
   };
 
   const setPercentage = (pct: number) => {
-    const maxVal = actionModal === 'deposit' ? solBalance : displayBalance;
+    const maxVal = actionModal === 'deposit' ? solBalance : currentDisplayBalance;
     const val = maxVal * (pct / 100);
-    setAmount(val > 0 ? val.toFixed(6) : '');
+    const dp = tokenDecimals >= 9 ? 6 : 4;
+    setAmount(val > 0 ? val.toFixed(dp) : '');
   };
 
   const formatBalance = () => {
     if (!showBalance) return '****';
-    return `${displayBalance.toFixed(4)} SOL`;
+    const dp = tokenDecimals >= 9 ? 4 : 2;
+    return `${currentDisplayBalance.toFixed(dp)} ${tokenSymbol}`;
   };
 
   const getMaxAmount = () => {
     if (actionModal === 'deposit') return solBalance;
-    return displayBalance;
+    return currentDisplayBalance;
   };
 
   return (
@@ -236,15 +257,15 @@ export default function ConfidentialWallet() {
           </div>
 
           {/* Pending credits indicator */}
-          {pendingCredits > 0 && (
+          {currentPendingCredits > 0 && (
             <div className="bg-p01-cyan/10 rounded-lg p-3 flex items-center gap-2 border border-p01-cyan/20">
               <Inbox className="w-4 h-4 text-p01-cyan flex-shrink-0" />
               <div className="flex-1">
                 <p className="text-p01-cyan text-xs font-medium">
-                  {pendingCredits} pending credit{pendingCredits > 1 ? 's' : ''}
+                  {currentPendingCredits} pending credit{currentPendingCredits > 1 ? 's' : ''}
                 </p>
                 <p className="text-p01-chrome/60 text-[10px]">
-                  Incoming transfers waiting to be applied
+                  Incoming {tokenSymbol} transfers waiting to be applied
                 </p>
               </div>
             </div>
@@ -272,10 +293,10 @@ export default function ConfidentialWallet() {
           )}
 
           {/* Not set up yet */}
-          {isInitialized && !hasAccount && !initError && (
+          {isInitialized && !currentHasAccount && !initError && (
             <div className="mt-3 p-3 bg-p01-void/50 rounded-lg border border-p01-dark">
               <p className="text-p01-chrome text-xs">
-                No confidential account yet. Make your first deposit to create one automatically.
+                No confidential {tokenSymbol} account yet. Make your first deposit to create one automatically.
               </p>
             </div>
           )}
@@ -305,6 +326,32 @@ export default function ConfidentialWallet() {
           </motion.div>
         )}
 
+        {/* Token Selector */}
+        <div className="flex gap-2 px-4 mt-3">
+          {SUPPORTED_TOKENS.map((token) => {
+            const isActive = token.mintStr === selectedToken;
+            const bal = (balances[token.mintStr] || 0) / Math.pow(10, token.decimals);
+            const dp = token.decimals >= 9 ? 4 : 2;
+            return (
+              <button
+                key={token.mintStr}
+                onClick={() => setSelectedToken(token.mintStr)}
+                className={cn(
+                  'flex-1 py-2 px-3 rounded-lg border text-xs font-medium transition-colors flex items-center justify-center gap-2',
+                  isActive
+                    ? 'border-p01-cyan bg-p01-cyan/10 text-p01-cyan'
+                    : 'border-p01-dark bg-p01-surface text-p01-chrome hover:border-p01-chrome/30'
+                )}
+              >
+                <span className="font-bold">{token.symbol}</span>
+                {showBalance && (
+                  <span className="text-[10px] opacity-70">{bal.toFixed(dp)}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Action Buttons */}
         <div className="flex justify-center gap-6 py-6">
           <ActionButton
@@ -324,7 +371,7 @@ export default function ConfidentialWallet() {
               setError(null);
               setActionModal('withdraw');
             }}
-            disabled={displayBalance <= 0}
+            disabled={currentDisplayBalance <= 0}
           />
           <ActionButton
             icon={<Send className="w-5 h-5" />}
@@ -334,7 +381,7 @@ export default function ConfidentialWallet() {
               setError(null);
               setActionModal('transfer');
             }}
-            disabled={displayBalance <= 0}
+            disabled={currentDisplayBalance <= 0}
           />
         </div>
 
@@ -404,12 +451,12 @@ export default function ConfidentialWallet() {
               </div>
               <div>
                 <h3 className="text-lg font-display font-bold text-white capitalize">
-                  {actionModal} SOL
+                  {actionModal} {tokenSymbol}
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
                   {actionModal === 'deposit'
-                    ? 'Move SOL into confidential account'
-                    : 'Withdraw from confidential account'}
+                    ? `Move ${tokenSymbol} into confidential account`
+                    : `Withdraw ${tokenSymbol} from confidential account`}
                 </p>
               </div>
             </div>
@@ -423,7 +470,7 @@ export default function ConfidentialWallet() {
                     onClick={() => setPercentage(100)}
                     className="text-p01-cyan text-xs hover:underline"
                   >
-                    Max: {getMaxAmount().toFixed(4)} SOL
+                    Max: {getMaxAmount().toFixed(tokenDecimals >= 9 ? 4 : 2)} {tokenSymbol}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -434,7 +481,7 @@ export default function ConfidentialWallet() {
                     placeholder="0.0"
                     className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
                   />
-                  <span className="text-p01-chrome text-lg">SOL</span>
+                  <span className="text-p01-chrome text-lg">{tokenSymbol}</span>
                 </div>
               </div>
             </div>
@@ -453,11 +500,11 @@ export default function ConfidentialWallet() {
             </div>
 
             {/* First deposit notice */}
-            {actionModal === 'deposit' && !hasAccount && (
+            {actionModal === 'deposit' && !currentHasAccount && (
               <div className="mb-4 p-3 bg-p01-cyan/10 rounded-lg flex items-start gap-2 border border-p01-cyan/20">
                 <Info className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
                 <p className="text-p01-chrome text-xs">
-                  First deposit will create your on-chain confidential account. This is a one-time setup.
+                  First deposit will create your on-chain confidential {tokenSymbol} account. This is a one-time setup.
                 </p>
               </div>
             )}
@@ -524,7 +571,7 @@ export default function ConfidentialWallet() {
                   Confidential Transfer
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
-                  Send SOL privately to another wallet
+                  Send {tokenSymbol} privately to another wallet
                 </p>
               </div>
             </div>
@@ -552,7 +599,7 @@ export default function ConfidentialWallet() {
                     onClick={() => setPercentage(100)}
                     className="text-p01-cyan text-xs hover:underline"
                   >
-                    Max: {displayBalance.toFixed(4)} SOL
+                    Max: {currentDisplayBalance.toFixed(tokenDecimals >= 9 ? 4 : 2)} {tokenSymbol}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
@@ -563,7 +610,7 @@ export default function ConfidentialWallet() {
                     placeholder="0.0"
                     className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
                   />
-                  <span className="text-p01-chrome text-lg">SOL</span>
+                  <span className="text-p01-chrome text-lg">{tokenSymbol}</span>
                 </div>
               </div>
             </div>
@@ -656,7 +703,7 @@ export default function ConfidentialWallet() {
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">Deposit</h4>
                 <p className="text-p01-chrome/80">
-                  Move SOL from your transparent wallet into the confidential account. The deposit
+                  Move tokens from your transparent wallet into the confidential account. The deposit
                   amount is visible, but your new total balance remains hidden.
                 </p>
               </div>
@@ -664,7 +711,7 @@ export default function ConfidentialWallet() {
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">Withdraw</h4>
                 <p className="text-p01-chrome/80">
-                  Move SOL from your confidential account back to your transparent wallet. The
+                  Move tokens from your confidential account back to your transparent wallet. The
                   withdrawal amount is visible, but your remaining balance stays hidden.
                 </p>
               </div>
@@ -672,7 +719,7 @@ export default function ConfidentialWallet() {
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">Confidential Transfer</h4>
                 <p className="text-p01-chrome/80">
-                  Send SOL to another wallet where the amount is hidden on-chain as an amount hash.
+                  Send tokens to another wallet where the amount is hidden on-chain as an amount hash.
                   The recipient receives a pending credit they must apply to update their balance.
                 </p>
               </div>

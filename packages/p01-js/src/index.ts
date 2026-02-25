@@ -151,3 +151,76 @@ export {
 
 // Security (privacy features)
 export * from './security';
+
+// Shielded Pool (Privacy Layer)
+export {
+  // Core functions
+  shield,
+  unshield,
+  getPoolInfo,
+  getPools,
+
+  // Helpers
+  validateShieldParams,
+  validateUnshieldParams,
+  resolveTokenMintForPool,
+  computeCommitmentPlaceholder,
+  estimateDelayTier,
+  isValidDenomination,
+
+  // Constants
+  ZK_SHIELDED_PROGRAM_ID,
+  STANDARD_DENOMINATIONS,
+  MERKLE_TREE_DEPTH,
+  MAX_LEAVES,
+  DELAY_TIERS,
+
+  // Types
+  type ShieldReceipt,
+  type ShieldParams,
+  type UnshieldParams,
+  type PoolInfo,
+} from './shielded-pool';
+
+// Relayer Client
+export {
+  RelayerClient,
+  type RelayerConfig,
+  type RelayerStatus,
+  type UnshieldRequest,
+  type UnshieldResponse,
+} from './relayer-client';
+
+// ZK Proof Generator
+export {
+  generateDenominatedPoolProof,
+  verifyProof,
+  type ProofResult,
+  type ProofGeneratorConfig,
+  type DenominatedPoolInputs,
+} from './proof-generator';
+
+// Receipt Manager
+export {
+  serializeReceipt,
+  deserializeReceipt,
+  receiptToJSON,
+  receiptFromJSON,
+} from './receipt-manager';
+
+// Private Subscription (ZK-private recurring payments)
+export {
+  PrivateSubscription,
+  type PrivateSubscriptionConfig,
+  type SubscriptionStatus as PrivateSubscriptionStatus,
+  type PrivateSubscriptionState,
+  type PrivatePaymentResult,
+} from './private-subscription';
+
+// Private Stream (privacy-preserving denominated payment streams)
+export {
+  PrivateStream,
+  type PrivateStreamConfig,
+  type PrivateStreamState,
+  type StreamStatus as PrivateStreamStatus,
+} from './private-stream';

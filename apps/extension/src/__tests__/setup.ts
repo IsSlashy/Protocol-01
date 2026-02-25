@@ -4,11 +4,19 @@
  * Configures the testing environment for the Protocol 01 browser extension.
  * Mocks Chrome extension APIs, crypto globals, and other browser APIs
  * that are unavailable in the jsdom test environment.
+ *
+ * NOTE: Some tests run in Node environment (e.g., ZK proof tests).
+ * All window/DOM-dependent code is guarded with typeof window checks.
  */
 
 import { vi, afterEach } from 'vitest';
-import { cleanup } from '@testing-library/react';
-import '@testing-library/jest-dom';
+
+const IS_BROWSER_ENV = typeof window !== 'undefined';
+
+// Only import browser-specific test utilities in jsdom
+if (IS_BROWSER_ENV) {
+  await import('@testing-library/jest-dom');
+}
 
 // ---------------------------------------------------------------------------
 // Global module mocks
@@ -97,9 +105,18 @@ vi.mock('qrcode.react', () => ({
 // Cleanup after each test
 // ---------------------------------------------------------------------------
 afterEach(() => {
-  cleanup();
+  if (IS_BROWSER_ENV) {
+    // Dynamic import to avoid loading @testing-library/react in Node env
+    import('@testing-library/react').then(({ cleanup }) => cleanup());
+  }
   vi.clearAllMocks();
 });
+
+// ---------------------------------------------------------------------------
+// Browser-only mocks (guarded)
+// ---------------------------------------------------------------------------
+
+if (IS_BROWSER_ENV) {
 
 // ---------------------------------------------------------------------------
 // Mock: Chrome Extension APIs
@@ -203,6 +220,38 @@ Object.defineProperty(window, 'matchMedia', {
 window.close = vi.fn();
 
 // ---------------------------------------------------------------------------
+// Mock: IntersectionObserver (used by lazy components)
+// ---------------------------------------------------------------------------
+
+class MockIntersectionObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+
+Object.defineProperty(window, 'IntersectionObserver', {
+  writable: true,
+  value: MockIntersectionObserver,
+});
+
+// ---------------------------------------------------------------------------
+// Mock: ResizeObserver (used by some UI libraries)
+// ---------------------------------------------------------------------------
+
+class MockResizeObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+
+Object.defineProperty(window, 'ResizeObserver', {
+  writable: true,
+  value: MockResizeObserver,
+});
+
+} // end IS_BROWSER_ENV
+
+// ---------------------------------------------------------------------------
 // Mock: crypto.randomUUID (used by generateId utility)
 // ---------------------------------------------------------------------------
 
@@ -232,36 +281,6 @@ if (!(import.meta as any).env) {
   (import.meta as any).env = {};
 }
 (import.meta as any).env.VITE_PRIVY_APP_ID = '';
-
-// ---------------------------------------------------------------------------
-// Mock: IntersectionObserver (used by lazy components)
-// ---------------------------------------------------------------------------
-
-class MockIntersectionObserver {
-  observe = vi.fn();
-  unobserve = vi.fn();
-  disconnect = vi.fn();
-}
-
-Object.defineProperty(window, 'IntersectionObserver', {
-  writable: true,
-  value: MockIntersectionObserver,
-});
-
-// ---------------------------------------------------------------------------
-// Mock: ResizeObserver (used by some UI libraries)
-// ---------------------------------------------------------------------------
-
-class MockResizeObserver {
-  observe = vi.fn();
-  unobserve = vi.fn();
-  disconnect = vi.fn();
-}
-
-Object.defineProperty(window, 'ResizeObserver', {
-  writable: true,
-  value: MockResizeObserver,
-});
 
 // ---------------------------------------------------------------------------
 // Suppress console noise during tests

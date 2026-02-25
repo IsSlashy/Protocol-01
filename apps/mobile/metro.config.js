@@ -93,6 +93,15 @@ function findInNodeModules(subpath, nodeModulesPaths, originModulePath) {
 // Custom resolver for Privy SDK dependencies
 const originalResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Shim snarkjs and its Node.js dependencies for React Native.
+  // Mobile uses the remote Rust prover exclusively — snarkjs is never called.
+  if (['snarkjs', 'readline', 'fastfile', 'circom_runtime', 'ejs'].includes(moduleName)) {
+    return {
+      filePath: path.resolve(projectRoot, 'polyfills/empty.js'),
+      type: 'sourceFile',
+    };
+  }
+
   // Handle ox/erc8010 polyfill (required by viem)
   if (moduleName === 'ox/erc8010') {
     return {

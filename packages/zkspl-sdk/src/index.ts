@@ -12,7 +12,9 @@ export {
   createAmountCommitment,
   deriveOwnerPubkey,
   randomSalt,
+  deriveDeterministicSalt,
   fieldToBytes,
+  fieldToBytesBE,
   bytesToField,
   pubkeyToField,
   zeroAmountHash,
@@ -59,6 +61,7 @@ export type {
 
   // Config
   ProverConfig,
+  ZkSplOperationType,
 
   // Results
   ZkSplTxResult,
@@ -76,8 +79,13 @@ export type {
 export {
   FIELD_MODULUS,
   ZKSPL_PROGRAM_ID,
+  ZK_SHIELDED_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  USDC_DEVNET_MINT,
+  TOKEN_DECIMALS,
   PDA_SEEDS,
+  ZK_SHIELDED_PDA_SEEDS,
+  USDC_DENOMINATIONS,
   VK_TYPE_BALANCE,
   VK_TYPE_PROOF,
   MAX_PENDING_CREDITS,

@@ -136,6 +136,46 @@ pub mod zk_shielded {
             merkle_root,
         )
     }
+
+    // -----------------------------------------------------------------------
+    // Denominated Pool instructions (Tornado Cash model — fixed denominations)
+    // -----------------------------------------------------------------------
+
+    /// Initialize a denominated shielded pool for a specific token + denomination
+    /// Each pool enforces a fixed deposit/withdrawal amount for maximum anonymity
+    pub fn init_denominated_pool(
+        ctx: Context<InitDenominatedPool>,
+        vk_hash: [u8; 32],
+        token_mint: Pubkey,
+        denomination: u64,
+        epoch_delay: u64,
+    ) -> Result<()> {
+        instructions::init_denominated_pool::handler(ctx, vk_hash, token_mint, denomination, epoch_delay)
+    }
+
+    /// Shield tokens into a denominated pool (deposit exactly denomination amount)
+    /// Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)
+    /// No amount in the commitment — denomination enforced at program level
+    pub fn shield_denominated(
+        ctx: Context<ShieldDenominated>,
+        commitment: [u8; 32],
+        new_root: [u8; 32],
+    ) -> Result<()> {
+        instructions::shield_denominated::handler(ctx, commitment, new_root)
+    }
+
+    /// Unshield tokens from a denominated pool (withdraw exactly denomination amount)
+    /// Requires ZK proof with 4 public inputs: [merkle_root, nullifier, min_epoch, token_mint]
+    /// Enforces time delay: current_epoch >= min_epoch
+    pub fn unshield_denominated(
+        ctx: Context<UnshieldDenominated>,
+        proof: Groth16Proof,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+    ) -> Result<()> {
+        instructions::unshield_denominated::handler(ctx, proof, nullifier, merkle_root, min_epoch)
+    }
 }
 
 /// Groth16 proof structure for on-chain verification
