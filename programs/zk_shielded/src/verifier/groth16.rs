@@ -82,6 +82,36 @@ impl Groth16Verifier {
         Self::verify(proof, &public_inputs, vk_data)
     }
 
+    /// Verify a denominated pool withdrawal proof with 4 public inputs
+    ///
+    /// Circuit public inputs: [merkle_root, nullifier, min_epoch, token_mint]
+    /// The circuit verifies:
+    /// - Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint) is in the tree
+    /// - Nullifier = Poseidon(nullifier_preimage, secret) matches
+    /// - deposit_epoch <= min_epoch (time delay)
+    pub fn verify_denominated(
+        proof: &Groth16Proof,
+        merkle_root: &[u8; 32],
+        nullifier: &[u8; 32],
+        min_epoch: u64,
+        token_mint: &[u8; 32],
+        vk_data: &[u8],
+    ) -> Result<bool> {
+        // Convert min_epoch to 32-byte field element (little-endian)
+        let mut min_epoch_bytes = [0u8; 32];
+        min_epoch_bytes[..8].copy_from_slice(&min_epoch.to_le_bytes());
+
+        // Convert public inputs from little-endian to big-endian for alt_bn128 pairing
+        let public_inputs = [
+            Self::le_to_be(merkle_root),
+            Self::le_to_be(nullifier),
+            Self::le_to_be(&min_epoch_bytes),
+            Self::le_to_be(token_mint),
+        ];
+
+        Self::verify(proof, &public_inputs, vk_data)
+    }
+
     /// Convert 32-byte array from little-endian to big-endian
     fn le_to_be(bytes: &[u8; 32]) -> [u8; 32] {
         let mut result = [0u8; 32];

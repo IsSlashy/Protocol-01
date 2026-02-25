@@ -65,7 +65,7 @@ pub fn handler(
         &account.balance_commitment,
         threshold,
         &token_mint_bytes,
-        &vk_data,
+        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
     )?;
 
     require!(is_valid, ZkSplError::InvalidProof);

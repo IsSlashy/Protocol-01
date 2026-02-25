@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { TouchableOpacity, View, Text } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Pressable, View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, {
   useSharedValue,
@@ -77,14 +77,6 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handlePress = useCallback(() => {
-    if (isRecording) {
-      onStopRecording();
-    } else {
-      onStartRecording();
-    }
-  }, [isRecording, onStartRecording, onStopRecording]);
-
   return (
     <View style={{ alignItems: 'center', justifyContent: 'center' }}>
       {/* Pulse ring */}
@@ -103,8 +95,13 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({
         />
       )}
 
-      <TouchableOpacity
-        onPress={handlePress}
+      <Pressable
+        onPressIn={() => {
+          if (!disabled && !isRecording) onStartRecording();
+        }}
+        onPressOut={() => {
+          if (isRecording) onStopRecording();
+        }}
         disabled={disabled}
         style={{
           width: 44,
@@ -116,11 +113,11 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({
         }}
       >
         <Ionicons
-          name={isRecording ? 'stop' : 'mic-outline'}
+          name={isRecording ? 'mic' : 'mic-outline'}
           size={22}
           color={isRecording ? Colors.text : Colors.primaryMuted}
         />
-      </TouchableOpacity>
+      </Pressable>
 
       {/* Timer */}
       {isRecording && duration > 0 && (

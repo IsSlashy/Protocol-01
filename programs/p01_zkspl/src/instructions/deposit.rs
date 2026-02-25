@@ -91,9 +91,14 @@ pub fn handler(
     //   4. new_balance fits in 64 bits
     let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
 
-    // Zero amount_hash for public deposit: Poseidon(0, 0) — a known constant
+    // Zero amount_hash for public deposit: Poseidon(0, 0) — a known constant (LE bytes)
     // The circuit enforces amount=0 and amount_salt=0 for this
-    let zero_amount_hash: [u8; 32] = [0; 32]; // Placeholder — actual hash computed off-chain
+    let zero_amount_hash: [u8; 32] = [
+        100, 72, 182, 70, 132, 238, 57, 168,
+        35, 213, 254, 95, 213, 36, 49, 220,
+        129, 228, 129, 123, 242, 195, 234, 60,
+        171, 158, 35, 158, 251, 245, 152, 32,
+    ];
 
     let token_mint_bytes = config.token_mint.to_bytes();
 
@@ -106,7 +111,7 @@ pub fn handler(
         0,                   // public_debit
         &token_mint_bytes,
         account.nonce,
-        &vk_data,
+        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
     )?;
 
     require!(is_valid, ZkSplError::InvalidProof);

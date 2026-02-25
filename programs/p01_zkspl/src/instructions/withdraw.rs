@@ -81,7 +81,13 @@ pub fn handler(
 
     // --- Verify ZK proof ---
     let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
-    let zero_amount_hash: [u8; 32] = [0; 32];
+    // Poseidon(0, 0) — zero amount hash constant (LE bytes)
+    let zero_amount_hash: [u8; 32] = [
+        100, 72, 182, 70, 132, 238, 57, 168,
+        35, 213, 254, 95, 213, 36, 49, 220,
+        129, 228, 129, 123, 242, 195, 234, 60,
+        171, 158, 35, 158, 251, 245, 152, 32,
+    ];
     let token_mint_bytes = config.token_mint.to_bytes();
 
     let is_valid = Groth16Verifier::verify_confidential_balance(
@@ -93,7 +99,7 @@ pub fn handler(
         amount,  // public_debit = withdraw amount
         &token_mint_bytes,
         account.nonce,
-        &vk_data,
+        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
     )?;
 
     require!(is_valid, ZkSplError::InvalidProof);
@@ -102,8 +108,9 @@ pub fn handler(
     let is_native_sol = config.token_mint == system_program::ID;
 
     if is_native_sol {
-        // Transfer SOL from vault PDA
-        // The vault is a PDA of the mint_config, so we use seeds to sign
+        // Transfer SOL from vault PDA via system_program CPI with PDA signer seeds.
+        // The vault is system-owned (received SOL via system_program::transfer in deposit),
+        // so we must use CPI — direct lamport modification is not allowed.
         let mint_key = config.token_mint;
         let seeds = &[
             b"zkspl_vault",
@@ -112,14 +119,15 @@ pub fn handler(
         ];
         let signer_seeds = &[&seeds[..]];
 
-        let vault_info = ctx.accounts.vault.to_account_info();
-        let user_info = ctx.accounts.withdrawer.to_account_info();
-
-        // Direct lamport transfer from PDA
-        **vault_info.try_borrow_mut_lamports()? -= amount;
-        **user_info.try_borrow_mut_lamports()? += amount;
-
-        let _ = signer_seeds; // Used for PDA authority validation
+        let cpi_context = CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
+            system_program::Transfer {
+                from: ctx.accounts.vault.to_account_info(),
+                to: ctx.accounts.withdrawer.to_account_info(),
+            },
+            signer_seeds,
+        );
+        system_program::transfer(cpi_context, amount)?;
     } else {
         // SPL token transfer from pool vault
         let token_program = ctx.accounts.token_program

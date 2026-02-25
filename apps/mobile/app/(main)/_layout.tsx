@@ -65,6 +65,19 @@ export default function MainLayout() {
         }}
       />
       <Tabs.Screen
+        name="(privacy)"
+        options={{
+          title: 'Privacy',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'shield-half' : 'shield-half-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="(streams)"
         options={{
           title: 'Streams',
@@ -83,7 +96,7 @@ export default function MainLayout() {
           title: 'Agent',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'sparkles' : 'sparkles-outline'}
+              name={focused ? 'aperture' : 'aperture-outline'}
               size={24}
               color={color}
             />

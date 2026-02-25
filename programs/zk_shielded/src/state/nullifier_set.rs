@@ -133,3 +133,24 @@ impl NullifierBatch {
         Ok(())
     }
 }
+
+// ---------------------------------------------------------------------------
+// PDA-per-nullifier — exact nullifier tracking (Tornado Cash model)
+// ---------------------------------------------------------------------------
+
+/// A tiny PDA account whose existence proves a nullifier has been spent.
+/// Seeds: [b"nullifier", pool_key, nullifier_bytes]
+/// No false positives, no size limits, scales to millions of nullifiers.
+/// Rent (~0.00089 SOL) paid by the withdrawer.
+#[account]
+pub struct NullifierRecord {
+    /// The pool this nullifier belongs to
+    pub pool: Pubkey,
+    /// Bump seed for PDA
+    pub bump: u8,
+}
+
+impl NullifierRecord {
+    pub const SEED_PREFIX: &'static [u8] = b"nullifier";
+    pub const LEN: usize = 8 + 32 + 1; // discriminator + pool + bump
+}

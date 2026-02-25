@@ -119,7 +119,7 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
         >
           {/* AI Icon */}
           <Ionicons
-            name="sparkles"
+            name="aperture"
             size={config.icon}
             color={isActive ? '#39c5bb' : '#555560'}
           />

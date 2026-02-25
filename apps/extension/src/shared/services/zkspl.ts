@@ -20,16 +20,55 @@ import {
   type ZkSplTxResult,
   type FieldElement,
   bytesToField,
+  poseidonHash,
   ZKSPL_PROGRAM_ID,
 } from '@p01/zkspl-sdk';
 import { useWalletStore, getPrivySigner } from '../store/wallet';
 import { getConnection } from './wallet';
 
 // ---------------------------------------------------------------------------
-// Native SOL token mint (SystemProgram.programId)
+// Token constants
 // ---------------------------------------------------------------------------
 
 const NATIVE_SOL_MINT = SystemProgram.programId;
+export const NATIVE_SOL_MINT_STR = NATIVE_SOL_MINT.toBase58();
+
+export const USDC_DEVNET_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+export const USDC_DEVNET_MINT_STR = USDC_DEVNET_MINT.toBase58();
+
+export const SOL_DECIMALS = 9;
+export const USDC_DECIMALS = 6;
+
+export interface TokenConfig {
+  mint: PublicKey;
+  mintStr: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+}
+
+export const SUPPORTED_TOKENS: TokenConfig[] = [
+  { mint: NATIVE_SOL_MINT, mintStr: NATIVE_SOL_MINT_STR, symbol: 'SOL', name: 'Solana', decimals: SOL_DECIMALS },
+  { mint: USDC_DEVNET_MINT, mintStr: USDC_DEVNET_MINT_STR, symbol: 'USDC', name: 'USD Coin', decimals: USDC_DECIMALS },
+];
+
+export function getTokenConfig(mintStr: string): TokenConfig | undefined {
+  return SUPPORTED_TOKENS.find(t => t.mintStr === mintStr);
+}
+
+export function getTokenDecimals(mintStr: string): number {
+  return getTokenConfig(mintStr)?.decimals ?? 9;
+}
+
+export function getTokenSymbol(mintStr: string): string {
+  return getTokenConfig(mintStr)?.symbol ?? 'TOKEN';
+}
+
+export function formatTokenAmount(mintStr: string, atomicAmount: number): string {
+  const d = getTokenDecimals(mintStr);
+  const value = atomicAmount / Math.pow(10, d);
+  return value.toFixed(d >= 9 ? 4 : 2);
+}
 
 // ---------------------------------------------------------------------------
 // Chrome storage-backed StateStore for zkSPL local state
@@ -61,17 +100,13 @@ class ChromeStateStore implements StateStore {
 
 /**
  * Derive a deterministic spending key from the wallet's secret key.
- * Uses SHA-256 of (secretKey + "zkspl_spending_key") reduced mod field.
+ * Uses Poseidon(bytesToField(seed)) — matches the mobile app and the
+ * circuit's OwnerDerivation template (owner_pubkey = Poseidon(spending_key)).
  */
-async function deriveSpendingKeyFromSecret(secretKey: Uint8Array): Promise<FieldElement> {
-  const label = new TextEncoder().encode('zkspl_spending_key');
-  const combined = new Uint8Array(secretKey.length + label.length);
-  combined.set(secretKey);
-  combined.set(label, secretKey.length);
-
-  const hashBuffer = await crypto.subtle.digest('SHA-256', combined as unknown as ArrayBuffer);
-  const hashBytes = new Uint8Array(hashBuffer);
-  return bytesToField(hashBytes);
+function deriveSpendingKeyFromSecret(secretKey: Uint8Array): FieldElement {
+  const seed = secretKey.slice(0, 32);
+  const seedField = bytesToField(seed);
+  return poseidonHash([seedField]);
 }
 
 /**
@@ -97,7 +132,7 @@ async function deriveSpendingKeyForPrivy(walletAddress: string): Promise<FieldEl
   for (let i = 0; i < 32; i++) {
     seedBytes[i] = parseInt(seedHex.substr(i * 2, 2), 16);
   }
-  return deriveSpendingKeyFromSecret(seedBytes);
+  return deriveSpendingKeyFromSecret(seedBytes.slice(0, 32));
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +188,7 @@ function createWalletAdapter(): {
   if (walletState.isPrivyWallet) {
     spendingKeyPromise = deriveSpendingKeyForPrivy(walletState.publicKey);
   } else if (keypair) {
-    spendingKeyPromise = deriveSpendingKeyFromSecret(keypair.secretKey.slice(0, 32));
+    spendingKeyPromise = Promise.resolve(deriveSpendingKeyFromSecret(keypair.secretKey));
   } else {
     throw new Error('No key material available for spending key derivation');
   }
@@ -195,6 +230,7 @@ export async function getZkSplClient(): Promise<ZkSplClient> {
     wallet,
     programId: new PublicKey(ZKSPL_PROGRAM_ID),
     prover: {
+      relayerUrl: RELAYER_URL,
       remoteProverUrl: `${RELAYER_URL}/prove`,
     },
     stateStore: new ChromeStateStore(),
