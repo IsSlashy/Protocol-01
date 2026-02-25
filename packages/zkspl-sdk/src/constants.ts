@@ -18,8 +18,22 @@ export const FIELD_MODULUS = BigInt(
 /** Deployed p01_zkspl program ID */
 export const ZKSPL_PROGRAM_ID = 'EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah';
 
+/** Deployed zk_shielded program ID (denominated pools + shielded pool) */
+export const ZK_SHIELDED_PROGRAM_ID = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
+
 /** SPL Token program ID */
 export const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+
+/** Devnet USDC mint */
+export const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+
+/** Decimal places for each supported token */
+export const TOKEN_DECIMALS: Record<string, number> = {
+  // Native SOL (SystemProgram.programId = "1111...1111")
+  '11111111111111111111111111111111': 9,
+  // Devnet USDC
+  [USDC_DEVNET_MINT]: 6,
+};
 
 // ---------------------------------------------------------------------------
 // PDA seed prefixes (must match the Rust program)
@@ -35,6 +49,23 @@ export const PDA_SEEDS = {
   /** VK data PDA: ["zkspl_vk", mint_config_key, vk_type_byte] */
   VK_DATA: Buffer.from('zkspl_vk'),
 } as const;
+
+/** PDA seeds for the zk_shielded program (denominated pools) */
+export const ZK_SHIELDED_PDA_SEEDS = {
+  /** DenominatedPool PDA: ["denominated_pool", token_mint, denomination_le_bytes] */
+  DENOMINATED_POOL: Buffer.from('denominated_pool'),
+  /** MerkleTree PDA: ["merkle_tree", pool_key] */
+  MERKLE_TREE: Buffer.from('merkle_tree'),
+  /** Nullifier PDA: ["nullifier", pool_key, nullifier_bytes] */
+  NULLIFIER: Buffer.from('nullifier'),
+  /** ShieldedPool PDA: ["shielded_pool", token_mint] */
+  SHIELDED_POOL: Buffer.from('shielded_pool'),
+  /** VK data PDA: ["vk_data", shielded_pool_key] */
+  VK_DATA: Buffer.from('vk_data'),
+} as const;
+
+/** Standard USDC denominated pool sizes (human-readable USDC amounts) */
+export const USDC_DENOMINATIONS = [1, 10, 100, 1000] as const;
 
 // ---------------------------------------------------------------------------
 // VK type discriminators

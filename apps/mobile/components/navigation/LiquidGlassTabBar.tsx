@@ -123,10 +123,12 @@ export function LiquidGlassTabBar({
 }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
 
-  // Filter out routes with href: null
+  // Filter out hidden routes (settings is accessed via header gear icon)
   const visibleRoutes = state.routes.filter((route) => {
     const options = descriptors[route.key].options;
-    return (options as any).href !== null;
+    if ((options as any).href === null) return false;
+    if (route.name === '(settings)') return false;
+    return true;
   });
 
   // Find active index within visible routes
@@ -201,7 +203,7 @@ export function LiquidGlassTabBar({
       const idx = Math.max(0, Math.min(tcShared.value - 1, e.x / twShared.value));
       hoverIndex.value = idx;
       pillPosition.value = idx;
-      lastHapticIndex.value = Math.round(idx);
+      lastHapticIndex.value = Math.floor(idx);
       runOnJS(triggerMediumHaptic)();
     })
     .onUpdate((e) => {
@@ -222,7 +224,7 @@ export function LiquidGlassTabBar({
       'worklet';
       if (twShared.value <= 0) return;
       const rawIdx = Math.max(0, Math.min(tcShared.value - 1, e.x / twShared.value));
-      const snapped = Math.round(rawIdx);
+      const snapped = Math.max(0, Math.min(tcShared.value - 1, Math.floor(rawIdx)));
       isDragging.value = 0;
       hoverIndex.value = snapped;
       pillPosition.value = withSpring(snapped, SNAP_SPRING);
@@ -241,9 +243,9 @@ export function LiquidGlassTabBar({
     .onEnd((e) => {
       'worklet';
       if (twShared.value <= 0) return;
-      const tapped = Math.round(
-        Math.max(0, Math.min(tcShared.value - 1, e.x / twShared.value))
-      );
+      const tapped = Math.max(0, Math.min(tcShared.value - 1,
+        Math.floor(e.x / twShared.value)
+      ));
       pillPosition.value = withSpring(tapped, SPRING_CONFIG);
       hoverIndex.value = tapped;
       runOnJS(triggerHaptic)();
@@ -356,15 +358,21 @@ export function LiquidGlassTabBar({
           style={styles.glassContainer}
           onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
         >
-          {/* Layer 1: Blur background */}
-          <BlurView
-            intensity={40}
-            tint="dark"
-            style={StyleSheet.absoluteFill}
-          />
+          {/* Layer 1: Background — blur on iOS, solid on Android */}
+          {Platform.OS === 'ios' ? (
+            <BlurView
+              intensity={40}
+              tint="dark"
+              style={StyleSheet.absoluteFill}
+            />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, styles.androidBg]} />
+          )}
 
-          {/* Layer 2: Semi-transparent overlay */}
-          <View style={[StyleSheet.absoluteFill, styles.overlay]} />
+          {/* Layer 2: Semi-transparent overlay (iOS only, Android bg already dark) */}
+          {Platform.OS === 'ios' && (
+            <View style={[StyleSheet.absoluteFill, styles.overlay]} />
+          )}
 
           {/* Layer 3: Top edge specular highlight */}
           <LinearGradient
@@ -383,13 +391,13 @@ export function LiquidGlassTabBar({
           {/* Animated indicator pill */}
           {containerWidth > 0 && (
             <Animated.View
-              style={[styles.pill, styles.pillShadow, pillAnimatedStyle, pillGlowStyle]}
+              style={[
+                styles.pill,
+                Platform.OS === 'ios' && styles.pillShadow,
+                pillAnimatedStyle,
+                Platform.OS === 'ios' && pillGlowStyle,
+              ]}
             >
-              <BlurView
-                intensity={18}
-                tint="dark"
-                style={StyleSheet.absoluteFill}
-              />
               <View
                 style={[StyleSheet.absoluteFill, styles.pillOverlay]}
               />
@@ -434,6 +442,9 @@ const styles = StyleSheet.create({
   },
   overlay: {
     backgroundColor: 'rgba(10, 10, 12, 0.35)',
+  },
+  androidBg: {
+    backgroundColor: 'rgba(10, 10, 12, 0.92)',
   },
   topHighlight: {
     position: 'absolute',

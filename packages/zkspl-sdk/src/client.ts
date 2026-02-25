@@ -31,6 +31,7 @@ import {
   createBalanceCommitment,
   createAmountCommitment,
   deriveOwnerPubkey,
+  deriveDeterministicSalt,
   fieldToBytes,
   pubkeyToField,
   randomSalt,
@@ -179,6 +180,64 @@ export class ZkSplClient {
   }
 
   // -----------------------------------------------------------------------
+  // SPL Token account helpers (ATA derivation)
+  // -----------------------------------------------------------------------
+
+  /** SPL Associated Token Account program ID */
+  static readonly ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+    'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
+  );
+
+  /**
+   * Derive the Associated Token Account (ATA) for a given owner + token mint.
+   * Standard SPL ATA: PDA of [owner, TOKEN_PROGRAM_ID, mint] under the ATA program.
+   */
+  deriveUserTokenAccount(owner: PublicKey, tokenMint: PublicKey): PublicKey {
+    const [ata] = PublicKey.findProgramAddressSync(
+      [
+        owner.toBytes(),
+        new PublicKey(TOKEN_PROGRAM_ID).toBytes(),
+        tokenMint.toBytes(),
+      ],
+      ZkSplClient.ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    return ata;
+  }
+
+  /**
+   * Derive the ATA for the pool vault PDA + token mint.
+   * This is the token account that holds SPL tokens for the vault.
+   */
+  derivePoolVaultTokenAccount(tokenMint: PublicKey): PublicKey {
+    const [vaultPDA] = this.deriveVaultPDA(tokenMint);
+    return this.deriveUserTokenAccount(vaultPDA, tokenMint);
+  }
+
+  /**
+   * Check if a token account exists and create it if needed.
+   * Returns the ATA address.
+   */
+  async ensureTokenAccountExists(
+    owner: PublicKey,
+    tokenMint: PublicKey,
+  ): Promise<PublicKey> {
+    const ata = this.deriveUserTokenAccount(owner, tokenMint);
+    const info = await this.connection.getAccountInfo(ata);
+    if (!info) {
+      // Create ATA using the standard create-associated-token-account instruction
+      const ix = createAssociatedTokenAccountInstruction(
+        this.wallet.publicKey, // payer
+        ata,                   // associated token account
+        owner,                 // owner
+        tokenMint,             // token mint
+      );
+      const tx = new Transaction().add(ix);
+      await this.sendAndConfirm(tx);
+    }
+    return ata;
+  }
+
+  // -----------------------------------------------------------------------
   // Setup: initializeMint
   // -----------------------------------------------------------------------
 
@@ -228,7 +287,8 @@ export class ZkSplClient {
   ): Promise<string> {
     const spendingKey = this.requireSpendingKey();
     const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const salt = initialSalt ?? randomSalt();
+    // Use deterministic salt for nonce=0 unless explicitly overridden
+    const salt = initialSalt ?? deriveDeterministicSalt(spendingKey, 0n);
     const tokenMintField = pubkeyToField(tokenMint.toBytes());
 
     // initial commitment = Poseidon(0, salt, owner_pubkey, token_mint)
@@ -298,7 +358,8 @@ export class ZkSplClient {
     const oldSalt = state.salt;
     const currentNonce = state.nonce;
     const newBalance = oldBalance + amount;
-    const newSalt = randomSalt();
+    // Deterministic salt: recoverable from (spendingKey, nonce+1) if local state is lost
+    const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
     // Compute commitments
     const oldCommitment = createBalanceCommitment(
@@ -330,7 +391,7 @@ export class ZkSplClient {
       isDebit: 0,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'deposit');
     const newCommitmentBytes = fieldToBytes(newCommitment);
 
     // Build accounts
@@ -417,7 +478,7 @@ export class ZkSplClient {
     const oldSalt = state.salt;
     const currentNonce = state.nonce;
     const newBalance = oldBalance - amount;
-    const newSalt = randomSalt();
+    const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
     const oldCommitment = createBalanceCommitment(
       oldBalance, oldSalt, ownerPubkey, tokenMintField
@@ -449,7 +510,7 @@ export class ZkSplClient {
       isDebit: 0,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'withdraw');
     const newCommitmentBytes = fieldToBytes(newCommitment);
 
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
@@ -536,8 +597,8 @@ export class ZkSplClient {
     const oldSalt = state.salt;
     const currentNonce = state.nonce;
     const newBalance = oldBalance - amount;
-    const newSalt = randomSalt();
-    const aSalt = amountSalt ?? randomSalt();
+    const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
+    const aSalt = amountSalt ?? randomSalt(); // amount salt stays random (not stored long-term)
 
     const oldCommitment = createBalanceCommitment(
       oldBalance, oldSalt, ownerPubkey, tokenMintField
@@ -569,7 +630,7 @@ export class ZkSplClient {
       isDebit: 1,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'transfer');
     const newCommitmentBytes = fieldToBytes(newCommitment);
     const amountHashBytes = fieldToBytes(amountHash);
 
@@ -649,7 +710,7 @@ export class ZkSplClient {
     const oldSalt = state.salt;
     const currentNonce = state.nonce;
     const newBalance = oldBalance + amount;
-    const newSalt = randomSalt();
+    const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
     const oldCommitment = createBalanceCommitment(
       oldBalance, oldSalt, ownerPubkey, tokenMintField
@@ -681,7 +742,8 @@ export class ZkSplClient {
       isDebit: 0,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
+    // apply_pending uses the same confidential_balance circuit as transfer (receive side)
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'transfer');
     const newCommitmentBytes = fieldToBytes(newCommitment);
     const amountHashBytes = fieldToBytes(amountHash);
 
@@ -904,6 +966,116 @@ export class ZkSplClient {
   }
 
   // -----------------------------------------------------------------------
+  // State validation & recovery
+  // -----------------------------------------------------------------------
+
+  /**
+   * Validate that the local state matches the on-chain commitment.
+   * Returns a detailed validation result.
+   */
+  async validateState(tokenMint: PublicKey): Promise<{
+    isValid: boolean;
+    localNonce: bigint;
+    onChainNonce: bigint;
+    localBalance: bigint;
+    commitmentMatches: boolean;
+    details: string;
+  }> {
+    const ownerBase58 = this.wallet.publicKey.toBase58();
+    const mintBase58 = tokenMint.toBase58();
+
+    const localState = await this.stateManager.getState(ownerBase58, mintBase58);
+    if (!localState) {
+      return {
+        isValid: false, localNonce: 0n, onChainNonce: 0n,
+        localBalance: 0n, commitmentMatches: false,
+        details: 'No local state found',
+      };
+    }
+
+    const onChainAccount = await this.getConfidentialAccount(tokenMint);
+    if (!onChainAccount) {
+      return {
+        isValid: false, localNonce: localState.nonce, onChainNonce: 0n,
+        localBalance: localState.balance, commitmentMatches: false,
+        details: 'No on-chain account found',
+      };
+    }
+
+    // Compare nonces
+    const noncesMatch = localState.nonce === onChainAccount.nonce;
+
+    // Compute expected commitment from local state
+    const ownerPubkey = deriveOwnerPubkey(localState.spendingKey);
+    const tokenMintField = pubkeyToField(tokenMint.toBytes());
+    const expectedCommitment = createBalanceCommitment(
+      localState.balance, localState.salt, ownerPubkey, tokenMintField
+    );
+    const expectedBytes = fieldToBytes(expectedCommitment);
+
+    // Compare with on-chain commitment
+    let commitmentMatches = true;
+    for (let i = 0; i < 32; i++) {
+      if (expectedBytes[i] !== onChainAccount.balanceCommitment[i]) {
+        commitmentMatches = false;
+        break;
+      }
+    }
+
+    const isValid = noncesMatch && commitmentMatches;
+
+    let details = '';
+    if (!noncesMatch) {
+      details += `Nonce mismatch: local=${localState.nonce}, on-chain=${onChainAccount.nonce}. `;
+    }
+    if (!commitmentMatches) {
+      details += 'Commitment mismatch: local state does not match on-chain commitment. ';
+    }
+    if (isValid) {
+      details = 'State is valid and in sync.';
+    }
+
+    return {
+      isValid,
+      localNonce: localState.nonce,
+      onChainNonce: onChainAccount.nonce,
+      localBalance: localState.balance,
+      commitmentMatches,
+      details,
+    };
+  }
+
+  /**
+   * Emergency reset: clear local state and reinitialize with zero balance.
+   *
+   * WARNING: This requires submitting a new on-chain transaction to update
+   * the commitment. The old confidential balance is forfeited.
+   *
+   * Returns null if the on-chain account doesn't exist (no reset needed).
+   */
+  async emergencyReset(tokenMint: PublicKey): Promise<string | null> {
+    const spendingKey = this.requireSpendingKey();
+    const ownerBase58 = this.wallet.publicKey.toBase58();
+    const mintBase58 = tokenMint.toBase58();
+
+    const onChainAccount = await this.getConfidentialAccount(tokenMint);
+    if (!onChainAccount || !onChainAccount.isInitialized) {
+      // No on-chain account — just clear local state
+      await this.stateManager.deleteState(ownerBase58, mintBase58);
+      return null;
+    }
+
+    // Delete old local state
+    await this.stateManager.deleteState(ownerBase58, mintBase58);
+
+    // Re-initialize with zero balance using deterministic salt
+    const newSalt = deriveDeterministicSalt(spendingKey, 0n);
+    await this.stateManager.initializeState(ownerBase58, mintBase58, spendingKey, newSalt);
+
+    return 'local_state_reset';
+  }
+
+  // -----------------------------------------------------------------------
   // Internal: Anchor instruction building
   // -----------------------------------------------------------------------
 
@@ -935,13 +1107,14 @@ export class ZkSplClient {
       argsBuffer,
     ]);
 
-    // Build account keys (order matters! must match IDL ordering)
+    // Build account keys (order matters! must match IDL ordering).
+    // For optional accounts (null), pass the program's own ID as the Anchor
+    // sentinel so the on-chain Option<> deserialises to None.
     const keys = Object.entries(accounts)
-      .filter(([_, v]) => v !== null)
       .map(([name, pubkey]) => ({
-        pubkey: pubkey!,
-        isSigner: isSignerAccount(instructionName, name),
-        isWritable: isWritableAccount(instructionName, name),
+        pubkey: pubkey ?? this.programId,
+        isSigner: pubkey !== null && isSignerAccount(instructionName, name),
+        isWritable: pubkey !== null && isWritableAccount(instructionName, name),
       }));
 
     return new TransactionInstruction({
@@ -1183,6 +1356,34 @@ function deserializeConfidentialAccount(
  *   created_at: i64 (8)
  *   bump: u8 (1)
  */
+// ---------------------------------------------------------------------------
+// Helpers: SPL Associated Token Account instruction
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a CreateAssociatedTokenAccount instruction (no external dependency needed).
+ * This matches the instruction layout of the SPL Associated Token Account program.
+ */
+function createAssociatedTokenAccountInstruction(
+  payer: PublicKey,
+  associatedToken: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey,
+): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: ZkSplClient.ASSOCIATED_TOKEN_PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: associatedToken, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: new PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
+    ],
+    data: Buffer.alloc(0), // Create ATA instruction has no data
+  });
+}
+
 function deserializeMintConfig(data: Buffer): MintConfigAccount {
   let offset = 8; // skip discriminator
 

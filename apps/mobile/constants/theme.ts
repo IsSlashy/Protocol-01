@@ -153,6 +153,22 @@ export const AnimationConfig = {
   },
 } as const;
 
+// P-01 Design System convenience colors — eliminates per-screen duplication
+export const P01Colors = {
+  cyan: '#39c5bb',
+  cyanDim: 'rgba(57, 197, 187, 0.15)',
+  cyanBright: '#00ffe5',
+  pink: '#ff77a8',
+  pinkDim: 'rgba(255, 119, 168, 0.15)',
+  pinkHot: '#ff2d7a',
+  blue: '#3b82f6',
+  blueDim: 'rgba(59, 130, 246, 0.15)',
+  yellow: '#ffcc00',
+  yellowDim: 'rgba(255, 204, 0, 0.15)',
+  green: '#10b981',
+  greenDim: 'rgba(16, 185, 129, 0.15)',
+} as const;
+
 // Layout constants
 export const Layout = {
   screenPadding: 20,

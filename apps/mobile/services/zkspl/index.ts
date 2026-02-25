@@ -6,11 +6,23 @@
  * via AsyncStorage.
  */
 
-import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
 import type { Wallet } from '@coral-xyz/anchor';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import { generateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english';
 import { getConnection } from '../solana/connection';
-import { getKeypair } from '../solana/wallet';
+import { getKeypair, deriveKeypairFromMnemonic } from '../solana/wallet';
+import { getZkService } from '../zk';
+
+// SecureStore keys — must match wallet.ts and shieldedStore.ts
+const MNEMONIC_KEY = 'p01_mnemonic';
+const ZK_SEED_KEY = 'p01_zk_seed';
+const SECURE_OPTIONS = {
+  keychainService: 'protocol-01',
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
 
 // Import directly from SDK source (monorepo workspace)
 import {
@@ -47,12 +59,76 @@ class AsyncStorageStateStore implements StateStore {
 }
 
 // ---------------------------------------------------------------------------
-// Native SOL mint constant
+// Token constants
 // ---------------------------------------------------------------------------
 
-/** For the MVP, we use native SOL. The token_mint = SystemProgram.programId */
+/** For native SOL, the token_mint = SystemProgram.programId */
 export const NATIVE_SOL_MINT = SystemProgram.programId;
 export const NATIVE_SOL_MINT_STR = NATIVE_SOL_MINT.toBase58(); // "11111111111111111111111111111111"
+
+/** Devnet USDC mint */
+export const USDC_DEVNET_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+export const USDC_DEVNET_MINT_STR = USDC_DEVNET_MINT.toBase58();
+
+/** Decimal places for each token type */
+export const SOL_DECIMALS = 9;
+export const USDC_DECIMALS = 6;
+
+/** Token metadata for supported tokens */
+export interface TokenConfig {
+  mint: PublicKey;
+  mintStr: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  icon: string; // Ionicon name
+}
+
+export const SUPPORTED_TOKENS: TokenConfig[] = [
+  {
+    mint: NATIVE_SOL_MINT,
+    mintStr: NATIVE_SOL_MINT_STR,
+    symbol: 'SOL',
+    name: 'Solana',
+    decimals: SOL_DECIMALS,
+    icon: 'logo-bitcoin', // closest Ionicon; UI can override with custom SVG
+  },
+  {
+    mint: USDC_DEVNET_MINT,
+    mintStr: USDC_DEVNET_MINT_STR,
+    symbol: 'USDC',
+    name: 'USD Coin',
+    decimals: USDC_DECIMALS,
+    icon: 'cash-outline',
+  },
+];
+
+/** Look up token config by mint string */
+export function getTokenConfig(mintStr: string): TokenConfig | undefined {
+  return SUPPORTED_TOKENS.find(t => t.mintStr === mintStr);
+}
+
+/** Get decimals for a given mint (defaults to 9 for unknown tokens) */
+export function getTokenDecimals(mintStr: string): number {
+  return getTokenConfig(mintStr)?.decimals ?? 9;
+}
+
+/** Get symbol for a given mint */
+export function getTokenSymbol(mintStr: string): string {
+  return getTokenConfig(mintStr)?.symbol ?? 'TOKEN';
+}
+
+/**
+ * Format a raw lamport/atomic amount for display.
+ * E.g., formatTokenAmount(USDC_DEVNET_MINT_STR, 1_500_000) => "1.5000"
+ */
+export function formatTokenAmount(mintStr: string, atomicAmount: number, decimals?: number): string {
+  const d = decimals ?? getTokenDecimals(mintStr);
+  const value = atomicAmount / Math.pow(10, d);
+  // Show 4 decimal places for SOL, 2 for USDC
+  const displayDecimals = d >= 9 ? 4 : 2;
+  return value.toFixed(displayDecimals);
+}
 
 // ---------------------------------------------------------------------------
 // Spending key derivation
@@ -107,25 +183,41 @@ export class ZkSplService {
   private client: ZkSplClient;
   private spendingKey: FieldElement;
   private walletPublicKey: PublicKey;
+  private connection: Connection;
+  private keypair: Keypair;
 
   constructor(
     connection: Connection,
     wallet: Wallet,
     spendingKey: FieldElement,
+    keypair: Keypair,
   ) {
     this.spendingKey = spendingKey;
     this.walletPublicKey = wallet.publicKey;
+    this.connection = connection;
+    this.keypair = keypair;
 
-    // Build prover config - use remote prover from env if available
-    const remoteProverUrl = process.env.EXPO_PUBLIC_RELAYER_URL
-      ? `${process.env.EXPO_PUBLIC_RELAYER_URL}/prove`
-      : '';
+    // Build prover config — proof generation cascade:
+    //   1. Relayer endpoints: POST {url}/api/zkspl/prove/{deposit|withdraw|transfer|balance-proof}
+    //   2. Remote Rust prover: POST {url}/prove/zkspl (fallback)
+    //   3. Local snarkjs: WASM + zkey (last resort, very slow on mobile)
+    const relayerBaseUrl = process.env.EXPO_PUBLIC_RELAYER_URL ?? '';
+    const remoteProverUrl = relayerBaseUrl ? `${relayerBaseUrl}/prove` : '';
+
+    if (relayerBaseUrl) {
+      console.log('[ZkSPL] Using relayer for proof generation:', relayerBaseUrl);
+      console.log('[ZkSPL]   Endpoints: /api/zkspl/prove/{deposit,withdraw,transfer,balance-proof}');
+      console.log('[ZkSPL]   Fallback Rust prover:', remoteProverUrl);
+    } else {
+      console.warn('[ZkSPL] No EXPO_PUBLIC_RELAYER_URL set — proof generation will use local snarkjs (slow)');
+    }
 
     this.client = new ZkSplClient({
       connection,
       wallet,
       programId: new PublicKey(ZKSPL_PROGRAM_ID),
       prover: {
+        relayerUrl: relayerBaseUrl,
         remoteProverUrl,
         timeout: 120_000,
       },
@@ -162,17 +254,56 @@ export class ZkSplService {
   // -----------------------------------------------------------------------
 
   /**
+   * Check if a token mint is native SOL (SystemProgram.programId).
+   */
+  private isNativeSol(tokenMint: PublicKey): boolean {
+    return tokenMint.equals(NATIVE_SOL_MINT);
+  }
+
+  /**
+   * For SPL tokens (non-SOL), derive the user's ATA and pool vault ATA.
+   * Returns undefined for both if the token is native SOL.
+   */
+  private deriveTokenAccounts(tokenMint: PublicKey): {
+    userTokenAccount: PublicKey | undefined;
+    poolVaultTokenAccount: PublicKey | undefined;
+  } {
+    if (this.isNativeSol(tokenMint)) {
+      return { userTokenAccount: undefined, poolVaultTokenAccount: undefined };
+    }
+    return {
+      userTokenAccount: this.client.deriveUserTokenAccount(this.walletPublicKey, tokenMint),
+      poolVaultTokenAccount: this.client.derivePoolVaultTokenAccount(tokenMint),
+    };
+  }
+
+  /**
+   * For SPL tokens, ensure the user's ATA exists (creates it if needed).
+   */
+  async ensureTokenAccount(tokenMint: PublicKey): Promise<PublicKey | undefined> {
+    if (this.isNativeSol(tokenMint)) return undefined;
+    return this.client.ensureTokenAccountExists(this.walletPublicKey, tokenMint);
+  }
+
+  /**
    * Deposit tokens into the confidential account.
    * The deposit amount is public; the resulting balance is hidden.
    *
    * For native SOL, no userTokenAccount/poolVault needed --
    * the program handles lamport transfer via SystemProgram.
+   * For SPL tokens, the user's ATA and pool vault ATA are derived automatically.
    */
   async deposit(
     tokenMint: PublicKey,
     amount: bigint,
   ): Promise<{ signature: string; newBalance: bigint }> {
-    const result: ZkSplTxResult = await this.client.deposit(tokenMint, amount);
+    const { userTokenAccount, poolVaultTokenAccount } = this.deriveTokenAccounts(tokenMint);
+    const result: ZkSplTxResult = await this.client.deposit(
+      tokenMint,
+      amount,
+      userTokenAccount,
+      poolVaultTokenAccount,
+    );
     return {
       signature: result.signature,
       newBalance: result.newBalance,
@@ -182,12 +313,23 @@ export class ZkSplService {
   /**
    * Withdraw tokens from the confidential account.
    * The withdrawal amount is public; the remaining balance stays hidden.
+   * For SPL tokens, ensures the user's ATA exists before withdrawing.
    */
   async withdraw(
     tokenMint: PublicKey,
     amount: bigint,
   ): Promise<{ signature: string; newBalance: bigint }> {
-    const result: ZkSplTxResult = await this.client.withdraw(tokenMint, amount);
+    // For SPL tokens, ensure user has an ATA to receive the tokens
+    if (!this.isNativeSol(tokenMint)) {
+      await this.ensureTokenAccount(tokenMint);
+    }
+    const { userTokenAccount, poolVaultTokenAccount } = this.deriveTokenAccounts(tokenMint);
+    const result: ZkSplTxResult = await this.client.withdraw(
+      tokenMint,
+      amount,
+      userTokenAccount,
+      poolVaultTokenAccount,
+    );
     return {
       signature: result.signature,
       newBalance: result.newBalance,
@@ -273,6 +415,110 @@ export class ZkSplService {
   getWalletPublicKey(): PublicKey {
     return this.walletPublicKey;
   }
+
+  // -----------------------------------------------------------------------
+  // State validation & recovery
+  // -----------------------------------------------------------------------
+
+  /**
+   * Validate that local state matches the on-chain commitment.
+   */
+  async validateState(tokenMint: PublicKey): Promise<{
+    isValid: boolean;
+    localNonce: bigint;
+    onChainNonce: bigint;
+    localBalance: bigint;
+    commitmentMatches: boolean;
+    details: string;
+  }> {
+    return this.client.validateState(tokenMint);
+  }
+
+  /**
+   * Emergency reset: clear local state and reinitialize with zero balance.
+   * WARNING: This forfeits any confidential balance that can't be recovered.
+   */
+  async emergencyReset(tokenMint: PublicKey): Promise<string | null> {
+    return this.client.emergencyReset(tokenMint);
+  }
+
+  /**
+   * Send regular SOL from the ZK wallet to any destination address.
+   * Used to sweep funds back to the main wallet after withdraw/unshield.
+   */
+  async sweepSol(
+    destination: PublicKey,
+    lamports: bigint,
+  ): Promise<string> {
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: this.walletPublicKey,
+        toPubkey: destination,
+        lamports,
+      }),
+    );
+    return sendAndConfirmTransaction(this.connection, tx, [this.keypair]);
+  }
+
+  /**
+   * Private sweep: move SOL from ZK wallet to main wallet via the shielded pool.
+   *
+   * Flow:
+   *   1. Shield SOL from ZK wallet into the shielded pool
+   *   2. Unshield SOL from the pool to the main wallet address
+   *
+   * This breaks the on-chain link between the ZK wallet and main wallet —
+   * no direct SystemProgram.transfer is visible.
+   *
+   * @param mainWalletAddress - Destination main wallet public key
+   * @param lamports - Amount in lamports to sweep
+   * @param onProgress - Callback for progress updates (step: 'shield' | 'unshield', message: string)
+   */
+  async privateSweepToMainWallet(
+    mainWalletAddress: PublicKey,
+    lamports: bigint,
+    onProgress?: (step: 'shield' | 'unshield', message: string) => void,
+  ): Promise<{ shieldSig: string; unshieldSig: string }> {
+    const zkService = getZkService();
+    if (!zkService.isInitialized) {
+      // ZkService needs to be initialized with the mnemonic/seed.
+      // It should already be initialized by the shielded store if the user
+      // has used shielded features before. If not, we need to init it.
+      const mnemonic = await SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTIONS);
+      const zkSeed = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS);
+      const seed = mnemonic || zkSeed;
+      if (!seed) {
+        throw new Error('No seed available to initialize ZK service for private sweep');
+      }
+      await zkService.initialize(seed);
+    }
+
+    // Use the ZK wallet's keypair to sign shield transactions
+    const zkWalletKeypair = this.keypair;
+    const signTransaction = async (tx: Transaction): Promise<Transaction> => {
+      tx.sign(zkWalletKeypair);
+      return tx;
+    };
+
+    // Step 1: Shield SOL from ZK wallet into the shielded pool
+    onProgress?.('shield', 'Shielding into pool...');
+    const shieldSig = await zkService.shield(
+      lamports,
+      zkWalletKeypair.publicKey,
+      signTransaction,
+    );
+
+    // Step 2: Unshield SOL from the pool to the main wallet
+    onProgress?.('unshield', 'Unshielding to main wallet...');
+    const unshieldSig = await zkService.unshield(
+      mainWalletAddress,
+      lamports,
+      zkWalletKeypair.publicKey,
+      signTransaction,
+    );
+
+    return { shieldSig, unshieldSig };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +528,47 @@ export class ZkSplService {
 let _service: ZkSplService | null = null;
 
 /**
+ * Resolve a Keypair for the ZkSPL service.
+ *
+ * Tries, in order:
+ *   1. getKeypair()       — reads p01_private_key from SecureStore (fast path)
+ *   2. p01_mnemonic       — derive keypair from the wallet mnemonic
+ *   3. p01_zk_seed        — derive from the ZK-specific seed (Privy users)
+ *   4. generate new seed  — create + persist a new ZK seed (first-time Privy)
+ *
+ * This mirrors the shielded store initialisation pattern so it works for
+ * all wallet types (local mnemonic, imported, Privy social login).
+ */
+async function resolveKeypair(): Promise<Keypair | null> {
+  // 1. Fast path — private key already in SecureStore
+  const kp = await getKeypair();
+  if (kp) {
+    console.log('[ZkSPL] Keypair from SecureStore private key');
+    return kp;
+  }
+
+  // 2. Derive from mnemonic
+  const mnemonic = await SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTIONS);
+  if (mnemonic) {
+    console.log('[ZkSPL] Deriving keypair from mnemonic');
+    return deriveKeypairFromMnemonic(mnemonic);
+  }
+
+  // 3. Derive from existing ZK seed (Privy users who already initialised shielded)
+  let zkSeed = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS);
+  if (zkSeed) {
+    console.log('[ZkSPL] Deriving keypair from ZK seed');
+    return deriveKeypairFromMnemonic(zkSeed);
+  }
+
+  // 4. Generate a brand-new ZK seed (first-time Privy user)
+  console.log('[ZkSPL] Generating new ZK seed for Privy user');
+  zkSeed = generateMnemonic(wordlist, 128);
+  await SecureStore.setItemAsync(ZK_SEED_KEY, zkSeed, SECURE_OPTIONS);
+  return deriveKeypairFromMnemonic(zkSeed);
+}
+
+/**
  * Get or create the ZkSplService singleton.
  * Returns null if wallet is not available.
  */
@@ -289,9 +576,9 @@ export async function getZkSplService(): Promise<ZkSplService | null> {
   if (_service) return _service;
 
   try {
-    const keypair = await getKeypair();
+    const keypair = await resolveKeypair();
     if (!keypair) {
-      console.warn('[ZkSPL] No keypair available');
+      console.warn('[ZkSPL] No keypair available after all fallbacks');
       return null;
     }
 
@@ -299,7 +586,8 @@ export async function getZkSplService(): Promise<ZkSplService | null> {
     const wallet = new KeypairWallet(keypair);
     const spendingKey = deriveSpendingKey(keypair.secretKey);
 
-    _service = new ZkSplService(connection, wallet, spendingKey);
+    _service = new ZkSplService(connection, wallet, spendingKey, keypair);
+    console.log('[ZkSPL] Service initialized, wallet:', keypair.publicKey.toBase58());
     return _service;
   } catch (error) {
     console.error('[ZkSPL] Failed to create service:', error);

@@ -49,6 +49,11 @@ coverage/
 nul
 .claude/
 
+# Keypairs / secrets (never commit private keys)
+**/keypair.json
+**/recipient-keypair.json
+**/id.json
+
 .vercel
 *.ptau
 # Generated TypeScript declarations
@@ -56,3 +61,11 @@ nul
 *.timestamp-*.mts
 *.timestamp-*.mjs
 **/vercel_out.txt
+
+# APK build artifacts
+*.apk
+*.apk.idsig
+
+# Log dumps
+logcat_*.txt
+shield_logs.txt

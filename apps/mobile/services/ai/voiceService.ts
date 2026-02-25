@@ -1,55 +1,147 @@
 /**
  * Voice input service: Recording + Groq Whisper transcription.
- *
- * NOTE: expo-av is NOT imported here. It requires a native rebuild (EAS build).
- * Until the next EAS build, voice recording is stubbed out.
- * After EAS build, uncomment the expo-av lines below and remove the stubs.
  */
 
+import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 const GROQ_WHISPER_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MAX_RECORDING_MS = 60_000;
 const WHISPER_MODEL = 'whisper-large-v3';
 
+let recording: Audio.Recording | null = null;
 let recordingStartTime = 0;
 let _isRecording = false;
 
 /**
  * Check if voice recording is available.
- * Returns false until a native build with expo-av is installed.
  */
 export async function isAvailable(): Promise<boolean> {
-  // expo-av not in this APK — will be available after EAS build
-  return false;
+  try {
+    const { granted } = await Audio.getPermissionsAsync();
+    return true; // Module exists, permissions may or may not be granted
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Request microphone permissions
  */
 export async function requestPermissions(): Promise<boolean> {
-  console.warn('[Voice] expo-av not available — needs native build');
-  return false;
+  try {
+    const { granted } = await Audio.requestPermissionsAsync();
+    return granted;
+  } catch (err) {
+    console.warn('[Voice] Permission request failed:', err);
+    return false;
+  }
 }
 
 /**
  * Start recording audio
  */
 export async function startRecording(): Promise<boolean> {
-  const available = await isAvailable();
-  if (!available) {
-    console.warn('[Voice] Voice recording requires a native build with expo-av');
+  try {
+    // Request permissions if needed
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) {
+      console.warn('[Voice] Microphone permission denied');
+      return false;
+    }
+
+    // Configure audio session
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+    });
+
+    // Stop any existing recording
+    if (recording) {
+      try { await recording.stopAndUnloadAsync(); } catch {}
+      recording = null;
+    }
+
+    // Start new recording
+    const { recording: newRecording } = await Audio.Recording.createAsync(
+      {
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 64000,
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 64000,
+        },
+        web: {},
+      }
+    );
+
+    recording = newRecording;
+    recordingStartTime = Date.now();
+    _isRecording = true;
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    // Auto-stop after max duration
+    setTimeout(async () => {
+      if (_isRecording && recording) {
+        await stopRecording();
+      }
+    }, MAX_RECORDING_MS);
+
+    console.log('[Voice] Recording started');
+    return true;
+  } catch (err) {
+    console.error('[Voice] Failed to start recording:', err);
+    _isRecording = false;
+    recording = null;
     return false;
   }
-  return false;
 }
 
 /**
  * Stop recording and return the file URI
  */
 export async function stopRecording(): Promise<string | null> {
-  return null;
+  if (!recording) return null;
+
+  try {
+    _isRecording = false;
+    await recording.stopAndUnloadAsync();
+
+    // Reset audio mode
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+    });
+
+    const uri = recording.getURI();
+    recording = null;
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    console.log('[Voice] Recording stopped, URI:', uri);
+    return uri;
+  } catch (err) {
+    console.error('[Voice] Failed to stop recording:', err);
+    recording = null;
+    _isRecording = false;
+    return null;
+  }
 }
 
 /**
@@ -57,6 +149,10 @@ export async function stopRecording(): Promise<string | null> {
  */
 export async function cancelRecording(): Promise<void> {
   _isRecording = false;
+  if (recording) {
+    try { await recording.stopAndUnloadAsync(); } catch {}
+    recording = null;
+  }
 }
 
 /**

@@ -64,4 +64,16 @@ pub enum ZkShieldedError {
 
     #[msg("Insufficient pool balance for withdrawal")]
     InsufficientPoolBalance,
+
+    #[msg("Denomination must be greater than zero")]
+    InvalidDenomination,
+
+    #[msg("Deposit amount must equal pool denomination")]
+    AmountMustEqualDenomination,
+
+    #[msg("Epoch delay not met - note is too young")]
+    EpochDelayNotMet,
+
+    #[msg("Epoch delay must be greater than zero")]
+    InvalidEpochDelay,
 }

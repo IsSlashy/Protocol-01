@@ -16,6 +16,12 @@ const MERKLE_TREE_DEPTH = 20;
 const CIRCUIT_WASM_PATH = 'circuits/transfer.wasm';
 const CIRCUIT_ZKEY_PATH = 'circuits/transfer_final.zkey';
 
+// Denominated pool circuit files
+const DENOM_POOL_WASM_PATH = 'circuits/denominated_pool.wasm';
+const DENOM_POOL_ZKEY_PATH = 'circuits/denominated_pool_final.zkey';
+
+export type CircuitName = 'transfer' | 'denominated_pool';
+
 // PDA seeds
 const PDA_SEEDS = {
   SHIELDED_POOL: new TextEncoder().encode('shielded_pool'),
@@ -363,14 +369,50 @@ class ClientProver {
   }> = new Map();
   private circuitWasm: ArrayBuffer | null = null;
   private circuitZkey: ArrayBuffer | null = null;
+  /** Additional circuits loaded on demand */
+  private circuits: Map<string, { wasm: ArrayBuffer; zkey: ArrayBuffer }> = new Map();
   private _isReady: boolean = false;
 
   get isReady(): boolean {
     return this._isReady;
   }
 
+  /**
+   * Load an additional circuit (on-demand, does not block initialize)
+   */
+  async loadCircuit(name: CircuitName): Promise<boolean> {
+    if (this.circuits.has(name)) return true;
+
+    const paths: Record<CircuitName, { wasm: string; zkey: string }> = {
+      transfer: { wasm: CIRCUIT_WASM_PATH, zkey: CIRCUIT_ZKEY_PATH },
+      denominated_pool: { wasm: DENOM_POOL_WASM_PATH, zkey: DENOM_POOL_ZKEY_PATH },
+    };
+
+    const p = paths[name];
+    if (!p) return false;
+
+    try {
+      const [wasmResp, zkeyResp] = await Promise.all([
+        fetch(chrome.runtime.getURL(p.wasm)),
+        fetch(chrome.runtime.getURL(p.zkey)),
+      ]);
+      if (!wasmResp.ok || !zkeyResp.ok) {
+        console.error(`[Prover] Failed to load circuit "${name}"`);
+        return false;
+      }
+      this.circuits.set(name, {
+        wasm: await wasmResp.arrayBuffer(),
+        zkey: await zkeyResp.arrayBuffer(),
+      });
+      return true;
+    } catch (err) {
+      console.error(`[Prover] Error loading circuit "${name}":`, err);
+      return false;
+    }
+  }
+
   async initialize(): Promise<void> {
-    // Load circuit files
+    // Load transfer circuit files (default)
     const wasmUrl = chrome.runtime.getURL(CIRCUIT_WASM_PATH);
     const zkeyUrl = chrome.runtime.getURL(CIRCUIT_ZKEY_PATH);
 
@@ -393,6 +435,8 @@ class ClientProver {
 
       this.circuitWasm = await wasmResponse.arrayBuffer();
       this.circuitZkey = await zkeyResponse.arrayBuffer();
+      // Store as named circuit too
+      this.circuits.set('transfer', { wasm: this.circuitWasm, zkey: this.circuitZkey });
 
       // Create Web Worker
       this.worker = new Worker(
@@ -505,11 +549,12 @@ class ClientProver {
     return bytes;
   }
 
-  async generateProof(inputs: Record<string, string | string[]>): Promise<Groth16Proof> {
-    if (!this.isReady || !this.worker || !this.circuitWasm || !this.circuitZkey) {
+  async generateProof(inputs: Record<string, string | string[]>, circuitName?: CircuitName): Promise<Groth16Proof> {
+    if (!this.isReady || !this.worker) {
       throw new Error('Prover not initialized. Circuit files may be missing.');
     }
 
+    const { wasm, zkey } = this.resolveCircuit(circuitName);
     const id = crypto.randomUUID();
 
     return new Promise((resolve, reject) => {
@@ -518,8 +563,8 @@ class ClientProver {
       this.worker!.postMessage({
         type: 'prove',
         id,
-        circuitWasm: this.circuitWasm,
-        circuitZkey: this.circuitZkey,
+        circuitWasm: wasm,
+        circuitZkey: zkey,
         inputs,
       });
 
@@ -536,14 +581,15 @@ class ClientProver {
   /**
    * Generate proof and return raw snarkjs format (for relayer verification)
    */
-  async generateProofRaw(inputs: Record<string, string | string[]>): Promise<{
+  async generateProofRaw(inputs: Record<string, string | string[]>, circuitName?: CircuitName): Promise<{
     proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
     publicSignals: string[];
   }> {
-    if (!this.isReady || !this.worker || !this.circuitWasm || !this.circuitZkey) {
+    if (!this.isReady || !this.worker) {
       throw new Error('Prover not initialized. Circuit files may be missing.');
     }
 
+    const { wasm, zkey } = this.resolveCircuit(circuitName);
     const id = crypto.randomUUID();
 
     return new Promise((resolve, reject) => {
@@ -552,8 +598,8 @@ class ClientProver {
       this.worker!.postMessage({
         type: 'prove',
         id,
-        circuitWasm: this.circuitWasm,
-        circuitZkey: this.circuitZkey,
+        circuitWasm: wasm,
+        circuitZkey: zkey,
         inputs,
       });
 
@@ -566,12 +612,31 @@ class ClientProver {
     });
   }
 
+  private resolveCircuit(circuitName?: CircuitName): { wasm: ArrayBuffer; zkey: ArrayBuffer } {
+    if (!circuitName || circuitName === 'transfer') {
+      if (!this.circuitWasm || !this.circuitZkey) {
+        throw new Error('Transfer circuit not loaded');
+      }
+      return { wasm: this.circuitWasm, zkey: this.circuitZkey };
+    }
+    const c = this.circuits.get(circuitName);
+    if (!c) {
+      throw new Error(`Circuit "${circuitName}" not loaded. Call loadCircuit("${circuitName}") first.`);
+    }
+    return c;
+  }
+
+  isCircuitLoaded(name: CircuitName): boolean {
+    return this.circuits.has(name);
+  }
+
   terminate(): void {
     if (this.worker) {
       this.worker.terminate();
       this.worker = null;
     }
     this.pendingRequests.clear();
+    this.circuits.clear();
   }
 }
 

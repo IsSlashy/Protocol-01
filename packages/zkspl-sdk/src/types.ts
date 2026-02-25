@@ -155,6 +155,19 @@ export interface KnownPendingCredit {
 export interface ProverConfig {
   /** URL of a remote Rust prover (e.g., http://localhost:3001/prove) */
   remoteProverUrl?: string;
+  /**
+   * URL of the relayer for proof generation via its zkSPL endpoints.
+   * e.g., "https://relayer.example.com" (without trailing slash).
+   *
+   * When set, the prover will first attempt to generate proofs via:
+   *   POST {relayerUrl}/api/zkspl/prove/deposit
+   *   POST {relayerUrl}/api/zkspl/prove/withdraw
+   *   POST {relayerUrl}/api/zkspl/prove/transfer
+   *   POST {relayerUrl}/api/zkspl/prove/balance-proof
+   *
+   * Falls back to remoteProverUrl (Rust prover), then local snarkjs.
+   */
+  relayerUrl?: string;
   /** Path / URL of the confidential_balance circuit WASM */
   balanceWasmPath?: string;
   /** Path / URL of the confidential_balance circuit zkey */
@@ -166,6 +179,12 @@ export interface ProverConfig {
   /** Timeout for proof generation in ms (default 120000) */
   timeout?: number;
 }
+
+/**
+ * The operation type for proof generation.
+ * Used to route to the correct relayer endpoint.
+ */
+export type ZkSplOperationType = 'deposit' | 'withdraw' | 'transfer' | 'balance-proof';
 
 // ---------------------------------------------------------------------------
 // Transaction result

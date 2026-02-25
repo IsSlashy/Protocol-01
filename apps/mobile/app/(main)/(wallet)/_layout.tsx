@@ -10,9 +10,6 @@ export default function WalletLayout() {
       }}
     >
       <Stack.Screen name="index" />
-      <Stack.Screen name="shielded" />
-      <Stack.Screen name="confidential" />
-      <Stack.Screen name="shielded-transfer" />
       <Stack.Screen name="send" />
       <Stack.Screen name="send-confirm" />
       <Stack.Screen name="send-success" />

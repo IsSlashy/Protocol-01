@@ -77,7 +77,7 @@ export function deriveOwnerPubkey(spendingKey: FieldElement): FieldElement {
 }
 
 // ---------------------------------------------------------------------------
-// Random salt generation
+// Salt generation
 // ---------------------------------------------------------------------------
 
 /**
@@ -88,6 +88,22 @@ export function randomSalt(): FieldElement {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return bytesToField(bytes);
+}
+
+/**
+ * Derive a deterministic salt from spending key and nonce.
+ *
+ * salt = Poseidon(spendingKey, nonce)
+ *
+ * This is recoverable: given the spending key and nonce, the salt can
+ * always be recomputed. This prevents state loss when local storage
+ * gets corrupted — we can replay from on-chain nonce.
+ */
+export function deriveDeterministicSalt(
+  spendingKey: FieldElement,
+  nonce: bigint,
+): FieldElement {
+  return poseidonHash([spendingKey, nonce]);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +117,20 @@ export function fieldToBytes(field: bigint): Bytes32 {
   const bytes = new Uint8Array(32);
   let value = field;
   for (let i = 0; i < 32; i++) {
+    bytes[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  return bytes;
+}
+
+/**
+ * Convert a field element to 32 bytes (big-endian).
+ * Used for G1/G2 point encoding for the alt_bn128 precompile.
+ */
+export function fieldToBytesBE(field: bigint): Bytes32 {
+  const bytes = new Uint8Array(32);
+  let value = field;
+  for (let i = 31; i >= 0; i--) {
     bytes[i] = Number(value & 0xffn);
     value >>= 8n;
   }
