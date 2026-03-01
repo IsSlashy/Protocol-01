@@ -345,7 +345,7 @@ export function subscribeToPayments(
 ): { unsubscribe: () => void } {
   const scanner = new StealthScanner(connection, viewingPrivateKey, spendingPubKey);
   let isActive = true;
-  let timeoutId: NodeJS.Timeout | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   const poll = async () => {
     if (!isActive) return;
