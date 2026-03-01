@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "expo": "~54.0.32",
+    "js-sha3": "^0.9.3",
     "react": "19.1.0",
     "react-native": "0.81.5"
   },
