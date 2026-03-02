@@ -32,6 +32,9 @@ let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
 export function setPrivySigner(signer: ((tx: Transaction) => Promise<Transaction>) | null) {
   privySigner = signer;
 }
+export function getPrivySigner(): ((tx: Transaction) => Promise<Transaction>) | null {
+  return privySigner;
+}
 import { requestAirdrop, isDevnet, initializeConnection } from '../services/solana/connection';
 
 interface WalletState {

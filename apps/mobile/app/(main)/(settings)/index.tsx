@@ -6,9 +6,11 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { SettingsSection, SettingsRow, CurrencyModal } from '../../../components/settings';
+import { SettingsSection, SettingsRow, ToggleRow, CurrencyModal } from '../../../components/settings';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/settingsStore';
+import { useShieldedStore } from '../../../stores/shieldedStore';
+import { useConfidentialStore } from '../../../stores/confidentialStore';
 import { getCluster } from '../../../services/solana/connection';
 import { useAuth } from '../../../providers/PrivyProvider';
 
@@ -16,7 +18,22 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { publicKey: localPublicKey, logout: walletLogout, hasWallet: hasLocalWallet } = useWalletStore();
   const { logout: privyLogout, walletAddress: privyWalletAddress } = useAuth();
-  const { currency, setCurrency, initialize: initSettings } = useSettingsStore();
+  const {
+    currency,
+    setCurrency,
+    initialize: initSettings,
+    shieldedWalletEnabled,
+    confidentialBalanceEnabled,
+    setShieldedWalletEnabled,
+    setConfidentialBalanceEnabled,
+  } = useSettingsStore();
+  const { shieldedBalance, notes: shieldedNotes } = useShieldedStore();
+  const { balances: confidentialBalances, pendingCredits } = useConfidentialStore();
+
+  const hasShieldedFunds = shieldedBalance > 0 || shieldedNotes.filter(n => Number(n.amount) > 0).length > 0;
+  const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
+  const hasConfidentialFunds = confidentialSolBalance > 0 || (pendingCredits['11111111111111111111111111111111'] || 0) > 0;
+  const hasLegacyFunds = hasShieldedFunds || hasConfidentialFunds;
   const [copied, setCopied] = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -203,6 +220,27 @@ export default function SettingsScreen() {
             label="Privacy Settings"
             leftIcon="eye-off-outline"
             onPress={() => router.push('/(main)/(settings)/privacy')}
+          />
+        </SettingsSection>
+
+        {/* PRIVACY FEATURES */}
+        <SettingsSection title="Privacy Features">
+          <ToggleRow
+            label="Shielded Wallet (Legacy)"
+            description={hasShieldedFunds
+              ? `${shieldedBalance.toFixed(4)} SOL in pool — withdraw recommended`
+              : 'Variable-amount privacy pool. Use Privacy Pool instead for stronger anonymity.'}
+            value={shieldedWalletEnabled}
+            onValueChange={setShieldedWalletEnabled}
+          />
+          <View style={{ height: 1, backgroundColor: '#27272a', marginHorizontal: 16 }} />
+          <ToggleRow
+            label="Confidential Balance"
+            description={hasConfidentialFunds
+              ? `${confidentialSolBalance.toFixed(4)} SOL confidential — withdraw recommended`
+              : 'Hide token amounts on-chain. Sender and recipient remain visible.'}
+            value={confidentialBalanceEnabled}
+            onValueChange={setConfidentialBalanceEnabled}
           />
         </SettingsSection>
 

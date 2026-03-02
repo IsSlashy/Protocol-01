@@ -12,6 +12,11 @@ export default function PrivacyLayout() {
       <Stack.Screen name="shielded" />
       <Stack.Screen name="confidential" />
       <Stack.Screen name="shielded-transfer" />
+      <Stack.Screen name="denominated-shield" />
+      <Stack.Screen name="denominated-unshield" />
+      <Stack.Screen name="denominated-notes" />
+      <Stack.Screen name="denominated-transfer" />
+      <Stack.Screen name="denominated-import" />
     </Stack>
   );
 }
