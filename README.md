@@ -34,7 +34,7 @@
 
 ### Mobile App (Android)
 
-**Download APK:** [Protocol-01.apk](https://expo.dev/accounts/slashy/projects/p01-mobile/builds)*
+**Download APK:** [Protocol-01 v0.1.1](https://expo.dev/accounts/slashy_fx/projects/protocol-01/builds/9d05f1aa-d16c-4706-bb43-a0dec7d0fce1)
 
 #### Installation Steps:
 1. Download the APK on your Android device
@@ -206,6 +206,7 @@ protocol-01/
 │   ├── transfer.circom              # Main ZK circuit (2-in-2-out, Merkle depth 20)
 │   ├── confidential_balance.circom  # zkSPL balance commitment circuit (1,382 constraints)
 │   ├── balance_proof.circom         # zkSPL balance sufficiency proof (644 constraints)
+│   ├── denominated_pool.circom      # Fixed-denomination privacy pool (4,273 constraints)
 │   ├── merkle.circom                # Merkle tree membership proof
 │   └── poseidon.circom              # ZK-friendly hash function
 ├── programs/
@@ -575,11 +576,15 @@ These libraries are used in production by Protocol 01 and are free to use under 
 - [x] zkSPL confidential balances (quantum-resistant Poseidon commitments)
 - [x] Rust native Groth16 prover (~50ms proofs vs ~3min in JS)
 - [x] zkSPL SDK (@p01/zkspl-sdk)
+- [x] Denominated privacy pools (fixed-amount Tornado Cash model, SOL + SPL tokens)
+- [x] Private ZK transfers (2-in-2-out UTXO within shielded pool)
+- [x] Private ZK subscriptions (recurring payments with ZK proofs)
+- [x] Instant ZK operations (~3s shield + unshield, down from ~3min)
 
 ### In Progress
 
 - [ ] DeFi composability spec (balance proof verification for lending/DEX)
-- [ ] On-chain relayer (Anchor program)
+- [ ] Mainnet security audit
 - [ ] Decentralized relayer network
 
 ### Future
