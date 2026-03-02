@@ -1,3 +1,6 @@
+# Secrets backup (never commit)
+P01_SECRETS_BACKUP.md
+
 # Dependencies
 node_modules/
 .pnpm-store/
