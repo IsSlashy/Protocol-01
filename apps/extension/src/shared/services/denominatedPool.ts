@@ -102,11 +102,40 @@ export interface DenominatedPoolProofInputs {
   nullifier: string;
   min_epoch: string;
   token_mint: string;
+  enforce_maturity: string;
   secret: string;
   nullifier_preimage: string;
   deposit_epoch: string;
   path_elements: string[];
   path_indices: string[];
+}
+
+export interface DenominatedTransferProofInputs {
+  merkle_root: string;
+  nullifier: string;
+  min_epoch: string;
+  token_mint: string;
+  new_commitment: string;
+  secret: string;
+  nullifier_preimage: string;
+  deposit_epoch: string;
+  path_elements: string[];
+  path_indices: string[];
+  new_secret: string;
+  new_nullifier_preimage: string;
+  new_deposit_epoch: string;
+}
+
+/** Shareable note data for peer-to-peer transfers and backup */
+export interface ShareableNote {
+  version: 1;
+  pool: string;
+  secret: string;
+  nullifier_preimage: string;
+  deposit_epoch: string;
+  token_mint: string;
+  commitment: string;
+  leafIndex: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +320,8 @@ export function buildDenominatedPoolInputs(
   pathElements: bigint[],
   pathIndices: number[],
   currentEpoch: bigint,
-  epochDelay: bigint
+  epochDelay: bigint,
+  enforceMaturity: boolean = true
 ): DenominatedPoolProofInputs {
   const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
   const minEpoch = currentEpoch - epochDelay;
@@ -301,6 +331,7 @@ export function buildDenominatedPoolInputs(
     nullifier: nullifier.toString(),
     min_epoch: minEpoch.toString(),
     token_mint: receipt.tokenMint.toString(),
+    enforce_maturity: enforceMaturity ? '1' : '0',
     secret: receipt.secret.toString(),
     nullifier_preimage: receipt.nullifierPreimage.toString(),
     deposit_epoch: receipt.depositEpoch.toString(),
@@ -490,5 +521,216 @@ export function receiptFromJSON(json: string): ShieldReceipt {
     merklePathElements: obj.merklePathElements?.map((e: string) => BigInt(e)),
     merklePathIndices: obj.merklePathIndices,
     merkleRoot: obj.merkleRoot ? BigInt(obj.merkleRoot) : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Note import/export (backup & sharing)
+// ---------------------------------------------------------------------------
+
+export function exportNoteToShareable(receipt: ShieldReceipt): ShareableNote {
+  return {
+    version: 1,
+    pool: receipt.pool,
+    secret: receipt.secret.toString(),
+    nullifier_preimage: receipt.nullifierPreimage.toString(),
+    deposit_epoch: receipt.depositEpoch.toString(),
+    token_mint: receipt.tokenMint.toString(),
+    commitment: receipt.commitment.toString(),
+    leafIndex: receipt.leafIndex,
+  };
+}
+
+export function importNoteFromShareable(noteData: ShareableNote): ShieldReceipt {
+  if (noteData.version !== 1) {
+    throw new Error(`Unsupported note version: ${noteData.version}`);
+  }
+
+  const secret = BigInt(noteData.secret);
+  const nullifierPreimage = BigInt(noteData.nullifier_preimage);
+  const depositEpoch = BigInt(noteData.deposit_epoch);
+  const tokenMint = BigInt(noteData.token_mint);
+
+  // Verify commitment matches
+  const expectedCommitment = createCommitment(nullifierPreimage, secret, depositEpoch, tokenMint);
+  const providedCommitment = BigInt(noteData.commitment);
+  if (expectedCommitment !== providedCommitment) {
+    throw new Error('Invalid note: commitment does not match secrets');
+  }
+
+  return {
+    secret,
+    nullifierPreimage,
+    depositEpoch,
+    tokenMint,
+    commitment: providedCommitment,
+    leafIndex: noteData.leafIndex,
+    denomination: 0n, // Caller must set from pool config
+    pool: noteData.pool,
+    // Merkle proof will need to be reconstructed from on-chain data
+  };
+}
+
+export function encodeShareableNote(note: ShareableNote): string {
+  return btoa(JSON.stringify(note));
+}
+
+export function decodeShareableNote(encoded: string): ShareableNote {
+  return JSON.parse(atob(encoded));
+}
+
+// ---------------------------------------------------------------------------
+// Transfer (ZK-to-ZK note transfer within pool)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build circuit inputs for a denominated transfer.
+ * A transfer nullifies the sender's note and creates a new commitment for the recipient.
+ * No funds move — the same denomination stays in the pool.
+ */
+export function buildTransferInputs(
+  receipt: ShieldReceipt,
+  merkleRoot: bigint,
+  pathElements: bigint[],
+  pathIndices: number[],
+  currentEpoch: bigint,
+  epochDelay: bigint,
+): {
+  circuitInputs: DenominatedTransferProofInputs;
+  nullifier: bigint;
+  newReceipt: ShieldReceipt;
+  newCommitment: bigint;
+} {
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const minEpoch = currentEpoch - epochDelay;
+
+  // Generate new note secrets for the recipient
+  const newSecret = randomFieldElement();
+  const newNullifierPreimage = randomFieldElement();
+  const newDepositEpoch = currentEpoch;
+  const newCommitment = createCommitment(
+    newNullifierPreimage,
+    newSecret,
+    newDepositEpoch,
+    receipt.tokenMint,
+  );
+
+  const circuitInputs: DenominatedTransferProofInputs = {
+    merkle_root: merkleRoot.toString(),
+    nullifier: nullifier.toString(),
+    min_epoch: minEpoch.toString(),
+    token_mint: receipt.tokenMint.toString(),
+    new_commitment: newCommitment.toString(),
+    secret: receipt.secret.toString(),
+    nullifier_preimage: receipt.nullifierPreimage.toString(),
+    deposit_epoch: receipt.depositEpoch.toString(),
+    path_elements: pathElements.map(e => e.toString()),
+    path_indices: pathIndices.map(i => i.toString()),
+    new_secret: newSecret.toString(),
+    new_nullifier_preimage: newNullifierPreimage.toString(),
+    new_deposit_epoch: newDepositEpoch.toString(),
+  };
+
+  const newReceipt: ShieldReceipt = {
+    secret: newSecret,
+    nullifierPreimage: newNullifierPreimage,
+    depositEpoch: newDepositEpoch,
+    tokenMint: receipt.tokenMint,
+    commitment: newCommitment,
+    leafIndex: -1, // Will be set after on-chain insertion
+    denomination: receipt.denomination,
+    pool: receipt.pool,
+    // Merkle proof will be computed after insertion
+  };
+
+  return { circuitInputs, nullifier, newReceipt, newCommitment };
+}
+
+/**
+ * Prepare a denominated transfer: build inputs and return everything needed
+ * for the caller to generate a proof and send the transaction.
+ */
+export async function prepareTransfer(
+  receipt: ShieldReceipt,
+  connection: Connection,
+  epochDelay: bigint,
+  poolPDA: PublicKey,
+): Promise<{
+  circuitInputs: DenominatedTransferProofInputs;
+  nullifier: bigint;
+  nullifierBytes: Uint8Array;
+  merkleRootBytes: number[];
+  minEpoch: bigint;
+  newCommitment: bigint;
+  newCommitmentBytes: number[];
+  newReceipt: ShieldReceipt;
+  newRoot: bigint;
+  newRootBytes: number[];
+}> {
+  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
+    throw new Error('Receipt missing Merkle proof data');
+  }
+
+  const slot = await connection.getSlot('confirmed');
+  const currentEpoch = slotToEpoch(slot);
+  const minEpoch = currentEpoch - epochDelay;
+
+  // Verify maturity (transfers always enforce maturity)
+  if (receipt.depositEpoch > minEpoch) {
+    const remaining = Number(receipt.depositEpoch - minEpoch + BigInt(1));
+    throw new Error(
+      `Note not mature yet. Wait ~${remaining} more epoch(s).`
+    );
+  }
+
+  const { circuitInputs, nullifier, newReceipt, newCommitment } = buildTransferInputs(
+    receipt,
+    receipt.merkleRoot,
+    receipt.merklePathElements,
+    receipt.merklePathIndices,
+    currentEpoch,
+    epochDelay,
+  );
+
+  // Compute new Merkle root after inserting the new commitment
+  const [treePDA] = deriveMerkleTreePDA(poolPDA);
+  const treeAccount = await connection.getAccountInfo(treePDA);
+  if (!treeAccount) throw new Error('Merkle tree account not found');
+
+  const data = treeAccount.data;
+  const leafCount = Number(data.readBigUInt64LE(8 + 32 + 32));
+  const vecLen = data.readUInt32LE(8 + 32 + 32 + 8 + 1);
+
+  const filledSubtrees: bigint[] = [];
+  let offset = 8 + 32 + 32 + 8 + 1 + 4;
+  for (let i = 0; i < vecLen; i++) {
+    let val = BigInt(0);
+    for (let b = 31; b >= 0; b--) {
+      val = (val << BigInt(8)) | BigInt(data[offset + b]);
+    }
+    filledSubtrees.push(val);
+    offset += 32;
+  }
+
+  const { newRoot, pathElements: newPathElements, pathIndices: newPathIndices } =
+    computeNewRootFromSubtrees(newCommitment, leafCount, filledSubtrees);
+
+  // Update the new receipt with the correct leaf index and Merkle proof
+  newReceipt.leafIndex = leafCount;
+  newReceipt.merklePathElements = newPathElements;
+  newReceipt.merklePathIndices = newPathIndices;
+  newReceipt.merkleRoot = newRoot;
+
+  return {
+    circuitInputs,
+    nullifier,
+    nullifierBytes: bigintToBeBytes32(nullifier),
+    merkleRootBytes: bigintToLeBytes32(receipt.merkleRoot),
+    minEpoch,
+    newCommitment,
+    newCommitmentBytes: bigintToLeBytes32(newCommitment),
+    newReceipt,
+    newRoot,
+    newRootBytes: bigintToLeBytes32(newRoot),
   };
 }

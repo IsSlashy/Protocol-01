@@ -22,15 +22,27 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
+import { useSettingsStore } from '@/shared/store/settings';
+import { useShieldedStore } from '@/shared/store/shielded';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 import { decrypt, encrypt, verifyPassword, hashPassword } from '@/shared/services/crypto';
 import { usePrivy } from '@/shared/providers/PrivyProvider';
+import { Shield, BarChart3 } from 'lucide-react';
 
 export default function Settings() {
   const navigate = useNavigate();
   const { publicKey, network, setNetwork, hideBalance, toggleHideBalance, lock, reset, logout: walletLogout, encryptedSeedPhrase, passwordHash, isPrivyWallet } =
     useWalletStore();
   const privy = usePrivy();
+  const {
+    shieldedWalletEnabled,
+    confidentialBalanceEnabled,
+    setShieldedWalletEnabled,
+    setConfidentialBalanceEnabled,
+    initialize: initSettings,
+  } = useSettingsStore();
+  const { shieldedBalance } = useShieldedStore();
+  const hasShieldedFunds = shieldedBalance > 0;
 
   const [copied, setCopied] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -62,6 +74,8 @@ export default function Settings() {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   // Load notification settings from storage
+  useEffect(() => { initSettings(); }, []);
+
   useEffect(() => {
     const loadNotificationSettings = async () => {
       try {
@@ -398,6 +412,82 @@ export default function Settings() {
               </div>
               <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
             </button>
+          </div>
+        </div>
+
+        {/* Privacy Features */}
+        <div className="px-4 mb-4">
+          <p className="text-p01-chrome/60 text-xs font-medium mb-2 tracking-wider px-1">
+            PRIVACY FEATURES
+          </p>
+          <div className="bg-p01-surface rounded-xl overflow-hidden">
+            {/* Shielded Wallet Toggle */}
+            <div className="flex items-center justify-between p-4 border-b border-p01-border/50">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-p01-chrome/10 flex items-center justify-center">
+                  <Shield className="w-5 h-5 text-p01-chrome/60" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-white font-medium text-sm">Shielded Wallet</p>
+                    <span className="text-[9px] text-p01-chrome/50 font-mono bg-p01-chrome/10 px-1 py-0.5 rounded">Legacy</span>
+                  </div>
+                  <p className="text-p01-chrome/60 text-xs">
+                    {hasShieldedFunds
+                      ? `${shieldedBalance.toFixed(4)} SOL — withdraw recommended`
+                      : 'Use Privacy Pool instead for stronger anonymity'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShieldedWalletEnabled(!shieldedWalletEnabled)}
+                className={cn(
+                  'w-12 h-7 rounded-full transition-colors relative',
+                  shieldedWalletEnabled ? 'bg-p01-cyan' : 'bg-p01-border'
+                )}
+              >
+                <motion.span
+                  layout
+                  className={cn(
+                    'absolute top-1 w-5 h-5 rounded-full bg-white shadow-md',
+                    shieldedWalletEnabled ? 'left-6' : 'left-1'
+                  )}
+                />
+              </button>
+            </div>
+
+            {/* Confidential Balance Toggle */}
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-p01-chrome/10 flex items-center justify-center">
+                  <BarChart3 className="w-5 h-5 text-p01-chrome/60" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-white font-medium text-sm">Confidential Balance</p>
+                    <span className="text-[9px] text-p01-chrome/50 font-mono bg-p01-chrome/10 px-1 py-0.5 rounded">Legacy</span>
+                  </div>
+                  <p className="text-p01-chrome/60 text-xs">
+                    Hide amounts on-chain. Sender/recipient visible.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setConfidentialBalanceEnabled(!confidentialBalanceEnabled)}
+                className={cn(
+                  'w-12 h-7 rounded-full transition-colors relative',
+                  confidentialBalanceEnabled ? 'bg-p01-cyan' : 'bg-p01-border'
+                )}
+              >
+                <motion.span
+                  layout
+                  className={cn(
+                    'absolute top-1 w-5 h-5 rounded-full bg-white shadow-md',
+                    confidentialBalanceEnabled ? 'left-6' : 'left-1'
+                  )}
+                />
+              </button>
+            </div>
           </div>
         </div>
 
