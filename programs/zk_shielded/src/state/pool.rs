@@ -214,6 +214,11 @@ pub struct DenominatedPool {
     /// When time advances, old entries are graduated (added to mature_note_count)
     /// and the start is shifted forward.
     pub epoch_note_start: u64,
+
+    /// Hash of the verification key for transfer circuit validation.
+    /// Separate from vk_hash because unshield and transfer are different circuits
+    /// with different public inputs.
+    pub vk_hash_transfer: [u8; 32],
 }
 
 impl DenominatedPool {
@@ -241,7 +246,8 @@ impl DenominatedPool {
         + 8   // mature_note_count
         + 8   // last_maturity_update_epoch
         + (8 * 32) // epoch_note_counts ([u64; 32])
-        + 8;  // epoch_note_start
+        + 8   // epoch_note_start
+        + 32; // vk_hash_transfer
 
     /// Seeds for PDA derivation: [b"denominated_pool", token_mint, denomination]
     pub const SEED_PREFIX: &'static [u8] = b"denominated_pool";
@@ -363,18 +369,18 @@ impl DenominatedPool {
     ///
     /// Thresholds:
     /// - >= 1000 mature notes: 0 (instant — large anonymity set)
-    /// - 100..999 mature notes: 1 epoch
-    /// - 10..99 mature notes: 6 epochs (~6 hours)
-    /// - < 10 mature notes: 24 epochs (~24 hours)
+    /// - 100..999 mature notes: 1 epoch (~1 hour)
+    /// - 10..99 mature notes: 1 epoch (~1 hour)
+    /// - < 10 mature notes: 2 epochs (~2 hours)
     pub fn get_dynamic_delay(&self) -> u64 {
         if self.mature_note_count >= 1000 {
             0
         } else if self.mature_note_count >= 100 {
             1
         } else if self.mature_note_count >= 10 {
-            6
+            1
         } else {
-            24
+            2
         }
     }
 
