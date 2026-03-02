@@ -544,6 +544,21 @@ Automated via GitHub Actions on every push/PR:
 
 ---
 
+## Open Source Libraries
+
+P01 contributes reusable ZK tooling to the Solana ecosystem:
+
+| Library | Description | Install |
+|---------|-------------|---------|
+| [@p01/react-native-zk](packages/react-native-zk/) | Client-side Groth16 proving on React Native | `npm i @p01/react-native-zk` |
+| [@p01/solana-verifier](packages/solana-verifier/) | On-chain Groth16 verification for Solana | `cargo add p01-solana-verifier` |
+| [@p01/privacy-toolkit](packages/privacy-toolkit/) | Merkle trees, Poseidon commitments, proof formatting | `npm i @p01/privacy-toolkit` |
+| [@p01/zk-pipeline](packages/zk-pipeline/) | Complete guide: circuit → mobile → Solana | [Read the guide](packages/zk-pipeline/) |
+
+These libraries are used in production by Protocol 01 and are free to use under the MIT license.
+
+---
+
 ## Roadmap
 
 ### Shipped
