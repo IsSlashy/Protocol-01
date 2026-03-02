@@ -8,6 +8,12 @@ pub mod transfer_via_relayer;
 pub mod init_denominated_pool;
 pub mod shield_denominated;
 pub mod unshield_denominated;
+pub mod emergency_unshield_denominated;
+pub mod transfer_denominated;
+pub mod update_denominated_vk;
+pub mod update_transfer_vk;
+pub mod resize_denominated_pool;
+pub mod store_transfer_vk_data;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -20,3 +26,9 @@ pub use transfer_via_relayer::*;
 pub use init_denominated_pool::*;
 pub use shield_denominated::*;
 pub use unshield_denominated::*;
+pub use emergency_unshield_denominated::*;
+pub use transfer_denominated::*;
+pub use update_denominated_vk::*;
+pub use update_transfer_vk::*;
+pub use resize_denominated_pool::*;
+pub use store_transfer_vk_data::*;

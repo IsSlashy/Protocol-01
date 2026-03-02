@@ -7,18 +7,16 @@ use crate::state::{DenominatedPool, MerkleTreeState, NullifierRecord};
 use crate::verifier::Groth16Verifier;
 use crate::Groth16Proof;
 
-/// Unshield tokens from a denominated pool.
+/// Emergency unshield from a denominated pool — bypasses maturity check.
 ///
-/// Uses PDA-per-nullifier (Tornado Cash model) instead of a Bloom filter:
-/// - Zero false positives — deterministic double-spend detection
-/// - No size limit — scales to millions of nullifiers
-/// - Rent (~0.00089 SOL) paid by payer
+/// Same as normal unshield but with enforce_maturity=0 in the circuit proof.
+/// This allows withdrawing immature notes (e.g., if the user needs funds urgently).
 ///
-/// The `init` constraint on `nullifier_record` will fail if the PDA already
-/// exists, which means the nullifier was already spent. This is the double-spend
-/// check — it's atomic and cannot race.
+/// PRIVACY WARNING: Emergency unshields are distinguishable on-chain (the
+/// `is_emergency` flag in the event reveals that maturity was bypassed).
+/// This weakens the anonymity set for this withdrawal.
 ///
-/// Public inputs: [merkle_root, nullifier, min_epoch, token_mint]
+/// Public inputs: [merkle_root, nullifier, min_epoch, token_mint, enforce_maturity=0]
 #[derive(Accounts)]
 #[instruction(
     proof: Groth16Proof,
@@ -26,7 +24,7 @@ use crate::Groth16Proof;
     merkle_root: [u8; 32],
     min_epoch: u64
 )]
-pub struct UnshieldDenominated<'info> {
+pub struct EmergencyUnshieldDenominated<'info> {
     /// Transaction submitter (can be anyone — enables relayer pattern)
     #[account(mut)]
     pub payer: Signer<'info>,
@@ -50,7 +48,7 @@ pub struct UnshieldDenominated<'info> {
     )]
     pub denominated_pool: Account<'info, DenominatedPool>,
 
-    /// Merkle tree state (read-only — no change notes in denominated pools)
+    /// Merkle tree state (read-only)
     #[account(
         seeds = [
             MerkleTreeState::SEED_PREFIX,
@@ -61,8 +59,6 @@ pub struct UnshieldDenominated<'info> {
     pub merkle_tree: Account<'info, MerkleTreeState>,
 
     /// Nullifier record PDA — created (init) on first use.
-    /// If this PDA already exists, the `init` constraint fails →
-    /// automatic double-spend rejection with zero false positives.
     #[account(
         init,
         payer = payer,
@@ -80,7 +76,7 @@ pub struct UnshieldDenominated<'info> {
     /// CHECK: Validated by hash comparison
     pub verification_key_data: AccountInfo<'info>,
 
-    /// System program (required for PDA creation + native SOL transfers)
+    /// System program
     pub system_program: Program<'info, System>,
 
     /// Token program (optional, for SPL token transfers)
@@ -96,7 +92,7 @@ pub struct UnshieldDenominated<'info> {
 }
 
 pub fn handler(
-    ctx: Context<UnshieldDenominated>,
+    ctx: Context<EmergencyUnshieldDenominated>,
     proof: Groth16Proof,
     nullifier: [u8; 32],
     merkle_root: [u8; 32],
@@ -114,33 +110,20 @@ pub fn handler(
         ZkShieldedError::InsufficientBalance
     );
 
-    // Dynamic delay: update maturity tracking before computing delay
+    // Update maturity tracking (still needed for state consistency)
     let current_epoch = DenominatedPool::current_epoch(clock.slot);
     pool.update_maturity(current_epoch);
 
-    // The circuit guarantees deposit_epoch + pool.epoch_delay <= min_epoch
-    // (the note has waited at least `epoch_delay` epochs).
-    // We additionally enforce a dynamic delay based on the anonymity set size:
-    // small pools require longer waits to prevent timing analysis.
-    let dynamic_delay = pool.get_dynamic_delay();
-    let effective_min_epoch = min_epoch
-        .checked_add(dynamic_delay)
-        .unwrap_or(u64::MAX);
-    require!(
-        current_epoch >= effective_min_epoch,
-        ZkShieldedError::EpochDelayNotMet
-    );
-
-    // Double-spend protection is handled by the `init` constraint on nullifier_record.
-    // If this nullifier was already used, the PDA already exists and init fails
-    // with "already in use" error — zero false positives, no Bloom filter needed.
+    // NOTE: No epoch delay enforcement for emergency unshield.
+    // The circuit proof was generated with enforce_maturity=0,
+    // which bypasses the time delay check.
 
     // Initialize the nullifier record (marks it as spent)
     let nullifier_record = &mut ctx.accounts.nullifier_record;
     nullifier_record.pool = pool.key();
     nullifier_record.bump = ctx.bumps.nullifier_record;
 
-    // Load and validate verification key
+    // Load and validate verification key (same VK as normal unshield)
     let vk_data = ctx.accounts.verification_key_data.try_borrow_data()?;
     let computed_vk_hash = Groth16Verifier::hash_verification_key(&vk_data);
     require!(
@@ -148,8 +131,7 @@ pub fn handler(
         ZkShieldedError::InvalidVerificationKey
     );
 
-    // Verify the ZK proof: 5 public inputs [merkle_root, nullifier, min_epoch, token_mint, enforce_maturity]
-    // Normal unshield always enforces maturity (enforce_maturity=1)
+    // Verify the ZK proof with enforce_maturity=0 (emergency bypass)
     let token_mint_bytes: [u8; 32] = pool.token_mint.to_bytes();
     let is_valid = Groth16Verifier::verify_denominated(
         &proof,
@@ -157,7 +139,7 @@ pub fn handler(
         &nullifier,
         min_epoch,
         &token_mint_bytes,
-        true, // enforce_maturity = 1 (normal unshield)
+        false, // enforce_maturity = 0 (emergency unshield)
         &vk_data,
     )?;
 
@@ -176,7 +158,6 @@ pub fn handler(
     let signer_seeds = &[&seeds[..]];
 
     if is_native_sol {
-        // Native SOL: transfer exactly denomination lamports from pool PDA to recipient
         let pool_lamports = pool.to_account_info().lamports();
         let rent = Rent::get()?;
         let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
@@ -186,11 +167,9 @@ pub fn handler(
             ZkShieldedError::InsufficientPoolBalance
         );
 
-        // Transfer lamports from pool PDA to recipient
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
         **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
     } else {
-        // SPL Token: transfer from pool vault to recipient token account
         let token_program = ctx.accounts.token_program
             .as_ref()
             .ok_or(ZkShieldedError::MissingTokenProgram)?;
@@ -222,7 +201,7 @@ pub fn handler(
         token::transfer(transfer_ctx, amount)?;
     }
 
-    // Update pool state — no change notes, no Merkle tree update
+    // Update pool state
     pool.total_shielded = pool
         .total_shielded
         .checked_sub(amount)
@@ -233,18 +212,21 @@ pub fn handler(
         .ok_or(ZkShieldedError::ArithmeticOverflow)?;
     pool.last_tx_at = clock.unix_timestamp;
 
-    // The withdrawn note was mature (it passed the delay check),
-    // so decrement the mature note count.
-    pool.mature_note_count = pool.mature_note_count.saturating_sub(1);
+    // Note: Emergency unshield may withdraw an immature note,
+    // so we can't assume it was in mature_note_count. Only decrement
+    // if there are mature notes tracked.
+    if pool.mature_note_count > 0 {
+        pool.mature_note_count = pool.mature_note_count.saturating_sub(1);
+    }
 
-    emit!(UnshieldDenominatedEvent {
+    emit!(EmergencyUnshieldDenominatedEvent {
         pool: pool.key(),
         recipient: ctx.accounts.recipient.key(),
         denomination: amount,
         nullifier,
         min_epoch,
         current_epoch,
-        dynamic_delay,
+        is_emergency: true,
         mature_note_count: pool.mature_note_count,
         timestamp: clock.unix_timestamp,
     });
@@ -253,14 +235,14 @@ pub fn handler(
 }
 
 #[event]
-pub struct UnshieldDenominatedEvent {
+pub struct EmergencyUnshieldDenominatedEvent {
     pub pool: Pubkey,
     pub recipient: Pubkey,
     pub denomination: u64,
     pub nullifier: [u8; 32],
     pub min_epoch: u64,
     pub current_epoch: u64,
-    pub dynamic_delay: u64,
+    pub is_emergency: bool,
     pub mature_note_count: u64,
     pub timestamp: i64,
 }
