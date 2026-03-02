@@ -542,7 +542,7 @@ describe("Denominated Pool — Real ZK Proof E2E", () => {
   describe("init denominated pool", () => {
     it("creates 1 SOL pool with real VK hash", async () => {
       await program.methods
-        .initDenominatedPool(vkHash, NATIVE_SOL_MINT, ONE_SOL, EPOCH_DELAY)
+        .initDenominatedPool(vkHash, vkHash, NATIVE_SOL_MINT, ONE_SOL, EPOCH_DELAY)
         .accountsPartial({
           authority: authority.publicKey,
           denominatedPool: denomPoolPDA,
@@ -617,12 +617,13 @@ describe("Denominated Pool — Real ZK Proof E2E", () => {
       // deposit_epoch = 0, so min_epoch = 0 works if current_epoch >= 0 (always true)
       minEpoch = BigInt(0);
 
-      // Build circuit inputs
+      // Build circuit inputs (5 public inputs: merkle_root, nullifier, min_epoch, token_mint, enforce_maturity)
       const circuitInputs = {
         merkle_root: merkleRoot.toString(),
         nullifier: nullifierHash.toString(),
         min_epoch: minEpoch.toString(),
         token_mint: tokenMintBigint.toString(),
+        enforce_maturity: "1", // normal unshield always enforces maturity
         secret: secret.toString(),
         nullifier_preimage: nullifierPreimage.toString(),
         deposit_epoch: depositEpoch.toString(),
@@ -658,6 +659,7 @@ describe("Denominated Pool — Real ZK Proof E2E", () => {
       expect(BigInt(publicSignals[1])).to.equal(nullifierHash);
       expect(BigInt(publicSignals[2])).to.equal(minEpoch);
       expect(BigInt(publicSignals[3])).to.equal(tokenMintBigint);
+      expect(BigInt(publicSignals[4])).to.equal(BigInt(1)); // enforce_maturity = 1
 
       // Convert proof to on-chain format
       onChainProof = proofToOnChain(proof);

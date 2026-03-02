@@ -133,7 +133,8 @@ async function hashVkBinary(vkBinary) {
   // Keccak256 via js-sha3 (matches on-chain)
   // Fallback to SHA256 if keccak not available
   try {
-    const { keccak_256 } = await import('js-sha3');
+    const sha3 = (await import('js-sha3')).default;
+    const keccak_256 = sha3.keccak_256;
     return Buffer.from(keccak_256.array(vkBinary));
   } catch {
     // SHA256 fallback (won't match on-chain, but useful for testing)
@@ -237,15 +238,16 @@ async function main() {
   console.log('USDC Mint:', USDC_DEVNET_MINT.toBase58());
   console.log();
 
-  // Load and convert denominated pool VK
+  // Load and convert denominated pool VK (unshield/emergency circuit)
   const vkJson = JSON.parse(readFileSync('circuits/build/denominated_pool_vk.json', 'utf8'));
   const vkBinary = vkJsonToBinary(vkJson);
-  console.log(`VK: ${vkJson.nPublic} public inputs, ${vkJson.IC.length} IC points, ${vkBinary.length} bytes`);
+  console.log(`Unshield VK: ${vkJson.nPublic} public inputs, ${vkJson.IC.length} IC points, ${vkBinary.length} bytes`);
 
   // Compute VK hash (keccak256)
   let vkHash;
   try {
-    const { keccak_256 } = await import('js-sha3');
+    const sha3 = (await import('js-sha3')).default;
+    const keccak_256 = sha3.keccak_256;
     vkHash = Buffer.from(keccak_256.array(vkBinary));
   } catch {
     console.log('  Note: js-sha3 not available, using SHA256 (won\'t match on-chain keccak)');
