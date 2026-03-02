@@ -27,9 +27,15 @@ interface SettingsState {
   currency: Currency;
   initialized: boolean;
 
+  // Privacy feature toggles (off by default — legacy features)
+  shieldedWalletEnabled: boolean;
+  confidentialBalanceEnabled: boolean;
+
   // Actions
   initialize: () => Promise<void>;
   setCurrency: (currency: Currency) => Promise<void>;
+  setShieldedWalletEnabled: (enabled: boolean) => Promise<void>;
+  setConfidentialBalanceEnabled: (enabled: boolean) => Promise<void>;
 
   // Helpers
   formatAmount: (usdAmount: number) => string;
@@ -37,21 +43,34 @@ interface SettingsState {
 }
 
 const STORAGE_KEY = 'p01_settings_currency';
+const PRIVACY_TOGGLES_KEY = 'p01_privacy_toggles';
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   currency: 'USD',
   initialized: false,
+  shieldedWalletEnabled: false,
+  confidentialBalanceEnabled: false,
 
   initialize: async () => {
     try {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
+      const [stored, togglesRaw] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEY),
+        AsyncStorage.getItem(PRIVACY_TOGGLES_KEY),
+      ]);
+      const updates: Partial<SettingsState> = { initialized: true };
       if (stored && Object.keys(CURRENCY_SYMBOLS).includes(stored)) {
-        set({ currency: stored as Currency, initialized: true });
-      } else {
-        set({ initialized: true });
+        updates.currency = stored as Currency;
       }
+      if (togglesRaw) {
+        try {
+          const toggles = JSON.parse(togglesRaw);
+          updates.shieldedWalletEnabled = toggles.shieldedWalletEnabled ?? false;
+          updates.confidentialBalanceEnabled = toggles.confidentialBalanceEnabled ?? false;
+        } catch {}
+      }
+      set(updates);
     } catch (error) {
-      console.error('Failed to load currency setting:', error);
+      console.error('Failed to load settings:', error);
       set({ initialized: true });
     }
   },
@@ -62,6 +81,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ currency });
     } catch (error) {
       console.error('Failed to save currency setting:', error);
+    }
+  },
+
+  setShieldedWalletEnabled: async (enabled: boolean) => {
+    set({ shieldedWalletEnabled: enabled });
+    try {
+      const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
+      const toggles = raw ? JSON.parse(raw) : {};
+      toggles.shieldedWalletEnabled = enabled;
+      await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
+    } catch (error) {
+      console.error('Failed to save privacy toggle:', error);
+    }
+  },
+
+  setConfidentialBalanceEnabled: async (enabled: boolean) => {
+    set({ confidentialBalanceEnabled: enabled });
+    try {
+      const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
+      const toggles = raw ? JSON.parse(raw) : {};
+      toggles.confidentialBalanceEnabled = enabled;
+      await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
+    } catch (error) {
+      console.error('Failed to save privacy toggle:', error);
     }
   },
 
