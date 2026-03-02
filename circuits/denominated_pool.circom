@@ -10,7 +10,7 @@ pragma circom 2.1.0;
 //   1. The prover knows a valid note (secret + nullifier_preimage)
 //   2. The note exists in the Merkle tree
 //   3. The nullifier is correctly derived (prevents double-spend)
-//   4. The note is old enough (deposit_epoch <= min_epoch)
+//   4. The note is old enough (deposit_epoch <= min_epoch) — when enforced
 //
 // Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)
 //   - No amount in the commitment. Denomination is implicit per pool.
@@ -22,8 +22,13 @@ pragma circom 2.1.0;
 //   - Deterministic: same note always produces the same nullifier
 //   - Revealed on-chain during withdrawal to prevent double-spend
 //
-// Public inputs:  merkle_root, nullifier, min_epoch, token_mint
+// Public inputs:  merkle_root, nullifier, min_epoch, token_mint, enforce_maturity
 // Private inputs: secret, nullifier_preimage, deposit_epoch, path_elements, path_indices
+//
+// enforce_maturity:
+//   - 1 = normal unshield (epoch delay enforced)
+//   - 0 = emergency unshield (bypass maturity, privacy warning on-chain)
+//   - On-chain program sets this value; normal unshield always passes 1.
 //
 // Security properties:
 //   - Depositing X and withdrawing Y is impossible: program always sends pool.denomination
@@ -42,8 +47,9 @@ template DenominatedPool(merkleDepth) {
     // ========================================
     signal input merkle_root;
     signal input nullifier;
-    signal input min_epoch;     // current_epoch - required_delay_epochs
+    signal input min_epoch;          // current_epoch - required_delay_epochs
     signal input token_mint;
+    signal input enforce_maturity;   // 1 = enforce epoch delay, 0 = skip (emergency)
 
     // ========================================
     // PRIVATE INPUTS
@@ -93,16 +99,27 @@ template DenominatedPool(merkleDepth) {
     merkleChecker.computedRoot === merkle_root;
 
     // ========================================
-    // STEP 4: Time delay verification
+    // STEP 4: Time delay verification (gated)
     // ========================================
-    // Prove: deposit_epoch <= min_epoch
+    // enforce_maturity must be binary (0 or 1)
+    enforce_maturity * (enforce_maturity - 1) === 0;
+
+    // Prove: deposit_epoch <= min_epoch (when enforce_maturity=1)
     // Equivalently: min_epoch - deposit_epoch >= 0
     // We verify this by decomposing (min_epoch - deposit_epoch) into bits.
     // If the difference is negative (in the field), Num2Bits will fail
     // because the field element would be huge (close to the prime).
     // 40 bits supports epochs up to ~1 trillion (way more than needed).
+    //
+    // When enforce_maturity=0 (emergency), we substitute epoch_diff=0
+    // so the range check always passes. The on-chain program controls
+    // which value of enforce_maturity is allowed per instruction.
+    signal epoch_diff_raw;
+    epoch_diff_raw <== min_epoch - deposit_epoch;
+
+    // Gated epoch diff: enforce_maturity=1 → epoch_diff_raw, enforce_maturity=0 → 0
     signal epoch_diff;
-    epoch_diff <== min_epoch - deposit_epoch;
+    epoch_diff <== enforce_maturity * epoch_diff_raw;
 
     component rangeCheck = Num2Bits(40);
     rangeCheck.in <== epoch_diff;
@@ -112,4 +129,4 @@ template DenominatedPool(merkleDepth) {
 // 32K notes per denomination is sufficient for launch.
 // Depth 15 = ~4,273 constraints (22% less than depth 20 = 5,503).
 // Faster proving on mobile: ~185ms vs ~237ms (snarkjs JS).
-component main {public [merkle_root, nullifier, min_epoch, token_mint]} = DenominatedPool(15);
+component main {public [merkle_root, nullifier, min_epoch, token_mint, enforce_maturity]} = DenominatedPool(15);
