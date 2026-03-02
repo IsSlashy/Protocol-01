@@ -165,8 +165,8 @@ pub mod zk_shielded {
     }
 
     /// Unshield tokens from a denominated pool (withdraw exactly denomination amount)
-    /// Requires ZK proof with 4 public inputs: [merkle_root, nullifier, min_epoch, token_mint]
-    /// Enforces time delay: current_epoch >= min_epoch
+    /// Requires ZK proof with 5 public inputs: [merkle_root, nullifier, min_epoch, token_mint, enforce_maturity=1]
+    /// Enforces time delay: current_epoch >= min_epoch + dynamic_delay
     pub fn unshield_denominated(
         ctx: Context<UnshieldDenominated>,
         proof: Groth16Proof,
@@ -175,6 +175,73 @@ pub mod zk_shielded {
         min_epoch: u64,
     ) -> Result<()> {
         instructions::unshield_denominated::handler(ctx, proof, nullifier, merkle_root, min_epoch)
+    }
+
+    /// Emergency unshield from a denominated pool (bypass maturity check)
+    /// Same as unshield but with enforce_maturity=0 in the circuit proof.
+    /// PRIVACY WARNING: Emergency unshields are distinguishable on-chain.
+    pub fn emergency_unshield_denominated(
+        ctx: Context<EmergencyUnshieldDenominated>,
+        proof: Groth16Proof,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+    ) -> Result<()> {
+        instructions::emergency_unshield_denominated::handler(ctx, proof, nullifier, merkle_root, min_epoch)
+    }
+
+    /// Update VK hash on a denominated pool (admin only)
+    pub fn update_denominated_vk(
+        ctx: Context<UpdateDenominatedVk>,
+        new_vk_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::update_denominated_vk::handler(ctx, new_vk_hash)
+    }
+
+    /// Update the transfer verification key hash on a denominated pool
+    pub fn update_transfer_vk(
+        ctx: Context<UpdateTransferVk>,
+        new_vk_hash: [u8; 32],
+    ) -> Result<()> {
+        instructions::update_transfer_vk::handler(ctx, new_vk_hash)
+    }
+
+    /// Resize an existing denominated pool to accommodate new fields
+    pub fn resize_denominated_pool(ctx: Context<ResizeDenominatedPool>) -> Result<()> {
+        instructions::resize_denominated_pool::handler(ctx)
+    }
+
+    /// Initialize transfer VK data account (admin only)
+    /// Creates a PDA for storing transfer circuit verification key bytes
+    pub fn init_transfer_vk_data(
+        ctx: Context<InitTransferVkData>,
+        vk_size: u32,
+    ) -> Result<()> {
+        instructions::store_transfer_vk_data::handler_init_transfer(ctx, vk_size)
+    }
+
+    /// Write chunk of transfer VK data (admin only)
+    pub fn write_transfer_vk_data(
+        ctx: Context<WriteTransferVkData>,
+        offset: u32,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::store_transfer_vk_data::handler_write_transfer(ctx, offset, data)
+    }
+
+    /// Transfer a note within a denominated pool to a new owner
+    /// The old note is nullified and a new commitment is inserted into the tree.
+    /// No funds move — same pool, same denomination.
+    pub fn transfer_denominated(
+        ctx: Context<TransferDenominated>,
+        proof: Groth16Proof,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        new_commitment: [u8; 32],
+        new_root: [u8; 32],
+    ) -> Result<()> {
+        instructions::transfer_denominated::handler(ctx, proof, nullifier, merkle_root, min_epoch, new_commitment, new_root)
     }
 }
 
