@@ -20,7 +20,11 @@ const CIRCUIT_ZKEY_PATH = 'circuits/transfer_final.zkey';
 const DENOM_POOL_WASM_PATH = 'circuits/denominated_pool.wasm';
 const DENOM_POOL_ZKEY_PATH = 'circuits/denominated_pool_final.zkey';
 
-export type CircuitName = 'transfer' | 'denominated_pool';
+// Denominated transfer circuit files (ZK→ZK note transfers)
+const DENOM_TRANSFER_WASM_PATH = 'circuits/denominated_transfer.wasm';
+const DENOM_TRANSFER_ZKEY_PATH = 'circuits/denominated_transfer_final.zkey';
+
+export type CircuitName = 'transfer' | 'denominated_pool' | 'denominated_transfer';
 
 // PDA seeds
 const PDA_SEEDS = {
@@ -386,6 +390,7 @@ class ClientProver {
     const paths: Record<CircuitName, { wasm: string; zkey: string }> = {
       transfer: { wasm: CIRCUIT_WASM_PATH, zkey: CIRCUIT_ZKEY_PATH },
       denominated_pool: { wasm: DENOM_POOL_WASM_PATH, zkey: DENOM_POOL_ZKEY_PATH },
+      denominated_transfer: { wasm: DENOM_TRANSFER_WASM_PATH, zkey: DENOM_TRANSFER_ZKEY_PATH },
     };
 
     const p = paths[name];

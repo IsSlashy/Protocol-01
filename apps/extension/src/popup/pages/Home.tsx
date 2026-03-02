@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
+import { useSettingsStore } from '@/shared/store/settings';
 import { getSolscanUrl } from '@/shared/services/transactions';
 import {
   formatCurrency,
@@ -47,6 +48,13 @@ export default function Home() {
     fetchTransactions,
   } = useWalletStore();
   const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
+  const { shieldedWalletEnabled, initialize: initSettings } = useSettingsStore();
+
+  // Show legacy shielded card only if toggle on or has funds
+  const hasShieldedFunds = shieldedBalance > 0;
+  const showShieldedCard = shieldedWalletEnabled || hasShieldedFunds;
+
+  useEffect(() => { initSettings(); }, []);
 
   const [copied, setCopied] = useState(false);
   const [faucetLoading, setFaucetLoading] = useState(false);
@@ -259,7 +267,7 @@ export default function Home() {
           </motion.button>
         )}
 
-        {/* Shielded Wallet Card */}
+        {/* Privacy Pool Card (Hero) */}
         <motion.button
           initial={{ y: 10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -272,11 +280,9 @@ export default function Home() {
               <ShieldCheck className="w-5 h-5 text-p01-cyan" />
             </div>
             <div className="text-left">
-              <p className="text-white font-medium">Shielded Wallet</p>
+              <p className="text-white font-medium">Privacy Pool</p>
               <p className="text-p01-chrome text-xs">
-                {shieldedInitialized
-                  ? `${shieldedBalance.toFixed(4)} SOL shielded`
-                  : 'ZK-protected privacy'}
+                Fixed-denomination anonymous pool
               </p>
             </div>
           </div>
@@ -287,6 +293,37 @@ export default function Home() {
             <ChevronRight className="w-5 h-5 text-p01-cyan" />
           </div>
         </motion.button>
+
+        {/* Legacy Shielded Wallet (conditional) */}
+        {showShieldedCard && (
+          <motion.button
+            initial={{ y: 10, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            onClick={() => navigate('/shielded')}
+            className="mx-4 mb-4 bg-p01-surface rounded-xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:bg-p01-surface/80 transition-all border border-p01-border/50"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-p01-chrome/10 flex items-center justify-center">
+                <ShieldCheck className="w-5 h-5 text-p01-chrome/60" />
+              </div>
+              <div className="text-left">
+                <div className="flex items-center gap-2">
+                  <p className="text-white/80 font-medium">Shielded Wallet</p>
+                  <span className="text-[9px] text-p01-chrome/60 font-mono bg-p01-chrome/10 px-1.5 py-0.5 rounded">
+                    Legacy
+                  </span>
+                </div>
+                <p className="text-p01-chrome text-xs">
+                  {hasShieldedFunds
+                    ? `${shieldedBalance.toFixed(4)} SOL — withdraw recommended`
+                    : 'Variable-amount privacy pool'}
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
+          </motion.button>
+        )}
 
         {/* Assets Section */}
         <div className="px-4">
