@@ -1,0 +1,1301 @@
+/**
+ * Denominated Pool Service for React Native
+ *
+ * Client-side ZK proving for Tornado Cash-style fixed-denomination pools.
+ * Adapted from apps/extension/src/shared/services/denominatedPool.ts
+ *
+ * RULE #1: NO private inputs are sent to the relayer. All proving is client-side.
+ *
+ * Proving strategy:
+ *   - snarkjs WASM loaded from bundled assets (Expo Asset system)
+ *   - Single-threaded (no Web Workers in React Native)
+ *   - Proof time ~1-3s on modern devices (4,273 constraints)
+ *   - If snarkjs WASM fails on RN, see PROVING_NOTES at bottom of file
+ */
+
+import {
+  Connection,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+  Keypair,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
+import {
+  getAssociatedTokenAddress,
+  TOKEN_PROGRAM_ID,
+} from '@solana/spl-token';
+import { poseidon2, poseidon4 } from 'poseidon-lite';
+import CryptoJS from 'crypto-js';
+import { getConnection } from '../solana/connection';
+import { getKeypair } from '../solana/wallet';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+export const ZK_SHIELDED_PROGRAM_ID = new PublicKey(
+  'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'
+);
+
+const NATIVE_SOL_MINT = SystemProgram.programId;
+
+export const USDC_DEVNET_MINT = new PublicKey(
+  '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+);
+
+const MERKLE_DEPTH = 15;
+const SLOTS_PER_EPOCH = 7200;
+
+const FIELD_ORDER = BigInt(
+  '21888242871839275222246405745257275088548364400416034343698204186575808495617'
+);
+
+const ZERO_VALUE = BigInt(
+  '21663839004416932945382355908790599225266501822907911457504978515578255421292'
+);
+
+const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey(
+  'ComputeBudget111111111111111111111111111111'
+);
+
+/** Build compute budget instructions for Groth16 verification transactions */
+function buildComputeBudgetIxs(cuLimit = 500_000, cuPriceMicroLamports = 1000) {
+  // SetComputeUnitLimit (discriminator = 2)
+  const limitData = Buffer.alloc(5);
+  limitData.writeUInt8(2, 0);
+  limitData.writeUInt32LE(cuLimit, 1);
+
+  // SetComputeUnitPrice (discriminator = 3)
+  const priceData = Buffer.alloc(9);
+  priceData.writeUInt8(3, 0);
+  priceData.writeBigUInt64LE(BigInt(cuPriceMicroLamports), 1);
+
+  return [
+    new TransactionInstruction({ programId: COMPUTE_BUDGET_PROGRAM_ID, keys: [], data: limitData }),
+    new TransactionInstruction({ programId: COMPUTE_BUDGET_PROGRAM_ID, keys: [], data: priceData }),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Pool configuration — matches docs/devnet-pools.md
+// ---------------------------------------------------------------------------
+
+export interface PoolConfig {
+  token: 'SOL' | 'USDC';
+  tokenMint: PublicKey;
+  denomination: number; // human-readable (0.1, 1, 10, etc.)
+  denominationAtomic: bigint; // lamports / atomic units
+  decimals: number;
+  poolPDA: PublicKey;
+  treePDA: PublicKey;
+  vaultATA?: PublicKey; // only for SPL tokens
+}
+
+export const SOL_POOLS: PoolConfig[] = [
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
+    denominationAtomic: 100_000_000n,
+    poolPDA: new PublicKey('JDVrKu9cKZMKaxxVeC8QUBRTnkC81LcbNHFDcrbyZ2iv'),
+    treePDA: new PublicKey('FGrmPausuBJTV7V2VS2XjpfwGHYrUt79t5E3e3EvjrZ5'),
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
+    denominationAtomic: 1_000_000_000n,
+    poolPDA: new PublicKey('BoCTorE7dDyFTaK4oCEw8K3w7F6FxrKCSqbAGVv4cxXL'),
+    treePDA: new PublicKey('JCRDNgcXieJmjazUnAxo81SsqPQ2XcF38wvgfpjYgSco'),
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 10, decimals: 9,
+    denominationAtomic: 10_000_000_000n,
+    poolPDA: new PublicKey('2ZTWWSjnzAjEXxeK5PXF5hjvxixqTnnFyZt7Dd4vfFDJ'),
+    treePDA: new PublicKey('Ha3Ls6adGbJzEwqLcF4Y7x3T7vLtVyFhtc1aCas5C5GT'),
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 100, decimals: 9,
+    denominationAtomic: 100_000_000_000n,
+    poolPDA: new PublicKey('4t5nFqX9Xw1Bcv9kp2RQJF4vC8xPnbNZPViZjFWA9KQa'),
+    treePDA: new PublicKey('5bGshmezFLkUDZgex5xQEEiXaKaHHo7Xxnum9qumeQyJ'),
+  },
+];
+
+export const USDC_POOLS: PoolConfig[] = [
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1, decimals: 6,
+    denominationAtomic: 1_000_000n,
+    poolPDA: new PublicKey('GH2MCghPgZBqHoHaSqGpzQTwY9gw7V1cwMkd67ofp3w6'),
+    treePDA: new PublicKey('29Zc9jqVoEtKKmhV769dWZBj957U95pxJpyWDkbLsTb3'),
+    vaultATA: new PublicKey('8QKdMJbSukL8fkHjU3xw8kFU9jZryPQmXmfvHEpZjTKa'),
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10, decimals: 6,
+    denominationAtomic: 10_000_000n,
+    poolPDA: new PublicKey('zmaKYBQFpRkan5UrKrCxAjw1oDrtiu7X2AMGue843Kp'),
+    treePDA: new PublicKey('4bv2gyfdMTi46fjmU5ccSk21bW2cEr6NKQyH3NAxosdh'),
+    vaultATA: new PublicKey('4EuSghk6zWzkLqzmxugTmEpchxYKyNmqZ8xBytzvgGsm'),
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 100, decimals: 6,
+    denominationAtomic: 100_000_000n,
+    poolPDA: new PublicKey('BixDeows6MrqXpxH9RZghnQi4ZihzevFagcq9HvW4sVS'),
+    treePDA: new PublicKey('2JSzffuT8f3dUZBEcZrMungLqmHFS21kZSRbdQ6tBbuT'),
+    vaultATA: new PublicKey('Hybuu8qYN1HJ9Gk6gkJftGXjGQdiY1DFSrxUXm2k2BUY'),
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1000, decimals: 6,
+    denominationAtomic: 1_000_000_000n,
+    poolPDA: new PublicKey('Dq7CHfsasR7VU3cVgDsyGnWmwBH3LtT4gTBBHEMDHvFF'),
+    treePDA: new PublicKey('EAicVNr5qitSzP7Dc1Z7DZUzV3Pidoqt21Lk7fBWfmtn'),
+    vaultATA: new PublicKey('GmiMpZfWSUKsvvJeirZSnYuhcvkbs2GfrN1jfCDmxE2H'),
+  },
+];
+
+export const ALL_POOLS: PoolConfig[] = [...SOL_POOLS, ...USDC_POOLS];
+
+export function getPoolsForToken(token: 'SOL' | 'USDC'): PoolConfig[] {
+  return token === 'SOL' ? SOL_POOLS : USDC_POOLS;
+}
+
+export function findPool(token: 'SOL' | 'USDC', denomination: number): PoolConfig | undefined {
+  return ALL_POOLS.find(p => p.token === token && p.denomination === denomination);
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface ShieldReceipt {
+  secret: bigint;
+  nullifierPreimage: bigint;
+  depositEpoch: bigint;
+  tokenMint: bigint;
+  commitment: bigint;
+  leafIndex: number;
+  denomination: bigint;
+  pool: string;
+  token: 'SOL' | 'USDC';
+  denominationHuman: number;
+  shieldedAt: number; // unix timestamp ms
+  merklePathElements?: bigint[];
+  merklePathIndices?: number[];
+  merkleRoot?: bigint;
+}
+
+export interface PoolOnChainInfo {
+  isActive: boolean;
+  noteCount: number;
+  nextLeafIndex: number;
+  totalShielded: bigint;
+  epochDelay: bigint;
+  matureNoteCount: number;
+  dynamicDelay: number;
+  currentRoot: Uint8Array;
+}
+
+export interface DenominatedPoolProofInputs {
+  merkle_root: string;
+  nullifier: string;
+  min_epoch: string;
+  token_mint: string;
+  enforce_maturity: string;
+  secret: string;
+  nullifier_preimage: string;
+  deposit_epoch: string;
+  path_elements: string[];
+  path_indices: string[];
+}
+
+export interface DenominatedTransferProofInputs {
+  merkle_root: string;
+  nullifier: string;
+  min_epoch: string;
+  token_mint: string;
+  new_commitment: string;
+  secret: string;
+  nullifier_preimage: string;
+  deposit_epoch: string;
+  path_elements: string[];
+  path_indices: string[];
+  new_secret: string;
+  new_nullifier_preimage: string;
+  new_deposit_epoch: string;
+}
+
+/** Shareable note data for peer-to-peer transfers and backup */
+export interface ShareableNote {
+  version: 1;
+  pool: string;
+  secret: string;
+  nullifier_preimage: string;
+  deposit_epoch: string;
+  token_mint: string;
+  commitment: string;
+  leafIndex: number;
+  token: 'SOL' | 'USDC';
+  denominationHuman: number;
+}
+
+// ---------------------------------------------------------------------------
+// Precomputed Merkle zeros
+// ---------------------------------------------------------------------------
+
+function computeZeroHashes(): bigint[] {
+  const zeros = [ZERO_VALUE];
+  for (let i = 1; i <= MERKLE_DEPTH; i++) {
+    zeros.push(poseidon2([zeros[i - 1], zeros[i - 1]]));
+  }
+  return zeros;
+}
+
+let _zeroHashes: bigint[] | null = null;
+function getZeroHashes(): bigint[] {
+  if (!_zeroHashes) _zeroHashes = computeZeroHashes();
+  return _zeroHashes;
+}
+
+// ---------------------------------------------------------------------------
+// Crypto helpers
+// ---------------------------------------------------------------------------
+
+function randomFieldElement(): bigint {
+  const bytes = new Uint8Array(32);
+  // Use crypto.getRandomValues in React Native (via expo-crypto polyfill)
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 32; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  let n = 0n;
+  for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
+  return n % FIELD_ORDER;
+}
+
+function pubkeyToField(pubkey: PublicKey): bigint {
+  const bytes = pubkey.toBytes();
+  let n = 0n;
+  for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
+  return n % FIELD_ORDER;
+}
+
+function bigintToLeBytes32(n: bigint): number[] {
+  const bytes: number[] = new Array(32);
+  let tmp = n;
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = Number(tmp & 0xFFn);
+    tmp >>= 8n;
+  }
+  return bytes;
+}
+
+function bigintToBeBytes32(n: bigint): Uint8Array {
+  const bytes = new Uint8Array(32);
+  let tmp = n;
+  for (let i = 31; i >= 0; i--) {
+    bytes[i] = Number(tmp & 0xFFn);
+    tmp >>= 8n;
+  }
+  return bytes;
+}
+
+export function slotToEpoch(slot: number): bigint {
+  return BigInt(Math.floor(slot / SLOTS_PER_EPOCH));
+}
+
+// ---------------------------------------------------------------------------
+// Commitment & nullifier (Poseidon)
+// ---------------------------------------------------------------------------
+
+export function createCommitment(
+  nullifierPreimage: bigint,
+  secret: bigint,
+  depositEpoch: bigint,
+  tokenMint: bigint
+): bigint {
+  return poseidon4([nullifierPreimage, secret, depositEpoch, tokenMint]);
+}
+
+export function createNullifier(
+  nullifierPreimage: bigint,
+  secret: bigint
+): bigint {
+  return poseidon2([nullifierPreimage, secret]);
+}
+
+// ---------------------------------------------------------------------------
+// Merkle tree from filledSubtrees
+// ---------------------------------------------------------------------------
+
+export function computeNewRootFromSubtrees(
+  leaf: bigint,
+  leafIndex: number,
+  filledSubtrees: bigint[]
+): {
+  newRoot: bigint;
+  updatedSubtrees: bigint[];
+  pathElements: bigint[];
+  pathIndices: number[];
+} {
+  const zeros = getZeroHashes();
+  const subtrees = [...filledSubtrees];
+  const pathElements: bigint[] = [];
+  const pathIndices: number[] = [];
+
+  let current = leaf;
+  let idx = leafIndex;
+
+  for (let level = 0; level < MERKLE_DEPTH; level++) {
+    const isRight = idx & 1;
+    pathIndices.push(isRight);
+
+    if (isRight === 0) {
+      pathElements.push(zeros[level]);
+      subtrees[level] = current;
+      current = poseidon2([current, zeros[level]]);
+    } else {
+      pathElements.push(subtrees[level]);
+      current = poseidon2([subtrees[level], current]);
+    }
+
+    idx >>= 1;
+  }
+
+  return { newRoot: current, updatedSubtrees: subtrees, pathElements, pathIndices };
+}
+
+// ---------------------------------------------------------------------------
+// On-chain reads
+// ---------------------------------------------------------------------------
+
+export async function fetchPoolInfo(
+  connection: Connection,
+  poolConfig: PoolConfig
+): Promise<PoolOnChainInfo | null> {
+  const account = await connection.getAccountInfo(poolConfig.poolPDA);
+  if (!account) return null;
+
+  const data = account.data;
+  // DenominatedPool account layout (Anchor / Borsh):
+  //   8    discriminator
+  //   32   authority
+  //   32   token_mint
+  //   8    denomination
+  //   8    epoch_delay
+  //   32   merkle_root
+  //   1    tree_depth
+  //   8    next_leaf_index
+  //   32   vk_hash
+  //   8    total_shielded
+  //   8    note_count
+  //   1    is_active
+  //   4+N  historical_roots (Vec<[u8;32]>)
+  //   1    max_historical_roots
+  //   8    created_at
+  //   8    last_tx_at
+  //   1    bump
+  //   8    mature_note_count
+  //   8    last_maturity_update_epoch
+  //   256  epoch_note_counts ([u64; 32])
+  //   8    epoch_note_start
+  let offset = 8; // skip discriminator
+  offset += 32; // authority
+  offset += 32; // token_mint
+  offset += 8;  // denomination
+  const epochDelay = data.readBigUInt64LE(offset); offset += 8;
+  const currentRoot = data.slice(offset, offset + 32); offset += 32; // merkle_root
+  offset += 1;  // tree_depth
+  const nextLeafIndex = Number(data.readBigUInt64LE(offset)); offset += 8;
+  offset += 32; // vk_hash
+  const totalShielded = data.readBigUInt64LE(offset); offset += 8;
+  const noteCount = Number(data.readBigUInt64LE(offset)); offset += 8;
+  const isActive = data[offset] === 1; offset += 1;
+  // Skip historical_roots Vec: 4 bytes length + N * 32 bytes
+  const histRootsLen = data.readUInt32LE(offset); offset += 4;
+  offset += histRootsLen * 32;
+  offset += 1;  // max_historical_roots
+  offset += 8;  // created_at
+  offset += 8;  // last_tx_at
+  offset += 1;  // bump
+  // Dynamic delay fields
+  const matureNoteCount = Number(data.readBigUInt64LE(offset)); offset += 8;
+  offset += 8;  // last_maturity_update_epoch
+  offset += 256; // epoch_note_counts ([u64; 32] = 8*32)
+  // epoch_note_start (not needed for dynamic delay)
+
+  // Compute dynamic delay from mature_note_count (same logic as on-chain)
+  let dynamicDelay: number;
+  if (matureNoteCount >= 1000) dynamicDelay = 0;
+  else if (matureNoteCount >= 100) dynamicDelay = 1;
+  else if (matureNoteCount >= 10) dynamicDelay = 1;
+  else dynamicDelay = 2;
+
+  return {
+    isActive,
+    noteCount,
+    nextLeafIndex,
+    totalShielded,
+    epochDelay,
+    matureNoteCount,
+    dynamicDelay,
+    currentRoot,
+  };
+}
+
+function parseFilledSubtrees(treeData: Buffer): { leafCount: number; subtrees: bigint[] } {
+  const leafCount = Number(treeData.readBigUInt64LE(8 + 32 + 32));
+  const depth = treeData[8 + 32 + 32 + 8];
+  const vecLen = treeData.readUInt32LE(8 + 32 + 32 + 8 + 1);
+
+  const subtrees: bigint[] = [];
+  let offset = 8 + 32 + 32 + 8 + 1 + 4;
+  for (let i = 0; i < vecLen; i++) {
+    let val = 0n;
+    for (let b = 31; b >= 0; b--) {
+      val = (val << 8n) | BigInt(treeData[offset + b]);
+    }
+    subtrees.push(val);
+    offset += 32;
+  }
+
+  return { leafCount, subtrees };
+}
+
+// ---------------------------------------------------------------------------
+// Anchor instruction builders
+// ---------------------------------------------------------------------------
+
+function getDiscriminator(name: string): Buffer {
+  const hash = CryptoJS.SHA256(`global:${name}`);
+  const hex = hash.toString(CryptoJS.enc.Hex);
+  return Buffer.from(hex, 'hex').slice(0, 8);
+}
+
+function buildShieldDenominatedIx(
+  depositor: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  commitment: number[],
+  newRoot: number[],
+  tokenProgram?: PublicKey,
+  userTokenAccount?: PublicKey,
+  poolVault?: PublicKey
+): TransactionInstruction {
+  const disc = getDiscriminator('shield_denominated');
+  const data = Buffer.alloc(8 + 32 + 32);
+  disc.copy(data, 0);
+  Buffer.from(commitment).copy(data, 8);
+  Buffer.from(newRoot).copy(data, 40);
+
+  const keys = [
+    { pubkey: depositor, isSigner: true, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Optional accounts — program ID as "None" sentinel for Anchor 0.32
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: userTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!userTokenAccount },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+// ---------------------------------------------------------------------------
+// VK data PDA derivation
+// ---------------------------------------------------------------------------
+
+function deriveShieldedPoolPDA(tokenMint: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('shielded_pool'), tokenMint.toBuffer()],
+    ZK_SHIELDED_PROGRAM_ID
+  );
+}
+
+function deriveVkDataPDA(shieldedPoolKey: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('vk_data'), shieldedPoolKey.toBuffer()],
+    ZK_SHIELDED_PROGRAM_ID
+  );
+}
+
+function deriveTransferVkDataPDA(shieldedPoolKey: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('vk_data_transfer'), shieldedPoolKey.toBuffer()],
+    ZK_SHIELDED_PROGRAM_ID
+  );
+}
+
+/** Get the unshield VK data PDA for a given token mint (via ShieldedPool PDA) */
+function getVkDataPDAForMint(tokenMint: PublicKey): PublicKey {
+  const [shieldedPoolPDA] = deriveShieldedPoolPDA(tokenMint);
+  const [vkDataPDA] = deriveVkDataPDA(shieldedPoolPDA);
+  return vkDataPDA;
+}
+
+/** Get the transfer VK data PDA (uses SOL ShieldedPool — same VK for all pools) */
+function getTransferVkDataPDA(): PublicKey {
+  const [shieldedPoolPDA] = deriveShieldedPoolPDA(NATIVE_SOL_MINT);
+  const [vkDataPDA] = deriveTransferVkDataPDA(shieldedPoolPDA);
+  return vkDataPDA;
+}
+
+function buildUnshieldDenominatedIx(
+  payer: PublicKey,
+  recipient: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  vkDataPDA: PublicKey,
+  proof: number[],
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  tokenProgram?: PublicKey,
+  poolVault?: PublicKey,
+  recipientTokenAccount?: PublicKey
+): TransactionInstruction {
+  const disc = getDiscriminator('unshield_denominated');
+
+  // On-chain args: proof: Groth16Proof([u8;256]), nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64
+  const data = Buffer.alloc(8 + 256 + 32 + 32 + 8);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(proof).copy(data, offset); offset += 256;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset);
+
+  // Account ordering must match on-chain UnshieldDenominated struct:
+  // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
+  // verification_key_data, system_program, token_program?, pool_vault?, recipient_token_account?
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: recipient, isSigner: false, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Optional accounts (program ID as None sentinel for Anchor 0.32)
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+// ---------------------------------------------------------------------------
+// Nullifier PDA
+// ---------------------------------------------------------------------------
+
+function deriveNullifierPDA(poolKey: PublicKey, nullifierBytes: Uint8Array | number[]): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('nullifier'), poolKey.toBuffer(), Buffer.from(nullifierBytes)],
+    ZK_SHIELDED_PROGRAM_ID
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wallet signer abstraction (local keypair OR Privy signer)
+// ---------------------------------------------------------------------------
+
+export interface WalletSigner {
+  publicKey: PublicKey;
+  signTransaction: (tx: Transaction) => Promise<Transaction>;
+}
+
+/**
+ * Sign and send a transaction, handling both local keypair and Privy signer.
+ */
+async function signAndSend(
+  connection: Connection,
+  tx: Transaction,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+): Promise<string> {
+  if (keypair) {
+    return await sendAndConfirmTransaction(connection, tx, [keypair], {
+      commitment: 'confirmed',
+    });
+  }
+  if (walletSigner) {
+    const { blockhash } = await connection.getLatestBlockhash();
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = walletSigner.publicKey;
+    const signed = await walletSigner.signTransaction(tx);
+    const sig = await connection.sendRawTransaction(signed.serialize());
+    await connection.confirmTransaction(sig, 'confirmed');
+    return sig;
+  }
+  throw new Error('No wallet available for signing');
+}
+
+// ---------------------------------------------------------------------------
+// Shield (deposit)
+// ---------------------------------------------------------------------------
+
+export async function shield(
+  poolConfig: PoolConfig,
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<ShieldReceipt> {
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+  onProgress?.('Reading pool state...');
+
+  // Read on-chain Merkle tree
+  const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
+  if (!treeAccount) throw new Error('Merkle tree account not found');
+
+  const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+
+  // Get current epoch
+  const slot = await connection.getSlot('confirmed');
+  const depositEpoch = slotToEpoch(slot);
+  const tokenMintField = pubkeyToField(poolConfig.tokenMint);
+
+  onProgress?.('Computing commitment...');
+  const secret = randomFieldElement();
+  const nullifierPreimage = randomFieldElement();
+
+  const commitment = createCommitment(nullifierPreimage, secret, depositEpoch, tokenMintField);
+
+  const { newRoot, pathElements, pathIndices } = computeNewRootFromSubtrees(
+    commitment, leafCount, subtrees
+  );
+
+  const commitmentBytes = bigintToLeBytes32(commitment);
+  const newRootBytes = bigintToLeBytes32(newRoot);
+
+  onProgress?.('Building transaction...');
+
+  // For USDC: pass token program, user ATA, pool vault
+  let tokenProgram: PublicKey | undefined;
+  let userTokenAccount: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+
+  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+  if (!isNativeSOL) {
+    tokenProgram = TOKEN_PROGRAM_ID;
+    userTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, walletPubkey);
+    poolVault = poolConfig.vaultATA;
+  }
+
+  const ix = buildShieldDenominatedIx(
+    walletPubkey,
+    poolConfig.poolPDA,
+    poolConfig.treePDA,
+    commitmentBytes,
+    newRootBytes,
+    tokenProgram,
+    userTokenAccount,
+    poolVault
+  );
+
+  onProgress?.('Sending transaction...');
+  const tx = new Transaction().add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  onProgress?.('Done!');
+
+  const receipt: ShieldReceipt = {
+    secret,
+    nullifierPreimage,
+    depositEpoch,
+    tokenMint: tokenMintField,
+    commitment,
+    leafIndex: leafCount,
+    denomination: poolConfig.denominationAtomic,
+    pool: poolConfig.poolPDA.toBase58(),
+    token: poolConfig.token,
+    denominationHuman: poolConfig.denomination,
+    shieldedAt: Date.now(),
+    merklePathElements: pathElements,
+    merklePathIndices: pathIndices,
+    merkleRoot: newRoot,
+  };
+
+  return receipt;
+}
+
+// ---------------------------------------------------------------------------
+// Build circuit inputs for unshield
+// ---------------------------------------------------------------------------
+
+export function buildUnshieldInputs(
+  receipt: ShieldReceipt,
+  currentEpoch: bigint,
+  epochDelay: bigint,
+  enforceMaturity: boolean = true
+): DenominatedPoolProofInputs {
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const minEpoch = currentEpoch - epochDelay;
+
+  // Only check maturity when enforcing
+  if (enforceMaturity && receipt.depositEpoch > minEpoch) {
+    const remaining = Number(receipt.depositEpoch - minEpoch + 1n);
+    throw new Error(
+      `Note not mature. Deposited epoch ${receipt.depositEpoch}, ` +
+      `need <= ${minEpoch}. Wait ~${remaining} more epoch(s).`
+    );
+  }
+
+  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
+    throw new Error('Receipt missing Merkle proof data');
+  }
+
+  return {
+    merkle_root: receipt.merkleRoot.toString(),
+    nullifier: nullifier.toString(),
+    min_epoch: minEpoch.toString(),
+    token_mint: receipt.tokenMint.toString(),
+    enforce_maturity: enforceMaturity ? '1' : '0',
+    secret: receipt.secret.toString(),
+    nullifier_preimage: receipt.nullifierPreimage.toString(),
+    deposit_epoch: receipt.depositEpoch.toString(),
+    path_elements: receipt.merklePathElements.map(e => e.toString()),
+    path_indices: receipt.merklePathIndices.map(i => i.toString()),
+  };
+}
+
+export function buildTransferInputs(
+  receipt: ShieldReceipt,
+  currentEpoch: bigint,
+  epochDelay: bigint,
+  newSecret: bigint,
+  newNullifierPreimage: bigint,
+  newDepositEpoch: bigint
+): DenominatedTransferProofInputs {
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const minEpoch = currentEpoch - epochDelay;
+
+  if (receipt.depositEpoch > minEpoch) {
+    const remaining = Number(receipt.depositEpoch - minEpoch + 1n);
+    throw new Error(
+      `Note not mature for transfer. Deposited epoch ${receipt.depositEpoch}, ` +
+      `need <= ${minEpoch}. Wait ~${remaining} more epoch(s).`
+    );
+  }
+
+  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
+    throw new Error('Receipt missing Merkle proof data');
+  }
+
+  const newCommitment = createCommitment(
+    newNullifierPreimage, newSecret, newDepositEpoch, receipt.tokenMint
+  );
+
+  return {
+    merkle_root: receipt.merkleRoot.toString(),
+    nullifier: nullifier.toString(),
+    min_epoch: minEpoch.toString(),
+    token_mint: receipt.tokenMint.toString(),
+    new_commitment: newCommitment.toString(),
+    secret: receipt.secret.toString(),
+    nullifier_preimage: receipt.nullifierPreimage.toString(),
+    deposit_epoch: receipt.depositEpoch.toString(),
+    path_elements: receipt.merklePathElements.map(e => e.toString()),
+    path_indices: receipt.merklePathIndices.map(i => i.toString()),
+    new_secret: newSecret.toString(),
+    new_nullifier_preimage: newNullifierPreimage.toString(),
+    new_deposit_epoch: newDepositEpoch.toString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Unshield (withdraw) — client-side proof generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Proof generator callback type.
+ *
+ * In React Native, proof generation runs in a hidden WebView
+ * (snarkjs from CDN), not in the JS thread directly.
+ * The DenominatedPoolProverProvider component provides this callback.
+ */
+export type ProofGenerator = (
+  inputs: Record<string, string | string[]>,
+  circuit?: 'pool' | 'transfer',
+) => Promise<{ proof: any; publicSignals: string[] }>;
+
+/**
+ * Convert snarkjs proof to on-chain format (256 bytes).
+ *
+ * pi_a: 2 x 32 bytes (G1)
+ * pi_b: 2 x 2 x 32 bytes (G2, swapped real/imag per EIP-197)
+ * pi_c: 2 x 32 bytes (G1)
+ */
+export function proofToOnChainBytes(proof: any): number[] {
+  const bytes: number[] = [];
+
+  function fieldToBytes(str: string): number[] {
+    let n = BigInt(str);
+    const b = new Array(32);
+    for (let i = 31; i >= 0; i--) {
+      b[i] = Number(n & 0xFFn);
+      n >>= 8n;
+    }
+    return b;
+  }
+
+  // pi_a (G1): [x, y]
+  bytes.push(...fieldToBytes(proof.pi_a[0]));
+  bytes.push(...fieldToBytes(proof.pi_a[1]));
+
+  // pi_b (G2): snarkjs [[c0_x, c1_x], [c0_y, c1_y]] → on-chain [c1_x, c0_x, c1_y, c0_y]
+  bytes.push(...fieldToBytes(proof.pi_b[0][1])); // x_imag
+  bytes.push(...fieldToBytes(proof.pi_b[0][0])); // x_real
+  bytes.push(...fieldToBytes(proof.pi_b[1][1])); // y_imag
+  bytes.push(...fieldToBytes(proof.pi_b[1][0])); // y_real
+
+  // pi_c (G1): [x, y]
+  bytes.push(...fieldToBytes(proof.pi_c[0]));
+  bytes.push(...fieldToBytes(proof.pi_c[1]));
+
+  return bytes;
+}
+
+export async function unshield(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  proofGenerator: ProofGenerator,
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<string> {
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  onProgress?.('Checking note maturity...');
+  const slot = await connection.getSlot('confirmed');
+  const currentEpoch = slotToEpoch(slot);
+
+  // Fetch pool epoch_delay
+  const poolInfo = await fetchPoolInfo(connection, poolConfig);
+  if (!poolInfo) throw new Error('Pool not found');
+
+  // Account for BOTH base epoch_delay AND dynamic delay (based on anonymity set size)
+  // On-chain check: current_epoch >= min_epoch + dynamic_delay
+  // So min_epoch must be <= current_epoch - dynamic_delay
+  const totalDelay = poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay);
+  const inputs = buildUnshieldInputs(receipt, currentEpoch, totalDelay);
+
+  onProgress?.('Generating proof (client-side)...');
+  const proofStartTime = Date.now();
+  const { proof } = await proofGenerator(inputs as unknown as Record<string, string | string[]>);
+  const proofTime = Date.now() - proofStartTime;
+  console.log(`[DenominatedPool] Proof generated in ${proofTime}ms`);
+
+  onProgress?.('Building transaction...');
+  const proofBytes = proofToOnChainBytes(proof);
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const nullifierBytes = bigintToLeBytes32(nullifier);
+  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
+  const minEpoch = currentEpoch - totalDelay;
+
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+  const vkDataPDA = getVkDataPDAForMint(poolConfig.tokenMint);
+
+  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+  let tokenProgram: PublicKey | undefined;
+  let recipientTokenAccount: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+
+  if (!isNativeSOL) {
+    tokenProgram = TOKEN_PROGRAM_ID;
+    recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+    poolVault = poolConfig.vaultATA;
+  }
+
+  const ix = buildUnshieldDenominatedIx(
+    walletPubkey,
+    recipient,
+    poolConfig.poolPDA,
+    poolConfig.treePDA,
+    nullifierPDA,
+    vkDataPDA,
+    proofBytes,
+    Array.from(nullifierBytes),
+    merkleRootBytes,
+    minEpoch,
+    tokenProgram,
+    poolVault,
+    recipientTokenAccount
+  );
+
+  onProgress?.('Sending transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(500_000));
+  tx.add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+// ---------------------------------------------------------------------------
+// Emergency Unshield (bypass maturity)
+// ---------------------------------------------------------------------------
+
+export async function emergencyUnshield(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  proofGenerator: ProofGenerator,
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<string> {
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  onProgress?.('Preparing emergency unshield...');
+  const slot = await connection.getSlot('confirmed');
+  const currentEpoch = slotToEpoch(slot);
+
+  const poolInfo = await fetchPoolInfo(connection, poolConfig);
+  if (!poolInfo) throw new Error('Pool not found');
+
+  // Build inputs with enforce_maturity=0 (emergency bypass)
+  const inputs = buildUnshieldInputs(receipt, currentEpoch, poolInfo.epochDelay, false);
+
+  onProgress?.('Generating proof (client-side)...');
+  const { proof } = await proofGenerator(inputs as unknown as Record<string, string | string[]>);
+
+  onProgress?.('Building transaction...');
+  const proofBytes = proofToOnChainBytes(proof);
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const nullifierBytes = bigintToLeBytes32(nullifier);
+  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
+  const minEpoch = currentEpoch - poolInfo.epochDelay;
+
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+  let tokenProgram: PublicKey | undefined;
+  let recipientTokenAccount: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+
+  if (!isNativeSOL) {
+    tokenProgram = TOKEN_PROGRAM_ID;
+    recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+    poolVault = poolConfig.vaultATA;
+  }
+
+  const vkDataPDA = getVkDataPDAForMint(poolConfig.tokenMint);
+
+  // Use emergency_unshield_denominated instruction
+  // Same args as normal unshield: proof, nullifier, merkle_root, min_epoch
+  const disc = getDiscriminator('emergency_unshield_denominated');
+  const data = Buffer.alloc(8 + 256 + 32 + 32 + 8);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(proofBytes).copy(data, offset); offset += 256;
+  Buffer.from(Array.from(nullifierBytes)).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset);
+
+  // Account ordering matches on-chain EmergencyUnshieldDenominated struct:
+  // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
+  // verification_key_data, system_program, token_program?, pool_vault?, recipient_token_account?
+  const keys = [
+    { pubkey: walletPubkey, isSigner: true, isWritable: true },
+    { pubkey: recipient, isSigner: false, isWritable: true },
+    { pubkey: poolConfig.poolPDA, isSigner: false, isWritable: true },
+    { pubkey: poolConfig.treePDA, isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Optional accounts (program ID as None sentinel for Anchor 0.32)
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+  ];
+
+  const ix = new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+
+  onProgress?.('Sending transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(500_000));
+  tx.add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+// ---------------------------------------------------------------------------
+// Transfer note (peer-to-peer)
+// ---------------------------------------------------------------------------
+
+export async function transferNote(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  proofGenerator: ProofGenerator,
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<{ txSig: string; recipientNote: ShareableNote }> {
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  onProgress?.('Reading pool state...');
+  const slot = await connection.getSlot('confirmed');
+  const currentEpoch = slotToEpoch(slot);
+
+  const poolInfo = await fetchPoolInfo(connection, poolConfig);
+  if (!poolInfo) throw new Error('Pool not found');
+
+  // Account for BOTH base epoch_delay AND dynamic delay (same as unshield)
+  // On-chain check: current_epoch >= min_epoch + dynamic_delay
+  const totalDelay = poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay);
+
+  // Generate new note secrets for the recipient
+  const newSecret = randomFieldElement();
+  const newNullifierPreimage = randomFieldElement();
+  const newDepositEpoch = currentEpoch;
+
+  const inputs = buildTransferInputs(
+    receipt, currentEpoch, totalDelay,
+    newSecret, newNullifierPreimage, newDepositEpoch
+  );
+
+  onProgress?.('Generating transfer proof (client-side)...');
+  const { proof } = await proofGenerator(inputs as unknown as Record<string, string | string[]>, 'transfer');
+
+  onProgress?.('Computing new commitment...');
+  const newCommitment = createCommitment(
+    newNullifierPreimage, newSecret, newDepositEpoch, receipt.tokenMint
+  );
+
+  // Read on-chain Merkle tree for new root computation
+  const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
+  if (!treeAccount) throw new Error('Merkle tree account not found');
+  const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+
+  const { newRoot } = computeNewRootFromSubtrees(newCommitment, leafCount, subtrees);
+
+  onProgress?.('Building transaction...');
+  const proofBytes = proofToOnChainBytes(proof);
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const nullifierBytes = bigintToLeBytes32(nullifier);
+  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
+  const newCommitmentBytes = bigintToLeBytes32(newCommitment);
+  const newRootBytes = bigintToLeBytes32(newRoot);
+  const minEpoch = currentEpoch - totalDelay;
+
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+  const disc = getDiscriminator('transfer_denominated');
+  const data = Buffer.alloc(8 + 256 + 32 + 32 + 8 + 32 + 32);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(proofBytes).copy(data, offset); offset += 256;
+  Buffer.from(Array.from(nullifierBytes)).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  Buffer.from(newCommitmentBytes).copy(data, offset); offset += 32;
+  Buffer.from(newRootBytes).copy(data, offset);
+
+  // Transfer VK data PDA — separate from unshield VK, validated against pool.vk_hash_transfer
+  const vkDataPDA = getTransferVkDataPDA();
+
+  console.log('[Transfer] Pool PDA:', poolConfig.poolPDA.toBase58());
+  console.log('[Transfer] Tree PDA:', poolConfig.treePDA.toBase58());
+  console.log('[Transfer] Nullifier PDA:', nullifierPDA.toBase58());
+  console.log('[Transfer] VK Data PDA:', vkDataPDA.toBase58());
+  console.log('[Transfer] minEpoch:', minEpoch.toString());
+  console.log('[Transfer] currentEpoch:', currentEpoch.toString());
+  console.log('[Transfer] totalDelay:', totalDelay.toString());
+  console.log('[Transfer] dynamicDelay:', poolInfo.dynamicDelay);
+  console.log('[Transfer] epochDelay:', poolInfo.epochDelay.toString());
+
+  // Pre-flight: verify VK data account exists
+  try {
+    const vkAcct = await connection.getAccountInfo(vkDataPDA);
+    if (vkAcct) {
+      console.log('[Transfer] VK data account size:', vkAcct.data.length, 'owner:', vkAcct.owner.toBase58());
+    } else {
+      console.error('[Transfer] VK DATA ACCOUNT NOT FOUND!');
+    }
+  } catch (e) { console.error('[Transfer] VK preflight error:', e); }
+
+  const keys = [
+    { pubkey: walletPubkey, isSigner: true, isWritable: true },
+    { pubkey: poolConfig.poolPDA, isSigner: false, isWritable: true },
+    { pubkey: poolConfig.treePDA, isSigner: false, isWritable: true },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  const ix = new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+
+  onProgress?.('Sending transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(500_000));
+  tx.add(ix);
+  const txSig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  onProgress?.('Done!');
+
+  // Build shareable note for the recipient
+  const recipientNote: ShareableNote = {
+    version: 1,
+    pool: poolConfig.poolPDA.toBase58(),
+    secret: newSecret.toString(),
+    nullifier_preimage: newNullifierPreimage.toString(),
+    deposit_epoch: newDepositEpoch.toString(),
+    token_mint: receipt.tokenMint.toString(),
+    commitment: newCommitment.toString(),
+    leafIndex: leafCount,
+    token: poolConfig.token,
+    denominationHuman: poolConfig.denomination,
+  };
+
+  return { txSig, recipientNote };
+}
+
+// ---------------------------------------------------------------------------
+// Note import/export (backup & sharing)
+// ---------------------------------------------------------------------------
+
+export function exportNote(receipt: ShieldReceipt, poolConfig: PoolConfig): ShareableNote {
+  return {
+    version: 1,
+    pool: receipt.pool,
+    secret: receipt.secret.toString(),
+    nullifier_preimage: receipt.nullifierPreimage.toString(),
+    deposit_epoch: receipt.depositEpoch.toString(),
+    token_mint: receipt.tokenMint.toString(),
+    commitment: receipt.commitment.toString(),
+    leafIndex: receipt.leafIndex,
+    token: poolConfig.token,
+    denominationHuman: poolConfig.denomination,
+  };
+}
+
+export function importNote(noteData: ShareableNote): ShieldReceipt {
+  if (noteData.version !== 1) {
+    throw new Error(`Unsupported note version: ${noteData.version}`);
+  }
+
+  const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === noteData.pool);
+  if (!pool) {
+    throw new Error(`Unknown pool: ${noteData.pool}`);
+  }
+
+  const secret = BigInt(noteData.secret);
+  const nullifierPreimage = BigInt(noteData.nullifier_preimage);
+  const depositEpoch = BigInt(noteData.deposit_epoch);
+  const tokenMint = BigInt(noteData.token_mint);
+
+  // Verify commitment matches
+  const expectedCommitment = createCommitment(nullifierPreimage, secret, depositEpoch, tokenMint);
+  const providedCommitment = BigInt(noteData.commitment);
+  if (expectedCommitment !== providedCommitment) {
+    throw new Error('Invalid note: commitment does not match secrets');
+  }
+
+  return {
+    secret,
+    nullifierPreimage,
+    depositEpoch,
+    tokenMint,
+    commitment: providedCommitment,
+    leafIndex: noteData.leafIndex,
+    denomination: pool.denominationAtomic,
+    pool: noteData.pool,
+    token: noteData.token,
+    denominationHuman: noteData.denominationHuman,
+    shieldedAt: Date.now(),
+    // Merkle proof will need to be reconstructed from on-chain data
+  };
+}
+
+export function encodeShareableNote(note: ShareableNote): string {
+  return btoa(JSON.stringify(note));
+}
+
+export function decodeShareableNote(encoded: string): ShareableNote {
+  return JSON.parse(atob(encoded));
+}
+
+// ---------------------------------------------------------------------------
+// Receipt serialization (for persistent storage)
+// ---------------------------------------------------------------------------
+
+export function receiptToJSON(receipt: ShieldReceipt): string {
+  return JSON.stringify({
+    secret: receipt.secret.toString(),
+    nullifierPreimage: receipt.nullifierPreimage.toString(),
+    depositEpoch: receipt.depositEpoch.toString(),
+    tokenMint: receipt.tokenMint.toString(),
+    commitment: receipt.commitment.toString(),
+    leafIndex: receipt.leafIndex,
+    denomination: receipt.denomination.toString(),
+    pool: receipt.pool,
+    token: receipt.token,
+    denominationHuman: receipt.denominationHuman,
+    shieldedAt: receipt.shieldedAt,
+    merklePathElements: receipt.merklePathElements?.map(e => e.toString()),
+    merklePathIndices: receipt.merklePathIndices,
+    merkleRoot: receipt.merkleRoot?.toString(),
+  });
+}
+
+export function receiptFromJSON(json: string): ShieldReceipt {
+  const obj = JSON.parse(json);
+  return {
+    secret: BigInt(obj.secret),
+    nullifierPreimage: BigInt(obj.nullifierPreimage),
+    depositEpoch: BigInt(obj.depositEpoch),
+    tokenMint: BigInt(obj.tokenMint),
+    commitment: BigInt(obj.commitment),
+    leafIndex: obj.leafIndex,
+    denomination: BigInt(obj.denomination),
+    pool: obj.pool,
+    token: obj.token || 'SOL',
+    denominationHuman: obj.denominationHuman || 0,
+    shieldedAt: obj.shieldedAt || 0,
+    merklePathElements: obj.merklePathElements?.map((e: string) => BigInt(e)),
+    merklePathIndices: obj.merklePathIndices,
+    merkleRoot: obj.merkleRoot ? BigInt(obj.merkleRoot) : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PROVING ARCHITECTURE
+// ---------------------------------------------------------------------------
+// Proof generation uses a hidden WebView (DenominatedPoolProverProvider):
+//   - snarkjs loaded from CDN inside the WebView (browser environment)
+//   - Circuit files loaded from Expo assets → base64 → injected into WebView
+//   - Proof inputs sent via postMessage, proof returned via onMessage
+//   - ~1-3s proof time for 4,273 constraints on modern phones
+//
+// Why WebView, not direct snarkjs in React Native?
+//   snarkjs depends on fastfile, circom_runtime, etc. which use Node.js APIs.
+//   Metro shims these to empty modules. The WebView provides a proper browser
+//   environment where snarkjs works out of the box.
+//
+// Future improvement (Plan B): Rust native prover via Expo Modules (JSI bridge)
+//   - Build ark-circom as a native module → ~50ms proof time
+//   - Eliminates snarkjs CDN dependency
+//
+// RULE #1: Private inputs NEVER leave the device.
