@@ -593,6 +593,238 @@ describe("Denominated Pool", () => {
   });
 
   // =========================================================================
+  // 3b. emergency_unshield_denominated — constraint checks
+  // =========================================================================
+
+  describe("emergency_unshield_denominated", () => {
+    const recipient = Keypair.generate();
+
+    it("rejects invalid merkle root (same as normal unshield)", async () => {
+      const invalidRoot = random32();
+      const fakeNullifier = random32();
+      const [nullPDA] = deriveNullifierPDA(poolPDA, fakeNullifier);
+
+      try {
+        await program.methods
+          .emergencyUnshieldDenominated(
+            mockProof(),
+            fakeNullifier,
+            invalidRoot,
+            new BN(0)
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            recipient: recipient.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullPDA,
+            verificationKeyData: authority.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.toString()).to.include("InvalidMerkleRoot");
+      }
+    });
+
+    it("rejects when VK hash does not match (same VK as normal unshield)", async () => {
+      const pool = await program.account.denominatedPool.fetch(poolPDA);
+      const validRoot = Array.from(pool.merkleRoot);
+      const testNullifier = random32();
+      const [nullPDA] = deriveNullifierPDA(poolPDA, testNullifier);
+
+      try {
+        await program.methods
+          .emergencyUnshieldDenominated(
+            mockProof(),
+            testNullifier,
+            validRoot,
+            new BN(0)
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            recipient: recipient.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullPDA,
+            verificationKeyData: authority.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        const msg = err.toString();
+        expect(
+          msg.includes("InvalidVerificationKey") ||
+            msg.includes("custom program error")
+        ).to.be.true;
+      }
+    });
+
+    it("nullifier PDA is NOT created when emergency tx fails", async () => {
+      const testNullifier = random32();
+      const [nullPDA] = deriveNullifierPDA(poolPDA, testNullifier);
+
+      let info = await provider.connection.getAccountInfo(nullPDA);
+      expect(info).to.be.null;
+
+      try {
+        await program.methods
+          .emergencyUnshieldDenominated(
+            mockProof(),
+            testNullifier,
+            random32(),
+            new BN(0)
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            recipient: recipient.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullPDA,
+            verificationKeyData: authority.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      } catch (_) {
+        // Expected to fail
+      }
+
+      info = await provider.connection.getAccountInfo(nullPDA);
+      expect(info).to.be.null;
+    });
+  });
+
+  // =========================================================================
+  // 3c. transfer_denominated — constraint checks
+  // =========================================================================
+
+  describe("transfer_denominated", () => {
+    it("rejects invalid merkle root", async () => {
+      const invalidRoot = random32();
+      const fakeNullifier = random32();
+      const [nullPDA] = deriveNullifierPDA(poolPDA, fakeNullifier);
+
+      try {
+        await program.methods
+          .transferDenominated(
+            mockProof(),
+            fakeNullifier,
+            invalidRoot,
+            new BN(0),
+            random32(), // new_commitment
+            random32(), // new_root
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullPDA,
+            verificationKeyData: authority.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.toString()).to.include("InvalidMerkleRoot");
+      }
+    });
+
+    it("rejects when transfer VK hash does not match", async () => {
+      const pool = await program.account.denominatedPool.fetch(poolPDA);
+      const validRoot = Array.from(pool.merkleRoot);
+      const testNullifier = random32();
+      const [nullPDA] = deriveNullifierPDA(poolPDA, testNullifier);
+
+      try {
+        await program.methods
+          .transferDenominated(
+            mockProof(),
+            testNullifier,
+            validRoot,
+            new BN(0),
+            random32(),
+            random32(),
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullPDA,
+            verificationKeyData: authority.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        const msg = err.toString();
+        expect(
+          msg.includes("InvalidVerificationKey") ||
+            msg.includes("custom program error")
+        ).to.be.true;
+      }
+    });
+
+    it("transfer does not move funds — no recipient account needed", async () => {
+      // transfer_denominated accounts have NO recipient, no token accounts
+      // Verify via IDL:
+      const ix = program.idl.instructions.find(
+        (i) => i.name === "transferDenominated"
+      );
+      expect(ix).to.not.be.undefined;
+
+      const accountNames = ix!.accounts.map((a) => a.name);
+      expect(accountNames).to.not.include("recipient");
+      expect(accountNames).to.not.include("tokenProgram");
+      expect(accountNames).to.not.include("poolVault");
+      expect(accountNames).to.not.include("recipientTokenAccount");
+
+      // Required accounts: payer, denominatedPool, merkleTree, nullifierRecord, verificationKeyData, systemProgram
+      expect(accountNames).to.include("payer");
+      expect(accountNames).to.include("denominatedPool");
+      expect(accountNames).to.include("merkleTree");
+      expect(accountNames).to.include("nullifierRecord");
+      expect(accountNames).to.include("verificationKeyData");
+      expect(accountNames).to.include("systemProgram");
+    });
+
+    it("nullifier PDA is NOT created when transfer tx fails", async () => {
+      const testNullifier = random32();
+      const [nullPDA] = deriveNullifierPDA(poolPDA, testNullifier);
+
+      let info = await provider.connection.getAccountInfo(nullPDA);
+      expect(info).to.be.null;
+
+      try {
+        await program.methods
+          .transferDenominated(
+            mockProof(),
+            testNullifier,
+            random32(),
+            new BN(0),
+            random32(),
+            random32(),
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullPDA,
+            verificationKeyData: authority.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      } catch (_) {
+        // Expected to fail
+      }
+
+      info = await provider.connection.getAccountInfo(nullPDA);
+      expect(info).to.be.null;
+    });
+  });
+
+  // =========================================================================
   // 4. Pool isolation — multiple denominations
   // =========================================================================
 
@@ -608,7 +840,7 @@ describe("Denominated Pool", () => {
 
     it("creates 0.1 SOL pool (separate from 1 SOL pool)", async () => {
       await program.methods
-        .initDenominatedPool(random32(), tokenMint, denom01, new BN(2))
+        .initDenominatedPool(random32(), random32(), tokenMint, denom01, new BN(2))
         .accountsPartial({
           authority: authority.publicKey,
           denominatedPool: pool01PDA,
@@ -716,6 +948,47 @@ describe("Denominated Pool", () => {
       expect(argNames).to.not.include("amount");
     });
 
+    it("emergency_unshield_denominated instruction exists with same args as unshield", async () => {
+      const ix = program.idl.instructions.find(
+        (i) => i.name === "emergencyUnshieldDenominated"
+      );
+      expect(ix).to.not.be.undefined;
+
+      const argNames = ix!.args.map((a) => a.name);
+      expect(argNames).to.include("proof");
+      expect(argNames).to.include("nullifier");
+      expect(argNames).to.include("merkleRoot");
+      expect(argNames).to.include("minEpoch");
+      expect(argNames).to.not.include("amount");
+    });
+
+    it("transfer_denominated instruction has newCommitment and newRoot", async () => {
+      const ix = program.idl.instructions.find(
+        (i) => i.name === "transferDenominated"
+      );
+      expect(ix).to.not.be.undefined;
+
+      const argNames = ix!.args.map((a) => a.name);
+      expect(argNames).to.include("proof");
+      expect(argNames).to.include("nullifier");
+      expect(argNames).to.include("merkleRoot");
+      expect(argNames).to.include("minEpoch");
+      expect(argNames).to.include("newCommitment");
+      expect(argNames).to.include("newRoot");
+      expect(argNames).to.not.include("amount");
+    });
+
+    it("init_denominated_pool accepts vkHash (no vkHashTransfer)", async () => {
+      const ix = program.idl.instructions.find(
+        (i) => i.name === "initDenominatedPool"
+      );
+      expect(ix).to.not.be.undefined;
+
+      const argNames = ix!.args.map((a) => a.name);
+      expect(argNames).to.include("vkHash");
+      expect(argNames).to.not.include("vkHashTransfer");
+    });
+
     it("nullifier_record account uses init constraint (double-spend guard)", async () => {
       // Verify IDL shows nullifier_record is writable + PDA
       const ix = program.idl.instructions.find(
@@ -812,7 +1085,7 @@ describe("Denominated Pool", () => {
 
     it("creates a 1 USDC denominated pool", async () => {
       await program.methods
-        .initDenominatedPool(usdcVkHash, usdcMint, ONE_USDC, EPOCH_DELAY_1)
+        .initDenominatedPool(usdcVkHash, random32(), usdcMint, ONE_USDC, EPOCH_DELAY_1)
         .accountsPartial({
           authority: authority.publicKey,
           denominatedPool: usdcPoolPDA,
