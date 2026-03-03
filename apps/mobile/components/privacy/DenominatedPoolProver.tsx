@@ -355,12 +355,13 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
       // Step 1: Tell WebView to try loading directly from APK assets
       console.log(`[DenomProver] Asking WebView to load ${circuit} circuit from APK assets...`);
       assetLoadFailedMap.current[circuit] = false;
+      const step1Promise = waitForCircuitMessage();
       webViewRef.current?.injectJavaScript(`
         loadCircuitFromAssets('${circuit}');
         true;
       `);
 
-      await waitForCircuitMessage();
+      await step1Promise;
 
       if (circuitLoadedMap.current[circuit]) return true;
 
@@ -371,7 +372,9 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
         const { wasmBase64, zkeyBase64 } = await loadCircuitAssets(circuit);
         console.log(`[DenomProver] Sending ${circuit} circuit via postMessage...`);
 
-        circuitPromise.current = null;
+        // Set up wait BEFORE postMessage to avoid race condition where
+        // WebView responds before waitForCircuitMessage creates the promise
+        const loadPromise = waitForCircuitMessage();
         webViewRef.current?.postMessage(JSON.stringify({
           type: 'loadCircuit',
           circuit,
@@ -379,7 +382,7 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
           zkey: zkeyBase64,
         }));
 
-        await waitForCircuitMessage();
+        await loadPromise;
       }
 
       return !!circuitLoadedMap.current[circuit];

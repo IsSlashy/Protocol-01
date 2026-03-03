@@ -26,6 +26,9 @@ import {
   receiptFromJSON,
   slotToEpoch,
   findPool,
+  createNullifier,
+  bigintToLeBytes32,
+  deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner } from './walletStore';
 
@@ -203,9 +206,45 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const slot = await connection.getSlot('confirmed');
           const currentEpoch = slotToEpoch(slot);
 
+          // Check nullifier PDAs on-chain for non-terminal notes
+          // If a nullifier PDA exists, the note was already spent (possibly on another device)
+          const activeNotes = notes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
+          const nullifierPDAs: { noteId: string; pda: PublicKey }[] = [];
+
+          for (const note of activeNotes) {
+            try {
+              const receipt = receiptFromJSON(note.receiptJSON);
+              const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+              const nullifierBytes = bigintToLeBytes32(nullifier);
+              const poolKey = new PublicKey(note.poolPDA);
+              const [pda] = deriveNullifierPDA(poolKey, nullifierBytes);
+              nullifierPDAs.push({ noteId: note.id, pda });
+            } catch {
+              // skip notes with invalid receipts
+            }
+          }
+
+          // Batch fetch nullifier accounts
+          const spentNoteIds = new Set<string>();
+          if (nullifierPDAs.length > 0) {
+            const accounts = await connection.getMultipleAccountsInfo(
+              nullifierPDAs.map(n => n.pda)
+            );
+            for (let i = 0; i < accounts.length; i++) {
+              if (accounts[i] !== null) {
+                spentNoteIds.add(nullifierPDAs[i].noteId);
+              }
+            }
+          }
+
           const updated = notes.map(note => {
             // Terminal states — never change
             if (note.status === 'spent' || note.status === 'transferred') return note;
+
+            // Nullifier exists on-chain — note was spent (possibly on another device)
+            if (spentNoteIds.has(note.id)) {
+              return { ...note, status: 'spent' as NoteStatus };
+            }
 
             const receipt = receiptFromJSON(note.receiptJSON);
             const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
@@ -215,7 +254,10 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const epochDelay = cached?.info.epochDelay ?? 1n;
 
             const minEpoch = currentEpoch - epochDelay;
-            const isMature = receipt.depositEpoch <= minEpoch;
+            const epochMature = receipt.depositEpoch <= minEpoch;
+            // Enforce 1 hour minimum from deposit time
+            const timeMature = (Date.now() - note.shieldedAt) >= 60 * 60 * 1000;
+            const isMature = epochMature && timeMature;
 
             // imported notes go to mature when ready, pending/imported when not
             const newStatus: NoteStatus = isMature ? 'mature' : (note.status === 'imported' ? 'imported' : 'pending');
