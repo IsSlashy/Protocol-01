@@ -162,19 +162,16 @@ export const useConfidentialStore = create<ConfidentialState>()(
           const zkAddr = walletPubkey.toBase58();
           const connection = getConnection();
           const walletBalance = await connection.getBalance(walletPubkey);
-          console.log(`[Confidential] ZK Wallet ${zkAddr} balance: ${walletBalance / LAMPORTS_PER_SOL} SOL`);
           set({ zkWalletAddress: zkAddr, zkWalletBalance: walletBalance });
 
           if (walletBalance < 0.01 * LAMPORTS_PER_SOL) {
-            console.log('[Confidential] Insufficient SOL — requesting devnet airdrop...');
             try {
               // Use public devnet RPC for airdrop (Helius has aggressive rate limits)
               const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
               const sig = await devnetConn.requestAirdrop(walletPubkey, 0.5 * LAMPORTS_PER_SOL);
               await devnetConn.confirmTransaction(sig, 'confirmed');
-              console.log('[Confidential] Airdrop confirmed:', sig);
             } catch (airdropErr: any) {
-              console.warn('[Confidential] Airdrop failed (may need manual funding):', airdropErr.message);
+              // Airdrop failed — may need manual funding
             }
           }
 
@@ -189,17 +186,14 @@ export const useConfidentialStore = create<ConfidentialState>()(
 
             if (!accountExists && token.mintStr === NATIVE_SOL_MINT_STR) {
               // Auto-create account for native SOL (primary token)
-              console.log('[Confidential] Creating on-chain account for native SOL...');
               try {
                 await service.createAccount(NATIVE_SOL_MINT);
-                console.log('[Confidential] SOL account created successfully');
                 initAccounts[token.mintStr] = true;
               } catch (createErr: any) {
                 if (
                   createErr.message?.includes('already in use') ||
                   createErr.message?.includes('already been processed')
                 ) {
-                  console.log('[Confidential] SOL account already exists on-chain');
                   initAccounts[token.mintStr] = true;
                 } else {
                   throw createErr;
@@ -309,12 +303,6 @@ export const useConfidentialStore = create<ConfidentialState>()(
             stateValidation: { ...state.stateValidation, [mint]: validation },
           }));
 
-          if (!result.isValid) {
-            console.warn(`[Confidential] State INVALID for ${getTokenSymbol(mint)}:`, result.details);
-          } else {
-            console.log(`[Confidential] State valid for ${getTokenSymbol(mint)}`);
-          }
-
           return validation;
         } catch (err) {
           console.error('[Confidential] Validation error:', err);
@@ -334,7 +322,6 @@ export const useConfidentialStore = create<ConfidentialState>()(
 
         const mintPubkey = new PublicKey(tokenMint);
 
-        console.log(`[Confidential] Emergency reset for ${getTokenSymbol(tokenMint)}`);
         await _service.emergencyReset(mintPubkey);
 
         // Clear validation and balance for this token
@@ -425,7 +412,6 @@ export const useConfidentialStore = create<ConfidentialState>()(
                 newPending[token.mintStr] = 0;
               }
             } catch (err) {
-              console.warn(`[Confidential] Failed to refresh ${token.symbol}:`, err);
               // Keep existing values for this token
               newBalances[token.mintStr] = get().balances[token.mintStr] || 0;
               newPending[token.mintStr] = get().pendingCredits[token.mintStr] || 0;
@@ -502,7 +488,6 @@ export const useConfidentialStore = create<ConfidentialState>()(
             }
             // Auto-cap to max depositable if user entered too much
             if (Number(amountAtomic) > maxDepositable) {
-              console.log(`[Confidential] Auto-capping deposit from ${amountAtomic} to ${maxDepositable} lamports (reserving ${FEE_RESERVE} for fee)`);
               amountAtomic = BigInt(maxDepositable);
             }
           }
@@ -569,16 +554,12 @@ export const useConfidentialStore = create<ConfidentialState>()(
           const MIN_FEE_LAMPORTS = 10_000; // ~2 tx fees worth
 
           if (walletBalance < MIN_FEE_LAMPORTS) {
-            console.log(`[Confidential] ZK wallet has ${walletBalance} lamports — need at least ${MIN_FEE_LAMPORTS} for tx fee`);
             // On devnet, auto-airdrop to cover fees
             try {
-              console.log('[Confidential] Requesting devnet airdrop for withdraw fee...');
               const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
               const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
               await devnetConn.confirmTransaction(sig, 'confirmed');
-              console.log('[Confidential] Fee airdrop confirmed:', sig);
             } catch (airdropErr: any) {
-              console.warn('[Confidential] Fee airdrop failed:', airdropErr.message);
               throw new Error(
                 `ZK wallet has insufficient SOL for transaction fee (${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL). ` +
                 `Send a small amount of SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`

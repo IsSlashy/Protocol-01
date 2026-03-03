@@ -103,7 +103,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       try {
         await initializeConnection();
       } catch (connErr: any) {
-        console.warn('[WalletStore] Connection init failed (non-fatal):', connErr?.message);
+        // Connection init failed — non-fatal, wallet can still load
       }
 
       const exists = await walletExists();
@@ -133,7 +133,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
             const balance = await getWalletBalance(publicKey);
             set({ balance });
           } catch (err: any) {
-            console.warn('[WalletStore] Failed to fetch fresh balance:', err?.message || err);
+            // Failed to fetch fresh balance — will retry on next refresh
           }
         }, 500);
 
@@ -143,7 +143,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
             const transactions = await getTransactionHistory(publicKey);
             set({ transactions });
           } catch (err: any) {
-            console.warn('[WalletStore] Failed to fetch fresh transactions:', err?.message || err);
+            // Failed to fetch fresh transactions — will retry on next refresh
           }
         }, 3000);
       }
@@ -197,7 +197,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           const balance = await getWalletBalance(address);
           set({ balance });
         } catch (err: any) {
-          console.warn('[WalletStore] Failed to fetch Privy wallet balance:', err?.message);
+          // Failed to fetch Privy wallet balance — will retry on next refresh
         }
       }, 500);
 
@@ -207,7 +207,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           const transactions = await getTransactionHistory(address);
           set({ transactions });
         } catch (err: any) {
-          console.warn('[WalletStore] Failed to fetch Privy wallet transactions:', err?.message);
+          // Failed to fetch Privy wallet transactions — will retry on next refresh
         }
       }, 2000);
 

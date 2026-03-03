@@ -419,7 +419,7 @@ export const useAIStore = create<AIState>((set, get) => ({
       const data = await getMarketSummary();
       set({ marketData: data });
     } catch (error) {
-      console.warn('[AIStore] Market data fetch failed:', error);
+      // Market data fetch failed — non-critical
     }
   },
 
