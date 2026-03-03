@@ -224,3 +224,29 @@ export {
   type PrivateStreamState,
   type StreamStatus as PrivateStreamStatus,
 } from './private-stream';
+
+// Subscription Vault (normal + private ZK subscriptions)
+export {
+  // PDA derivation
+  deriveVaultPDA,
+  deriveSubscriberVkPDA,
+
+  // Computation helpers
+  computeClaimable,
+  computeClaimableAmount,
+  computeRefundable,
+  nextClaimableSlot,
+  computeReshieldNotes,
+  parseVaultAccount,
+
+  // Constants
+  VAULT_SEED_PREFIX,
+  SUBSCRIBER_VK_DATA_SEED,
+  ZK_SHIELDED_PROGRAM_ID as VAULT_PROGRAM_ID,
+
+  // Types
+  type VaultInfo,
+  type SubscribeNormalParams,
+  type SubscribePrivateParams,
+  type ProofData,
+} from './subscription-vault';
