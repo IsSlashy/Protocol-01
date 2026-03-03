@@ -23,11 +23,30 @@ import {
   type StoredNote,
   type NoteStatus,
 } from '@/stores/denominatedPoolStore';
+import {
+  receiptFromJSON,
+  slotToEpoch,
+} from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+
+const SLOTS_PER_EPOCH = 7200;
+const DEFAULT_SLOT_DURATION_MS = 500; // fallback before we measure
+const MIN_MATURITY_MS = 60 * 60 * 1000; // 1 hour minimum from deposit
+
+function formatTimeRemaining(ms: number): string {
+  if (ms <= 0) return 'Ready';
+  const mins = Math.ceil(ms / 60_000);
+  if (mins < 60) return `~${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remainMins = mins % 60;
+  return remainMins > 0 ? `~${hrs}h ${remainMins}m` : `~${hrs}h`;
+}
 
 export default function DenominatedNotesScreen() {
   const router = useRouter();
   const [showHistory, setShowHistory] = useState(false);
+  const [currentSlot, setCurrentSlot] = useState<number | null>(null);
+  const [slotDurationMs, setSlotDurationMs] = useState(DEFAULT_SLOT_DURATION_MS);
 
   const {
     notes,
@@ -36,14 +55,100 @@ export default function DenominatedNotesScreen() {
     refreshNoteStatuses,
     exportAllNotes,
     exportNote,
+    poolCache,
   } = useDenominatedPoolStore();
 
   const activeNotes = notes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
   const historyNotes = notes.filter(n => n.status === 'spent' || n.status === 'transferred');
 
+  // Measure real slot duration by taking two readings, then poll every 30s
   useEffect(() => {
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval>;
+
+    const init = async () => {
+      try {
+        const { getConnection } = await import('@/services/solana/connection');
+        const conn = getConnection();
+
+        // First reading
+        const slot1 = await conn.getSlot('confirmed');
+        const time1 = Date.now();
+        if (cancelled) return;
+        setCurrentSlot(slot1);
+
+        // Second reading after 3s to measure real slot speed
+        setTimeout(async () => {
+          if (cancelled) return;
+          try {
+            const slot2 = await conn.getSlot('confirmed');
+            const time2 = Date.now();
+            const slotDiff = slot2 - slot1;
+            const timeDiff = time2 - time1;
+            if (slotDiff > 0) {
+              const measured = timeDiff / slotDiff;
+              // Clamp to reasonable range (200-800ms)
+              setSlotDurationMs(Math.max(200, Math.min(800, measured)));
+            }
+            if (!cancelled) setCurrentSlot(slot2);
+          } catch {}
+        }, 3000);
+
+        // Ongoing polling every 30s
+        interval = setInterval(async () => {
+          if (cancelled) return;
+          try {
+            const s = await conn.getSlot('confirmed');
+            if (!cancelled) setCurrentSlot(s);
+          } catch {}
+        }, 30_000);
+      } catch {}
+    };
+
     refreshNoteStatuses();
+    init();
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
+
+  const getMaturityInfo = useCallback((note: StoredNote) => {
+    // Time-based minimum: 1 hour from deposit
+    const timeSinceDeposit = Date.now() - note.shieldedAt;
+    const timeRemaining = Math.max(0, MIN_MATURITY_MS - timeSinceDeposit);
+
+    if (note.status === 'mature') {
+      // Even if on-chain says mature, enforce 1h minimum in UI
+      if (timeRemaining > 0) return { isMature: false, remainingMs: timeRemaining };
+      return { isMature: true, remainingMs: 0 };
+    }
+    if (!currentSlot) {
+      // No slot data yet — use time-based estimate
+      return { isMature: false, remainingMs: timeRemaining > 0 ? timeRemaining : -1 };
+    }
+
+    try {
+      const receipt = receiptFromJSON(note.receiptJSON);
+      const currentEpoch = slotToEpoch(currentSlot);
+      const cached = poolCache[note.poolPDA];
+      const epochDelay = cached?.info.epochDelay ?? 1n;
+      const minEpoch = currentEpoch - epochDelay;
+
+      if (receipt.depositEpoch <= minEpoch) {
+        // On-chain mature — but enforce 1h minimum
+        if (timeRemaining > 0) return { isMature: false, remainingMs: timeRemaining };
+        return { isMature: true, remainingMs: 0 };
+      }
+
+      // The note matures when slot reaches: (depositEpoch + epochDelay) * SLOTS_PER_EPOCH
+      const maturitySlot = Number(receipt.depositEpoch + epochDelay) * SLOTS_PER_EPOCH;
+      const slotsLeft = Math.max(0, maturitySlot - currentSlot);
+      const epochRemaining = slotsLeft * slotDurationMs;
+      // Show whichever is longer
+      const remainingMs = Math.max(epochRemaining, timeRemaining);
+      return { isMature: false, remainingMs };
+    } catch {
+      return { isMature: false, remainingMs: timeRemaining > 0 ? timeRemaining : -1 };
+    }
+  }, [currentSlot, slotDurationMs, poolCache]);
 
   const onRefresh = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -105,6 +210,41 @@ export default function DenominatedNotesScreen() {
       );
     } catch (err) {
       Alert.alert('Export Failed', (err as Error).message);
+    }
+  };
+
+  const handleManualShare = (note: StoredNote) => {
+    Alert.alert(
+      'Less Secure Sharing',
+      'Nearby sharing uses end-to-end encryption. Manual sharing exposes your note to other apps on your device.\n\nOnly use this if Nearby isn\'t available.',
+      [
+        {
+          text: 'Copy & Share',
+          onPress: async () => {
+            try {
+              const encoded = exportNote(note.id);
+              await Clipboard.setStringAsync(encoded);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Share.share({ message: encoded, title: 'Protocol 01 — Private Note' });
+            } catch (err) {
+              Alert.alert('Error', (err as Error).message);
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
+  };
+
+  const handleNearbyShare = (note: StoredNote) => {
+    try {
+      const encoded = exportNote(note.id);
+      router.push({
+        pathname: '/(main)/(privacy)/share-note' as any,
+        params: { noteData: encoded, noteId: note.id },
+      });
+    } catch (err) {
+      Alert.alert('Error', (err as Error).message);
     }
   };
 
@@ -249,57 +389,74 @@ export default function DenominatedNotesScreen() {
             </TouchableOpacity>
           )}
 
-          {/* Actions */}
-          <View style={styles.noteActions}>
-            {note.status === 'mature' && (
-              <>
-                <TouchableOpacity
-                  style={styles.actionBtn}
-                  onPress={() => handleUnshield(note)}
-                >
+          {/* Status + Actions */}
+          {note.status === 'mature' && (
+            <>
+              <View style={styles.readyBanner}>
+                <Ionicons name="shield-checkmark" size={14} color={P01Colors.green} />
+                <Text style={styles.readyBannerText}>Mature · Ready</Text>
+              </View>
+              <View style={styles.noteActions}>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handleUnshield(note)}>
                   <Ionicons name="arrow-up-circle" size={16} color={P01Colors.cyan} />
                   <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Withdraw</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: P01Colors.cyanDim }]}
+                  onPress={() => handleNearbyShare(note)}
+                >
+                  <Ionicons name="radio-outline" size={16} color={P01Colors.cyan} />
+                  <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Nearby</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: '#1a1a3a' }]}
                   onPress={() => handleTransfer(note)}
                 >
                   <Ionicons name="swap-horizontal" size={16} color="#8B8BFF" />
-                  <Text style={[styles.actionText, { color: '#8B8BFF' }]}>Transfer</Text>
+                  <Text style={[styles.actionText, { color: '#8B8BFF' }]}>Send</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: Colors.surfaceSecondary }]}
-                  onPress={() => handleExportNote(note)}
+                  onPress={() => handleManualShare(note)}
                 >
-                  <Ionicons name="cloud-upload-outline" size={16} color={Colors.textSecondary} />
-                  <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Backup</Text>
+                  <Ionicons name="alert-circle-outline" size={16} color={Colors.textSecondary} />
+                  <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Share</Text>
                 </TouchableOpacity>
-              </>
-            )}
-            {(note.status === 'pending' || note.status === 'imported') && (
+              </View>
+            </>
+          )}
+          {(note.status === 'pending' || note.status === 'imported') && (() => {
+            const maturity = getMaturityInfo(note);
+            const timeStr = maturity.remainingMs > 0
+              ? formatTimeRemaining(maturity.remainingMs)
+              : maturity.remainingMs === 0 ? 'Ready' : 'Calculating...';
+            return (
               <>
-                <View style={styles.actionBtnDisabled}>
-                  <Ionicons name="time-outline" size={16} color={P01Colors.yellow} />
-                  <Text style={[styles.actionText, { color: P01Colors.yellow }]}>Maturing...</Text>
+                <View style={styles.pendingBanner}>
+                  <Ionicons name="hourglass-outline" size={14} color={P01Colors.yellow} />
+                  <Text style={styles.pendingBannerText}>
+                    Available in {timeStr}
+                  </Text>
                 </View>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
-                  onPress={() => handleEmergencyUnshield(note)}
-                >
-                  <Ionicons name="flash" size={16} color={Colors.error} />
-                  <Text style={[styles.actionText, { color: Colors.error }]}>Emergency</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: Colors.surfaceSecondary }]}
-                  onPress={() => handleExportNote(note)}
-                >
-                  <Ionicons name="cloud-upload-outline" size={16} color={Colors.textSecondary} />
-                  <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Backup</Text>
-                </TouchableOpacity>
+                <View style={styles.noteActions}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
+                    onPress={() => handleEmergencyUnshield(note)}
+                  >
+                    <Ionicons name="flash" size={16} color={Colors.error} />
+                    <Text style={[styles.actionText, { color: Colors.error }]}>Emergency</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: Colors.surfaceSecondary }]}
+                    onPress={() => handleExportNote(note)}
+                  >
+                    <Ionicons name="cloud-upload-outline" size={16} color={Colors.textSecondary} />
+                    <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Backup</Text>
+                  </TouchableOpacity>
+                </View>
               </>
-            )}
-            {/* spent and transferred: no actions, just display info */}
-          </View>
+            );
+          })()}
         </View>
       </Animated.View>
     );
@@ -314,11 +471,8 @@ export default function DenominatedNotesScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Notes</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity onPress={handleImport} style={styles.headerActionBtn}>
-            <Ionicons name="download-outline" size={18} color={P01Colors.cyan} />
-          </TouchableOpacity>
           <TouchableOpacity onPress={handleBackup} style={styles.headerActionBtn}>
-            <Ionicons name="cloud-upload-outline" size={18} color={P01Colors.cyan} />
+            <Ionicons name="cloud-upload-outline" size={18} color={Colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
@@ -337,6 +491,24 @@ export default function DenominatedNotesScreen() {
           <RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={P01Colors.cyan} />
         }
       >
+        {/* Quick actions: Receive + Import */}
+        <View style={styles.quickActions}>
+          <TouchableOpacity
+            style={styles.quickActionBtn}
+            onPress={() => router.push('/(main)/(privacy)/receive-note' as any)}
+          >
+            <Ionicons name="bluetooth" size={20} color={P01Colors.blue} />
+            <Text style={styles.quickActionLabel}>Receive Nearby</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickActionBtn}
+            onPress={handleImport}
+          >
+            <Ionicons name="clipboard-outline" size={20} color={P01Colors.cyan} />
+            <Text style={styles.quickActionLabel}>Import Note</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Summary Card */}
         {notes.length > 0 && (
           <Animated.View entering={FadeInDown.delay(50)}>
@@ -478,6 +650,28 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.xl,
     paddingBottom: 120,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  quickActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  quickActionLabel: {
+    fontSize: 14,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
   },
   summaryCard: {
     borderRadius: BorderRadius.xl,
@@ -626,13 +820,43 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     color: Colors.textSecondary,
   },
+  readyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: P01Colors.greenDim,
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginTop: Spacing.sm,
+  },
+  readyBannerText: {
+    fontSize: 12,
+    fontFamily: FontFamily.medium,
+    color: P01Colors.green,
+  },
+  pendingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: P01Colors.yellowDim,
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginTop: Spacing.sm,
+  },
+  pendingBannerText: {
+    fontSize: 12,
+    fontFamily: FontFamily.medium,
+    color: P01Colors.yellow,
+  },
   noteActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
-    alignItems: 'center',
     gap: Spacing.sm,
-    marginTop: Spacing.md,
-    paddingTop: Spacing.md,
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },

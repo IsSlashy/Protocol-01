@@ -326,6 +326,8 @@ export default function ShieldedWalletScreen() {
           onUnshield={() => setActionModal('unshield')}
           onTransfer={() => router.push('/(main)/(privacy)/shielded-transfer')}
           onRecover={handleOpenRecovery}
+          onShareNearby={() => router.push('/(main)/(privacy)/share-note' as any)}
+          onReceiveNearby={() => router.push('/(main)/(privacy)/receive-note' as any)}
         />
 
         {/* Transparent Balance */}
