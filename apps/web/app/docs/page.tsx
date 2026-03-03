@@ -260,15 +260,135 @@ await p01.createSubscription({
 // On-chain: payment is visible but harder to correlate`,
   },
   {
+    id: "denominated-pools",
+    title: "Denominated Privacy Pools",
+    icon: <Layers className="w-6 h-6" />,
+    description:
+      "Tornado Cash-style fixed-denomination pools for SOL and USDC. All deposits in a pool are the same value, making them indistinguishable. Epoch-based time delays prevent timing correlation attacks.",
+    details: [
+      "Fixed denominations: 0.1/1/10/100 SOL or 1/10/100/1000 USDC",
+      "Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)",
+      "PDA-per-nullifier for atomic double-spend prevention (not Bloom filter)",
+      "Epoch-based maturity: deposit_epoch <= min_epoch enforced in circuit and on-chain",
+      "Merkle tree depth 15 = 32,768 notes per pool",
+      "Circuit: denominated_pool.circom (4,273 non-linear constraints)",
+      "P2P note sharing via BLE and NFC for offline transfers",
+    ],
+    codeExample: `// Shield into a 1 SOL denominated pool
+const commitment = poseidon([nullifierPreimage, secret, epoch, tokenMint]);
+await program.methods.shieldDenominated(commitment, epoch)
+  .accounts({ pool, depositor, systemProgram })
+  .rpc();
+
+// Unshield with ZK proof (proves membership without revealing which note)
+const { proof } = await snarkjs.groth16.fullProve(
+  { nullifier_preimage, secret, deposit_epoch, token_mint,
+    path_elements, path_indices, root, min_epoch },
+  "denominated_pool.wasm", "denominated_pool.zkey"
+);
+await program.methods.unshieldDenominated(proof, nullifier, root, minEpoch)
+  .accounts({ pool, recipient, nullifierPda })
+  .rpc();`,
+  },
+  {
+    id: "zkspl",
+    title: "Confidential Balances (zkSPL)",
+    icon: <Lock className="w-6 h-6" />,
+    description:
+      "Account-model confidential tokens using Poseidon hash commitments. Unlike UTXO-based shielded pools, zkSPL maintains a single balance commitment per account that updates with each operation. Quantum-resistant by design.",
+    details: [
+      "Balance commitment = Poseidon(balance, salt, owner_pubkey, token_mint)",
+      "Amount commitment = Poseidon(amount, amount_salt) links sender and recipient",
+      "Single circuit handles deposit, withdraw, send, and receive operations",
+      "Conservation law: old_balance + credits === new_balance + debits",
+      "Balance proof: proves balance >= threshold via Num2Bits(64) range check",
+      "Circuit: confidential_balance.circom (1,382 constraints)",
+      "SDK: @p01/zkspl-sdk with ZkSplClient, ZkSplProver, LocalStateManager",
+    ],
+    codeExample: `// Confidential deposit — public tokens become hidden balance
+const oldCommitment = poseidon([0, salt, owner, mint]);
+const newCommitment = poseidon([amount, newSalt, owner, mint]);
+const { proof } = await prover.prove({
+  old_balance: 0, new_balance: amount,
+  public_credit: amount, public_debit: 0,
+  private_credit: 0, private_debit: 0,
+  old_salt: salt, new_salt: newSalt
+});
+
+// Confidential transfer — sender and recipient balances stay hidden
+// Amount commitment links the two operations cryptographically
+const amountCommitment = poseidon([transferAmount, amountSalt]);`,
+  },
+  {
+    id: "subscription-vaults",
+    title: "Subscription Vaults",
+    icon: <Zap className="w-6 h-6" />,
+    description:
+      "On-chain recurring payment vaults with configurable intervals. Retailers create vaults, subscribers deposit funds, and a crank claims payments each period. Supports both normal (public) and ZK-private subscriber modes.",
+    details: [
+      "Vault PDA stores: retailer, amount, interval, token mint, subscriber count",
+      "Normal mode: subscriber identity visible, straightforward recurring payments",
+      "Private mode: ZK proof of subscription ownership without revealing identity",
+      "Auto-pause on insufficient funds, resume when topped up",
+      "Retailer claim periods with on-chain settlement",
+      "Circuit: subscriber_ownership.circom for private subscriber proofs",
+    ],
+    codeExample: `// Retailer creates a subscription vault
+await program.methods.initSubscriptionVault(
+  amount,       // per-period amount (lamports or token units)
+  interval,     // seconds between payments
+  tokenMint     // SOL (system_program::ID) or SPL token
+).accounts({ vault, retailer }).rpc();
+
+// Subscriber joins (normal mode)
+await program.methods.subscribeNormal()
+  .accounts({ vault, subscriber, subscriberRecord })
+  .rpc();
+
+// Retailer claims a payment period
+await program.methods.claimPeriod()
+  .accounts({ vault, subscriberRecord, retailer })
+  .rpc();`,
+  },
+  {
+    id: "p2p-sharing",
+    title: "P2P Note Sharing (BLE + NFC)",
+    icon: <Eye className="w-6 h-6" />,
+    description:
+      "Share denominated pool notes between devices offline using Bluetooth Low Energy or NFC. Notes are encrypted end-to-end and can be transferred without internet connectivity.",
+    details: [
+      "BLE: X25519 ECDH key exchange with nacl.box encryption",
+      "NFC: Host Card Emulation (HCE) with PIN-derived nacl.secretbox",
+      "Anti-MITM fingerprint verification for BLE connections",
+      "Fragmentation protocol for large payloads over BLE characteristics",
+      "Native Android modules: BluetoothGattServer + HostApduService",
+      "Works offline — no internet or blockchain access needed for transfer",
+    ],
+    codeExample: `// BLE: Sender (central) connects to receiver (peripheral)
+// 1. ECDH key exchange
+const sharedKey = x25519(senderPrivateKey, receiverPublicKey);
+
+// 2. Encrypt note data
+const encrypted = nacl.box(noteJSON, nonce, sharedKey);
+
+// 3. Fragment and send over BLE characteristics
+await bleTransport.sendFragmented(encrypted, characteristicUUID);
+
+// NFC: Sender emulates tag via HCE
+// Receiver taps phone → APDU commands: SELECT → GET LENGTH → GET DATA
+// Data encrypted with nacl.secretbox(noteJSON, nonce, pinDerivedKey)`,
+  },
+  {
     id: "client-sdk",
     title: "Client SDK Architecture",
     icon: <Code className="w-6 h-6" />,
     description:
-      "Three SDKs for different use cases. P01Client for stealth wallets & transfers, ShieldedClient for ZK proofs, and Protocol01 for merchant integration. All run client-side for maximum privacy.",
+      "Four SDKs for different use cases. P01Client for stealth wallets & transfers, ShieldedClient for ZK proofs, ZkSplClient for confidential balances, and Protocol01 for merchant integration. All run client-side for maximum privacy.",
     details: [
       "TypeScript SDKs with full type definitions",
       "Stealth address generation & scanning (ECDH)",
       "Groth16 proof generation for shielded transfers",
+      "Confidential balance management with ZkSplProver",
       "Payment streams & recurring subscriptions",
       "React hooks for wallet, streams and subscriptions",
     ],
@@ -282,22 +402,21 @@ await client.connect(wallet);
 // Send to stealth address (recipient unlinkable on-chain)
 await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 
-// Create payment stream (time-locked escrow)
-await client.createStream({ recipient, amount: 10, duration: 30 * 86400 });
-
 // === @p01/zk-sdk — ZK Shielded Pool ===
 import { ShieldedClient } from '@p01/zk-sdk';
 
 const zkClient = new ShieldedClient({ rpcUrl, programId });
-
-// Shield tokens (deposit into private Merkle tree pool)
 await zkClient.shield(1_000_000_000n, notes);
-
-// Private transfer (Groth16 proof — amount hidden on-chain)
 await zkClient.transfer(proofInputs);
-
-// Unshield (withdraw back to public address)
 await zkClient.unshield(outputNotes, 500_000_000n);
+
+// === @p01/zkspl-sdk — Confidential Balances ===
+import { ZkSplClient, ZkSplProver } from '@p01/zkspl-sdk';
+
+const zkspl = new ZkSplClient({ rpcUrl, programId });
+await zkspl.deposit(amount, proof);    // Public → confidential
+await zkspl.send(amount, recipient);   // Confidential transfer
+await zkspl.withdraw(amount, proof);   // Confidential → public
 
 // === @p01/sdk — Merchant Integration ===
 import { Protocol01 } from '@p01/sdk';
@@ -324,6 +443,7 @@ const docsArchLayers = [
       { label: "@p01/sdk", sub: "Merchant Integration" },
       { label: "@p01/specter-sdk", sub: "Stealth & Wallets" },
       { label: "@p01/zk-sdk", sub: "Groth16 Prover" },
+      { label: "@p01/zkspl-sdk", sub: "Confidential Balances" },
     ],
   },
   {
@@ -332,7 +452,10 @@ const docsArchLayers = [
     nodes: [
       { label: "STEALTH", sub: "ECDH Addresses" },
       { label: "SHIELDED", sub: "ZK Pool + Merkle Tree" },
+      { label: "DENOMINATED", sub: "Fixed-Denom Pools" },
+      { label: "zkSPL", sub: "Confidential Balances" },
       { label: "PAYMENTS", sub: "Streams & Subscriptions" },
+      { label: "VAULTS", sub: "Subscription Vaults" },
     ],
   },
   {
@@ -348,7 +471,7 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "6 PROGRAMS", sub: "Anchor / Rust" },
+      { label: "7 PROGRAMS", sub: "Anchor / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
       { label: "alt_bn128", sub: "ZK Curve Ops" },
     ],
@@ -482,7 +605,7 @@ const ArchitectureDiagram = () => (
               </div>
 
               {/* Nodes grid */}
-              <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+              <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : layer.nodes.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : layer.nodes.length >= 5 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3'}`}>
                 {layer.nodes.map((node) => (
                   <div
                     key={node.label}
