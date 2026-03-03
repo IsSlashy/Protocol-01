@@ -154,6 +154,22 @@ impl Groth16Verifier {
         Self::verify(proof, &public_inputs, vk_data)
     }
 
+    /// Verify a subscriber ownership proof with 1 public input
+    ///
+    /// Circuit public inputs: [commitment]
+    /// The circuit verifies: Poseidon(subscriber_secret) == commitment
+    pub fn verify_subscriber_ownership(
+        proof: &Groth16Proof,
+        commitment: &[u8; 32],
+        vk_data: &[u8],
+    ) -> Result<bool> {
+        let public_inputs = [
+            Self::le_to_be(commitment),
+        ];
+
+        Self::verify(proof, &public_inputs, vk_data)
+    }
+
     /// Convert 32-byte array from little-endian to big-endian
     fn le_to_be(bytes: &[u8; 32]) -> [u8; 32] {
         let mut result = [0u8; 32];

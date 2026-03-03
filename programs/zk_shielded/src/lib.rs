@@ -243,6 +243,96 @@ pub mod zk_shielded {
     ) -> Result<()> {
         instructions::transfer_denominated::handler(ctx, proof, nullifier, merkle_root, min_epoch, new_commitment, new_root)
     }
+
+    // -----------------------------------------------------------------------
+    // Subscription Vault instructions (normal + private ZK)
+    // -----------------------------------------------------------------------
+
+    /// Create a normal (wallet-based) subscription vault
+    /// Deposits funds from subscriber wallet into vault PDA
+    pub fn subscribe_normal(
+        ctx: Context<SubscribeNormal>,
+        rate: u64,
+        interval_slots: u64,
+        amount: u64,
+        token_mint: Pubkey,
+        vk_hash_subscriber: [u8; 32],
+    ) -> Result<()> {
+        instructions::subscribe_normal::handler(ctx, rate, interval_slots, amount, token_mint, vk_hash_subscriber)
+    }
+
+    /// Create a private (ZK-based) subscription vault by unshielding a denom pool note
+    /// Subscriber identity hidden behind Poseidon(secret) commitment
+    pub fn subscribe_private(
+        ctx: Context<SubscribePrivate>,
+        proof: Groth16Proof,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        subscriber_commitment: [u8; 32],
+        rate: u64,
+        interval_slots: u64,
+        vk_hash_subscriber: [u8; 32],
+    ) -> Result<()> {
+        instructions::subscribe_private::handler(ctx, proof, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber)
+    }
+
+    /// Claim accrued periods from a subscription vault (retailer only)
+    pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
+        instructions::claim_period::handler(ctx)
+    }
+
+    /// Pause a normal subscription vault (subscriber wallet signature)
+    pub fn pause_normal(ctx: Context<PauseNormal>) -> Result<()> {
+        instructions::pause_normal::handler(ctx)
+    }
+
+    /// Pause a private subscription vault (ZK ownership proof)
+    pub fn pause_private(ctx: Context<PausePrivate>, proof: Groth16Proof) -> Result<()> {
+        instructions::pause_private::handler(ctx, proof)
+    }
+
+    /// Resume a normal subscription vault (subscriber wallet signature)
+    pub fn resume_normal(ctx: Context<ResumeNormal>) -> Result<()> {
+        instructions::resume_normal::handler(ctx)
+    }
+
+    /// Resume a private subscription vault (ZK ownership proof)
+    pub fn resume_private(ctx: Context<ResumePrivate>, proof: Groth16Proof) -> Result<()> {
+        instructions::resume_private::handler(ctx, proof)
+    }
+
+    /// Cancel a normal subscription vault, refund remaining to subscriber
+    pub fn cancel_normal(ctx: Context<CancelNormal>) -> Result<()> {
+        instructions::cancel_normal::handler(ctx)
+    }
+
+    /// Cancel a private subscription vault, re-shield remaining into pool
+    pub fn cancel_private(
+        ctx: Context<CancelPrivate>,
+        ownership_proof: Groth16Proof,
+        new_commitments: Vec<[u8; 32]>,
+        new_roots: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cancel_private::handler(ctx, ownership_proof, new_commitments, new_roots)
+    }
+
+    /// Initialize subscriber ownership VK data account (admin only)
+    pub fn init_subscriber_vk_data(
+        ctx: Context<InitSubscriberVkData>,
+        vk_size: u32,
+    ) -> Result<()> {
+        instructions::store_subscriber_vk_data::handler_init_subscriber(ctx, vk_size)
+    }
+
+    /// Write chunk of subscriber ownership VK data (admin only)
+    pub fn write_subscriber_vk_data(
+        ctx: Context<WriteSubscriberVkData>,
+        offset: u32,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::store_subscriber_vk_data::handler_write_subscriber(ctx, offset, data)
+    }
 }
 
 /// Groth16 proof structure for on-chain verification

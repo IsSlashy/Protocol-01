@@ -39,6 +39,7 @@ enum CircuitId {
     Transfer,
     ConfidentialBalance,
     BalanceProof,
+    SubscriberOwnership,
 }
 
 impl CircuitId {
@@ -47,6 +48,7 @@ impl CircuitId {
             CircuitId::Transfer => "transfer",
             CircuitId::ConfidentialBalance => "confidential_balance",
             CircuitId::BalanceProof => "balance_proof",
+            CircuitId::SubscriberOwnership => "subscriber_ownership",
         }
     }
 }
@@ -137,6 +139,21 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|_| circuits_dir.join("balance_proof_final.zkey").to_string_lossy().into_owned()),
             ),
         },
+        CircuitDescriptor {
+            id: CircuitId::SubscriberOwnership,
+            wasm: PathBuf::from(
+                std::env::var("SUBSCRIBER_OWNERSHIP_WASM_PATH")
+                    .unwrap_or_else(|_| circuits_dir.join("subscriber_ownership.wasm").to_string_lossy().into_owned()),
+            ),
+            r1cs: PathBuf::from(
+                std::env::var("SUBSCRIBER_OWNERSHIP_R1CS_PATH")
+                    .unwrap_or_else(|_| circuits_dir.join("subscriber_ownership.r1cs").to_string_lossy().into_owned()),
+            ),
+            zkey: PathBuf::from(
+                std::env::var("SUBSCRIBER_OWNERSHIP_ZKEY_PATH")
+                    .unwrap_or_else(|_| circuits_dir.join("subscriber_ownership_final.zkey").to_string_lossy().into_owned()),
+            ),
+        },
     ];
 
     // Load all circuits. Failures are logged but do not prevent startup.
@@ -196,6 +213,9 @@ async fn main() -> anyhow::Result<()> {
         // New balance-proof endpoints
         .route("/prove/balance-proof", post(prove_balance_proof_handler))
         .route("/verify/balance-proof", post(verify_balance_proof_handler))
+        // Subscriber ownership endpoints
+        .route("/prove/subscriber-ownership", post(prove_subscriber_ownership_handler))
+        .route("/verify/subscriber-ownership", post(verify_subscriber_ownership_handler))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -416,6 +436,7 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse
         CircuitId::Transfer,
         CircuitId::ConfidentialBalance,
         CircuitId::BalanceProof,
+        CircuitId::SubscriberOwnership,
     ];
 
     let mut circuits = HashMap::new();
@@ -501,4 +522,20 @@ async fn verify_balance_proof_handler(
     Json(req): Json<VerifyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     verify_proof(state, CircuitId::BalanceProof, req).await
+}
+
+/// POST /prove/subscriber-ownership — Generate proof for the subscriber_ownership circuit.
+async fn prove_subscriber_ownership_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ProveRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    generate_proof(state, CircuitId::SubscriberOwnership, req).await
+}
+
+/// POST /verify/subscriber-ownership — Verify proof for the subscriber_ownership circuit.
+async fn verify_subscriber_ownership_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<VerifyRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    verify_proof(state, CircuitId::SubscriberOwnership, req).await
 }
