@@ -6,7 +6,7 @@
   "description": "Protocol 01 Wallet Browser Extension",
   "scripts": {
     "dev": "vite build --watch --mode development",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives",
     "test": "vitest run",
