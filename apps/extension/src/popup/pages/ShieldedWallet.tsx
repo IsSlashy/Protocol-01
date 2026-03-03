@@ -21,6 +21,8 @@ import {
   Clock,
   AlertTriangle,
   Scan,
+  Layers,
+  Calendar,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
@@ -332,6 +334,70 @@ export default function ShieldedWallet() {
                 </button>
               )}
             </div>
+          </div>
+        </motion.div>
+
+        {/* Denominated Pools Card */}
+        <motion.div
+          initial={{ y: 10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.05 }}
+          className="mx-4 mt-3 bg-gradient-to-r from-p01-pink/10 to-p01-surface rounded-xl p-4 border border-p01-pink/20 cursor-pointer hover:border-p01-pink/40 transition-colors"
+          onClick={() => navigate('/denominated')}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-p01-pink/20 flex items-center justify-center">
+                <Layers className="w-5 h-5 text-p01-pink" />
+              </div>
+              <div>
+                <p className="text-white font-medium text-sm">Denominated Pools</p>
+                <p className="text-p01-chrome text-xs mt-0.5">
+                  Fixed-denomination privacy pools
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('/denominated/shield');
+              }}
+              className="px-3 py-1.5 text-xs font-medium text-p01-pink bg-p01-pink/10 rounded-lg hover:bg-p01-pink/20 transition-colors border border-p01-pink/30"
+            >
+              Shield
+            </button>
+          </div>
+        </motion.div>
+
+        {/* Subscription Vaults Card */}
+        <motion.div
+          initial={{ y: 10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="mx-4 mt-3 bg-gradient-to-r from-p01-cyan/5 to-p01-surface rounded-xl p-4 border border-p01-cyan/10 cursor-pointer hover:border-p01-cyan/30 transition-colors"
+          onClick={() => navigate('/subscription-vaults')}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-p01-cyan/10 flex items-center justify-center">
+                <Calendar className="w-5 h-5 text-p01-cyan" />
+              </div>
+              <div>
+                <p className="text-white font-medium text-sm">Subscription Vaults</p>
+                <p className="text-p01-chrome text-xs mt-0.5">
+                  On-chain recurring payments
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate('/subscription-vaults');
+              }}
+              className="px-3 py-1.5 text-xs font-medium text-p01-cyan bg-p01-cyan/10 rounded-lg hover:bg-p01-cyan/20 transition-colors border border-p01-cyan/20"
+            >
+              Manage
+            </button>
           </div>
         </motion.div>
 
