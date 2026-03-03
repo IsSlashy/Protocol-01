@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
 import Link from "next/link";
-import { Wallet, Radio, ArrowLeftRight, Bot, Shield, ArrowRight, Check } from "lucide-react";
+import { Wallet, Radio, ArrowLeftRight, Bot, Shield, ArrowRight, Check, Lock, Layers, Calendar } from "lucide-react";
 
 const modules = [
   {
@@ -140,6 +140,95 @@ const proof = await p01.zk.prove({
   witness: privateData,
   public: false
 });`,
+  },
+  {
+    id: "denominated-pools",
+    icon: Layers,
+    name: "Denominated Pools",
+    tagline: "Fixed-denomination privacy pools",
+    color: "pink",
+    description: [
+      "Tornado Cash-style privacy pools with fixed denominations for maximum anonymity.",
+      "All notes in a pool share the same value, breaking the link between deposits and withdrawals.",
+      "Supports SOL and USDC with P2P note sharing via BLE and NFC.",
+    ],
+    features: [
+      "Fixed denominations (0.1/1/10/100 SOL)",
+      "USDC pools (1/10/100/1000)",
+      "Epoch-based maturity protection",
+      "P2P note sharing (BLE + NFC)",
+    ],
+    docsLink: "/docs#denominated-pools",
+    codePreview: `// Shield into denominated pool
+const receipt = await p01.denominated.shield({
+  token: "SOL",
+  denomination: 1, // Exactly 1 SOL
+});
+
+// Unshield after maturity
+const sig = await p01.denominated.unshield({
+  receipt,
+  recipient: myWallet,
+  // ZK proof generated client-side
+});`,
+  },
+  {
+    id: "zkspl",
+    icon: Lock,
+    name: "Confidential Balances (zkSPL)",
+    tagline: "Account-model confidential tokens",
+    color: "bright-cyan",
+    description: [
+      "Account-based confidential tokens using Poseidon hash commitments.",
+      "Quantum-resistant privacy: balances hidden behind ZK proofs.",
+      "Send, receive, deposit, and withdraw without revealing amounts on-chain.",
+    ],
+    features: [
+      "Poseidon hash commitments",
+      "Quantum-resistant cryptography",
+      "Balance proofs (prove balance >= threshold)",
+      "Account-model (no UTXO management)",
+    ],
+    docsLink: "/docs#zkspl",
+    codePreview: `// Deposit into confidential account
+await p01.confidential.deposit({
+  amount: 100,
+  token: "SOL",
+});
+
+// Prove balance without revealing it
+const proof = await p01.confidential.proveBalance({
+  threshold: 50, // Proves balance >= 50
+});`,
+  },
+  {
+    id: "subscription-vaults",
+    icon: Calendar,
+    name: "Subscription Vaults",
+    tagline: "On-chain recurring payments",
+    color: "cyan",
+    description: [
+      "Fully on-chain subscription vaults with configurable intervals and auto-pause.",
+      "Retailers can claim accrued periods; subscribers can pause, resume, or cancel anytime.",
+      "Private mode uses ZK proofs for subscriber identity verification.",
+    ],
+    features: [
+      "On-chain vault escrow",
+      "Auto-pause on insufficient funds",
+      "ZK private subscriber mode",
+      "Retailer claim periods",
+    ],
+    docsLink: "/docs#subscription-vaults",
+    codePreview: `// Create subscription vault
+const vault = await p01.vault.subscribe({
+  retailer: "Gk7m...",
+  rate: 9.99, // USDC per period
+  interval: "monthly",
+  private: true, // ZK subscriber proof
+});
+
+// Retailer claims earned periods
+await p01.vault.claim({ vault: vault.address });`,
   },
 ];
 

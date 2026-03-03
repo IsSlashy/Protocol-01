@@ -288,9 +288,9 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <p>Recurring private payments.</p>
-              <p>Anonymous subscriptions.</p>
-              <p>Stealth transfers on Solana.</p>
+              <p>Denominated pools. Confidential balances.</p>
+              <p>Anonymous subscriptions. Stealth transfers.</p>
+              <p>Quantum-resistant privacy on Solana.</p>
               <p className="text-[#39c5bb]">Your finances, your privacy.</p>
             </div>
 
