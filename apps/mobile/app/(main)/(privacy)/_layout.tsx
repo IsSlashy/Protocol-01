@@ -17,6 +17,12 @@ export default function PrivacyLayout() {
       <Stack.Screen name="denominated-notes" />
       <Stack.Screen name="denominated-transfer" />
       <Stack.Screen name="denominated-import" />
+      <Stack.Screen name="share-note" />
+      <Stack.Screen name="receive-note" />
+      <Stack.Screen name="subscription-vaults" />
+      <Stack.Screen name="subscribe-normal" />
+      <Stack.Screen name="subscribe-private" />
+      <Stack.Screen name="vault-detail" />
     </Stack>
   );
 }
