@@ -1,5 +1,13 @@
-# Secrets backup (never commit)
+# Secrets / backup files (never commit)
 P01_SECRETS_BACKUP.md
+PC_SECRETS_BACKUP.md
+RECOVERY_GUIDE.md
+PROMPT_RESTAURATION.md
+RESTORE_P01.bat
+restore_p01.ps1
+debug.keystore.backup
+%TEMP%*
+P01-Extension-*.zip
 
 # Dependencies
 node_modules/
