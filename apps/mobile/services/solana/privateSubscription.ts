@@ -1,18 +1,20 @@
 /**
  * ZK Private Subscription Service
  *
- * Enables fully untraceable subscription payments by composing:
- * 1. ZK Shielded Pool (unshield to stealth address)
- * 2. Stealth Addresses (one-time recipient address)
- * 3. Stream/Subscription creation
- *
+ * Enables fully untraceable subscription payments using denomination pool notes.
  * Flow:
- *   User's ZK Pool → [ZK Proof] → Stealth Address → Merchant
- *   Neither the merchant nor on-chain observers can trace the payment source.
+ *   Denomination Pool Note → [ZK Proof] → Recipient
+ *   On-chain trace shows: Pool → Recipient (no link to the subscriber/depositor).
+ *
+ * For recurring payments (processZkStreamPayment), this uses the denomination pool store
+ * to find a suitable mature note and unshield it on-chain.
+ *
+ * NOTE: This requires a proofGenerator function to be passed in, since ZK proof generation
+ * happens in a WebView context (DenominatedPoolProver). For automatic background payments,
+ * the caller must provide the generateProof function from the prover context.
  */
 
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
-import { getZkService, ZkService, type StealthUnshieldResult } from '../zk';
 import { getKeypair } from './wallet';
 import type { Stream } from './streams';
 
@@ -22,136 +24,78 @@ import type { Stream } from './streams';
 export interface PrivatePaymentResult {
   success: boolean;
   signature?: string;
-  stealthAddress?: string;
-  ephemeralPublicKey?: string;
-  viewTag?: string;
+  denomination?: number;
   error?: string;
 }
 
 /**
- * Create a signTransaction function from a Keypair.
- * This matches the pattern used throughout the app for wallet signing.
- */
-function keypairSigner(keypair: Keypair): (tx: Transaction) => Promise<Transaction> {
-  return async (tx: Transaction) => {
-    tx.partialSign(keypair);
-    return tx;
-  };
-}
-
-/**
- * Process a single subscription payment through the ZK shielded pool.
+ * Process a ZK stream payment using denomination pool notes.
  *
- * Instead of sending SOL directly (which links sender → recipient on-chain),
- * this unshields from the ZK pool to a fresh stealth address derived for the recipient.
- * The on-chain trace shows: ZK Pool → Stealth Address (no link to the subscriber).
- */
-export async function processZkPayment(
-  recipientAddress: string,
-  amountSol: number,
-  walletPublicKey: PublicKey,
-  signTransaction: (tx: Transaction) => Promise<Transaction>,
-  zkService?: ZkService,
-): Promise<PrivatePaymentResult> {
-  try {
-    const service = zkService || getZkService();
-    if (!service) {
-      return { success: false, error: 'ZK Service not initialized. Shield funds first.' };
-    }
-
-    const amountLamports = BigInt(Math.round(amountSol * 1e9));
-    const recipientPubkey = new PublicKey(recipientAddress);
-
-    // Unshield from the ZK pool to the recipient.
-    // This hides the SENDER (ZK proof breaks the link to the depositor).
-    // Full stealth (hiding recipient too) is enabled when merchant publishes stealth meta-address.
-    const signature = await service.unshield(
-      recipientPubkey,
-      amountLamports,
-      walletPublicKey,
-      signTransaction,
-    );
-
-    return {
-      success: true,
-      signature,
-      stealthAddress: recipientAddress,
-    };
-  } catch (error: any) {
-    console.error('[PrivateSub] ZK payment failed:', error);
-    return { success: false, error: error.message || 'ZK payment failed' };
-  }
-}
-
-/**
- * Process a ZK payment to a recipient's stealth meta-address.
- * This hides BOTH sender and recipient:
- *   - Sender hidden by ZK proof (shielded pool → unshield)
- *   - Recipient hidden by stealth address (one-time derived address)
- */
-export async function processFullyPrivatePayment(
-  recipientSpendingPubKey: string,
-  recipientViewingPubKey: string,
-  amountSol: number,
-  walletPublicKey: PublicKey,
-  signTransaction: (tx: Transaction) => Promise<Transaction>,
-  zkService?: ZkService,
-): Promise<PrivatePaymentResult> {
-  try {
-    const service = zkService || getZkService();
-    if (!service) {
-      return { success: false, error: 'ZK Service not initialized. Shield funds first.' };
-    }
-
-    const amountLamports = BigInt(Math.round(amountSol * 1e9));
-
-    const result: StealthUnshieldResult = await service.unshieldStealth(
-      recipientSpendingPubKey,
-      recipientViewingPubKey,
-      amountLamports,
-      walletPublicKey,
-      signTransaction,
-    );
-
-    return {
-      success: true,
-      signature: result.signature,
-      stealthAddress: result.stealthAddress,
-      ephemeralPublicKey: result.ephemeralPublicKey,
-      viewTag: result.viewTag,
-    };
-  } catch (error: any) {
-    console.error('[PrivateSub] Fully private payment failed:', error);
-    return { success: false, error: error.message || 'Private payment failed' };
-  }
-}
-
-/**
- * Process a stream payment using the ZK pool instead of a direct transfer.
+ * Finds a suitable mature note from the denomination pool, unshields it on-chain
+ * to the stream's recipient address. Returns the real on-chain transaction signature.
  *
- * Drop-in replacement for `sendSol()` in processStreamPayment() when
- * the stream has `useZkPool: true`. Resolves the local keypair automatically
- * (same pattern as sendSol).
+ * @param stream - The stream to pay
+ * @param amountToSend - The amount needed (used to find a suitable note)
+ * @param proofGenerator - The generateProof function from DenominatedPoolProver context.
+ *                         If not provided, payment will fail (proof generation requires WebView).
  */
 export async function processZkStreamPayment(
   stream: Stream,
   amountToSend: number,
+  proofGenerator?: (inputs: any, circuit?: string) => Promise<any>,
 ): Promise<{ success: boolean; signature: string; error?: string }> {
-  const keypair = await getKeypair();
-  if (!keypair) {
-    return { success: false, signature: '', error: 'No wallet found' };
+  try {
+    // Dynamic import to avoid circular dependencies
+    const { useDenominatedPoolStore } = await import('../../stores/denominatedPoolStore');
+    const poolStore = useDenominatedPoolStore.getState();
+
+    // Find a mature SOL note that covers the payment amount
+    const matureNotes = poolStore.getActiveNotes()
+      .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
+      .sort((a: any, b: any) => a.denomination - b.denomination);
+
+    const availableNote = matureNotes.find((n: any) => n.denomination >= amountToSend);
+
+    if (!availableNote) {
+      return {
+        success: false,
+        signature: '',
+        error: 'Insufficient private balance — no mature shielded notes available for this payment amount.',
+      };
+    }
+
+    if (!proofGenerator) {
+      return {
+        success: false,
+        signature: '',
+        error: 'ZK proof generator not available. Manual "Pay Now" required (needs WebView prover context).',
+      };
+    }
+
+    console.log(
+      `[PrivateSub] Unshielding ${availableNote.denomination} SOL note for stream "${stream.name}" ` +
+      `(needed: ${amountToSend} SOL) to ${stream.recipientAddress.slice(0, 8)}...`
+    );
+
+    // Unshield the note on-chain — this generates a ZK proof and sends a real Solana transaction
+    const signature = await poolStore.unshieldNote(
+      availableNote.id,
+      stream.recipientAddress,
+      proofGenerator,
+    );
+
+    console.log(`[PrivateSub] ZK payment successful: ${signature}`);
+
+    return {
+      success: true,
+      signature,
+    };
+  } catch (error: any) {
+    console.error('[PrivateSub] ZK stream payment failed:', error);
+    return {
+      success: false,
+      signature: '',
+      error: error.message || 'ZK payment failed',
+    };
   }
-
-  const result = await processZkPayment(
-    stream.recipientAddress,
-    amountToSend,
-    keypair.publicKey,
-    keypairSigner(keypair),
-  );
-
-  if (!result.success) {
-    return { success: false, signature: '', error: result.error };
-  }
-
-  return { success: true, signature: result.signature! };
 }

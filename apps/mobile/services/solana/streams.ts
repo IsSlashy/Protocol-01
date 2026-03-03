@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendSol } from './transactions';
 import { getConnection } from './connection';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
-import { processZkStreamPayment } from './privateSubscription';
 import {
   applyAmountNoise,
   NoiseAdjustment,
@@ -552,6 +551,40 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
 
   const paymentId = `payment_${Date.now()}`;
 
+  // Auto-pause ZK pool streams when private wallet has no mature notes
+  if (stream.useZkPool) {
+    try {
+      const { useDenominatedPoolStore } = await import('../../stores/denominatedPoolStore');
+      const poolStore = useDenominatedPoolStore.getState();
+      const matureNotes = poolStore.getActiveNotes()
+        .filter((n: any) => n.token === 'SOL' && n.status === 'mature');
+      const availableNote = matureNotes.find((n: any) => n.denomination >= stream.amountPerPayment);
+
+      if (!availableNote) {
+        console.log(`[Streams] Auto-pausing ZK stream "${stream.name}" — no mature notes available`);
+
+        const payment: StreamPayment = {
+          id: paymentId,
+          amount: stream.amountPerPayment,
+          signature: '',
+          timestamp: Date.now(),
+          status: 'failed',
+          error: 'Insufficient private balance — no shielded notes available. Shield more SOL to resume.',
+        };
+
+        // Pause and record the failed payment
+        await pauseStream(streamId);
+        await updateStream(streamId, {
+          paymentHistory: [...stream.paymentHistory, payment],
+        });
+
+        return payment;
+      }
+    } catch (e) {
+      console.warn('[Streams] Failed to check denomination pool notes:', e);
+    }
+  }
+
   try {
     // Calculate amount to send (with noise if enabled for privacy)
     let amountToSend = stream.amountPerPayment;
@@ -590,10 +623,15 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
       );
     }
 
-    // Execute the payment — route through ZK pool if enabled, otherwise direct transfer
+    // Execute the payment
+    // ZK pool streams require manual "Pay Now" from UI (WebView prover needed for ZK proofs)
+    // Automatic processing only works for normal wallet streams
     let result: { success: boolean; signature?: string; error?: string };
     if (stream.useZkPool) {
-      result = await processZkStreamPayment(stream, amountToSend);
+      // ZK streams: skip automatic payment, user must use "Pay Now" button
+      // The pre-check above already handles auto-pause on insufficient balance
+      console.log(`[Streams] Skipping automatic payment for ZK stream "${stream.name}" — requires manual Pay Now`);
+      return null;
     } else {
       result = await sendSol(stream.recipientAddress, amountToSend);
     }
@@ -670,10 +708,18 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
       error: error.message,
     };
 
-    // Update stream with failed payment
-    await updateStream(streamId, {
-      paymentHistory: [...stream.paymentHistory, payment],
-    });
+    // Auto-pause ZK streams on payment failure (likely insufficient balance)
+    if (stream.useZkPool) {
+      console.log(`[Streams] Auto-pausing ZK stream "${stream.name}" after payment failure`);
+      await pauseStream(streamId);
+      await updateStream(streamId, {
+        paymentHistory: [...stream.paymentHistory, payment],
+      });
+    } else {
+      await updateStream(streamId, {
+        paymentHistory: [...stream.paymentHistory, payment],
+      });
+    }
 
     return payment;
   }

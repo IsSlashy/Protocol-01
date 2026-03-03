@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,15 +11,15 @@ import {
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
+import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { Stream, formatFrequency } from '../../../services/solana/streams';
-import { getKeypair } from '../../../services/solana/wallet';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 85;
@@ -81,10 +81,48 @@ export default function StreamsDashboard() {
     resetAll,
     cancelAllWithSync,
   } = useStreamStore();
+  const { notes: denomNotes } = useDenominatedPoolStore();
+
+  // Compute private balance from denomination pool notes
+  const availableNotes = denomNotes.filter(n => n.status === 'mature' || n.status === 'pending');
+  const privateBalance = availableNotes.reduce((sum, n) => sum + n.denomination, 0);
+  const privateNoteCount = availableNotes.length;
 
   useEffect(() => {
     initialize(publicKey || undefined);
   }, [publicKey]);
+
+  // Auto-process due payments when streams tab is focused
+  // ZK streams are skipped (require manual Pay Now with prover context)
+  // Normal wallet streams are paid automatically via on-chain SOL transfer
+  const isProcessingRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      const processDue = async () => {
+        if (isProcessingRef.current) return;
+        isProcessingRef.current = true;
+        try {
+          const { processAllDuePayments } = useStreamStore.getState();
+          const payments = await processAllDuePayments();
+          if (payments.length > 0) {
+            const succeeded = payments.filter(p => p.status === 'success').length;
+            const failed = payments.filter(p => p.status === 'failed').length;
+            if (succeeded > 0) {
+              console.log(`[Streams] Auto-processed ${succeeded} due payment(s)`);
+            }
+            if (failed > 0) {
+              console.log(`[Streams] ${failed} payment(s) failed during auto-processing`);
+            }
+          }
+        } catch (e) {
+          console.warn('[Streams] Auto-payment processing failed:', e);
+        } finally {
+          isProcessingRef.current = false;
+        }
+      };
+      processDue();
+    }, [])
+  );
 
   const onRefresh = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -401,6 +439,117 @@ export default function StreamsDashboard() {
               </Text>
             </View>
 
+            {/* Private Balance Card */}
+            <Animated.View entering={FadeInDown.delay(50).springify()}>
+              <LinearGradient
+                colors={['rgba(255, 119, 168, 0.12)', 'rgba(21, 21, 24, 0.9)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  borderRadius: 14,
+                  padding: 16,
+                  marginBottom: 16,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255, 119, 168, 0.25)',
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 10,
+                      backgroundColor: 'rgba(255, 119, 168, 0.2)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      <Ionicons name="eye-off" size={18} color={COLORS.pink} />
+                    </View>
+                    <View>
+                      <Text style={{ color: COLORS.textMuted, fontSize: 11 }}>Private Balance</Text>
+                      <Text style={{ color: COLORS.text, fontSize: 20, fontWeight: '700' }}>
+                        {privateBalance < 1 ? privateBalance.toFixed(4) : privateBalance.toFixed(2)} SOL
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11 }}>
+                      {privateNoteCount} note{privateNoteCount !== 1 ? 's' : ''} shielded
+                    </Text>
+                    {/* Count ZK private subscriptions */}
+                    {streams.filter(s => s.useZkPool && s.status === 'active').length > 0 && (
+                      <Text style={{ color: COLORS.pink, fontSize: 11, fontWeight: '500', marginTop: 2 }}>
+                        {streams.filter(s => s.useZkPool && s.status === 'active').length} private sub{streams.filter(s => s.useZkPool && s.status === 'active').length !== 1 ? 's' : ''}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Actions */}
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      router.push('/(main)/(privacy)/denominated-notes' as any);
+                    }}
+                    activeOpacity={0.7}
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      paddingVertical: 10,
+                      backgroundColor: COLORS.pink,
+                      borderRadius: 10,
+                    }}
+                  >
+                    <Ionicons name="add-circle" size={16} color={COLORS.void} />
+                    <Text style={{ color: COLORS.void, fontSize: 12, fontWeight: '600' }}>Shield More</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      router.push('/(main)/(privacy)/denominated-notes' as any);
+                    }}
+                    activeOpacity={0.7}
+                    style={{
+                      flex: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      paddingVertical: 10,
+                      backgroundColor: 'rgba(255, 119, 168, 0.15)',
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255, 119, 168, 0.3)',
+                    }}
+                  >
+                    <Ionicons name="wallet" size={16} color={COLORS.pink} />
+                    <Text style={{ color: COLORS.pink, fontSize: 12, fontWeight: '600' }}>Manage Notes</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {privateNoteCount === 0 && (
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginTop: 10,
+                    padding: 8,
+                    backgroundColor: 'rgba(255, 119, 168, 0.08)',
+                    borderRadius: 8,
+                  }}>
+                    <Ionicons name="lock-closed" size={12} color={COLORS.pink} />
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11, flex: 1 }}>
+                      Shield SOL to build your private balance. Subscribe to services anonymously via ZK proofs.
+                    </Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </Animated.View>
+
             {/* Info Banner */}
             <View style={{
               flexDirection: 'row',
@@ -415,7 +564,7 @@ export default function StreamsDashboard() {
             }}>
               <Ionicons name="information-circle" size={20} color={COLORS.pink} />
               <Text style={{ color: COLORS.textMuted, fontSize: 12, flex: 1 }}>
-                Prices are set by service providers via SDK. Subscribe with one tap.
+                Subscribe with one tap. Toggle ZK Private Payment to pay anonymously from your private balance.
               </Text>
             </View>
 
@@ -858,3 +1007,4 @@ function SubscriptionCard({
     </Animated.View>
   );
 }
+
