@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
@@ -30,7 +30,34 @@ export default function SubscribePrivateScreen() {
   const matureNotes = notes.filter(n => n.status === 'mature');
 
   const handleSubmit = async () => {
-    Alert.alert('Not Implemented', 'Private subscription creation requires proof generation setup.');
+    if (!selectedNoteId) {
+      Alert.alert('Select Note', 'Please select a mature note to use for the private subscription.');
+      return;
+    }
+    if (!retailer.trim()) {
+      Alert.alert('Missing Retailer', 'Please enter a retailer address.');
+      return;
+    }
+    try {
+      const retailerKey = new PublicKey(retailer);
+      const rateLamports = BigInt(Math.floor(parseFloat(rate || '0') * 1e9));
+      const intervalSlotsNum = BigInt(parseInt(intervalSlots, 10));
+
+      const sig = await subscribePrivateAction(
+        selectedNoteId,
+        {
+          retailer: retailerKey,
+          tokenMint: SystemProgram.programId,
+          rate: rateLamports,
+          intervalSlots: intervalSlotsNum,
+        },
+      );
+
+      Alert.alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
+      router.back();
+    } catch (err) {
+      Alert.alert('Error', (err as Error).message);
+    }
   };
 
   return (

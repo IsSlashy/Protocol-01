@@ -63,10 +63,9 @@ export default function DenominatedShieldScreen() {
       if (walletPublicKey) {
         const connection = getConnection();
         const bal = await connection.getBalance(new PublicKey(walletPublicKey));
-        console.log(`[DenomShield] Wallet balance: ${bal} lamports (${bal / LAMPORTS_PER_SOL} SOL)`);
         setWalletBalance(bal);
       } else {
-        console.warn('[DenomShield] No wallet public key found');
+        // No wallet public key found
       }
     } catch (err) {
       console.error('[DenomShield] Failed to fetch balance:', err);
@@ -94,7 +93,6 @@ export default function DenominatedShieldScreen() {
 
     // Balance check
     const needed = Number(pool.denominationAtomic);
-    console.log(`[DenomShield] Balance check: have=${currentBalance}, need=${needed + 50_000} (${pool.denomination} ${pool.token})`);
     if (pool.token === 'SOL' && currentBalance < needed + 50_000) {
       Alert.alert(
         'Insufficient SOL',

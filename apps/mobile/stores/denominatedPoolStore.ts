@@ -174,7 +174,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               cache[key] = { info: serializablePoolInfo(info), fetchedAt: Date.now() };
             }
           } catch (err) {
-            console.warn(`[DenomPool] Failed to fetch pool ${key}:`, err);
+            // Failed to fetch pool info — will retry on next refresh
           }
         }
 
@@ -266,7 +266,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           set({ notes: updated });
         } catch (err) {
-          console.warn('[DenomPool] refreshNoteStatuses error:', err);
+          // refreshNoteStatuses error — non-fatal
         }
       },
 

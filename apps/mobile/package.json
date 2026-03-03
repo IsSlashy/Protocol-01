@@ -1,6 +1,6 @@
 {
   "name": "@p01/mobile",
-  "version": "0.1.0",
+  "version": "0.5.1",
   "private": true,
   "packageManager": "pnpm@8.15.0",
   "main": "./index.js",

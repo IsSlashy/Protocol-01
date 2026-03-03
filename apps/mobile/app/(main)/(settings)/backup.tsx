@@ -86,7 +86,7 @@ export default function BackupRecoveryScreen() {
   const handleExportBackup = () => {
     Alert.alert(
       'Export Encrypted Backup',
-      'This feature is coming soon. For now, please use your seed phrase to back up your wallet.',
+      'Encrypted backups will be available in a future update. Your seed phrase is currently the safest way to back up your wallet.',
       [{ text: 'OK' }]
     );
   };

@@ -26,6 +26,18 @@ export default function SubscribeNormalScreen() {
   const [intervalSlots, setIntervalSlots] = useState('7200'); // ~1 hour
 
   const handleSubmit = async () => {
+    if (!retailer.trim()) {
+      Alert.alert('Missing Retailer', 'Please enter a retailer address.');
+      return;
+    }
+    if (!amount.trim() || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
+    }
+    if (!rate.trim() || isNaN(parseFloat(rate)) || parseFloat(rate) <= 0) {
+      Alert.alert('Invalid Rate', 'Please enter a valid rate per period.');
+      return;
+    }
     try {
       const retailerKey = new PublicKey(retailer);
       const amountLamports = BigInt(Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL));

@@ -128,7 +128,7 @@ export default function SecuritySettingsScreen() {
   const handleChangePIN = () => {
     Alert.alert(
       'Change PIN',
-      'PIN functionality is not yet implemented. Coming soon!',
+      'PIN lock will be available in a future update. Your wallet is secured by biometric authentication.',
       [{ text: 'OK' }]
     );
   };

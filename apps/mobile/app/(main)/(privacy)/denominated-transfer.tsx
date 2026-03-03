@@ -85,15 +85,12 @@ function TransferScreenContent() {
 
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      console.log('[Transfer] Starting transfer for note:', selectedNoteId);
       const res = await transferNote(selectedNoteId, generateProof);
-      console.log('[Transfer] Success! txSig:', res.txSig);
       setResult(res);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       const msg = (err as Error).message || 'Unknown error';
-      console.error('[Transfer] FAILED:', msg);
-      console.error('[Transfer] Full error:', err);
+      console.error('[Transfer] FAILED:', msg, err);
       Alert.alert('Transfer Failed', msg);
     }
   }, [selectedNoteId, generateProof, transferNote]);
