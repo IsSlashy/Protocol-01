@@ -51,12 +51,12 @@ const technologies = [
 const architectureLayers = [
   {
     name: "Application Layer",
-    description: "Wallet, Streams, Agent",
+    description: "Wallet, Streams, Agent, Denominated Pools, Subscription Vaults, P2P Sharing",
     color: "p01-cyan",
   },
   {
     name: "Privacy Layer",
-    description: "ZK Proofs, Stealth Addresses, Encryption",
+    description: "ZK Proofs, Stealth Addresses, Encryption, zkSPL Confidential Balances",
     color: "p01-pink",
   },
   {
