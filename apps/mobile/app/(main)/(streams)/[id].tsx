@@ -8,6 +8,12 @@ import {
   Linking,
   Image,
 } from 'react-native';
+import {
+  PublicKey,
+  Transaction,
+  SystemProgram,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
 import { useAlert } from '../../../providers/AlertProvider';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -17,8 +23,14 @@ import * as Clipboard from 'expo-clipboard';
 import { Card } from '../../../components/ui/Card';
 import { StreamProgress, ServiceLogo } from '../../../components/streams';
 import { useStreamStore } from '../../../stores/streamStore';
-import { Stream, formatFrequency } from '../../../services/solana/streams';
-import { getExplorerUrl } from '../../../services/solana/connection';
+import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
+import { Stream, StreamPayment, formatFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
+import { getExplorerUrl, getConnection } from '../../../services/solana/connection';
+import { getKeypair } from '../../../services/solana/wallet';
+import {
+  DenominatedPoolProverProvider,
+  useDenominatedPoolProver,
+} from '../../../components/privacy/DenominatedPoolProver';
 import {
   getServiceById,
   CATEGORY_CONFIG,
@@ -40,6 +52,14 @@ const P01_COLORS = {
 const ACCENT = P01_COLORS.pink;
 
 export default function StreamDetailScreen() {
+  return (
+    <DenominatedPoolProverProvider>
+      <StreamDetailContent />
+    </DenominatedPoolProverProvider>
+  );
+}
+
+function StreamDetailContent() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { showConfirm, showAlert } = useAlert();
@@ -53,9 +73,13 @@ export default function StreamDetailScreen() {
     deleteStream,
     processPayment,
   } = useStreamStore();
+  const { generateProof } = useDenominatedPoolProver();
 
   const [stream, setStream] = useState<Stream | null>(null);
   const [copied, setCopied] = useState(false);
+  const [zkPayProgress, setZkPayProgress] = useState<string | null>(null);
+  const [isZkPaying, setIsZkPaying] = useState(false);
+  const { notes: denomNotes } = useDenominatedPoolStore();
 
   useEffect(() => {
     const found = streams.find((s) => s.id === id);
@@ -103,9 +127,14 @@ export default function StreamDetailScreen() {
   };
 
   const handleCancel = () => {
+    const remaining = stream.totalAmount - stream.amountStreamed;
+    const cancelMessage = stream.useZkPool
+      ? `Are you sure you want to cancel "${stream.name}"? ${remaining > 0 ? `${remaining.toFixed(4)} SOL remains in your private balance.` : 'All payments have been processed.'}`
+      : `Are you sure you want to cancel "${stream.name}"? This will stop all future payments and remove the subscription.`;
+
     showConfirm(
       'Cancel Stream',
-      `Are you sure you want to cancel "${stream.name}"? This will stop all future payments and remove the subscription.`,
+      cancelMessage,
       {
         icon: 'warning',
         confirmText: 'Yes, Cancel',
@@ -140,28 +169,165 @@ export default function StreamDetailScreen() {
   };
 
   const handlePayNow = async () => {
-    showConfirm(
-      'Process Payment',
-      `Pay ${stream.amountPerPayment.toFixed(4)} SOL now?`,
-      {
-        icon: 'question',
-        confirmText: 'Pay Now',
-        cancelText: 'Cancel',
-        onConfirm: async () => {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          const payment = await processPayment(stream.id);
-          if (payment?.status === 'success') {
-            showAlert('Payment Sent!', 'Transaction completed successfully.', {
-              icon: 'success',
-            });
-          } else {
-            showAlert('Payment Failed', payment?.error || 'Please try again.', {
-              icon: 'error',
-            });
-          }
-        },
+    if (!stream) return;
+
+    if (stream.useZkPool) {
+      // ZK stream: unshield a denomination pool note on-chain
+      const poolStore = useDenominatedPoolStore.getState();
+      const matureNotes = poolStore.getActiveNotes()
+        .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
+        .sort((a: any, b: any) => a.denomination - b.denomination);
+      const availableNote = matureNotes.find((n: any) => n.denomination >= stream.amountPerPayment);
+
+      if (!availableNote) {
+        showAlert('Insufficient Balance', 'No mature shielded notes available. Shield more SOL first.', {
+          icon: 'error',
+        });
+        return;
       }
-    );
+
+      showConfirm(
+        'Private Payment',
+        `Unshield ${availableNote.denomination} SOL note to pay ${stream.name}? This generates a ZK proof and sends a real on-chain transaction.`,
+        {
+          icon: 'question',
+          confirmText: 'Pay with ZK Proof',
+          cancelText: 'Cancel',
+          onConfirm: async () => {
+            try {
+              setIsZkPaying(true);
+              setZkPayProgress('Generating ZK proof...');
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+              const sig = await poolStore.unshieldNote(
+                availableNote.id,
+                stream.recipientAddress,
+                generateProof,
+              );
+
+              setZkPayProgress('Recording payment...');
+              const now = Date.now();
+              const intervalMs = stream.frequency === 'daily' ? 86400000
+                : stream.frequency === 'weekly' ? 604800000
+                : stream.frequency === 'biweekly' ? 1209600000
+                : 2592000000; // monthly
+
+              const payment: StreamPayment = {
+                id: `payment_${now}`,
+                amount: stream.amountPerPayment,
+                actualAmount: availableNote.denomination,
+                signature: sig,
+                timestamp: now,
+                status: 'success',
+              };
+
+              const newPaymentsCompleted = stream.paymentsCompleted + 1;
+              let newStatus = stream.status;
+              if (stream.totalPayments && newPaymentsCompleted >= stream.totalPayments) {
+                newStatus = 'completed';
+              }
+
+              await updateStreamRecord(stream.id, {
+                amountStreamed: stream.amountStreamed + availableNote.denomination,
+                paymentsCompleted: newPaymentsCompleted,
+                nextPaymentDate: now + intervalMs,
+                status: newStatus,
+                paymentHistory: [...stream.paymentHistory, payment],
+              });
+              await refresh();
+
+              setZkPayProgress(null);
+              showAlert('Payment Sent!', `${availableNote.denomination} SOL paid on-chain via ZK proof. Tx: ${sig.slice(0, 8)}...`, {
+                icon: 'success',
+              });
+            } catch (error: any) {
+              showAlert('Payment Failed', error.message || 'ZK payment failed.', {
+                icon: 'error',
+              });
+            } finally {
+              setIsZkPaying(false);
+              setZkPayProgress(null);
+            }
+          },
+        }
+      );
+    } else {
+      // Normal wallet: real SOL transfer
+      showConfirm(
+        'Process Payment',
+        `Send ${stream.amountPerPayment.toFixed(4)} SOL to ${stream.recipientAddress.slice(0, 8)}...?`,
+        {
+          icon: 'question',
+          confirmText: 'Pay Now',
+          cancelText: 'Cancel',
+          onConfirm: async () => {
+            try {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              setIsZkPaying(true);
+              setZkPayProgress('Sending transaction...');
+
+              const keypair = await getKeypair();
+              if (!keypair) throw new Error('Wallet not found');
+
+              const connection = getConnection();
+              const lamports = Math.round(stream.amountPerPayment * 1_000_000_000);
+
+              const transferIx = SystemProgram.transfer({
+                fromPubkey: keypair.publicKey,
+                toPubkey: new PublicKey(stream.recipientAddress),
+                lamports,
+              });
+
+              const tx = new Transaction().add(transferIx);
+              const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
+                commitment: 'confirmed',
+              });
+
+              const now = Date.now();
+              const intervalMs = stream.frequency === 'daily' ? 86400000
+                : stream.frequency === 'weekly' ? 604800000
+                : stream.frequency === 'biweekly' ? 1209600000
+                : 2592000000;
+
+              const payment: StreamPayment = {
+                id: `payment_${now}`,
+                amount: stream.amountPerPayment,
+                actualAmount: stream.amountPerPayment,
+                signature: sig,
+                timestamp: now,
+                status: 'success',
+              };
+
+              const newPaymentsCompleted = stream.paymentsCompleted + 1;
+              let newStatus = stream.status;
+              if (stream.totalPayments && newPaymentsCompleted >= stream.totalPayments) {
+                newStatus = 'completed';
+              }
+
+              await updateStreamRecord(stream.id, {
+                amountStreamed: stream.amountStreamed + stream.amountPerPayment,
+                paymentsCompleted: newPaymentsCompleted,
+                nextPaymentDate: now + intervalMs,
+                status: newStatus,
+                paymentHistory: [...stream.paymentHistory, payment],
+              });
+              await refresh();
+
+              showAlert('Payment Sent!', `${stream.amountPerPayment.toFixed(4)} SOL confirmed on-chain. Tx: ${sig.slice(0, 8)}...`, {
+                icon: 'success',
+              });
+            } catch (error: any) {
+              showAlert('Payment Failed', error.message || 'Transaction failed.', {
+                icon: 'error',
+              });
+            } finally {
+              setIsZkPaying(false);
+              setZkPayProgress(null);
+            }
+          },
+        }
+      );
+    }
   };
 
   const formatDate = (timestamp: number): string => {
@@ -212,7 +378,7 @@ export default function StreamDetailScreen() {
       <ScrollView
         className="flex-1 px-4"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* Service Info Banner (if detected service) */}
         {serviceInfo && (
@@ -402,16 +568,23 @@ export default function StreamDetailScreen() {
               {isDue && (
                 <TouchableOpacity
                   onPress={handlePayNow}
-                  disabled={processingPayment === stream.id}
+                  disabled={processingPayment === stream.id || isZkPaying}
                   className="px-4 py-2 rounded-xl flex-row items-center"
                   style={{ backgroundColor: serviceColor }}
                 >
-                  {processingPayment === stream.id ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                  {(processingPayment === stream.id || isZkPaying) ? (
+                    <View style={{ alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#fff" />
+                      {zkPayProgress && (
+                        <Text style={{ color: '#fff', fontSize: 9, marginTop: 2 }}>{zkPayProgress}</Text>
+                      )}
+                    </View>
                   ) : (
                     <>
-                      <Ionicons name="flash" size={16} color="#fff" />
-                      <Text className="text-white font-semibold ml-1">Pay Now</Text>
+                      <Ionicons name={stream.useZkPool ? 'eye-off' : 'flash'} size={16} color="#fff" />
+                      <Text className="text-white font-semibold ml-1">
+                        {stream.useZkPool ? 'Pay (ZK)' : 'Pay Now'}
+                      </Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -480,6 +653,73 @@ export default function StreamDetailScreen() {
           </View>
         </View>
 
+        {/* ZK Stream Low Balance Warning */}
+        {stream.useZkPool && stream.status === 'paused' && (() => {
+          const lastPayment = stream.paymentHistory[stream.paymentHistory.length - 1];
+          const isBalanceIssue = lastPayment?.status === 'failed' &&
+            lastPayment?.error?.includes('private balance');
+          if (!isBalanceIssue) return null;
+          return (
+            <View style={{
+              backgroundColor: 'rgba(255, 204, 0, 0.12)',
+              borderWidth: 1,
+              borderColor: 'rgba(255, 204, 0, 0.3)',
+              borderRadius: 12,
+              padding: 14,
+              marginBottom: 16,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+            }}>
+              <Ionicons name="alert-circle" size={24} color={P01_COLORS.yellow} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: P01_COLORS.yellow, fontSize: 13, fontWeight: '600' }}>
+                  Auto-paused — Insufficient Private Balance
+                </Text>
+                <Text style={{ color: P01_COLORS.textMuted, fontSize: 11, marginTop: 4 }}>
+                  Shield more SOL in your private wallet, then resume this subscription.
+                </Text>
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Action Buttons (inside scroll, above tab bar) */}
+        {(stream.status === 'active' || stream.status === 'paused') && (
+          <View className="mb-6">
+            <View
+              style={{
+                flexDirection: 'row',
+                gap: 12,
+              }}
+            >
+              <TouchableOpacity
+                onPress={handlePauseResume}
+                className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
+                style={{ backgroundColor: `${serviceColor}20` }}
+              >
+                <Ionicons
+                  name={stream.status === 'active' ? 'pause' : 'play'}
+                  size={20}
+                  color={serviceColor}
+                />
+                <Text className="font-semibold ml-2" style={{ color: serviceColor }}>
+                  {stream.status === 'active' ? 'Pause' : 'Resume'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleCancel}
+                className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
+                style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
+              >
+                <Ionicons name="close-circle" size={20} color="#ef4444" />
+                <Text className="font-semibold ml-2 text-red-500">Cancel Stream</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Payment History */}
         {stream.paymentHistory.length > 0 && (
           <View
@@ -547,37 +787,6 @@ export default function StreamDetailScreen() {
           </View>
         )}
       </ScrollView>
-
-      {/* Bottom Actions */}
-      {(stream.status === 'active' || stream.status === 'paused') && (
-        <View className="absolute bottom-0 left-0 right-0 p-4 bg-p01-void border-t border-gray-800">
-          <View className="flex-row gap-3">
-            <TouchableOpacity
-              onPress={handlePauseResume}
-              className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
-              style={{ backgroundColor: `${serviceColor}20` }}
-            >
-              <Ionicons
-                name={stream.status === 'active' ? 'pause' : 'play'}
-                size={20}
-                color={serviceColor}
-              />
-              <Text className="font-semibold ml-2" style={{ color: serviceColor }}>
-                {stream.status === 'active' ? 'Pause' : 'Resume'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={handleCancel}
-              className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
-              style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
-            >
-              <Ionicons name="close-circle" size={20} color="#ef4444" />
-              <Text className="font-semibold ml-2 text-red-500">Cancel Stream</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
     </SafeAreaView>
   );
 }

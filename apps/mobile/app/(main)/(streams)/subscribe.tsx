@@ -13,10 +13,23 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import {
+  PublicKey,
+  Transaction,
+  SystemProgram,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useShieldedStore } from '../../../stores/shieldedStore';
-import { StreamFrequency } from '../../../services/solana/streams';
+import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
+import { StreamFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
+import { getConnection } from '../../../services/solana/connection';
+import { getKeypair } from '../../../services/solana/wallet';
+import {
+  DenominatedPoolProverProvider,
+  useDenominatedPoolProver,
+} from '../../../components/privacy/DenominatedPoolProver';
 
 // Protocol 01 Color System
 const COLORS = {
@@ -46,6 +59,14 @@ const SERVICE_ICONS: Record<string, string> = {
 };
 
 export default function SubscribeScreen() {
+  return (
+    <DenominatedPoolProverProvider>
+      <SubscribeScreenContent />
+    </DenominatedPoolProverProvider>
+  );
+}
+
+function SubscribeScreenContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { showAlert, showCustom } = useAlert();
@@ -56,10 +77,17 @@ export default function SubscribeScreen() {
     frequency: string;
   }>();
 
-  const { createNewStream } = useStreamStore();
+  const { createNewStream, refresh } = useStreamStore();
   const { publicKey } = useWalletStore();
   const { shieldedBalance, isInitialized: isZkReady } = useShieldedStore();
+  const { notes: denomNotes } = useDenominatedPoolStore();
+  const { generateProof } = useDenominatedPoolProver();
+
+  // Private balance = total value of available denomination pool notes
+  const availableNotes = denomNotes.filter(n => n.status === 'mature' || n.status === 'pending');
+  const privateBalance = availableNotes.reduce((sum, n) => sum + n.denomination, 0);
   const [isSubscribing, setIsSubscribing] = useState(false);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [enablePrivacy, setEnablePrivacy] = useState(false);
   const [useZkPool, setUseZkPool] = useState(false);
   const [selectedDuration, setSelectedDuration] = useState<'1' | '6' | '12'>('1');
@@ -85,16 +113,63 @@ export default function SubscribeScreen() {
 
     try {
       setIsSubscribing(true);
+      setProgressMessage(null);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      // Calculate end date
+      const firstPayment = price;
       const now = Date.now();
       const endDate = now + durationMonths * 30 * 24 * 60 * 60 * 1000;
-
-      // Create subscription stream
-      // In production, recipientAddress comes from SDK. Using devnet test address for now.
       const devnetTestAddress = 'GJyrdH4xBKjQiWspGUqfwHR1Mqn2pgXMxpXsE3M2aGS6';
 
+      let paymentSignature: string;
+      let paymentAmount: number = firstPayment;
+
+      if (useZkPool) {
+        // Private Wallet: unshield denomination note on-chain with ZK proof
+        setProgressMessage('Finding shielded note...');
+        const poolStore = useDenominatedPoolStore.getState();
+        const activeNotes = poolStore.getActiveNotes()
+          .filter(n => n.token === 'SOL' && n.status === 'mature')
+          .sort((a, b) => a.denomination - b.denomination);
+
+        const sourceNote = activeNotes.find(n => n.denomination >= firstPayment);
+        if (!sourceNote) {
+          throw new Error('No mature shielded note large enough. Shield more SOL first.');
+        }
+
+        setProgressMessage('Generating ZK proof...');
+        // unshieldNote: generates proof on-device → sends real tx → marks note spent
+        paymentSignature = await poolStore.unshieldNote(
+          sourceNote.id,
+          devnetTestAddress,
+          generateProof,
+        );
+        paymentAmount = sourceNote.denomination;
+        setProgressMessage('Confirmed on Solana!');
+      } else {
+        // Normal Wallet: real SOL transfer on-chain
+        setProgressMessage('Preparing transaction...');
+        const keypair = await getKeypair();
+        if (!keypair) throw new Error('Wallet keypair not found');
+
+        const connection = getConnection();
+        const lamports = Math.round(firstPayment * 1_000_000_000);
+
+        const transferIx = SystemProgram.transfer({
+          fromPubkey: keypair.publicKey,
+          toPubkey: new PublicKey(devnetTestAddress),
+          lamports,
+        });
+
+        setProgressMessage('Sending to Solana...');
+        const tx = new Transaction().add(transferIx);
+        paymentSignature = await sendAndConfirmTransaction(connection, tx, [keypair], {
+          commitment: 'confirmed',
+        });
+        setProgressMessage('Confirmed!');
+      }
+
+      // Create stream record AFTER on-chain payment succeeds
       const stream = await createNewStream({
         name: serviceName,
         recipientAddress: devnetTestAddress,
@@ -103,21 +178,34 @@ export default function SubscribeScreen() {
         endDate,
         serviceId,
         serviceName,
-        // Privacy features
         amountNoise: enablePrivacy ? 10 : 0,
         timingNoise: enablePrivacy ? 4 : 0,
         useStealthAddress: enablePrivacy,
-        // ZK Private Payment - pays from shielded pool via ZK proof
         useZkPool,
       });
+
+      // Record first payment with REAL on-chain signature
+      await updateStreamRecord(stream.id, {
+        amountStreamed: paymentAmount,
+        paymentsCompleted: 1,
+        paymentHistory: [{
+          id: `pay-${stream.id}-0`,
+          amount: paymentAmount,
+          actualAmount: paymentAmount,
+          signature: paymentSignature,
+          timestamp: now,
+          status: 'success',
+        }],
+      });
+      await refresh(publicKey || undefined);
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       showCustom({
         title: useZkPool ? 'Privately Subscribed!' : 'Subscribed!',
         message: useZkPool
-          ? `You're now privately subscribed to ${serviceName}. Payments are routed through the ZK pool — your identity is fully hidden.`
-          : `You're now subscribed to ${serviceName}. Your first payment of ${price} SOL will be processed shortly.`,
+          ? `${paymentAmount} SOL paid on-chain via ZK proof. Tx: ${paymentSignature.slice(0, 8)}... — ${serviceName} is active, your identity is hidden.`
+          : `First payment of ${firstPayment} SOL confirmed on-chain. Tx: ${paymentSignature.slice(0, 8)}... — ${serviceName} is now active.`,
         icon: 'success',
         buttons: [
           {
@@ -139,6 +227,7 @@ export default function SubscribeScreen() {
       });
     } finally {
       setIsSubscribing(false);
+      setProgressMessage(null);
     }
   };
 
@@ -295,109 +384,278 @@ export default function SubscribeScreen() {
           </View>
         </Animated.View>
 
-        {/* Privacy Toggle */}
+        {/* Payment Method */}
         <Animated.View entering={FadeInDown.delay(200).duration(300)} style={{ marginTop: 24 }}>
-          <TouchableOpacity
-            onPress={() => {
-              Haptics.selectionAsync();
-              setEnablePrivacy(!enablePrivacy);
-            }}
-            activeOpacity={0.8}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 14,
-              padding: 16,
-              backgroundColor: enablePrivacy ? 'rgba(57, 197, 187, 0.15)' : COLORS.surface,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: enablePrivacy ? 'rgba(57, 197, 187, 0.4)' : COLORS.border,
-            }}
-          >
-            <View style={{
-              width: 44,
-              height: 44,
-              borderRadius: 10,
-              backgroundColor: enablePrivacy ? 'rgba(57, 197, 187, 0.2)' : 'rgba(42, 42, 48, 0.5)',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <Ionicons
-                name="shield-checkmark"
-                size={22}
-                color={enablePrivacy ? COLORS.cyan : COLORS.textMuted}
-              />
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: COLORS.text, fontSize: 14, fontWeight: '600' }}>
-                Privacy Shield
-              </Text>
-              <Text style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
-                Add amount noise, timing noise & stealth addresses
-              </Text>
-            </View>
-
-            <View style={{
-              width: 48,
-              height: 28,
-              borderRadius: 14,
-              backgroundColor: enablePrivacy ? COLORS.cyan : COLORS.border,
-              justifyContent: 'center',
-              padding: 2,
-            }}>
-              <View style={{
-                width: 24,
-                height: 24,
+          <Text style={{ color: COLORS.text, fontSize: 15, fontWeight: '600', marginBottom: 12 }}>
+            Pay With
+          </Text>
+          <View style={{ gap: 10 }}>
+            {/* Normal Wallet Option */}
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.selectionAsync();
+                setUseZkPool(false);
+              }}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 14,
+                padding: 16,
+                backgroundColor: !useZkPool ? 'rgba(57, 197, 187, 0.12)' : COLORS.surface,
                 borderRadius: 12,
-                backgroundColor: COLORS.text,
-                alignSelf: enablePrivacy ? 'flex-end' : 'flex-start',
-              }} />
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
+                borderWidth: 1.5,
+                borderColor: !useZkPool ? COLORS.cyan : COLORS.border,
+              }}
+            >
+              {/* Radio */}
+              <View style={{
+                width: 22,
+                height: 22,
+                borderRadius: 11,
+                borderWidth: 2,
+                borderColor: !useZkPool ? COLORS.cyan : COLORS.textDim,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                {!useZkPool && (
+                  <View style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: 6,
+                    backgroundColor: COLORS.cyan,
+                  }} />
+                )}
+              </View>
 
-        {/* ZK Private Payment Toggle */}
-        <Animated.View entering={FadeInDown.delay(250).duration(300)} style={{ marginTop: 16 }}>
-          <TouchableOpacity
-            onPress={() => {
-              Haptics.selectionAsync();
-              const newValue = !useZkPool;
-              setUseZkPool(newValue);
-              // Auto-enable privacy when using ZK pool
-              if (newValue && !enablePrivacy) setEnablePrivacy(true);
-            }}
-            activeOpacity={0.8}
-            style={{
-              padding: 16,
-              backgroundColor: useZkPool ? 'rgba(255, 119, 168, 0.12)' : COLORS.surface,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: useZkPool ? 'rgba(255, 119, 168, 0.4)' : COLORS.border,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
               <View style={{
                 width: 44,
                 height: 44,
                 borderRadius: 10,
-                backgroundColor: useZkPool ? 'rgba(255, 119, 168, 0.2)' : 'rgba(42, 42, 48, 0.5)',
+                backgroundColor: !useZkPool ? 'rgba(57, 197, 187, 0.2)' : 'rgba(42, 42, 48, 0.5)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <Ionicons name="wallet" size={22} color={!useZkPool ? COLORS.cyan : COLORS.textMuted} />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: COLORS.text, fontSize: 14, fontWeight: '600' }}>
+                  Wallet
+                </Text>
+                <Text style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
+                  Pay directly from your connected wallet
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Private Wallet (ZK) Option */}
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.selectionAsync();
+                setUseZkPool(true);
+                if (!enablePrivacy) setEnablePrivacy(true);
+              }}
+              activeOpacity={0.7}
+              style={{
+                padding: 16,
+                backgroundColor: useZkPool ? 'rgba(255, 119, 168, 0.12)' : COLORS.surface,
+                borderRadius: 12,
+                borderWidth: 1.5,
+                borderColor: useZkPool ? COLORS.pink : COLORS.border,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                {/* Radio */}
+                <View style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 11,
+                  borderWidth: 2,
+                  borderColor: useZkPool ? COLORS.pink : COLORS.textDim,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  {useZkPool && (
+                    <View style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: COLORS.pink,
+                    }} />
+                  )}
+                </View>
+
+                <View style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 10,
+                  backgroundColor: useZkPool ? 'rgba(255, 119, 168, 0.2)' : 'rgba(42, 42, 48, 0.5)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <Ionicons name="eye-off" size={22} color={useZkPool ? COLORS.pink : COLORS.textMuted} />
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: COLORS.text, fontSize: 14, fontWeight: '600' }}>
+                    Private Wallet
+                  </Text>
+                  <Text style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
+                    Pay anonymously via ZK proof
+                  </Text>
+                </View>
+
+                {/* ZK Badge */}
+                <View style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  backgroundColor: useZkPool ? 'rgba(255, 119, 168, 0.25)' : 'rgba(42, 42, 48, 0.5)',
+                  borderRadius: 6,
+                }}>
+                  <Text style={{
+                    color: useZkPool ? COLORS.pink : COLORS.textDim,
+                    fontSize: 10,
+                    fontWeight: '700',
+                  }}>ZK</Text>
+                </View>
+              </View>
+
+              {/* Private Balance Details (shown when selected) */}
+              {useZkPool && (
+                <View style={{
+                  marginTop: 14,
+                  paddingTop: 14,
+                  borderTopWidth: 1,
+                  borderTopColor: 'rgba(255, 119, 168, 0.2)',
+                }}>
+                  {/* Balance row */}
+                  <View style={{
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: 12,
+                    backgroundColor: 'rgba(255, 119, 168, 0.06)',
+                    borderRadius: 10,
+                  }}>
+                    <View>
+                      <Text style={{ color: COLORS.textMuted, fontSize: 11 }}>Private Balance</Text>
+                      <Text style={{
+                        color: COLORS.text,
+                        fontSize: 18,
+                        fontWeight: '700',
+                        marginTop: 2,
+                      }}>
+                        {privateBalance < 1 ? privateBalance.toFixed(4) : privateBalance.toFixed(2)} SOL
+                      </Text>
+                      <Text style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 2 }}>
+                        {availableNotes.length} shielded note{availableNotes.length !== 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                    <View style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: privateBalance >= totalPrice
+                        ? 'rgba(0, 255, 136, 0.15)'
+                        : 'rgba(255, 51, 102, 0.15)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      <Ionicons
+                        name={privateBalance >= totalPrice ? 'checkmark-circle' : 'alert-circle'}
+                        size={22}
+                        color={privateBalance >= totalPrice ? COLORS.green : COLORS.red}
+                      />
+                    </View>
+                  </View>
+
+                  {privateBalance < totalPrice && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push('/(main)/(privacy)/denominated-notes' as any);
+                      }}
+                      activeOpacity={0.7}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        marginTop: 10,
+                        paddingVertical: 10,
+                        backgroundColor: COLORS.pink,
+                        borderRadius: 8,
+                      }}
+                    >
+                      <Ionicons name="add-circle" size={16} color={COLORS.void} />
+                      <Text style={{ color: COLORS.void, fontSize: 12, fontWeight: '600' }}>
+                        Shield More SOL
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginTop: 10,
+                    padding: 8,
+                    backgroundColor: 'rgba(255, 119, 168, 0.06)',
+                    borderRadius: 8,
+                  }}>
+                    <Ionicons name="lock-closed" size={12} color={COLORS.pink} />
+                    <Text style={{ color: COLORS.textMuted, fontSize: 11, flex: 1 }}>
+                      Paid from your shielded notes via ZK proof. No one can trace this payment back to you.
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+
+        {/* Privacy Shield Toggle (additional for normal wallet) */}
+        {!useZkPool && (
+          <Animated.View entering={FadeInDown.delay(250).duration(300)} style={{ marginTop: 16 }}>
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.selectionAsync();
+                setEnablePrivacy(!enablePrivacy);
+              }}
+              activeOpacity={0.8}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 14,
+                padding: 16,
+                backgroundColor: enablePrivacy ? 'rgba(57, 197, 187, 0.15)' : COLORS.surface,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: enablePrivacy ? 'rgba(57, 197, 187, 0.4)' : COLORS.border,
+              }}
+            >
+              <View style={{
+                width: 44,
+                height: 44,
+                borderRadius: 10,
+                backgroundColor: enablePrivacy ? 'rgba(57, 197, 187, 0.2)' : 'rgba(42, 42, 48, 0.5)',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}>
                 <Ionicons
-                  name="eye-off"
+                  name="shield-checkmark"
                   size={22}
-                  color={useZkPool ? COLORS.pink : COLORS.textMuted}
+                  color={enablePrivacy ? COLORS.cyan : COLORS.textMuted}
                 />
               </View>
 
               <View style={{ flex: 1 }}>
                 <Text style={{ color: COLORS.text, fontSize: 14, fontWeight: '600' }}>
-                  ZK Private Payment
+                  Privacy Shield
                 </Text>
                 <Text style={{ color: COLORS.textMuted, fontSize: 12, marginTop: 2 }}>
-                  Pay from shielded pool — fully untraceable
+                  Amount noise, timing noise & stealth addresses
                 </Text>
               </View>
 
@@ -405,7 +663,7 @@ export default function SubscribeScreen() {
                 width: 48,
                 height: 28,
                 borderRadius: 14,
-                backgroundColor: useZkPool ? COLORS.pink : COLORS.border,
+                backgroundColor: enablePrivacy ? COLORS.cyan : COLORS.border,
                 justifyContent: 'center',
                 padding: 2,
               }}>
@@ -414,54 +672,12 @@ export default function SubscribeScreen() {
                   height: 24,
                   borderRadius: 12,
                   backgroundColor: COLORS.text,
-                  alignSelf: useZkPool ? 'flex-end' : 'flex-start',
+                  alignSelf: enablePrivacy ? 'flex-end' : 'flex-start',
                 }} />
               </View>
-            </View>
-
-            {/* ZK Pool Balance Info */}
-            {useZkPool && (
-              <View style={{
-                marginTop: 12,
-                paddingTop: 12,
-                borderTopWidth: 1,
-                borderTopColor: 'rgba(255, 119, 168, 0.2)',
-              }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
-                    Shielded Balance
-                  </Text>
-                  <Text style={{
-                    color: shieldedBalance >= totalPrice ? COLORS.green : COLORS.red,
-                    fontSize: 13,
-                    fontWeight: '600',
-                  }}>
-                    {shieldedBalance.toFixed(4)} SOL
-                  </Text>
-                </View>
-                {shieldedBalance < totalPrice && (
-                  <Text style={{ color: COLORS.red, fontSize: 11, marginTop: 6 }}>
-                    Insufficient shielded balance. Shield more SOL first.
-                  </Text>
-                )}
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                  marginTop: 8,
-                  padding: 8,
-                  backgroundColor: 'rgba(255, 119, 168, 0.08)',
-                  borderRadius: 8,
-                }}>
-                  <Ionicons name="lock-closed" size={12} color={COLORS.pink} />
-                  <Text style={{ color: COLORS.textMuted, fontSize: 11, flex: 1 }}>
-                    ZK proof hides your identity. Neither the merchant nor anyone on-chain can trace this payment back to you.
-                  </Text>
-                </View>
-              </View>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
+            </TouchableOpacity>
+          </Animated.View>
+        )}
 
         {/* Summary */}
         <Animated.View entering={FadeInDown.delay(300).duration(300)} style={{ marginTop: 24 }}>
@@ -497,24 +713,29 @@ export default function SubscribeScreen() {
                 </View>
               )}
 
-              {enablePrivacy && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: 13 }}>
+                  Payment Method
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Ionicons
+                    name={useZkPool ? 'eye-off' : 'wallet'}
+                    size={12}
+                    color={useZkPool ? COLORS.pink : COLORS.cyan}
+                  />
+                  <Text style={{ color: useZkPool ? COLORS.pink : COLORS.cyan, fontSize: 13, fontWeight: '500' }}>
+                    {useZkPool ? 'Private Wallet' : 'Wallet'}
+                  </Text>
+                </View>
+              </View>
+
+              {enablePrivacy && !useZkPool && (
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <Text style={{ color: COLORS.cyan, fontSize: 13 }}>
                     Privacy Shield
                   </Text>
                   <Text style={{ color: COLORS.cyan, fontSize: 13 }}>
                     Enabled
-                  </Text>
-                </View>
-              )}
-
-              {useZkPool && (
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={{ color: COLORS.pink, fontSize: 13 }}>
-                    ZK Private Payment
-                  </Text>
-                  <Text style={{ color: COLORS.pink, fontSize: 13 }}>
-                    Untraceable
                   </Text>
                 </View>
               )}
@@ -572,7 +793,7 @@ export default function SubscribeScreen() {
       }}>
         <TouchableOpacity
           onPress={handleSubscribe}
-          disabled={isSubscribing || (useZkPool && shieldedBalance < totalPrice)}
+          disabled={isSubscribing || (useZkPool && privateBalance < totalPrice)}
           activeOpacity={0.8}
           style={{
             flexDirection: 'row',
@@ -582,7 +803,7 @@ export default function SubscribeScreen() {
             paddingVertical: 16,
             backgroundColor: isSubscribing
               ? COLORS.cyanDim
-              : (useZkPool && shieldedBalance < totalPrice)
+              : (useZkPool && privateBalance < totalPrice)
                 ? COLORS.border
                 : useZkPool
                   ? COLORS.pink
@@ -591,7 +812,14 @@ export default function SubscribeScreen() {
           }}
         >
           {isSubscribing ? (
-            <ActivityIndicator size="small" color={COLORS.void} />
+            <View style={{ alignItems: 'center', gap: 4 }}>
+              <ActivityIndicator size="small" color={COLORS.void} />
+              {progressMessage && (
+                <Text style={{ color: COLORS.void, fontSize: 11, fontWeight: '500', opacity: 0.8 }}>
+                  {progressMessage}
+                </Text>
+              )}
+            </View>
           ) : (
             <>
               <Ionicons
