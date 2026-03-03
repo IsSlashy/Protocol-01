@@ -35,7 +35,7 @@ describe('CTA -- Download section and conversion funnel', () => {
 
     it('displays Android APK file details with size', () => {
       expect(screen.getByText(/Instant Download APK/)).toBeInTheDocument();
-      expect(screen.getByText(/218 MB/)).toBeInTheDocument();
+      expect(screen.getByText(/231 MB/)).toBeInTheDocument();
     });
 
     it('links to the correct Android APK file', () => {
