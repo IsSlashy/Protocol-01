@@ -11,7 +11,7 @@ const downloadOptions = [
     icon: Smartphone,
     description: "Instant Download APK",
     filename: "P01-Mobile-v0.5.1.apk",
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.4.0/P01-Mobile-v0.5.1.apk",
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.5.0/P01-Mobile-v0.5.1.apk",
     size: "218 MB",
   },
   {
@@ -19,7 +19,7 @@ const downloadOptions = [
     icon: Chrome,
     description: "Instant Download ZIP",
     filename: "P01-Extension-v0.3.0.zip",
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.4.0/P01-Extension-v0.3.0.zip",
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.5.0/P01-Extension-v0.3.0.zip",
     size: "10 MB",
   },
 ];
