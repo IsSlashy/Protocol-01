@@ -62,7 +62,7 @@
 
 **Option 2 - Manual Install (Developer Mode):**
 
-1. Download the extension: [protocol-01-extension.zip](https://github.com/user-attachments/files/extension-dist.zip)
+1. Download the extension: [P01-Extension-v0.3.0.zip](https://github.com/IsSlashy/Protocol-01/releases/download/v0.4.0/P01-Extension-v0.3.0.zip)
 2. Extract the ZIP file
 3. Open Chrome → `chrome://extensions/`
 4. Enable **"Developer mode"** (top right toggle)
