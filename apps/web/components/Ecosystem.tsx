@@ -4,6 +4,21 @@ import { memo } from "react";
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
 
+// Inline marquee styles — Tailwind v4 purges plain CSS classes from globals.css
+const marqueeStyles = `
+@keyframes p01-marquee-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes p01-marquee-right {
+  0% { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .p01-marquee-left, .p01-marquee-right { animation-play-state: paused !important; }
+}
+`;
+
 // Tech logo SVGs — small recognizable icons for each technology
 const techLogos: Record<string, JSX.Element> = {
   Solana: (
@@ -243,11 +258,14 @@ function Ecosystem() {
           <div className="absolute left-0 top-0 bottom-0 w-24 sm:w-40 z-10 bg-gradient-to-r from-[#0a0a0c] to-transparent pointer-events-none" />
           <div className="absolute right-0 top-0 bottom-0 w-24 sm:w-40 z-10 bg-gradient-to-l from-[#0a0a0c] to-transparent pointer-events-none" />
 
+          {/* Inject keyframes */}
+          <style dangerouslySetInnerHTML={{ __html: marqueeStyles }} />
+
           {/* Row 1 — scrolls left */}
           <div className="mb-3 overflow-hidden">
             <div
-              className="flex gap-3 marquee-left"
-              style={{ width: "max-content" }}
+              className="flex gap-3 p01-marquee-left"
+              style={{ width: "max-content", animation: "p01-marquee-left 40s linear infinite" }}
             >
               {row1.map((tech, i) => (
                 <div
@@ -271,8 +289,8 @@ function Ecosystem() {
           {/* Row 2 — scrolls right */}
           <div className="overflow-hidden">
             <div
-              className="flex gap-3 marquee-right"
-              style={{ width: "max-content" }}
+              className="flex gap-3 p01-marquee-right"
+              style={{ width: "max-content", animation: "p01-marquee-right 45s linear infinite" }}
             >
               {row2.map((tech, i) => (
                 <div
