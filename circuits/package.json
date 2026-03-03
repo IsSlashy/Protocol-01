@@ -44,8 +44,16 @@
     "test:dtransfer": "node test/denominated_transfer.test.js",
     "build:dtransfer": "npm run compile:dtransfer && npm run setup:dtransfer && npm run contribute:dtransfer && npm run finalize:dtransfer && npm run export-vk:dtransfer",
 
-    "build:all": "npm run build && npm run build:zkspl && npm run build:bproof && npm run build:dpool && npm run build:dtransfer",
-    "test:all": "npm run test && npm run test:zkspl && npm run test:bproof && npm run test:dpool && npm run test:dtransfer"
+    "compile:subowner": "circom subscriber_ownership.circom --r1cs --wasm --sym -l node_modules -o build",
+    "setup:subowner": "snarkjs groth16 setup build/subscriber_ownership.r1cs keys/pot20_final.ptau build/subscriber_ownership_0000.zkey",
+    "contribute:subowner": "snarkjs zkey contribute build/subscriber_ownership_0000.zkey build/subscriber_ownership_0001.zkey --name=\"First contribution\" -v",
+    "finalize:subowner": "snarkjs zkey beacon build/subscriber_ownership_0001.zkey build/subscriber_ownership_final.zkey 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f 10 -n=\"Final Beacon phase2\"",
+    "export-vk:subowner": "snarkjs zkey export verificationkey build/subscriber_ownership_final.zkey build/subscriber_ownership_vk.json",
+    "test:subowner": "node test/subscriber_ownership.test.js",
+    "build:subowner": "npm run compile:subowner && npm run setup:subowner && npm run contribute:subowner && npm run finalize:subowner && npm run export-vk:subowner",
+
+    "build:all": "npm run build && npm run build:zkspl && npm run build:bproof && npm run build:dpool && npm run build:dtransfer && npm run build:subowner",
+    "test:all": "npm run test && npm run test:zkspl && npm run test:bproof && npm run test:dpool && npm run test:dtransfer && npm run test:subowner"
   },
   "devDependencies": {
     "circomlib": "^2.0.5",

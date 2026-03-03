@@ -76,4 +76,38 @@ pub enum ZkShieldedError {
 
     #[msg("Epoch delay must be greater than zero")]
     InvalidEpochDelay,
+
+    // Subscription Vault errors
+    #[msg("Subscription vault is not active")]
+    VaultNotActive,
+
+    #[msg("Subscription vault is already paused")]
+    VaultAlreadyPaused,
+
+    #[msg("Subscription vault is not paused")]
+    VaultNotPaused,
+
+    #[msg("Unauthorized vault subscriber")]
+    UnauthorizedVaultSubscriber,
+
+    #[msg("No claimable periods available")]
+    NoClaimablePeriods,
+
+    #[msg("Insufficient vault balance for claim")]
+    InsufficientVaultBalance,
+
+    #[msg("Invalid vault mode for this operation")]
+    InvalidVaultMode,
+
+    #[msg("Subscription rate must be greater than zero")]
+    InvalidRate,
+
+    #[msg("Subscription interval must be greater than zero")]
+    InvalidInterval,
+
+    #[msg("Expected normal (wallet) mode vault")]
+    ExpectedNormalMode,
+
+    #[msg("Expected private (ZK) mode vault")]
+    ExpectedPrivateMode,
 }
