@@ -25,7 +25,8 @@
       "infoPlist": {
         "NSFaceIDUsageDescription": "Use Face ID to unlock your wallet",
         "NSBluetoothAlwaysUsageDescription": "P-01 uses Bluetooth to discover nearby users for mesh networking",
-        "NSBluetoothPeripheralUsageDescription": "P-01 uses Bluetooth to connect with nearby users"
+        "NSBluetoothPeripheralUsageDescription": "P-01 uses Bluetooth to connect with nearby users",
+        "NFCReaderUsageDescription": "P-01 uses NFC to share shielded notes between nearby devices"
       }
     },
     "android": {
@@ -49,7 +50,8 @@
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "NFC"
       ]
     },
     "notification": {
@@ -83,6 +85,7 @@
           "microphonePermission": "P-01 needs microphone access for voice input to the AI agent."
         }
       ],
+      "react-native-nfc-manager",
       [
         "llama.rn",
         {
