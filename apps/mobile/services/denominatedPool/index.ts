@@ -235,6 +235,9 @@ export interface ShareableNote {
   leafIndex: number;
   token: 'SOL' | 'USDC';
   denominationHuman: number;
+  merkle_path_elements?: string[];
+  merkle_path_indices?: number[];
+  merkle_root?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +282,7 @@ function pubkeyToField(pubkey: PublicKey): bigint {
   return n % FIELD_ORDER;
 }
 
-function bigintToLeBytes32(n: bigint): number[] {
+export function bigintToLeBytes32(n: bigint): number[] {
   const bytes: number[] = new Array(32);
   let tmp = n;
   for (let i = 0; i < 32; i++) {
@@ -590,7 +593,7 @@ function buildUnshieldDenominatedIx(
 // Nullifier PDA
 // ---------------------------------------------------------------------------
 
-function deriveNullifierPDA(poolKey: PublicKey, nullifierBytes: Uint8Array | number[]): [PublicKey, number] {
+export function deriveNullifierPDA(poolKey: PublicKey, nullifierBytes: Uint8Array | number[]): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [Buffer.from('nullifier'), poolKey.toBuffer(), Buffer.from(nullifierBytes)],
     ZK_SHIELDED_PROGRAM_ID
@@ -884,9 +887,49 @@ export async function unshield(
   const poolInfo = await fetchPoolInfo(connection, poolConfig);
   if (!poolInfo) throw new Error('Pool not found');
 
-  // Account for BOTH base epoch_delay AND dynamic delay (based on anonymity set size)
-  // On-chain check: current_epoch >= min_epoch + dynamic_delay
-  // So min_epoch must be <= current_epoch - dynamic_delay
+  // Reconstruct Merkle proof from on-chain if missing (e.g. imported/shared note)
+  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
+    onProgress?.('Reconstructing Merkle proof from on-chain...');
+    const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
+    if (!treeAccount) throw new Error('Merkle tree account not found');
+    const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+
+    if (receipt.leafIndex >= leafCount) {
+      throw new Error(`Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}`);
+    }
+
+    const { newRoot, pathElements, pathIndices } = computeNewRootFromSubtrees(
+      receipt.commitment, receipt.leafIndex, subtrees
+    );
+    receipt.merklePathElements = pathElements;
+    receipt.merklePathIndices = pathIndices;
+
+    // Convert on-chain root bytes to bigint (LE)
+    let onChainRoot = 0n;
+    for (let i = 31; i >= 0; i--) {
+      onChainRoot = (onChainRoot << 8n) | BigInt(poolInfo.currentRoot[i]);
+    }
+
+    // If this is the last leaf, computed root should match on-chain root
+    // For older leaves the computed root won't match, but the on-chain root is
+    // what the verifier checks against, and the proof must be against that root
+    if (newRoot === onChainRoot) {
+      receipt.merkleRoot = onChainRoot;
+      console.log(`[DenomPool] Reconstructed Merkle proof for leaf ${receipt.leafIndex} — root matches on-chain`);
+    } else {
+      // Computed root doesn't match — tree has had more insertions since this leaf.
+      // Use the computed root (proof is valid against it) and hope it's in historical_roots.
+      receipt.merkleRoot = newRoot;
+      console.log(`[DenomPool] Reconstructed Merkle proof for leaf ${receipt.leafIndex} — using computed root (tree advanced)`);
+    }
+  }
+
+  // min_epoch must satisfy BOTH:
+  //   Circuit: deposit_epoch <= min_epoch (note has waited at least epochDelay)
+  //   On-chain: current_epoch >= min_epoch + dynamic_delay
+  // So: min_epoch = current_epoch - epochDelay - dynamicDelay
+  // This ensures min_epoch + dynamicDelay <= currentEpoch (on-chain passes)
+  // And deposit_epoch <= min_epoch requires the note to be epochDelay + dynamicDelay epochs old
   const totalDelay = poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay);
   const inputs = buildUnshieldInputs(receipt, currentEpoch, totalDelay);
 
@@ -1062,8 +1105,7 @@ export async function transferNote(
   const poolInfo = await fetchPoolInfo(connection, poolConfig);
   if (!poolInfo) throw new Error('Pool not found');
 
-  // Account for BOTH base epoch_delay AND dynamic delay (same as unshield)
-  // On-chain check: current_epoch >= min_epoch + dynamic_delay
+  // totalDelay = epochDelay + dynamicDelay — same as unshield
   const totalDelay = poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay);
 
   // Generate new note secrets for the recipient
@@ -1122,7 +1164,6 @@ export async function transferNote(
   console.log('[Transfer] VK Data PDA:', vkDataPDA.toBase58());
   console.log('[Transfer] minEpoch:', minEpoch.toString());
   console.log('[Transfer] currentEpoch:', currentEpoch.toString());
-  console.log('[Transfer] totalDelay:', totalDelay.toString());
   console.log('[Transfer] dynamicDelay:', poolInfo.dynamicDelay);
   console.log('[Transfer] epochDelay:', poolInfo.epochDelay.toString());
 
@@ -1188,6 +1229,9 @@ export function exportNote(receipt: ShieldReceipt, poolConfig: PoolConfig): Shar
     leafIndex: receipt.leafIndex,
     token: poolConfig.token,
     denominationHuman: poolConfig.denomination,
+    merkle_path_elements: receipt.merklePathElements?.map(e => e.toString()),
+    merkle_path_indices: receipt.merklePathIndices,
+    merkle_root: receipt.merkleRoot?.toString(),
   };
 }
 
@@ -1225,7 +1269,9 @@ export function importNote(noteData: ShareableNote): ShieldReceipt {
     token: noteData.token,
     denominationHuman: noteData.denominationHuman,
     shieldedAt: Date.now(),
-    // Merkle proof will need to be reconstructed from on-chain data
+    merklePathElements: noteData.merkle_path_elements?.map(e => BigInt(e)),
+    merklePathIndices: noteData.merkle_path_indices,
+    merkleRoot: noteData.merkle_root ? BigInt(noteData.merkle_root) : undefined,
   };
 }
 

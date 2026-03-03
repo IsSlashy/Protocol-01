@@ -11,6 +11,8 @@ interface ShieldedActionsProps {
   onUnshield: () => void;
   onTransfer: () => void;
   onRecover: () => void;
+  onShareNearby?: () => void;
+  onReceiveNearby?: () => void;
 }
 
 export default function ShieldedActions({
@@ -20,6 +22,8 @@ export default function ShieldedActions({
   onUnshield,
   onTransfer,
   onRecover,
+  onShareNearby,
+  onReceiveNearby,
 }: ShieldedActionsProps) {
   return (
     <Animated.View entering={FadeInDown.delay(200)} style={styles.container}>
@@ -55,6 +59,24 @@ export default function ShieldedActions({
         dimColor={P01Colors.greenDim}
         onPress={onRecover}
       />
+      {onShareNearby && (
+        <PrivacyActionButton
+          icon="bluetooth"
+          label="Share"
+          color="#3b82f6"
+          dimColor="rgba(59,130,246,0.15)"
+          onPress={onShareNearby}
+        />
+      )}
+      {onReceiveNearby && (
+        <PrivacyActionButton
+          icon="phone-portrait"
+          label="Receive"
+          color={P01Colors.pink}
+          dimColor={P01Colors.pinkDim}
+          onPress={onReceiveNearby}
+        />
+      )}
     </Animated.View>
   );
 }

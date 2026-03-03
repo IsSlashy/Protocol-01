@@ -17,7 +17,6 @@
 
 import { Platform } from 'react-native';
 import { Asset } from 'expo-asset';
-import * as FileSystem from 'expo-file-system';
 
 export type CircuitType = 'pool' | 'transfer';
 
@@ -60,6 +59,17 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 }
 
 /**
+ * Read a local file URI as base64 via fetch + arrayBuffer.
+ * Works with both file:// URIs and content:// URIs.
+ */
+async function readFileAsBase64(uri: string): Promise<string> {
+  const response = await fetch(uri);
+  if (!response.ok) throw new Error(`fetch failed for ${uri}: ${response.status}`);
+  const buf = await response.arrayBuffer();
+  return arrayBufferToBase64(buf);
+}
+
+/**
  * Try loading via Expo Asset system (works with native builds).
  */
 async function loadViaExpoAsset(circuit: CircuitType): Promise<{ wasmBase64: string; zkeyBase64: string }> {
@@ -75,9 +85,10 @@ async function loadViaExpoAsset(circuit: CircuitType): Promise<{ wasmBase64: str
 
   console.log(`[CircuitLoader] Expo assets (${circuit}): wasm=${wasmAsset.localUri}, zkey=${zkeyAsset.localUri}`);
 
+  // Use fetch instead of deprecated FileSystem.readAsStringAsync
   const [wasmB64, zkeyB64] = await Promise.all([
-    FileSystem.readAsStringAsync(wasmAsset.localUri, { encoding: 'base64' as any }),
-    FileSystem.readAsStringAsync(zkeyAsset.localUri, { encoding: 'base64' as any }),
+    readFileAsBase64(wasmAsset.localUri),
+    readFileAsBase64(zkeyAsset.localUri),
   ]);
 
   return { wasmBase64: wasmB64, zkeyBase64: zkeyB64 };
