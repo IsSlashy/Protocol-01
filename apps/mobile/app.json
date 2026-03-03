@@ -2,7 +2,7 @@
   "expo": {
     "name": "Protocol 01",
     "slug": "protocol-01",
-    "version": "0.1.1",
+    "version": "0.5.1",
     "orientation": "portrait",
     "scheme": "p01",
     "userInterfaceStyle": "dark",
@@ -37,7 +37,6 @@
       "package": "com.protocol01.app",
       "permissions": [
         "USE_BIOMETRIC",
-        "USE_FINGERPRINT",
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_SCAN",
@@ -45,12 +44,7 @@
         "BLUETOOTH_ADVERTISE",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT",
-        "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.RECORD_AUDIO",
+        "RECORD_AUDIO",
         "NFC"
       ]
     },

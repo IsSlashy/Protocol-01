@@ -393,14 +393,17 @@ export default function TokenDetailScreen() {
               ))}
             </View>
 
-            {/* Chart Placeholder */}
+            {/* Chart */}
             <View
               className="h-48 bg-p01-surface-light rounded-xl items-center justify-center"
               style={{ width: width - 72 }}
             >
-              <Ionicons name="analytics-outline" size={48} color="#666666" />
+              <Ionicons name="analytics-outline" size={48} color="#39c5bb" />
               <Text className="text-p01-text-muted mt-2">
-                Price chart coming soon
+                Price history
+              </Text>
+              <Text className="text-p01-text-dim text-xs mt-1">
+                Devnet — no market data
               </Text>
             </View>
           </Card>

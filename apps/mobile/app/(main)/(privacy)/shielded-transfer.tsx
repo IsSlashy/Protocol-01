@@ -67,7 +67,7 @@ export default function ShieldedTransferScreen() {
   };
 
   const handleScan = () => {
-    Alert.alert('Coming Soon', 'QR code scanning will be available in a future update.');
+    Alert.alert('QR Scanner', 'QR code scanning will be available in a future update. Please paste the address manually.');
   };
 
   const handleSetMax = () => {
