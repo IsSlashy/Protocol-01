@@ -35,13 +35,13 @@ describe('CTA -- Download section and conversion funnel', () => {
 
     it('displays Android APK file details with size', () => {
       expect(screen.getByText(/Instant Download APK/)).toBeInTheDocument();
-      expect(screen.getByText(/240 MB/)).toBeInTheDocument();
+      expect(screen.getByText(/218 MB/)).toBeInTheDocument();
     });
 
     it('links to the correct Android APK file', () => {
       const androidLink = screen.getByText('Android').closest('a');
-      expect(androidLink).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01/releases/download/v0.3.0/P01-Mobile-v0.4.apk');
-      expect(androidLink).toHaveAttribute('download', 'P01-Mobile-v0.4.apk');
+      expect(androidLink).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01/releases/download/v0.4.0/P01-Mobile-v0.5.1.apk');
+      expect(androidLink).toHaveAttribute('download', 'P01-Mobile-v0.5.1.apk');
     });
 
     it('renders the Chrome Extension download option', () => {
@@ -50,13 +50,13 @@ describe('CTA -- Download section and conversion funnel', () => {
 
     it('displays Chrome Extension file details with size', () => {
       expect(screen.getByText(/Instant Download ZIP/)).toBeInTheDocument();
-      expect(screen.getByText(/9\.6 MB/)).toBeInTheDocument();
+      expect(screen.getByText(/10 MB/)).toBeInTheDocument();
     });
 
     it('links to the correct Chrome Extension ZIP file', () => {
       const chromeLink = screen.getByText('Chrome Extension').closest('a');
-      expect(chromeLink).toHaveAttribute('href', '/downloads/P01-Extension-v0.2.0.zip');
-      expect(chromeLink).toHaveAttribute('download', 'P01-Extension-v0.2.0.zip');
+      expect(chromeLink).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01/releases/download/v0.4.0/P01-Extension-v0.3.0.zip');
+      expect(chromeLink).toHaveAttribute('download', 'P01-Extension-v0.3.0.zip');
     });
   });
 
