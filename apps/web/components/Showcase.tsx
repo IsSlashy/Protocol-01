@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence, useInView } from "framer-motion";
 import { useState, useEffect, useRef } from "react";
-import { Wallet, Shield, Bot, Radio, Check } from "lucide-react";
+import { Wallet, Shield, Bot, Radio, Check, Layers, Lock } from "lucide-react";
 
 const screens = [
   {
@@ -102,6 +102,56 @@ const screens = [
         { label: "Monthly", value: "9.99", accent: false },
         { label: "Noise", value: "\u00b118%", accent: true },
         { label: "Next", value: "3d 7h", accent: false },
+      ],
+    },
+  },
+  {
+    id: "denominated",
+    icon: Layers,
+    title: "Denominated Pools",
+    subtitle: "Fixed-denomination privacy",
+    color: "#ff77a8",
+    description:
+      "Deposit exact denominations into privacy pools. All notes share the same value, making deposits and withdrawals completely unlinkable. Share notes peer-to-peer via BLE or NFC.",
+    highlights: [
+      "Fixed denominations (0.1/1/10/100 SOL)",
+      "USDC pools (1/10/100/1000)",
+      "P2P note sharing (BLE + NFC)",
+      "Epoch-based maturity protection",
+    ],
+    visual: {
+      topLabel: "DENOMINATED POOL",
+      centerValue: "1 SOL",
+      centerSuffix: "",
+      items: [
+        { label: "Notes", value: "32K", accent: true },
+        { label: "Epoch", value: "Mature", accent: true },
+        { label: "Pool", value: "Active", accent: false },
+      ],
+    },
+  },
+  {
+    id: "confidential",
+    icon: Lock,
+    title: "Confidential Balances",
+    subtitle: "Quantum-resistant zkSPL",
+    color: "#00ffe5",
+    description:
+      "Account-model confidential tokens using Poseidon hash commitments. Balances are hidden on-chain while remaining fully functional. Quantum-resistant by design.",
+    highlights: [
+      "Poseidon hash commitments",
+      "Quantum-resistant cryptography",
+      "Balance proof: prove balance >= threshold",
+      "Account-model (no UTXO management)",
+    ],
+    visual: {
+      topLabel: "CONFIDENTIAL BALANCE",
+      centerValue: "HIDDEN",
+      centerSuffix: "",
+      items: [
+        { label: "Balance", value: "***", accent: true },
+        { label: "Proof", value: "Valid", accent: true },
+        { label: "Quantum", value: "Safe", accent: true },
       ],
     },
   },

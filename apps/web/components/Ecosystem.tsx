@@ -303,8 +303,8 @@ function Ecosystem() {
         >
           {[
             { value: "24+", label: "Technologies" },
-            { value: "6", label: "On-chain Programs" },
-            { value: "3", label: "Client SDKs" },
+            { value: "7", label: "On-chain Programs" },
+            { value: "4", label: "Client SDKs" },
             { value: "100%", label: "Open Source" },
           ].map((s) => (
             <div key={s.label} className="text-center">

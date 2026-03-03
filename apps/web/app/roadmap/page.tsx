@@ -135,6 +135,42 @@ const roadmap: RoadmapPhase[] = [
           "Shield and unshield in ~3 seconds total via filledSubtrees optimization. Rust native Groth16 prover generates proofs 10x faster than snarkjs.",
         icon: <Shield className="w-5 h-5" />,
       },
+      {
+        title: "On-Chain Smart Contracts",
+        description:
+          "7 on-chain Solana programs deployed to devnet. Trustless, permissionless privacy — no server required for core operations.",
+        icon: <Code className="w-5 h-5" />,
+      },
+      {
+        title: "Advanced Privacy (Decoy Transactions + Noise)",
+        description:
+          "Amount noise (\u00b120% variation) and timing noise (\u00b124h delay) to defeat chain analysis heuristics. Multiple privacy levels from standard to maximum.",
+        icon: <Lock className="w-5 h-5" />,
+      },
+      {
+        title: "Denominated Pools",
+        description:
+          "Tornado Cash-style fixed-denomination privacy pools for SOL and USDC. Epoch-based maturity, PDA-per-nullifier, 32K notes per pool. P2P note sharing via BLE and NFC.",
+        icon: <Layers className="w-5 h-5" />,
+      },
+      {
+        title: "Confidential Balances (zkSPL)",
+        description:
+          "Account-model confidential tokens using Poseidon hash commitments. Quantum-resistant privacy with balance proofs. Full SDK, on-chain program, and mobile/extension integration.",
+        icon: <Lock className="w-5 h-5" />,
+      },
+      {
+        title: "Subscription Vaults",
+        description:
+          "On-chain recurring payment vaults with configurable intervals. Normal and ZK-private subscriber modes. Auto-pause on insufficient funds, retailer claim periods.",
+        icon: <Radio className="w-5 h-5" />,
+      },
+      {
+        title: "P2P Note Sharing (BLE + NFC)",
+        description:
+          "Share denominated pool notes between devices using BLE (ECDH encrypted) or NFC (HCE with PIN-derived encryption). Anti-MITM fingerprint verification.",
+        icon: <Wallet className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -144,28 +180,28 @@ const roadmap: RoadmapPhase[] = [
     subtitle: "Actively building",
     items: [
       {
-        title: "On-Chain Smart Contracts",
-        description:
-          "Replace the backend relayer with fully on-chain Solana programs. Trustless, permissionless privacy — no server required.",
-        icon: <Code className="w-5 h-5" />,
-      },
-      {
         title: "P-01 Internal Network Mapping",
         description:
           "Map internal transaction flows to optimize privacy routing and reduce on-chain fingerprinting across the P-01 network.",
         icon: <Globe className="w-5 h-5" />,
       },
       {
-        title: "Advanced Privacy (Decoy Transactions + Noise)",
-        description:
-          "Configurable decoy transactions and timing noise to defeat chain analysis heuristics. Multiple privacy levels from standard to maximum.",
-        icon: <Lock className="w-5 h-5" />,
-      },
-      {
         title: "Fiat On-Ramp (Buy Crypto)",
         description:
           "Buy SOL, USDC, and USDT with credit card or bank transfer. Direct fiat-to-crypto without leaving the app.",
         icon: <CreditCard className="w-5 h-5" />,
+      },
+      {
+        title: "Mainnet Audit",
+        description:
+          "Comprehensive security audit of all 7 on-chain programs, ZK circuits, and client SDKs before mainnet deployment.",
+        icon: <Shield className="w-5 h-5" />,
+      },
+      {
+        title: "DeFi Composability",
+        description:
+          "Enable confidential balances and shielded pools to interact with Solana DeFi protocols. Composable privacy for lending, swapping, and staking.",
+        icon: <Layers className="w-5 h-5" />,
       },
     ],
   },
