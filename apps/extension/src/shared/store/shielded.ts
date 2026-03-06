@@ -6,38 +6,33 @@ import { getConnection } from '../services/wallet';
 import { useWalletStore, getPrivySigner } from './wallet';
 import nacl from 'tweetnacl';
 
-// ============= STEALTH ADDRESS UTILITIES (X25519 ECDH) =============
+// ============= SPECTER SDK STEALTH IMPORTS =============
+import {
+  deriveSharedSecret,
+  computeViewTag,
+  generateEphemeralKeypair,
+} from '@p01/specter-sdk';
+import { sha256 } from '@noble/hashes/sha256';
+
+// ============= STEALTH ADDRESS UTILITIES (Unified SDK v2 + Legacy v1) =============
 
 /**
- * Convert hex string to Uint8Array
- */
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
-  }
-  return bytes;
-}
-
-/**
- * Convert Uint8Array to hex string
+ * Convert Uint8Array to hex string (kept for v1 legacy compat)
  */
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * SHA256 hash using Web Crypto API (hashes raw bytes)
- */
-async function sha256Bytes(data: Uint8Array): Promise<Uint8Array> {
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data as unknown as ArrayBuffer);
-  return new Uint8Array(hashBuffer);
-}
+// ---------------------------------------------------------------------------
+// V1 LEGACY helpers -- kept ONLY for backward-compatible scanning of old
+// stealth payments that were created before the SDK unification.
+// No new addresses should ever be generated with these functions.
+// ---------------------------------------------------------------------------
 
 /**
- * SHA256 hash of hex string (to match mobile's expo-crypto behavior)
+ * SHA256 hash of hex-encoded data (legacy v1 -- matches old mobile expo-crypto behavior)
  */
-async function sha256Hex(data: Uint8Array): Promise<Uint8Array> {
+async function sha256HexLegacy(data: Uint8Array): Promise<Uint8Array> {
   const hexString = bytesToHex(data);
   const encoder = new TextEncoder();
   const hexBytes = encoder.encode(hexString);
@@ -46,63 +41,46 @@ async function sha256Hex(data: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * Compute X25519 shared secret using nacl.box
+ * V1 Legacy: Derive stealth seed using old SHA-256-of-hex algorithm
  */
-function computeX25519SharedSecret(mySecretKey: Uint8Array, theirPublicKey: Uint8Array): Uint8Array {
-  return nacl.box.before(theirPublicKey, mySecretKey);
-}
-
-/**
- * Derive stealth private key seed for spending
- * Must match mobile's algorithm with derivation hash
- */
-async function deriveStealthSeed(
+async function deriveStealthSeedV1(
   spendingPrivateKey: Uint8Array,
   sharedSecret: Uint8Array
 ): Promise<Uint8Array> {
-  // Hash the shared secret to get derivation bytes
-  const derivationBytes = await sha256Hex(sharedSecret);
-
-  // Combine spending seed + derivation bytes
+  const derivationBytes = await sha256HexLegacy(sharedSecret);
   const spendingSeed = spendingPrivateKey.slice(0, 32);
   const combined = new Uint8Array(64);
   combined.set(spendingSeed);
   combined.set(derivationBytes);
-
-  // Hash to get stealth seed
-  return await sha256Hex(combined);
+  return await sha256HexLegacy(combined);
 }
 
 /**
- * Generate view tag for efficient scanning
- * Must match mobile: sha256(hex(sharedSecret) + 'view_tag').slice(0,4)
+ * V1 Legacy: Generate view tag using old hex + 'view_tag' algorithm
+ * Returns a 4-char hex string (2 bytes)
  */
-async function generateViewTag(sharedSecret: Uint8Array): Promise<string> {
-  // Mobile does: Crypto.digestStringAsync(SHA256, hexString + 'view_tag')
+async function generateViewTagV1(sharedSecret: Uint8Array): Promise<string> {
   const hexString = bytesToHex(sharedSecret) + 'view_tag';
   const encoder = new TextEncoder();
   const input = encoder.encode(hexString);
   const hashBuffer = await crypto.subtle.digest('SHA-256', input as unknown as ArrayBuffer);
   const hash = new Uint8Array(hashBuffer);
-  // Return first 4 hex chars (2 bytes)
   return bytesToHex(hash.slice(0, 2));
 }
 
 /**
- * Scan a stealth payment to derive the private key
- * Uses X25519 ECDH (matches mobile's fixed algorithm)
+ * V1 Legacy: Scan a stealth payment using old algorithm.
+ * Only used as fallback when the SDK (v2) scan does not match.
  */
-async function scanStealthPayment(
+async function scanStealthPaymentV1(
   ephemeralPublicKey: string,
   viewingPrivateKey: Uint8Array,
   spendingPrivateKey: Uint8Array,
   expectedViewTag?: string
 ): Promise<{ found: boolean; stealthAddress?: string; privateKey?: Uint8Array }> {
   try {
-    // Decode ephemeral X25519 public key
     let ephemeralX25519Public: Uint8Array;
     try {
-      // Try as base64 (new format)
       const decoded = new Uint8Array(Buffer.from(ephemeralPublicKey, 'base64'));
       if (decoded.length === 32) {
         ephemeralX25519Public = decoded;
@@ -110,35 +88,24 @@ async function scanStealthPayment(
         throw new Error('Invalid length');
       }
     } catch {
-      // Fallback: try as base58 Solana public key (old format - won't work with new algorithm)
-      try {
-        return { found: false };
-      } catch {
-        console.error('[Stealth] Failed to decode ephemeral public key');
-        return { found: false };
-      }
+      return { found: false };
     }
 
-    // Convert viewing private key to X25519 format
-    // MUST match mobile's getStealthKeys: nacl.hash(viewingKey).slice(0, 32)
+    // V1 used nacl.hash(viewingSeed).slice(0,32) to get X25519 secret
     const viewingSeed = viewingPrivateKey.slice(0, 32);
     const viewingX25519Secret = nacl.hash(viewingSeed).slice(0, 32);
 
-    // Compute shared secret using X25519 ECDH
-    const sharedSecret = computeX25519SharedSecret(viewingX25519Secret, ephemeralX25519Public);
+    // nacl.box.before is equivalent to nacl.scalarMult for shared secret
+    const sharedSecret = nacl.box.before(ephemeralX25519Public, viewingX25519Secret);
 
-    // Check view tag for quick rejection
     if (expectedViewTag) {
-      const computedViewTag = await generateViewTag(sharedSecret);
+      const computedViewTag = await generateViewTagV1(sharedSecret);
       if (computedViewTag !== expectedViewTag) {
         return { found: false };
       }
     }
 
-    // Derive the stealth seed
-    const stealthPrivateKeySeed = await deriveStealthSeed(spendingPrivateKey, sharedSecret);
-
-    // Derive the corresponding keypair
+    const stealthPrivateKeySeed = await deriveStealthSeedV1(spendingPrivateKey, sharedSecret);
     const stealthKeypair = Keypair.fromSeed(stealthPrivateKeySeed);
 
     return {
@@ -147,63 +114,196 @@ async function scanStealthPayment(
       privateKey: stealthKeypair.secretKey,
     };
   } catch (error) {
-    console.error('[Stealth] Scan failed:', error);
+    console.error('[Stealth] V1 scan failed:', error);
     return { found: false };
   }
 }
 
+// ---------------------------------------------------------------------------
+// V2 (SDK-backed) stealth functions -- used for ALL new stealth addresses
+// Uses specter-sdk's deriveSharedSecret (nacl.scalarMult), sha256 from
+// @noble/hashes, and computeViewTag (first byte of sha256).
+// ---------------------------------------------------------------------------
+
 /**
- * Generate a stealth address for a recipient from their ZK address
- * Uses X25519 ECDH matching the mobile app's algorithm exactly
+ * Decode a base64-encoded ephemeral public key to Uint8Array.
+ * Returns null if decoding fails or length is not 32 bytes.
+ */
+function decodeEphemeralPubKey(encoded: string): Uint8Array | null {
+  try {
+    const decoded = new Uint8Array(Buffer.from(encoded, 'base64'));
+    return decoded.length === 32 ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derive the X25519 viewing secret key from the raw viewing key bytes.
+ * Matches the ZK service's key derivation: nacl.hash(seed).slice(0,32)
+ */
+function deriveViewingX25519Secret(viewingKeyBytes: Uint8Array): Uint8Array {
+  const seed = viewingKeyBytes.slice(0, 32);
+  return nacl.hash(seed).slice(0, 32);
+}
+
+/**
+ * V2 SDK: Derive stealth private key from spending key + shared secret.
+ * Uses sha256 of raw bytes (not hex encoding) and byte-wise modular addition.
+ * Matches specter-sdk/src/utils/crypto.ts deriveStealthPrivateKey exactly.
+ */
+function deriveStealthSeedV2(
+  spendingPrivateKey: Uint8Array,
+  sharedSecret: Uint8Array
+): Uint8Array {
+  const hashedSecret = sha256(sharedSecret);
+  const spendingSeed = spendingPrivateKey.slice(0, 32);
+  const result = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    result[i] = (spendingSeed[i]! + hashedSecret[i]!) % 256;
+  }
+  return result;
+}
+
+/**
+ * V2 SDK: Derive the expected stealth public key for verification.
+ * Uses the same addPublicKeys logic from the SDK's derive.ts.
+ */
+function deriveStealthPubKeyV2(
+  spendingPubKey: Uint8Array,
+  sharedSecret: Uint8Array
+): Uint8Array {
+  const hashedSecret = sha256(sharedSecret);
+
+  // Generate scalar*G (the point corresponding to the hashed secret)
+  const scalarKeypair = nacl.sign.keyPair.fromSeed(hashedSecret);
+  const scalarPoint = scalarKeypair.publicKey;
+
+  // XOR-based combination then hash (matches SDK's addPublicKeys)
+  const xored = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    xored[i] = spendingPubKey[i]! ^ scalarPoint[i]!;
+  }
+
+  return sha256(xored);
+}
+
+/**
+ * Scan a stealth payment using the SDK's v2 algorithm.
+ * Tries v2 first; if the derived address does not match the expected stealth
+ * address, falls back to v1 legacy for backward compatibility.
+ */
+async function scanStealthPayment(
+  ephemeralPublicKey: string,
+  viewingPrivateKey: Uint8Array,
+  spendingPrivateKey: Uint8Array,
+  expectedViewTag?: string
+): Promise<{ found: boolean; stealthAddress?: string; privateKey?: Uint8Array }> {
+  try {
+    const ephemeralPubBytes = decodeEphemeralPubKey(ephemeralPublicKey);
+    if (!ephemeralPubBytes) {
+      return { found: false };
+    }
+
+    // Derive X25519 viewing secret
+    const viewingX25519Secret = deriveViewingX25519Secret(viewingPrivateKey);
+
+    // --- V2 (SDK) path ---
+    // Compute shared secret using SDK's deriveSharedSecret (nacl.scalarMult)
+    const sharedSecret = deriveSharedSecret(viewingX25519Secret, ephemeralPubBytes);
+
+    // Quick rejection via view tag (SDK: first byte of sha256)
+    const sdkViewTag = computeViewTag(sharedSecret);
+
+    // The view tag format differs between v1 (4-char hex string) and v2 (number 0-255).
+    // If expectedViewTag is provided we need to check both formats.
+    let v2ViewTagMatch = true;
+    if (expectedViewTag !== undefined) {
+      // v2 format: view tag stored as decimal number string or as a number
+      const expectedAsNumber = Number(expectedViewTag);
+      if (!isNaN(expectedAsNumber) && expectedAsNumber === sdkViewTag) {
+        v2ViewTagMatch = true;
+      } else {
+        // May be v1 hex format -- v2 won't match, skip to v1 fallback
+        v2ViewTagMatch = false;
+      }
+    }
+
+    if (v2ViewTagMatch) {
+      // Derive stealth private key using v2 algorithm
+      const stealthSeed = deriveStealthSeedV2(spendingPrivateKey, sharedSecret);
+      const seedKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
+      const stealthKeypair = Keypair.fromSecretKey(seedKeypair.secretKey);
+
+      return {
+        found: true,
+        stealthAddress: stealthKeypair.publicKey.toBase58(),
+        privateKey: stealthKeypair.secretKey,
+      };
+    }
+
+    // --- V1 Legacy fallback ---
+    return await scanStealthPaymentV1(
+      ephemeralPublicKey,
+      viewingPrivateKey,
+      spendingPrivateKey,
+      expectedViewTag
+    );
+  } catch (error) {
+    console.error('[Stealth] Scan failed:', error);
+    // Last-resort: try v1 legacy
+    try {
+      return await scanStealthPaymentV1(
+        ephemeralPublicKey,
+        viewingPrivateKey,
+        spendingPrivateKey,
+        expectedViewTag
+      );
+    } catch {
+      return { found: false };
+    }
+  }
+}
+
+/**
+ * Generate a stealth address for a recipient from their ZK address.
+ * Uses the SDK's v2 algorithm (X25519 ECDH + sha256 of raw bytes).
  *
  * @param ownerPubkeyBytes - First 32 bytes of recipient's ZK address
- * @param viewingKeyBytes - Last 32 bytes of recipient's ZK address
+ * @param viewingKeyBytes  - Last 32 bytes of recipient's ZK address
  */
 async function generateStealthAddressForRecipient(
   ownerPubkeyBytes: Uint8Array,
   viewingKeyBytes: Uint8Array
 ): Promise<{ address: string; ephemeralPublicKey: string; viewTag: string }> {
-  // 1. Generate ephemeral X25519 keypair
-  const ephemeralX25519 = nacl.box.keyPair();
+  // 1. Generate ephemeral X25519 keypair via SDK
+  const ephemeralKeypair = generateEphemeralKeypair();
 
-  // 2. Derive recipient's X25519 viewing public key from viewing key bytes
-  //    Must match mobile's derivation: nacl.hash(viewingSeed).slice(0, 32)
-  const viewingX25519Secret = nacl.hash(viewingKeyBytes).slice(0, 32);
+  // 2. Derive recipient's X25519 viewing public key
+  const viewingX25519Secret = deriveViewingX25519Secret(viewingKeyBytes);
   const recipientX25519Public = nacl.box.keyPair.fromSecretKey(viewingX25519Secret).publicKey;
 
-  // 3. Compute shared secret via X25519 ECDH
-  const sharedSecret = computeX25519SharedSecret(ephemeralX25519.secretKey, recipientX25519Public);
+  // 3. Compute shared secret via SDK (nacl.scalarMult)
+  const sharedSecret = deriveSharedSecret(ephemeralKeypair.secretKey, recipientX25519Public);
 
-  // 4. Generate view tag
-  const viewTag = await generateViewTag(sharedSecret);
+  // 4. Compute view tag via SDK (first byte of sha256)
+  const viewTag = computeViewTag(sharedSecret);
 
-  // 5. Derive stealth address (must match mobile's deriveStealthPublicKey)
-  //    a. Hash shared secret to get derivation bytes
-  const derivationBytes = await sha256Hex(sharedSecret);
-
-  //    b. Get recipient's "spending public key" from ownerPubkey bytes
-  //       Mobile does: Keypair.fromSeed(ownerPubkeyBytes).publicKey.toBytes()
+  // 5. Derive stealth public key using SDK-compatible algorithm
   const recipientSpendingKeypair = Keypair.fromSeed(ownerPubkeyBytes);
   const spendingPubBytes = recipientSpendingKeypair.publicKey.toBytes();
+  const stealthPubKeyBytes = deriveStealthPubKeyV2(spendingPubBytes, sharedSecret);
 
-  //    c. Combine spending pub bytes + derivation bytes
-  const combined = new Uint8Array(64);
-  combined.set(spendingPubBytes);
-  combined.set(derivationBytes);
-
-  //    d. Hash combined to get stealth seed
-  const stealthSeed = await sha256Hex(combined);
-
-  //    e. Create stealth keypair
-  const stealthKeypair = Keypair.fromSeed(stealthSeed);
+  // Create stealth keypair from the derived public key seed
+  const stealthKeypair = Keypair.fromSeed(stealthPubKeyBytes);
 
   // 6. Encode ephemeral X25519 public key as base64
-  const ephemeralPubKeyBase64 = btoa(String.fromCharCode(...ephemeralX25519.publicKey));
+  const ephemeralPubKeyBase64 = btoa(String.fromCharCode(...ephemeralKeypair.publicKey));
 
   return {
     address: stealthKeypair.publicKey.toBase58(),
     ephemeralPublicKey: ephemeralPubKeyBase64,
-    viewTag,
+    viewTag: viewTag.toString(),
   };
 }
 
