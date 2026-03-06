@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogOut, X } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
+import { getLockoutRemaining } from '@/shared/services/crypto';
 import GlitchLogo from '../components/GlitchLogo';
 import { cn } from '@/shared/utils';
 
@@ -21,12 +22,50 @@ export default function Unlock() {
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [lockoutSeconds, setLockoutSeconds] = useState(0);
+  const lockoutTimer = useRef<number | null>(null);
+
+  const isLockedOut = lockoutSeconds > 0;
+
+  // Check lockout on mount and after failed attempts
+  const refreshLockout = useCallback(async () => {
+    const remaining = await getLockoutRemaining();
+    const secs = Math.ceil(remaining / 1000);
+    setLockoutSeconds(secs);
+
+    // Clear any existing timer
+    if (lockoutTimer.current) {
+      clearInterval(lockoutTimer.current);
+      lockoutTimer.current = null;
+    }
+
+    if (secs > 0) {
+      lockoutTimer.current = window.setInterval(async () => {
+        const r = await getLockoutRemaining();
+        const s = Math.ceil(r / 1000);
+        setLockoutSeconds(s);
+        if (s <= 0 && lockoutTimer.current) {
+          clearInterval(lockoutTimer.current);
+          lockoutTimer.current = null;
+        }
+      }, 1000);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshLockout();
+    return () => {
+      if (lockoutTimer.current) clearInterval(lockoutTimer.current);
+    };
+  }, [refreshLockout]);
 
   const handleUnlock = async () => {
     if (!password) {
       setLocalError('Please enter your password');
       return;
     }
+
+    if (isLockedOut) return;
 
     setLocalError('');
     clearError();
@@ -47,7 +86,11 @@ export default function Unlock() {
       }
       navigate('/');
     } else {
-      setLocalError('Invalid password');
+      // Refresh lockout state — the store may have recorded a new failed attempt
+      await refreshLockout();
+      if (!isLockedOut) {
+        setLocalError('Invalid password');
+      }
     }
   };
 
@@ -118,8 +161,18 @@ export default function Unlock() {
             </button>
           </div>
 
+          {/* Lockout warning */}
+          {isLockedOut && (
+            <div className="flex items-center gap-2 p-3 bg-orange-500/10 border border-orange-500/30 text-orange-400">
+              <Lock className="w-4 h-4 flex-shrink-0" />
+              <span className="text-xs font-mono">
+                Too many failed attempts. Try again in {lockoutSeconds}s
+              </span>
+            </div>
+          )}
+
           {/* Error */}
-          {(localError || error) && (
+          {!isLockedOut && (localError || error) && (
             <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs font-mono">{localError || error}</span>
@@ -129,10 +182,10 @@ export default function Unlock() {
           {/* Unlock Button */}
           <button
             onClick={handleUnlock}
-            disabled={isLoading || !password}
+            disabled={isLoading || !password || isLockedOut}
             className={cn(
               'w-full py-3 font-display font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
-              isLoading || !password
+              isLoading || !password || isLockedOut
                 ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
                 : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
             )}
@@ -142,6 +195,8 @@ export default function Unlock() {
                 <Loader2 className="w-4 h-4 animate-spin" />
                 UNLOCKING...
               </>
+            ) : isLockedOut ? (
+              `LOCKED (${lockoutSeconds}s)`
             ) : (
               'UNLOCK'
             )}

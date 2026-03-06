@@ -119,3 +119,78 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   const newHash = await hashPassword(password);
   return newHash === hash;
 }
+
+// --- Brute-force protection ---
+
+const UNLOCK_ATTEMPTS_KEY = 'p01_unlock_attempts';
+const UNLOCK_LOCKOUT_KEY = 'p01_unlock_lockout_until';
+
+interface UnlockAttemptData {
+  count: number;
+  lockoutUntil: number; // epoch ms, 0 = no lockout
+}
+
+/**
+ * Progressive lockout thresholds matching mobile:
+ * 5 fails → 30s, 8 fails → 60s, 10 fails → 300s
+ */
+function getLockoutDuration(attempts: number): number {
+  if (attempts >= 10) return 300_000;
+  if (attempts >= 8) return 60_000;
+  if (attempts >= 5) return 30_000;
+  return 0;
+}
+
+async function getAttemptData(): Promise<UnlockAttemptData> {
+  try {
+    const result = await chrome.storage.local.get([UNLOCK_ATTEMPTS_KEY, UNLOCK_LOCKOUT_KEY]);
+    return {
+      count: result[UNLOCK_ATTEMPTS_KEY] ?? 0,
+      lockoutUntil: result[UNLOCK_LOCKOUT_KEY] ?? 0,
+    };
+  } catch {
+    return { count: 0, lockoutUntil: 0 };
+  }
+}
+
+/**
+ * Returns remaining lockout time in milliseconds. 0 means no lockout.
+ */
+export async function getLockoutRemaining(): Promise<number> {
+  const data = await getAttemptData();
+  if (data.lockoutUntil <= 0) return 0;
+  const remaining = data.lockoutUntil - Date.now();
+  return remaining > 0 ? remaining : 0;
+}
+
+/**
+ * Get current failed attempt count.
+ */
+export async function getUnlockAttempts(): Promise<number> {
+  const data = await getAttemptData();
+  return data.count;
+}
+
+/**
+ * Record a failed unlock attempt. Returns the lockout duration imposed (ms), 0 if none.
+ */
+export async function recordFailedAttempt(): Promise<number> {
+  const data = await getAttemptData();
+  const newCount = data.count + 1;
+  const lockoutMs = getLockoutDuration(newCount);
+  const lockoutUntil = lockoutMs > 0 ? Date.now() + lockoutMs : 0;
+
+  await chrome.storage.local.set({
+    [UNLOCK_ATTEMPTS_KEY]: newCount,
+    [UNLOCK_LOCKOUT_KEY]: lockoutUntil,
+  });
+
+  return lockoutMs;
+}
+
+/**
+ * Reset unlock attempts on successful unlock.
+ */
+export async function resetUnlockAttempts(): Promise<void> {
+  await chrome.storage.local.remove([UNLOCK_ATTEMPTS_KEY, UNLOCK_LOCKOUT_KEY]);
+}

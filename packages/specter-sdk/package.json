@@ -79,6 +79,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
+    "@noble/curves": "^1.9.0",
     "@noble/hashes": "^1.7.1",
     "@noble/post-quantum": "^0.2.1",
     "@solana/spl-token": "^0.4.14",
