@@ -180,7 +180,7 @@ describe('Key Derivation Utilities -- BIP32/BIP44 for Solana', () => {
   describe('Key Format Conversions', () => {
     it('should extract public key string from keypair', () => {
       const kp = Keypair.generate();
-      const pubStr = getPublicKeyString(kp);
+      const pubStr = getPublicKeyString(kp as any);
       expect(typeof pubStr).toBe('string');
       expect(pubStr.length).toBeGreaterThan(0);
     });

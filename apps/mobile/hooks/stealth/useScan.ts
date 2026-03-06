@@ -62,7 +62,9 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
   const [error, setError] = useState<Error | null>(null);
 
   const scanAbortRef = useRef(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
+  const isScanningRef = useRef(false);
+  const startScanRef = useRef<(fromBlock?: number) => Promise<ScanResult | null>>(null as any);
 
   const { stealthMetaAddress, getViewingPrivateKey } = useStealth();
   const { isConnected, provider, chainId } = useNetwork();
@@ -140,6 +142,7 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
     }
 
     setIsScanning(true);
+    isScanningRef.current = true;
     setError(null);
     scanAbortRef.current = false;
 
@@ -207,6 +210,7 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
       return null;
     } finally {
       setIsScanning(false);
+      isScanningRef.current = false;
       setProgress(null);
     }
   }, [
@@ -221,6 +225,9 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
     setSavedLastBlock,
   ]);
 
+  // Keep ref in sync so the interval closure always calls the latest version
+  startScanRef.current = startScan;
+
   const stopScan = useCallback(() => {
     scanAbortRef.current = true;
   }, []);
@@ -231,26 +238,17 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
     setError(null);
 
     try {
-      // In real implementation:
-      // 1. Derive the spending key for this stealth address
-      // 2. Create transaction to transfer funds from stealth address
-      // 3. Sign and broadcast transaction
-
-      // Placeholder - simulate claim
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      const claimTxHash = '0x' + Math.random().toString(16).slice(2).padEnd(64, '0');
-
-      // Update payment status
-      const updatedPayments = payments.map(p =>
-        p.id === payment.id
-          ? { ...p, claimed: true, claimTxHash }
-          : p
-      );
-      setPayments(updatedPayments);
-      await setCachedPayments(updatedPayments);
-
-      return claimTxHash;
+      // Claim flow using the specter-sdk:
+      // 1. Derive the stealth private key from viewing + spending keys
+      //    via deriveStealthPrivateKey(spendingPubKey, viewingPrivateKey, ephemeralPubKey)
+      // 2. Build an Ed25519 claim proof: the stealth private key signs a
+      //    deterministic challenge = SHA-256("p01:claim:v1" || stealthAddr || spendingKey)
+      //    using buildClaimProof(stealthKeypair, spendingPubKey) from @p01/specter-sdk
+      // 3. Submit the claim_stealth instruction with the 64-byte signature
+      //
+      // TODO: Wire up Solana connection and wallet keys from the mobile
+      // stealth key provider once the full SDK integration is in place.
+      throw new Error('Claim not yet wired to Solana SDK — see buildClaimProof in @p01/specter-sdk');
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to claim payment'));
       return null;
@@ -264,19 +262,19 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
     }
   }, [cachedPayments]);
 
-  // Auto-scan on interval
+  // Auto-scan on interval (uses refs to avoid re-subscribing on every state change)
   useEffect(() => {
     if (!autoScan || !stealthMetaAddress || !isConnected) {
       return;
     }
 
     // Initial scan
-    startScan();
+    startScanRef.current();
 
     // Set up interval
     intervalRef.current = setInterval(() => {
-      if (!isScanning) {
-        startScan();
+      if (!isScanningRef.current) {
+        startScanRef.current();
       }
     }, scanInterval);
 
@@ -285,7 +283,7 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
         clearInterval(intervalRef.current);
       }
     };
-  }, [autoScan, stealthMetaAddress, isConnected, scanInterval, isScanning, startScan]);
+  }, [autoScan, stealthMetaAddress, isConnected, scanInterval]);
 
   return {
     isScanning,

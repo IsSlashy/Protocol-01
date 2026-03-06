@@ -47,7 +47,7 @@ export async function deriveKeypairFromMnemonic(
 
     // Derive path for account
     const path = getDerivationPath(accountIndex);
-    const derived = derivePath(path, seed.toString('hex'));
+    const derived = derivePath(path, Buffer.from(seed).toString('hex'));
 
     // Create Solana keypair
     const keypair = Keypair.fromSeed(derived.key);

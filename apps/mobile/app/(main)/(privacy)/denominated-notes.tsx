@@ -206,8 +206,17 @@ export default function DenominatedNotesScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
         'Note Exported',
-        'Note backup copied to clipboard. Store it safely — it contains your private keys.',
+        'Note backup copied to clipboard. Store it safely — it contains your private keys. Clipboard will be cleared in 60 seconds.',
       );
+      // Security: Auto-clear clipboard after 60 seconds (contains private keys)
+      setTimeout(async () => {
+        try {
+          const current = await Clipboard.getStringAsync();
+          if (current === encoded) {
+            await Clipboard.setStringAsync('');
+          }
+        } catch (_) {}
+      }, 60000);
     } catch (err) {
       Alert.alert('Export Failed', (err as Error).message);
     }

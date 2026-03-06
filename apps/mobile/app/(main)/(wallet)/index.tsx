@@ -119,7 +119,17 @@ export default function WalletHomeScreen() {
     }
   };
 
-  if (!initialized || (loading && !hasWallet)) {
+  // Timeout to prevent infinite loading — if wallet isn't ready after 8s, show fallback
+  const [loadTimeout, setLoadTimeout] = useState(false);
+  useEffect(() => {
+    if (!initialized || !hasWallet) {
+      const timer = setTimeout(() => setLoadTimeout(true), 8000);
+      return () => clearTimeout(timer);
+    }
+    setLoadTimeout(false);
+  }, [initialized, hasWallet]);
+
+  if ((!initialized || (loading && !hasWallet)) && !loadTimeout) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
@@ -134,7 +144,25 @@ export default function WalletHomeScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600', marginBottom: 12 }}>
+            No Wallet Found
+          </Text>
+          <Text style={{ color: '#888', fontSize: 14, textAlign: 'center', marginBottom: 24, paddingHorizontal: 32 }}>
+            Create a new wallet or import an existing one to get started.
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.replace('/(onboarding)')}
+            style={{
+              backgroundColor: Colors.primary,
+              paddingHorizontal: 32,
+              paddingVertical: 14,
+              borderRadius: 12,
+            }}
+          >
+            <Text style={{ color: '#0a0a0c', fontWeight: '700', fontSize: 16 }}>
+              Set Up Wallet
+            </Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -245,7 +273,7 @@ export default function WalletHomeScreen() {
       {/* Devnet Airdrop FAB */}
       <DevnetAirdropFAB
         publicKey={publicKey}
-        requestAirdrop={requestDevnetAirdrop}
+        requestAirdrop={async (amount: number) => { await requestDevnetAirdrop(amount); }}
         refreshBalance={refreshBalance}
       />
     </SafeAreaView>

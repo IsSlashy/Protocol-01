@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram } from '@solana/web3.js';
-import { getConnection } from '../services/solana/connection';
+import { getConnection, isDevnet } from '../services/solana/connection';
 import {
   getZkSplService,
   resetZkSplService,
@@ -164,7 +164,7 @@ export const useConfidentialStore = create<ConfidentialState>()(
           const walletBalance = await connection.getBalance(walletPubkey);
           set({ zkWalletAddress: zkAddr, zkWalletBalance: walletBalance });
 
-          if (walletBalance < 0.01 * LAMPORTS_PER_SOL) {
+          if (isDevnet() && walletBalance < 0.01 * LAMPORTS_PER_SOL) {
             try {
               // Use public devnet RPC for airdrop (Helius has aggressive rate limits)
               const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
@@ -473,7 +473,7 @@ export const useConfidentialStore = create<ConfidentialState>()(
         try {
           const mintPubkey = new PublicKey(tokenMint);
           const decimals = getTokenDecimals(tokenMint);
-          const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
+          let amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
 
           // Pre-flight SOL balance check for native SOL deposits
           if (tokenMint === NATIVE_SOL_MINT_STR) {
@@ -554,12 +554,19 @@ export const useConfidentialStore = create<ConfidentialState>()(
           const MIN_FEE_LAMPORTS = 10_000; // ~2 tx fees worth
 
           if (walletBalance < MIN_FEE_LAMPORTS) {
-            // On devnet, auto-airdrop to cover fees
-            try {
-              const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
-              const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
-              await devnetConn.confirmTransaction(sig, 'confirmed');
-            } catch (airdropErr: any) {
+            if (isDevnet()) {
+              // On devnet, auto-airdrop to cover fees
+              try {
+                const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
+                const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
+                await devnetConn.confirmTransaction(sig, 'confirmed');
+              } catch (airdropErr: any) {
+                throw new Error(
+                  `ZK wallet has insufficient SOL for transaction fee (${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL). ` +
+                  `Send a small amount of SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
+                );
+              }
+            } else {
               throw new Error(
                 `ZK wallet has insufficient SOL for transaction fee (${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL). ` +
                 `Send a small amount of SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
@@ -621,11 +628,18 @@ export const useConfidentialStore = create<ConfidentialState>()(
           const MIN_FEE_LAMPORTS = 10_000;
 
           if (walletBalance < MIN_FEE_LAMPORTS) {
-            try {
-              const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
-              const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
-              await devnetConn.confirmTransaction(sig, 'confirmed');
-            } catch {
+            if (isDevnet()) {
+              try {
+                const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
+                const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
+                await devnetConn.confirmTransaction(sig, 'confirmed');
+              } catch {
+                throw new Error(
+                  `ZK wallet has insufficient SOL for transaction fee. ` +
+                  `Send SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
+                );
+              }
+            } else {
               throw new Error(
                 `ZK wallet has insufficient SOL for transaction fee. ` +
                 `Send SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`

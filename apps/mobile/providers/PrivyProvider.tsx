@@ -138,27 +138,25 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
 
   // Get the first Solana wallet from the wallets array
   const solanaWalletFromArray = useMemo(() => {
-    // Check wallets array first (plural - for existing wallets)
-    const wallets = (solanaWallet as any)?.wallets;
+    // Check wallets array (plural - for existing wallets)
+    const wallets = solanaWallet?.wallets;
     if (wallets && Array.isArray(wallets) && wallets.length > 0) {
-      const wallet = wallets[0];
-      return wallet;
+      return wallets[0];
     }
-    // Fallback to wallet property (singular)
-    return solanaWallet?.wallet;
-  }, [(solanaWallet as any)?.wallets, solanaWallet?.wallet]);
+    return undefined;
+  }, [solanaWallet?.wallets]);
 
   // Get wallet address from various sources
   const privyWalletAddress = useMemo(() => {
     if (solanaWalletFromArray?.address) {
       return solanaWalletFromArray.address;
     }
-    // Fallback: check linkedAccounts for Solana wallet
-    const linkedWallet = privy?.user?.linkedAccounts?.find(
-      (account: any) => account.type === 'wallet' && account.chainType === 'solana'
+    // Fallback: check linked_accounts for Solana wallet
+    const linkedWallet = privy?.user?.linked_accounts?.find(
+      (account: any) => account.type === 'wallet' && account.chain_type === 'solana'
     );
-    return linkedWallet?.address || null;
-  }, [solanaWalletFromArray?.address, privy?.user?.linkedAccounts]);
+    return (linkedWallet as any)?.address || null;
+  }, [solanaWalletFromArray?.address, privy?.user?.linked_accounts]);
 
   // Track last synced address to avoid re-initializing on every render
   const lastSyncedAddress = React.useRef<string | null>(null);
@@ -191,22 +189,25 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     return signedTransaction;
   }, [solanaWalletFromArray]);
 
-  const createSignMessage = useCallback(async (message: Uint8Array) => {
+  const createSignMessage = useCallback(async (message: Uint8Array): Promise<Uint8Array> => {
     if (!solanaWalletFromArray) {
       throw new Error('No Privy wallet available for signing');
     }
     const provider = await solanaWalletFromArray.getProvider();
+    // Privy provider expects message as a base64/utf8 string
+    const messageStr = Buffer.from(message).toString('base64');
     const { signature } = await provider.request({
       method: 'signMessage',
-      params: { message },
+      params: { message: messageStr },
     });
-    return signature;
+    // Convert the returned signature string (base64) back to Uint8Array
+    return Uint8Array.from(Buffer.from(signature, 'base64'));
   }, [solanaWalletFromArray]);
 
   const contextValue = useMemo<PrivyContextType>(() => ({
     ready: privy?.isReady ?? (privy as any)?.ready ?? !!privy?.user,
     authenticated: isAuthenticated,
-    user: privy?.user as PrivyUser | null,
+    user: (privy?.user as unknown as PrivyUser) ?? null,
     // Use wallet from wallets array with proper signing functions
     solanaWallet: solanaWalletFromArray ? {
       address: solanaWalletFromArray.address,
@@ -250,8 +251,8 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
         await oauthLogin?.login?.({ provider: 'twitter' });
       },
       wallet: async () => {
-        // For connecting external wallets
-        await privy?.connectWallet?.();
+        // connectWallet was removed in newer Privy Expo SDK
+        console.warn('[Privy] connectWallet is not available in the current Privy Expo SDK. Use useLoginWithOAuth or external wallet adapters.');
       },
     },
 
@@ -270,31 +271,56 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     },
 
     createWallet: async () => {
-      const wallet = await solanaWallet?.create?.();
-      if (wallet?.address) {
+      const provider = await solanaWallet?.create?.();
+      // After creation, the wallets array should be populated on re-render.
+      // Build a SolanaWallet from the provider or from current state.
+      const address = solanaWalletFromArray?.address ?? '';
+      if (address) {
         await walletStore.initialize();
       }
-      return wallet;
+      return {
+        address,
+        publicKey: address,
+        signMessage: createSignMessage,
+        signTransaction: createSignTransaction,
+        signAllTransactions: async (txs: any[]) => {
+          const signed = [];
+          for (const tx of txs) {
+            signed.push(await createSignTransaction(tx));
+          }
+          return signed;
+        },
+      } as SolanaWallet;
     },
 
     exportWallet: async () => {
-      return await solanaWallet?.wallet?.export?.() ?? '';
+      // wallet export is not directly available on the Privy Expo SDK's EmbeddedSolanaWalletState
+      console.warn('[Privy] exportWallet is not supported in the current Privy Expo SDK.');
+      return '';
     },
 
-    linkEmail: async (email: string) => {
-      await privy?.linkEmail?.(email);
+    linkEmail: async (_email: string) => {
+      // linkEmail was removed from UsePrivy in newer Privy Expo SDK.
+      // Use the useLinkEmail hook directly if needed.
+      console.warn('[Privy] linkEmail is not available on UsePrivy. Use the useLinkEmail hook instead.');
     },
 
-    linkPhone: async (phone: string) => {
-      await privy?.linkPhone?.(phone);
+    linkPhone: async (_phone: string) => {
+      // linkPhone was removed from UsePrivy in newer Privy Expo SDK.
+      // Use the useLinkSMS hook directly if needed.
+      console.warn('[Privy] linkPhone is not available on UsePrivy. Use the useLinkSMS hook instead.');
     },
 
     linkWallet: async () => {
-      await privy?.linkWallet?.();
+      // linkWallet was removed from UsePrivy in newer Privy Expo SDK.
+      // Use the useLinkWithSiwe/useLinkWithSiws hooks directly if needed.
+      console.warn('[Privy] linkWallet is not available on UsePrivy. Use useLinkWithSiwe or useLinkWithSiws hooks instead.');
     },
 
-    unlinkAccount: async (accountId: string) => {
-      await privy?.unlinkAccount?.(accountId);
+    unlinkAccount: async (_accountId: string) => {
+      // unlinkAccount was removed from UsePrivy in newer Privy Expo SDK.
+      // Use useUnlinkEmail, useUnlinkWallet, etc. hooks directly if needed.
+      console.warn('[Privy] unlinkAccount is not available on UsePrivy. Use specific unlink hooks (useUnlinkEmail, useUnlinkWallet, etc.) instead.');
     },
   }), [privy, solanaWallet, solanaWalletFromArray, privyWalletAddress, createSignTransaction, createSignMessage, isAuthenticated, emailLogin, smsLogin, oauthLogin, pendingOtpType, walletStore]);
 

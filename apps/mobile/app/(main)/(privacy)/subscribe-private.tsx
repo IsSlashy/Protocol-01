@@ -15,6 +15,8 @@ import { PublicKey, SystemProgram } from '@solana/web3.js';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
+import { receiptFromJSON, findPool } from '@/services/denominatedPool';
+import type { ProofGenerator } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 export default function SubscribePrivateScreen() {
@@ -43,14 +45,34 @@ export default function SubscribePrivateScreen() {
       const rateLamports = BigInt(Math.floor(parseFloat(rate || '0') * 1e9));
       const intervalSlotsNum = BigInt(parseInt(intervalSlots, 10));
 
+      // Look up the selected note and reconstruct the ShieldReceipt + PoolConfig
+      const note = notes.find(n => n.id === selectedNoteId);
+      if (!note) throw new Error('Selected note not found');
+      const receipt = receiptFromJSON(note.receiptJSON);
+      const poolConfig = findPool(note.token, note.denomination);
+      if (!poolConfig) throw new Error(`Pool not found for ${note.token} ${note.denomination}`);
+
+      const vaultConfig = {
+        retailer: retailerKey,
+        rate: rateLamports,
+        intervalSlots: intervalSlotsNum,
+      };
+
+      // TODO: subscriberSecret, vkHashSubscriber, and proofGenerator should be
+      // provided by the privacy proving layer (e.g. WebView prover).
+      const subscriberSecret = receipt.secret;
+      const vkHashSubscriber = new Uint8Array(32);
+      const proofGenerator: ProofGenerator = async (inputs, circuit) => {
+        throw new Error('Proof generation not yet wired for private subscriptions');
+      };
+
       const sig = await subscribePrivateAction(
-        selectedNoteId,
-        {
-          retailer: retailerKey,
-          tokenMint: SystemProgram.programId,
-          rate: rateLamports,
-          intervalSlots: intervalSlotsNum,
-        },
+        receipt,
+        poolConfig,
+        vaultConfig,
+        subscriberSecret,
+        vkHashSubscriber,
+        proofGenerator,
       );
 
       Alert.alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);

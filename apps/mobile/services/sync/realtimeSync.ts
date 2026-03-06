@@ -60,8 +60,8 @@ export class RealtimeSyncService {
   private status: SyncStatus = 'disconnected';
   private config: Required<RealtimeSyncConfig>;
   private reconnectAttempts: number = 0;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private syncIntervalId: NodeJS.Timeout | null = null;
+  private reconnectTimeout: number | null = null;
+  private syncIntervalId: number | null = null;
   private listeners: Set<SyncEventListener> = new Set();
   private knownStreamIds: Set<string> = new Set();
   private isStarting: boolean = false;
@@ -257,15 +257,19 @@ export class RealtimeSyncService {
 
     const pubkey = new PublicKey(this.walletAddress);
 
-    // Subscribe to logs mentioning the wallet address
-    this.subscriptionId = this.connection.onLogs(
-      pubkey,
-      (logs: Logs, context: Context) => {
-        this.handleLogs(logs, context);
-      },
-      'confirmed'
-    );
-
+    try {
+      // Subscribe to logs mentioning the wallet address
+      this.subscriptionId = this.connection.onLogs(
+        pubkey,
+        (logs: Logs, context: Context) => {
+          this.handleLogs(logs, context);
+        },
+        'confirmed'
+      );
+    } catch (error) {
+      console.warn('[RealtimeSync] WebSocket subscription failed, falling back to polling only');
+      this.subscriptionId = null;
+    }
   }
 
   private async handleLogs(logs: Logs, context: Context): Promise<void> {
@@ -361,7 +365,7 @@ export class RealtimeSyncService {
 
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Nouvel abonnement ajouté',
+          title: 'New subscription added',
           body: `${stream.name} - ${stream.amountPerPayment.toFixed(4)} SOL/${intervalDisplay}`,
           data: {
             subscriptionId: stream.id,

@@ -72,7 +72,7 @@ export default function ConfidentialBalanceScreen() {
   // Progress tracking
   const [progressStep, setProgressStep] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
-  const [progressOperation, setProgressOperation] = useState<'deposit' | 'withdraw' | 'transfer' | null>(null);
+  const [progressOperation, setProgressOperation] = useState<'deposit' | 'withdraw' | 'transfer' | 'sweep' | null>(null);
 
   // Token-aware balance computation
   const tokenDecimals = getTokenDecimals(selectedToken);

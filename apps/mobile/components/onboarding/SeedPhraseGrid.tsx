@@ -23,10 +23,20 @@ export const SeedPhraseGrid: React.FC<SeedPhraseGridProps> = ({
   const [copied, setCopied] = useState(false);
 
   const handleCopyAll = async () => {
-    await Clipboard.setStringAsync(words.join(' '));
+    const phrase = words.join(' ');
+    await Clipboard.setStringAsync(phrase);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+    // Security: Auto-clear clipboard after 60 seconds
+    setTimeout(async () => {
+      try {
+        const current = await Clipboard.getStringAsync();
+        if (current === phrase) {
+          await Clipboard.setStringAsync('');
+        }
+      } catch (_) {}
+    }, 60000);
   };
 
   const handleWordPress = (word: string, index: number) => {

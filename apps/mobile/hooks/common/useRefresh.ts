@@ -34,7 +34,7 @@ export function useRefresh({
   const [lastRefreshed, setLastRefreshed] = useState<number | null>(null);
   const [canRefresh, setCanRefresh] = useState(true);
 
-  const cooldownTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const cooldownTimeoutRef = useRef<number | null>(null);
 
   const { trigger } = useHaptics();
 
@@ -167,7 +167,7 @@ export function useAutoRefresh({
   ...refreshConfig
 }: AutoRefreshConfig): UseRefreshReturn & { setEnabled: (enabled: boolean) => void } {
   const [autoEnabled, setAutoEnabled] = useState(enabled);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
 
   const refreshHook = useRefresh(refreshConfig);
 

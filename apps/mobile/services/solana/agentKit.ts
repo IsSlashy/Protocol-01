@@ -311,7 +311,7 @@ export async function createAgentKit(
   publicKey: string | PublicKey,
   network: 'devnet' | 'mainnet-beta' = 'devnet'
 ): Promise<SpecterAgentKit> {
-  const connection = getConnection(network);
+  const connection = getConnection();
   const pubkey = typeof publicKey === 'string' ? new PublicKey(publicKey) : publicKey;
   return new SpecterAgentKit(connection, pubkey);
 }
