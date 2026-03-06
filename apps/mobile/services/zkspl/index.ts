@@ -197,28 +197,17 @@ export class ZkSplService {
     this.connection = connection;
     this.keypair = keypair;
 
-    // Build prover config — proof generation cascade:
-    //   1. Relayer endpoints: POST {url}/api/zkspl/prove/{deposit|withdraw|transfer|balance-proof}
-    //   2. Remote Rust prover: POST {url}/prove/zkspl (fallback)
-    //   3. Local snarkjs: WASM + zkey (last resort, very slow on mobile)
-    const relayerBaseUrl = process.env.EXPO_PUBLIC_RELAYER_URL ?? '';
-    const remoteProverUrl = relayerBaseUrl ? `${relayerBaseUrl}/prove` : '';
-
-    if (relayerBaseUrl) {
-      console.log('[ZkSPL] Using relayer for proof generation:', relayerBaseUrl);
-      console.log('[ZkSPL]   Endpoints: /api/zkspl/prove/{deposit,withdraw,transfer,balance-proof}');
-      console.log('[ZkSPL]   Fallback Rust prover:', remoteProverUrl);
-    } else {
-      console.warn('[ZkSPL] No EXPO_PUBLIC_RELAYER_URL set — proof generation will use local snarkjs (slow)');
-    }
+    // TRUSTLESS MODE: All proofs generated locally via snarkjs WASM.
+    // The spending_key NEVER leaves the device. No relayer dependency.
+    // Circuit files loaded from app assets at runtime.
+    console.log('[ZkSPL] Trustless mode: local-only proving (spending_key stays on device)');
 
     this.client = new ZkSplClient({
       connection,
       wallet,
       programId: new PublicKey(ZKSPL_PROGRAM_ID),
       prover: {
-        relayerUrl: relayerBaseUrl,
-        remoteProverUrl,
+        localOnly: true,
         timeout: 120_000,
       },
       stateStore: new AsyncStorageStateStore(),
