@@ -223,15 +223,18 @@ export async function getZkSplClient(): Promise<ZkSplClient> {
   const { wallet, connection, spendingKeyPromise } = createWalletAdapter();
   const spendingKey = await spendingKeyPromise;
 
-  const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://p01-relayer-production.up.railway.app';
-
+  // TRUSTLESS MODE: All proofs generated locally via snarkjs WASM.
+  // The spending_key NEVER leaves the browser. No relayer dependency.
   const config: ZkSplClientConfig = {
     connection,
     wallet,
     programId: new PublicKey(ZKSPL_PROGRAM_ID),
     prover: {
-      relayerUrl: RELAYER_URL,
-      remoteProverUrl: `${RELAYER_URL}/prove`,
+      localOnly: true,
+      balanceWasmPath: chrome.runtime.getURL('circuits/confidential_balance.wasm'),
+      balanceZkeyPath: chrome.runtime.getURL('circuits/confidential_balance_final.zkey'),
+      proofWasmPath: chrome.runtime.getURL('circuits/balance_proof.wasm'),
+      proofZkeyPath: chrome.runtime.getURL('circuits/balance_proof_final.zkey'),
     },
     stateStore: new ChromeStateStore(),
     spendingKey,
