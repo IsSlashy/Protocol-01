@@ -189,13 +189,7 @@ export const useShieldedStore = create<ShieldedState>()(
           // Get or create ZK service instance
           const zkService = getZkService();
 
-          // Configure backend prover URL for mobile (no local circuit bundling)
-          // Only override if env var is set; otherwise use the default in ZkService
-          const envRelayerUrl = process.env.EXPO_PUBLIC_RELAYER_URL;
-          if (envRelayerUrl) {
-            ZkService.setBackendProverUrl(envRelayerUrl);
-          } else {
-          }
+          // All proving is client-side (WebView snarkjs). No backend needed.
 
           // Initialize with user's seed phrase
           await zkService.initialize(phrase);
@@ -451,10 +445,9 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Transfer shielded tokens using PRIVATE TRANSFER via relayer
-      // This automatically routes through the relayer for sender privacy
+      // Transfer shielded tokens via on-chain decentralized relay
+      // Sender hidden (ephemeral payer), recipient hidden (stealth address)
       transfer: async (recipient: string, amount: number, walletPublicKey: PublicKey, signTransaction) => {
-        // Ensure ZK service is initialized (handles app restart case)
         const initialized = await get().ensureInitialized();
         if (!initialized) {
           throw new Error('ZK service not initialized. Please restart the app.');
@@ -466,136 +459,47 @@ export const useShieldedStore = create<ShieldedState>()(
         }
 
         const txId = generateUUID();
-        const amountLamports = BigInt(Math.floor(amount * 1e9));
 
-        // Parse recipient ZK address to extract viewing/spending keys
+        // Parse recipient ZK address to extract stealth keys
         if (!recipient.startsWith('zk:')) {
           throw new Error('Invalid ZK address format. Must start with "zk:"');
         }
 
         const combined = Buffer.from(recipient.slice(3), 'base64');
-        const receivingPubkeyBytes = combined.slice(0, 32);
-        const viewingKeyBytes = combined.slice(32, 64);
+        const stealthKeysBase64 = combined.toString('base64');
 
-        // Convert receiving pubkey bytes to Ed25519 public key for stealth address derivation
-        const { Keypair: SolKeypair } = await import('@solana/web3.js');
-        const recipientSpendingPubKey = SolKeypair.fromSeed(receivingPubkeyBytes).publicKey.toBase58();
-        const recipientViewingPubKey = SolKeypair.fromSeed(viewingKeyBytes).publicKey.toBase58();
-
-        // Derive X25519 public key from raw viewing key bytes
-        // MUST match scanner's derivation: nacl.hash(viewingSeed).slice(0, 32) → X25519 secret → public key
-        const viewingX25519Secret = nacl.hash(new Uint8Array(viewingKeyBytes)).slice(0, 32);
-        const recipientViewingX25519Pub = nacl.box.keyPair.fromSecretKey(viewingX25519Secret).publicKey;
-
+        // Map denominations to indices
+        const DENOMINATIONS = [0.1, 1, 10]; // SOL
+        const closestDenom = DENOMINATIONS.reduce((prev, curr) =>
+          Math.abs(curr - amount) < Math.abs(prev - amount) ? curr : prev
+        );
+        const denominationIndex = DENOMINATIONS.indexOf(closestDenom);
 
         set(state => ({
           pendingTransactions: [
             ...state.pendingTransactions,
-            {
-              id: txId,
-              type: 'transfer',
-              amount,
-              status: 'generating_proof',
-              createdAt: Date.now(),
-            },
+            { id: txId, type: 'transfer', amount, status: 'generating_proof', createdAt: Date.now() },
           ],
         }));
 
         try {
-          // Step 1: Generate stealth address for recipient
-          const { generateStealthAddress } = await import('../utils/crypto/stealth');
-          const stealth = await generateStealthAddress(recipientSpendingPubKey, recipientViewingPubKey, recipientViewingX25519Pub);
-
-          // Step 2: Generate ZK proof showing we have funds
-          // Use the unshield proof generation (proves ownership, creates nullifier)
-          set(state => ({
-            pendingTransactions: state.pendingTransactions.map(tx =>
-              tx.id === txId ? { ...tx, status: 'generating_proof' } : tx
-            ),
-          }));
-
-          const proofData = await _zkService.generateTransferProofForRelayer(amountLamports);
-
-          // Step 3: Fund the relayer (amount + fee + gas)
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
               tx.id === txId ? { ...tx, status: 'submitting' } : tx
             ),
           }));
 
-          const RELAYER_URL = process.env.EXPO_PUBLIC_RELAYER_URL || ZkService.getBackendProverUrl();
-
-          // Fetch relayer info to get fee and wallet address
-          let relayerAddress: string;
-          let feeBps: number;
-          try {
-            const infoRes = await fetch(`${RELAYER_URL}/health`);
-            const info = await infoRes.json();
-            relayerAddress = info.relayer;
-            feeBps = info.feeBps || 50;
-          } catch {
-            // Fallback
-            const infoRes = await fetch(`${RELAYER_URL}/info`);
-            const info = await infoRes.json();
-            relayerAddress = info.relayer;
-            feeBps = info.feeBps || 50;
-          }
-
-          const feeLamports = BigInt(Math.ceil(Number(amountLamports) * feeBps / 10000));
-          const rentExempt = BigInt(890880); // Minimum balance for rent exemption
-          const gasEstimate = BigInt(10000); // ~0.00001 SOL for tx fees
-          const totalFunding = amountLamports + feeLamports + gasEstimate + rentExempt;
-
-
-          // Send funding tx: User → Relayer
-          const { Connection, PublicKey: SolPubKey, Transaction: SolTx, SystemProgram: SolSystem } = await import('@solana/web3.js');
-          const { getConnection: getConn } = await import('../services/solana/connection');
-          const conn = getConn();
-
-          const fundingTx = new SolTx().add(
-            SolSystem.transfer({
-              fromPubkey: walletPublicKey,
-              toPubkey: new SolPubKey(relayerAddress),
-              lamports: Number(totalFunding),
-            })
+          // Use privateSend which now routes through the on-chain relay
+          const result = await _zkService.privateSend(
+            stealthKeysBase64,
+            denominationIndex,
+            walletPublicKey,
+            signTransaction
           );
-          fundingTx.feePayer = walletPublicKey;
-          fundingTx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
 
-          const signedFundingTx = await signTransaction(fundingTx);
-          const fundingSignature = await conn.sendRawTransaction(signedFundingTx.serialize(), {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-          });
-          await conn.confirmTransaction(fundingSignature, 'confirmed');
-
-
-          // Step 4: Send proof + funding signature to relayer
-
-          const response = await fetch(`${RELAYER_URL}/relay/private-transfer`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              proof: proofData.proof,
-              publicSignals: proofData.publicSignals,
-              nullifier: proofData.nullifier,
-              stealthAddress: stealth.address,
-              ephemeralPublicKey: stealth.ephemeralPublicKey,
-              viewTag: stealth.viewTag,
-              amountLamports: amountLamports.toString(),
-              fundingTxSignature: fundingSignature,
-            }),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Private transfer failed');
+          if (!result.success) {
+            throw new Error(result.error || 'Private transfer failed');
           }
-
-          const result = await response.json();
-
-          // Step 4: Update local state - mark note as spent
-          await _zkService.markNoteSpent(proofData.nullifier);
 
           const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
           const zkNotes = _zkService.getNotes();
@@ -610,7 +514,7 @@ export const useShieldedStore = create<ShieldedState>()(
             shieldedBalance: newBalance,
             notes: serializedNotes,
             pendingTransactions: state.pendingTransactions.map(tx =>
-              tx.id === txId ? { ...tx, status: 'confirmed', signature: result.signature } : tx
+              tx.id === txId ? { ...tx, status: 'confirmed', signature: result.txSignature } : tx
             ),
           }));
 
@@ -620,68 +524,16 @@ export const useShieldedStore = create<ShieldedState>()(
             }));
           }, 5000);
 
-          return result.signature;
+          return result.txSignature || '';
 
         } catch (error) {
           console.error('[Private Transfer] Error:', error);
-
-          // Fallback to direct transfer if relayer fails
-
-          try {
-            // Parse ZK address again for direct transfer
-            let receivingPubkey = BigInt(0);
-            for (let i = receivingPubkeyBytes.length - 1; i >= 0; i--) {
-              receivingPubkey = (receivingPubkey << BigInt(8)) + BigInt(receivingPubkeyBytes[i]);
-            }
-
-            const zkRecipient: ZkAddress = {
-              receivingPubkey,
-              viewingKey: viewingKeyBytes,
-              encoded: recipient,
-            };
-
-            const signature = await _zkService.transfer(
-              zkRecipient,
-              amountLamports,
-              walletPublicKey,
-              signTransaction
-            );
-
-            const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
-            const zkNotes = _zkService.getNotes();
-            const serializedNotes: ShieldedNote[] = zkNotes.map(note => ({
-              amount: note.amount.toString(),
-              commitment: note.commitment.toString(),
-              leafIndex: note.leafIndex,
-              createdAt: Date.now(),
-            }));
-
-            set(state => ({
-              shieldedBalance: newBalance,
-              notes: serializedNotes,
-              pendingTransactions: state.pendingTransactions.map(tx =>
-                tx.id === txId ? { ...tx, status: 'confirmed', signature } : tx
-              ),
-            }));
-
-            setTimeout(() => {
-              set(state => ({
-                pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
-              }));
-            }, 5000);
-
-            return signature;
-          } catch (fallbackError) {
-            console.error('[Private Transfer] Fallback also failed:', fallbackError);
-            set(state => ({
-              pendingTransactions: state.pendingTransactions.map(tx =>
-                tx.id === txId
-                  ? { ...tx, status: 'failed', error: (error as Error).message }
-                  : tx
-              ),
-            }));
-            throw error;
-          }
+          set(state => ({
+            pendingTransactions: state.pendingTransactions.map(tx =>
+              tx.id === txId ? { ...tx, status: 'failed', error: (error as Error).message } : tx
+            ),
+          }));
+          throw error;
         }
       },
 
