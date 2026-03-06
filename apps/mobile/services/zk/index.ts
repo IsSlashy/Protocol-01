@@ -1815,22 +1815,8 @@ export class ZkService {
     publicSignals: string[];
   }>) | null = null;
 
-  // Backend prover URL (for mobile without bundled circuits)
-  private static BACKEND_PROVER_URL = 'https://p01-relayer-production.up.railway.app'; // Railway hosted relayer
-
-  /**
-   * Set the backend prover URL
-   */
-  static setBackendProverUrl(url: string): void {
-    ZkService.BACKEND_PROVER_URL = url;
-  }
-
-  /**
-   * Get the current backend prover URL
-   */
-  static getBackendProverUrl(): string {
-    return ZkService.BACKEND_PROVER_URL;
-  }
+  // Backend prover removed — all proving is client-side (WebView snarkjs).
+  // Spending keys NEVER leave the device.
 
   /**
    * Set the prover function (called by ZkProverProvider)
@@ -1847,82 +1833,6 @@ export class ZkService {
     publicSignals: string[];
   }>): void {
     this.proverFunctionRaw = prover;
-  }
-
-  /**
-   * Generate proof using backend prover service
-   * This is the preferred method for mobile as it doesn't require bundling 19MB circuits
-   */
-  private async generateProofViaBackend(inputs: Record<string, string>): Promise<Groth16Proof> {
-
-    try {
-      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ inputs }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(`Backend prover error: ${error.message || error.error || response.statusText}`);
-      }
-
-      const result = await response.json();
-
-      if (!result.success || !result.proof) {
-        throw new Error(result.message || 'Backend prover returned invalid response');
-      }
-
-
-      // Convert snarkjs proof format to our Groth16Proof format
-      return this.convertSnarkjsProof(result.proof);
-    } catch (error: any) {
-      console.error('[ZK] Backend prover failed:', error);
-      throw new Error(`Backend prover failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Generate proof via backend and return raw snarkjs format
-   * Used for relayer which expects snarkjs format (not byte arrays for Solana)
-   */
-  private async generateProofViaBackendRaw(inputs: Record<string, string>): Promise<{
-    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
-    publicSignals: string[];
-  }> {
-
-    try {
-      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ inputs }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(`Backend prover error: ${error.message || error.error || response.statusText}`);
-      }
-
-      const result = await response.json();
-
-      if (!result.success || !result.proof) {
-        throw new Error(result.message || 'Backend prover returned invalid response');
-      }
-
-
-      // Return raw snarkjs format (string arrays, not byte arrays)
-      return {
-        proof: result.proof,
-        publicSignals: result.publicSignals,
-      };
-    } catch (error: any) {
-      console.error('[ZK] Backend prover failed:', error);
-      throw new Error(`Backend prover failed: ${error.message}`);
-    }
   }
 
   /**
@@ -2462,58 +2372,11 @@ export class ZkService {
         return;
       }
 
-      // Step 3: Fetch new commitments — try chain first (trustless), relayer as fallback
+      // Step 3: Fetch new commitments from chain (fully on-chain, no backend)
       console.log('[ZK Sync] Need', onChainLeafCount - cachedLeafCount, 'new commitments (have', cachedLeafCount, 'of', onChainLeafCount, ')');
 
-      let allCommitments: bigint[] | null = null;
-
-      // TRUSTLESS: Try on-chain scan first (verifiable, no relayer dependency)
-      try {
-        allCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
-        console.log('[ZK Sync] Got', allCommitments.length, 'commitments from chain');
-      } catch (chainError: any) {
-        console.warn('[ZK Sync] Chain scan failed, trying relayer as fallback:', chainError.message);
-
-        // Fallback: try relayer (faster but centralized)
-        try {
-          const relayerCommitments = await this.fetchCommitmentsFromRelayer(cachedLeafCount);
-          if (relayerCommitments) {
-            // Insert only NEW commitments into local tree
-            for (const commitment of relayerCommitments) {
-              this.merkleTree.insert(commitment);
-            }
-
-            console.log('[ZK Sync] Inserted', relayerCommitments.length, 'commitments from relayer');
-
-            // Verify root matches
-            if (this.merkleTree.leafCount === onChainLeafCount) {
-              if (this.merkleTree.root === onChainRoot) {
-                this._onChainRoot = null;
-                console.log('[ZK Sync] Tree synced via relayer, root verified');
-
-                await this.saveTreeCache();
-                await this.updateNoteIndices();
-                await this.saveNotes();
-                return;
-              } else {
-                console.warn('[ZK Sync] Root mismatch after relayer sync — using cached tree (historical root)');
-                await this.loadTreeCache();
-                this._onChainRoot = null;
-                await this.updateNoteIndices();
-                await this.saveNotes();
-                return;
-              }
-            }
-          }
-        } catch (relayerError: any) {
-          console.warn('[ZK Sync] Relayer also failed:', relayerError.message);
-          throw new Error('Both chain scan and relayer failed — cannot sync merkle tree');
-        }
-      }
-
-      if (!allCommitments) {
-        throw new Error('Failed to fetch commitments from any source');
-      }
+      const allCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
+      console.log('[ZK Sync] Got', allCommitments.length, 'commitments from chain');
 
       // Rebuild the merkle tree from all commitments
       this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
@@ -2554,49 +2417,6 @@ export class ZkService {
     }
   }
 
-  /**
-   * Fetch commitments from the relayer indexer (single HTTP call, ~200ms).
-   * Returns null if relayer is unreachable or not synced.
-   */
-  private async fetchCommitmentsFromRelayer(fromIndex: number): Promise<bigint[] | null> {
-    const url = `${ZkService.BACKEND_PROVER_URL}/pool/commitments?from=${fromIndex}`;
-    console.log('[ZK Sync] Fetching from relayer:', url);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        console.warn('[ZK Sync] Relayer returned', response.status, body);
-        return null;
-      }
-
-      const data = await response.json() as {
-        commitments: string[];
-        fromIndex: number;
-        toIndex: number;
-        root: string;
-        leafCount: number;
-      };
-
-      if (!data.commitments || data.commitments.length === 0) {
-        return null;
-      }
-
-      console.log('[ZK Sync] Got', data.commitments.length, 'commitments from relayer (index', data.fromIndex, '->', data.toIndex, ')');
-
-      // Convert string commitments to bigints
-      return data.commitments.map(c => BigInt(c));
-    } catch (e: any) {
-      clearTimeout(timeout);
-      console.warn('[ZK Sync] Relayer fetch error:', e.message);
-      return null;
-    }
-  }
 
   /**
    * Update note leaf indices and on-chain status after tree sync
@@ -3537,51 +3357,104 @@ export class ZkService {
       });
 
 
-      // 5. Create request for relayer
-      const requestBody = {
-        proof: {
-          pi_a: Array.from(zkProof.pi_a),
-          pi_b: Array.from(zkProof.pi_b),
-          pi_c: Array.from(zkProof.pi_c),
-        },
-        publicSignals: [
-          merkleRoot.toString(),
-          nullifier1.toString(),
-          nullifier2.toString(),
-          changeNote.commitment.toString(),
-          dummyOutput2Commitment.toString(),
-        ],
-        nullifier: nullifier1.toString(),
-        encryptedRecipient: '', // Not needed - we send stealth address directly
-        ephemeralPublicKey: stealthData.ephemeralPublicKey,
-        viewTag: stealthData.viewTag,
-        denominationIndex,
-        feeCommitment: '0', // Fee paid from shielded balance (TODO)
-        stealthAddress: stealthData.address, // Direct stealth address
-      };
+      // 5. Build on-chain unshield tx to stealth address via decentralized relay
+      const stealthRecipient = new PublicKey(stealthData.address);
 
-      // 6. Send to relayer
-      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/relay/private-send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+      // Compute newRoot for the change commitment
+      const onChainState = await this.readOnChainFilledSubtrees();
+      const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
+      const useSubtrees = localSubtrees || onChainState.filledSubtrees;
+      const { newRoot, updatedSubtrees, pathElements: changePathElements, pathIndices: changePathIndices } = this.computeNewRootFromSubtrees(
+        useSubtrees, onChainState.leafCount, changeNote.commitment, onChainState.depth
+      );
+      await this.saveLocalSubtrees(updatedSubtrees, onChainState.leafCount + 1);
+
+      // Build unshield tx with ephemeral payer (sender privacy)
+      const ephemeralKeypair = Keypair.generate();
+
+      const [poolPDA] = PublicKey.findProgramAddressSync(
+        [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()], this.programId
+      );
+      const [merkleTreePDA] = PublicKey.findProgramAddressSync(
+        [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()], this.programId
+      );
+      const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
+        [PDA_SEEDS.NULLIFIER_SET, poolPDA.toBytes()], this.programId
+      );
+      const [vkDataPDA] = PublicKey.findProgramAddressSync(
+        [Buffer.from('vk_data'), poolPDA.toBytes()], this.programId
+      );
+
+      const unshieldDiscriminator = Buffer.from([0x15, 0xe4, 0x37, 0x18, 0xc2, 0x0a, 0x15, 0x16]);
+      const amountBuffer = Buffer.alloc(8);
+      amountBuffer.writeBigUInt64LE(amount, 0);
+      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+
+      const txData = Buffer.concat([
+        unshieldDiscriminator,
+        zkProof.pi_a, zkProof.pi_b, zkProof.pi_c,
+        bigintToLeBytes(nullifier1),
+        bigintToLeBytes(nullifier2),
+        bigintToLeBytes(changeNote.commitment),
+        bigintToLeBytes(dummyCommitment),
+        bigintToLeBytes(merkleRoot),
+        amountBuffer,
+        bigintToLeBytes(newRoot),
+      ]);
+
+      const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+      const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+
+      const computeLimitData = Buffer.alloc(5);
+      computeLimitData.writeUInt8(2, 0);
+      computeLimitData.writeUInt32LE(1_400_000, 1);
+
+      const computeLimitIx = new TransactionInstruction({
+        programId: COMPUTE_BUDGET_PROGRAM_ID, keys: [], data: computeLimitData,
       });
 
-      const result = await response.json();
+      const unshieldIx = new TransactionInstruction({
+        programId: this.programId,
+        keys: [
+          { pubkey: ephemeralKeypair.publicKey, isSigner: true, isWritable: true },
+          { pubkey: stealthRecipient, isSigner: false, isWritable: true },
+          { pubkey: poolPDA, isSigner: false, isWritable: true },
+          { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
+          { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
+          { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: this.programId, isSigner: false, isWritable: false },
+          { pubkey: this.programId, isSigner: false, isWritable: false },
+        ],
+        data: txData,
+      });
 
-      if (!result.success) {
-        console.error('[ZK Private Send] Relayer error:', result.error);
-        return { success: false, error: result.error || 'Relayer rejected request' };
-      }
+      // Build + sign with ephemeral keypair
+      const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+      const unshieldTx = new Transaction().add(computeLimitIx).add(unshieldIx);
+      unshieldTx.feePayer = ephemeralKeypair.publicKey;
+      unshieldTx.recentBlockhash = blockhash;
+      unshieldTx.sign(ephemeralKeypair);
 
-      // Relayer returns 'signature' not 'txSignature'
-      const txSignature = result.signature || result.txSignature;
+      const serializedTx = unshieldTx.serialize();
+      console.log('[ZK Private Send] Tx serialized:', serializedTx.length, 'bytes, submitting via relay...');
+
+      // 6. Submit via decentralized on-chain relay
+      const { relayTransaction } = await import('../relay');
+      const txSignature = await relayTransaction(
+        serializedTx,
+        walletPublicKey,
+        signTransaction,
+      );
 
       // 7. Mark notes as spent locally and add change note
       this.removeSpentNotes(notesToSpend);
       if (changeAmount > BigInt(0)) {
-        const newRoot = this.merkleTree.insert(changeNote.commitment);
-        changeNote.leafIndex = this.merkleTree.leafCount - 1;
+        changeNote.leafIndex = onChainState.leafCount;
+        changeNote.merkleRoot = newRoot;
+        changeNote.merklePathElements = changePathElements;
+        changeNote.merklePathIndices = changePathIndices;
         changeNote.isOnChain = true;
         this.addNote(changeNote);
       }
@@ -3599,204 +3472,6 @@ export class ZkService {
       console.error('[ZK Private Send] Error:', error);
       return { success: false, error: error.message || 'Private send failed' };
     }
-  }
-
-  /**
-   * Generate a proof for relayer-based private transfer (any amount)
-   * This creates a proof showing we own funds, which the relayer verifies
-   * before sending SOL to the recipient's stealth address.
-   *
-   * @param amount - Amount in lamports
-   * @returns Proof data for relayer
-   */
-  async generateTransferProofForRelayer(amount: bigint): Promise<{
-    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
-    publicSignals: string[];
-    nullifier: string;
-    changeNoteData?: { noteString: string; amount: bigint; leafIndex: number };
-  }> {
-    if (!this.spendingKey || !this.spendingKeyHash || !this.ownerPubkey) {
-      throw new Error('ZK Service not initialized');
-    }
-
-
-    // Sync merkle tree first
-    await this.syncMerkleTree();
-
-    // Select notes to spend
-    const { notesToSpend, totalValue } = this.selectNotes(amount);
-    if (totalValue < amount) {
-      throw new Error(`Insufficient shielded balance. Have ${Number(totalValue) / 1e9} SOL, need ${Number(amount) / 1e9} SOL`);
-    }
-
-    const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
-    const merkleRoot = this.merkleTree.root;
-
-    // Compute nullifiers
-    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
-    let nullifier2: bigint;
-    let dummyInputNote: Note | undefined;
-
-    if (notesToSpend[1]) {
-      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
-    } else {
-      // Create unique dummy input note
-      const dummyRandomness = generateRandomBigInt();
-      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
-      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
-      dummyInputNote = {
-        amount: BigInt(0),
-        ownerPubkey: BigInt(0),
-        randomness: dummyRandomness,
-        tokenMint: tokenMintField,
-        commitment: dummyCommitment,
-      };
-    }
-
-    // Generate merkle proofs
-    const proof1 = this.merkleTree.generateProof(notesToSpend[0].leafIndex!);
-    const proof2 = notesToSpend[1]
-      ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
-      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
-
-    const inputNotesForCircuit = notesToSpend[1]
-      ? notesToSpend
-      : [notesToSpend[0], dummyInputNote!];
-
-    // Create change note (remaining balance stays in pool)
-    const changeAmount = totalValue - amount;
-    const changeNote = await createNote(changeAmount, this.ownerPubkey, tokenMintField);
-
-    // Create dummy output (the "spent" amount - relayer will send actual SOL)
-    const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
-    const dummyOutput2: Note = {
-      amount: BigInt(0),
-      ownerPubkey: BigInt(0),
-      randomness: BigInt(0),
-      tokenMint: tokenMintField,
-      commitment: dummyOutput2Commitment,
-    };
-
-    // BN254 field modulus - negative numbers must be represented as p - |amount|
-    const FIELD_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
-
-    // Convert public_amount to field representation (negative for withdrawal)
-    const publicAmountField = FIELD_MODULUS - amount; // amount is positive, we want -amount in field
-
-    // Build circuit inputs directly for backend prover (returns raw snarkjs format)
-    const circuitInputs: Record<string, string> = {
-      // Public inputs (snake_case)
-      merkle_root: merkleRoot.toString(),
-      nullifier_1: nullifier1.toString(),
-      nullifier_2: nullifier2.toString(),
-      output_commitment_1: changeNote.commitment.toString(),
-      output_commitment_2: dummyOutput2Commitment.toString(),
-      public_amount: publicAmountField.toString(),
-      token_mint: tokenMintField.toString(),
-
-      // Private inputs - Input note 1
-      in_amount_1: inputNotesForCircuit[0]?.amount.toString() ?? '0',
-      in_owner_pubkey_1: inputNotesForCircuit[0]?.ownerPubkey.toString() ?? '0',
-      in_randomness_1: inputNotesForCircuit[0]?.randomness.toString() ?? '0',
-      in_path_elements_1: JSON.stringify(proof1.pathElements.map(e => e.toString())),
-      in_path_indices_1: JSON.stringify(proof1.pathIndices.map(i => i.toString())),
-
-      // Private inputs - Input note 2
-      in_amount_2: inputNotesForCircuit[1]?.amount.toString() ?? '0',
-      in_owner_pubkey_2: inputNotesForCircuit[1]?.ownerPubkey.toString() ?? '0',
-      in_randomness_2: inputNotesForCircuit[1]?.randomness.toString() ?? '0',
-      in_path_elements_2: JSON.stringify(proof2.pathElements.map(e => e.toString())),
-      in_path_indices_2: JSON.stringify(proof2.pathIndices.map(i => i.toString())),
-
-      // Private inputs - Output notes
-      out_amount_1: changeNote.amount.toString(),
-      out_recipient_1: changeNote.ownerPubkey.toString(),
-      out_randomness_1: changeNote.randomness.toString(),
-      out_amount_2: dummyOutput2.amount.toString(),
-      out_recipient_2: dummyOutput2.ownerPubkey.toString(),
-      out_randomness_2: dummyOutput2.randomness.toString(),
-
-      // Spending key
-      spending_key: this.spendingKey.toString(),
-    };
-
-    // TRUSTLESS: Try client-side raw prover FIRST (spending_key stays on device)
-    let snarkjsProof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
-
-    if (this.proverFunctionRaw) {
-      try {
-        console.log('[ZK] Generating transfer proof locally (trustless mode)...');
-        const result = await this.proverFunctionRaw(circuitInputs);
-        snarkjsProof = result.proof;
-      } catch (error) {
-        console.error('[ZK] Client-side raw proof generation failed:', error);
-        throw error;
-      }
-    } else {
-      // HARD FAIL: Never send spending_key to a remote server.
-      throw new Error(
-        'ZK Raw Prover not available. Client-side prover is not loaded. ' +
-        'Restart the app to load circuits locally. ' +
-        'Spending keys NEVER leave this device.'
-      );
-    }
-
-
-    // Store change note data (will be applied after relayer confirms)
-    const changeNoteData = changeAmount > BigInt(0) ? {
-      noteString: this.exportNote(changeNote),
-      amount: changeAmount,
-      leafIndex: -1, // Will be set after on-chain confirmation
-    } : undefined;
-
-    // Store notes to spend for later marking
-    this._pendingSpendNotes = notesToSpend;
-    this._pendingChangeNote = changeNote;
-
-    // Return raw snarkjs format proof (string arrays, not byte arrays)
-    // This is what snarkjs.groth16.verify expects on the relayer side
-    return {
-      proof: snarkjsProof,
-      publicSignals: [
-        merkleRoot.toString(),
-        nullifier1.toString(),
-        nullifier2.toString(),
-        changeNote.commitment.toString(),
-        dummyOutput2Commitment.toString(),
-        publicAmountField.toString(), // public_amount as field element
-        tokenMintField.toString(),
-      ],
-      nullifier: nullifier1.toString(),
-      changeNoteData,
-    };
-  }
-
-  // Pending notes for after relayer confirms
-  private _pendingSpendNotes: Note[] = [];
-  private _pendingChangeNote: Note | null = null;
-
-  /**
-   * Mark a note as spent after relayer confirms the transfer
-   * @param nullifier - The nullifier string from the proof
-   */
-  async markNoteSpent(nullifier: string): Promise<void> {
-
-    // Remove the spent notes
-    if (this._pendingSpendNotes.length > 0) {
-      this.removeSpentNotes(this._pendingSpendNotes);
-      this._pendingSpendNotes = [];
-    }
-
-    // Add change note if it exists
-    if (this._pendingChangeNote && this._pendingChangeNote.amount > BigInt(0)) {
-      // In a real implementation, we'd need to update the merkle tree
-      // For now, we track it locally - the next sync will pick it up
-      this._pendingChangeNote.isOnChain = false; // Will be confirmed on next sync
-      this.addNote(this._pendingChangeNote);
-      this._pendingChangeNote = null;
-    }
-
-    await this.saveNotes();
   }
 
   /**
@@ -4038,108 +3713,73 @@ export function getZkService(): ZkService {
 }
 
 /**
- * TreeSyncManager — keeps the local Merkle tree in sync via WebSocket.
+ * TreeSyncManager — Fully on-chain Merkle tree sync.
  *
- * When active, connects to the relayer's /pool/ws endpoint and receives
- * real-time commitment updates. This means when the user performs a
- * shield/unshield/transfer, the tree is already current — zero sync wait.
- *
- * Usage:
- *   const sync = getTreeSyncManager();
- *   sync.start();  // Call when app becomes active
- *   sync.stop();   // Call when app goes to background
+ * Polls the MerkleTree PDA on-chain every 10s for new leaf count changes.
+ * When a change is detected, triggers a full sync via ZkService.syncMerkleTree().
+ * No backend dependency — all data comes from Solana RPC.
  */
 export class TreeSyncManager {
-  private ws: WebSocket | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
   private _isRunning: boolean = false;
+  private lastKnownLeafCount: number = 0;
 
   get isRunning(): boolean {
     return this._isRunning;
   }
 
-  /**
-   * Start the background sync connection
-   */
   start(): void {
     if (this._isRunning) return;
     this._isRunning = true;
-    this.connect();
+    console.log('[TreeSync] Started on-chain polling (10s interval)');
+    this.poll(); // Initial poll
+    this.pollTimer = setInterval(() => this.poll(), 10_000);
   }
 
-  /**
-   * Stop background sync and disconnect
-   */
   stop(): void {
     this._isRunning = false;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
     }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    console.log('[TreeSync] Stopped');
   }
 
-  private connect(): void {
+  private async poll(): Promise<void> {
     if (!this._isRunning) return;
-
-    const httpUrl = ZkService.getBackendProverUrl();
-    // Convert http(s):// to ws(s)://
-    const wsUrl = httpUrl.replace(/^http/, 'ws') + '/pool/ws';
-    console.log('[TreeSync] Connecting to', wsUrl);
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      const zkService = getZkService();
+      if (!zkService) return;
 
-      this.ws.onopen = () => {
-        console.log('[TreeSync] Connected');
-      };
+      const connection = getConnection();
+      const programId = (zkService as any).programId as PublicKey;
+      const tokenMint = (zkService as any).tokenMint as PublicKey;
+      if (!programId || !tokenMint) return;
 
-      this.ws.onmessage = (event: any) => {
-        try {
-          const msg = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString());
+      const [poolPDA] = PublicKey.findProgramAddressSync(
+        [Buffer.from('shielded_pool'), tokenMint.toBytes()], programId
+      );
+      const [merkleTreePDA] = PublicKey.findProgramAddressSync(
+        [Buffer.from('merkle_tree'), poolPDA.toBytes()], programId
+      );
 
-          if (msg.type === 'snapshot') {
-            console.log('[TreeSync] Snapshot: leafCount=', msg.leafCount, 'status=', msg.status);
-          } else if (msg.type === 'commitment') {
-            // Insert new commitment into local tree
-            const zkService = getZkService();
-            const tree = (zkService as any).merkleTree as MerkleTree;
-            if (tree && msg.index === tree.leafCount) {
-              tree.insert(BigInt(msg.commitment));
-              console.log('[TreeSync] Inserted commitment at index', msg.index);
-            }
-          }
-        } catch (e) {
-          console.warn('[TreeSync] Failed to parse message:', e);
-        }
-      };
+      const account = await connection.getAccountInfo(merkleTreePDA);
+      if (!account) return;
 
-      this.ws.onclose = () => {
-        console.log('[TreeSync] Disconnected');
-        this.ws = null;
-        this.scheduleReconnect();
-      };
+      const leafCountOffset = 8 + 32 + 32; // disc + pool_authority + root
+      const onChainLeafCount = Number(account.data.readBigUInt64LE(leafCountOffset));
 
-      this.ws.onerror = (err: any) => {
-        console.warn('[TreeSync] Error:', err.message || 'unknown');
-        // onclose will fire after onerror
-      };
+      if (onChainLeafCount > this.lastKnownLeafCount) {
+        console.log('[TreeSync] New leaves detected:', this.lastKnownLeafCount, '->', onChainLeafCount);
+        this.lastKnownLeafCount = onChainLeafCount;
+        // Trigger full sync
+        await zkService.syncMerkleTree();
+      }
     } catch (e: any) {
-      console.warn('[TreeSync] Connection failed:', e.message);
-      this.scheduleReconnect();
+      // Silent — polling errors are non-fatal
+      console.warn('[TreeSync] Poll error:', e.message);
     }
-  }
-
-  private scheduleReconnect(): void {
-    if (!this._isRunning) return;
-    // Reconnect after 5 seconds
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, 5000);
   }
 }
 
