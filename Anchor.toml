@@ -15,6 +15,7 @@ specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
 zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
 p01_zkspl = "EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah"
 p01_trustless = "FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q"
+p01_relayer = "2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW"
 
 [programs.localnet]
 p01_fee_splitter = "muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD"
@@ -25,6 +26,7 @@ specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"
 zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
 p01_zkspl = "EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah"
 p01_trustless = "FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q"
+p01_relayer = "2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW"
 
 [programs.mainnet]
 p01_fee_splitter = "7xwX64ZxMVyw7xWJPaPuy8WFcvvhJrDDWEkc64nUMDCu"

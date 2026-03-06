@@ -175,6 +175,8 @@ export {
   canClaim,
   estimateClaimFee,
   closeStealthAccount,
+  buildClaimProof,
+  buildClaimProofV2,
   type ClaimOptions,
 } from './transfer';
 
@@ -348,3 +350,41 @@ export {
   type ProgressEvent as CircuitProgressEvent,
   type CircuitFiles,
 } from './proving';
+
+// ============================================================================
+// Relay Module (Decentralized Transaction Relay)
+// ============================================================================
+//
+// BREAK THE LINK. Submit transactions through encrypted relay jobs.
+// An ephemeral keypair posts the job; the relayer executes it.
+// No on-chain connection between your wallet and the transaction.
+//
+export {
+  // Submit
+  submitRelayJob,
+  generateJobId,
+
+  // Encryption
+  encryptForRelayer,
+  decryptRelayJob,
+
+  // Selection
+  fetchActiveRelayers,
+  fetchRelayerConfig,
+  selectRelayer,
+
+  // Monitoring
+  monitorJob,
+  cancelRelayJob,
+
+  // Constants & types
+  RELAYER_PROGRAM_ID_DEVNET,
+  RELAY_SEEDS,
+  JobStatus,
+  type RelayerNodeInfo,
+  type RelayerConfigInfo,
+  type RelayJobInfo,
+  type SubmitRelayJobOptions,
+  type RelayJobResult,
+  type JobCompletionResult,
+} from './relay';
