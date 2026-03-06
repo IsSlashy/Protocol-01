@@ -1043,7 +1043,7 @@ export const useShieldedStore = create<ShieldedState>()(
 
       // ============= STEALTH PAYMENT RECOVERY =============
 
-      // Scan for stealth payments from relayer
+      // Scan for stealth payments directly from Solana (no relayer)
       scanStealthPayments: async () => {
         const { isInitialized, _zkService } = get();
         if (!isInitialized || !_zkService) {
@@ -1051,17 +1051,33 @@ export const useShieldedStore = create<ShieldedState>()(
         }
 
         try {
-          // Use the relayer URL from environment or default
-          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://p01-relayer-production.up.railway.app';
-          const response = await fetch(`${RELAYER_URL}/relay/stealth-payments?limit=100`);
+          // Scan on-chain transactions directly — no relayer dependency.
+          // Uses the SDK's StealthIndexer for batched signature fetching,
+          // view-tag quick-rejection, and instruction data parsing.
+          const { scanForPayments } = await import('@p01/specter-sdk');
+          const { network: net } = getWalletData();
+          const conn = getConnection(net);
 
-          if (!response.ok) {
-            console.warn('[Shielded] Failed to fetch stealth payments, status:', response.status);
+          const stealthKeys = _zkService.getStealthKeys();
+          if (!stealthKeys) {
+            console.warn('[Shielded] Stealth keys not available');
             return { found: 0, amount: 0, payments: [] };
           }
 
-          const data = await response.json();
-          const payments = data.payments || [];
+          const onChainPayments = await scanForPayments(
+            conn,
+            stealthKeys.viewingKey,
+            stealthKeys.spendingKey,
+            { limit: 100 }
+          );
+
+          // Convert SDK StealthPayment format to the legacy format used below
+          const payments = onChainPayments.map(p => ({
+            ephemeralPublicKey: Buffer.from(p.ephemeralPubKey).toString('base64'),
+            viewTag: p.viewTag.toString(),
+            stealthAddress: p.stealthAddress.toBase58(),
+            signature: p.signature,
+          }));
 
           if (payments.length === 0) {
             return { found: 0, amount: 0, payments: [] };
