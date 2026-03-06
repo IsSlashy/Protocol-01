@@ -5,24 +5,41 @@ import type {
   StealthAddressOptions,
 } from '../types';
 import { SpecterError, SpecterErrorCode } from '../types';
-import { generateEphemeralKeypair } from '../utils/crypto';
+import { generateEphemeralKeypair, kemGenerateKeypair } from '../utils/crypto';
 import { encodeStealthMetaAddress, decodeStealthMetaAddress } from '../utils/helpers';
+import { KEM_CIPHERTEXT_SIZE } from '../constants';
 import {
   deriveStealthPublicKey,
-  deriveStealthPublicKeyFromEncoded,
 } from './derive';
 
 /**
- * Generate a stealth meta-address from spending and viewing keypairs
- * @param spendingKeypair - Keypair for spending (private key stays with recipient)
- * @param viewingKeypair - Keypair for viewing/scanning (private key stays with recipient)
+ * Generate a stealth meta-address from spending and viewing keypairs.
+ * If `enableHybrid` is true, also generates an ML-KEM-768 keypair for
+ * post-quantum resistance (v2 meta-address).
+ *
+ * @param spendingKeypair - Keypair for spending
+ * @param viewingKeypair - Keypair for viewing/scanning
+ * @param enableHybrid - Generate v2 hybrid meta-address with ML-KEM-768
+ * @returns Meta-address and optionally the KEM secret key (caller must store securely)
  */
 export function generateStealthMetaAddress(
   spendingKeypair: Keypair,
-  viewingKeypair: Keypair
-): StealthMetaAddress {
+  viewingKeypair: Keypair,
+  enableHybrid: boolean = false
+): StealthMetaAddress & { kemSecretKey?: Uint8Array } {
   const spendingPubKey = spendingKeypair.publicKey.toBytes();
   const viewingPubKey = viewingKeypair.publicKey.toBytes();
+
+  if (enableHybrid) {
+    const kem = kemGenerateKeypair();
+    return {
+      spendingPubKey,
+      viewingPubKey,
+      kemPubKey: kem.publicKey,
+      encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey, kem.publicKey),
+      kemSecretKey: kem.secretKey,
+    };
+  }
 
   return {
     spendingPubKey,
@@ -32,15 +49,15 @@ export function generateStealthMetaAddress(
 }
 
 /**
- * Parse an encoded stealth meta-address
- * @param encoded - The encoded stealth meta-address string
+ * Parse an encoded stealth meta-address (v1 or v2)
  */
 export function parseStealthMetaAddress(encoded: string): StealthMetaAddress {
   try {
-    const { spendingPubKey, viewingPubKey } = decodeStealthMetaAddress(encoded);
+    const decoded = decodeStealthMetaAddress(encoded);
     return {
-      spendingPubKey,
-      viewingPubKey,
+      spendingPubKey: decoded.spendingPubKey,
+      viewingPubKey: decoded.viewingPubKey,
+      kemPubKey: decoded.kemPubKey,
       encoded,
     };
   } catch (error) {
@@ -53,43 +70,34 @@ export function parseStealthMetaAddress(encoded: string): StealthMetaAddress {
 }
 
 /**
- * Generate a one-time stealth address for receiving a payment
- * This creates a fresh address that can only be spent by the meta-address owner
- *
- * @param recipientMetaAddress - The recipient's stealth meta-address
- * @param options - Optional configuration for the stealth address
+ * Generate a one-time stealth address for receiving a payment.
+ * Automatically uses hybrid mode if the meta-address contains a KEM public key.
  */
 export function generateStealthAddress(
   recipientMetaAddress: StealthMetaAddress | string,
-  options: StealthAddressOptions = {}
+  _options: StealthAddressOptions = {}
 ): StealthAddress & { ephemeralPrivateKey: Uint8Array } {
   try {
-    // Parse meta-address if string
     const metaAddress =
       typeof recipientMetaAddress === 'string'
         ? parseStealthMetaAddress(recipientMetaAddress)
         : recipientMetaAddress;
 
-    // Generate ephemeral keypair for this transaction
     const ephemeralKeypair = generateEphemeralKeypair();
 
-    // Derive the stealth public key
-    const { stealthPubKey, ephemeralPubKey, viewTag } = deriveStealthPublicKey(
-      metaAddress,
-      ephemeralKeypair.secretKey
-    );
+    const { stealthPubKey, ephemeralPubKey, viewTag, kemCiphertext } =
+      deriveStealthPublicKey(metaAddress, ephemeralKeypair.secretKey);
 
     return {
       address: stealthPubKey,
       ephemeralPubKey,
       viewTag,
+      kemCiphertext,
       createdAt: new Date(),
       ephemeralPrivateKey: ephemeralKeypair.secretKey,
     };
   } catch (error) {
-    if (error instanceof SpecterError) {
-      throw error;
-    }
+    if (error instanceof SpecterError) throw error;
     throw new SpecterError(
       SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
       'Failed to generate stealth address',
@@ -100,10 +108,6 @@ export function generateStealthAddress(
 
 /**
  * Generate multiple stealth addresses for a recipient
- * Useful for batch payments or privacy-enhanced transfers
- *
- * @param recipientMetaAddress - The recipient's stealth meta-address
- * @param count - Number of addresses to generate
  */
 export function generateMultipleStealthAddresses(
   recipientMetaAddress: StealthMetaAddress | string,
@@ -117,64 +121,76 @@ export function generateMultipleStealthAddresses(
   }
 
   const addresses: Array<StealthAddress & { ephemeralPrivateKey: Uint8Array }> = [];
-
   for (let i = 0; i < count; i++) {
     addresses.push(generateStealthAddress(recipientMetaAddress));
   }
-
   return addresses;
 }
 
 /**
- * Create a shareable stealth address announcement
- * This is the data that gets published on-chain for the recipient to find
- *
- * @param stealthAddress - The generated stealth address
- * @param ephemeralPubKey - The ephemeral public key
- * @param viewTag - The view tag
+ * Create a stealth announcement for on-chain publication.
+ * Format is length-based:
+ *   v1 (65 bytes):  [viewTag(1)] [ephemeralPubKey(32)] [stealthAddress(32)]
+ *   v2 (1153 bytes): [viewTag(1)] [ephemeralPubKey(32)] [stealthAddress(32)] [kemCiphertext(1088)]
  */
 export function createStealthAnnouncement(
   stealthAddress: PublicKey,
   ephemeralPubKey: Uint8Array,
-  viewTag: number
+  viewTag: number,
+  kemCiphertext?: Uint8Array
 ): Uint8Array {
-  // Format: [view_tag (1 byte)] [ephemeral_pubkey (32 bytes)] [stealth_address (32 bytes)]
-  const announcement = new Uint8Array(65);
+  const baseSize = 65;
+  const totalSize = kemCiphertext ? baseSize + KEM_CIPHERTEXT_SIZE : baseSize;
+
+  const announcement = new Uint8Array(totalSize);
   announcement[0] = viewTag;
   announcement.set(ephemeralPubKey, 1);
   announcement.set(stealthAddress.toBytes(), 33);
+
+  if (kemCiphertext) {
+    announcement.set(kemCiphertext, 65);
+  }
+
   return announcement;
 }
 
 /**
- * Parse a stealth announcement
- * @param announcement - The announcement data
+ * Parse a stealth announcement (v1 or v2, detected by length)
  */
 export function parseStealthAnnouncement(announcement: Uint8Array): {
   viewTag: number;
   ephemeralPubKey: Uint8Array;
   stealthAddress: PublicKey;
+  kemCiphertext?: Uint8Array;
 } {
-  if (announcement.length !== 65) {
+  if (announcement.length !== 65 && announcement.length !== 65 + KEM_CIPHERTEXT_SIZE) {
     throw new SpecterError(
       SpecterErrorCode.INVALID_STEALTH_ADDRESS,
-      'Invalid announcement length'
+      `Invalid announcement length: ${announcement.length} (expected 65 or ${65 + KEM_CIPHERTEXT_SIZE})`
     );
   }
 
-  return {
+  const result: {
+    viewTag: number;
+    ephemeralPubKey: Uint8Array;
+    stealthAddress: PublicKey;
+    kemCiphertext?: Uint8Array;
+  } = {
     viewTag: announcement[0]!,
     ephemeralPubKey: announcement.slice(1, 33),
     stealthAddress: new PublicKey(announcement.slice(33, 65)),
   };
+
+  // v2: includes KEM ciphertext
+  if (announcement.length > 65) {
+    result.kemCiphertext = announcement.slice(65, 65 + KEM_CIPHERTEXT_SIZE);
+  }
+
+  return result;
 }
 
 /**
  * Generate stealth data for a transfer
- * Returns all the data needed to execute a stealth transfer
- *
- * @param recipientMetaAddress - Recipient's meta-address
- * @param amount - Amount to transfer
  */
 export function generateStealthTransferData(
   recipientMetaAddress: StealthMetaAddress | string,
@@ -184,6 +200,7 @@ export function generateStealthTransferData(
   ephemeralPubKey: Uint8Array;
   viewTag: number;
   announcement: Uint8Array;
+  kemCiphertext?: Uint8Array;
   amount: bigint;
 } {
   const stealth = generateStealthAddress(recipientMetaAddress);
@@ -192,10 +209,12 @@ export function generateStealthTransferData(
     stealthAddress: stealth.address,
     ephemeralPubKey: stealth.ephemeralPubKey,
     viewTag: stealth.viewTag,
+    kemCiphertext: stealth.kemCiphertext,
     announcement: createStealthAnnouncement(
       stealth.address,
       stealth.ephemeralPubKey,
-      stealth.viewTag
+      stealth.viewTag,
+      stealth.kemCiphertext
     ),
     amount,
   };
