@@ -24,6 +24,7 @@ import {
 import nacl from 'tweetnacl';
 import { sha256 } from '@noble/hashes/sha256';
 import { hkdf } from '@noble/hashes/hkdf';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import { getConnection } from '../solana/connection';
 
 // ── Program Constants ──────────────────────────────────────────────────
@@ -38,8 +39,10 @@ const SEEDS = {
   JOB: Buffer.from('relay_job'),
 } as const;
 
-// Overhead: ephemeral_pubkey (32) + nonce (24) + Poly1305 tag (16)
-const ENCRYPTED_PAYLOAD_OVERHEAD = 72;
+// v1 overhead: version(1) + ephemeral_pubkey(32) + nonce(24) + Poly1305 tag(16) = 73
+// v2 overhead: version(1) + ephemeral_pubkey(32) + kem_ct(1088) + nonce(24) + tag(16) = 1161
+const ENCRYPTED_PAYLOAD_OVERHEAD_V1 = 73;
+const ENCRYPTED_PAYLOAD_OVERHEAD_V2 = 1161;
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -47,6 +50,7 @@ export interface RelayerNode {
   address: PublicKey; // PDA address
   operator: PublicKey;
   encryptionKey: Uint8Array; // 32-byte X25519 public key
+  kemEncryptionKey?: Uint8Array; // 1184-byte ML-KEM-768 public key (v2 relayers)
   stake: number;
   isActive: boolean;
   reputationScore: number;
@@ -78,31 +82,71 @@ export enum JobStatus {
 
 // ── Encryption ─────────────────────────────────────────────────────────
 
+/** HKDF info for hybrid relay encryption (must match relayer-side decryption) */
+const HYBRID_RELAY_HKDF_INFO = 'p01_relay_job_hybrid_v2';
+
+/** ML-KEM-768 sizes */
+const KEM_PUBLIC_KEY_SIZE = 1184;
+const KEM_CIPHERTEXT_SIZE = 1088;
+
 /**
- * Encrypt a transaction payload for a relayer using X25519 ECDH + HKDF + XSalsa20-Poly1305.
+ * Encrypt a transaction payload for a relayer.
  *
- * Wire format: ephemeral_pubkey (32) || nonce (24) || ciphertext (N + 16)
+ * v1 (classic): X25519 ECDH + HKDF + XSalsa20-Poly1305
+ *   Wire: 0x01 || ephemeral_pubkey (32) || nonce (24) || ciphertext (N + 16)
+ *
+ * v2 (hybrid): X25519 ECDH + ML-KEM-768 + HKDF + XSalsa20-Poly1305
+ *   Wire: 0x02 || ephemeral_pubkey (32) || kem_ciphertext (1088) || nonce (24) || ciphertext (N + 16)
+ *
+ * Automatically uses v2 if relayerKemKey is provided.
  */
 export function encryptForRelayer(
   payload: Uint8Array,
   relayerEncryptionKey: Uint8Array,
+  relayerKemKey?: Uint8Array,
 ): Uint8Array {
   const ephemeral = nacl.box.keyPair();
 
   // X25519 ECDH → raw shared secret
-  const rawSecret = nacl.scalarMult(ephemeral.secretKey, relayerEncryptionKey);
+  const classicSecret = nacl.scalarMult(ephemeral.secretKey, relayerEncryptionKey);
 
-  // HKDF-SHA256 → 32-byte symmetric key
-  const symmetricKey = hkdf(sha256, rawSecret, undefined, 'p01_relay_job_v1', 32);
+  let symmetricKey: Uint8Array;
+  let kemCiphertext: Uint8Array | undefined;
+
+  if (relayerKemKey && relayerKemKey.length === KEM_PUBLIC_KEY_SIZE) {
+    // Hybrid v2: combine X25519 + ML-KEM-768
+    const kem = ml_kem768.encapsulate(relayerKemKey);
+    kemCiphertext = kem.cipherText;
+
+    const combined = new Uint8Array(classicSecret.length + kem.sharedSecret.length);
+    combined.set(classicSecret);
+    combined.set(kem.sharedSecret, classicSecret.length);
+    symmetricKey = hkdf(sha256, combined, undefined, HYBRID_RELAY_HKDF_INFO, 32);
+  } else {
+    // Classic v1: X25519 only
+    symmetricKey = hkdf(sha256, classicSecret, undefined, 'p01_relay_job_v1', 32);
+  }
 
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
   const ciphertext = nacl.secretbox(payload, nonce, symmetricKey);
 
-  // Pack: ephemeral_pubkey || nonce || ciphertext
-  const result = new Uint8Array(32 + nonce.length + ciphertext.length);
-  result.set(ephemeral.publicKey, 0);
-  result.set(nonce, 32);
-  result.set(ciphertext, 32 + nonce.length);
+  if (kemCiphertext) {
+    // v2 wire: version(1) + ephemeral(32) + kem_ct(1088) + nonce(24) + ciphertext
+    const result = new Uint8Array(1 + 32 + KEM_CIPHERTEXT_SIZE + nonce.length + ciphertext.length);
+    result[0] = 0x02;
+    result.set(ephemeral.publicKey, 1);
+    result.set(kemCiphertext, 33);
+    result.set(nonce, 33 + KEM_CIPHERTEXT_SIZE);
+    result.set(ciphertext, 33 + KEM_CIPHERTEXT_SIZE + nonce.length);
+    return result;
+  }
+
+  // v1 wire: version(1) + ephemeral(32) + nonce(24) + ciphertext
+  const result = new Uint8Array(1 + 32 + nonce.length + ciphertext.length);
+  result[0] = 0x01;
+  result.set(ephemeral.publicKey, 1);
+  result.set(nonce, 33);
+  result.set(ciphertext, 33 + nonce.length);
   return result;
 }
 
@@ -186,12 +230,23 @@ export async function fetchActiveRelayers(
     offset += 8; // registered_at
     offset += 8; // deactivated_at_slot
     const isActive = data[offset] === 1; offset += 1;
-    const reputationScore = data.readUInt16LE(offset);
+    const reputationScore = data.readUInt16LE(offset); offset += 2;
+
+    // v2 relayers have an optional 1184-byte KEM public key after reputation_score
+    let kemEncryptionKey: Uint8Array | undefined;
+    if (offset + KEM_PUBLIC_KEY_SIZE <= data.length) {
+      const kemBytes = new Uint8Array(data.slice(offset, offset + KEM_PUBLIC_KEY_SIZE));
+      // Check it's not all zeros (uninitialized)
+      if (kemBytes.some(b => b !== 0)) {
+        kemEncryptionKey = kemBytes;
+      }
+    }
 
     return {
       address: pubkey,
       operator,
       encryptionKey,
+      kemEncryptionKey,
       stake,
       isActive,
       reputationScore,
@@ -258,8 +313,8 @@ export async function submitRelayJob(
   const { blockhash: currentBlockhash } = await connection.getLatestBlockhash('confirmed');
   const { relayer: selectedRelayer } = selectRelayer(relayers, currentBlockhash, jobId);
 
-  // 3. Encrypt the transaction for the selected relayer
-  const encrypted = encryptForRelayer(serializedTx, selectedRelayer.encryptionKey);
+  // 3. Encrypt the transaction for the selected relayer (hybrid if KEM key available)
+  const encrypted = encryptForRelayer(serializedTx, selectedRelayer.encryptionKey, selectedRelayer.kemEncryptionKey);
 
   // 4. Generate ephemeral keypair
   const ephemeral = Keypair.generate();
