@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CommitmentIndexer } from './commitment-indexer';
 import { WebSocketServer } from 'ws';
+import { createRateLimiter } from './rate-limiter';
 
 dotenv.config();
 
@@ -145,6 +146,7 @@ try {
 
 // Express app setup
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (for correct IP in X-Forwarded-For)
 app.use(cors({
   origin: [
     'https://protocol-01.vercel.app',
@@ -155,14 +157,41 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10mb' })); // Increased limit for proof inputs
 
-// TODO: Add rate limiting - install express-rate-limit and apply:
-//   /prove endpoint: 5 requests per minute
-//   /relay/* endpoints: 20 requests per minute
-// Example: import rateLimit from 'express-rate-limit';
-//   const proveLimiter = rateLimit({ windowMs: 60000, max: 5 });
-//   const relayLimiter = rateLimit({ windowMs: 60000, max: 20 });
-//   app.use('/prove', proveLimiter);
-//   app.use('/relay', relayLimiter);
+// ---------------------------------------------------------------------------
+// Rate limiting — sliding window, per-IP, in-memory
+// ---------------------------------------------------------------------------
+
+// Proof generation endpoints: 10 requests per minute per IP
+// These are expensive (CPU-bound ZK proof generation) and must be tightly limited.
+const proofRateLimiter = createRateLimiter({
+  maxRequests: 10,
+  windowMs: 60_000,
+  label: 'proof',
+  logger,
+});
+
+// General endpoints: 60 requests per minute per IP
+const generalRateLimiter = createRateLimiter({
+  maxRequests: 60,
+  windowMs: 60_000,
+  label: 'general',
+  logger,
+});
+
+// Apply proof rate limiter to all proof-generation routes
+app.use('/prove', proofRateLimiter);
+app.use('/api/zkspl/prove', proofRateLimiter);
+
+// Apply general rate limiter to relay, verify, pool data, and subscription mutation routes
+app.use('/relay', generalRateLimiter);
+app.use('/verify', generalRateLimiter);
+app.use('/pool/commitments', generalRateLimiter);
+app.use('/subscriptions/scan', generalRateLimiter);
+app.use('/subscriptions/crank', generalRateLimiter);
+
+// Health/status endpoints are NOT rate-limited:
+//   /health, /info, /pool/state, /relay/denominations,
+//   /relay/status/:txId, /subscriptions/status
 
 // =============================================================================
 // COMMITMENT INDEXER — serves commitments to mobile clients for fast tree sync

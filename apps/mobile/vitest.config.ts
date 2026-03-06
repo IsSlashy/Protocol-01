@@ -37,7 +37,6 @@ export default defineConfig({
       { find: 'expo-background-fetch', replacement: resolve(__dirname, './test/__mocks__/expo-background-fetch.ts') },
       { find: 'expo-task-manager', replacement: resolve(__dirname, './test/__mocks__/expo-task-manager.ts') },
       { find: 'ed25519-hd-key', replacement: resolve(__dirname, './test/__mocks__/ed25519-hd-key.ts') },
-      { find: 'crypto-js', replacement: resolve(__dirname, './test/__mocks__/crypto-js.ts') },
       { find: 'tweetnacl', replacement: resolve(__dirname, './test/__mocks__/tweetnacl.ts') },
       { find: 'bs58', replacement: resolve(__dirname, './test/__mocks__/bs58.ts') },
     ],

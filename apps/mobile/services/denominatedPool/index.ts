@@ -28,7 +28,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { poseidon2, poseidon4 } from 'poseidon-lite';
-import CryptoJS from 'crypto-js';
+import { sha256 } from '@noble/hashes/sha256';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
 
@@ -469,9 +469,8 @@ function parseFilledSubtrees(treeData: Buffer): { leafCount: number; subtrees: b
 // ---------------------------------------------------------------------------
 
 function getDiscriminator(name: string): Buffer {
-  const hash = CryptoJS.SHA256(`global:${name}`);
-  const hex = hash.toString(CryptoJS.enc.Hex);
-  return Buffer.from(hex, 'hex').slice(0, 8);
+  const hash = sha256(`global:${name}`);
+  return Buffer.from(hash.slice(0, 8));
 }
 
 function buildShieldDenominatedIx(
@@ -824,7 +823,7 @@ export function buildTransferInputs(
  */
 export type ProofGenerator = (
   inputs: Record<string, string | string[]>,
-  circuit?: 'pool' | 'transfer',
+  circuit?: 'pool' | 'transfer' | 'subscriber',
 ) => Promise<{ proof: any; publicSignals: string[] }>;
 
 /**
