@@ -61,9 +61,15 @@ interface ZkProverContextType {
 
 const ZkProverContext = createContext<ZkProverContextType | null>(null);
 
-// Pending proof requests
+// Pending proof requests (byte-array format)
 const pendingRequests = new Map<string, {
   resolve: (proof: Groth16Proof) => void;
+  reject: (error: Error) => void;
+}>();
+
+// Pending raw proof requests (snarkjs format for relayer)
+const pendingRawRequests = new Map<string, {
+  resolve: (result: { proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] }; publicSignals: string[] }) => void;
   reject: (error: Error) => void;
 }>();
 
@@ -276,19 +282,29 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
           setError(data.error);
         } else {
           setError(null);
-          // Connect prover to ZK service
+          // Connect prover to ZK service (both byte-array and raw snarkjs formats)
           const zkService = getZkService();
           zkService.setProver(generateProofViaWebView);
+          zkService.setProverRaw(generateRawProofViaWebView);
         }
         return;
       }
 
       if (data.type === 'proof') {
+        // Check byte-array pending requests
         const pending = pendingRequests.get(data.id);
         if (pending) {
           pendingRequests.delete(data.id);
           const proof = convertProof(data.proof);
           pending.resolve(proof);
+          return;
+        }
+        // Check raw-format pending requests
+        const pendingRaw = pendingRawRequests.get(data.id);
+        if (pendingRaw) {
+          pendingRawRequests.delete(data.id);
+          pendingRaw.resolve({ proof: data.proof, publicSignals: data.publicSignals });
+          return;
         }
         return;
       }
@@ -298,6 +314,13 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
         if (pending) {
           pendingRequests.delete(data.id);
           pending.reject(new Error(data.error));
+          return;
+        }
+        const pendingRaw = pendingRawRequests.get(data.id);
+        if (pendingRaw) {
+          pendingRawRequests.delete(data.id);
+          pendingRaw.reject(new Error(data.error));
+          return;
         }
         return;
       }
@@ -416,6 +439,40 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
       setTimeout(() => {
         if (pendingRequests.has(id)) {
           pendingRequests.delete(id);
+          reject(new Error('Proof generation timed out'));
+        }
+      }, 180000);
+    });
+  }, [startProver]);
+
+  // Generate raw proof via WebView (returns snarkjs format, not byte arrays)
+  const generateRawProofViaWebView = useCallback(async (inputs: Record<string, string>): Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+  }> => {
+    const ready = await startProver();
+    if (!ready) {
+      throw new Error('Failed to initialize ZK prover. Please try again.');
+    }
+
+    if (!webViewRefCurrent.current) {
+      throw new Error('WebView not available');
+    }
+
+    const id = 'raw_' + Math.random().toString(36).substring(2);
+
+    return new Promise((resolve, reject) => {
+      pendingRawRequests.set(id, { resolve, reject });
+
+      const message = JSON.stringify({ type: 'prove', id, inputs });
+      webViewRefCurrent.current?.injectJavaScript(`
+        window.postMessage(${JSON.stringify(message)}, '*');
+        true;
+      `);
+
+      setTimeout(() => {
+        if (pendingRawRequests.has(id)) {
+          pendingRawRequests.delete(id);
           reject(new Error('Proof generation timed out'));
         }
       }, 180000);
