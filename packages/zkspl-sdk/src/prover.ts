@@ -1,13 +1,16 @@
 /**
  * Proof generation for zkSPL circuits.
  *
- * Supports three backends (tried in order):
- *   1. Relayer HTTP endpoints (POST /api/zkspl/prove/{operation})
- *   2. Remote Rust prover via HTTP POST (direct, /prove/zkspl or /prove/balance-proof)
- *   3. Local snarkjs (WASM + zkey files)
+ * DEFAULT MODE (trustless / client-side only):
+ *   Local snarkjs (WASM + zkey files) — spending_key NEVER leaves the device.
  *
- * The relayer and remote prover are preferred in production (much faster, ~3s vs ~3min).
- * Each tier falls back to the next on failure.
+ * OPTIONAL remote backends (opt-in, NOT recommended — exposes spending_key):
+ *   - Relayer HTTP endpoints (POST /api/zkspl/prove/{operation})
+ *   - Remote Rust prover via HTTP POST
+ *
+ * SECURITY WARNING: The relayer and remote prover receive ALL circuit inputs
+ * including spending_key in plaintext. Only use remote backends for testing
+ * or when local proving is not feasible. Production should ALWAYS use local.
  */
 
 import { fieldToBytesBE } from './crypto';
@@ -133,6 +136,7 @@ export class ZkSplProver {
 
   constructor(config: ProverConfig = {}) {
     this.config = {
+      localOnly: config.localOnly ?? true,
       remoteProverUrl: config.remoteProverUrl ?? '',
       relayerUrl: config.relayerUrl ?? '',
       balanceWasmPath: config.balanceWasmPath ?? CIRCUIT_FILES.BALANCE_WASM,
@@ -181,7 +185,19 @@ export class ZkSplProver {
   ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
     const inputs = buildBalanceCircuitInputs(pub, priv);
 
-    // 1. Try relayer first (if configured and operation type is known)
+    // DEFAULT: Local snarkjs (spending_key never leaves device)
+    if (this.config.localOnly) {
+      return this.proveLocal(
+        inputs,
+        this.config.balanceWasmPath,
+        this.config.balanceZkeyPath
+      );
+    }
+
+    // UNSAFE FALLBACK (opt-in only): Try remote backends for speed.
+    // WARNING: spending_key is sent in plaintext to these endpoints.
+
+    // 1. Try relayer (if configured and operation type is known)
     if (this.config.relayerUrl && operationType) {
       try {
         return await this.proveViaRelayer(operationType, inputs);
@@ -227,7 +243,18 @@ export class ZkSplProver {
   ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
     const inputs = buildProofCircuitInputs(pub, priv);
 
-    // 1. Try relayer first (if configured)
+    // DEFAULT: Local snarkjs (spending_key never leaves device)
+    if (this.config.localOnly) {
+      return this.proveLocal(
+        inputs,
+        this.config.proofWasmPath,
+        this.config.proofZkeyPath
+      );
+    }
+
+    // UNSAFE FALLBACK (opt-in only)
+
+    // 1. Try relayer (if configured)
     if (this.config.relayerUrl) {
       try {
         return await this.proveViaRelayer('balance-proof', inputs);
