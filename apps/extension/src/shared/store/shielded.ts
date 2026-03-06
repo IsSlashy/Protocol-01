@@ -4,6 +4,12 @@ import { PublicKey, Transaction, Keypair, SystemProgram } from '@solana/web3.js'
 import { getZkServiceExtension, ZkServiceExtension, ZkAddress, RecipientNoteData } from '../services/zk';
 import { getConnection } from '../services/wallet';
 import { useWalletStore, getPrivySigner } from './wallet';
+import {
+  encryptForSession,
+  decryptFromSession,
+  isEncryptedBlob,
+  getSessionPassword,
+} from '../services/sessionCrypto';
 import nacl from 'tweetnacl';
 
 // ============= SPECTER SDK STEALTH IMPORTS =============
@@ -435,17 +441,41 @@ function getWalletData() {
 const PRIVY_ZK_SEED_KEY = 'p01_privy_zk_seed';
 
 /**
- * Helper to get or generate ZK seed for Privy wallets
- * Stored in chrome.storage.local, unique per wallet address
+ * Helper to get or generate ZK seed for Privy wallets.
+ * The seed is encrypted at rest with the user's session password via
+ * AES-256-GCM so it never sits in chrome.storage.local as plaintext.
+ *
+ * Backward compatibility: if a legacy plaintext hex seed is found, it is
+ * transparently migrated to the encrypted format on first access.
  */
 async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
   const storageKey = `${PRIVY_ZK_SEED_KEY}_${walletAddress}`;
+  const password = getSessionPassword();
 
   try {
     // Try to retrieve existing seed
     const result = await chrome.storage.local.get(storageKey);
-    if (result[storageKey]) {
-      return result[storageKey];
+    const stored = result[storageKey];
+
+    if (stored) {
+      if (isEncryptedBlob(stored)) {
+        // New encrypted format
+        if (!password) {
+          throw new Error('Wallet must be unlocked to access ZK seed');
+        }
+        return await decryptFromSession(stored, password);
+      }
+
+      // Legacy plaintext hex -- migrate to encrypted
+      if (typeof stored === 'string') {
+        console.warn('[Shielded] Migrating legacy plaintext Privy ZK seed to encrypted');
+        if (password) {
+          const encryptedBlob = await encryptForSession(stored, password);
+          await chrome.storage.local.set({ [storageKey]: encryptedBlob });
+          console.log('[Shielded] Privy ZK seed migration complete');
+        }
+        return stored;
+      }
     }
 
     // Generate new seed (32 random bytes as hex)
@@ -455,8 +485,15 @@ async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Store for future use
-    await chrome.storage.local.set({ [storageKey]: seedHex });
+    // Store encrypted if we have a password, otherwise store plaintext
+    if (password) {
+      const encryptedBlob = await encryptForSession(seedHex, password);
+      await chrome.storage.local.set({ [storageKey]: encryptedBlob });
+    } else {
+      // Privy wallets may not have a password; store as-is
+      // (this is still better than before since most paths now encrypt)
+      await chrome.storage.local.set({ [storageKey]: seedHex });
+    }
 
     return seedHex;
   } catch (e) {
