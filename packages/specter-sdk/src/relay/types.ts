@@ -16,6 +16,9 @@ export const RELAY_SEEDS = {
 // Types
 // ============================================================================
 
+/** ML-KEM-768 public key size (FIPS 203) */
+export const KEM_PUBLIC_KEY_SIZE = 1184;
+
 /** On-chain relayer node data */
 export interface RelayerNodeInfo {
   /** Relayer node PDA */
@@ -24,6 +27,8 @@ export interface RelayerNodeInfo {
   operator: PublicKey;
   /** X25519 encryption public key (32 bytes) */
   encryptionKey: Uint8Array;
+  /** ML-KEM-768 encryption public key (1184 bytes, v2 relayers only) */
+  kemEncryptionKey?: Uint8Array;
   /** SOL staked in lamports */
   stake: number;
   /** Successful jobs */
@@ -111,5 +116,9 @@ export interface JobCompletionResult {
   txSignature?: string;
 }
 
-/** Encrypted payload format: ephemeral_pubkey (32) || nonce (24) || ciphertext */
-export const ENCRYPTED_PAYLOAD_OVERHEAD = 32 + 24 + 16; // pubkey + nonce + Poly1305 tag
+/** v1 encrypted payload: version(1) + ephemeral(32) + nonce(24) + tag(16) */
+export const ENCRYPTED_PAYLOAD_OVERHEAD_V1 = 1 + 32 + 24 + 16;
+/** v2 encrypted payload: version(1) + ephemeral(32) + kem_ct(1088) + nonce(24) + tag(16) */
+export const ENCRYPTED_PAYLOAD_OVERHEAD_V2 = 1 + 32 + 1088 + 24 + 16;
+/** @deprecated Use ENCRYPTED_PAYLOAD_OVERHEAD_V1 */
+export const ENCRYPTED_PAYLOAD_OVERHEAD = 32 + 24 + 16;
