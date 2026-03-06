@@ -70,7 +70,8 @@ interface ShieldedState {
     amount: number,
     recipient: PublicKey,
     walletPublicKey: PublicKey,
-    signTransaction: (tx: Transaction) => Promise<Transaction>
+    signTransaction: (tx: Transaction) => Promise<Transaction>,
+    useRelay?: boolean
   ) => Promise<string>;
   transfer: (
     recipient: string,
@@ -358,8 +359,8 @@ export const useShieldedStore = create<ShieldedState>()(
         }
       },
 
-      // Unshield tokens using real ZK SDK
-      unshield: async (amount: number, recipient: PublicKey, walletPublicKey: PublicKey, signTransaction) => {
+      // Unshield tokens using real ZK SDK (optional: via decentralized relay)
+      unshield: async (amount: number, recipient: PublicKey, walletPublicKey: PublicKey, signTransaction, useRelay = false) => {
         // Ensure ZK service is initialized (handles app restart case)
         const initialized = await get().ensureInitialized();
         if (!initialized) {
@@ -395,13 +396,20 @@ export const useShieldedStore = create<ShieldedState>()(
             ),
           }));
 
-          // Call real ZK service
-          const signature = await _zkService.unshield(
-            recipient,
-            amountLamports,
-            walletPublicKey,
-            signTransaction
-          );
+          // Route through decentralized relay or direct
+          const signature = useRelay
+            ? await _zkService.unshieldViaRelay(
+                recipient,
+                amountLamports,
+                walletPublicKey,
+                signTransaction
+              )
+            : await _zkService.unshield(
+                recipient,
+                amountLamports,
+                walletPublicKey,
+                signTransaction
+              );
 
           // Update state
           const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
