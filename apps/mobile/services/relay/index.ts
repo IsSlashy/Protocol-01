@@ -230,15 +230,15 @@ export async function fetchActiveRelayers(
     offset += 8; // registered_at
     offset += 8; // deactivated_at_slot
     const isActive = data[offset] === 1; offset += 1;
-    const reputationScore = data.readUInt16LE(offset); offset += 2;
+    const reputationScore = data.readUInt32LE(offset); offset += 4;
+    offset += 32; // endpoint_hash
 
-    // v2 relayers have an optional 1184-byte KEM public key after reputation_score
+    // v2 fields: has_kem_key (1) + kem_encryption_key (1184) + bump (1)
     let kemEncryptionKey: Uint8Array | undefined;
-    if (offset + KEM_PUBLIC_KEY_SIZE <= data.length) {
-      const kemBytes = new Uint8Array(data.slice(offset, offset + KEM_PUBLIC_KEY_SIZE));
-      // Check it's not all zeros (uninitialized)
-      if (kemBytes.some(b => b !== 0)) {
-        kemEncryptionKey = kemBytes;
+    if (offset + 1 + KEM_PUBLIC_KEY_SIZE <= data.length) {
+      const hasKemKey = data[offset] === 1; offset += 1;
+      if (hasKemKey) {
+        kemEncryptionKey = new Uint8Array(data.slice(offset, offset + KEM_PUBLIC_KEY_SIZE));
       }
     }
 
