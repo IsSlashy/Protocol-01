@@ -1,6 +1,12 @@
 import { PublicKey, Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import type { Cluster, SpecterError, SpecterErrorCode } from '../types';
-import { RPC_ENDPOINTS, STEALTH_ADDRESS_PREFIX, STEALTH_META_ADDRESS_VERSION } from '../constants';
+import {
+  RPC_ENDPOINTS,
+  STEALTH_ADDRESS_PREFIX,
+  STEALTH_META_ADDRESS_VERSION,
+  STEALTH_META_ADDRESS_VERSION_2,
+  KEM_PUBLIC_KEY_SIZE,
+} from '../constants';
 import { toBase58, fromBase58 } from './crypto';
 
 // ============================================================================
@@ -21,7 +27,7 @@ export function isValidPublicKey(address: string): boolean {
 }
 
 /**
- * Validate a stealth meta-address
+ * Validate a stealth meta-address (v1 or v2)
  * @param address - Stealth meta-address string
  */
 export function isValidStealthMetaAddress(address: string): boolean {
@@ -30,8 +36,15 @@ export function isValidStealthMetaAddress(address: string): boolean {
       return false;
     }
     const data = fromBase58(address.slice(STEALTH_ADDRESS_PREFIX.length));
-    // Version (1) + spending key (32) + viewing key (32) = 65 bytes
-    return data.length === 65 && data[0] === STEALTH_META_ADDRESS_VERSION;
+    // v1: Version(1) + spending(32) + viewing(32) = 65 bytes
+    if (data.length === 65 && data[0] === STEALTH_META_ADDRESS_VERSION) {
+      return true;
+    }
+    // v2: Version(1) + spending(32) + viewing(32) + kemPubKey(1184) = 1249 bytes
+    if (data.length === 1249 && data[0] === STEALTH_META_ADDRESS_VERSION_2) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -41,11 +54,23 @@ export function isValidStealthMetaAddress(address: string): boolean {
  * Encode a stealth meta-address from keys
  * @param spendingPubKey - Spending public key (32 bytes)
  * @param viewingPubKey - Viewing public key (32 bytes)
+ * @param kemPubKey - ML-KEM-768 public key (1184 bytes, optional — enables v2 hybrid)
  */
 export function encodeStealthMetaAddress(
   spendingPubKey: Uint8Array,
-  viewingPubKey: Uint8Array
+  viewingPubKey: Uint8Array,
+  kemPubKey?: Uint8Array
 ): string {
+  if (kemPubKey) {
+    // v2: 1 + 32 + 32 + 1184 = 1249 bytes
+    const data = new Uint8Array(1249);
+    data[0] = STEALTH_META_ADDRESS_VERSION_2;
+    data.set(spendingPubKey, 1);
+    data.set(viewingPubKey, 33);
+    data.set(kemPubKey, 65);
+    return STEALTH_ADDRESS_PREFIX + toBase58(data);
+  }
+  // v1: 1 + 32 + 32 = 65 bytes
   const data = new Uint8Array(65);
   data[0] = STEALTH_META_ADDRESS_VERSION;
   data.set(spendingPubKey, 1);
@@ -54,26 +79,38 @@ export function encodeStealthMetaAddress(
 }
 
 /**
- * Decode a stealth meta-address to keys
+ * Decode a stealth meta-address to keys (supports v1 and v2)
  * @param encoded - Encoded stealth meta-address
  */
 export function decodeStealthMetaAddress(encoded: string): {
   spendingPubKey: Uint8Array;
   viewingPubKey: Uint8Array;
+  kemPubKey?: Uint8Array;
 } {
   if (!encoded.startsWith(STEALTH_ADDRESS_PREFIX)) {
     throw new Error('Invalid stealth meta-address prefix');
   }
 
   const data = fromBase58(encoded.slice(STEALTH_ADDRESS_PREFIX.length));
-  if (data.length !== 65 || data[0] !== STEALTH_META_ADDRESS_VERSION) {
-    throw new Error('Invalid stealth meta-address format');
+
+  // v2: 1249 bytes with ML-KEM-768 public key
+  if (data.length === 1249 && data[0] === STEALTH_META_ADDRESS_VERSION_2) {
+    return {
+      spendingPubKey: data.slice(1, 33),
+      viewingPubKey: data.slice(33, 65),
+      kemPubKey: data.slice(65, 1249),
+    };
   }
 
-  return {
-    spendingPubKey: data.slice(1, 33),
-    viewingPubKey: data.slice(33, 65),
-  };
+  // v1: 65 bytes classic
+  if (data.length === 65 && data[0] === STEALTH_META_ADDRESS_VERSION) {
+    return {
+      spendingPubKey: data.slice(1, 33),
+      viewingPubKey: data.slice(33, 65),
+    };
+  }
+
+  throw new Error('Invalid stealth meta-address format');
 }
 
 /**
