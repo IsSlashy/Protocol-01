@@ -11,6 +11,7 @@ import nacl from 'tweetnacl';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256 } from '@noble/hashes/sha256';
+import bs58 from 'bs58';
 
 // ============= ECDH-like Shared Secret =============
 // Uses nacl.box which internally does X25519 ECDH
@@ -214,11 +215,12 @@ export async function generateStealthAddress(
     const viewTag = await generateViewTag(sharedSecret);
 
     // Store ephemeral X25519 public key for recipient to compute shared secret
-    const ephemeralPubKeyBase64 = Buffer.from(ephemeralX25519.publicKey).toString('base64');
+    // Encode as base58 to match extension format for cross-app compatibility
+    const ephemeralPubKeyBase58 = bs58.encode(ephemeralX25519.publicKey);
 
     return {
       address: stealthPubKey,
-      ephemeralPublicKey: ephemeralPubKeyBase64,
+      ephemeralPublicKey: ephemeralPubKeyBase58,
       viewTag,
       kemCiphertext,
     };
@@ -244,10 +246,10 @@ export async function scanStealthPayment(
   kemSecretKey?: Uint8Array,
 ): Promise<StealthScanResult> {
   try {
-    // Decode ephemeral X25519 public key (base64 encoded)
+    // Decode ephemeral X25519 public key (base58 encoded, matching extension format)
     let ephemeralX25519Public: Uint8Array;
     try {
-      const decoded = Buffer.from(ephemeralPublicKey, 'base64');
+      const decoded = bs58.decode(ephemeralPublicKey);
       if (decoded.length === 32) {
         ephemeralX25519Public = new Uint8Array(decoded);
       } else {
@@ -255,9 +257,13 @@ export async function scanStealthPayment(
       }
     } catch {
       try {
-        const ephemeralPubBytes = new PublicKey(ephemeralPublicKey).toBytes();
-        const ephemeralX25519 = seedToX25519Keypair(ephemeralPubBytes);
-        ephemeralX25519Public = ephemeralX25519.publicKey;
+        // Fallback: try base64 for backward compatibility with older mobile memos
+        const decoded = Buffer.from(ephemeralPublicKey, 'base64');
+        if (decoded.length === 32) {
+          ephemeralX25519Public = new Uint8Array(decoded);
+        } else {
+          throw new Error('Invalid length');
+        }
       } catch {
         console.error('[Stealth] Failed to decode ephemeral public key');
         return { found: false };
@@ -455,8 +461,10 @@ export async function generateRegistryKey(
 
 /**
  * Create a publishable meta-address from stealth keys.
- * v1: st:01<base64(spending_x25519_pub(32) + viewing_x25519_pub(32))>
- * v2: st:02<base64(spending_x25519_pub(32) + viewing_x25519_pub(32) + kem_pub(1184))>
+ * v1: st:01<base58(spending_pub(32) + viewing_pub(32))>
+ * v2: st:02<base58(spending_pub(32) + viewing_pub(32) + kem_pub(1184))>
+ *
+ * Encoding: base58 (matches extension for cross-app compatibility)
  */
 export function createMetaAddress(keys: StealthKeys): string {
   const spendingBytes = keys.spendingKey.publicKey.toBytes();
@@ -468,14 +476,14 @@ export function createMetaAddress(keys: StealthKeys): string {
     combined.set(spendingBytes, 0);
     combined.set(viewingBytes, 32);
     combined.set(keys.kemPubKey, 64);
-    return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION_V2}${Buffer.from(combined).toString('base64')}`;
+    return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION_V2}${bs58.encode(combined)}`;
   }
 
   // v1: 32 + 32 = 64 bytes
   const combined = new Uint8Array(64);
   combined.set(spendingBytes, 0);
   combined.set(viewingBytes, 32);
-  return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION_V1}${Buffer.from(combined).toString('base64')}`;
+  return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION_V1}${bs58.encode(combined)}`;
 }
 
 export interface ParsedMetaAddress {
@@ -496,7 +504,7 @@ export function parseMetaAddress(metaAddress: string): ParsedMetaAddress {
 
   if (withoutPrefix.startsWith(META_ADDRESS_VERSION_V2)) {
     const encoded = withoutPrefix.slice(META_ADDRESS_VERSION_V2.length);
-    const combined = new Uint8Array(Buffer.from(encoded, 'base64'));
+    const combined = bs58.decode(encoded);
     if (combined.length !== 1248) {
       throw createStealthError('INVALID_ADDRESS', `Invalid v2 meta-address: expected 1248 bytes, got ${combined.length}`);
     }
@@ -509,7 +517,7 @@ export function parseMetaAddress(metaAddress: string): ParsedMetaAddress {
 
   if (withoutPrefix.startsWith(META_ADDRESS_VERSION_V1)) {
     const encoded = withoutPrefix.slice(META_ADDRESS_VERSION_V1.length);
-    const combined = new Uint8Array(Buffer.from(encoded, 'base64'));
+    const combined = bs58.decode(encoded);
     if (combined.length !== 64) {
       throw createStealthError('INVALID_ADDRESS', `Invalid v1 meta-address: expected 64 bytes, got ${combined.length}`);
     }
@@ -536,22 +544,25 @@ export function isMetaAddress(address: string): boolean {
 
 /**
  * Create a stealth memo for on-chain announcement.
- * v1: "P01:STEALTH:<ephemeral_base64>"
- * v2: "P01:STEALTH:V2:<ephemeral_base64>:<kem_ciphertext_base64>"
+ * v1: "P01:STEALTH:<ephemeral_base58>"
+ * v2: "P01:STEALTH:V2:<ephemeral_base58>:<kem_ciphertext_base58>"
+ *
+ * Encoding: base58 for both ephemeral key and KEM ciphertext (matches extension)
  */
 export function createStealthMemo(
   ephemeralPublicKey: string,
   kemCiphertext?: Uint8Array,
 ): string {
   if (kemCiphertext) {
-    const kemBase64 = Buffer.from(kemCiphertext).toString('base64');
-    return `P01:STEALTH:V2:${ephemeralPublicKey}:${kemBase64}`;
+    const kemBase58 = bs58.encode(kemCiphertext);
+    return `P01:STEALTH:V2:${ephemeralPublicKey}:${kemBase58}`;
   }
   return `P01:STEALTH:${ephemeralPublicKey}`;
 }
 
 /**
  * Parse a stealth memo (v1 or v2).
+ * Decodes base58-encoded KEM ciphertext for v2 memos (matches extension).
  */
 export function parseStealthMemo(memo: string): {
   ephemeralPublicKey: string;
@@ -562,7 +573,7 @@ export function parseStealthMemo(memo: string): {
     const rest = memo.slice(v2Prefix.length);
     const colonIdx = rest.indexOf(':');
     if (colonIdx === -1) return null;
-    const kemBytes = new Uint8Array(Buffer.from(rest.slice(colonIdx + 1), 'base64'));
+    const kemBytes = bs58.decode(rest.slice(colonIdx + 1));
     if (kemBytes.length !== KEM_CIPHERTEXT_SIZE) return null;
     return {
       ephemeralPublicKey: rest.slice(0, colonIdx),
