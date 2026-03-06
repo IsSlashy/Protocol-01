@@ -44,6 +44,7 @@ pub fn handler(
     ctx: Context<RegisterRelayer>,
     encryption_key: [u8; 32],
     endpoint_hash: [u8; 32],
+    kem_encryption_key: Option<Vec<u8>>,
 ) -> Result<()> {
     let clock = Clock::get()?;
     let config = &mut ctx.accounts.config;
@@ -73,6 +74,19 @@ pub fn handler(
     relayer_node.reputation_score = RelayerNode::INITIAL_REPUTATION;
     relayer_node.endpoint_hash = endpoint_hash;
     relayer_node.bump = ctx.bumps.relayer_node;
+
+    // Set ML-KEM-768 key if provided
+    if let Some(kem_key) = kem_encryption_key {
+        require!(
+            kem_key.len() == crate::state::relayer_node::KEM_PUBLIC_KEY_SIZE,
+            RelayerError::InvalidEncryptionKey
+        );
+        relayer_node.has_kem_key = true;
+        relayer_node.kem_encryption_key.copy_from_slice(&kem_key);
+    } else {
+        relayer_node.has_kem_key = false;
+        relayer_node.kem_encryption_key = [0u8; 1184];
+    }
 
     // Update config
     config.active_relayer_count = config

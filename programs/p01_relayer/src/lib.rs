@@ -72,13 +72,15 @@ pub mod p01_relayer {
     // Relayer lifecycle
     // -----------------------------------------------------------------------
 
-    /// Register as a relayer by staking SOL and providing an encryption key.
+    /// Register as a relayer by staking SOL and providing encryption key(s).
+    /// Provide `kem_encryption_key` (1184 bytes) for hybrid post-quantum encryption.
     pub fn register_relayer(
         ctx: Context<RegisterRelayer>,
         encryption_key: [u8; 32],
         endpoint_hash: [u8; 32],
+        kem_encryption_key: Option<Vec<u8>>,
     ) -> Result<()> {
-        instructions::register_relayer::handler(ctx, encryption_key, endpoint_hash)
+        instructions::register_relayer::handler(ctx, encryption_key, endpoint_hash, kem_encryption_key)
     }
 
     /// Deactivate this relayer (stops accepting jobs, begins cooldown).
@@ -91,12 +93,14 @@ pub mod p01_relayer {
         instructions::unstake_relayer::handler(ctx)
     }
 
-    /// Rotate the relayer's X25519 encryption key.
+    /// Rotate the relayer's encryption key(s).
+    /// Provide `new_kem_encryption_key` (1184 bytes) to update the ML-KEM-768 key.
     pub fn update_relayer_key(
         ctx: Context<UpdateRelayerKey>,
         new_encryption_key: [u8; 32],
+        new_kem_encryption_key: Option<Vec<u8>>,
     ) -> Result<()> {
-        instructions::update_relayer_key::handler(ctx, new_encryption_key)
+        instructions::update_relayer_key::handler(ctx, new_encryption_key, new_kem_encryption_key)
     }
 
     // -----------------------------------------------------------------------

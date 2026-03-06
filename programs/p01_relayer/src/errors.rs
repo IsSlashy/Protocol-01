@@ -49,4 +49,7 @@ pub enum RelayerError {
 
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
+
+    #[msg("Invalid encryption key size (expected 1184 bytes for ML-KEM-768)")]
+    InvalidEncryptionKey,
 }
