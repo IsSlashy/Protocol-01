@@ -214,21 +214,21 @@ export default function WalletHomeScreen() {
             </TouchableOpacity>
 
             <View style={[styles.actionButtons, isDevnet() && styles.actionButtonsDevnet]}>
-              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/send')}>
+              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/send')} accessibilityLabel="Send tokens" accessibilityRole="button">
                 <LinearGradient colors={[P01Colors.cyan, P01Colors.cyanBright]} style={styles.actionIconGradient}>
                   <Ionicons name="arrow-up" size={18} color="#0a0a0c" />
                 </LinearGradient>
                 <Text style={styles.actionLabel}>Send</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/receive')}>
+              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/receive')} accessibilityLabel="Receive tokens" accessibilityRole="button">
                 <View style={[styles.actionIcon, { backgroundColor: Colors.primaryDim }]}>
                   <Ionicons name="arrow-down" size={18} color={Colors.primary} />
                 </View>
                 <Text style={[styles.actionLabel, { color: Colors.primary }]}>Receive</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/swap')}>
+              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/swap')} accessibilityLabel="Swap tokens" accessibilityRole="button">
                 <View style={[styles.actionIcon, { backgroundColor: P01Colors.blueDim }]}>
                   <Ionicons name="swap-horizontal" size={18} color={P01Colors.blue} />
                 </View>
@@ -236,7 +236,7 @@ export default function WalletHomeScreen() {
               </TouchableOpacity>
 
               {!isDevnet() && (
-                <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/buy')}>
+                <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/buy')} accessibilityLabel="Buy crypto" accessibilityRole="button">
                   <View style={[styles.actionIcon, { backgroundColor: P01Colors.pinkDim }]}>
                     <Ionicons name="card" size={18} color={P01Colors.pink} />
                   </View>

@@ -14,7 +14,7 @@ import {
 } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { getConnection } from './connection';
-import CryptoJS from 'crypto-js';
+import { sha256 } from '@noble/hashes/sha256';
 
 // Subscription program ID (from programs/subscription)
 const SUBSCRIPTION_PROGRAM_ID = new PublicKey('5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt');
@@ -42,14 +42,8 @@ export function getSubscriptionPDA(
  * Get Anchor instruction discriminator (first 8 bytes of SHA256 hash)
  */
 function getInstructionDiscriminator(name: string): Buffer {
-  const hash = CryptoJS.SHA256(`global:${name}`);
-  // Convert WordArray to Uint8Array and take first 8 bytes
-  const words = hash.words;
-  const bytes = new Uint8Array(8);
-  for (let i = 0; i < 8; i++) {
-    bytes[i] = (words[Math.floor(i / 4)] >>> (24 - (i % 4) * 8)) & 0xff;
-  }
-  return Buffer.from(bytes);
+  const hash = sha256(`global:${name}`);
+  return Buffer.from(hash.slice(0, 8));
 }
 
 /**
