@@ -14,5 +14,7 @@ export {
   canClaim,
   estimateClaimFee,
   closeStealthAccount,
+  buildClaimProof,
+  buildClaimProofV2,
   type ClaimOptions,
 } from './claim';

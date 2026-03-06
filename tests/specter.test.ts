@@ -28,6 +28,8 @@ import {
   getAccount,
 } from '@solana/spl-token';
 import { expect } from 'chai';
+import nacl from 'tweetnacl';
+import { sha256 } from '@noble/hashes/sha256';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -88,21 +90,36 @@ function randomBytes32(): Buffer {
   return buf;
 }
 
-/** Build a valid claim proof for the simplified hackathon verifier (XOR). */
+/**
+ * Build a valid Ed25519 claim proof for the on-chain verifier.
+ *
+ * The proof is a 64-byte Ed25519 signature over:
+ *   SHA-256("p01:claim:v1" || recipientKey || spendingKey)
+ *
+ * signed with the stealth private key whose public key == recipientKey.
+ */
 function buildValidClaimProof(
   recipientKey: Buffer,
   spendingKey: Buffer,
+  stealthSecretKey?: Uint8Array,
 ): Buffer {
-  const proof = Buffer.alloc(64);
-  // First 32 bytes = XOR of recipientKey and spendingKey
-  for (let i = 0; i < 32; i++) {
-    proof[i] = recipientKey[i] ^ spendingKey[i];
+  // Build the challenge matching the on-chain verifier
+  const domain = Buffer.from('p01:claim:v1');
+  const challengeInput = Buffer.concat([domain, recipientKey, spendingKey]);
+  const challenge = sha256(challengeInput);
+
+  // If a stealth secret key was provided, sign the challenge
+  if (stealthSecretKey) {
+    const signature = nacl.sign.detached(challenge, stealthSecretKey);
+    return Buffer.from(signature);
   }
-  // Last 32 bytes = non-zero signature component
-  for (let i = 32; i < 64; i++) {
-    proof[i] = (i % 255) + 1;
-  }
-  return proof;
+
+  // Fallback for tests that don't have the real key: generate a keypair
+  // from a deterministic seed so the public key matches recipientKey.
+  // (This only works if recipientKey was derived from the same seed.)
+  const keypair = nacl.sign.keyPair.fromSeed(new Uint8Array(recipientKey));
+  const signature = nacl.sign.detached(challenge, keypair.secretKey);
+  return Buffer.from(signature);
 }
 
 // ---------------------------------------------------------------------------
@@ -258,47 +275,57 @@ describe('Specter (P01) Core Program', () => {
   // 3. Claim Stealth Payment
   // =====================================================================
   describe('claim_stealth', () => {
-    it('should generate valid claim proof with XOR scheme', () => {
-      const recipientKey = randomBytes32();
+    it('should generate valid Ed25519 claim proof', () => {
+      // Generate a stealth keypair from a deterministic seed
+      const seed = randomBytes32();
+      const stealthKeypair = nacl.sign.keyPair.fromSeed(new Uint8Array(seed));
+      const recipientKey = Buffer.from(stealthKeypair.publicKey);
       const spendingKey = randomBytes32();
-      const proof = buildValidClaimProof(recipientKey, spendingKey);
 
-      // Verify first 32 bytes match XOR
-      for (let i = 0; i < 32; i++) {
-        expect(proof[i]).to.equal(recipientKey[i] ^ spendingKey[i]);
-      }
+      const proof = buildValidClaimProof(recipientKey, spendingKey, stealthKeypair.secretKey);
 
-      // Verify non-zero signature component
-      let hasNonZero = false;
-      for (let i = 32; i < 64; i++) {
-        if (proof[i] !== 0) hasNonZero = true;
-      }
-      expect(hasNonZero).to.be.true;
+      // Proof should be 64 bytes (Ed25519 signature)
+      expect(proof.length).to.equal(64);
+
+      // Verify the signature is valid using tweetnacl
+      const domain = Buffer.from('p01:claim:v1');
+      const challengeInput = Buffer.concat([domain, recipientKey, spendingKey]);
+      const challenge = sha256(challengeInput);
+
+      const isValid = nacl.sign.detached.verify(
+        challenge,
+        new Uint8Array(proof),
+        stealthKeypair.publicKey,
+      );
+      expect(isValid).to.be.true;
     });
 
     it('should reject all-zero proof', () => {
       const zeroProof = Buffer.alloc(64, 0);
-      // verify_claim_proof returns false for all-zero proof
+      // An all-zero buffer is not a valid Ed25519 signature
       expect(zeroProof.every((b) => b === 0)).to.be.true;
     });
 
-    it('should reject proof with wrong XOR prefix', () => {
-      const recipientKey = randomBytes32();
+    it('should reject proof signed by wrong key', () => {
+      const seed = randomBytes32();
+      const stealthKeypair = nacl.sign.keyPair.fromSeed(new Uint8Array(seed));
+      const recipientKey = Buffer.from(stealthKeypair.publicKey);
       const spendingKey = randomBytes32();
 
-      // Build proof with wrong prefix
-      const badProof = Buffer.alloc(64);
-      badProof.fill(0xff, 0, 32); // Incorrect XOR result
-      badProof.fill(0x01, 32, 64);
+      // Sign with a DIFFERENT keypair
+      const wrongKeypair = nacl.sign.keyPair();
+      const domain = Buffer.from('p01:claim:v1');
+      const challengeInput = Buffer.concat([domain, recipientKey, spendingKey]);
+      const challenge = sha256(challengeInput);
+      const badSig = nacl.sign.detached(challenge, wrongKeypair.secretKey);
 
-      // Compute expected prefix
-      const expectedPrefix = Buffer.alloc(32);
-      for (let i = 0; i < 32; i++) {
-        expectedPrefix[i] = recipientKey[i] ^ spendingKey[i];
-      }
-
-      // First 32 bytes of badProof should NOT match expected
-      expect(badProof.subarray(0, 32).equals(expectedPrefix)).to.be.false;
+      // Verification against the stealth public key should fail
+      const isValid = nacl.sign.detached.verify(
+        challenge,
+        badSig,
+        stealthKeypair.publicKey,
+      );
+      expect(isValid).to.be.false;
     });
 
     it('should enforce stealth payment expiry (30 days)', () => {
