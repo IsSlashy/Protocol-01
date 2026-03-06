@@ -28,16 +28,16 @@
     "@solana/web3.js": "^1.98.4",
     "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^25.0.10",
+    "@types/node": "^22.15.0",
     "chai": "^6.2.2",
     "circomlib": "^2.0.5",
     "circomlibjs": "^0.1.7",
     "mocha": "^11.7.5",
-    "poseidon-lite": "^0.2.0",
-    "snarkjs": "^0.7.4",
+    "poseidon-lite": "^0.3.0",
+    "snarkjs": "^0.7.5",
     "ts-mocha": "^11.1.0",
-    "turbo": "^2.0.0",
-    "typescript": "^5.3.0"
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0"
   },
   "packageManager": "pnpm@8.15.0",
   "engines": {
