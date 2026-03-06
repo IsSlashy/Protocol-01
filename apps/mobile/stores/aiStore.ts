@@ -96,6 +96,7 @@ interface AIState {
   switchConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
   searchConversations: (query: string) => Conversation[];
+  _persistConversation: (msgs: DisplayMessage[], convId: string) => void;
 
   // Voice
   setRecording: (recording: boolean) => void;

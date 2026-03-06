@@ -33,7 +33,7 @@ export const FeatureSlide: React.FC<FeatureSlideProps> = ({
 
   useEffect(() => {
     if (isActive) {
-      iconScale.value = withTiming(1, { duration: 500, easing: Easing.out(Easing.back) });
+      iconScale.value = withTiming(1, { duration: 500, easing: Easing.out(Easing.back as any) });
       titleOpacity.value = withDelay(200, withTiming(1, { duration: 400 }));
       descOpacity.value = withDelay(400, withTiming(1, { duration: 400 }));
     } else {
@@ -65,7 +65,7 @@ export const FeatureSlide: React.FC<FeatureSlideProps> = ({
       {/* Icon container with glow */}
       <Animated.View
         style={[
-          iconStyle,
+          iconStyle as any,
           {
             shadowColor: color,
             shadowOpacity: 0.5,
@@ -91,7 +91,7 @@ export const FeatureSlide: React.FC<FeatureSlideProps> = ({
       {/* Title */}
       <Animated.Text
         style={[
-          titleStyle,
+          titleStyle as any,
           {
             textShadowColor: color,
             textShadowOffset: { width: 0, height: 0 },
@@ -105,7 +105,7 @@ export const FeatureSlide: React.FC<FeatureSlideProps> = ({
 
       {/* Description */}
       <Animated.Text
-        style={descStyle}
+        style={descStyle as any}
         className="text-lg text-[#888892] text-center leading-7 px-4"
       >
         {description}

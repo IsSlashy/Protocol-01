@@ -84,7 +84,7 @@ export default function SwapScreen() {
   const [slippage, setSlippage] = useState(50); // 0.5% default
 
   // Quote debounce
-  const quoteTimeout = useRef<NodeJS.Timeout | null>(null);
+  const quoteTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Get SOL balance for display
   const solBalance = balance?.sol ? balance.sol / 1e9 : 0;
@@ -182,7 +182,7 @@ export default function SwapScreen() {
         (t: any) => t.mint === inputToken.address
       );
       if (tokenBalance) {
-        setInputAmount((tokenBalance.amount / Math.pow(10, inputToken.decimals)).toString());
+        setInputAmount((tokenBalance.balance / Math.pow(10, inputToken.decimals)).toString());
       }
     }
   };

@@ -5,11 +5,12 @@
  * Features custom P-01 cyberpunk design.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthScreen } from '@/components/auth';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
+import { useWalletStore } from '@/stores/walletStore';
 
 type LoginMethod = 'email' | 'sms' | 'google' | 'apple' | 'twitter' | 'wallet';
 
@@ -18,17 +19,38 @@ export default function LoginScreen() {
   const {
     ready,
     authenticated,
+    solanaWallet,
     login,
     verifyOtp,
     createWallet,
   } = usePrivyAuth();
 
+  const { hasWallet: hasLocalWallet } = useWalletStore();
   const [loading, setLoading] = useState<LoginMethod | null>(null);
+  const redirectedRef = useRef(false);
 
-  // Redirect if already authenticated
+  // Redirect if already authenticated — wait for wallet to be available
   useEffect(() => {
-    if (ready && authenticated) {
-      router.replace('/(main)/(wallet)');
+    if (ready && authenticated && !redirectedRef.current) {
+      const hasAnyWallet = solanaWallet?.address || hasLocalWallet;
+      if (hasAnyWallet) {
+        redirectedRef.current = true;
+        router.replace('/(main)/(wallet)');
+      }
+    }
+  }, [ready, authenticated, solanaWallet?.address, hasLocalWallet, router]);
+
+  // Fallback: if authenticated but no wallet after 10s, redirect anyway
+  // (Privy wallet may be loading asynchronously)
+  useEffect(() => {
+    if (ready && authenticated && !redirectedRef.current) {
+      const timer = setTimeout(() => {
+        if (!redirectedRef.current) {
+          redirectedRef.current = true;
+          router.replace('/(main)/(wallet)');
+        }
+      }, 10000);
+      return () => clearTimeout(timer);
     }
   }, [ready, authenticated, router]);
 
