@@ -795,8 +795,6 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@20.19.30)
 
-  packages/p01-tools-release: {}
-
   packages/privacy-toolkit:
     dependencies:
       poseidon-lite:
@@ -880,6 +878,12 @@ importers:
       '@noble/hashes':
         specifier: ^1.3.3
         version: 1.8.0
+      '@noble/post-quantum':
+        specifier: ^0.2.0
+        version: 0.2.1
+      '@p01/privacy-toolkit':
+        specifier: workspace:*
+        version: link:../privacy-toolkit
       '@solana/spl-token':
         specifier: ^0.4.0
         version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
@@ -895,6 +899,12 @@ importers:
       ed25519-hd-key:
         specifier: ^1.3.0
         version: 1.3.0
+      poseidon-lite:
+        specifier: ^0.3.0
+        version: 0.3.0
+      snarkjs:
+        specifier: ^0.7.4
+        version: 0.7.6
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -902,6 +912,9 @@ importers:
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.30
+      '@types/snarkjs':
+        specifier: ^0.7.8
+        version: 0.7.9
       eslint:
         specifier: ^8.56.0
         version: 8.57.1
@@ -5379,6 +5392,11 @@ packages:
     engines: {node: '>= 16'}
     dev: false
 
+  /@noble/hashes@1.6.0:
+    resolution: {integrity: sha512-YUULf0Uk4/mAA89w+k3+yUYh6NrEvxZa5T6SY3wlMvE2chHkxFUUIDI8/XW1QSC357iA5pSnqt7XEhvFOqmDyQ==}
+    engines: {node: ^14.21.3 || >=16}
+    dev: false
+
   /@noble/hashes@1.7.0:
     resolution: {integrity: sha512-HXydb0DgzTpDPwbVeDGCG1gIu7X6+AuU6Zl6av/E/KG8LMsvPntvq+w17CHRpKBmN6Ybdrt1eP3k4cj8DJa78w==}
     engines: {node: ^14.21.3 || >=16}
@@ -5396,6 +5414,12 @@ packages:
   /@noble/hashes@2.0.1:
     resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
     engines: {node: '>= 20.19.0'}
+    dev: false
+
+  /@noble/post-quantum@0.2.1:
+    resolution: {integrity: sha512-ImgfMp9notXSEocz464o1AefYfFWEkkszKMGO+ZiTn73yIBFeNyEHKQUMS+SheJwSNymldSts6YyVcQDjcnVVg==}
+    dependencies:
+      '@noble/hashes': 1.6.0
     dev: false
 
   /@nodelib/fs.scandir@2.1.5:
