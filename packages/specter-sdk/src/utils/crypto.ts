@@ -1,7 +1,9 @@
 import nacl from 'tweetnacl';
 import { sha256 } from '@noble/hashes/sha256';
+import { sha512 } from '@noble/hashes/sha512';
 import { hkdf } from '@noble/hashes/hkdf';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { ed25519 } from '@noble/curves/ed25519';
 import bs58 from 'bs58';
 import {
   SALT_SIZE,
@@ -380,23 +382,122 @@ export function randomSeed(): Uint8Array {
 // Key Conversion
 // ============================================================================
 
+// Field prime for Curve25519: p = 2^255 - 19
+const CURVE25519_P = BigInt(
+  '57896044618658097711785492504343953926634992332820282019728792003956564819949'
+);
+
 /**
- * Convert Ed25519 public key to X25519 for encryption
- * @param ed25519PublicKey - Ed25519 public key (32 bytes)
+ * Modular exponentiation: base^exp mod m
+ * Used for computing modular inverse via Fermat's little theorem.
  */
-export function ed25519ToX25519PublicKey(ed25519PublicKey: Uint8Array): Uint8Array {
-  // Note: This is a simplified conversion. In production, use a proper library
-  // like @stablelib/ed25519 or similar that implements the birational map
-  return sha256(ed25519PublicKey).slice(0, 32);
+function modPow(base: bigint, exp: bigint, m: bigint): bigint {
+  let result = 1n;
+  base = base % m;
+  while (exp > 0n) {
+    if (exp % 2n === 1n) {
+      result = (result * base) % m;
+    }
+    exp = exp >> 1n;
+    base = (base * base) % m;
+  }
+  return result;
 }
 
 /**
- * Convert Ed25519 private key to X25519 for encryption
+ * Convert a bigint to a 32-byte little-endian Uint8Array.
+ */
+function bigIntToLE32(value: bigint): Uint8Array {
+  const bytes = new Uint8Array(32);
+  let v = value;
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = Number(v & 0xffn);
+    v = v >> 8n;
+  }
+  return bytes;
+}
+
+/**
+ * Convert an Ed25519 public key to an X25519 public key using the birational map.
+ *
+ * Applies the Edwards-to-Montgomery conversion: u = (1 + y) / (1 - y) mod p
+ * where y is the y-coordinate of the Ed25519 point and p = 2^255 - 19.
+ *
+ * @param ed25519Pub - 32-byte Ed25519 public key
+ * @returns 32-byte X25519 public key
+ */
+export function ed25519PublicKeyToX25519(ed25519Pub: Uint8Array): Uint8Array {
+  if (ed25519Pub.length !== 32) {
+    throw new Error('Ed25519 public key must be 32 bytes');
+  }
+
+  // Decode the Ed25519 point to get the affine y-coordinate
+  const point = ed25519.ExtendedPoint.fromHex(ed25519Pub);
+  const { y } = point.toAffine();
+
+  const p = CURVE25519_P;
+
+  // Birational map: u = (1 + y) / (1 - y) mod p
+  const numerator = (1n + y) % p;
+  const denominator = (p + 1n - (y % p)) % p;
+  const denominatorInv = modPow(denominator, p - 2n, p);
+  const u = (numerator * denominatorInv) % p;
+
+  return bigIntToLE32(u);
+}
+
+/**
+ * Convert an Ed25519 secret key (seed) to an X25519 secret key.
+ *
+ * Performs SHA-512 on the 32-byte seed, takes the first 32 bytes,
+ * and applies RFC 7748 clamping:
+ *   - scalar[0]  &= 248  (clear bottom 3 bits)
+ *   - scalar[31] &= 127  (clear top bit)
+ *   - scalar[31] |= 64   (set second-to-top bit)
+ *
+ * @param ed25519Seed - 32-byte Ed25519 seed (private key)
+ * @returns 32-byte X25519 secret key
+ */
+export function ed25519SecretKeyToX25519(ed25519Seed: Uint8Array): Uint8Array {
+  if (ed25519Seed.length !== 32) {
+    throw new Error('Ed25519 seed must be 32 bytes');
+  }
+
+  const h = sha512(ed25519Seed);
+  const scalar = new Uint8Array(h.slice(0, 32));
+
+  // RFC 7748 clamping
+  scalar[0] &= 248;
+  scalar[31] &= 127;
+  scalar[31] |= 64;
+
+  return scalar;
+}
+
+/**
+ * Convert Ed25519 public key to X25519 for encryption.
+ *
+ * @deprecated This function produces INCORRECT results (uses SHA-256 instead of
+ * the birational map). Use {@link ed25519PublicKeyToX25519} instead, or generate
+ * X25519 keys directly with `nacl.box.keyPair()`.
+ *
+ * @param ed25519PublicKey - Ed25519 public key (32 bytes)
+ */
+export function ed25519ToX25519PublicKey(ed25519PublicKey: Uint8Array): Uint8Array {
+  return ed25519PublicKeyToX25519(ed25519PublicKey);
+}
+
+/**
+ * Convert Ed25519 private key to X25519 for encryption.
+ *
+ * @deprecated This function previously produced INCORRECT results (used SHA-256
+ * instead of SHA-512 + clamping). Use {@link ed25519SecretKeyToX25519} instead,
+ * or generate X25519 keys directly with `nacl.box.keyPair()`.
+ *
  * @param ed25519PrivateKey - Ed25519 private key (32 bytes, seed portion)
  */
 export function ed25519ToX25519PrivateKey(ed25519PrivateKey: Uint8Array): Uint8Array {
-  // The X25519 private key is derived from the Ed25519 seed
-  return sha256(ed25519PrivateKey).slice(0, 32);
+  return ed25519SecretKeyToX25519(ed25519PrivateKey);
 }
 
 // ============================================================================
