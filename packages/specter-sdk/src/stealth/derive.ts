@@ -1,23 +1,25 @@
 import { PublicKey, Keypair } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 import { sha256 } from '@noble/hashes/sha256';
-import type { StealthMetaAddress, StealthAddress } from '../types';
+import type { StealthMetaAddress } from '../types';
 import { SpecterError, SpecterErrorCode } from '../types';
 import {
   deriveSharedSecret,
+  deriveHybridSharedSecret,
+  deriveStealthSeed,
   computeViewTag,
-  generateEphemeralKeypair,
-  toBase58,
+  kemEncapsulate,
+  kemDecapsulate,
 } from '../utils/crypto';
 import { decodeStealthMetaAddress } from '../utils/helpers';
 
 /**
- * Derive a one-time stealth public key from the recipient's meta-address
- * This is used by the SENDER to generate the stealth address
+ * Derive a one-time stealth public key from the recipient's meta-address.
+ * If the meta-address contains a kemPubKey (v2), uses hybrid X25519 + ML-KEM-768
+ * key exchange for post-quantum resistance.
  *
- * @param recipientMetaAddress - Recipient's stealth meta-address (spending + viewing pubkeys)
- * @param ephemeralPrivateKey - Sender's ephemeral private key
- * @returns The derived stealth public key and ephemeral public key
+ * @param recipientMetaAddress - Recipient's stealth meta-address
+ * @param ephemeralPrivateKey - Sender's ephemeral X25519 private key
  */
 export function deriveStealthPublicKey(
   recipientMetaAddress: StealthMetaAddress,
@@ -26,40 +28,51 @@ export function deriveStealthPublicKey(
   stealthPubKey: PublicKey;
   ephemeralPubKey: Uint8Array;
   viewTag: number;
+  kemCiphertext?: Uint8Array;
 } {
   try {
-    // Get ephemeral public key from private key
     const ephemeralKeypair = nacl.box.keyPair.fromSecretKey(ephemeralPrivateKey);
     const ephemeralPubKey = ephemeralKeypair.publicKey;
 
-    // Compute shared secret: s = ECDH(r, V) where r is ephemeral private, V is viewing pubkey
-    const sharedSecret = deriveSharedSecret(
+    // Classic ECDH: s = X25519(r, V)
+    const classicSecret = deriveSharedSecret(
       ephemeralPrivateKey,
       recipientMetaAddress.viewingPubKey
     );
 
-    // Compute view tag for efficient scanning
+    let sharedSecret: Uint8Array;
+    let kemCiphertext: Uint8Array | undefined;
+
+    if (recipientMetaAddress.kemPubKey) {
+      // Hybrid mode: combine X25519 + ML-KEM-768
+      const kem = kemEncapsulate(recipientMetaAddress.kemPubKey);
+      kemCiphertext = kem.cipherText;
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
+    } else {
+      // Classic mode: ECDH only
+      sharedSecret = classicSecret;
+    }
+
     const viewTag = computeViewTag(sharedSecret);
 
-    // Hash the shared secret
-    const hashedSecret = sha256(sharedSecret);
-
-    // Derive stealth public key: P = K + hash(s)*G
-    // In practice, we add the hashed secret to the spending public key
-    // This is a simplified implementation - production should use proper EC math
-    const stealthPubKeyBytes = addPublicKeys(
+    // Deterministic stealth seed from shared secret + spending pubkey
+    const stealthSeed = deriveStealthSeed(
       recipientMetaAddress.spendingPubKey,
-      hashedSecret
+      sharedSecret
     );
 
-    const stealthPubKey = new PublicKey(stealthPubKeyBytes);
+    // Derive stealth keypair from seed
+    const stealthKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
+    const stealthPubKey = new PublicKey(stealthKeypair.publicKey);
 
     return {
       stealthPubKey,
       ephemeralPubKey,
       viewTag,
+      kemCiphertext,
     };
   } catch (error) {
+    if (error instanceof SpecterError) throw error;
     throw new SpecterError(
       SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
       'Failed to derive stealth public key',
@@ -70,7 +83,6 @@ export function deriveStealthPublicKey(
 
 /**
  * Derive a stealth public key from an encoded meta-address string
- * @param encodedMetaAddress - The encoded stealth meta-address
  */
 export function deriveStealthPublicKeyFromEncoded(
   encodedMetaAddress: string
@@ -79,17 +91,17 @@ export function deriveStealthPublicKeyFromEncoded(
   ephemeralPubKey: Uint8Array;
   viewTag: number;
   ephemeralPrivateKey: Uint8Array;
+  kemCiphertext?: Uint8Array;
 } {
   const decoded = decodeStealthMetaAddress(encodedMetaAddress);
   const metaAddress: StealthMetaAddress = {
     spendingPubKey: decoded.spendingPubKey,
     viewingPubKey: decoded.viewingPubKey,
+    kemPubKey: decoded.kemPubKey,
     encoded: encodedMetaAddress,
   };
 
-  // Generate ephemeral keypair
-  const ephemeralKeypair = generateEphemeralKeypair();
-
+  const ephemeralKeypair = nacl.box.keyPair();
   const result = deriveStealthPublicKey(metaAddress, ephemeralKeypair.secretKey);
 
   return {
@@ -99,36 +111,45 @@ export function deriveStealthPublicKeyFromEncoded(
 }
 
 /**
- * Derive the stealth private key that can spend from the stealth address
- * This is used by the RECIPIENT to derive the key for claiming
+ * Derive the stealth private key that can spend from the stealth address.
+ * The recipient uses their viewing private key to recover the shared secret,
+ * then derives the same stealth seed as the sender.
  *
- * @param spendingPrivateKey - Recipient's spending private key
+ * @param spendingPubKey - Recipient's spending public key (for seed derivation)
  * @param viewingPrivateKey - Recipient's viewing private key
  * @param ephemeralPubKey - Sender's ephemeral public key
- * @returns The derived stealth keypair
+ * @param kemSecretKey - Recipient's ML-KEM-768 secret key (for v2 hybrid)
+ * @param kemCiphertext - KEM ciphertext from the announcement (for v2 hybrid)
  */
 export function deriveStealthPrivateKey(
-  spendingPrivateKey: Uint8Array,
+  spendingPubKey: Uint8Array,
   viewingPrivateKey: Uint8Array,
-  ephemeralPubKey: Uint8Array
+  ephemeralPubKey: Uint8Array,
+  kemSecretKey?: Uint8Array,
+  kemCiphertext?: Uint8Array
 ): Keypair {
   try {
-    // Compute shared secret: s = ECDH(v, R) where v is viewing private, R is ephemeral pubkey
-    const sharedSecret = deriveSharedSecret(viewingPrivateKey, ephemeralPubKey);
+    // Classic ECDH: s = X25519(v, R)
+    const classicSecret = deriveSharedSecret(viewingPrivateKey, ephemeralPubKey);
 
-    // Hash the shared secret
-    const hashedSecret = sha256(sharedSecret);
+    let sharedSecret: Uint8Array;
 
-    // Derive stealth private key: p = k + hash(s)
-    // where k is the spending private key
-    const stealthPrivateKey = addPrivateKeys(spendingPrivateKey, hashedSecret);
+    if (kemSecretKey && kemCiphertext) {
+      // Hybrid mode: combine X25519 + ML-KEM-768
+      const kemSharedSecret = kemDecapsulate(kemCiphertext, kemSecretKey);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+    } else {
+      sharedSecret = classicSecret;
+    }
 
-    // Create keypair from the derived private key
-    // Note: Solana expects a 64-byte secret key (seed + public key)
-    const seedKeypair = nacl.sign.keyPair.fromSeed(stealthPrivateKey);
+    // Same deterministic seed as the sender
+    const stealthSeed = deriveStealthSeed(spendingPubKey, sharedSecret);
 
+    // Derive full keypair from seed
+    const seedKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
     return Keypair.fromSecretKey(seedKeypair.secretKey);
   } catch (error) {
+    if (error instanceof SpecterError) throw error;
     throw new SpecterError(
       SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
       'Failed to derive stealth private key',
@@ -139,24 +160,38 @@ export function deriveStealthPrivateKey(
 
 /**
  * Verify if a stealth address belongs to a recipient
+ *
  * @param stealthAddress - The stealth address to check
- * @param ephemeralPubKey - The ephemeral public key from the transaction
+ * @param ephemeralPubKey - The ephemeral public key from the announcement
  * @param viewingPrivateKey - Recipient's viewing private key
  * @param spendingPubKey - Recipient's spending public key
  * @param viewTag - View tag for quick filtering (optional)
+ * @param kemSecretKey - ML-KEM-768 secret key (for v2 hybrid)
+ * @param kemCiphertext - KEM ciphertext from announcement (for v2 hybrid)
  */
 export function verifyStealthOwnership(
   stealthAddress: PublicKey,
   ephemeralPubKey: Uint8Array,
   viewingPrivateKey: Uint8Array,
   spendingPubKey: Uint8Array,
-  viewTag?: number
+  viewTag?: number,
+  kemSecretKey?: Uint8Array,
+  kemCiphertext?: Uint8Array
 ): boolean {
   try {
-    // Compute shared secret
-    const sharedSecret = deriveSharedSecret(viewingPrivateKey, ephemeralPubKey);
+    // Classic ECDH
+    const classicSecret = deriveSharedSecret(viewingPrivateKey, ephemeralPubKey);
 
-    // Quick check with view tag if provided
+    let sharedSecret: Uint8Array;
+
+    if (kemSecretKey && kemCiphertext) {
+      const kemSharedSecret = kemDecapsulate(kemCiphertext, kemSecretKey);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+    } else {
+      sharedSecret = classicSecret;
+    }
+
+    // Quick check with view tag
     if (viewTag !== undefined) {
       const computedViewTag = computeViewTag(sharedSecret);
       if (computedViewTag !== viewTag) {
@@ -164,75 +199,36 @@ export function verifyStealthOwnership(
       }
     }
 
-    // Hash the shared secret
-    const hashedSecret = sha256(sharedSecret);
-
     // Derive expected stealth public key
-    const expectedStealthPubKey = addPublicKeys(spendingPubKey, hashedSecret);
+    const stealthSeed = deriveStealthSeed(spendingPubKey, sharedSecret);
+    const expectedKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
 
     // Compare with the actual stealth address
-    return stealthAddress.toBuffer().equals(Buffer.from(expectedStealthPubKey));
+    const expectedPubKey = new PublicKey(expectedKeypair.publicKey);
+    return stealthAddress.equals(expectedPubKey);
   } catch {
     return false;
   }
 }
 
 /**
- * Compute the expected stealth address from components
+ * Compute the expected stealth address from public components.
+ * Only works for v1 (classic ECDH). For v2 hybrid, use verifyStealthOwnership instead.
+ *
+ * @deprecated Use verifyStealthOwnership for proper verification
  */
 export function computeStealthAddress(
   spendingPubKey: Uint8Array,
   viewingPubKey: Uint8Array,
   ephemeralPubKey: Uint8Array
 ): PublicKey {
-  // This would need the viewing private key to compute properly
-  // This function is mainly for verification purposes
-  const sharedSecret = sha256(
+  // Without the viewing private key, we can't compute ECDH.
+  // This function concatenates public keys as a proxy (NOT cryptographically correct).
+  // Use verifyStealthOwnership for proper verification.
+  const pseudoSecret = sha256(
     new Uint8Array([...ephemeralPubKey, ...viewingPubKey])
   );
-  const stealthPubKeyBytes = addPublicKeys(spendingPubKey, sharedSecret);
-  return new PublicKey(stealthPubKeyBytes);
-}
-
-// ============================================================================
-// Helper functions for EC arithmetic (simplified for Ed25519)
-// In production, use a proper cryptographic library for EC operations
-// ============================================================================
-
-/**
- * Add a scalar to a public key (simplified)
- * P' = P + hash*G
- */
-function addPublicKeys(pubKey: Uint8Array, scalar: Uint8Array): Uint8Array {
-  // Generate a keypair from the scalar (this gives us scalar*G)
-  const scalarKeypair = nacl.sign.keyPair.fromSeed(scalar);
-  const scalarPoint = scalarKeypair.publicKey;
-
-  // XOR-based addition (simplified - not real EC addition)
-  // In production, use proper point addition
-  const result = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    // Use a hash-based combination to ensure result is on curve
-    result[i] = pubKey[i]! ^ scalarPoint[i]!;
-  }
-
-  // Hash to ensure valid public key
-  return sha256(result);
-}
-
-/**
- * Add two private keys (mod curve order)
- */
-function addPrivateKeys(key1: Uint8Array, key2: Uint8Array): Uint8Array {
-  const result = new Uint8Array(32);
-
-  // Simple modular addition (simplified)
-  let carry = 0;
-  for (let i = 31; i >= 0; i--) {
-    const sum = key1[i]! + key2[i]! + carry;
-    result[i] = sum % 256;
-    carry = Math.floor(sum / 256);
-  }
-
-  return result;
+  const stealthSeed = deriveStealthSeed(spendingPubKey, pseudoSecret);
+  const keypair = nacl.sign.keyPair.fromSeed(stealthSeed);
+  return new PublicKey(keypair.publicKey);
 }
