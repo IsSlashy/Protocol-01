@@ -180,26 +180,26 @@ export default function PrivacyTestScreen() {
       addLog('Step 1: Generating stealth keys...', 'info');
       const stealthKeys = await generateStealthKeys();
       addLog(`Spending Public Key: ${stealthKeys.spendingPublicKey.slice(0, 20)}...`, 'success');
-      addLog(`Viewing Public Key: ${stealthKeys.viewingPublicKey.slice(0, 20)}...`, 'success');
+      addLog(`Viewing Public Key (X25519): ${Array.from(stealthKeys.viewingPublicKey.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join('')}...`, 'success');
 
       // Step 2: Generate stealth address
       addLog('', 'info');
       addLog('Step 2: Generating stealth address for payment...', 'info');
-      const stealthAddr = await generateStealthAddress(
-        stealthKeys.spendingPublicKey,
+      const stealthAddr = generateStealthAddress(
+        stealthKeys.spendingKey.publicKey.toBytes(),
         stealthKeys.viewingPublicKey
       );
       addLog(`Stealth Address: ${stealthAddr.address.slice(0, 20)}...`, 'success');
       addLog(`Ephemeral Public Key: ${stealthAddr.ephemeralPublicKey.slice(0, 20)}...`, 'success');
       addLog(`View Tag: ${stealthAddr.viewTag}`, 'success');
 
-      // Step 3: Simulate scanning for payment
+      // Step 3: Simulate scanning for payment (round-trip verification)
       addLog('', 'info');
       addLog('Step 3: Simulating payment scan...', 'info');
-      const scanResult = await scanStealthPayment(
+      const scanResult = scanStealthPayment(
         stealthAddr.ephemeralPublicKey,
-        stealthKeys.viewingKey.secretKey,
-        stealthKeys.spendingKey.secretKey,
+        stealthKeys.viewingSecretKey,
+        stealthKeys.spendingKey.publicKey.toBytes(),
         stealthAddr.viewTag
       );
 

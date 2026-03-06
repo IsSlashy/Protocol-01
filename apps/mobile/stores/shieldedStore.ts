@@ -94,7 +94,7 @@ interface ShieldedState {
     recipientViewingPubKey: string,
     walletPublicKey: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
-  ) => Promise<{ signature: string; stealthAddress: string; ephemeralPublicKey: string; viewTag: string }>;
+  ) => Promise<{ signature: string; stealthAddress: string; ephemeralPublicKey: string; viewTag: number }>;
 
   // True ZK private send via relayer
   privateSend: (

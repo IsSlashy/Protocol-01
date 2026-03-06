@@ -73,7 +73,7 @@ export interface StealthUnshieldResult {
   signature: string;
   stealthAddress: string;
   ephemeralPublicKey: string;
-  viewTag: string;
+  viewTag: number;
   amount: bigint;
 }
 
@@ -1706,9 +1706,11 @@ export class ZkService {
   ): Promise<StealthUnshieldResult> {
 
     // Generate one-time stealth address
-    const stealthData: StealthAddress = await generateStealthAddress(
-      recipientSpendingPubKey,
-      recipientViewingPubKey
+    const spendingPubBytes = new PublicKey(recipientSpendingPubKey).toBytes();
+    const viewingPubBytes = new PublicKey(recipientViewingPubKey).toBytes();
+    const stealthData: StealthAddress = generateStealthAddress(
+      spendingPubBytes,
+      viewingPubBytes
     );
 
 
@@ -3231,7 +3233,7 @@ export class ZkService {
     txSignature?: string;
     stealthAddress?: string;
     ephemeralPublicKey?: string;
-    viewTag?: string;
+    viewTag?: number;
     error?: string;
   }> {
 
@@ -3252,29 +3254,18 @@ export class ZkService {
       // 1. Decode recipient's stealth keys
       const keyBuffer = Buffer.from(recipientStealthKeys, 'base64');
 
-      // Support both old format (64 bytes) and new format (96 bytes with X25519)
-      let recipientSpendingPubKey: string;
-      let recipientViewingPubKey: string;
-      let recipientViewingX25519Pub: Uint8Array | undefined;
-
-      if (keyBuffer.length === 96) {
-        // New format: spending(32) + viewing(32) + viewingX25519(32)
-        recipientSpendingPubKey = new PublicKey(keyBuffer.slice(0, 32)).toBase58();
-        recipientViewingPubKey = new PublicKey(keyBuffer.slice(32, 64)).toBase58();
-        recipientViewingX25519Pub = new Uint8Array(keyBuffer.slice(64, 96));
-      } else if (keyBuffer.length === 64) {
-        // Old format: spending(32) + viewing(32)
-        recipientSpendingPubKey = new PublicKey(keyBuffer.slice(0, 32)).toBase58();
-        recipientViewingPubKey = new PublicKey(keyBuffer.slice(32, 64)).toBase58();
-      } else {
+      // Decode recipient stealth keys: spending_ed25519(32) + viewing_x25519(32)
+      if (keyBuffer.length < 64) {
         return { success: false, error: `Invalid stealth keys format (got ${keyBuffer.length} bytes)` };
       }
 
+      const recipientSpendingPub = new Uint8Array(keyBuffer.slice(0, 32));
+      const recipientViewingPub = new Uint8Array(keyBuffer.slice(32, 64));
+
       // 2. Generate stealth address for recipient
-      const stealthData = await generateStealthAddress(
-        recipientSpendingPubKey,
-        recipientViewingPubKey,
-        recipientViewingX25519Pub
+      const stealthData = generateStealthAddress(
+        recipientSpendingPub,
+        recipientViewingPub,
       );
 
       // 3. Select notes for the exact denomination
@@ -3532,10 +3523,10 @@ export class ZkService {
           }
 
           // Derive stealth private key locally using the ephemeral pubkey
-          const result = await scanStealthPayment(
+          const result = scanStealthPayment(
             Buffer.from(payment.ephemeralPubKey).toString('base64'),
             viewingKeyBytes,
-            spendingKeyBytes,
+            spendingPubKeyBytes,
             payment.viewTag
           );
 

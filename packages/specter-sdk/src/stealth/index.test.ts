@@ -394,6 +394,141 @@ describe('stealth/derive', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Full round-trip: generate → verify → derive private key
+  // -----------------------------------------------------------------------
+  describe('stealth round-trip (generate → verify → derive)', () => {
+    it('sender and receiver derive the same stealth address', () => {
+      // Spending: Ed25519 (for Solana on-chain addresses)
+      // Viewing: X25519 (for ECDH key exchange)
+      const spending = Keypair.generate();
+      const viewing = nacl.box.keyPair();
+
+      // Build meta-address with X25519 viewing public key
+      const meta: StealthMetaAddress = {
+        spendingPubKey: spending.publicKey.toBytes(),
+        viewingPubKey: viewing.publicKey,
+        encoded: encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey),
+      };
+
+      // --- Sender side ---
+      const ephemeral = nacl.box.keyPair();
+      const senderResult = deriveStealthPublicKey(meta, ephemeral.secretKey);
+
+      // --- Receiver side ---
+      // Verify ownership using X25519 viewing secret
+      const owns = verifyStealthOwnership(
+        senderResult.stealthPubKey,
+        senderResult.ephemeralPubKey,
+        viewing.secretKey,
+        spending.publicKey.toBytes(),
+        senderResult.viewTag,
+      );
+      expect(owns).toBe(true);
+
+      // Derive stealth private key
+      const stealthKeypair = deriveStealthPrivateKey(
+        spending.publicKey.toBytes(),
+        viewing.secretKey,
+        senderResult.ephemeralPubKey,
+      );
+
+      // The derived keypair's public key must match the sender's stealth address
+      expect(stealthKeypair.publicKey.toBase58()).toBe(
+        senderResult.stealthPubKey.toBase58()
+      );
+    });
+
+    it('round-trip works via encoded meta-address string', () => {
+      const spending = Keypair.generate();
+      const viewing = nacl.box.keyPair();
+
+      const encoded = encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey);
+
+      // Sender generates stealth address from encoded string
+      const senderResult = deriveStealthPublicKeyFromEncoded(encoded);
+
+      // Receiver verifies ownership
+      const owns = verifyStealthOwnership(
+        senderResult.stealthPubKey,
+        senderResult.ephemeralPubKey,
+        viewing.secretKey,
+        spending.publicKey.toBytes(),
+        senderResult.viewTag,
+      );
+      expect(owns).toBe(true);
+
+      // Receiver derives matching private key
+      const stealthKeypair = deriveStealthPrivateKey(
+        spending.publicKey.toBytes(),
+        viewing.secretKey,
+        senderResult.ephemeralPubKey,
+      );
+      expect(stealthKeypair.publicKey.toBase58()).toBe(
+        senderResult.stealthPubKey.toBase58()
+      );
+    });
+
+    it('round-trip works via generateStealthAddress helper', () => {
+      const spending = Keypair.generate();
+      const viewing = nacl.box.keyPair();
+
+      const meta: StealthMetaAddress = {
+        spendingPubKey: spending.publicKey.toBytes(),
+        viewingPubKey: viewing.publicKey,
+        encoded: encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey),
+      };
+
+      // Sender uses the high-level API
+      const stealth = generateStealthAddress(meta);
+
+      // Receiver verifies and derives
+      const owns = verifyStealthOwnership(
+        stealth.address,
+        stealth.ephemeralPubKey,
+        viewing.secretKey,
+        spending.publicKey.toBytes(),
+        stealth.viewTag,
+      );
+      expect(owns).toBe(true);
+
+      const stealthKeypair = deriveStealthPrivateKey(
+        spending.publicKey.toBytes(),
+        viewing.secretKey,
+        stealth.ephemeralPubKey,
+      );
+      expect(stealthKeypair.publicKey.toBase58()).toBe(
+        stealth.address.toBase58()
+      );
+    });
+
+    it('different recipients produce different stealth addresses from same ephemeral', () => {
+      const spendingA = Keypair.generate();
+      const viewingA = nacl.box.keyPair();
+      const spendingB = Keypair.generate();
+      const viewingB = nacl.box.keyPair();
+
+      const metaA: StealthMetaAddress = {
+        spendingPubKey: spendingA.publicKey.toBytes(),
+        viewingPubKey: viewingA.publicKey,
+        encoded: encodeStealthMetaAddress(spendingA.publicKey.toBytes(), viewingA.publicKey),
+      };
+      const metaB: StealthMetaAddress = {
+        spendingPubKey: spendingB.publicKey.toBytes(),
+        viewingPubKey: viewingB.publicKey,
+        encoded: encodeStealthMetaAddress(spendingB.publicKey.toBytes(), viewingB.publicKey),
+      };
+
+      const ephemeral = nacl.box.keyPair();
+      const resultA = deriveStealthPublicKey(metaA, ephemeral.secretKey);
+      const resultB = deriveStealthPublicKey(metaB, ephemeral.secretKey);
+
+      expect(resultA.stealthPubKey.toBase58()).not.toBe(
+        resultB.stealthPubKey.toBase58()
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // computeStealthAddress
   // -----------------------------------------------------------------------
   describe('computeStealthAddress', () => {
