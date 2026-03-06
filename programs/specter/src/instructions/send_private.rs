@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
 use crate::errors::P01Error;
-use crate::state::{DecoyLevel, P01Wallet, StealthAccount};
+use crate::state::{DecoyLevel, P01Wallet, StealthAccount, StealthPaymentCreated};
 
 /// Send a private payment using stealth addressing
 ///
@@ -116,6 +116,15 @@ pub fn handler(
     // Increment sender's nonce
     let sender_wallet = &mut ctx.accounts.sender_wallet;
     let new_nonce = sender_wallet.increment_nonce();
+
+    // Emit v1 event for client-side indexing
+    emit!(StealthPaymentCreated {
+        version: 1,
+        stealth_address,
+        token_mint: ctx.accounts.token_mint.key(),
+        amount,
+        slot: clock.slot,
+    });
 
     msg!("Private payment sent successfully");
     msg!("Amount: {} (encrypted)", amount);
