@@ -15,8 +15,12 @@ import {
 } from '@solana/web3.js';
 import { expect } from 'chai';
 import { sha256 } from '@noble/hashes/sha256';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+
+/** ML-KEM-768 public key size per FIPS 203 */
+const KEM_PUBLIC_KEY_SIZE = 1184;
 
 const PROGRAM_ID = new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW');
 
@@ -64,7 +68,7 @@ async function fundAccount(
       lamports: amount * LAMPORTS_PER_SOL,
     }),
   );
-  const sig = await provider.sendAndConfirm(tx);
+  await provider.sendAndConfirm(tx);
 }
 
 function randomJobId(): Buffer {
@@ -77,6 +81,17 @@ function randomEncryptionKey(): number[] {
 
 function randomEndpointHash(): number[] {
   return Array.from(sha256(Buffer.from('https://relay.protocol01.io')));
+}
+
+function randomKemPublicKey(): number[] {
+  const key = new Uint8Array(KEM_PUBLIC_KEY_SIZE);
+  for (let i = 0; i < KEM_PUBLIC_KEY_SIZE; i++) key[i] = Math.floor(Math.random() * 256);
+  return Array.from(key);
+}
+
+function realKemPublicKey(): { publicKey: number[]; secretKey: Uint8Array } {
+  const keys = ml_kem768.keygen();
+  return { publicKey: Array.from(keys.publicKey), secretKey: keys.secretKey };
 }
 
 describe('p01_relayer', () => {
@@ -169,12 +184,12 @@ describe('p01_relayer', () => {
   });
 
   describe('Relayer Registration', () => {
-    it('registers relayer 1 with stake', async () => {
+    it('registers relayer 1 with stake (no KEM key)', async () => {
       const encKey = randomEncryptionKey();
       const endpointHash = randomEndpointHash();
 
       await program.methods
-        .registerRelayer(encKey, endpointHash)
+        .registerRelayer(encKey, endpointHash, null)
         .accounts({
           operator: operator1.publicKey,
           config: configPda,
@@ -190,14 +205,16 @@ describe('p01_relayer', () => {
       expect(node.stake.toNumber()).to.equal(MIN_STAKE.toNumber());
       expect(node.reputationScore).to.equal(5000);
       expect(node.jobsCompleted.toNumber()).to.equal(0);
+      expect(node.hasKemKey).to.be.false;
+      expect(Array.from(node.kemEncryptionKey).every((b: number) => b === 0)).to.be.true;
 
       const config = await program.account.relayerConfig.fetch(configPda);
       expect(config.activeRelayerCount).to.equal(1);
     });
 
-    it('registers relayer 2', async () => {
+    it('registers relayer 2 (no KEM key)', async () => {
       await program.methods
-        .registerRelayer(randomEncryptionKey(), randomEndpointHash())
+        .registerRelayer(randomEncryptionKey(), randomEndpointHash(), null)
         .accounts({
           operator: operator2.publicKey,
           config: configPda,
@@ -211,10 +228,10 @@ describe('p01_relayer', () => {
       expect(config.activeRelayerCount).to.equal(2);
     });
 
-    it('rotates encryption key', async () => {
+    it('rotates encryption key (X25519 only, no KEM update)', async () => {
       const newKey = randomEncryptionKey();
       await program.methods
-        .updateRelayerKey(newKey)
+        .updateRelayerKey(newKey, null)
         .accounts({
           operator: operator1.publicKey,
           relayerNode: relayer1Pda,
@@ -224,6 +241,89 @@ describe('p01_relayer', () => {
 
       const node = await program.account.relayerNode.fetch(relayer1Pda);
       expect(Array.from(node.encryptionKey)).to.deep.equal(newKey);
+      expect(node.hasKemKey).to.be.false;
+    });
+  });
+
+  describe('ML-KEM-768 Key Management', () => {
+    it('registers relayer with KEM public key', async () => {
+      const newOp = Keypair.generate();
+      await fundAccount(provider, newOp.publicKey, 10);
+      const [newPda] = findRelayerNodePda(newOp.publicKey);
+
+      const kem = realKemPublicKey();
+      await program.methods
+        .registerRelayer(randomEncryptionKey(), randomEndpointHash(), Buffer.from(kem.publicKey))
+        .accounts({
+          operator: newOp.publicKey,
+          config: configPda,
+          relayerNode: newPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([newOp])
+        .rpc();
+
+      const node = await program.account.relayerNode.fetch(newPda);
+      expect(node.hasKemKey).to.be.true;
+      expect(node.kemEncryptionKey.length).to.equal(KEM_PUBLIC_KEY_SIZE);
+      expect(Array.from(node.kemEncryptionKey).slice(0, 32)).to.deep.equal(kem.publicKey.slice(0, 32));
+
+      await program.methods
+        .deactivateRelayer()
+        .accounts({ operator: newOp.publicKey, config: configPda, relayerNode: newPda })
+        .signers([newOp])
+        .rpc();
+    });
+
+    it('adds KEM key to existing relayer via updateRelayerKey', async () => {
+      const kem = realKemPublicKey();
+      await program.methods
+        .updateRelayerKey(null, Buffer.from(kem.publicKey))
+        .accounts({
+          operator: operator1.publicKey,
+          relayerNode: relayer1Pda,
+        })
+        .signers([operator1])
+        .rpc();
+
+      const node = await program.account.relayerNode.fetch(relayer1Pda);
+      expect(node.hasKemKey).to.be.true;
+      expect(Array.from(node.kemEncryptionKey).slice(0, 32)).to.deep.equal(kem.publicKey.slice(0, 32));
+    });
+
+    it('rejects invalid KEM key size', async () => {
+      const badKey = Buffer.alloc(100, 0xaa);
+      try {
+        await program.methods
+          .updateRelayerKey(null, badKey)
+          .accounts({
+            operator: operator1.publicKey,
+            relayerNode: relayer1Pda,
+          })
+          .signers([operator1])
+          .rpc();
+        expect.fail('Should have thrown');
+      } catch (err: any) {
+        expect(err.message).to.include('InvalidEncryptionKey');
+      }
+    });
+
+    it('rotates both X25519 and KEM keys simultaneously', async () => {
+      const newX25519 = randomEncryptionKey();
+      const newKem = realKemPublicKey();
+      await program.methods
+        .updateRelayerKey(newX25519, Buffer.from(newKem.publicKey))
+        .accounts({
+          operator: operator1.publicKey,
+          relayerNode: relayer1Pda,
+        })
+        .signers([operator1])
+        .rpc();
+
+      const node = await program.account.relayerNode.fetch(relayer1Pda);
+      expect(Array.from(node.encryptionKey)).to.deep.equal(newX25519);
+      expect(node.hasKemKey).to.be.true;
+      expect(Array.from(node.kemEncryptionKey).slice(0, 32)).to.deep.equal(newKem.publicKey.slice(0, 32));
     });
   });
 
@@ -371,8 +471,6 @@ describe('p01_relayer', () => {
     it('rejects oversized encrypted tx', async () => {
       const jobId = randomJobId();
       const [jobPda] = findJobPda(jobId);
-      // 1500 bytes exceeds MAX_ENCRYPTED_TX_SIZE (1280)
-      // Borsh serialization rejects it client-side before reaching the program
       const oversizedTx = Buffer.alloc(1500, 0xff);
 
       try {
@@ -389,7 +487,6 @@ describe('p01_relayer', () => {
           .rpc();
         expect.fail('Should have thrown');
       } catch (err: any) {
-        // Either client-side Borsh rejection or on-chain size check
         expect(err.message).to.satisfy((msg: string) =>
           msg.includes('EncryptedTxTooLarge') || msg.includes('overruns') || msg.includes('too large'),
         );
@@ -408,7 +505,7 @@ describe('p01_relayer', () => {
 
       try {
         await program.methods
-          .registerRelayer(randomEncryptionKey(), randomEndpointHash())
+          .registerRelayer(randomEncryptionKey(), randomEndpointHash(), null)
           .accounts({
             operator: newOp.publicKey,
             config: configPda,
