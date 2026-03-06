@@ -96,7 +96,7 @@
     "metro-runtime": "^0.83.3",
     "nativewind": "^4.0.1",
     "nullthrows": "^1.1.1",
-    "poseidon-lite": "^0.2.0",
+    "poseidon-lite": "^0.3.0",
     "pretty-format": "^30.2.0",
     "promise": "^8.3.0",
     "react": "19.1.0",
