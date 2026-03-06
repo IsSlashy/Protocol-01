@@ -13,6 +13,8 @@ export interface WalletState {
   viewingKeypair: Keypair;
   /** Derived stealth meta-address */
   stealthMetaAddress: StealthMetaAddress;
+  /** ML-KEM-768 secret key for hybrid post-quantum stealth (2400 bytes, v2 only) */
+  kemSecretKey?: Uint8Array;
   /** Original seed phrase */
   seedPhrase: string;
   /** Derivation path used */
