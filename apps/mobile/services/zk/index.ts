@@ -1569,6 +1569,12 @@ export class ZkService {
   // Prover function injected by ZkProverProvider
   private proverFunction: ((inputs: Record<string, string>) => Promise<Groth16Proof>) | null = null;
 
+  // Raw-format prover (returns snarkjs format for relayer, NOT byte arrays)
+  private proverFunctionRaw: ((inputs: Record<string, string>) => Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+  }>) | null = null;
+
   // Backend prover URL (for mobile without bundled circuits)
   private static BACKEND_PROVER_URL = 'https://p01-relayer-production.up.railway.app'; // Railway hosted relayer
 
@@ -1591,6 +1597,16 @@ export class ZkService {
    */
   setProver(prover: (inputs: Record<string, string>) => Promise<Groth16Proof>): void {
     this.proverFunction = prover;
+  }
+
+  /**
+   * Set the raw-format prover (returns snarkjs format for relayer compatibility)
+   */
+  setProverRaw(prover: (inputs: Record<string, string>) => Promise<{
+    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+    publicSignals: string[];
+  }>): void {
+    this.proverFunctionRaw = prover;
   }
 
   /**
@@ -1788,8 +1804,25 @@ export class ZkService {
       throw new Error('Commitment mismatch: stored note does not match computed commitment');
     }
 
-    // Try backend prover first (preferred for mobile - no 19MB circuit bundling)
-    // Inline call to capture publicSignals for debugging
+    // TRUSTLESS: Try client-side prover FIRST (spending_key stays on device)
+    if (this.proverFunction) {
+      try {
+        console.log('[ZK] Generating proof locally (trustless mode)...');
+        const proof = await this.proverFunction(circuitInputs);
+        return proof;
+      } catch (error) {
+        console.error('[ZK] Client-side proof generation failed:', error);
+        console.error('[ZK] This error means the circuit constraints are not satisfied.');
+        console.error('[ZK] Most likely cause: commitment mismatch or invalid merkle proof.');
+        throw error;
+      }
+    }
+
+    // FALLBACK: Backend prover (only if client-side prover not loaded)
+    // WARNING: This sends spending_key to the relayer. Use only for testing
+    // or when circuit files cannot be loaded on device.
+    console.warn('[ZK] Client-side prover not loaded — falling back to backend prover');
+    console.warn('[ZK] WARNING: spending_key will be sent to the relayer');
     try {
       const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
         method: 'POST',
@@ -1807,65 +1840,13 @@ export class ZkService {
         throw new Error(result.message || 'Backend prover returned invalid response');
       }
 
-      console.log('[ZK Debug] Prover:', result.prover, 'Time:', result.proofTimeMs, 'ms');
-
-      // Compare publicSignals from prover with expected circuit inputs
-      const expectedOrder = ['merkle_root', 'nullifier_1', 'nullifier_2', 'output_commitment_1', 'output_commitment_2', 'public_amount', 'token_mint'];
-      if (result.publicSignals) {
-        let allMatch = true;
-        for (let i = 0; i < expectedOrder.length; i++) {
-          const expected = circuitInputs[expectedOrder[i]];
-          const actual = result.publicSignals[i];
-          if (expected !== actual) {
-            console.error(`[ZK Debug] PUBLIC INPUT MISMATCH [${i}] ${expectedOrder[i]}: prover="${actual}" expected="${expected}"`);
-            allMatch = false;
-          }
-        }
-        if (allMatch) {
-          console.log('[ZK Debug] All 7 public inputs match between prover and circuit inputs');
-        }
-      } else {
-        console.warn('[ZK Debug] No publicSignals in prover response');
-      }
-
-      // Off-chain verification using relayer /verify endpoint
-      try {
-        const verifyResp = await fetch(`${ZkService.BACKEND_PROVER_URL}/verify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            proof: { pi_a: result.proof.pi_a, pi_b: result.proof.pi_b, pi_c: result.proof.pi_c },
-            publicSignals: result.publicSignals,
-          }),
-        });
-        const verifyResult = await verifyResp.json();
-        console.log('[ZK Debug] Off-chain verify:', verifyResult.valid ? 'PASS' : 'FAIL', verifyResult.error || '');
-      } catch (ve: any) {
-        console.warn('[ZK Debug] Off-chain verify unavailable:', ve.message);
-      }
-
       return this.convertSnarkjsProof(result.proof);
     } catch (backendError: any) {
-      console.warn('[ZK] Backend prover failed:', backendError.message);
-    }
-
-    // Fall back to client-side prover
-    if (!this.proverFunction) {
+      console.error('[ZK] Backend prover also failed:', backendError.message);
       throw new Error(
-        'ZK Prover not available. The backend prover is not reachable and ' +
-        'client-side prover is not loaded. Please ensure the relayer is running ' +
-        'or restart the app to load circuits locally.'
+        'ZK Prover not available. Client-side prover is not loaded and ' +
+        'the backend prover is not reachable. Restart the app to load circuits locally.'
       );
-    }
-
-    try {
-      const proof = await this.proverFunction(circuitInputs);
-      return proof;
-    } catch (error) {
-      console.error('[ZK] Client-side proof generation failed:', error);
-      console.error('[ZK] This error means the circuit constraints are not satisfied.');
-      console.error('[ZK] Most likely cause: commitment mismatch or invalid merkle proof.');
-      throw error;
     }
   }
 
@@ -2264,54 +2245,58 @@ export class ZkService {
         return;
       }
 
-      // Step 3: Fetch new commitments — try relayer first, fall back to chain
+      // Step 3: Fetch new commitments — try chain first (trustless), relayer as fallback
       console.log('[ZK Sync] Need', onChainLeafCount - cachedLeafCount, 'new commitments (have', cachedLeafCount, 'of', onChainLeafCount, ')');
 
       let allCommitments: bigint[] | null = null;
 
-      // Try relayer first (fast path)
+      // TRUSTLESS: Try on-chain scan first (verifiable, no relayer dependency)
       try {
-        const relayerCommitments = await this.fetchCommitmentsFromRelayer(cachedLeafCount);
-        if (relayerCommitments) {
-          // Insert only NEW commitments into local tree
-          for (const commitment of relayerCommitments) {
-            this.merkleTree.insert(commitment);
-          }
+        allCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
+        console.log('[ZK Sync] Got', allCommitments.length, 'commitments from chain');
+      } catch (chainError: any) {
+        console.warn('[ZK Sync] Chain scan failed, trying relayer as fallback:', chainError.message);
 
-          console.log('[ZK Sync] Inserted', relayerCommitments.length, 'commitments from relayer');
+        // Fallback: try relayer (faster but centralized)
+        try {
+          const relayerCommitments = await this.fetchCommitmentsFromRelayer(cachedLeafCount);
+          if (relayerCommitments) {
+            // Insert only NEW commitments into local tree
+            for (const commitment of relayerCommitments) {
+              this.merkleTree.insert(commitment);
+            }
 
-          // Verify root matches — if not, rollback and fall through to chain scan
-          if (this.merkleTree.leafCount === onChainLeafCount) {
-            if (this.merkleTree.root === onChainRoot) {
-              this._onChainRoot = null;
-              console.log('[ZK Sync] Tree synced via relayer, root verified');
+            console.log('[ZK Sync] Inserted', relayerCommitments.length, 'commitments from relayer');
 
-              // Save updated tree cache
-              await this.saveTreeCache();
-              await this.updateNoteIndices();
-              await this.saveNotes();
-              return;
-            } else {
-              // Relayer commitments produce wrong root — rollback to cached tree.
-              // The cached tree's root is a known historical root on-chain (from last
-              // successful shield/sync), so unshield can use it directly without
-              // needing the current root or a correction shield.
-              console.warn('[ZK Sync] Root mismatch after relayer sync — using cached tree (historical root)');
-              await this.loadTreeCache(); // Restore tree from before relayer inserts
-              this._onChainRoot = null; // Don't trigger correction shield
-              await this.updateNoteIndices();
-              await this.saveNotes();
-              return; // Skip chain scan — historical root is sufficient
+            // Verify root matches
+            if (this.merkleTree.leafCount === onChainLeafCount) {
+              if (this.merkleTree.root === onChainRoot) {
+                this._onChainRoot = null;
+                console.log('[ZK Sync] Tree synced via relayer, root verified');
+
+                await this.saveTreeCache();
+                await this.updateNoteIndices();
+                await this.saveNotes();
+                return;
+              } else {
+                console.warn('[ZK Sync] Root mismatch after relayer sync — using cached tree (historical root)');
+                await this.loadTreeCache();
+                this._onChainRoot = null;
+                await this.updateNoteIndices();
+                await this.saveNotes();
+                return;
+              }
             }
           }
+        } catch (relayerError: any) {
+          console.warn('[ZK Sync] Relayer also failed:', relayerError.message);
+          throw new Error('Both chain scan and relayer failed — cannot sync merkle tree');
         }
-      } catch (e: any) {
-        console.warn('[ZK Sync] Relayer fetch failed, falling back to chain:', e.message);
       }
 
-      // Slow path: full rebuild from chain
-      console.warn('[ZK Sync] Falling back to slow chain scan...');
-      allCommitments = await this.fetchCommitmentsFromChain(merkleTreePDA, onChainLeafCount);
+      if (!allCommitments) {
+        throw new Error('Failed to fetch commitments from any source');
+      }
 
       // Rebuild the merkle tree from all commitments
       this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
@@ -3518,8 +3503,26 @@ export class ZkService {
       spending_key: this.spendingKey.toString(),
     };
 
-    // Generate proof using backend (returns raw snarkjs format for relayer)
-    const { proof: snarkjsProof } = await this.generateProofViaBackendRaw(circuitInputs);
+    // TRUSTLESS: Try client-side raw prover FIRST (spending_key stays on device)
+    let snarkjsProof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
+
+    if (this.proverFunctionRaw) {
+      try {
+        console.log('[ZK] Generating transfer proof locally (trustless mode)...');
+        const result = await this.proverFunctionRaw(circuitInputs);
+        snarkjsProof = result.proof;
+      } catch (error) {
+        console.error('[ZK] Client-side raw proof generation failed:', error);
+        throw error;
+      }
+    } else {
+      // FALLBACK: Backend prover (only if client-side prover not loaded)
+      // WARNING: This sends spending_key to the relayer
+      console.warn('[ZK] Raw prover not loaded — falling back to backend prover');
+      console.warn('[ZK] WARNING: spending_key will be sent to the relayer');
+      const result = await this.generateProofViaBackendRaw(circuitInputs);
+      snarkjsProof = result.proof;
+    }
 
 
     // Store change note data (will be applied after relayer confirms)
@@ -3599,71 +3602,76 @@ export class ZkService {
   }> {
 
     try {
-      const RELAYER_URL = ZkService.BACKEND_PROVER_URL;
-      const response = await fetch(`${RELAYER_URL}/relay/stealth-payments?limit=100`);
-
-      if (!response.ok) {
-        console.warn('[ZK] Failed to fetch stealth payments');
-        return { found: 0, amount: 0, payments: [] };
-      }
-
-      const data = await response.json();
-      const payments = data.payments || [];
-
-      if (payments.length === 0) {
-        return { found: 0, amount: 0, payments: [] };
-      }
-
-      // Get our stealth keys for scanning
+      // TRUSTLESS: Scan blockchain directly instead of relying on the relayer.
+      // Uses the specter-sdk StealthIndexer to find on-chain stealth announcements.
       const stealthKeys = this.getStealthKeys();
       if (!stealthKeys) {
         return { found: 0, amount: 0, payments: [] };
       }
 
-      // Try to scan each payment
+      const { scanForPayments: sdkScanForPayments } = await import('@p01/specter-sdk');
+
+      const viewingKeyBytes = this.viewingKey!;
+      const spendingKeyBytes = bigintToLeBytes(this.spendingKey!);
+
+      // Derive spending public key for the scanner
+      const spendingKeypair = Keypair.fromSeed(spendingKeyBytes);
+      const spendingPubKeyBytes = spendingKeypair.publicKey.toBytes();
+
+      const onChainPayments = await sdkScanForPayments(
+        this.connection,
+        viewingKeyBytes,
+        spendingPubKeyBytes,
+        { limit: 100 }
+      );
+
       let found = 0;
       let totalAmount = 0;
       const foundPayments: Array<{ stealthAddress: string; amount: number; signature: string }> = [];
 
-      for (const payment of payments) {
+      for (const payment of onChainPayments) {
         try {
+          const sig = payment.signature || '';
+
           // Check if we already have this payment
-          if (this._foundStealthPayments.some(p => p.signature === payment.signature)) {
+          if (this._foundStealthPayments.some(p => p.signature === sig)) {
             continue;
           }
 
+          // Derive stealth private key locally using the ephemeral pubkey
           const result = await scanStealthPayment(
-            payment.ephemeralPublicKey,
-            this.viewingKey!,
-            bigintToLeBytes(this.spendingKey!),
+            Buffer.from(payment.ephemeralPubKey).toString('base64'),
+            viewingKeyBytes,
+            spendingKeyBytes,
             payment.viewTag
           );
 
-          if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
-            found++;
-            totalAmount += payment.amount;
-
-            // Store the payment with private key for later withdrawal
-            this._foundStealthPayments.push({
-              stealthAddress: payment.stealthAddress,
-              privateKey: result.privateKey,
-              amount: payment.amount,
-              signature: payment.signature,
-              ephemeralPublicKey: payment.ephemeralPublicKey,
-            });
-
-            foundPayments.push({
-              stealthAddress: payment.stealthAddress,
-              amount: payment.amount,
-              signature: payment.signature,
-            });
+          if (!result.found || !result.privateKey) {
+            continue;
           }
-        } catch (e) {
-          // Not for us, skip
-        }
-      }
 
-      if (found > 0) {
+          const stealthAddress = payment.stealthAddress.toBase58();
+          const amount = Number(payment.amount);
+
+          found++;
+          totalAmount += amount;
+
+          this._foundStealthPayments.push({
+            stealthAddress,
+            privateKey: result.privateKey,
+            amount,
+            signature: sig,
+            ephemeralPublicKey: Buffer.from(payment.ephemeralPubKey).toString('base64'),
+          });
+
+          foundPayments.push({
+            stealthAddress,
+            amount,
+            signature: sig,
+          });
+        } catch (e) {
+          // Not for us or parse error, skip
+        }
       }
 
       return { found, amount: totalAmount, payments: foundPayments };
