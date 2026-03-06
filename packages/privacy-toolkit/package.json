@@ -22,7 +22,7 @@
     "poseidon-lite": "^0.3.0"
   },
   "devDependencies": {
-    "vitest": "^1.0.0",
-    "typescript": "^5.3.0"
+    "vitest": "^3.2.0",
+    "typescript": "^5.9.0"
   }
 }
