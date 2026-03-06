@@ -13,7 +13,11 @@ import {
   generateStealthAddress as generateRealStealthAddress,
   scanStealthPayment,
   createStealthMeta,
+  createMetaAddress,
+  parseMetaAddress,
+  isMetaAddress,
   isValidStealthAddress,
+  parseStealthMemo,
   type StealthKeys as RealStealthKeys,
   type StealthAddress as RealStealthAddress,
   type StealthScanResult,
@@ -291,11 +295,22 @@ export function useStealth(): UseStealthReturn {
       // Derive stealth keys using REAL crypto
       const keys = await stealthCrypto.deriveStealthKeys(seedPhrase);
 
+      // Generate v2 stealth keys with ML-KEM-768 (hybrid PQ)
+      const realKeys = await generateRealStealthKeys(true); // enableHybrid=true
+
       // Store keys securely (hex encoded private keys)
       await setSecure(SECURE_KEYS.STEALTH_SPENDING_KEY, keys.spendingPrivateKey);
       await setSecure(SECURE_KEYS.STEALTH_VIEWING_KEY, keys.viewingPrivateKey);
       await setSecure('p01_stealth_spending_pub' as any, keys.spendingPublicKey);
       await setSecure('p01_stealth_viewing_pub' as any, keys.viewingPublicKey);
+
+      // Store ML-KEM-768 keys (base64 encoded, too large for hex)
+      if (realKeys.kemPubKey) {
+        await setSecure('p01_stealth_kem_pub' as any, Buffer.from(realKeys.kemPubKey).toString('base64'));
+      }
+      if (realKeys.kemSecretKey) {
+        await setSecure('p01_stealth_kem_secret' as any, Buffer.from(realKeys.kemSecretKey).toString('base64'));
+      }
 
       // Store keypairs in memory for crypto operations
       if (keys.spendingKeypair && keys.viewingKeypair) {
@@ -305,9 +320,15 @@ export function useStealth(): UseStealthReturn {
         });
       }
 
-      // Generate meta-address (Solana format: st:sol:spendingPubKey:viewingPubKey)
-      const metaAddress = stealthCrypto.encodeStealthMetaAddress(keys);
-      const parsed = stealthCrypto.parseStealthMetaAddress(metaAddress);
+      // Generate v2 meta-address with KEM key for PQ resistance
+      const v2MetaAddress = createMetaAddress(realKeys);
+
+      // Also store legacy format for backward compat
+      const legacyMetaAddress = stealthCrypto.encodeStealthMetaAddress(keys);
+      const parsed = stealthCrypto.parseStealthMetaAddress(legacyMetaAddress);
+
+      // Store v2 meta-address
+      await setSecure('p01_stealth_meta_v2' as any, v2MetaAddress);
 
       setStealthMetaAddress(parsed);
       setIsInitialized(true);
@@ -378,13 +399,26 @@ export function useStealth(): UseStealthReturn {
   }, []);
 
   // Scan for incoming stealth payments - uses REAL scanning from stealth.ts
+  // Supports both v1 (classic) and v2 (hybrid PQ) payments
   const scanForPayments = useCallback(async (
     ephemeralPublicKey: string,
-    expectedViewTag?: string
+    expectedViewTag?: string,
+    kemCiphertextBase64?: string,
   ): Promise<StealthScanResult | null> => {
     try {
+      // Load KEM secret key from storage (for v2 hybrid payments)
+      let kemSecretKey: Uint8Array | undefined;
+      const kemSecretBase64 = await getSecure<string>('p01_stealth_kem_secret' as any);
+      if (kemSecretBase64) {
+        kemSecretKey = new Uint8Array(Buffer.from(kemSecretBase64, 'base64'));
+      }
+
+      let kemCiphertext: Uint8Array | undefined;
+      if (kemCiphertextBase64) {
+        kemCiphertext = new Uint8Array(Buffer.from(kemCiphertextBase64, 'base64'));
+      }
+
       if (!stealthKeypairs.viewing || !stealthKeypairs.spending) {
-        // Try to restore from secure storage
         const viewingPrivHex = await getSecure<string>(SECURE_KEYS.STEALTH_VIEWING_KEY);
         const spendingPrivHex = await getSecure<string>(SECURE_KEYS.STEALTH_SPENDING_KEY);
 
@@ -395,26 +429,24 @@ export function useStealth(): UseStealthReturn {
         const viewingSecretKey = hexToBytes(viewingPrivHex);
         const spendingSecretKey = hexToBytes(spendingPrivHex);
 
-        // Use the REAL scan function from stealth.ts
-        const result = await scanStealthPayment(
+        return await scanStealthPayment(
           ephemeralPublicKey,
           viewingSecretKey,
           spendingSecretKey,
-          expectedViewTag
+          expectedViewTag,
+          kemCiphertext,
+          kemSecretKey,
         );
-
-        return result;
       }
 
-      // Use stored keypairs directly
-      const result = await scanStealthPayment(
+      return await scanStealthPayment(
         ephemeralPublicKey,
         stealthKeypairs.viewing.secretKey,
         stealthKeypairs.spending.secretKey,
-        expectedViewTag
+        expectedViewTag,
+        kemCiphertext,
+        kemSecretKey,
       );
-
-      return result;
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to scan for stealth payments'));
       return null;
