@@ -23,7 +23,7 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { poseidon1 } from 'poseidon-lite';
-import CryptoJS from 'crypto-js';
+import { sha256 } from '@noble/hashes/sha256';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
 import type { PoolConfig, ShieldReceipt, ProofGenerator } from '../denominatedPool';
@@ -143,9 +143,8 @@ export function deriveSubscriberVkDataPDA(authority: PublicKey): [PublicKey, num
 // ---------------------------------------------------------------------------
 
 function getDiscriminator(name: string): Buffer {
-  const hash = CryptoJS.SHA256(`global:${name}`);
-  const hex = hash.toString(CryptoJS.enc.Hex);
-  return Buffer.from(hex, 'hex').slice(0, 8);
+  const hash = sha256(`global:${name}`);
+  return Buffer.from(hash.slice(0, 8));
 }
 
 /**

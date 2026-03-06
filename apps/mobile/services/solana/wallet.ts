@@ -17,7 +17,8 @@ import {
 import * as SecureStore from 'expo-secure-store';
 import { generateMnemonic as scureGenerateMnemonic, mnemonicToSeedSync, validateMnemonic as scureValidateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
-import CryptoJS from 'crypto-js';
+import { hmac } from '@noble/hashes/hmac';
+import { sha512 } from '@noble/hashes/sha512';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { getConnection } from './connection';
@@ -47,46 +48,13 @@ export interface WalletInfo {
 }
 
 /**
- * Convert Uint8Array to CryptoJS WordArray
- */
-function uint8ArrayToWordArray(u8Array: Uint8Array): CryptoJS.lib.WordArray {
-  const words: number[] = [];
-  for (let i = 0; i < u8Array.length; i += 4) {
-    words.push(
-      ((u8Array[i] || 0) << 24) |
-      ((u8Array[i + 1] || 0) << 16) |
-      ((u8Array[i + 2] || 0) << 8) |
-      (u8Array[i + 3] || 0)
-    );
-  }
-  return CryptoJS.lib.WordArray.create(words, u8Array.length);
-}
-
-/**
- * Convert CryptoJS WordArray to Uint8Array
- */
-function wordArrayToUint8Array(wordArray: CryptoJS.lib.WordArray): Uint8Array {
-  const words = wordArray.words;
-  const sigBytes = wordArray.sigBytes;
-  const u8Array = new Uint8Array(sigBytes);
-
-  for (let i = 0; i < sigBytes; i++) {
-    u8Array[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
-  }
-
-  return u8Array;
-}
-
-/**
- * HMAC-SHA512 using CryptoJS
+ * HMAC-SHA512 using @noble/hashes
  */
 function hmacSha512(key: Uint8Array | string, data: Uint8Array): Uint8Array {
-  const keyWordArray = typeof key === 'string'
-    ? CryptoJS.enc.Utf8.parse(key)
-    : uint8ArrayToWordArray(key);
-  const dataWordArray = uint8ArrayToWordArray(data);
-  const hmacResult = CryptoJS.HmacSHA512(dataWordArray, keyWordArray);
-  return wordArrayToUint8Array(hmacResult);
+  const keyBytes = typeof key === 'string'
+    ? new TextEncoder().encode(key)
+    : key;
+  return hmac(sha512, keyBytes, data);
 }
 
 /**
