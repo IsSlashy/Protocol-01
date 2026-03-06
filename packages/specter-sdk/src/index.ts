@@ -84,7 +84,11 @@ export {
 
   // Stealth constants
   STEALTH_ADDRESS_PREFIX,
+  STEALTH_META_ADDRESS_VERSION,
+  STEALTH_META_ADDRESS_VERSION_2,
   VIEW_TAG_SIZE,
+  KEM_PUBLIC_KEY_SIZE,
+  KEM_CIPHERTEXT_SIZE,
 
   // Stream constants
   MIN_STREAM_DURATION,
@@ -202,6 +206,25 @@ export {
 } from './streams';
 
 // ============================================================================
+// Indexing Module (Client-Side — replaces relayer indexer)
+// ============================================================================
+export {
+  // Commitment indexer (replaces /pool/state & /pool/commitments)
+  CommitmentIndexer,
+  type CommitmentIndexerOptions,
+  type IndexerStatus,
+
+  // Stealth payment indexer (replaces /relay/stealth-payments)
+  StealthIndexer,
+  type StealthIndexerOptions,
+
+  // Cache backends
+  type IndexerCache,
+  MemoryCache,
+  LocalStorageCache,
+} from './indexing';
+
+// ============================================================================
 // Subscription Module (ZK Private)
 // ============================================================================
 export {
@@ -223,6 +246,11 @@ export {
   deriveSharedSecret,
   deriveKey,
   computeViewTag,
+  deriveStealthSeed,
+  kemGenerateKeypair,
+  kemEncapsulate,
+  kemDecapsulate,
+  deriveHybridSharedSecret,
   encrypt,
   decrypt,
   encryptForRecipient,
@@ -274,3 +302,49 @@ export {
   omit,
   createLogger,
 } from './utils';
+
+// ============================================================================
+// Proving Module (Client-Side zkSPL Prover)
+// ============================================================================
+//
+// TRUST THE MATH, NOT THE NODES.
+// Generate zkSPL Groth16 proofs entirely on the client device.
+// The spending_key, balance, and salt NEVER leave the user's machine.
+//
+export {
+  // Main prover class
+  ClientProver,
+
+  // Circuit file loader
+  CircuitLoader,
+
+  // Proof format conversion
+  snarkjsProofToBytes,
+  parsePublicSignals,
+  buildBalanceCircuitInputs,
+  buildSufficiencyCircuitInputs,
+
+  // Error class
+  ProofInputValidationError,
+
+  // Types (re-exported from proving/types.ts)
+  type Groth16ProofBytes,
+  type FieldElement as ZkFieldElement,
+  type ZkSplOperation,
+  type ConfidentialBalancePublicInputs,
+  type ConfidentialBalancePrivateInputs,
+  type BalanceProofPublicInputs,
+  type BalanceProofPrivateInputs,
+  type DepositProofInputs,
+  type WithdrawProofInputs,
+  type TransferProofInputs,
+  type BalanceSufficiencyProofInputs,
+  type ZkSplProofInputs,
+  type SnarkjsProof,
+  type ProofResult,
+  type CircuitFileConfig,
+  type ClientProverConfig,
+  type ProgressCallback,
+  type ProgressEvent as CircuitProgressEvent,
+  type CircuitFiles,
+} from './proving';
