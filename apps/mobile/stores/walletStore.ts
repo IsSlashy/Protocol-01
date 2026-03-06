@@ -330,10 +330,12 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     if (!publicKey) return;
 
     try {
+      set({ refreshing: true });
       const transactions = await getTransactionHistory(publicKey);
-      set({ transactions });
+      set({ transactions, refreshing: false });
     } catch (error: any) {
       console.error('Failed to refresh transactions:', error);
+      set({ refreshing: false });
     }
   },
 

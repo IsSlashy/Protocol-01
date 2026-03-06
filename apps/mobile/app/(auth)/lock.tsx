@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
+import * as Crypto from 'expo-crypto';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -17,6 +18,8 @@ export default function LockScreen() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
   const [showPinEntry, setShowPinEntry] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
 
   useEffect(() => {
     checkSecurityMethod();
@@ -38,8 +41,30 @@ export default function LockScreen() {
       // Show PIN entry
       setShowPinEntry(true);
     } else if (method === 'none' || !method) {
-      // No security, go directly to wallet
-      router.replace('/(main)/(wallet)');
+      // No explicit security method set — try device-level auth as minimum protection
+      try {
+        const compatible = await LocalAuthentication.hasHardwareAsync();
+        const enrolled = compatible && await LocalAuthentication.isEnrolledAsync();
+        if (enrolled) {
+          const result = await LocalAuthentication.authenticateAsync({
+            promptMessage: 'Unlock P-01',
+            cancelLabel: 'Cancel',
+            disableDeviceFallback: false,
+            fallbackLabel: 'Use Passcode',
+          });
+          if (result.success) {
+            router.replace('/(main)/(wallet)');
+          }
+          // If auth fails, stay on lock screen — user can retry via biometric button
+          setIsBiometricSupported(true);
+        } else {
+          // No biometrics enrolled or no hardware — allow through
+          // (User never configured app-level security either)
+          router.replace('/(main)/(wallet)');
+        }
+      } catch {
+        router.replace('/(main)/(wallet)');
+      }
     }
   };
 
@@ -63,15 +88,41 @@ export default function LockScreen() {
   };
 
   const verifyPin = async (enteredPin: string) => {
-    const storedPin = await SecureStore.getItemAsync('wallet_pin');
+    // Enforce lockout
+    if (lockoutUntil > Date.now()) {
+      const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      setPinError(true);
+      setPin('');
+      Alert.alert('Too many attempts', `Try again in ${remaining} seconds.`);
+      return;
+    }
 
-    if (enteredPin === storedPin) {
+    const storedPinHash = await SecureStore.getItemAsync('wallet_pin');
+    const enteredPinHash = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      'p01_pin_v1:' + enteredPin
+    );
+
+    if (enteredPinHash === storedPinHash) {
+      setFailedAttempts(0);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(main)/(wallet)');
     } else {
+      const attempts = failedAttempts + 1;
+      setFailedAttempts(attempts);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setPinError(true);
       setPin('');
+
+      // Progressive lockout: 5 fails → 30s, 8 fails → 60s, 10+ fails → 300s
+      if (attempts >= 10) {
+        setLockoutUntil(Date.now() + 300_000);
+      } else if (attempts >= 8) {
+        setLockoutUntil(Date.now() + 60_000);
+      } else if (attempts >= 5) {
+        setLockoutUntil(Date.now() + 30_000);
+      }
+
       setTimeout(() => setPinError(false), 1500);
     }
   };
@@ -219,7 +270,7 @@ export default function LockScreen() {
         >
           <Ionicons name="swap-horizontal-outline" size={16} color="#666" />
           <Text style={styles.switchWalletText}>
-            Utiliser un autre wallet
+            Use another wallet
           </Text>
         </TouchableOpacity>
       </Animated.View>

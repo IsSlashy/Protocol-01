@@ -122,16 +122,31 @@ export default function ViewKeysScreen() {
 
   const generateMockKey = (type: KeyType): string => {
     const prefix = type.toUpperCase();
-    const randomPart = Array.from({ length: 64 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('');
+    // Use crypto.getRandomValues for secure random key generation
+    const bytes = new Uint8Array(32);
+    if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+      globalThis.crypto.getRandomValues(bytes);
+    } else {
+      // Fallback for environments without Web Crypto
+      for (let i = 0; i < 32; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    const randomPart = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     return `${prefix}_${randomPart}`;
   };
 
   const copyKey = async (key: string) => {
     await Clipboard.setStringAsync(key);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Copied', 'Viewing key copied to clipboard');
+    Alert.alert('Copied', 'Viewing key copied to clipboard. It will be cleared in 60 seconds.');
+    // Security: Auto-clear clipboard after 60 seconds
+    setTimeout(async () => {
+      try {
+        const current = await Clipboard.getStringAsync();
+        if (current === key) {
+          await Clipboard.setStringAsync('');
+        }
+      } catch (_) {}
+    }, 60000);
   };
 
   const shareKey = async (viewingKey: ViewingKey) => {

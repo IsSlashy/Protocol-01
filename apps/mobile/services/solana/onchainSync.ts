@@ -173,7 +173,7 @@ export async function fetchSubscriptionsFromChain(
 
           // Check if it's a parsed instruction
           if ('parsed' in instruction) {
-            const parsedInstruction = instruction as {
+            const parsedInstruction = instruction as unknown as {
               program: string;
               programId: string;
               parsed: string | object;

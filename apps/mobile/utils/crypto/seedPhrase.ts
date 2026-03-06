@@ -174,7 +174,7 @@ export function mnemonicToEntropy(mnemonic: string): string {
     throw validation.error;
   }
 
-  return scureMnemonicToEntropy(mnemonic.toLowerCase(), wordlist);
+  return Buffer.from(scureMnemonicToEntropy(mnemonic.toLowerCase(), wordlist)).toString('hex');
 }
 
 /**

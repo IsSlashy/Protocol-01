@@ -48,7 +48,7 @@ export function useStream({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
 
   const { wallet } = useWallet();
   const { isConnected } = useNetwork();

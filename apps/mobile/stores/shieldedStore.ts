@@ -541,9 +541,8 @@ export const useShieldedStore = create<ShieldedState>()(
 
           // Send funding tx: User → Relayer
           const { Connection, PublicKey: SolPubKey, Transaction: SolTx, SystemProgram: SolSystem } = await import('@solana/web3.js');
-          const conn = new Connection(process.env.EXPO_PUBLIC_SOLANA_NETWORK === 'mainnet-beta'
-            ? 'https://api.mainnet-beta.solana.com'
-            : 'https://api.devnet.solana.com', 'confirmed');
+          const { getConnection: getConn } = await import('../services/solana/connection');
+          const conn = getConn();
 
           const fundingTx = new SolTx().add(
             SolSystem.transfer({

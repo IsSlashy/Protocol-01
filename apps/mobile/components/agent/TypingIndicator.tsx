@@ -7,6 +7,7 @@ import Animated, {
   withSequence,
   withTiming,
   withDelay,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { Colors } from '@/constants/theme';
 
@@ -16,7 +17,7 @@ export const TypingIndicator: React.FC = () => {
   const dot3 = useSharedValue(0);
 
   useEffect(() => {
-    const animate = (sv: Animated.SharedValue<number>, delay: number) => {
+    const animate = (sv: SharedValue<number>, delay: number) => {
       sv.value = withDelay(
         delay,
         withRepeat(
@@ -47,9 +48,9 @@ export const TypingIndicator: React.FC = () => {
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 }}>
-      <Animated.View style={[dotBase, { opacity: 0.8 }, style1]} />
-      <Animated.View style={[dotBase, { opacity: 0.6 }, style2]} />
-      <Animated.View style={[dotBase, { opacity: 0.4 }, style3]} />
+      <Animated.View style={[dotBase, { opacity: 0.8 }, style1 as any]} />
+      <Animated.View style={[dotBase, { opacity: 0.6 }, style2 as any]} />
+      <Animated.View style={[dotBase, { opacity: 0.4 }, style3 as any]} />
     </View>
   );
 };

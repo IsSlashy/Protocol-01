@@ -103,7 +103,7 @@ function AnimatedTab({
   });
 
   return (
-    <Animated.View style={[styles.tab, scaleStyle]}>
+    <Animated.View style={[styles.tab, scaleStyle as any]}>
       {renderIcon()}
       <Animated.Text
         style={[styles.label, { color }]}
@@ -267,7 +267,7 @@ export function LiquidGlassTabBar({
         { scaleY: pillScale.value },
       ],
       width: pw,
-    };
+    } as any;
   });
 
   // Pill glow intensifies during drag
@@ -324,7 +324,7 @@ export function LiquidGlassTabBar({
               >
                 {/* Native glass pill indicator */}
                 {containerWidth > 0 && (
-                  <Animated.View style={[styles.nativePillWrapper, pillAnimatedStyle]}>
+                  <Animated.View style={[styles.nativePillWrapper, pillAnimatedStyle as any]}>
                     <GlassView
                       glassEffectStyle="clear"
                       tintColor="rgba(57, 197, 187, 0.15)"
@@ -394,8 +394,8 @@ export function LiquidGlassTabBar({
               style={[
                 styles.pill,
                 Platform.OS === 'ios' && styles.pillShadow,
-                pillAnimatedStyle,
-                Platform.OS === 'ios' && pillGlowStyle,
+                pillAnimatedStyle as any,
+                Platform.OS === 'ios' && (pillGlowStyle as any),
               ]}
             >
               <View

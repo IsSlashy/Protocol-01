@@ -7,7 +7,15 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 import { PinInput } from '../../components/onboarding';
+
+async function hashPin(pin: string): Promise<string> {
+  return await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    'p01_pin_v1:' + pin
+  );
+}
 
 type SecurityMethod = 'none' | 'pin' | 'biometrics';
 
@@ -84,7 +92,8 @@ export default function SecurityScreen() {
 
   const savePinAndContinue = async (pinCode: string) => {
     try {
-      await SecureStore.setItemAsync('wallet_pin', pinCode);
+      const pinHash = await hashPin(pinCode);
+      await SecureStore.setItemAsync('wallet_pin', pinHash);
       await SecureStore.setItemAsync('security_method', 'pin');
       completeOnboarding();
     } catch (error) {

@@ -9,6 +9,7 @@ import Animated, {
   interpolate,
   withSpring,
   FadeIn,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -158,7 +159,7 @@ export default function FeaturesScreen() {
 interface FeatureSlideProps {
   feature: Feature;
   index: number;
-  scrollX: Animated.SharedValue<number>;
+  scrollX: SharedValue<number>;
 }
 
 function FeatureSlide({ feature, index, scrollX }: FeatureSlideProps) {
@@ -176,12 +177,12 @@ function FeatureSlide({ feature, index, scrollX }: FeatureSlideProps) {
     return {
       transform: [{ scale }, { translateY }],
       opacity,
-    };
+    } as any;
   });
 
   return (
     <Animated.View
-      style={[{ width: SCREEN_WIDTH }, animatedStyle]}
+      style={[{ width: SCREEN_WIDTH }, animatedStyle as any]}
       className="flex-1 items-center justify-center px-8"
     >
       {/* Icon container with glow */}
@@ -231,7 +232,7 @@ function FeatureSlide({ feature, index, scrollX }: FeatureSlideProps) {
 
 interface PaginationDotProps {
   index: number;
-  scrollX: Animated.SharedValue<number>;
+  scrollX: SharedValue<number>;
   color: string;
 }
 
@@ -255,7 +256,7 @@ function PaginationDot({ index, scrollX, color }: PaginationDotProps) {
 
   return (
     <Animated.View
-      style={animatedStyle}
+      style={animatedStyle as any}
       className="h-2 rounded-full mx-1"
     />
   );

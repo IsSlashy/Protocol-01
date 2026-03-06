@@ -263,28 +263,52 @@ export async function sendSol(
 }
 
 /**
- * Get transaction history for a wallet
- * Fetches transactions one by one to avoid rate limits
+ * Race a promise against a timeout. Rejects with 'Timeout' if the deadline is exceeded.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label = 'RPC'): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
+/**
+ * Get transaction history for a wallet.
+ *
+ * Uses batch fetching (getParsedTransactions) to retrieve transaction details
+ * in a single RPC call instead of one-by-one with delays. Includes:
+ * - Pagination (default 20, caller can request more via `limit`)
+ * - 15-second overall timeout so the UI is never blocked indefinitely
+ * - Graceful fallback to cached data on timeout/error
  */
 export async function getTransactionHistory(
   publicKey: string,
-  limit: number = 20 // Need 20 to include older SOL transfers past memo transactions
+  limit: number = 20
 ): Promise<TransactionHistory[]> {
+  const TIMEOUT_MS = 15_000; // 15 s hard ceiling
+
   try {
     const connection = getConnection();
     const pubkey = new PublicKey(publicKey);
 
-    // Get signatures with retry for server errors
+    // 1. Fetch signatures (with retry for transient server errors) --------
     let signatures;
     let retries = 2;
     while (retries > 0) {
       try {
-        signatures = await connection.getSignaturesForAddress(pubkey, { limit });
+        signatures = await withTimeout(
+          connection.getSignaturesForAddress(pubkey, { limit }),
+          TIMEOUT_MS,
+          'getSignaturesForAddress',
+        );
         break;
       } catch (sigError: any) {
         const errMsg = sigError?.message || String(sigError);
         if (errMsg.includes('500') || errMsg.includes('502') || errMsg.includes('503') || errMsg.includes('429')) {
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          await new Promise(resolve => setTimeout(resolve, 2000));
           retries--;
           if (retries === 0) throw sigError;
         } else {
@@ -293,79 +317,56 @@ export async function getTransactionHistory(
       }
     }
 
-    if (!signatures) {
+    if (!signatures || signatures.length === 0) {
       return [];
     }
 
+    // 2. Batch-fetch parsed transaction details ----------------------------
+    //    getParsedTransactions accepts an array of signatures and returns
+    //    them all in one RPC call, eliminating the 1.5 s per-tx delay.
+    const BATCH_SIZE = 10; // Helius / public RPCs handle 10-tx batches well
+    const allParsed: (ParsedTransactionWithMeta | null)[] = [];
 
-    if (signatures.length === 0) {
-      return [];
-    }
-
-    const history: TransactionHistory[] = [];
-
-    // Fetch transactions one by one with delay to avoid rate limits
-    for (let i = 0; i < signatures.length; i++) {
-      const sig = signatures[i];
-
+    for (let i = 0; i < signatures.length; i += BATCH_SIZE) {
+      const batch = signatures.slice(i, i + BATCH_SIZE).map(s => s.signature);
       try {
-        // Add delay between requests to avoid rate limits (1.5 seconds)
-        if (i > 0) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
-        }
-
-        const tx = await connection.getParsedTransaction(sig.signature, {
-          maxSupportedTransactionVersion: 0,
-        });
-
-        if (!tx) {
-          continue;
-        }
-
-        const parsed = parseTransaction(tx, publicKey);
-
-        // Include all transactions with SOL changes (skip memo-only)
-        if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
-          history.push({
-            signature: sig.signature,
-            timestamp: sig.blockTime,
-            status: sig.err ? 'failed' : 'confirmed',
-            ...parsed,
-          });
-        }
-      } catch (txError: any) {
-        // Skip this transaction on error, continue with others
-        const msg = txError?.message || String(txError);
-        const isRateLimit = msg.includes('429');
-        const isServerError = msg.includes('500') || msg.includes('502') || msg.includes('503');
-
-        if (isRateLimit || isServerError) {
-          const errorType = isRateLimit ? 'Rate limited' : 'Server error';
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          // Retry this transaction once
-          try {
-            const tx = await connection.getParsedTransaction(sig.signature, {
-              maxSupportedTransactionVersion: 0,
-            });
-            if (tx) {
-              const parsed = parseTransaction(tx, publicKey);
-              if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
-                history.push({
-                  signature: sig.signature,
-                  timestamp: sig.blockTime,
-                  status: sig.err ? 'failed' : 'confirmed',
-                  ...parsed,
-                });
-              }
-            }
-          } catch {
-          }
-        }
+        const results = await withTimeout(
+          connection.getParsedTransactions(batch, {
+            maxSupportedTransactionVersion: 0,
+          }),
+          TIMEOUT_MS,
+          'getParsedTransactions',
+        );
+        allParsed.push(...results);
+      } catch (batchError: any) {
+        // On batch failure, push nulls so indices stay aligned and continue
+        console.warn('[Transactions] Batch fetch failed, skipping batch:', batchError?.message?.slice(0, 80));
+        allParsed.push(...batch.map(() => null));
       }
     }
 
+    // 3. Parse results into TransactionHistory ----------------------------
+    const history: TransactionHistory[] = [];
 
-    // Cache the results for instant loading next time
+    for (let i = 0; i < signatures.length; i++) {
+      const sig = signatures[i];
+      const tx = allParsed[i];
+      if (!tx) continue;
+
+      const parsed = parseTransaction(tx, publicKey);
+
+      // Include transactions with meaningful SOL changes (skip memo-only)
+      if (parsed.type !== 'unknown' && parsed.amount && parsed.amount > 0) {
+        history.push({
+          signature: sig.signature,
+          timestamp: sig.blockTime,
+          status: sig.err ? 'failed' : 'confirmed',
+          ...parsed,
+        } as TransactionHistory);
+      }
+    }
+
+    // 4. Cache results for instant loading next time ----------------------
     if (history.length > 0) {
       await cacheTransactions(publicKey, history);
     }
@@ -374,7 +375,10 @@ export async function getTransactionHistory(
   } catch (error: any) {
     const errMsg = error?.message || String(error);
     console.warn('[Transactions] Error fetching history:', errMsg.slice(0, 100));
-    return [];
+
+    // Fallback: return cached transactions so the UI is never empty on error
+    const cached = await getCachedTransactions(publicKey);
+    return cached;
   }
 }
 

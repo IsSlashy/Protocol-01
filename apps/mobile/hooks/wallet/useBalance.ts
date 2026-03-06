@@ -73,7 +73,7 @@ export function useBalance({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
   const { isConnected, provider } = useNetwork();
 
   const fetchBalance = useCallback(async (isRefresh = false) => {

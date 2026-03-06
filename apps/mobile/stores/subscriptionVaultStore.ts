@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { PublicKey } from '@solana/web3.js';
 import { poseidon1 } from 'poseidon-lite';
 import { getConnection } from '../services/solana/connection';
@@ -8,7 +9,6 @@ import {
   type VaultInfo,
   type SubscribeNormalConfig,
   type SubscribePrivateConfig,
-  type ProofGenerator,
   type WalletSigner,
   subscribeNormal,
   subscribePrivate,
@@ -23,7 +23,7 @@ import {
   computeClaimable,
   computeClaimableAmount,
 } from '../services/subscriptionVault';
-import type { ShieldReceipt, PoolConfig } from '../services/denominatedPool';
+import type { ShieldReceipt, PoolConfig, ProofGenerator } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner } from './walletStore';
 
 // ---------------------------------------------------------------------------
@@ -101,6 +101,24 @@ interface SubscriptionVaultState {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Secure secret storage (SecureStore instead of AsyncStorage)
+// ---------------------------------------------------------------------------
+
+const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
+
+async function saveSecretSecurely(vaultAddress: string, secret: string): Promise<void> {
+  await SecureStore.setItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`, secret);
+}
+
+async function loadSecretSecurely(vaultAddress: string): Promise<string | null> {
+  return SecureStore.getItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`);
+}
+
+async function deleteSecretSecurely(vaultAddress: string): Promise<void> {
+  await SecureStore.deleteItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`);
+}
+
 /** Build a WalletSigner for Privy wallets, or undefined for local keypair wallets. */
 function getWalletSignerIfPrivy(): WalletSigner | undefined {
   const { isPrivyWallet, publicKey } = useWalletStore.getState();
@@ -136,11 +154,9 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       removeVault: (vaultAddress) => {
+        deleteSecretSecurely(vaultAddress).catch(() => {});
         set(state => ({
           vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
-          subscriberSecrets: Object.fromEntries(
-            Object.entries(state.subscriberSecrets).filter(([k]) => k !== vaultAddress)
-          ),
         }));
       },
 
@@ -274,14 +290,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             createdAt: Date.now(),
           };
 
+          // Save secret to SecureStore (not AsyncStorage)
+          await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
+
           set(state => ({
             isLoading: false,
             progress: null,
             vaults: [storedVault, ...state.vaults],
-            subscriberSecrets: {
-              ...state.subscriberSecrets,
-              [vaultPDA.toBase58()]: subscriberSecret.toString(),
-            },
           }));
 
           return sig;
@@ -499,14 +514,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             walletSigner,
           );
 
-          // Remove vault from store
+          // Remove vault from store and delete secret from SecureStore
+          await deleteSecretSecurely(vaultAddress);
           set(state => ({
             isLoading: false,
             progress: null,
             vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
-            subscriberSecrets: Object.fromEntries(
-              Object.entries(state.subscriberSecrets).filter(([k]) => k !== vaultAddress)
-            ),
           }));
 
           return sig;
@@ -518,6 +531,11 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       reset: () => {
+        // Delete all secrets from SecureStore
+        const { vaults } = get();
+        for (const v of vaults) {
+          deleteSecretSecurely(v.vaultAddress).catch(() => {});
+        }
         set({
           vaults: [],
           subscriberSecrets: {},
@@ -533,7 +551,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         vaults: state.vaults,
-        subscriberSecrets: state.subscriberSecrets,
+        // subscriberSecrets are now stored in SecureStore, not AsyncStorage
       }),
     },
   ),

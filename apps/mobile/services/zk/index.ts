@@ -1198,7 +1198,7 @@ export class ZkService {
       }
     } else {
       console.warn('[ZK Unshield] No saved proof — reconstructing from subtrees');
-      proof1 = this.reconstructProofFromSubtrees(note1);
+      proof1 = await this.reconstructProofFromSubtrees(note1);
     }
 
     const proof2 = notesToSpend[1]?.merklePathElements
@@ -1818,36 +1818,13 @@ export class ZkService {
       }
     }
 
-    // FALLBACK: Backend prover (only if client-side prover not loaded)
-    // WARNING: This sends spending_key to the relayer. Use only for testing
-    // or when circuit files cannot be loaded on device.
-    console.warn('[ZK] Client-side prover not loaded — falling back to backend prover');
-    console.warn('[ZK] WARNING: spending_key will be sent to the relayer');
-    try {
-      const response = await fetch(`${ZkService.BACKEND_PROVER_URL}/prove`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs: circuitInputs }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(`Backend prover error: ${error.message || error.error || response.statusText}`);
-      }
-
-      const result = await response.json();
-      if (!result.success || !result.proof) {
-        throw new Error(result.message || 'Backend prover returned invalid response');
-      }
-
-      return this.convertSnarkjsProof(result.proof);
-    } catch (backendError: any) {
-      console.error('[ZK] Backend prover also failed:', backendError.message);
-      throw new Error(
-        'ZK Prover not available. Client-side prover is not loaded and ' +
-        'the backend prover is not reachable. Restart the app to load circuits locally.'
-      );
-    }
+    // HARD FAIL: Never send spending_key to a remote server.
+    // The client-side prover must be loaded via ZkProverProvider.
+    throw new Error(
+      'ZK Prover not available. Client-side prover is not loaded. ' +
+      'Restart the app to load circuits locally. ' +
+      'Spending keys NEVER leave this device.'
+    );
   }
 
   /**
@@ -3516,12 +3493,12 @@ export class ZkService {
         throw error;
       }
     } else {
-      // FALLBACK: Backend prover (only if client-side prover not loaded)
-      // WARNING: This sends spending_key to the relayer
-      console.warn('[ZK] Raw prover not loaded — falling back to backend prover');
-      console.warn('[ZK] WARNING: spending_key will be sent to the relayer');
-      const result = await this.generateProofViaBackendRaw(circuitInputs);
-      snarkjsProof = result.proof;
+      // HARD FAIL: Never send spending_key to a remote server.
+      throw new Error(
+        'ZK Raw Prover not available. Client-side prover is not loaded. ' +
+        'Restart the app to load circuits locally. ' +
+        'Spending keys NEVER leave this device.'
+      );
     }
 
 
@@ -3609,6 +3586,7 @@ export class ZkService {
         return { found: 0, amount: 0, payments: [] };
       }
 
+      // @ts-expect-error -- @p01/specter-sdk is a workspace package not yet linked in mobile
       const { scanForPayments: sdkScanForPayments } = await import('@p01/specter-sdk');
 
       const viewingKeyBytes = this.viewingKey!;

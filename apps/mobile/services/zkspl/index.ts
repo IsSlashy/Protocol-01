@@ -155,21 +155,21 @@ function deriveSpendingKey(secretKey: Uint8Array): FieldElement {
 // Anchor-compatible wallet adapter for local keypair
 // ---------------------------------------------------------------------------
 
-class KeypairWallet implements Wallet {
+class KeypairWallet {
   constructor(private keypair: import('@solana/web3.js').Keypair) {}
 
   get publicKey(): PublicKey {
     return this.keypair.publicKey;
   }
 
-  async signTransaction(tx: Transaction): Promise<Transaction> {
-    tx.sign(this.keypair);
+  async signTransaction<T extends Transaction | import('@solana/web3.js').VersionedTransaction>(tx: T): Promise<T> {
+    (tx as Transaction).sign(this.keypair);
     return tx;
   }
 
-  async signAllTransactions(txs: Transaction[]): Promise<Transaction[]> {
+  async signAllTransactions<T extends Transaction | import('@solana/web3.js').VersionedTransaction>(txs: T[]): Promise<T[]> {
     for (const tx of txs) {
-      tx.sign(this.keypair);
+      (tx as Transaction).sign(this.keypair);
     }
     return txs;
   }
@@ -469,7 +469,7 @@ export class ZkSplService {
     onProgress?: (step: 'shield' | 'unshield', message: string) => void,
   ): Promise<{ shieldSig: string; unshieldSig: string }> {
     const zkService = getZkService();
-    if (!zkService.isInitialized) {
+    if (!(zkService as any).isInitialized) {
       // ZkService needs to be initialized with the mnemonic/seed.
       // It should already be initialized by the shielded store if the user
       // has used shielded features before. If not, we need to init it.
@@ -575,7 +575,7 @@ export async function getZkSplService(): Promise<ZkSplService | null> {
     const wallet = new KeypairWallet(keypair);
     const spendingKey = deriveSpendingKey(keypair.secretKey);
 
-    _service = new ZkSplService(connection, wallet, spendingKey, keypair);
+    _service = new ZkSplService(connection, wallet as any, spendingKey, keypair);
     console.log('[ZkSPL] Service initialized, wallet:', keypair.publicKey.toBase58());
     return _service;
   } catch (error) {
