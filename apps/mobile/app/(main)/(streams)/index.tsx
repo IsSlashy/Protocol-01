@@ -250,6 +250,9 @@ export default function StreamsDashboard() {
                     onPress={handleSync}
                     disabled={syncing}
                     style={{ padding: 6, borderRadius: 8, backgroundColor: 'rgba(21, 21, 24, 0.5)' }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Sync streams from blockchain"
+                    accessibilityState={{ disabled: syncing }}
                   >
                     {syncing ? (
                       <ActivityIndicator size={16} color={COLORS.cyan} />
@@ -260,6 +263,8 @@ export default function StreamsDashboard() {
                   <TouchableOpacity
                     onPress={() => setShowPrivacyInfo(!showPrivacyInfo)}
                     style={{ padding: 6, borderRadius: 8, backgroundColor: 'rgba(21, 21, 24, 0.5)' }}
+                    accessibilityRole="button"
+                    accessibilityLabel={showPrivacyInfo ? 'Hide privacy info' : 'Show privacy info'}
                   >
                     <Ionicons name="shield" size={16} color={COLORS.cyan} />
                   </TouchableOpacity>
@@ -369,6 +374,9 @@ export default function StreamsDashboard() {
                 Haptics.selectionAsync();
                 setActiveSection('personal');
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Personal streams"
+              accessibilityState={{ selected: activeSection === 'personal' }}
               style={{
                 flex: 1,
                 flexDirection: 'row',
@@ -398,6 +406,9 @@ export default function StreamsDashboard() {
                 Haptics.selectionAsync();
                 setActiveSection('services');
               }}
+              accessibilityRole="button"
+              accessibilityLabel="Services"
+              accessibilityState={{ selected: activeSection === 'services' }}
               style={{
                 flex: 1,
                 flexDirection: 'row',
@@ -493,6 +504,8 @@ export default function StreamsDashboard() {
                       router.push('/(main)/(privacy)/denominated-notes' as any);
                     }}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Shield more SOL"
                     style={{
                       flex: 1,
                       flexDirection: 'row',
@@ -513,6 +526,8 @@ export default function StreamsDashboard() {
                       router.push('/(main)/(privacy)/denominated-notes' as any);
                     }}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Manage shielded notes"
                     style={{
                       flex: 1,
                       flexDirection: 'row',
@@ -650,6 +665,8 @@ export default function StreamsDashboard() {
             <TouchableOpacity
               onPress={handleCreatePersonalStream}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Create payment stream"
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -746,6 +763,9 @@ function ServiceCard({
         onPress={onSubscribe}
         disabled={isSubscribed}
         activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${service.name}, ${service.price} SOL per ${service.frequency}${isSubscribed ? ', subscribed' : ''}`}
+        accessibilityState={{ disabled: isSubscribed }}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -874,6 +894,8 @@ function SubscriptionCard({
       <TouchableOpacity
         onPress={handlePress}
         activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${sub.name}, ${sub.amountPerPayment.toFixed(sub.amountPerPayment < 1 ? 4 : 2)} SOL, ${getStatusText()}`}
         style={{
           flexDirection: 'row',
           alignItems: 'center',

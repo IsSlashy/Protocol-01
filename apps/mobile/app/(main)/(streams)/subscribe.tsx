@@ -246,6 +246,8 @@ function SubscribeScreenContent() {
       >
         <TouchableOpacity
           onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
           style={{
             width: 40,
             height: 40,
@@ -337,6 +339,9 @@ function SubscribeScreenContent() {
                     setSelectedDuration(duration);
                   }}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${months} ${months === 1 ? 'month' : 'months'}${months > 1 ? ', save 10%' : ''}`}
+                  accessibilityState={{ selected: isSelected }}
                   style={{
                     flex: 1,
                     padding: 16,
@@ -397,6 +402,9 @@ function SubscribeScreenContent() {
                 setUseZkPool(false);
               }}
               activeOpacity={0.7}
+              accessibilityRole="radio"
+              accessibilityLabel="Pay with wallet"
+              accessibilityState={{ selected: !useZkPool }}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -457,6 +465,9 @@ function SubscribeScreenContent() {
                 if (!enablePrivacy) setEnablePrivacy(true);
               }}
               activeOpacity={0.7}
+              accessibilityRole="radio"
+              accessibilityLabel="Pay with private wallet via ZK proof"
+              accessibilityState={{ selected: useZkPool }}
               style={{
                 padding: 16,
                 backgroundColor: useZkPool ? 'rgba(255, 119, 168, 0.12)' : COLORS.surface,
@@ -577,6 +588,8 @@ function SubscribeScreenContent() {
                         router.push('/(main)/(privacy)/denominated-notes' as any);
                       }}
                       activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Shield more SOL"
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -624,6 +637,9 @@ function SubscribeScreenContent() {
                 setEnablePrivacy(!enablePrivacy);
               }}
               activeOpacity={0.8}
+              accessibilityRole="switch"
+              accessibilityLabel="Privacy Shield"
+              accessibilityState={{ checked: enablePrivacy }}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -795,6 +811,9 @@ function SubscribeScreenContent() {
           onPress={handleSubscribe}
           disabled={isSubscribing || (useZkPool && privateBalance < totalPrice)}
           activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={useZkPool ? `Subscribe privately to ${serviceName}` : `Subscribe to ${serviceName}`}
+          accessibilityState={{ disabled: isSubscribing || (useZkPool && privateBalance < totalPrice) }}
           style={{
             flexDirection: 'row',
             alignItems: 'center',

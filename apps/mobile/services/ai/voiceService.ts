@@ -1,8 +1,19 @@
 /**
  * Voice input service: Recording + Groq Whisper transcription.
+ *
+ * Migrated from deprecated expo-av to expo-audio (Expo 54+).
+ * Uses the imperative createAudioRecorder API for service-layer usage.
  */
 
-import { Audio } from 'expo-av';
+import {
+  AudioModule,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+  getRecordingPermissionsAsync,
+  IOSOutputFormat,
+  AudioQuality,
+  type AudioRecorder,
+} from 'expo-audio';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
@@ -11,16 +22,33 @@ const GROQ_WHISPER_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MAX_RECORDING_MS = 60_000;
 const WHISPER_MODEL = 'whisper-large-v3';
 
-let recording: Audio.Recording | null = null;
+/** Recording preset tuned for voice: mono 16kHz AAC .m4a */
+const VOICE_RECORDING_OPTIONS = {
+  extension: '.m4a',
+  sampleRate: 16000,
+  numberOfChannels: 1,
+  bitRate: 64000,
+  android: {
+    outputFormat: 'mpeg4' as const,
+    audioEncoder: 'aac' as const,
+  },
+  ios: {
+    outputFormat: IOSOutputFormat.MPEG4AAC,
+    audioQuality: AudioQuality.HIGH,
+  },
+};
+
+let recorder: AudioRecorder | null = null;
 let recordingStartTime = 0;
 let _isRecording = false;
+let _autoStopTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Check if voice recording is available.
  */
 export async function isAvailable(): Promise<boolean> {
   try {
-    const { granted } = await Audio.getPermissionsAsync();
+    await getRecordingPermissionsAsync();
     return true; // Module exists, permissions may or may not be granted
   } catch {
     return false;
@@ -32,7 +60,7 @@ export async function isAvailable(): Promise<boolean> {
  */
 export async function requestPermissions(): Promise<boolean> {
   try {
-    const { granted } = await Audio.requestPermissionsAsync();
+    const { granted } = await requestRecordingPermissionsAsync();
     return granted;
   } catch (err) {
     console.warn('[Voice] Permission request failed:', err);
@@ -53,41 +81,22 @@ export async function startRecording(): Promise<boolean> {
     }
 
     // Configure audio session
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
     });
 
     // Stop any existing recording
-    if (recording) {
-      try { await recording.stopAndUnloadAsync(); } catch {}
-      recording = null;
+    if (recorder) {
+      try { await recorder.stop(); recorder.release(); } catch {}
+      recorder = null;
     }
 
-    // Start new recording
-    const { recording: newRecording } = await Audio.Recording.createAsync(
-      {
-        android: {
-          extension: '.m4a',
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 64000,
-        },
-        ios: {
-          extension: '.m4a',
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 64000,
-        },
-        web: {},
-      }
-    );
+    // Create and start new recording
+    recorder = new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS);
+    await recorder.prepareToRecordAsync();
+    recorder.record();
 
-    recording = newRecording;
     recordingStartTime = Date.now();
     _isRecording = true;
 
@@ -96,8 +105,8 @@ export async function startRecording(): Promise<boolean> {
     }
 
     // Auto-stop after max duration
-    setTimeout(async () => {
-      if (_isRecording && recording) {
+    _autoStopTimer = setTimeout(async () => {
+      if (_isRecording && recorder) {
         await stopRecording();
       }
     }, MAX_RECORDING_MS);
@@ -107,7 +116,7 @@ export async function startRecording(): Promise<boolean> {
   } catch (err) {
     console.error('[Voice] Failed to start recording:', err);
     _isRecording = false;
-    recording = null;
+    recorder = null;
     return false;
   }
 }
@@ -116,19 +125,25 @@ export async function startRecording(): Promise<boolean> {
  * Stop recording and return the file URI
  */
 export async function stopRecording(): Promise<string | null> {
-  if (!recording) return null;
+  if (!recorder) return null;
 
   try {
     _isRecording = false;
-    await recording.stopAndUnloadAsync();
+    if (_autoStopTimer) {
+      clearTimeout(_autoStopTimer);
+      _autoStopTimer = null;
+    }
+
+    await recorder.stop();
 
     // Reset audio mode
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
+    await setAudioModeAsync({
+      allowsRecording: false,
     });
 
-    const uri = recording.getURI();
-    recording = null;
+    const uri = recorder.uri;
+    recorder.release();
+    recorder = null;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -138,7 +153,10 @@ export async function stopRecording(): Promise<string | null> {
     return uri;
   } catch (err) {
     console.error('[Voice] Failed to stop recording:', err);
-    recording = null;
+    if (recorder) {
+      try { recorder.release(); } catch {}
+    }
+    recorder = null;
     _isRecording = false;
     return null;
   }
@@ -149,9 +167,13 @@ export async function stopRecording(): Promise<string | null> {
  */
 export async function cancelRecording(): Promise<void> {
   _isRecording = false;
-  if (recording) {
-    try { await recording.stopAndUnloadAsync(); } catch {}
-    recording = null;
+  if (_autoStopTimer) {
+    clearTimeout(_autoStopTimer);
+    _autoStopTimer = null;
+  }
+  if (recorder) {
+    try { await recorder.stop(); recorder.release(); } catch {}
+    recorder = null;
   }
 }
 

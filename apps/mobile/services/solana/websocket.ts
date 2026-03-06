@@ -8,7 +8,7 @@
 
 import { PublicKey, Connection, Logs, Context } from '@solana/web3.js';
 import { EventEmitter } from 'events';
-import { getCluster, type SolanaCluster } from './connection';
+import { getCluster, getConnection, type SolanaCluster } from './connection';
 import type { Stream, StreamFrequency, StreamStatus } from './streams';
 
 // ============ Constants ============
@@ -19,13 +19,6 @@ const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfc
 // Protocol prefixes for identifying P01 subscription memos
 const MEMO_PREFIX = 'P01_SUB_V1:';
 const UPDATE_PREFIX = 'P01_SUB_UPD:';
-
-// WebSocket endpoints for each cluster
-const WS_ENDPOINTS: Record<SolanaCluster, string> = {
-  'devnet': 'wss://api.devnet.solana.com',
-  'mainnet-beta': 'wss://api.mainnet-beta.solana.com',
-  'testnet': 'wss://api.testnet.solana.com',
-};
 
 // Reconnection settings
 const RECONNECT_DELAY_MS = 3000;
@@ -183,14 +176,6 @@ export class SolanaWebSocket extends EventEmitter {
   }
 
   /**
-   * Get WebSocket endpoint for current cluster
-   */
-  private getWsEndpoint(): string {
-    const cluster = getCluster();
-    return WS_ENDPOINTS[cluster];
-  }
-
-  /**
    * Connect to the Solana WebSocket
    */
   async connect(): Promise<void> {
@@ -203,13 +188,8 @@ export class SolanaWebSocket extends EventEmitter {
     this.emit('state_change', this.connectionState);
 
     try {
-      const wsEndpoint = this.getWsEndpoint();
-
-      // Create connection with WebSocket commitment
-      this.connection = new Connection(wsEndpoint, {
-        commitment: 'confirmed',
-        wsEndpoint: wsEndpoint,
-      });
+      // Use the shared connection which has proper wsEndpoint configured
+      this.connection = getConnection();
 
       // Verify connection is working by making a simple request
       await this.connection.getSlot();
@@ -223,10 +203,9 @@ export class SolanaWebSocket extends EventEmitter {
         await this.subscribe(this.walletAddress);
       }
     } catch (error) {
-      console.error('[WebSocket] Connection failed:', error);
+      console.warn('[WebSocket] Connection failed:', error);
       this.connectionState = 'disconnected';
       this.emit('state_change', this.connectionState);
-      this.emit('error', error);
 
       // Attempt reconnect
       this.scheduleReconnect();
@@ -288,8 +267,7 @@ export class SolanaWebSocket extends EventEmitter {
       );
 
     } catch (error) {
-      console.error('[WebSocket] Subscription failed:', error);
-      this.emit('error', error);
+      console.warn('[WebSocket] Subscription failed:', error);
     }
   }
 

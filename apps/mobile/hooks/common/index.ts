@@ -3,8 +3,7 @@
  * @module hooks/common
  */
 
-export { useNetwork, useNetworkStatus, NETWORKS } from './useNetwork';
-export type { NetworkType, NetworkConfig, NetworkState } from './useNetwork';
+export { useNetwork, useNetworkStatus } from './useNetwork';
 
 export { useRefresh, useMultiRefresh, useSequentialRefresh, useAutoRefresh } from './useRefresh';
 export type { RefreshConfig, MultiRefreshSource, AutoRefreshConfig } from './useRefresh';

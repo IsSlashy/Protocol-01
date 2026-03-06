@@ -318,7 +318,7 @@ export class AgentBridge {
       return {
         success: true,
         intent: 'analyze_streams' as WalletIntent,
-        message: "ANALYSE DE VOS ABONNEMENTS\n\nAucun stream trouvé. Créez votre premier abonnement pour que je puisse vous aider à optimiser vos dépenses.",
+        message: "SUBSCRIPTION ANALYSIS\n\nNo streams found. Create your first subscription so I can help you optimize your spending.",
       };
     }
 
@@ -354,7 +354,7 @@ export class AgentBridge {
    */
   getBalanceSummary(): string {
     if (!this.streamContext) {
-      return "Aucune donnée de solde disponible.";
+      return "No balance data available.";
     }
     const analysis = analyzeStreams(this.streamContext.streams, this.streamContext.balance);
     return getBalanceSummary(this.streamContext.balance, analysis);

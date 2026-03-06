@@ -14,11 +14,3 @@ export type {
 export { useScan } from './useScan';
 export type { ScanProgress, ScanResult } from './useScan';
 
-export { usePrivacy } from './usePrivacy';
-export type {
-  PrivacyLevel,
-  PrivacyScore,
-  PrivacyFactor,
-  PrivacyRecommendation,
-  PrivacySettings,
-} from './usePrivacy';

@@ -296,7 +296,7 @@ describe('Wallet Store -- Core Wallet Management', () => {
       expect(state.initialized).toBe(true);
     });
 
-    it('should handle initialization errors gracefully', async () => {
+    it('should handle connection errors gracefully (non-fatal)', async () => {
       const { initializeConnection } = await import('../services/solana/connection');
       (initializeConnection as any).mockRejectedValueOnce(new Error('Network unreachable'));
 
@@ -304,7 +304,8 @@ describe('Wallet Store -- Core Wallet Management', () => {
 
       const state = useWalletStore.getState();
       expect(state.initialized).toBe(true);
-      expect(state.error).toBe('Network unreachable');
+      // Connection errors are non-fatal — wallet still loads, error stays null
+      expect(state.error).toBeNull();
     });
   });
 

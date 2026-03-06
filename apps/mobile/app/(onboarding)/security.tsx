@@ -156,6 +156,8 @@ export default function SecurityScreen() {
             }}
             activeOpacity={0.7}
             style={{ position: 'absolute', top: 80, left: 24, zIndex: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
             <Ionicons name="arrow-back" size={24} color="#39c5bb" />
           </TouchableOpacity>
@@ -255,6 +257,9 @@ export default function SecurityScreen() {
             <TouchableOpacity
               onPress={() => handleSelectMethod('pin')}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="PIN Code, 6-digit security code"
+              accessibilityState={{ selected: selectedMethod === 'pin' }}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -298,6 +303,9 @@ export default function SecurityScreen() {
               onPress={() => handleSelectMethod('biometrics')}
               activeOpacity={0.8}
               disabled={!biometricsAvailable}
+              accessibilityRole="button"
+              accessibilityLabel={`${biometricType === 'face' ? 'Face ID' : 'Fingerprint'}, ${biometricsAvailable ? 'Quick and secure authentication' : 'Not available on this device'}`}
+              accessibilityState={{ selected: selectedMethod === 'biometrics', disabled: !biometricsAvailable }}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -359,6 +367,9 @@ export default function SecurityScreen() {
             onPress={handleContinue}
             activeOpacity={0.8}
             disabled={!canContinue}
+            accessibilityRole="button"
+            accessibilityLabel="Continue"
+            accessibilityState={{ disabled: !canContinue }}
             style={{
               paddingVertical: 16,
               borderRadius: 12,
@@ -391,6 +402,8 @@ export default function SecurityScreen() {
             onPress={handleSkip}
             activeOpacity={0.7}
             style={{ paddingVertical: 12, alignItems: 'center' }}
+            accessibilityRole="button"
+            accessibilityLabel="Skip for now"
           >
             <Text style={{ color: '#555560', fontSize: 16 }}>Skip for now</Text>
           </TouchableOpacity>

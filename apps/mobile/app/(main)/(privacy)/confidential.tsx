@@ -291,14 +291,14 @@ export default function ConfidentialBalanceScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Gradient Header */}
       <LinearGradient colors={['#0d1117', '#0a0a0c']} style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
           <Ionicons name="arrow-back" size={24} color={Colors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerTitle}>
           <Ionicons name="lock-closed" size={22} color={P01Colors.blue} />
           <Text style={styles.headerText}>Confidential Balance</Text>
         </View>
-        <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
+        <TouchableOpacity onPress={() => setShowBalance(!showBalance)} accessibilityRole="button" accessibilityLabel={showBalance ? 'Hide balance' : 'Show balance'}>
           <Ionicons name={showBalance ? 'eye' : 'eye-off'} size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
       </LinearGradient>
@@ -333,6 +333,9 @@ export default function ConfidentialBalanceScreen() {
                   isActive && styles.tokenChipActive,
                 ]}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`Select ${token.symbol}`}
+                accessibilityState={{ selected: isActive }}
               >
                 <Ionicons
                   name={token.symbol === 'SOL' ? 'diamond-outline' : 'cash-outline'}
@@ -387,13 +390,13 @@ export default function ConfidentialBalanceScreen() {
                       {zkWalletAddress.slice(0, 8)}...{zkWalletAddress.slice(-6)}
                     </Text>
                   </View>
-                  <TouchableOpacity onPress={handleCopyAddress} style={styles.copyButton}>
+                  <TouchableOpacity onPress={handleCopyAddress} style={styles.copyButton} accessibilityRole="button" accessibilityLabel="Copy ZK wallet address">
                     <Ionicons name="copy-outline" size={16} color={P01Colors.blue} />
                   </TouchableOpacity>
                 </View>
               )}
               {publicKey && zkWalletAddress && publicKey !== zkWalletAddress && zkWalletBalance > 0.003 * 1e9 && (
-                <TouchableOpacity onPress={handleSweepToMain} style={styles.sweepButton}>
+                <TouchableOpacity onPress={handleSweepToMain} style={styles.sweepButton} accessibilityRole="button" accessibilityLabel="Private sweep to main wallet">
                   <Ionicons name="arrow-undo" size={14} color={P01Colors.cyan} />
                   <Text style={styles.sweepText}>Private sweep to main</Text>
                 </TouchableOpacity>
@@ -427,6 +430,8 @@ export default function ConfidentialBalanceScreen() {
                 </Text>
                 <TouchableOpacity
                   style={styles.resetButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Emergency reset"
                   onPress={() => {
                     Alert.alert(
                       'Emergency Reset',
@@ -515,8 +520,10 @@ export default function ConfidentialBalanceScreen() {
                   placeholderTextColor={Colors.textTertiary}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  accessibilityLabel="Recipient address"
+                  accessibilityHint="Enter the Solana address of the recipient"
                 />
-                <TouchableOpacity style={styles.pasteButton} onPress={handlePasteRecipient}>
+                <TouchableOpacity style={styles.pasteButton} onPress={handlePasteRecipient} accessibilityRole="button" accessibilityLabel="Paste address from clipboard">
                   <Ionicons name="clipboard-outline" size={16} color={P01Colors.blue} />
                   <Text style={styles.pasteText}>Paste</Text>
                 </TouchableOpacity>

@@ -190,19 +190,14 @@ export async function requestBiometricAuth(
 ): Promise<boolean> {
   try {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
-    if (!hasHardware) {
-      return true; // Allow without biometrics if not available
-    }
+    const isEnrolled = hasHardware && await LocalAuthentication.isEnrolledAsync();
 
-    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-    if (!isEnrolled) {
-      return true; // Allow without biometrics if not enrolled
-    }
-
+    // Use device-level fallback (PIN/pattern) when biometrics aren't available
     const result = await LocalAuthentication.authenticateAsync({
-      promptMessage: `Se connecter à ${serviceName} - Confirmez avec votre empreinte digitale`,
-      cancelLabel: 'Annuler',
+      promptMessage: `Connect to ${serviceName} — Confirm your identity`,
+      cancelLabel: 'Cancel',
       disableDeviceFallback: false,
+      fallbackLabel: 'Use Passcode',
     });
 
     return result.success;
@@ -318,7 +313,7 @@ export async function authenticateWithService(
 
   // 1. Check if expired
   if (request.isExpired) {
-    return { success: false, error: 'Session expirée' };
+    return { success: false, error: 'Session expired' };
   }
 
   // 2. Check subscription if required
@@ -328,7 +323,7 @@ export async function authenticateWithService(
     if (!subscriptionStatus.active) {
       return {
         success: false,
-        error: `Abonnement ${request.serviceName} non actif`,
+        error: `${request.serviceName} subscription not active`,
       };
     }
   }
@@ -336,13 +331,13 @@ export async function authenticateWithService(
   // 3. Request biometric confirmation
   const biometricSuccess = await requestBiometricAuth(request.serviceName);
   if (!biometricSuccess) {
-    return { success: false, error: 'Authentification biométrique annulée' };
+    return { success: false, error: 'Authentication cancelled' };
   }
 
   // 4. Sign the challenge
   const signResult = await signAuthChallenge(payload);
   if (!signResult) {
-    return { success: false, error: 'Erreur de signature' };
+    return { success: false, error: 'Signing error' };
   }
 
   // 5. Send to callback

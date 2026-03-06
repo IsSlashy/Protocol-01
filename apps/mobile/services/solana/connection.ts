@@ -14,15 +14,21 @@ const NETWORK_STORAGE_KEY = 'settings_network';
 const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 
 // RPC endpoints - Helius first (if configured), then official Solana fallback
-const RPC_ENDPOINTS: Record<SolanaCluster, string[]> = {
+const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
   'devnet': HELIUS_API_KEY
-    ? [`https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, 'https://api.devnet.solana.com']
-    : ['https://api.devnet.solana.com'],
+    ? [
+        { http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` },
+        { http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' },
+      ]
+    : [{ http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' }],
   'mainnet-beta': HELIUS_API_KEY
-    ? [`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, 'https://api.mainnet-beta.solana.com']
-    : ['https://api.mainnet-beta.solana.com'],
+    ? [
+        { http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` },
+        { http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' },
+      ]
+    : [{ http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' }],
   'testnet': [
-    'https://api.testnet.solana.com',
+    { http: 'https://api.testnet.solana.com', ws: 'wss://api.testnet.solana.com' },
   ],
 };
 
@@ -73,10 +79,12 @@ export async function setCluster(cluster: SolanaCluster): Promise<void> {
 export function getConnection(): Connection {
   if (!connectionInstance) {
     const endpoints = RPC_ENDPOINTS[currentCluster];
+    const endpoint = endpoints[currentEndpointIndex];
     connectionInstance = new Connection(
-      endpoints[currentEndpointIndex],
+      endpoint.http,
       {
         commitment: DEFAULT_COMMITMENT,
+        wsEndpoint: endpoint.ws,
         confirmTransactionInitialTimeout: 60000,
         disableRetryOnRateLimit: true,
       }
@@ -91,10 +99,12 @@ export function getConnection(): Connection {
 export function switchEndpoint(): void {
   const endpoints = RPC_ENDPOINTS[currentCluster];
   currentEndpointIndex = (currentEndpointIndex + 1) % endpoints.length;
+  const endpoint = endpoints[currentEndpointIndex];
   connectionInstance = new Connection(
-    endpoints[currentEndpointIndex],
+    endpoint.http,
     {
       commitment: DEFAULT_COMMITMENT,
+      wsEndpoint: endpoint.ws,
       confirmTransactionInitialTimeout: 60000,
       disableRetryOnRateLimit: true,
     }

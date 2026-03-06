@@ -68,13 +68,13 @@ export default function AuthConfirmScreen() {
     } catch (err) {
       console.error('[AuthConfirm] Load error:', err);
       setState('error');
-      setError('Erreur de chargement');
+      setError('Loading error');
     }
   };
 
   const handleConfirm = async () => {
     if (!payload) {
-      setError('Données invalides');
+      setError('Invalid data');
       return;
     }
 
@@ -100,12 +100,12 @@ export default function AuthConfirmScreen() {
         }, 2000);
       } else {
         setState('error');
-        setError(result.error || 'Authentification échouée');
+        setError(result.error || 'Authentication failed');
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } catch (err: any) {
       setState('error');
-      setError(err.message || 'Erreur inattendue');
+      setError(err.message || 'Unexpected error');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
   };
@@ -123,13 +123,13 @@ export default function AuthConfirmScreen() {
             <Ionicons name="time-outline" size={40} color="#ef4444" />
           </View>
           <Text className="text-white text-xl font-bold mb-2">
-            Session Expirée
+            Session Expired
           </Text>
           <Text className="text-p01-text-muted text-center mb-8">
-            Cette demande de connexion a expiré. Veuillez scanner un nouveau QR code.
+            This connection request has expired. Please scan a new QR code.
           </Text>
           <Button onPress={handleCancel} variant="secondary" fullWidth>
-            Retour
+            Back
           </Button>
         </View>
       </SafeAreaView>
@@ -141,7 +141,7 @@ export default function AuthConfirmScreen() {
     return (
       <SafeAreaView className="flex-1 bg-p01-void items-center justify-center">
         <ActivityIndicator size="large" color="#39c5bb" />
-        <Text className="text-white mt-4">Chargement...</Text>
+        <Text className="text-white mt-4">Loading...</Text>
       </SafeAreaView>
     );
   }
@@ -158,10 +158,10 @@ export default function AuthConfirmScreen() {
             <Ionicons name="checkmark" size={48} color="#0a0a0a" />
           </LinearGradient>
           <Text className="text-white text-2xl font-bold mb-2">
-            Connecté !
+            Connected!
           </Text>
           <Text className="text-p01-text-muted text-center">
-            Vous êtes maintenant connecté à {serviceName}
+            You are now connected to {serviceName}
           </Text>
         </View>
       </SafeAreaView>
@@ -179,7 +179,7 @@ export default function AuthConfirmScreen() {
           >
             <Ionicons name="close" size={24} color="#ffffff" />
           </TouchableOpacity>
-          <Text className="text-white text-lg font-semibold">Erreur</Text>
+          <Text className="text-white text-lg font-semibold">Error</Text>
           <View className="w-10" />
         </View>
 
@@ -188,17 +188,17 @@ export default function AuthConfirmScreen() {
             <Ionicons name="alert-circle" size={40} color="#ef4444" />
           </View>
           <Text className="text-white text-xl font-bold mb-2">
-            Échec de connexion
+            Connection failed
           </Text>
           <Text className="text-p01-text-muted text-center mb-8">
             {error}
           </Text>
           <View className="w-full gap-3">
             <Button onPress={loadData} fullWidth>
-              Réessayer
+              Retry
             </Button>
             <Button onPress={handleCancel} variant="secondary" fullWidth>
-              Annuler
+              Cancel
             </Button>
           </View>
         </View>
@@ -218,7 +218,7 @@ export default function AuthConfirmScreen() {
           <Ionicons name="close" size={24} color="#ffffff" />
         </TouchableOpacity>
         <Text className="text-white text-lg font-semibold">
-          Connexion
+          Connection
         </Text>
         <View className="w-10" />
       </View>
@@ -245,7 +245,7 @@ export default function AuthConfirmScreen() {
             {serviceName}
           </Text>
           <Text className="text-p01-text-muted text-center">
-            souhaite accéder à votre compte
+            wants to access your account
           </Text>
         </View>
 
@@ -283,14 +283,14 @@ export default function AuthConfirmScreen() {
               </View>
               <View className="flex-1">
                 <Text className="text-p01-text-muted text-xs mb-1">
-                  ABONNEMENT
+                  SUBSCRIPTION
                 </Text>
                 <Text
                   className={`font-semibold ${
                     subscription?.active ? 'text-green-500' : 'text-red-500'
                   }`}
                 >
-                  {subscription?.active ? 'Actif' : 'Non actif'}
+                  {subscription?.active ? 'Active' : 'Inactive'}
                 </Text>
               </View>
             </View>
@@ -300,7 +300,7 @@ export default function AuthConfirmScreen() {
         {/* Permissions */}
         <View className="bg-p01-surface rounded-2xl p-5">
           <Text className="text-p01-text-muted text-xs mb-3">
-            CETTE APPLICATION POURRA :
+            THIS APP WILL BE ABLE TO:
           </Text>
           <View className="gap-3">
             <View className="flex-row items-center">
@@ -311,7 +311,7 @@ export default function AuthConfirmScreen() {
                 style={{ marginRight: 12 }}
               />
               <Text className="text-white flex-1">
-                Vérifier votre identité wallet
+                Verify your wallet identity
               </Text>
             </View>
             {requiresSubscription && (
@@ -323,7 +323,7 @@ export default function AuthConfirmScreen() {
                   style={{ marginRight: 12 }}
                 />
                 <Text className="text-white flex-1">
-                  Vérifier votre statut d'abonnement
+                  Verify your subscription status
                 </Text>
               </View>
             )}
@@ -337,7 +337,7 @@ export default function AuthConfirmScreen() {
           <View className="bg-p01-cyan rounded-xl py-4 items-center flex-row justify-center">
             <ActivityIndicator color="#0a0a0a" style={{ marginRight: 8 }} />
             <Text className="text-p01-void font-semibold">
-              Authentification...
+              Authenticating...
             </Text>
           </View>
         ) : (
@@ -356,7 +356,7 @@ export default function AuthConfirmScreen() {
                   style={{ marginRight: 8 }}
                 />
                 <Text className="text-p01-void font-semibold text-lg">
-                  Confirmer avec Biométrie
+                  Confirm with Biometrics
                 </Text>
               </View>
             </Button>
@@ -364,7 +364,7 @@ export default function AuthConfirmScreen() {
               onPress={handleCancel}
               className="py-3 items-center"
             >
-              <Text className="text-p01-text-muted">Annuler</Text>
+              <Text className="text-p01-text-muted">Cancel</Text>
             </TouchableOpacity>
           </>
         )}
