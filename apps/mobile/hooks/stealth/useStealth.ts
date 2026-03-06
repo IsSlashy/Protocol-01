@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Keypair } from '@solana/web3.js';
 import * as Crypto from 'expo-crypto';
+import nacl from 'tweetnacl';
 import { useSecureStorage, SECURE_KEYS } from '../storage/useSecureStorage';
 import { useWallet } from '../wallet/useWallet';
 import {
@@ -23,19 +24,17 @@ import {
   type StealthScanResult,
 } from '../../utils/crypto/stealth';
 
-// Stealth Address scheme types (Solana-compatible)
 export interface StealthKeys {
-  spendingPrivateKey: string;
-  spendingPublicKey: string;
-  viewingPrivateKey: string;
-  viewingPublicKey: string;
-  // Store raw keypairs for crypto operations
+  spendingPrivateKey: string;     // hex of Ed25519 secretKey (64 bytes)
+  spendingPublicKey: string;      // base58 of Ed25519 pub
+  viewingSecretKey: string;       // hex of X25519 secret (32 bytes)
+  viewingPublicKey: string;       // hex of X25519 pub (32 bytes)
   spendingKeypair?: Keypair;
-  viewingKeypair?: Keypair;
+  viewingSecret?: Uint8Array;     // raw X25519 secret for crypto ops
 }
 
 export interface StealthMetaAddress {
-  prefix: string; // 'st:sol:'
+  prefix: string;
   spendingPublicKey: string;
   viewingPublicKey: string;
   full: string;
@@ -78,16 +77,14 @@ interface UseStealthReturn {
   getViewingPrivateKey: () => Promise<string | null>;
   scanForPayments: (
     ephemeralPublicKey: string,
-    expectedViewTag?: string
+    expectedViewTag?: number
   ) => Promise<StealthScanResult | null>;
 }
 
-// Helper to convert Uint8Array to hex string
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Helper to convert hex string to Uint8Array
 function hexToBytes(hex: string): Uint8Array {
   const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
   const bytes = new Uint8Array(cleanHex.length / 2);
@@ -97,11 +94,8 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-// Real crypto utilities using the stealth.ts implementation
 const stealthCrypto = {
-  // Generate stealth keys from wallet seed using real crypto
   deriveStealthKeys: async (seedPhrase: string): Promise<StealthKeys> => {
-    // Hash the seed phrase to create deterministic entropy
     const seedHash = await Crypto.digestStringAsync(
       Crypto.CryptoDigestAlgorithm.SHA256,
       seedPhrase + ':stealth:spending'
@@ -111,88 +105,21 @@ const stealthCrypto = {
       seedPhrase + ':stealth:viewing'
     );
 
-    // Create keypairs from hashed seeds
     const spendingSeed = hexToBytes(seedHash);
     const viewingSeed = hexToBytes(viewingHash);
 
     const spendingKeypair = Keypair.fromSeed(spendingSeed);
-    const viewingKeypair = Keypair.fromSeed(viewingSeed);
+    // X25519 viewing keypair (not Ed25519)
+    const viewingKeypair = nacl.box.keyPair.fromSecretKey(viewingSeed);
 
     return {
       spendingPrivateKey: bytesToHex(spendingKeypair.secretKey),
       spendingPublicKey: spendingKeypair.publicKey.toBase58(),
-      viewingPrivateKey: bytesToHex(viewingKeypair.secretKey),
-      viewingPublicKey: viewingKeypair.publicKey.toBase58(),
+      viewingSecretKey: bytesToHex(viewingKeypair.secretKey),
+      viewingPublicKey: bytesToHex(viewingKeypair.publicKey),
       spendingKeypair,
-      viewingKeypair,
+      viewingSecret: viewingKeypair.secretKey,
     };
-  },
-
-  // Generate ephemeral keypair for sending using secure randomness from expo-crypto
-  generateEphemeralKey: async (): Promise<{ privateKey: string; publicKey: string; keypair: Keypair }> => {
-    // Use expo-crypto for secure random bytes instead of Keypair.generate()
-    const randomBytes = await Crypto.getRandomBytesAsync(32);
-    const keypair = Keypair.fromSeed(randomBytes);
-    return {
-      privateKey: bytesToHex(keypair.secretKey),
-      publicKey: keypair.publicKey.toBase58(),
-      keypair,
-    };
-  },
-
-  // Compute view tag from shared secret hash
-  computeViewTag: async (sharedSecretHex: string): Promise<number> => {
-    const viewTagHash = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      sharedSecretHex + 'view_tag'
-    );
-    // Return first byte as view tag (0-255)
-    return parseInt(viewTagHash.slice(0, 2), 16);
-  },
-
-  // Parse stealth meta-address (Solana format)
-  parseStealthMetaAddress: (metaAddress: string): StealthMetaAddress | null => {
-    // Support both st:sol: and st:eth: prefixes for compatibility
-    const solPrefix = 'st:sol:';
-    const ethPrefix = 'st:eth:';
-
-    let prefix: string;
-    let data: string;
-
-    if (metaAddress.startsWith(solPrefix)) {
-      prefix = solPrefix;
-      data = metaAddress.slice(solPrefix.length);
-    } else if (metaAddress.startsWith(ethPrefix)) {
-      prefix = ethPrefix;
-      data = metaAddress.slice(ethPrefix.length);
-    } else {
-      return null;
-    }
-
-    // Format: spendingPubKey:viewingPubKey (Base58 encoded)
-    const parts = data.split(':');
-    if (parts.length !== 2) {
-      return null;
-    }
-
-    const [spendingPublicKey, viewingPublicKey] = parts;
-
-    // Validate as Solana public keys
-    if (!isValidStealthAddress(spendingPublicKey) || !isValidStealthAddress(viewingPublicKey)) {
-      return null;
-    }
-
-    return {
-      prefix,
-      spendingPublicKey,
-      viewingPublicKey,
-      full: metaAddress,
-    };
-  },
-
-  // Encode stealth meta-address (Solana format)
-  encodeStealthMetaAddress: (keys: StealthKeys): string => {
-    return `st:sol:${keys.spendingPublicKey}:${keys.viewingPublicKey}`;
   },
 };
 
@@ -202,10 +129,9 @@ export function useStealth(): UseStealthReturn {
   const [error, setError] = useState<Error | null>(null);
   const [stealthMetaAddress, setStealthMetaAddress] = useState<StealthMetaAddress | null>(null);
   const [generatedAddresses, setGeneratedAddresses] = useState<GeneratedStealthAddress[]>([]);
-  // Store keypairs in memory for crypto operations
   const [stealthKeypairs, setStealthKeypairs] = useState<{
     spending?: Keypair;
-    viewing?: Keypair;
+    viewingSecret?: Uint8Array; // X25519 secret (32 bytes)
   }>({});
 
   const { getSecure, setSecure, hasSecure } = useSecureStorage({
@@ -213,7 +139,6 @@ export function useStealth(): UseStealthReturn {
   });
   const { wallet, status: walletStatus } = useWallet();
 
-  // Check if stealth keys are initialized
   useEffect(() => {
     const checkInitialization = async () => {
       setIsLoading(true);
@@ -223,31 +148,36 @@ export function useStealth(): UseStealthReturn {
         setIsInitialized(hasKeys);
 
         if (hasKeys) {
-          // Load stealth meta-address (using Solana Base58 format)
           const spendingPub = await getSecure<string>('p01_stealth_spending_pub' as any);
-          const viewingPub = await getSecure<string>('p01_stealth_viewing_pub' as any);
+          const viewingPubHex = await getSecure<string>('p01_stealth_viewing_pub' as any);
 
-          if (spendingPub && viewingPub) {
+          if (spendingPub && viewingPubHex) {
             setStealthMetaAddress({
-              prefix: 'st:sol:',
+              prefix: 'st:',
               spendingPublicKey: spendingPub,
-              viewingPublicKey: viewingPub,
-              full: `st:sol:${spendingPub}:${viewingPub}`,
+              viewingPublicKey: viewingPubHex,
+              full: await getSecure<string>('p01_stealth_meta_v2' as any) || '',
             });
           }
 
-          // Restore keypairs from stored private keys
           const spendingPrivHex = await getSecure<string>(SECURE_KEYS.STEALTH_SPENDING_KEY);
-          const viewingPrivHex = await getSecure<string>(SECURE_KEYS.STEALTH_VIEWING_KEY);
+          const viewingSecretHex = await getSecure<string>(SECURE_KEYS.STEALTH_VIEWING_KEY);
 
-          if (spendingPrivHex && viewingPrivHex) {
+          if (spendingPrivHex && viewingSecretHex) {
             try {
               const spendingSecretKey = hexToBytes(spendingPrivHex);
-              const viewingSecretKey = hexToBytes(viewingPrivHex);
-              setStealthKeypairs({
-                spending: Keypair.fromSecretKey(spendingSecretKey),
-                viewing: Keypair.fromSecretKey(viewingSecretKey),
-              });
+              const viewingSecretKey = hexToBytes(viewingSecretHex);
+
+              // Ed25519 spending key (64-byte secret → Keypair)
+              // X25519 viewing secret (32 bytes)
+              if (spendingSecretKey.length === 64) {
+                setStealthKeypairs({
+                  spending: Keypair.fromSecretKey(spendingSecretKey),
+                  viewingSecret: viewingSecretKey.length === 32
+                    ? viewingSecretKey
+                    : undefined,
+                });
+              }
             } catch (keypairError) {
               console.warn('Failed to restore stealth keypairs:', keypairError);
             }
@@ -286,25 +216,24 @@ export function useStealth(): UseStealthReturn {
     setError(null);
 
     try {
-      // Get seed phrase to derive keys
       const seedPhrase = await getSecure<string>(SECURE_KEYS.WALLET_SEED);
       if (!seedPhrase) {
         throw new Error('Seed phrase not available');
       }
 
-      // Derive stealth keys using REAL crypto
+      // Derive deterministic stealth keys (Ed25519 spending + X25519 viewing)
       const keys = await stealthCrypto.deriveStealthKeys(seedPhrase);
 
-      // Generate v2 stealth keys with ML-KEM-768 (hybrid PQ)
-      const realKeys = await generateRealStealthKeys(true); // enableHybrid=true
+      // Generate ML-KEM-768 keys for hybrid PQ
+      const realKeys = await generateRealStealthKeys(true);
 
-      // Store keys securely (hex encoded private keys)
+      // Store Ed25519 spending key (64-byte hex)
       await setSecure(SECURE_KEYS.STEALTH_SPENDING_KEY, keys.spendingPrivateKey);
-      await setSecure(SECURE_KEYS.STEALTH_VIEWING_KEY, keys.viewingPrivateKey);
+      // Store X25519 viewing secret (32-byte hex)
+      await setSecure(SECURE_KEYS.STEALTH_VIEWING_KEY, keys.viewingSecretKey);
       await setSecure('p01_stealth_spending_pub' as any, keys.spendingPublicKey);
       await setSecure('p01_stealth_viewing_pub' as any, keys.viewingPublicKey);
 
-      // Store ML-KEM-768 keys (base64 encoded, too large for hex)
       if (realKeys.kemPubKey) {
         await setSecure('p01_stealth_kem_pub' as any, Buffer.from(realKeys.kemPubKey).toString('base64'));
       }
@@ -312,25 +241,33 @@ export function useStealth(): UseStealthReturn {
         await setSecure('p01_stealth_kem_secret' as any, Buffer.from(realKeys.kemSecretKey).toString('base64'));
       }
 
-      // Store keypairs in memory for crypto operations
-      if (keys.spendingKeypair && keys.viewingKeypair) {
+      // Store keypairs in memory
+      if (keys.spendingKeypair && keys.viewingSecret) {
         setStealthKeypairs({
           spending: keys.spendingKeypair,
-          viewing: keys.viewingKeypair,
+          viewingSecret: keys.viewingSecret,
         });
       }
 
-      // Generate v2 meta-address with KEM key for PQ resistance
-      const v2MetaAddress = createMetaAddress(realKeys);
-
-      // Also store legacy format for backward compat
-      const legacyMetaAddress = stealthCrypto.encodeStealthMetaAddress(keys);
-      const parsed = stealthCrypto.parseStealthMetaAddress(legacyMetaAddress);
-
-      // Store v2 meta-address
+      // Create meta-address using deterministic keys + KEM
+      // Build a StealthKeys object with the deterministic spending + viewing + KEM
+      const metaKeys: RealStealthKeys = {
+        spendingKey: keys.spendingKeypair!,
+        viewingSecretKey: keys.viewingSecret!,
+        viewingPublicKey: nacl.box.keyPair.fromSecretKey(keys.viewingSecret!).publicKey,
+        spendingPublicKey: keys.spendingPublicKey,
+        kemPubKey: realKeys.kemPubKey,
+        kemSecretKey: realKeys.kemSecretKey,
+      };
+      const v2MetaAddress = createMetaAddress(metaKeys);
       await setSecure('p01_stealth_meta_v2' as any, v2MetaAddress);
 
-      setStealthMetaAddress(parsed);
+      setStealthMetaAddress({
+        prefix: 'st:',
+        spendingPublicKey: keys.spendingPublicKey,
+        viewingPublicKey: keys.viewingPublicKey,
+        full: v2MetaAddress,
+      });
       setIsInitialized(true);
 
       return true;
@@ -348,29 +285,22 @@ export function useStealth(): UseStealthReturn {
     setError(null);
 
     try {
-      // Parse recipient's stealth meta-address
-      const parsed = stealthCrypto.parseStealthMetaAddress(recipientMetaAddress);
-      if (!parsed) {
-        throw new Error('Invalid stealth meta-address format');
-      }
+      // Parse st:01.../st:02... meta-address format
+      const parsed = parseMetaAddress(recipientMetaAddress);
 
-      // Use the REAL stealth address generation from utils/crypto/stealth.ts
-      const realStealthAddress = await generateRealStealthAddress(
-        parsed.spendingPublicKey,
-        parsed.viewingPublicKey
+      const realStealthAddress = generateRealStealthAddress(
+        parsed.spendingPubKey,
+        parsed.viewingPubKey,
+        parsed.kemPubKey,
       );
-
-      // Convert viewTag string to number (first 2 hex chars = 0-255)
-      const viewTagNum = parseInt(realStealthAddress.viewTag, 16);
 
       const generated: GeneratedStealthAddress = {
         stealthAddress: realStealthAddress.address,
         ephemeralPublicKey: realStealthAddress.ephemeralPublicKey,
-        viewTag: viewTagNum,
+        viewTag: realStealthAddress.viewTag,
         timestamp: Date.now(),
       };
 
-      // Store for reference
       setGeneratedAddresses(prev => [generated, ...prev.slice(0, 99)]);
 
       return generated;
@@ -382,27 +312,21 @@ export function useStealth(): UseStealthReturn {
 
   const computeStealthAddress = useCallback(async (
     recipientSpendingPubKey: string,
-    ephemeralPublicKey: string
+    _ephemeralPublicKey: string
   ): Promise<string | null> => {
     try {
-      // Use the REAL stealth address generation
-      const realStealthAddress = await generateRealStealthAddress(
-        recipientSpendingPubKey,
-        recipientSpendingPubKey // In this context, we're computing for a known recipient
-      );
-
-      return realStealthAddress.address;
+      // This is a simplified path - for proper usage, use generateStealthAddress with meta-address
+      console.warn('[Stealth] computeStealthAddress is deprecated, use generateStealthAddress with meta-address');
+      return null;
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to compute stealth address'));
       return null;
     }
   }, []);
 
-  // Scan for incoming stealth payments - uses REAL scanning from stealth.ts
-  // Supports both v1 (classic) and v2 (hybrid PQ) payments
   const scanForPayments = useCallback(async (
     ephemeralPublicKey: string,
-    expectedViewTag?: string,
+    expectedViewTag?: number,
     kemCiphertextBase64?: string,
   ): Promise<StealthScanResult | null> => {
     try {
@@ -418,31 +342,30 @@ export function useStealth(): UseStealthReturn {
         kemCiphertext = new Uint8Array(Buffer.from(kemCiphertextBase64, 'base64'));
       }
 
-      if (!stealthKeypairs.viewing || !stealthKeypairs.spending) {
-        const viewingPrivHex = await getSecure<string>(SECURE_KEYS.STEALTH_VIEWING_KEY);
+      // Get X25519 viewing secret and Ed25519 spending public key
+      let viewingSecret: Uint8Array;
+      let spendingPubKey: Uint8Array;
+
+      if (stealthKeypairs.viewingSecret && stealthKeypairs.spending) {
+        viewingSecret = stealthKeypairs.viewingSecret;
+        spendingPubKey = stealthKeypairs.spending.publicKey.toBytes();
+      } else {
+        const viewingSecretHex = await getSecure<string>(SECURE_KEYS.STEALTH_VIEWING_KEY);
         const spendingPrivHex = await getSecure<string>(SECURE_KEYS.STEALTH_SPENDING_KEY);
 
-        if (!viewingPrivHex || !spendingPrivHex) {
+        if (!viewingSecretHex || !spendingPrivHex) {
           throw new Error('Stealth keys not available for scanning');
         }
 
-        const viewingSecretKey = hexToBytes(viewingPrivHex);
+        viewingSecret = hexToBytes(viewingSecretHex);
         const spendingSecretKey = hexToBytes(spendingPrivHex);
-
-        return await scanStealthPayment(
-          ephemeralPublicKey,
-          viewingSecretKey,
-          spendingSecretKey,
-          expectedViewTag,
-          kemCiphertext,
-          kemSecretKey,
-        );
+        spendingPubKey = Keypair.fromSecretKey(spendingSecretKey).publicKey.toBytes();
       }
 
-      return await scanStealthPayment(
+      return scanStealthPayment(
         ephemeralPublicKey,
-        stealthKeypairs.viewing.secretKey,
-        stealthKeypairs.spending.secretKey,
+        viewingSecret,
+        spendingPubKey,
         expectedViewTag,
         kemCiphertext,
         kemSecretKey,
