@@ -95,6 +95,7 @@ export default function CreateSubscription() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 hover:bg-p01-surface rounded-lg transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-5 h-5 text-p01-chrome" />
         </button>
@@ -104,10 +105,11 @@ export default function CreateSubscription() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Name Input */}
         <div>
-          <label className="text-xs font-medium text-p01-chrome/60 mb-2 block">
+          <label htmlFor="sub-name" className="text-xs font-medium text-p01-chrome/60 mb-2 block">
             Name
           </label>
           <input
+            id="sub-name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -118,10 +120,11 @@ export default function CreateSubscription() {
 
         {/* Recipient Address */}
         <div>
-          <label className="text-xs font-medium text-p01-chrome/60 mb-2 block">
+          <label htmlFor="sub-recipient" className="text-xs font-medium text-p01-chrome/60 mb-2 block">
             Recipient Wallet Address
           </label>
           <input
+            id="sub-recipient"
             type="text"
             value={recipient}
             onChange={(e) => setRecipient(e.target.value)}
@@ -141,10 +144,11 @@ export default function CreateSubscription() {
         {/* Amount and Interval */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium text-p01-chrome/60 mb-2 block">
+            <label htmlFor="sub-amount" className="text-xs font-medium text-p01-chrome/60 mb-2 block">
               Amount (SOL)
             </label>
             <input
+              id="sub-amount"
               type="number"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -160,11 +164,12 @@ export default function CreateSubscription() {
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-p01-chrome/60 mb-2 block">
+            <label htmlFor="sub-frequency" className="text-xs font-medium text-p01-chrome/60 mb-2 block">
               Frequency
             </label>
             <div className="relative">
               <select
+                id="sub-frequency"
                 value={interval}
                 onChange={(e) => setInterval(e.target.value as SubscriptionInterval)}
                 className="w-full px-4 py-3 bg-p01-surface border border-p01-border rounded-xl text-white appearance-none focus:border-p01-cyan focus:outline-none"
@@ -189,10 +194,11 @@ export default function CreateSubscription() {
 
         {/* Duration */}
         <div>
-          <label className="text-xs font-medium text-p01-chrome/60 mb-2 block">
+          <label htmlFor="sub-duration" className="text-xs font-medium text-p01-chrome/60 mb-2 block">
             Duration (number of payments, 0 = unlimited)
           </label>
           <input
+            id="sub-duration"
             type="number"
             value={maxPayments}
             onChange={(e) => setMaxPayments(e.target.value)}
@@ -229,6 +235,9 @@ export default function CreateSubscription() {
         <button
           type="button"
           onClick={() => setUseZkPool(!useZkPool)}
+          role="switch"
+          aria-checked={useZkPool}
+          aria-label="ZK private payment"
           className={cn(
             'w-full rounded-xl p-4 border text-left transition-colors',
             useZkPool
@@ -285,9 +294,9 @@ export default function CreateSubscription() {
 
         {/* Error */}
         {error && (
-          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30">
+          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30" role="alert" aria-live="polite">
             <div className="flex items-start gap-3">
-              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <p className="text-xs text-red-500">{error}</p>
             </div>
           </div>

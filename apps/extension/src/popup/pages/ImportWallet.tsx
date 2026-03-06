@@ -61,6 +61,7 @@ export default function ImportWallet() {
         <button
           onClick={() => (step === 'seedphrase' ? navigate(-1) : setStep('seedphrase'))}
           className="p-2 -ml-2 hover:bg-p01-border transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
@@ -88,10 +89,11 @@ export default function ImportWallet() {
             </div>
 
             <div>
-              <label className="text-[10px] text-p01-chrome/60 font-mono mb-1.5 block tracking-wider">
+              <label htmlFor="import-seed-phrase" className="text-[10px] text-p01-chrome/60 font-mono mb-1.5 block tracking-wider">
                 RECOVERY PHRASE
               </label>
               <textarea
+                id="import-seed-phrase"
                 value={seedPhrase}
                 onChange={(e) => {
                   setSeedPhrase(e.target.value);
@@ -113,8 +115,8 @@ export default function ImportWallet() {
               </div>
 
               {localError && (
-                <div className="flex items-center gap-2 mt-3 p-3 bg-red-500/10 border border-red-500/30 text-red-400">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <div className="flex items-center gap-2 mt-3 p-3 bg-red-500/10 border border-red-500/30 text-red-400" role="alert" aria-live="polite">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
                   <span className="text-xs font-mono">{localError}</span>
                 </div>
               )}
@@ -170,12 +172,14 @@ export default function ImportWallet() {
                   placeholder="Enter password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  aria-label="Password"
                   className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-p01-chrome/60 hover:text-white"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -186,12 +190,13 @@ export default function ImportWallet() {
                 placeholder="Confirm password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                aria-label="Confirm password"
                 className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
               />
             </div>
 
             {/* Password strength indicator */}
-            <div className="space-y-1">
+            <div className="space-y-1" role="meter" aria-label="Password strength" aria-valuemin={0} aria-valuemax={4} aria-valuenow={password.length >= 12 ? 4 : password.length >= 8 ? 3 : password.length >= 3 ? 1 : 0}>
               <div className="flex gap-1">
                 {[1, 2, 3, 4].map((i) => (
                   <div
@@ -209,14 +214,14 @@ export default function ImportWallet() {
                   />
                 ))}
               </div>
-              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider">
+              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider" aria-live="polite">
                 {password.length < 8 ? 'MINIMUM 8 CHARACTERS' : password.length >= 12 ? 'STRONG' : 'GOOD'}
               </p>
             </div>
 
             {/* Error */}
             {(localError || error) && (
-              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono">
+              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono" role="alert" aria-live="polite">
                 {localError || error}
               </div>
             )}

@@ -110,7 +110,7 @@ export default function Unlock() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
+    <div className="flex flex-col h-full bg-p01-void" role="main" aria-label="Unlock wallet">
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
@@ -151,11 +151,14 @@ export default function Unlock() {
               onKeyPress={handleKeyPress}
               className="w-full pl-10 pr-10 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
               autoFocus
+              aria-label="Wallet password"
+              aria-describedby="unlock-error"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-p01-chrome/60 hover:text-white"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -163,7 +166,7 @@ export default function Unlock() {
 
           {/* Lockout warning */}
           {isLockedOut && (
-            <div className="flex items-center gap-2 p-3 bg-orange-500/10 border border-orange-500/30 text-orange-400">
+            <div className="flex items-center gap-2 p-3 bg-orange-500/10 border border-orange-500/30 text-orange-400" role="alert" aria-live="polite">
               <Lock className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs font-mono">
                 Too many failed attempts. Try again in {lockoutSeconds}s
@@ -173,8 +176,8 @@ export default function Unlock() {
 
           {/* Error */}
           {!isLockedOut && (localError || error) && (
-            <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <div id="unlock-error" className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400" role="alert" aria-live="polite">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
               <span className="text-xs font-mono">{localError || error}</span>
             </div>
           )}
@@ -207,8 +210,9 @@ export default function Unlock() {
         <button
           onClick={handleLogout}
           className="mt-6 text-[10px] text-[#555560] hover:text-p01-cyan transition-colors font-mono tracking-wider flex items-center gap-1"
+          aria-label="Forgot password? Disconnect wallet"
         >
-          <LogOut className="w-3 h-3" />
+          <LogOut className="w-3 h-3" aria-hidden="true" />
           FORGOT PASSWORD? DISCONNECT
         </button>
       </div>
@@ -228,6 +232,9 @@ export default function Unlock() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="disconnect-modal-title"
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -239,13 +246,14 @@ export default function Unlock() {
               <div className="flex items-center justify-between p-4 border-b border-p01-border">
                 <div className="flex items-center gap-2">
                   <LogOut className="w-5 h-5 text-p01-cyan" />
-                  <h2 className="text-sm font-bold text-white font-mono tracking-wider">
+                  <h2 id="disconnect-modal-title" className="text-sm font-bold text-white font-mono tracking-wider">
                     DISCONNECT WALLET
                   </h2>
                 </div>
                 <button
                   onClick={() => setShowLogoutModal(false)}
                   className="p-1 hover:bg-p01-surface transition-colors"
+                  aria-label="Close"
                 >
                   <X className="w-4 h-4 text-p01-chrome" />
                 </button>

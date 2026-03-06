@@ -407,6 +407,8 @@ export default function ApproveTransaction() {
             initial={{ y: 10, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             className="bg-red-500/10 p-3 border border-red-500/30"
+            role="alert"
+            aria-live="polite"
           >
             <p className="text-xs text-red-400 font-mono">{error}</p>
           </motion.div>

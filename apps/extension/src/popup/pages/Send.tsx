@@ -109,6 +109,7 @@ export default function Send() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 hover:bg-p01-border transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
@@ -175,11 +176,12 @@ export default function Send() {
 
         {/* Recipient Input */}
         <div>
-          <label className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
+          <label htmlFor="send-recipient" className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
             RECIPIENT ADDRESS {isStealthSend && <span className="text-p01-cyan">(STEALTH)</span>}
           </label>
           <div className="relative">
             <input
+              id="send-recipient"
               type="text"
               value={recipient}
               onChange={(e) => {
@@ -204,11 +206,12 @@ export default function Send() {
 
         {/* Amount Input */}
         <div>
-          <label className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
+          <label htmlFor="send-amount" className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
             AMOUNT (SOL)
           </label>
           <div className="bg-p01-surface border border-p01-border p-4 rounded-lg">
             <input
+              id="send-amount"
               type="number"
               value={amount}
               onChange={(e) => {
@@ -232,6 +235,7 @@ export default function Send() {
                     setLocalError('');
                   }}
                   className="flex-1 py-1.5 text-[10px] font-mono font-medium bg-p01-dark border border-p01-border text-p01-chrome hover:border-p01-cyan/50 hover:text-white transition-colors tracking-wider rounded"
+                  aria-label={`Set amount to ${percent}% of balance`}
                 >
                   {percent}%
                 </button>
@@ -242,8 +246,8 @@ export default function Send() {
 
         {/* Error */}
         {localError && (
-          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg" role="alert" aria-live="polite">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
             <span className="text-xs font-mono">{localError}</span>
           </div>
         )}

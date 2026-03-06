@@ -241,6 +241,7 @@ export default function ShieldedWallet() {
           <button
             onClick={() => navigate(-1)}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -255,18 +256,21 @@ export default function ShieldedWallet() {
             disabled={isSyncing || !isInitialized}
             className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
             title="Sync from Blockchain"
+            aria-label="Sync from blockchain"
           >
             <RefreshCw className={cn('w-5 h-5', isSyncing && 'animate-spin')} />
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label={showBalance ? 'Hide balance' : 'Show balance'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
           </button>
           <button
             onClick={() => setShowInfoModal(true)}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Show info"
           >
             <Info className="w-5 h-5" />
           </button>
@@ -416,6 +420,7 @@ export default function ShieldedWallet() {
               onClick={() => refreshBalance()}
               disabled={isLoading}
               className="p-1 text-p01-chrome hover:text-white transition-colors"
+              aria-label="Refresh shielded balance"
             >
               <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
             </button>
@@ -446,6 +451,7 @@ export default function ShieldedWallet() {
               <button
                 onClick={handleCopyAddress}
                 className="flex items-center gap-1 text-p01-cyan text-xs hover:text-p01-cyan/80 transition-colors"
+                aria-label={copied ? 'ZK address copied' : 'Copy ZK address'}
               >
                 {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copied ? 'Copied' : 'Copy'}
@@ -458,7 +464,7 @@ export default function ShieldedWallet() {
 
           {/* Init Error */}
           {initError && (
-            <div className="mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+            <div className="mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30" role="alert" aria-live="polite">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
@@ -479,7 +485,7 @@ export default function ShieldedWallet() {
 
           {/* Sync Result */}
           {syncResult && (
-            <div className={cn(
+            <div role="status" aria-live="polite" className={cn(
               'mt-3 p-3 rounded-lg border',
               syncResult.success
                 ? 'bg-green-500/10 border-green-500/30'
@@ -677,7 +683,7 @@ export default function ShieldedWallet() {
 
       {/* Shield/Unshield Modal */}
       {actionModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="shield-modal-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -695,7 +701,7 @@ export default function ShieldedWallet() {
                 )}
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white capitalize">
+                <h3 id="shield-modal-title" className="text-lg font-display font-bold text-white capitalize">
                   {actionModal} SOL
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -729,6 +735,7 @@ export default function ShieldedWallet() {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.0"
+                    aria-label="Amount in SOL"
                     className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
                   />
                   <span className="text-p01-chrome text-lg">SOL</span>
@@ -748,7 +755,7 @@ export default function ShieldedWallet() {
 
             {/* Error */}
             {error && (
-              <div className="mb-4 p-3 bg-red-500/10 rounded-lg">
+              <div className="mb-4 p-3 bg-red-500/10 rounded-lg" role="alert" aria-live="polite">
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
@@ -792,7 +799,7 @@ export default function ShieldedWallet() {
 
       {/* Info Modal */}
       {showInfoModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="shielded-info-title">
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -803,7 +810,7 @@ export default function ShieldedWallet() {
                 <ShieldCheck className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="shielded-info-title" className="text-lg font-display font-bold text-white">
                   Shielded Transactions
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -866,7 +873,7 @@ export default function ShieldedWallet() {
 
       {/* Recovery Modal */}
       {showRecoveryModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="recovery-modal-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -877,7 +884,7 @@ export default function ShieldedWallet() {
                 <Scan className="w-6 h-6 text-emerald-400" />
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="recovery-modal-title" className="text-lg font-display font-bold text-white">
                   Recover Private Funds
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -888,8 +895,8 @@ export default function ShieldedWallet() {
 
             {/* Scanning Status */}
             {isScanning && (
-              <div className="mb-4 p-4 bg-emerald-500/10 rounded-xl flex items-center gap-3">
-                <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" />
+              <div className="mb-4 p-4 bg-emerald-500/10 rounded-xl flex items-center gap-3" aria-live="polite">
+                <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" aria-hidden="true" />
                 <span className="text-emerald-400 text-sm">Scanning for payments...</span>
               </div>
             )}
@@ -932,7 +939,7 @@ export default function ShieldedWallet() {
 
             {/* Error */}
             {error && (
-              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30" role="alert" aria-live="polite">
                 <p className="text-red-400 text-xs">{error}</p>
               </div>
             )}
@@ -1017,6 +1024,7 @@ function ActionButton({
       <button
         onClick={onClick}
         disabled={disabled}
+        aria-label={label}
         className={cn(
           'w-12 h-12 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100',
           colorClasses[color]
@@ -1024,7 +1032,7 @@ function ActionButton({
       >
         {icon}
       </button>
-      <span className={cn('text-xs', disabled ? 'text-p01-chrome/50' : 'text-p01-chrome')}>
+      <span aria-hidden="true" className={cn('text-xs', disabled ? 'text-p01-chrome/50' : 'text-p01-chrome')}>
         {label}
       </span>
     </div>

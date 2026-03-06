@@ -298,7 +298,7 @@ export default function StreamsDashboard() {
                     <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>Privacy Score</Text>
                     <Text style={{ color: COLORS.cyan, fontSize: 12, fontWeight: '500' }}>{privacyScore}%</Text>
                   </View>
-                  <View style={{ height: 6, backgroundColor: COLORS.border, borderRadius: 3, overflow: 'hidden' }}>
+                  <View style={{ height: 6, backgroundColor: COLORS.border, borderRadius: 3, overflow: 'hidden' }} accessibilityRole="progressbar" accessibilityLabel={`Privacy score ${privacyScore} percent`} accessibilityValue={{ min: 0, max: 100, now: privacyScore }}>
                     <Animated.View
                       style={{
                         height: '100%',
@@ -443,7 +443,7 @@ export default function StreamsDashboard() {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons name="apps" size={18} color={COLORS.pink} />
-                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>Available Services</Text>
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }} accessibilityRole="header">Available Services</Text>
               </View>
               <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
                 {SDK_SERVICES.length} services
@@ -636,7 +636,7 @@ export default function StreamsDashboard() {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons name="person" size={18} color={COLORS.cyan} />
-                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }}>Personal Payments</Text>
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '600' }} accessibilityRole="header">Personal Payments</Text>
               </View>
               <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>
                 {personalStreams.length} stream{personalStreams.length !== 1 ? 's' : ''}

@@ -112,6 +112,7 @@ export default function ShieldedTransfer() {
           <button
             onClick={() => navigate(-1)}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -150,6 +151,7 @@ export default function ShieldedTransfer() {
             <button
               onClick={handleCopyOwnAddress}
               className="flex items-center gap-1 text-p01-cyan text-xs hover:text-p01-cyan/80 transition-colors"
+              aria-label={copied ? 'ZK address copied' : 'Copy your ZK address'}
             >
               {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
               {copied ? 'Copied' : 'Copy'}
@@ -166,10 +168,11 @@ export default function ShieldedTransfer() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.1 }}
         >
-          <label className="text-[10px] text-p01-chrome/60 mb-1.5 block font-mono tracking-wider">
+          <label htmlFor="transfer-recipient" className="text-[10px] text-p01-chrome/60 mb-1.5 block font-mono tracking-wider">
             RECIPIENT ZK ADDRESS
           </label>
           <input
+            id="transfer-recipient"
             type="text"
             value={recipient}
             onChange={(e) => {
@@ -203,11 +206,12 @@ export default function ShieldedTransfer() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.15 }}
         >
-          <label className="text-[10px] text-p01-chrome/60 mb-1.5 block font-mono tracking-wider">
+          <label htmlFor="transfer-amount" className="text-[10px] text-p01-chrome/60 mb-1.5 block font-mono tracking-wider">
             AMOUNT (SOL)
           </label>
           <div className="bg-p01-surface border border-p01-border p-4 rounded-lg">
             <input
+              id="transfer-amount"
               type="number"
               value={amount}
               onChange={(e) => {
@@ -232,6 +236,7 @@ export default function ShieldedTransfer() {
                     setSuccess(null);
                   }}
                   className="flex-1 py-1.5 text-[10px] font-mono font-medium bg-p01-dark border border-p01-border text-p01-chrome hover:border-p01-cyan/50 hover:text-white transition-colors tracking-wider rounded"
+                  aria-label={`Set amount to ${percent}% of balance`}
                 >
                   {percent}%
                 </button>
@@ -267,6 +272,8 @@ export default function ShieldedTransfer() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="p-3 bg-red-500/10 rounded-lg border border-red-500/30"
+            role="alert"
+            aria-live="polite"
           >
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
@@ -281,6 +288,8 @@ export default function ShieldedTransfer() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="p-3 bg-green-500/10 rounded-lg border border-green-500/30"
+            role="status"
+            aria-live="polite"
           >
             <div className="flex items-start gap-2">
               <Check className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />

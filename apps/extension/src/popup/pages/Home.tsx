@@ -142,12 +142,14 @@ export default function Home() {
           <button
             onClick={handleCopy}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label={copied ? 'Address copied' : 'Copy wallet address'}
           >
             {copied ? <Check className="w-5 h-5 text-p01-cyan" /> : <Copy className="w-5 h-5" />}
           </button>
           <button
             onClick={() => navigate('/settings')}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Settings"
           >
             <Settings className="w-5 h-5" />
           </button>
@@ -165,7 +167,7 @@ export default function Home() {
           {/* Wallet Address */}
           <div className="flex items-center justify-center gap-2 text-p01-chrome text-sm mb-1">
             <span>{publicKey ? truncateAddress(publicKey, 6) : '---'}</span>
-            <button onClick={handleCopy} className="hover:text-white transition-colors">
+            <button onClick={handleCopy} className="hover:text-white transition-colors" aria-label={copied ? 'Address copied' : 'Copy address'}>
               {copied ? <Check className="w-4 h-4 text-p01-cyan" /> : <Copy className="w-4 h-4" />}
             </button>
             <a
@@ -173,6 +175,7 @@ export default function Home() {
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white transition-colors"
+              aria-label="View on Solscan"
             >
               <ExternalLink className="w-4 h-4" />
             </a>
@@ -188,6 +191,7 @@ export default function Home() {
                 onClick={() => refreshBalance()}
                 disabled={isRefreshing}
                 className="p-1 text-p01-chrome hover:text-white transition-colors"
+                aria-label="Refresh balance"
               >
                 <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
               </button>
@@ -385,6 +389,7 @@ export default function Home() {
             <button
               onClick={() => navigate('/activity')}
               className="text-p01-pink text-xs font-medium hover:underline"
+              aria-label="See all activity"
             >
               See All
             </button>
@@ -452,10 +457,11 @@ function ActionButton({
           'w-12 h-12 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95',
           colorClasses[color]
         )}
+        aria-label={label}
       >
         {icon}
       </button>
-      <span className="text-xs text-p01-chrome">{label}</span>
+      <span className="text-xs text-p01-chrome" aria-hidden="true">{label}</span>
     </div>
   );
 }

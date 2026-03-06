@@ -200,6 +200,7 @@ export default function SubscriptionVaults() {
           <button
             onClick={() => navigate('/shielded')}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -213,13 +214,14 @@ export default function SubscriptionVaults() {
             onClick={() => publicKey && loadVaults(publicKey)}
             disabled={loading}
             className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
-            title="Refresh vaults"
+            aria-label="Refresh vaults"
           >
             <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label={showBalance ? 'Hide balances' : 'Show balances'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
           </button>
@@ -233,8 +235,10 @@ export default function SubscriptionVaults() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="mx-4 mt-3 p-3 bg-green-500/10 rounded-lg border border-green-500/30 flex items-center gap-2"
+            role="status"
+            aria-live="polite"
           >
-            <Check className="w-4 h-4 text-green-400" />
+            <Check className="w-4 h-4 text-green-400" aria-hidden="true" />
             <p className="text-green-400 text-xs">{successMsg}</p>
           </motion.div>
         )}
@@ -245,8 +249,10 @@ export default function SubscriptionVaults() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="mx-4 mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-center gap-2"
+            role="alert"
+            aria-live="polite"
           >
-            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" aria-hidden="true" />
             <p className="text-red-400 text-xs">{storeError}</p>
           </motion.div>
         )}
@@ -449,7 +455,7 @@ export default function SubscriptionVaults() {
 
       {/* Action Modal */}
       {actionModal && selectedVault && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="vault-action-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -471,7 +477,7 @@ export default function SubscriptionVaults() {
                 {actionModal === 'claim' && <DollarSign className="w-6 h-6 text-p01-cyan" />}
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white capitalize">
+                <h3 id="vault-action-title" className="text-lg font-display font-bold text-white capitalize">
                   {actionModal} Vault
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -485,8 +491,8 @@ export default function SubscriptionVaults() {
 
             {/* Error */}
             {error && (
-              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-start gap-2" role="alert" aria-live="polite">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}

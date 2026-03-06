@@ -68,7 +68,7 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
   }));
 
   return (
-    <View className={`items-center justify-center ${className || ''}`}>
+    <View className={`items-center justify-center ${className || ''}`} accessibilityRole="image" accessibilityLabel={`P-01 Agent, ${isActive ? 'online' : 'offline'}`}>
       {/* Outer glow ring */}
       {isActive && (
         <Animated.View

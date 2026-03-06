@@ -138,6 +138,7 @@ export default function Buy() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 text-p01-chrome hover:text-white transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -179,6 +180,7 @@ export default function Buy() {
                 inputMode="decimal"
                 value={amount}
                 onChange={(e) => handleAmountChange(e.target.value)}
+                aria-label="Amount to pay"
                 className="flex-1 bg-transparent text-white text-2xl font-bold outline-none placeholder:text-p01-chrome/40"
                 placeholder="0.00"
               />
@@ -190,6 +192,7 @@ export default function Buy() {
                 <button
                   key={value}
                   onClick={() => setAmount(value.toString())}
+                  aria-label={`Set amount to ${selectedFiat.symbol}${value}`}
                   className={cn(
                     'flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors',
                     amount === value.toString()
@@ -235,6 +238,7 @@ export default function Buy() {
                 <button
                   key={asset.symbol}
                   onClick={() => setSelectedAsset(asset)}
+                  aria-pressed={selectedAsset.symbol === asset.symbol}
                   className={cn(
                     'flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                     selectedAsset.symbol === asset.symbol
@@ -273,6 +277,7 @@ export default function Buy() {
                 <button
                   key={method.id}
                   onClick={() => setSelectedPayment(method)}
+                  aria-pressed={selectedPayment.id === method.id}
                   className={cn(
                     'w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left',
                     isSelected

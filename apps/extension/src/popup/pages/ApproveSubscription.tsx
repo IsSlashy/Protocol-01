@@ -436,6 +436,8 @@ export default function ApproveSubscription() {
           <button
             onClick={() => setShowPrivacyOptions(!showPrivacyOptions)}
             className="w-full flex items-center justify-between p-4"
+            aria-expanded={showPrivacyOptions}
+            aria-label="Privacy options"
           >
             <div className="flex items-center gap-2">
               <Shield className="w-4 h-4 text-p01-cyan" />
@@ -466,6 +468,7 @@ export default function ApproveSubscription() {
                   max="20"
                   value={amountNoise}
                   onChange={(e) => setAmountNoise(parseInt(e.target.value))}
+                  aria-label="Amount noise percentage"
                   className="w-full accent-p01-cyan h-1"
                 />
                 <p className="text-[10px] text-p01-chrome/40 mt-1">
@@ -488,6 +491,7 @@ export default function ApproveSubscription() {
                   max="24"
                   value={timingNoise}
                   onChange={(e) => setTimingNoise(parseInt(e.target.value))}
+                  aria-label="Timing noise hours"
                   className="w-full accent-streams h-1"
                 />
                 <p className="text-[10px] text-p01-chrome/40 mt-1">
@@ -508,6 +512,9 @@ export default function ApproveSubscription() {
                 </div>
                 <button
                   onClick={() => setUseStealthAddress(!useStealthAddress)}
+                  role="switch"
+                  aria-checked={useStealthAddress}
+                  aria-label="Stealth addresses"
                   className={cn(
                     'w-10 h-5 rounded-full transition-colors relative',
                     useStealthAddress ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -535,6 +542,9 @@ export default function ApproveSubscription() {
                 </div>
                 <button
                   onClick={() => setSyncToChain(!syncToChain)}
+                  role="switch"
+                  aria-checked={syncToChain}
+                  aria-label="Sync to blockchain"
                   className={cn(
                     'w-10 h-5 rounded-full transition-colors relative',
                     syncToChain ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -605,6 +615,7 @@ export default function ApproveSubscription() {
         <button
           onClick={() => setShowAdvanced(!showAdvanced)}
           className="w-full text-left"
+          aria-expanded={showAdvanced}
         >
           <div className="flex items-center justify-between text-xs text-p01-chrome/60 hover:text-p01-chrome transition-colors">
             <span>Advanced details</span>
@@ -624,7 +635,7 @@ export default function ApproveSubscription() {
                 <span className="font-mono text-white">
                   {truncateAddress(payload.recipient, 4)}
                 </span>
-                <ExternalLink className="w-3 h-3 text-p01-chrome/40" />
+                <ExternalLink className="w-3 h-3 text-p01-chrome/40" aria-hidden="true" />
               </div>
             </div>
             <div className="flex justify-between text-xs">
@@ -662,9 +673,9 @@ export default function ApproveSubscription() {
 
         {/* Error */}
         {error && (
-          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30">
+          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30" role="alert" aria-live="polite">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <p className="text-xs text-red-500">{error}</p>
             </div>
           </div>

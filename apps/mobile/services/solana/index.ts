@@ -16,7 +16,6 @@ export {
   type FeeBreakdown,
 } from './transactions';
 export * from './streams';
-export * from './privateSubscription';
 export * from './onchainSync';
 export * from './websocket';
 export * from './decoyTransactions';

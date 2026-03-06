@@ -51,7 +51,7 @@ export default function DevnetAirdropFAB({ publicKey, requestAirdrop, refreshBal
   };
 
   return (
-    <TouchableOpacity style={[styles.fab, loading && { opacity: 0.7 }]} onPress={handlePress} disabled={loading}>
+    <TouchableOpacity style={[styles.fab, loading && { opacity: 0.7 }]} onPress={handlePress} disabled={loading} accessibilityRole="button" accessibilityLabel="Request devnet airdrop" accessibilityHint="Requests 1 SOL from the devnet faucet" accessibilityState={{ disabled: loading, busy: loading }}>
       {loading ? (
         <ActivityIndicator size="small" color="#000" />
       ) : (

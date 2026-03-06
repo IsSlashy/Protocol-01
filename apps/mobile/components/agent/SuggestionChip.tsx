@@ -45,6 +45,9 @@ export const SuggestionChip: React.FC<SuggestionChipProps> = ({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityHint="Send this suggestion to the agent"
         style={[
           animatedStyle,
           {

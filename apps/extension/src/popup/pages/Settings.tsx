@@ -283,6 +283,7 @@ export default function Settings() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -295,6 +296,7 @@ export default function Settings() {
           <button
             onClick={handleCopy}
             className="w-full bg-p01-surface rounded-2xl p-4 flex items-center gap-4 hover:bg-p01-surface/80 transition-colors"
+            aria-label={copied ? 'Address copied' : 'Copy wallet address'}
           >
             {/* Avatar */}
             <img
@@ -381,6 +383,9 @@ export default function Settings() {
               </div>
               <button
                 onClick={toggleHideBalance}
+                role="switch"
+                aria-checked={hideBalance}
+                aria-label="Hide balance"
                 className={cn(
                   'w-12 h-7 rounded-full transition-colors relative',
                   hideBalance ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -441,6 +446,9 @@ export default function Settings() {
               </div>
               <button
                 onClick={() => setShieldedWalletEnabled(!shieldedWalletEnabled)}
+                role="switch"
+                aria-checked={shieldedWalletEnabled}
+                aria-label="Shielded wallet"
                 className={cn(
                   'w-12 h-7 rounded-full transition-colors relative',
                   shieldedWalletEnabled ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -474,6 +482,9 @@ export default function Settings() {
               </div>
               <button
                 onClick={() => setConfidentialBalanceEnabled(!confidentialBalanceEnabled)}
+                role="switch"
+                aria-checked={confidentialBalanceEnabled}
+                aria-label="Confidential balance"
                 className={cn(
                   'w-12 h-7 rounded-full transition-colors relative',
                   confidentialBalanceEnabled ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -619,7 +630,7 @@ export default function Settings() {
 
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -631,7 +642,7 @@ export default function Settings() {
                   <Trash2 className="w-5 h-5 text-red-500" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-display font-bold text-white">
+                  <h3 id="delete-modal-title" className="text-lg font-display font-bold text-white">
                     Delete Wallet
                   </h3>
                   <p className="text-xs text-p01-chrome/60">
@@ -642,6 +653,7 @@ export default function Settings() {
               <button
                 onClick={closeResetModal}
                 className="p-2 text-p01-chrome hover:text-white"
+                aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -654,10 +666,11 @@ export default function Settings() {
             </div>
 
             <div className="mb-4">
-              <label className="text-p01-chrome/60 text-xs mb-2 block">
+              <label htmlFor="reset-password" className="text-p01-chrome/60 text-xs mb-2 block">
                 Enter password to confirm deletion
               </label>
               <input
+                id="reset-password"
                 type="password"
                 value={resetPassword}
                 onChange={(e) => {
@@ -666,12 +679,13 @@ export default function Settings() {
                 }}
                 placeholder="Your password"
                 className="w-full px-4 py-3 bg-p01-void border border-p01-border rounded-xl text-white font-mono text-sm focus:outline-none focus:border-red-500"
+                aria-describedby="reset-error"
               />
             </div>
 
             {resetError && (
-              <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <div id="reset-error" className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400" role="alert" aria-live="polite">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
                 <span className="text-xs">{resetError}</span>
               </div>
             )}
@@ -704,7 +718,7 @@ export default function Settings() {
 
       {/* Notifications Modal */}
       {showNotifications && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="notif-modal-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -715,13 +729,14 @@ export default function Settings() {
                 <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center">
                   <Bell className="w-5 h-5 text-orange-400" />
                 </div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="notif-modal-title" className="text-lg font-display font-bold text-white">
                   Notifications
                 </h3>
               </div>
               <button
                 onClick={() => setShowNotifications(false)}
                 className="p-2 text-p01-chrome hover:text-white"
+                aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -740,6 +755,9 @@ export default function Settings() {
                     setNotifyTransactions(newValue);
                     saveNotificationSettings(newValue, notifySubscriptions, notifyPrice);
                   }}
+                  role="switch"
+                  aria-checked={notifyTransactions}
+                  aria-label="Transaction notifications"
                   className={cn(
                     'w-12 h-7 rounded-full transition-colors relative',
                     notifyTransactions ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -767,6 +785,9 @@ export default function Settings() {
                     setNotifySubscriptions(newValue);
                     saveNotificationSettings(notifyTransactions, newValue, notifyPrice);
                   }}
+                  role="switch"
+                  aria-checked={notifySubscriptions}
+                  aria-label="Subscription notifications"
                   className={cn(
                     'w-12 h-7 rounded-full transition-colors relative',
                     notifySubscriptions ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -794,6 +815,9 @@ export default function Settings() {
                     setNotifyPrice(newValue);
                     saveNotificationSettings(notifyTransactions, notifySubscriptions, newValue);
                   }}
+                  role="switch"
+                  aria-checked={notifyPrice}
+                  aria-label="Price alert notifications"
                   className={cn(
                     'w-12 h-7 rounded-full transition-colors relative',
                     notifyPrice ? 'bg-p01-cyan' : 'bg-p01-border'
@@ -822,7 +846,7 @@ export default function Settings() {
 
       {/* Backup Seed Phrase Modal */}
       {showBackupModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="backup-modal-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -833,13 +857,14 @@ export default function Settings() {
                 <div className="w-10 h-10 rounded-full bg-p01-pink/20 flex items-center justify-center">
                   <Key className="w-5 h-5 text-p01-pink" />
                 </div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="backup-modal-title" className="text-lg font-display font-bold text-white">
                   Backup Seed Phrase
                 </h3>
               </div>
               <button
                 onClick={closeBackupModal}
                 className="p-2 text-p01-chrome hover:text-white"
+                aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -854,10 +879,11 @@ export default function Settings() {
                 </div>
 
                 <div className="mb-4">
-                  <label className="text-p01-chrome/60 text-xs mb-2 block">
+                  <label htmlFor="backup-password" className="text-p01-chrome/60 text-xs mb-2 block">
                     Enter password to reveal
                   </label>
                   <input
+                    id="backup-password"
                     type="password"
                     value={backupPassword}
                     onChange={(e) => {
@@ -870,8 +896,8 @@ export default function Settings() {
                 </div>
 
                 {backupError && (
-                  <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400" role="alert" aria-live="polite">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
                     <span className="text-xs">{backupError}</span>
                   </div>
                 )}
@@ -944,7 +970,7 @@ export default function Settings() {
 
       {/* Change Password Modal */}
       {showPasswordModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -955,13 +981,14 @@ export default function Settings() {
                 <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
                   <Lock className="w-5 h-5 text-green-400" />
                 </div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="password-modal-title" className="text-lg font-display font-bold text-white">
                   Change Password
                 </h3>
               </div>
               <button
                 onClick={closePasswordModal}
                 className="p-2 text-p01-chrome hover:text-white"
+                aria-label="Close"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -979,8 +1006,9 @@ export default function Settings() {
               <>
                 <div className="space-y-3 mb-4">
                   <div>
-                    <label className="text-p01-chrome/60 text-xs mb-1 block">Current Password</label>
+                    <label htmlFor="current-password" className="text-p01-chrome/60 text-xs mb-1 block">Current Password</label>
                     <input
+                      id="current-password"
                       type="password"
                       value={currentPassword}
                       onChange={(e) => {
@@ -992,8 +1020,9 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="text-p01-chrome/60 text-xs mb-1 block">New Password</label>
+                    <label htmlFor="new-password" className="text-p01-chrome/60 text-xs mb-1 block">New Password</label>
                     <input
+                      id="new-password"
                       type="password"
                       value={newPassword}
                       onChange={(e) => {
@@ -1005,8 +1034,9 @@ export default function Settings() {
                     />
                   </div>
                   <div>
-                    <label className="text-p01-chrome/60 text-xs mb-1 block">Confirm New Password</label>
+                    <label htmlFor="confirm-new-password" className="text-p01-chrome/60 text-xs mb-1 block">Confirm New Password</label>
                     <input
+                      id="confirm-new-password"
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => {
@@ -1020,8 +1050,8 @@ export default function Settings() {
                 </div>
 
                 {passwordError && (
-                  <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <div className="flex items-center gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400" role="alert" aria-live="polite">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
                     <span className="text-xs">{passwordError}</span>
                   </div>
                 )}
