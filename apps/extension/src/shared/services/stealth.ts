@@ -7,9 +7,10 @@
  * 3. Seul le destinataire peut détecter et dépenser les fonds
  *
  * CRYPTOGRAPHIE:
- * - Utilise Diffie-Hellman sur curve25519 pour le shared secret
- * - HKDF pour la dérivation de clés
- * - ed25519 pour les signatures Solana
+ * - v1: X25519 ECDH for shared secret derivation
+ * - v2: Hybrid X25519 + ML-KEM-768 (FIPS 203) for post-quantum resistance
+ * - HKDF for key derivation
+ * - ed25519 for Solana signatures
  */
 
 import { Keypair, PublicKey } from '@solana/web3.js';
@@ -19,6 +20,7 @@ import { derivePath } from 'ed25519-hd-key';
 import { Buffer } from 'buffer';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 
 // =============================================================================
 // TYPES
@@ -33,6 +35,10 @@ export interface StealthKeyPair {
   viewingKey: Uint8Array;
   /** Clé publique pour le viewing (32 bytes) */
   viewingPubKey: Uint8Array;
+  /** ML-KEM-768 public key for hybrid post-quantum key exchange (1184 bytes, v2 only) */
+  kemPubKey?: Uint8Array;
+  /** ML-KEM-768 secret key for hybrid post-quantum key exchange (2400 bytes, v2 only) */
+  kemSecretKey?: Uint8Array;
 }
 
 export interface StealthPayment {
@@ -52,6 +58,8 @@ export interface StealthPayment {
   claimed: boolean;
   /** Signature de la transaction de claim */
   claimSignature?: string;
+  /** ML-KEM-768 ciphertext for hybrid payments (1088 bytes, v2 only) */
+  kemCiphertext?: Uint8Array;
 }
 
 export interface GeneratedStealthAddress {
@@ -61,6 +69,8 @@ export interface GeneratedStealthAddress {
   ephemeralPubKey: Uint8Array;
   /** Le shared secret (pour debug/tests uniquement) */
   sharedSecret: Uint8Array;
+  /** ML-KEM-768 ciphertext to include in transaction (1088 bytes, v2 only) */
+  kemCiphertext?: Uint8Array;
 }
 
 export interface ParsedMetaAddress {
@@ -68,6 +78,8 @@ export interface ParsedMetaAddress {
   spendingPubKey: Uint8Array;
   /** Clé publique viewing (32 bytes) */
   viewingPubKey: Uint8Array;
+  /** ML-KEM-768 public key (1184 bytes, v2 only) */
+  kemPubKey?: Uint8Array;
 }
 
 // =============================================================================
@@ -77,8 +89,11 @@ export interface ParsedMetaAddress {
 /** Préfixe pour identifier les meta-addresses */
 const META_ADDRESS_PREFIX = 'st:';
 
-/** Préfixe HRP (Human Readable Part) pour le format */
-const META_ADDRESS_VERSION = '01';
+/** v1: classic ECDH only */
+const META_ADDRESS_VERSION_V1 = '01';
+
+/** v2: hybrid X25519 + ML-KEM-768 */
+const META_ADDRESS_VERSION_V2 = '02';
 
 /** Dérivation paths pour les clés stealth */
 const SPENDING_KEY_PATH = "m/44'/501'/0'/0'/0'";
@@ -86,6 +101,13 @@ const VIEWING_KEY_PATH = "m/44'/501'/0'/0'/1'";
 
 /** Info pour HKDF */
 const HKDF_INFO = new TextEncoder().encode('P01-STEALTH-v1');
+
+/** Info string for hybrid HKDF (must match specter-sdk) */
+const HYBRID_HKDF_INFO = new TextEncoder().encode('p01-hybrid-stealth-v2');
+
+/** ML-KEM-768 sizes (FIPS 203) */
+const KEM_PUBLIC_KEY_SIZE = 1184;
+const KEM_CIPHERTEXT_SIZE = 1088;
 
 // =============================================================================
 // UTILITAIRES CRYPTOGRAPHIQUES
@@ -258,16 +280,72 @@ function fromBase58(str: string): Uint8Array {
 }
 
 // =============================================================================
+// ML-KEM-768 HYBRID KEY EXCHANGE
+// =============================================================================
+
+/**
+ * Generate an ML-KEM-768 keypair for post-quantum hybrid stealth addresses.
+ * @returns publicKey (1184 bytes) and secretKey (2400 bytes)
+ */
+function kemGenerateKeypair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
+  return ml_kem768.keygen();
+}
+
+/**
+ * Encapsulate: sender creates a shared secret using the recipient's KEM public key.
+ * @param kemPubKey - Recipient's ML-KEM-768 public key (1184 bytes)
+ * @returns cipherText (1088 bytes) and sharedSecret (32 bytes)
+ */
+function kemEncapsulate(kemPubKey: Uint8Array): {
+  cipherText: Uint8Array;
+  sharedSecret: Uint8Array;
+} {
+  return ml_kem768.encapsulate(kemPubKey);
+}
+
+/**
+ * Decapsulate: recipient recovers the shared secret from the KEM ciphertext.
+ * @param cipherText - KEM ciphertext from sender (1088 bytes)
+ * @param kemSecretKey - Recipient's ML-KEM-768 secret key (2400 bytes)
+ * @returns sharedSecret (32 bytes)
+ */
+function kemDecapsulate(cipherText: Uint8Array, kemSecretKey: Uint8Array): Uint8Array {
+  return ml_kem768.decapsulate(cipherText, kemSecretKey);
+}
+
+/**
+ * Derive a hybrid shared secret by combining classical ECDH and post-quantum KEM secrets.
+ * Security holds if EITHER the classical or post-quantum scheme is secure.
+ *
+ * Uses HKDF to combine both secrets into a single 32-byte key.
+ */
+async function deriveHybridSharedSecret(
+  classicSecret: Uint8Array,
+  kemSecret: Uint8Array
+): Promise<Uint8Array> {
+  const combined = new Uint8Array(classicSecret.length + kemSecret.length);
+  combined.set(classicSecret);
+  combined.set(kemSecret, classicSecret.length);
+  return hkdfDerive(combined, new Uint8Array(0), HYBRID_HKDF_INFO, 32);
+}
+
+// =============================================================================
 // GÉNÉRATION DE CLÉS STEALTH
 // =============================================================================
 
 /**
- * Génère une paire de clés stealth (spending + viewing) à partir d'un mnemonic
+ * Génère une paire de clés stealth (spending + viewing) à partir d'un mnemonic.
+ * If enableHybrid is true, also generates an ML-KEM-768 keypair for
+ * post-quantum resistance (v2 meta-address).
  *
  * @param mnemonic - La phrase mnémonique du wallet
- * @returns StealthKeyPair contenant les 4 clés
+ * @param enableHybrid - Generate ML-KEM-768 keypair for v2 hybrid stealth
+ * @returns StealthKeyPair contenant les clés (+ KEM keys if hybrid)
  */
-export async function generateStealthKeys(mnemonic: string): Promise<StealthKeyPair> {
+export async function generateStealthKeys(
+  mnemonic: string,
+  enableHybrid: boolean = false
+): Promise<StealthKeyPair> {
   // Valider le mnemonic
   if (!bip39.validateMnemonic(mnemonic)) {
     throw new Error('Invalid mnemonic');
@@ -285,12 +363,20 @@ export async function generateStealthKeys(mnemonic: string): Promise<StealthKeyP
   const viewingSeed = derivePath(VIEWING_KEY_PATH, seedHex).key;
   const viewingKeyPair = nacl.sign.keyPair.fromSeed(viewingSeed);
 
-  return {
+  const keys: StealthKeyPair = {
     spendingKey: spendingKeyPair.secretKey,
     spendingPubKey: spendingKeyPair.publicKey,
     viewingKey: viewingKeyPair.secretKey,
     viewingPubKey: viewingKeyPair.publicKey,
   };
+
+  if (enableHybrid) {
+    const kem = kemGenerateKeypair();
+    keys.kemPubKey = kem.publicKey;
+    keys.kemSecretKey = kem.secretKey;
+  }
+
+  return keys;
 }
 
 // =============================================================================
@@ -298,29 +384,40 @@ export async function generateStealthKeys(mnemonic: string): Promise<StealthKeyP
 // =============================================================================
 
 /**
- * Crée une meta-address publiable à partir des clés stealth
- * Format: st:01<spending_pub_key><viewing_pub_key> en base58
+ * Crée une meta-address publiable à partir des clés stealth.
+ *
+ * v1 format: st:01<base58(spending_pub(32) + viewing_pub(32))>
+ * v2 format: st:02<base58(spending_pub(32) + viewing_pub(32) + kem_pub(1184))>
+ *
+ * Automatically uses v2 if the key pair contains a kemPubKey.
  *
  * @param stealthKeys - La paire de clés stealth
  * @returns La meta-address encodée
  */
 export function createMetaAddress(stealthKeys: StealthKeyPair): string {
-  // Combiner les deux clés publiques (32 + 32 = 64 bytes)
+  if (stealthKeys.kemPubKey) {
+    // v2: 32 + 32 + 1184 = 1248 bytes
+    const combined = new Uint8Array(1248);
+    combined.set(stealthKeys.spendingPubKey, 0);
+    combined.set(stealthKeys.viewingPubKey, 32);
+    combined.set(stealthKeys.kemPubKey, 64);
+    const encoded = toBase58(combined);
+    return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION_V2}${encoded}`;
+  }
+
+  // v1: 32 + 32 = 64 bytes
   const combined = new Uint8Array(64);
   combined.set(stealthKeys.spendingPubKey, 0);
   combined.set(stealthKeys.viewingPubKey, 32);
-
-  // Encoder en base58 avec préfixe
   const encoded = toBase58(combined);
-
-  return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION}${encoded}`;
+  return `${META_ADDRESS_PREFIX}${META_ADDRESS_VERSION_V1}${encoded}`;
 }
 
 /**
- * Parse une meta-address pour extraire les clés publiques
+ * Parse une meta-address pour extraire les clés publiques (v1 or v2)
  *
  * @param metaAddress - La meta-address à parser
- * @returns Les clés publiques spending et viewing
+ * @returns Les clés publiques spending, viewing, and optionally kemPubKey
  */
 export function parseMetaAddress(metaAddress: string): ParsedMetaAddress {
   // Vérifier le préfixe
@@ -328,31 +425,46 @@ export function parseMetaAddress(metaAddress: string): ParsedMetaAddress {
     throw new Error('Invalid meta-address: missing prefix');
   }
 
-  // Retirer le préfixe et la version
+  // Retirer le préfixe
   const withoutPrefix = metaAddress.slice(META_ADDRESS_PREFIX.length);
 
-  // Vérifier la version
-  if (!withoutPrefix.startsWith(META_ADDRESS_VERSION)) {
-    throw new Error(`Invalid meta-address version: expected ${META_ADDRESS_VERSION}`);
+  // Check version
+  if (withoutPrefix.startsWith(META_ADDRESS_VERSION_V2)) {
+    // v2: hybrid with ML-KEM-768
+    const encoded = withoutPrefix.slice(META_ADDRESS_VERSION_V2.length);
+    const combined = fromBase58(encoded);
+
+    if (combined.length !== 1248) {
+      throw new Error(`Invalid v2 meta-address: expected 1248 bytes, got ${combined.length}`);
+    }
+
+    return {
+      spendingPubKey: combined.slice(0, 32),
+      viewingPubKey: combined.slice(32, 64),
+      kemPubKey: combined.slice(64, 64 + KEM_PUBLIC_KEY_SIZE),
+    };
   }
 
-  const encoded = withoutPrefix.slice(META_ADDRESS_VERSION.length);
+  if (withoutPrefix.startsWith(META_ADDRESS_VERSION_V1)) {
+    // v1: classic ECDH
+    const encoded = withoutPrefix.slice(META_ADDRESS_VERSION_V1.length);
+    const combined = fromBase58(encoded);
 
-  // Décoder depuis base58
-  const combined = fromBase58(encoded);
+    if (combined.length !== 64) {
+      throw new Error(`Invalid v1 meta-address: expected 64 bytes, got ${combined.length}`);
+    }
 
-  if (combined.length !== 64) {
-    throw new Error(`Invalid meta-address: expected 64 bytes, got ${combined.length}`);
+    return {
+      spendingPubKey: combined.slice(0, 32),
+      viewingPubKey: combined.slice(32, 64),
+    };
   }
 
-  return {
-    spendingPubKey: combined.slice(0, 32),
-    viewingPubKey: combined.slice(32, 64),
-  };
+  throw new Error(`Invalid meta-address version: expected ${META_ADDRESS_VERSION_V1} or ${META_ADDRESS_VERSION_V2}`);
 }
 
 /**
- * Vérifie si une chaîne est une meta-address valide
+ * Vérifie si une chaîne est une meta-address valide (v1 or v2)
  *
  * @param address - L'adresse à vérifier
  * @returns true si c'est une meta-address valide
@@ -374,20 +486,28 @@ export function isMetaAddress(address: string): boolean {
 // =============================================================================
 
 /**
- * Génère une adresse stealth unique pour un paiement
+ * Génère une adresse stealth unique pour un paiement.
+ * Automatically uses hybrid mode (X25519 + ML-KEM-768) if the meta-address
+ * contains a kemPubKey (v2). Falls back to classic ECDH for v1.
  *
- * Processus:
+ * v1 process:
  * 1. Génère une clé éphémère aléatoire (r)
  * 2. Calcule le shared secret: S = r * viewing_pub_key (ECDH)
  * 3. Dérive une clé avec HKDF: k = HKDF(S)
  * 4. Calcule l'adresse stealth: P = spending_pub_key + k*G
  *
+ * v2 process (hybrid):
+ * 1-2. Same ECDH as v1 → classicSecret
+ * 3. KEM encapsulate with kemPubKey → kemCiphertext + kemSecret
+ * 4. Combine: S_hybrid = HKDF(classicSecret || kemSecret)
+ * 5. Dérive tweak + stealth address from S_hybrid
+ *
  * @param metaAddress - La meta-address du destinataire
- * @returns L'adresse stealth et la clé éphémère publique
+ * @returns L'adresse stealth, la clé éphémère publique, and optionally kemCiphertext
  */
 export async function generateStealthAddress(metaAddress: string): Promise<GeneratedStealthAddress> {
   // Parser la meta-address
-  const { spendingPubKey, viewingPubKey } = parseMetaAddress(metaAddress);
+  const { spendingPubKey, viewingPubKey, kemPubKey } = parseMetaAddress(metaAddress);
 
   // Générer une clé éphémère aléatoire
   const ephemeralSeed = randomBytes(32);
@@ -397,8 +517,21 @@ export async function generateStealthAddress(metaAddress: string): Promise<Gener
   const ephemeralCurve = ed25519SecretKeyToCurve25519(ephemeralKeyPair.secretKey);
   const viewingCurve = ed25519PublicKeyToCurve25519(viewingPubKey);
 
-  // Calculer le shared secret via ECDH
-  const sharedSecret = nacl.scalarMult(ephemeralCurve, viewingCurve);
+  // Calculer le shared secret classique via ECDH
+  const classicSecret = nacl.scalarMult(ephemeralCurve, viewingCurve);
+
+  let sharedSecret: Uint8Array;
+  let kemCiphertext: Uint8Array | undefined;
+
+  if (kemPubKey) {
+    // Hybrid mode: X25519 + ML-KEM-768
+    const kem = kemEncapsulate(kemPubKey);
+    kemCiphertext = kem.cipherText;
+    sharedSecret = await deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
+  } else {
+    // Classic mode: ECDH only
+    sharedSecret = classicSecret;
+  }
 
   // Dériver la clé de tweak avec HKDF
   const salt = ephemeralKeyPair.publicKey.slice(0, 16);
@@ -409,8 +542,6 @@ export async function generateStealthAddress(metaAddress: string): Promise<Gener
 
   // Additionner les clés publiques (point addition sur ed25519)
   // P_stealth = P_spending + P_tweak
-  // Note: Cette addition de points est une approximation
-  // Pour une vraie implémentation, utiliser une bibliothèque d'opérations sur courbes elliptiques
   const stealthPubKey = addPublicKeys(spendingPubKey, tweakKeyPair.publicKey);
 
   // Créer la PublicKey Solana
@@ -420,6 +551,7 @@ export async function generateStealthAddress(metaAddress: string): Promise<Gener
     stealthAddress,
     ephemeralPubKey: ephemeralKeyPair.publicKey,
     sharedSecret,
+    kemCiphertext,
   };
 }
 
@@ -469,14 +601,18 @@ export interface ParsedStealthTransaction {
   timestamp: number;
   /** Clé éphémère (si présente dans le memo ou les données) */
   ephemeralPubKey?: string;
+  /** ML-KEM-768 ciphertext from v2 announcement (base58 encoded) */
+  kemCiphertext?: string;
 }
 
 /**
- * Scanne les transactions pour détecter les paiements stealth reçus
+ * Scanne les transactions pour détecter les paiements stealth reçus.
+ * Supports both v1 (classic) and v2 (hybrid) stealth payments.
  *
  * Processus pour chaque transaction:
  * 1. Extraire la clé éphémère E du memo
  * 2. Calculer le shared secret: S = viewing_key * E (ECDH)
+ *    For v2: also decapsulate kemCiphertext and combine secrets
  * 3. Dériver k = HKDF(S)
  * 4. Calculer P_expected = spending_pub + k*G
  * 5. Si P_expected == destination, c'est un paiement pour nous
@@ -505,11 +641,21 @@ export async function scanForPayments(
         continue;
       }
 
+      // Decode KEM ciphertext if present (v2 hybrid payment)
+      let kemCiphertextBytes: Uint8Array | undefined;
+      if (tx.kemCiphertext) {
+        kemCiphertextBytes = fromBase58(tx.kemCiphertext);
+        if (kemCiphertextBytes.length !== KEM_CIPHERTEXT_SIZE) {
+          kemCiphertextBytes = undefined;
+        }
+      }
+
       // Vérifier si cette transaction nous appartient
       const isOurs = await checkStealthPayment(
         stealthKeys,
         ephemeralPubKey,
-        tx.destination
+        tx.destination,
+        kemCiphertextBytes
       );
 
       if (isOurs) {
@@ -521,6 +667,7 @@ export async function scanForPayments(
           signature: tx.signature,
           timestamp: tx.timestamp,
           claimed: false,
+          kemCiphertext: kemCiphertextBytes,
         });
       }
     } catch (error) {
@@ -533,20 +680,32 @@ export async function scanForPayments(
 }
 
 /**
- * Vérifie si un paiement stealth nous appartient
+ * Vérifie si un paiement stealth nous appartient.
+ * Supports v2 hybrid mode when kemCiphertext + kemSecretKey are available.
  */
 async function checkStealthPayment(
   stealthKeys: StealthKeyPair,
   ephemeralPubKey: Uint8Array,
-  destinationAddress: string
+  destinationAddress: string,
+  kemCiphertext?: Uint8Array
 ): Promise<boolean> {
   try {
     // Convertir les clés pour ECDH
     const viewingCurve = ed25519SecretKeyToCurve25519(stealthKeys.viewingKey);
     const ephemeralCurve = ed25519PublicKeyToCurve25519(ephemeralPubKey);
 
-    // Calculer le shared secret
-    const sharedSecret = nacl.scalarMult(viewingCurve, ephemeralCurve);
+    // Calculer le shared secret classique
+    const classicSecret = nacl.scalarMult(viewingCurve, ephemeralCurve);
+
+    let sharedSecret: Uint8Array;
+
+    if (kemCiphertext && stealthKeys.kemSecretKey) {
+      // Hybrid mode: decapsulate KEM + combine with ECDH
+      const kemSharedSecret = kemDecapsulate(kemCiphertext, stealthKeys.kemSecretKey);
+      sharedSecret = await deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+    } else {
+      sharedSecret = classicSecret;
+    }
 
     // Dériver le tweak
     const salt = ephemeralPubKey.slice(0, 16);
@@ -570,33 +729,44 @@ async function checkStealthPayment(
 // =============================================================================
 
 /**
- * Dérive la clé privée pour dépenser un paiement stealth
+ * Dérive la clé privée pour dépenser un paiement stealth.
+ * Supports v2 hybrid mode when kemCiphertext + kemSecretKey are provided.
  *
  * La clé privée stealth est: s_stealth = s_spending + k
- * où k est dérivé du shared secret
+ * où k est dérivé du shared secret (classic or hybrid)
  *
  * @param stealthKeys - Les clés stealth du destinataire
  * @param ephemeralPubKey - La clé éphémère de la transaction
+ * @param kemCiphertext - KEM ciphertext from the announcement (v2 hybrid)
  * @returns Le Keypair pour signer les transactions depuis l'adresse stealth
  */
 export async function deriveSpendingKey(
   stealthKeys: StealthKeyPair,
-  ephemeralPubKey: Uint8Array
+  ephemeralPubKey: Uint8Array,
+  kemCiphertext?: Uint8Array
 ): Promise<Keypair> {
   // Convertir les clés pour ECDH
   const viewingCurve = ed25519SecretKeyToCurve25519(stealthKeys.viewingKey);
   const ephemeralCurve = ed25519PublicKeyToCurve25519(ephemeralPubKey);
 
-  // Calculer le shared secret
-  const sharedSecret = nacl.scalarMult(viewingCurve, ephemeralCurve);
+  // Calculer le shared secret classique
+  const classicSecret = nacl.scalarMult(viewingCurve, ephemeralCurve);
+
+  let sharedSecret: Uint8Array;
+
+  if (kemCiphertext && stealthKeys.kemSecretKey) {
+    // Hybrid mode: decapsulate KEM + combine with ECDH
+    const kemSharedSecret = kemDecapsulate(kemCiphertext, stealthKeys.kemSecretKey);
+    sharedSecret = await deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+  } else {
+    sharedSecret = classicSecret;
+  }
 
   // Dériver le tweak
   const salt = ephemeralPubKey.slice(0, 16);
   const tweakKey = await hkdfDerive(sharedSecret, salt, HKDF_INFO, 32);
 
   // Combiner la clé de spending avec le tweak
-  // Note: En ed25519, l'addition de clés privées est modulo l'ordre de la courbe
-  // Ici on utilise une approximation en combinant les seeds
   const spendingSeed = stealthKeys.spendingKey.slice(0, 32);
   const combinedSeed = new Uint8Array(64);
   combinedSeed.set(spendingSeed, 0);
@@ -613,14 +783,17 @@ export async function deriveSpendingKey(
 }
 
 /**
- * Dérive la clé de dépense à partir d'une clé éphémère encodée en base58
+ * Dérive la clé de dépense à partir d'une clé éphémère encodée en base58.
+ * Supports v2 hybrid mode when kemCiphertextBase58 is provided.
  */
 export async function deriveSpendingKeyFromBase58(
   stealthKeys: StealthKeyPair,
-  ephemeralPubKeyBase58: string
+  ephemeralPubKeyBase58: string,
+  kemCiphertextBase58?: string
 ): Promise<Keypair> {
   const ephemeralPubKey = fromBase58(ephemeralPubKeyBase58);
-  return deriveSpendingKey(stealthKeys, ephemeralPubKey);
+  const kemCiphertext = kemCiphertextBase58 ? fromBase58(kemCiphertextBase58) : undefined;
+  return deriveSpendingKey(stealthKeys, ephemeralPubKey, kemCiphertext);
 }
 
 // =============================================================================
@@ -635,24 +808,55 @@ export function encodeEphemeralKey(ephemeralPubKey: Uint8Array): string {
 }
 
 /**
- * Génère un memo contenant la clé éphémère pour une transaction stealth
- * Format: "P01:STEALTH:<ephemeral_pub_key_base58>"
+ * Génère un memo contenant la clé éphémère pour une transaction stealth.
+ * v2 format includes the KEM ciphertext for hybrid payments.
+ *
+ * v1: "P01:STEALTH:<ephemeral_pub_key_base58>"
+ * v2: "P01:STEALTH:V2:<ephemeral_pub_key_base58>:<kem_ciphertext_base58>"
  */
-export function createStealthMemo(ephemeralPubKey: Uint8Array): string {
-  const encoded = encodeEphemeralKey(ephemeralPubKey);
-  return `P01:STEALTH:${encoded}`;
+export function createStealthMemo(
+  ephemeralPubKey: Uint8Array,
+  kemCiphertext?: Uint8Array
+): string {
+  const encodedEphemeral = encodeEphemeralKey(ephemeralPubKey);
+
+  if (kemCiphertext) {
+    const encodedKem = toBase58(kemCiphertext);
+    return `P01:STEALTH:V2:${encodedEphemeral}:${encodedKem}`;
+  }
+
+  return `P01:STEALTH:${encodedEphemeral}`;
 }
 
 /**
- * Parse un memo de transaction stealth
- * @returns La clé éphémère ou null si le memo n'est pas un memo stealth
+ * Parse un memo de transaction stealth (v1 or v2)
+ * @returns Object with ephemeralPubKey and optionally kemCiphertext, or null
  */
-export function parseStealthMemo(memo: string): string | null {
-  const prefix = 'P01:STEALTH:';
-  if (!memo.startsWith(prefix)) {
-    return null;
+export function parseStealthMemo(memo: string): {
+  ephemeralPubKey: string;
+  kemCiphertext?: string;
+} | null {
+  // v2 format: P01:STEALTH:V2:<ephemeral>:<kem_ciphertext>
+  const v2Prefix = 'P01:STEALTH:V2:';
+  if (memo.startsWith(v2Prefix)) {
+    const rest = memo.slice(v2Prefix.length);
+    const colonIdx = rest.indexOf(':');
+    if (colonIdx === -1) return null;
+    return {
+      ephemeralPubKey: rest.slice(0, colonIdx),
+      kemCiphertext: rest.slice(colonIdx + 1),
+    };
   }
-  return memo.slice(prefix.length);
+
+  // v1 format: P01:STEALTH:<ephemeral>
+  const v1Prefix = 'P01:STEALTH:';
+  if (memo.startsWith(v1Prefix)) {
+    return {
+      ephemeralPubKey: memo.slice(v1Prefix.length),
+    };
+  }
+
+  return null;
 }
 
 /**

@@ -1083,14 +1083,7 @@ export const useShieldedStore = create<ShieldedState>()(
             return { found: 0, amount: 0, payments: [] };
           }
 
-          // Get stealth keys from ZK service (derived from seed phrase)
-          const stealthKeys = _zkService.getStealthKeys();
-          if (!stealthKeys) {
-            console.warn('[Shielded] Stealth keys not available');
-            return { found: 0, amount: 0, payments: [] };
-          }
-
-          // Use the proper ZK-derived viewing and spending keys
+          // Use the stealth keys already fetched above
           const viewingKey = stealthKeys.viewingKey;
           const spendingKey = stealthKeys.spendingKey;
 

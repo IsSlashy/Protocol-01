@@ -19,8 +19,9 @@ import {
   createMetaAddress,
   calculateStealthBalance,
   lamportsToSol,
-  deriveSpendingKeyFromBase58,
+  deriveSpendingKey,
 } from '../services/stealth';
+import bs58 from 'bs58';
 import { getConnection, NetworkType } from '../services/wallet';
 import {
   SystemProgram,
@@ -126,12 +127,19 @@ export const useStealthStore = create<StealthState>()(
           const metaAddress = createMetaAddress(stealthKeys);
 
           // Sérialiser les clés pour le chiffrement
-          const keysData = JSON.stringify({
+          const keysObj: Record<string, number[]> = {
             spendingKey: Array.from(stealthKeys.spendingKey),
             spendingPubKey: Array.from(stealthKeys.spendingPubKey),
             viewingKey: Array.from(stealthKeys.viewingKey),
             viewingPubKey: Array.from(stealthKeys.viewingPubKey),
-          });
+          };
+          if (stealthKeys.kemPubKey) {
+            keysObj.kemPubKey = Array.from(stealthKeys.kemPubKey);
+          }
+          if (stealthKeys.kemSecretKey) {
+            keysObj.kemSecretKey = Array.from(stealthKeys.kemSecretKey);
+          }
+          const keysData = JSON.stringify(keysObj);
 
           // Chiffrer les clés
           const encryptedStealthKeys = await encrypt(keysData, password);
@@ -176,6 +184,8 @@ export const useStealthStore = create<StealthState>()(
             spendingPubKey: new Uint8Array(parsed.spendingPubKey),
             viewingKey: new Uint8Array(parsed.viewingKey),
             viewingPubKey: new Uint8Array(parsed.viewingPubKey),
+            kemPubKey: parsed.kemPubKey ? new Uint8Array(parsed.kemPubKey) : undefined,
+            kemSecretKey: parsed.kemSecretKey ? new Uint8Array(parsed.kemSecretKey) : undefined,
           };
 
           // Recalculer la balance
@@ -355,9 +365,11 @@ export const useStealthStore = create<StealthState>()(
 
         try {
           // Dériver la clé de dépense pour cette adresse stealth
-          const stealthKeypair = await deriveSpendingKeyFromBase58(
+          const ephemeralPubKeyBytes = bs58.decode(payment.ephemeralPubKey);
+          const stealthKeypair = await deriveSpendingKey(
             _stealthKeys,
-            payment.ephemeralPubKey
+            ephemeralPubKeyBytes,
+            payment.kemCiphertext
           );
 
           // Créer la transaction de transfert
