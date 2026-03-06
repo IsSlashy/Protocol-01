@@ -80,3 +80,11 @@ nul
 # Log dumps
 logcat_*.txt
 shield_logs.txt
+
+# Screenshots (dev debugging)
+screen*.png
+apps/mobile/screen*.png
+apps/mobile/ui*.xml
+
+# Solana test validator ledger
+test-ledger/
