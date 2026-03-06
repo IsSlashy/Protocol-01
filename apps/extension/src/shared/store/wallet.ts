@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { chromeStorage } from '../storage';
-import { encrypt, decrypt, hashPassword, verifyPassword, EncryptedData } from '../services/crypto';
+import { encrypt, decrypt, hashPassword, verifyPassword, EncryptedData, getLockoutRemaining, recordFailedAttempt, resetUnlockAttempts } from '../services/crypto';
 import {
   encryptForSession,
   decryptFromSession,
@@ -371,15 +371,27 @@ export const useWalletStore = create<WalletState>()(
           return false;
         }
 
+        // Check brute-force lockout before attempting
+        const lockoutMs = await getLockoutRemaining();
+        if (lockoutMs > 0) {
+          const secs = Math.ceil(lockoutMs / 1000);
+          set({ isLoading: false, error: `Too many failed attempts. Try again in ${secs}s` });
+          return false;
+        }
+
         set({ isLoading: true, error: null });
 
         try {
           // Verify password
           const isValid = await verifyPassword(password, passwordHash);
           if (!isValid) {
+            await recordFailedAttempt();
             set({ isLoading: false, error: 'Invalid password' });
             return false;
           }
+
+          // Password correct — reset brute-force counter
+          await resetUnlockAttempts();
 
           // Decrypt seed phrase
           const mnemonic = await decrypt(encryptedSeedPhrase, password);

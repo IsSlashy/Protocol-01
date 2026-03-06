@@ -270,6 +270,10 @@ export {
   verify,
   randomBytes,
   randomSeed,
+  ed25519PublicKeyToX25519,
+  ed25519SecretKeyToX25519,
+  ed25519ToX25519PublicKey,
+  ed25519ToX25519PrivateKey,
   constantTimeEqual,
   secureClear,
 

@@ -18,8 +18,8 @@ import nacl from 'tweetnacl';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import { Buffer } from 'buffer';
-import { ed25519, x25519 } from '@noble/curves/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha256 } from '@noble/hashes/sha256';
+import { hkdf } from '@noble/hashes/hkdf';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 
 // =============================================================================
@@ -99,11 +99,11 @@ const META_ADDRESS_VERSION_V2 = '02';
 const SPENDING_KEY_PATH = "m/44'/501'/0'/0'/0'";
 const VIEWING_KEY_PATH = "m/44'/501'/0'/0'/1'";
 
-/** Info pour HKDF */
-const HKDF_INFO = new TextEncoder().encode('P01-STEALTH-v1');
+/** Info string for stealth seed derivation (must match specter-sdk STEALTH_SEED_INFO) */
+const STEALTH_SEED_INFO = 'p01-stealth-seed';
 
-/** Info string for hybrid HKDF (must match specter-sdk) */
-const HYBRID_HKDF_INFO = new TextEncoder().encode('p01-hybrid-stealth-v2');
+/** Info string for hybrid HKDF (must match specter-sdk HYBRID_HKDF_INFO) */
+const HYBRID_HKDF_INFO = 'p01-hybrid-stealth-v2';
 
 /** ML-KEM-768 sizes (FIPS 203) */
 const KEM_PUBLIC_KEY_SIZE = 1184;
@@ -114,102 +114,35 @@ const KEM_CIPHERTEXT_SIZE = 1088;
 // =============================================================================
 
 /**
- * Converts an ed25519 public key to a curve25519 (x25519) public key
- * Uses the birational map from Edwards to Montgomery form
- *
- * The conversion formula is: u = (1 + y) / (1 - y) mod p
- * where y is the y-coordinate of the ed25519 point
+ * Derive a shared secret using raw X25519 ECDH.
+ * Both keys must be X25519 keys (from nacl.box.keyPair).
  */
-function ed25519PublicKeyToCurve25519(publicKey: Uint8Array): Uint8Array {
-  // ed25519 public key is the compressed y-coordinate with sign bit
-  // We use the @noble/curves library for proper conversion
-  try {
-    // Decode the ed25519 point
-    const point = ed25519.ExtendedPoint.fromHex(publicKey);
-
-    // Convert to Montgomery form (x25519)
-    // u = (1 + y) / (1 - y) mod p
-    const { y } = point.toAffine();
-    const p = ed25519.CURVE.Fp.ORDER;
-    const Fp = ed25519.CURVE.Fp;
-
-    const one = Fp.create(1n);
-    const numerator = Fp.add(one, y);
-    const denominator = Fp.sub(one, y);
-    const u = Fp.mul(numerator, Fp.inv(denominator));
-
-    // Convert to bytes (little-endian)
-    const uBytes = new Uint8Array(32);
-    let val = u;
-    for (let i = 0; i < 32; i++) {
-      uBytes[i] = Number(val & 0xffn);
-      val >>= 8n;
-    }
-
-    return uBytes;
-  } catch {
-    // Fallback for invalid points - hash the key
-    const hash = sha512(publicKey);
-    return hash.slice(0, 32);
-  }
+function deriveSharedSecret(
+  privateKey: Uint8Array,
+  publicKey: Uint8Array
+): Uint8Array {
+  return nacl.scalarMult(privateKey, publicKey);
 }
 
 /**
- * Converts an ed25519 secret key to a curve25519 (x25519) secret key
- * The ed25519 secret key is hashed with SHA-512, then the first 32 bytes
- * are clamped according to the x25519 specification
+ * Derive a deterministic stealth seed from shared secret and spending public key.
+ * Uses HKDF-SHA256 with spendingPubKey as salt and STEALTH_SEED_INFO as info.
+ * Matches specter-sdk deriveStealthSeed exactly.
  */
-function ed25519SecretKeyToCurve25519(secretKey: Uint8Array): Uint8Array {
-  // ed25519 secret key is 64 bytes: first 32 are seed, last 32 are public key
-  // For x25519, we hash the seed and clamp it
-  const seed = secretKey.slice(0, 32);
-
-  // Hash the seed with SHA-512 (same as ed25519 key expansion)
-  const hash = sha512(seed);
-
-  // Take first 32 bytes and clamp for x25519
-  const scalar = new Uint8Array(hash.slice(0, 32));
-
-  // Clamp according to x25519 spec (RFC 7748)
-  scalar[0] &= 248;      // Clear bottom 3 bits
-  scalar[31] &= 127;     // Clear top bit
-  scalar[31] |= 64;      // Set second-to-top bit
-
-  return scalar;
+function deriveStealthSeed(
+  spendingPubKey: Uint8Array,
+  sharedSecret: Uint8Array
+): Uint8Array {
+  return hkdf(sha256, sharedSecret, spendingPubKey, STEALTH_SEED_INFO, 32);
 }
 
 /**
- * HKDF-SHA256 pour dériver des clés à partir du shared secret
- * Implémentation simplifiée de HKDF (RFC 5869)
+ * Compute a view tag from shared secret: first byte of sha256(sharedSecret).
+ * Matches specter-sdk computeViewTag exactly.
  */
-async function hkdfDerive(
-  inputKeyMaterial: Uint8Array,
-  salt: Uint8Array,
-  info: Uint8Array,
-  length: number
-): Promise<Uint8Array> {
-  // Import the input key material
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new Uint8Array(inputKeyMaterial.buffer, inputKeyMaterial.byteOffset, inputKeyMaterial.byteLength) as BufferSource,
-    { name: 'HKDF' },
-    false,
-    ['deriveBits']
-  );
-
-  // Derive bits using HKDF
-  const derivedBits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(salt.buffer, salt.byteOffset, salt.byteLength) as BufferSource,
-      info: new Uint8Array(info.buffer, info.byteOffset, info.byteLength) as BufferSource,
-    },
-    key,
-    length * 8
-  );
-
-  return new Uint8Array(derivedBits);
+function computeViewTag(sharedSecret: Uint8Array): number {
+  const hash = sha256(sharedSecret);
+  return hash[0]!;
 }
 
 /**
@@ -317,16 +250,17 @@ function kemDecapsulate(cipherText: Uint8Array, kemSecretKey: Uint8Array): Uint8
  * Derive a hybrid shared secret by combining classical ECDH and post-quantum KEM secrets.
  * Security holds if EITHER the classical or post-quantum scheme is secure.
  *
- * Uses HKDF to combine both secrets into a single 32-byte key.
+ * Uses HKDF-SHA256 to combine both secrets into a single 32-byte key.
+ * Matches specter-sdk deriveHybridSharedSecret exactly.
  */
-async function deriveHybridSharedSecret(
+function deriveHybridSharedSecret(
   classicSecret: Uint8Array,
   kemSecret: Uint8Array
-): Promise<Uint8Array> {
+): Uint8Array {
   const combined = new Uint8Array(classicSecret.length + kemSecret.length);
   combined.set(classicSecret);
   combined.set(kemSecret, classicSecret.length);
-  return hkdfDerive(combined, new Uint8Array(0), HYBRID_HKDF_INFO, 32);
+  return hkdf(sha256, combined, undefined, HYBRID_HKDF_INFO, 32);
 }
 
 // =============================================================================
@@ -337,6 +271,13 @@ async function deriveHybridSharedSecret(
  * Génère une paire de clés stealth (spending + viewing) à partir d'un mnemonic.
  * If enableHybrid is true, also generates an ML-KEM-768 keypair for
  * post-quantum resistance (v2 meta-address).
+ *
+ * Spending key: Ed25519 keypair (for Solana signatures)
+ * Viewing key: X25519 keypair (for ECDH shared secret derivation)
+ *
+ * The viewing key is X25519 native — no birational map conversion needed.
+ * This matches the specter-sdk protocol where ephemeral and viewing keys
+ * are both X25519 (nacl.box.keyPair).
  *
  * @param mnemonic - La phrase mnémonique du wallet
  * @param enableHybrid - Generate ML-KEM-768 keypair for v2 hybrid stealth
@@ -355,19 +296,20 @@ export async function generateStealthKeys(
   const seed = await bip39.mnemonicToSeed(mnemonic);
   const seedHex = Buffer.from(seed).toString('hex');
 
-  // Dériver la clé de spending
+  // Dériver la clé de spending (Ed25519 for Solana signatures)
   const spendingSeed = derivePath(SPENDING_KEY_PATH, seedHex).key;
   const spendingKeyPair = nacl.sign.keyPair.fromSeed(spendingSeed);
 
-  // Dériver la clé de viewing (chemin différent)
+  // Dériver la clé de viewing (X25519 for ECDH)
+  // We derive a 32-byte seed from the viewing path, then use it as an X25519 secret key
   const viewingSeed = derivePath(VIEWING_KEY_PATH, seedHex).key;
-  const viewingKeyPair = nacl.sign.keyPair.fromSeed(viewingSeed);
+  const viewingKeyPair = nacl.box.keyPair.fromSecretKey(viewingSeed);
 
   const keys: StealthKeyPair = {
     spendingKey: spendingKeyPair.secretKey,
     spendingPubKey: spendingKeyPair.publicKey,
-    viewingKey: viewingKeyPair.secretKey,
-    viewingPubKey: viewingKeyPair.publicKey,
+    viewingKey: viewingSeed, // 32-byte X25519 private key
+    viewingPubKey: viewingKeyPair.publicKey, // 32-byte X25519 public key
   };
 
   if (enableHybrid) {
@@ -490,35 +432,26 @@ export function isMetaAddress(address: string): boolean {
  * Automatically uses hybrid mode (X25519 + ML-KEM-768) if the meta-address
  * contains a kemPubKey (v2). Falls back to classic ECDH for v1.
  *
- * v1 process:
- * 1. Génère une clé éphémère aléatoire (r)
- * 2. Calcule le shared secret: S = r * viewing_pub_key (ECDH)
- * 3. Dérive une clé avec HKDF: k = HKDF(S)
- * 4. Calcule l'adresse stealth: P = spending_pub_key + k*G
- *
- * v2 process (hybrid):
- * 1-2. Same ECDH as v1 → classicSecret
- * 3. KEM encapsulate with kemPubKey → kemCiphertext + kemSecret
- * 4. Combine: S_hybrid = HKDF(classicSecret || kemSecret)
- * 5. Dérive tweak + stealth address from S_hybrid
+ * Protocol (matches specter-sdk):
+ * 1. Generate ephemeral X25519 keypair (r, R)
+ * 2. ECDH: classicSecret = X25519(r, viewingPubKey)
+ * 3. For v2 hybrid: combine with ML-KEM-768 KEM secret
+ * 4. Stealth seed: HKDF(sha256, sharedSecret, spendingPubKey, 'p01-stealth-seed', 32)
+ * 5. Stealth keypair: nacl.sign.keyPair.fromSeed(stealthSeed)
+ * 6. View tag: sha256(sharedSecret)[0]
  *
  * @param metaAddress - La meta-address du destinataire
  * @returns L'adresse stealth, la clé éphémère publique, and optionally kemCiphertext
  */
-export async function generateStealthAddress(metaAddress: string): Promise<GeneratedStealthAddress> {
+export function generateStealthAddress(metaAddress: string): GeneratedStealthAddress {
   // Parser la meta-address
   const { spendingPubKey, viewingPubKey, kemPubKey } = parseMetaAddress(metaAddress);
 
-  // Générer une clé éphémère aléatoire
-  const ephemeralSeed = randomBytes(32);
-  const ephemeralKeyPair = nacl.sign.keyPair.fromSeed(ephemeralSeed);
+  // Generate ephemeral X25519 keypair (native, no Ed25519 conversion)
+  const ephemeralKeyPair = nacl.box.keyPair();
 
-  // Convertir les clés pour ECDH (curve25519)
-  const ephemeralCurve = ed25519SecretKeyToCurve25519(ephemeralKeyPair.secretKey);
-  const viewingCurve = ed25519PublicKeyToCurve25519(viewingPubKey);
-
-  // Calculer le shared secret classique via ECDH
-  const classicSecret = nacl.scalarMult(ephemeralCurve, viewingCurve);
+  // Classic ECDH: S = X25519(ephemeralSecret, viewingPubKey)
+  const classicSecret = deriveSharedSecret(ephemeralKeyPair.secretKey, viewingPubKey);
 
   let sharedSecret: Uint8Array;
   let kemCiphertext: Uint8Array | undefined;
@@ -527,25 +460,18 @@ export async function generateStealthAddress(metaAddress: string): Promise<Gener
     // Hybrid mode: X25519 + ML-KEM-768
     const kem = kemEncapsulate(kemPubKey);
     kemCiphertext = kem.cipherText;
-    sharedSecret = await deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
+    sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
   } else {
     // Classic mode: ECDH only
     sharedSecret = classicSecret;
   }
 
-  // Dériver la clé de tweak avec HKDF
-  const salt = ephemeralKeyPair.publicKey.slice(0, 16);
-  const tweakKey = await hkdfDerive(sharedSecret, salt, HKDF_INFO, 32);
+  // Derive stealth seed: HKDF(sha256, sharedSecret, spendingPubKey, 'p01-stealth-seed', 32)
+  const stealthSeed = deriveStealthSeed(spendingPubKey, sharedSecret);
 
-  // Générer un keypair à partir du tweak pour obtenir le point sur la courbe
-  const tweakKeyPair = nacl.sign.keyPair.fromSeed(tweakKey);
-
-  // Additionner les clés publiques (point addition sur ed25519)
-  // P_stealth = P_spending + P_tweak
-  const stealthPubKey = addPublicKeys(spendingPubKey, tweakKeyPair.publicKey);
-
-  // Créer la PublicKey Solana
-  const stealthAddress = new PublicKey(stealthPubKey);
+  // Derive stealth keypair from seed (no point addition)
+  const stealthKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
+  const stealthAddress = new PublicKey(stealthKeypair.publicKey);
 
   return {
     stealthAddress,
@@ -553,34 +479,6 @@ export async function generateStealthAddress(metaAddress: string): Promise<Gener
     sharedSecret,
     kemCiphertext,
   };
-}
-
-/**
- * Addition of two ed25519 public keys using proper elliptic curve point addition
- * P3 = P1 + P2 on the Edwards curve
- */
-function addPublicKeys(key1: Uint8Array, key2: Uint8Array): Uint8Array {
-  try {
-    // Decode both points from compressed form
-    const point1 = ed25519.ExtendedPoint.fromHex(key1);
-    const point2 = ed25519.ExtendedPoint.fromHex(key2);
-
-    // Add points on the curve
-    const sumPoint = point1.add(point2);
-
-    // Convert back to compressed public key format
-    return sumPoint.toRawBytes();
-  } catch (error) {
-    // Fallback: if point operations fail, use deterministic derivation
-    // This maintains compatibility but loses the algebraic relationship
-    console.warn('[Stealth] Point addition failed, using fallback derivation');
-    const combined = new Uint8Array(64);
-    combined.set(key1, 0);
-    combined.set(key2, 32);
-    const hash = sha512(combined);
-    const keyPair = nacl.sign.keyPair.fromSeed(hash.slice(0, 32));
-    return keyPair.publicKey;
-  }
 }
 
 // =============================================================================
@@ -651,7 +549,7 @@ export async function scanForPayments(
       }
 
       // Vérifier si cette transaction nous appartient
-      const isOurs = await checkStealthPayment(
+      const isOurs = checkStealthPayment(
         stealthKeys,
         ephemeralPubKey,
         tx.destination,
@@ -682,41 +580,40 @@ export async function scanForPayments(
 /**
  * Vérifie si un paiement stealth nous appartient.
  * Supports v2 hybrid mode when kemCiphertext + kemSecretKey are available.
+ *
+ * Protocol (matches specter-sdk verifyStealthOwnership):
+ * 1. ECDH: classicSecret = X25519(viewingKey, ephemeralPubKey)
+ * 2. For v2: combine with KEM decapsulation
+ * 3. Stealth seed = HKDF(sha256, sharedSecret, spendingPubKey, 'p01-stealth-seed', 32)
+ * 4. Expected address = nacl.sign.keyPair.fromSeed(stealthSeed).publicKey
+ * 5. Compare with destination
  */
-async function checkStealthPayment(
+function checkStealthPayment(
   stealthKeys: StealthKeyPair,
   ephemeralPubKey: Uint8Array,
   destinationAddress: string,
   kemCiphertext?: Uint8Array
-): Promise<boolean> {
+): boolean {
   try {
-    // Convertir les clés pour ECDH
-    const viewingCurve = ed25519SecretKeyToCurve25519(stealthKeys.viewingKey);
-    const ephemeralCurve = ed25519PublicKeyToCurve25519(ephemeralPubKey);
-
-    // Calculer le shared secret classique
-    const classicSecret = nacl.scalarMult(viewingCurve, ephemeralCurve);
+    // ECDH: viewingKey is X25519 private, ephemeralPubKey is X25519 public
+    const classicSecret = deriveSharedSecret(stealthKeys.viewingKey, ephemeralPubKey);
 
     let sharedSecret: Uint8Array;
 
     if (kemCiphertext && stealthKeys.kemSecretKey) {
       // Hybrid mode: decapsulate KEM + combine with ECDH
       const kemSharedSecret = kemDecapsulate(kemCiphertext, stealthKeys.kemSecretKey);
-      sharedSecret = await deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
     } else {
       sharedSecret = classicSecret;
     }
 
-    // Dériver le tweak
-    const salt = ephemeralPubKey.slice(0, 16);
-    const tweakKey = await hkdfDerive(sharedSecret, salt, HKDF_INFO, 32);
+    // Derive stealth seed (same as sender)
+    const stealthSeed = deriveStealthSeed(stealthKeys.spendingPubKey, sharedSecret);
 
-    // Générer le point de tweak
-    const tweakKeyPair = nacl.sign.keyPair.fromSeed(tweakKey);
-
-    // Calculer l'adresse stealth attendue
-    const expectedPubKey = addPublicKeys(stealthKeys.spendingPubKey, tweakKeyPair.publicKey);
-    const expectedAddress = new PublicKey(expectedPubKey).toBase58();
+    // Derive expected stealth public key
+    const expectedKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
+    const expectedAddress = new PublicKey(expectedKeypair.publicKey).toBase58();
 
     return expectedAddress === destinationAddress;
   } catch {
@@ -732,65 +629,57 @@ async function checkStealthPayment(
  * Dérive la clé privée pour dépenser un paiement stealth.
  * Supports v2 hybrid mode when kemCiphertext + kemSecretKey are provided.
  *
- * La clé privée stealth est: s_stealth = s_spending + k
- * où k est dérivé du shared secret (classic or hybrid)
+ * Protocol (matches specter-sdk deriveStealthPrivateKey):
+ * 1. ECDH: classicSecret = X25519(viewingKey, ephemeralPubKey)
+ * 2. For v2: combine with KEM decapsulation
+ * 3. Stealth seed = HKDF(sha256, sharedSecret, spendingPubKey, 'p01-stealth-seed', 32)
+ * 4. Stealth keypair = nacl.sign.keyPair.fromSeed(stealthSeed)
+ *
+ * The stealth private key is derived deterministically from the shared secret
+ * and spending public key — NOT by combining spending private key + tweak.
  *
  * @param stealthKeys - Les clés stealth du destinataire
- * @param ephemeralPubKey - La clé éphémère de la transaction
+ * @param ephemeralPubKey - La clé éphémère de la transaction (X25519 public key)
  * @param kemCiphertext - KEM ciphertext from the announcement (v2 hybrid)
  * @returns Le Keypair pour signer les transactions depuis l'adresse stealth
  */
-export async function deriveSpendingKey(
+export function deriveSpendingKey(
   stealthKeys: StealthKeyPair,
   ephemeralPubKey: Uint8Array,
   kemCiphertext?: Uint8Array
-): Promise<Keypair> {
-  // Convertir les clés pour ECDH
-  const viewingCurve = ed25519SecretKeyToCurve25519(stealthKeys.viewingKey);
-  const ephemeralCurve = ed25519PublicKeyToCurve25519(ephemeralPubKey);
-
-  // Calculer le shared secret classique
-  const classicSecret = nacl.scalarMult(viewingCurve, ephemeralCurve);
+): Keypair {
+  // ECDH: viewingKey is X25519 private, ephemeralPubKey is X25519 public
+  const classicSecret = deriveSharedSecret(stealthKeys.viewingKey, ephemeralPubKey);
 
   let sharedSecret: Uint8Array;
 
   if (kemCiphertext && stealthKeys.kemSecretKey) {
     // Hybrid mode: decapsulate KEM + combine with ECDH
     const kemSharedSecret = kemDecapsulate(kemCiphertext, stealthKeys.kemSecretKey);
-    sharedSecret = await deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+    sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
   } else {
     sharedSecret = classicSecret;
   }
 
-  // Dériver le tweak
-  const salt = ephemeralPubKey.slice(0, 16);
-  const tweakKey = await hkdfDerive(sharedSecret, salt, HKDF_INFO, 32);
+  // Same deterministic seed as the sender
+  const stealthSeed = deriveStealthSeed(stealthKeys.spendingPubKey, sharedSecret);
 
-  // Combiner la clé de spending avec le tweak
-  const spendingSeed = stealthKeys.spendingKey.slice(0, 32);
-  const combinedSeed = new Uint8Array(64);
-  combinedSeed.set(spendingSeed, 0);
-  combinedSeed.set(tweakKey, 32);
-
-  // Hash pour obtenir une nouvelle seed valide
-  const derivedSeed = nacl.hash(combinedSeed).slice(0, 32);
-
-  // Créer le keypair ed25519
-  const keyPair = nacl.sign.keyPair.fromSeed(derivedSeed);
+  // Derive full keypair from seed
+  const seedKeypair = nacl.sign.keyPair.fromSeed(stealthSeed);
 
   // Convertir en Keypair Solana
-  return Keypair.fromSecretKey(keyPair.secretKey);
+  return Keypair.fromSecretKey(seedKeypair.secretKey);
 }
 
 /**
  * Dérive la clé de dépense à partir d'une clé éphémère encodée en base58.
  * Supports v2 hybrid mode when kemCiphertextBase58 is provided.
  */
-export async function deriveSpendingKeyFromBase58(
+export function deriveSpendingKeyFromBase58(
   stealthKeys: StealthKeyPair,
   ephemeralPubKeyBase58: string,
   kemCiphertextBase58?: string
-): Promise<Keypair> {
+): Keypair {
   const ephemeralPubKey = fromBase58(ephemeralPubKeyBase58);
   const kemCiphertext = kemCiphertextBase58 ? fromBase58(kemCiphertextBase58) : undefined;
   return deriveSpendingKey(stealthKeys, ephemeralPubKey, kemCiphertext);
