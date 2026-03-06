@@ -3,6 +3,14 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { chromeStorage } from '../storage';
 import { encrypt, decrypt, hashPassword, verifyPassword, EncryptedData } from '../services/crypto';
 import {
+  encryptForSession,
+  decryptFromSession,
+  isEncryptedBlob,
+  setSessionPassword,
+  getSessionPassword,
+  clearSessionPassword,
+} from '../services/sessionCrypto';
+import {
   generateMnemonic,
   validateMnemonic,
   deriveKeypairFromMnemonic,
@@ -39,12 +47,16 @@ const SESSION_KEYS = {
 };
 
 /**
- * Save session to chrome.storage.local with timestamp for expiry
+ * Save session to chrome.storage.local with timestamp for expiry.
+ * The secret key is encrypted with the user's password via AES-256-GCM
+ * so it never sits in storage as plaintext.
  */
-async function saveSession(secretKey: Uint8Array): Promise<void> {
+async function saveSession(secretKey: Uint8Array, password: string): Promise<void> {
   try {
+    const plaintext = JSON.stringify(Array.from(secretKey));
+    const encryptedBlob = await encryptForSession(plaintext, password);
     await chrome.storage.local.set({
-      [SESSION_KEYS.SECRET_KEY]: Array.from(secretKey),
+      [SESSION_KEYS.SECRET_KEY]: encryptedBlob,
       [SESSION_KEYS.TIMESTAMP]: Date.now(),
     });
   } catch (e) {
@@ -64,23 +76,55 @@ async function clearSession(): Promise<void> {
 }
 
 /**
- * Try to restore session if still valid
- * Returns keypair if session is valid, null otherwise
+ * Try to restore session if still valid.
+ * Decrypts the stored secret key using the cached session password.
+ * Also handles backward compatibility with legacy plaintext sessions.
+ * Returns keypair if session is valid, null otherwise.
  */
 async function tryRestoreSession(): Promise<Keypair | null> {
   try {
     const result = await chrome.storage.local.get([SESSION_KEYS.SECRET_KEY, SESSION_KEYS.TIMESTAMP]);
 
-    const secretKeyArray = result[SESSION_KEYS.SECRET_KEY];
+    const storedKey = result[SESSION_KEYS.SECRET_KEY];
     const timestamp = result[SESSION_KEYS.TIMESTAMP];
 
-    if (!secretKeyArray || !timestamp) {
+    if (!storedKey || !timestamp) {
       return null;
     }
 
     // Check if session has expired
     const elapsed = Date.now() - timestamp;
     if (elapsed > SESSION_TIMEOUT_MS) {
+      await clearSession();
+      return null;
+    }
+
+    let secretKeyArray: number[];
+
+    if (isEncryptedBlob(storedKey)) {
+      // Encrypted session (new format) -- need session password
+      const password = getSessionPassword();
+      if (!password) {
+        // No cached password means user must re-enter it; session cannot auto-restore
+        return null;
+      }
+      const plaintext = await decryptFromSession(storedKey, password);
+      secretKeyArray = JSON.parse(plaintext);
+    } else if (Array.isArray(storedKey)) {
+      // Legacy plaintext session -- migrate to encrypted on next save
+      console.warn('[Session] Found legacy plaintext session key, will encrypt on next save');
+      secretKeyArray = storedKey;
+
+      // Attempt immediate migration if we have a cached password
+      const password = getSessionPassword();
+      if (password) {
+        const plaintext = JSON.stringify(secretKeyArray);
+        const encryptedBlob = await encryptForSession(plaintext, password);
+        await chrome.storage.local.set({ [SESSION_KEYS.SECRET_KEY]: encryptedBlob });
+        console.log('[Session] Migrated legacy plaintext session to encrypted');
+      }
+    } else {
+      // Unknown format
       await clearSession();
       return null;
     }
@@ -207,6 +251,9 @@ export const useWalletStore = create<WalletState>()(
           const encryptedSeedPhrase = await encrypt(mnemonic, password);
           const passwordHash = await hashPassword(password);
 
+          // Cache password for session encryption
+          setSessionPassword(password);
+
           set({
             isInitialized: true,
             isUnlocked: true,
@@ -216,6 +263,9 @@ export const useWalletStore = create<WalletState>()(
             _keypair: keypair,
             isLoading: false,
           });
+
+          // Save encrypted session
+          await saveSession(keypair.secretKey, password);
 
           // Fetch initial balance
           get().refreshBalance();
@@ -246,6 +296,9 @@ export const useWalletStore = create<WalletState>()(
           const encryptedSeedPhrase = await encrypt(mnemonic, password);
           const passwordHash = await hashPassword(password);
 
+          // Cache password for session encryption
+          setSessionPassword(password);
+
           set({
             isInitialized: true,
             isUnlocked: true,
@@ -255,6 +308,9 @@ export const useWalletStore = create<WalletState>()(
             _keypair: keypair,
             isLoading: false,
           });
+
+          // Save encrypted session
+          await saveSession(keypair.secretKey, password);
 
           // Fetch initial balance and transactions for imported wallet
           get().refreshBalance();
@@ -283,6 +339,7 @@ export const useWalletStore = create<WalletState>()(
       // Logout (for Privy users — full reset)
       logout: async () => {
         clearSession();
+        clearSessionPassword();
         // Clear chrome storage directly to ensure clean state
         try {
           await chrome.storage.local.remove('p01-wallet');
@@ -330,14 +387,17 @@ export const useWalletStore = create<WalletState>()(
           // Derive keypair
           const keypair = await deriveKeypairFromMnemonic(mnemonic);
 
+          // Cache password for session encryption
+          setSessionPassword(password);
+
           set({
             isUnlocked: true,
             _keypair: keypair,
             isLoading: false,
           });
 
-          // Save session for auto-unlock (10 minute timeout)
-          await saveSession(keypair.secretKey);
+          // Save encrypted session for auto-unlock (10 minute timeout)
+          await saveSession(keypair.secretKey, password);
 
           // Fetch balance and transactions
           get().refreshBalance();
@@ -393,6 +453,8 @@ export const useWalletStore = create<WalletState>()(
       lock: () => {
         // Clear session
         clearSession();
+        // Wipe cached password from memory
+        clearSessionPassword();
 
         set({
           isUnlocked: false,
@@ -406,6 +468,7 @@ export const useWalletStore = create<WalletState>()(
       // Reset wallet completely
       reset: async () => {
         clearSession();
+        clearSessionPassword();
         // Clear chrome storage directly to ensure clean state
         try {
           await chrome.storage.local.remove('p01-wallet');

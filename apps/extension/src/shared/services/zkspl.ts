@@ -25,6 +25,12 @@ import {
 } from '@p01/zkspl-sdk';
 import { useWalletStore, getPrivySigner } from '../store/wallet';
 import { getConnection } from './wallet';
+import {
+  encryptForSession,
+  decryptFromSession,
+  isEncryptedBlob,
+  getSessionPassword,
+} from './sessionCrypto';
 
 // ---------------------------------------------------------------------------
 // Token constants
@@ -111,21 +117,51 @@ function deriveSpendingKeyFromSecret(secretKey: Uint8Array): FieldElement {
 
 /**
  * Derive spending key for Privy wallets using a stored random seed.
+ * The seed is encrypted at rest via AES-256-GCM with the user's session
+ * password. Legacy plaintext seeds are transparently migrated on access.
  */
 async function deriveSpendingKeyForPrivy(walletAddress: string): Promise<FieldElement> {
   const storageKey = `p01_zkspl_privy_seed_${walletAddress}`;
   const result = await chrome.storage.local.get(storageKey);
+  const stored = result[storageKey];
+  const password = getSessionPassword();
 
   let seedHex: string;
-  if (result[storageKey]) {
-    seedHex = result[storageKey];
+
+  if (stored) {
+    if (isEncryptedBlob(stored)) {
+      // New encrypted format
+      if (!password) {
+        throw new Error('Wallet must be unlocked to access zkSPL spending key');
+      }
+      seedHex = await decryptFromSession(stored, password);
+    } else if (typeof stored === 'string') {
+      // Legacy plaintext -- migrate
+      console.warn('[zkSPL] Migrating legacy plaintext Privy seed to encrypted');
+      seedHex = stored;
+      if (password) {
+        const encryptedBlob = await encryptForSession(seedHex, password);
+        await chrome.storage.local.set({ [storageKey]: encryptedBlob });
+        console.log('[zkSPL] Privy seed migration complete');
+      }
+    } else {
+      throw new Error('Corrupted zkSPL seed data');
+    }
   } else {
+    // Generate new seed
     const randomBytes = new Uint8Array(32);
     crypto.getRandomValues(randomBytes);
     seedHex = Array.from(randomBytes)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
-    await chrome.storage.local.set({ [storageKey]: seedHex });
+
+    // Store encrypted if we have a password
+    if (password) {
+      const encryptedBlob = await encryptForSession(seedHex, password);
+      await chrome.storage.local.set({ [storageKey]: encryptedBlob });
+    } else {
+      await chrome.storage.local.set({ [storageKey]: seedHex });
+    }
   }
 
   const seedBytes = new Uint8Array(32);
