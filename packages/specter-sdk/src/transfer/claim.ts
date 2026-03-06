@@ -28,14 +28,16 @@ export interface ClaimOptions {
   connection: Connection;
   /** The stealth payment to claim */
   payment: StealthPayment;
-  /** Spending private key (seed portion, 32 bytes) */
-  spendingPrivateKey: Uint8Array;
-  /** Viewing private key (for deriving stealth key) */
+  /** Spending public key (32 bytes, used as HKDF salt for stealth seed derivation) */
+  spendingPubKey: Uint8Array;
+  /** Viewing private key (for deriving shared secret via ECDH) */
   viewingPrivateKey: Uint8Array;
   /** Destination address (defaults to sender's main wallet) */
   destination?: PublicKey;
   /** External wallet for signing destination transaction */
   destinationWallet?: Keypair | WalletAdapter;
+  /** ML-KEM-768 secret key for hybrid v2 payments */
+  kemSecretKey?: Uint8Array;
   /** Skip preflight checks */
   skipPreflight?: boolean;
 }
@@ -50,10 +52,11 @@ export async function claimStealth(options: ClaimOptions): Promise<ClaimResult> 
   const {
     connection,
     payment,
-    spendingPrivateKey,
+    spendingPubKey,
     viewingPrivateKey,
     destination,
     destinationWallet,
+    kemSecretKey,
     skipPreflight = false,
   } = options;
 
@@ -68,9 +71,11 @@ export async function claimStealth(options: ClaimOptions): Promise<ClaimResult> 
   try {
     // Derive the stealth private key for this payment
     const stealthKeypair = deriveStealthPrivateKey(
-      spendingPrivateKey,
+      spendingPubKey,
       viewingPrivateKey,
-      payment.ephemeralPubKey
+      payment.ephemeralPubKey,
+      kemSecretKey,
+      payment.kemCiphertext
     );
 
     // Verify the derived key matches the stealth address
@@ -179,9 +184,10 @@ export async function claimStealth(options: ClaimOptions): Promise<ClaimResult> 
 export async function claimMultiple(
   connection: Connection,
   payments: StealthPayment[],
-  spendingPrivateKey: Uint8Array,
+  spendingPubKey: Uint8Array,
   viewingPrivateKey: Uint8Array,
-  destination: PublicKey
+  destination: PublicKey,
+  kemSecretKey?: Uint8Array
 ): Promise<ClaimResult[]> {
   const results: ClaimResult[] = [];
 
@@ -190,9 +196,10 @@ export async function claimMultiple(
       const result = await claimStealth({
         connection,
         payment,
-        spendingPrivateKey,
+        spendingPubKey,
         viewingPrivateKey,
         destination,
+        kemSecretKey,
       });
       results.push(result);
     } catch (error) {

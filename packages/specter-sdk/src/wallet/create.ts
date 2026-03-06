@@ -10,6 +10,7 @@ import {
   STEALTH_DERIVATION,
 } from '../constants';
 import { encodeStealthMetaAddress } from '../utils/helpers';
+import { kemGenerateKeypair } from '../utils/crypto';
 
 /**
  * Derive a keypair from seed using HD derivation
@@ -30,35 +31,41 @@ export function deriveKeypair(seed: Buffer, derivationPath: string): HDDerivatio
 /**
  * Generate stealth keys from seed
  * @param seed - 64-byte seed from mnemonic
+ * @param enableHybrid - Generate ML-KEM-768 keypair for post-quantum hybrid mode
  */
-function generateStealthKeys(seed: Buffer): {
+function generateStealthKeys(seed: Buffer, enableHybrid: boolean = false): {
   spendingKeypair: Keypair;
   viewingKeypair: Keypair;
   stealthMetaAddress: StealthMetaAddress;
+  kemSecretKey?: Uint8Array;
 } {
-  // Derive spending keypair
   const spendingResult = deriveKeypair(seed, STEALTH_DERIVATION.SPENDING_KEY_PATH);
   const spendingKeypair = spendingResult.keypair;
 
-  // Derive viewing keypair
   const viewingResult = deriveKeypair(seed, STEALTH_DERIVATION.VIEWING_KEY_PATH);
   const viewingKeypair = viewingResult.keypair;
 
-  // Create stealth meta-address
+  const spendingPubKey = spendingKeypair.publicKey.toBytes();
+  const viewingPubKey = viewingKeypair.publicKey.toBytes();
+
+  if (enableHybrid) {
+    const kem = kemGenerateKeypair();
+    const stealthMetaAddress: StealthMetaAddress = {
+      spendingPubKey,
+      viewingPubKey,
+      kemPubKey: kem.publicKey,
+      encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey, kem.publicKey),
+    };
+    return { spendingKeypair, viewingKeypair, stealthMetaAddress, kemSecretKey: kem.secretKey };
+  }
+
   const stealthMetaAddress: StealthMetaAddress = {
-    spendingPubKey: spendingKeypair.publicKey.toBytes(),
-    viewingPubKey: viewingKeypair.publicKey.toBytes(),
-    encoded: encodeStealthMetaAddress(
-      spendingKeypair.publicKey.toBytes(),
-      viewingKeypair.publicKey.toBytes()
-    ),
+    spendingPubKey,
+    viewingPubKey,
+    encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey),
   };
 
-  return {
-    spendingKeypair,
-    viewingKeypair,
-    stealthMetaAddress,
-  };
+  return { spendingKeypair, viewingKeypair, stealthMetaAddress };
 }
 
 /**
@@ -71,20 +78,14 @@ export async function createWallet(
   const {
     derivationPath = DEFAULT_DERIVATION_PATH,
     strength = DEFAULT_MNEMONIC_STRENGTH,
+    enableHybrid = false,
   } = options;
 
   try {
-    // Generate new mnemonic
     const mnemonic = bip39.generateMnemonic(strength);
-
-    // Convert mnemonic to seed
     const seed = await bip39.mnemonicToSeed(mnemonic);
-
-    // Derive main keypair
     const mainResult = deriveKeypair(Buffer.from(seed), derivationPath);
-
-    // Generate stealth keys
-    const { stealthMetaAddress } = generateStealthKeys(Buffer.from(seed));
+    const { stealthMetaAddress } = generateStealthKeys(Buffer.from(seed), enableHybrid);
 
     return {
       publicKey: mainResult.publicKey,
@@ -109,25 +110,23 @@ export async function createWallet(
  */
 export async function createWalletState(
   mnemonic: string,
-  derivationPath: string = DEFAULT_DERIVATION_PATH
+  derivationPath: string = DEFAULT_DERIVATION_PATH,
+  enableHybrid: boolean = false
 ): Promise<WalletState> {
   try {
-    // Convert mnemonic to seed
     const seed = await bip39.mnemonicToSeed(mnemonic);
     const seedBuffer = Buffer.from(seed);
-
-    // Derive main keypair
     const mainResult = deriveKeypair(seedBuffer, derivationPath);
 
-    // Generate stealth keys
-    const { spendingKeypair, viewingKeypair, stealthMetaAddress } =
-      generateStealthKeys(seedBuffer);
+    const { spendingKeypair, viewingKeypair, stealthMetaAddress, kemSecretKey } =
+      generateStealthKeys(seedBuffer, enableHybrid);
 
     return {
       keypair: mainResult.keypair,
       spendingKeypair,
       viewingKeypair,
       stealthMetaAddress,
+      kemSecretKey,
       seedPhrase: mnemonic,
       derivationPath,
     };
