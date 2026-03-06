@@ -122,6 +122,7 @@ export default function Welcome() {
               <button
                 onClick={() => { setStep('welcome'); setError(''); setEmail(''); }}
                 className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+                aria-label="Go back"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
@@ -144,12 +145,13 @@ export default function Welcome() {
                   onKeyDown={(e) => e.key === 'Enter' && handleSendCode()}
                   placeholder="your@email.com"
                   autoFocus
+                  aria-label="Email address"
                   className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm placeholder:text-p01-chrome/30 focus:outline-none focus:border-p01-cyan transition-colors"
                 />
 
                 {error && (
-                  <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400" role="alert" aria-live="polite">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
                     <span className="text-xs font-mono">{error}</span>
                   </div>
                 )}
@@ -192,6 +194,7 @@ export default function Welcome() {
               <button
                 onClick={() => { setStep('email'); setError(''); setOtpCode(['', '', '', '', '', '']); }}
                 className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+                aria-label="Go back"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
@@ -218,6 +221,7 @@ export default function Welcome() {
                     value={digit}
                     onChange={(e) => handleOtpChange(i, e.target.value)}
                     onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                    aria-label={`Digit ${i + 1} of 6`}
                     className={cn(
                       'w-10 h-12 text-center text-white font-mono text-lg bg-p01-surface border transition-colors focus:outline-none',
                       digit ? 'border-p01-cyan' : 'border-p01-border focus:border-p01-cyan'
@@ -227,15 +231,15 @@ export default function Welcome() {
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 p-3 mt-4 bg-red-500/10 border border-red-500/30 text-red-400 w-full">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <div className="flex items-center gap-2 p-3 mt-4 bg-red-500/10 border border-red-500/30 text-red-400 w-full" role="alert" aria-live="polite">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
                   <span className="text-xs font-mono">{error}</span>
                 </div>
               )}
 
               {isVerifying && (
-                <div className="flex items-center gap-2 mt-4 text-p01-cyan">
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                <div className="flex items-center gap-2 mt-4 text-p01-cyan" aria-live="polite">
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                   <span className="text-xs font-mono tracking-wider">VERIFYING...</span>
                 </div>
               )}

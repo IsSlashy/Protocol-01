@@ -170,6 +170,7 @@ export default function SubscriptionDetails() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 hover:bg-p01-surface rounded-lg transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-5 h-5 text-p01-chrome" />
         </button>
@@ -359,9 +360,9 @@ export default function SubscriptionDetails() {
 
         {/* Error Display */}
         {error && (
-          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30">
+          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30" role="alert" aria-live="polite">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
               <div>
                 <p className="text-sm text-red-500 font-medium">Payment Failed</p>
                 <p className="text-xs text-red-400 mt-1">{error}</p>
@@ -375,6 +376,7 @@ export default function SubscriptionDetails() {
           <button
             onClick={() => setShowPaymentHistory(!showPaymentHistory)}
             className="w-full flex items-center justify-between p-4"
+            aria-expanded={showPaymentHistory}
           >
             <span className="text-sm font-medium text-white">Payment History</span>
             <ChevronDown
@@ -410,7 +412,7 @@ export default function SubscriptionDetails() {
               <span className="text-sm font-mono text-white">
                 {truncateAddress(subscription.recipient, 4)}
               </span>
-              <ExternalLink className="w-3 h-3 text-p01-chrome/40" />
+              <ExternalLink className="w-3 h-3 text-p01-chrome/40" aria-hidden="true" />
             </div>
           </div>
           <div className="flex items-center justify-between">
@@ -460,7 +462,7 @@ export default function SubscriptionDetails() {
 
       {/* Cancel Confirmation Modal */}
       {showCancelConfirm && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="cancel-confirm-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -471,7 +473,7 @@ export default function SubscriptionDetails() {
                 <AlertTriangle className="w-5 h-5 text-red-500" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-white">
+                <h3 id="cancel-confirm-title" className="text-lg font-semibold text-white">
                   Cancel Subscription?
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -542,9 +544,10 @@ function PaymentHistoryItem({ payment }: { payment: PaymentRecord }) {
           href={`https://solscan.io/tx/${payment.signature}`}
           target="_blank"
           rel="noopener noreferrer"
+          aria-label="View transaction on Solscan"
           className="text-xs text-p01-chrome/60 hover:text-p01-cyan flex items-center gap-1"
         >
-          View <ExternalLink className="w-3 h-3" />
+          View <ExternalLink className="w-3 h-3" aria-hidden="true" />
         </a>
       </div>
     </div>

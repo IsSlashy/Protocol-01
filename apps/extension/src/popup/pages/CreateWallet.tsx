@@ -67,6 +67,7 @@ export default function CreateWallet() {
             else setStep('password');
           }}
           className="p-2 -ml-2 hover:bg-p01-border transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
@@ -103,12 +104,14 @@ export default function CreateWallet() {
                   placeholder="Enter password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  aria-label="Password"
                   className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-p01-chrome/60 hover:text-white"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -119,12 +122,13 @@ export default function CreateWallet() {
                 placeholder="Confirm password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                aria-label="Confirm password"
                 className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
               />
             </div>
 
             {/* Password strength indicator */}
-            <div className="space-y-1">
+            <div className="space-y-1" role="meter" aria-label="Password strength" aria-valuemin={0} aria-valuemax={4} aria-valuenow={password.length >= 12 ? 4 : password.length >= 8 ? 3 : password.length >= 3 ? 1 : 0}>
               <div className="flex gap-1">
                 {[1, 2, 3, 4].map((i) => (
                   <div
@@ -142,14 +146,14 @@ export default function CreateWallet() {
                   />
                 ))}
               </div>
-              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider">
+              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider" aria-live="polite">
                 {password.length < 8 ? 'MINIMUM 8 CHARACTERS' : password.length >= 12 ? 'STRONG' : 'GOOD'}
               </p>
             </div>
 
             {/* Error */}
             {(localError || error) && (
-              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono">
+              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono" role="alert" aria-live="polite">
                 {localError || error}
               </div>
             )}
@@ -205,6 +209,7 @@ export default function CreateWallet() {
                 <button
                   onClick={() => setShowPhrase(!showPhrase)}
                   className="flex items-center gap-1 text-[10px] text-p01-cyan font-mono tracking-wider"
+                  aria-label={showPhrase ? 'Hide seed phrase' : 'Show seed phrase'}
                 >
                   {showPhrase ? (
                     <>
@@ -238,6 +243,7 @@ export default function CreateWallet() {
               <button
                 onClick={handleCopySeedPhrase}
                 className="w-full mt-3 py-2 bg-p01-dark border border-p01-border text-p01-chrome font-mono text-[10px] flex items-center justify-center gap-2 hover:text-white hover:border-p01-cyan/30 transition-colors tracking-wider"
+                aria-label={copied ? 'Seed phrase copied' : 'Copy seed phrase to clipboard'}
               >
                 {copied ? (
                   <>
@@ -260,6 +266,7 @@ export default function CreateWallet() {
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
                 className="mt-0.5 w-4 h-4 accent-p01-cyan"
+                aria-label="I have saved my seed phrase"
               />
               <span className="text-[11px] text-p01-chrome font-mono">
                 I have copied and saved my seed phrase securely.

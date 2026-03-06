@@ -98,6 +98,7 @@ export default function DenominatedUnshield() {
           <button
             onClick={() => navigate('/denominated')}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -129,6 +130,8 @@ export default function DenominatedUnshield() {
                 <button
                   key={note.id}
                   onClick={() => setSelectedNote(note.id)}
+                  aria-pressed={selectedNote === note.id}
+                  aria-label={`Select note ${formatDenomination(note)}`}
                   className={cn(
                     'w-full p-4 rounded-xl border transition-all flex items-center justify-between',
                     selectedNote === note.id
@@ -183,6 +186,7 @@ export default function DenominatedUnshield() {
               value={recipient}
               onChange={(e) => setRecipient(e.target.value)}
               placeholder="Solana address..."
+              aria-label="Recipient address"
               className="w-full bg-transparent text-white text-sm font-mono outline-none"
             />
           </div>
@@ -190,8 +194,8 @@ export default function DenominatedUnshield() {
 
         {/* Warning */}
         <div className="px-4 mt-4">
-          <div className="p-3 bg-p01-pink/10 rounded-lg border border-p01-pink/20 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-p01-pink flex-shrink-0 mt-0.5" />
+          <div className="p-3 bg-p01-pink/10 rounded-lg border border-p01-pink/20 flex items-start gap-2" role="note">
+            <AlertTriangle className="w-4 h-4 text-p01-pink flex-shrink-0 mt-0.5" aria-hidden="true" />
             <p className="text-p01-chrome text-xs">
               Unshielding generates a ZK proof that may take a few seconds. The withdrawal amount is visible but the deposit source remains hidden.
             </p>
@@ -201,7 +205,7 @@ export default function DenominatedUnshield() {
         {/* Error */}
         {(localError || error) && (
           <div className="px-4 mt-3">
-            <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+            <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30" role="alert" aria-live="polite">
               <p className="text-red-400 text-sm">{localError || error}</p>
             </div>
           </div>
@@ -210,8 +214,8 @@ export default function DenominatedUnshield() {
         {/* Progress */}
         {progress && (
           <div className="px-4 mt-3">
-            <div className="p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/20 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" />
+            <div className="p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/20 flex items-center gap-2" role="status" aria-live="polite">
+              <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" aria-hidden="true" />
               <p className="text-p01-cyan text-sm">{progress}</p>
             </div>
           </div>

@@ -57,6 +57,7 @@ export default function Activity() {
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
+                  aria-pressed={filter === f}
                   className={cn(
                     'px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors capitalize',
                     filter === f
@@ -73,6 +74,7 @@ export default function Activity() {
             onClick={handleRefresh}
             disabled={isLoadingTransactions}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Refresh transactions"
           >
             <RefreshCw
               className={cn('w-4 h-4', isLoadingTransactions && 'animate-spin')}
@@ -266,7 +268,7 @@ function TransactionRow({
         )}
       </div>
 
-      <ExternalLink className="w-4 h-4 text-p01-chrome/40 flex-shrink-0" />
+      <ExternalLink className="w-4 h-4 text-p01-chrome/40 flex-shrink-0" aria-hidden="true" />
     </motion.a>
   );
 }

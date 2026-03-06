@@ -64,6 +64,7 @@ export default function DenominatedPools() {
           <button
             onClick={() => navigate('/shielded')}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -77,12 +78,14 @@ export default function DenominatedPools() {
             onClick={() => refreshNotes()}
             disabled={isLoading}
             className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
+            aria-label="Refresh notes"
           >
             <RefreshCw className={cn('w-5 h-5', isLoading && 'animate-spin')} />
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label={showBalance ? 'Hide balances' : 'Show balances'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
           </button>
@@ -96,6 +99,8 @@ export default function DenominatedPools() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="mx-4 mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30"
+            role="alert"
+            aria-live="polite"
           >
             <p className="text-red-400 text-xs">{error}</p>
             <button onClick={clearError} className="text-p01-chrome text-xs hover:underline mt-1">
@@ -129,6 +134,7 @@ export default function DenominatedPools() {
             <button
               key={t}
               onClick={() => setFilter(t)}
+              aria-pressed={filter === t}
               className={cn(
                 'px-3 py-1.5 rounded-lg text-xs font-mono transition-colors',
                 filter === t

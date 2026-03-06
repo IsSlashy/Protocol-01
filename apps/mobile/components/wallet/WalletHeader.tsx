@@ -18,9 +18,11 @@ export default function WalletHeader({ onScan, onSettings }: WalletHeaderProps) 
           source={require('@/assets/images/01-miku.png')}
           style={styles.logo}
           resizeMode="contain"
+          accessibilityLabel="Protocol 01 logo"
+          accessibilityRole="image"
         />
         <View>
-          <Text style={styles.brand}>PROTOCOL 01</Text>
+          <Text style={styles.brand} accessibilityRole="header">PROTOCOL 01</Text>
           {isDevnet() && (
             <View style={[styles.devnetBadge, { backgroundColor: P01Colors.pinkDim }]}>
               <Text style={[styles.devnetText, { color: P01Colors.pink }]}>DEVNET</Text>
@@ -29,10 +31,10 @@ export default function WalletHeader({ onScan, onSettings }: WalletHeaderProps) 
         </View>
       </View>
       <View style={styles.right}>
-        <TouchableOpacity style={styles.button} onPress={onScan}>
+        <TouchableOpacity style={styles.button} onPress={onScan} accessibilityRole="button" accessibilityLabel="Scan QR code">
           <Ionicons name="scan-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button} onPress={onSettings}>
+        <TouchableOpacity style={styles.button} onPress={onSettings} accessibilityRole="button" accessibilityLabel="Settings">
           <Ionicons name="settings-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
       </View>

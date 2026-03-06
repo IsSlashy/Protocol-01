@@ -208,12 +208,12 @@ export default function Swap() {
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-p01-border">
         <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-p01-surface rounded-lg transition-colors">
+          <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-p01-surface rounded-lg transition-colors" aria-label="Go back">
             <ArrowLeft className="w-5 h-5 text-p01-chrome" />
           </button>
           <h1 className="text-lg font-semibold text-white">Swap</h1>
         </div>
-        <button onClick={() => setShowSlippage(!showSlippage)} className="p-2 hover:bg-p01-surface rounded-lg transition-colors">
+        <button onClick={() => setShowSlippage(!showSlippage)} className="p-2 hover:bg-p01-surface rounded-lg transition-colors" aria-label="Slippage settings" aria-expanded={showSlippage}>
           <Settings className="w-5 h-5 text-p01-chrome" />
         </button>
       </div>
@@ -233,6 +233,7 @@ export default function Swap() {
                 <button
                   key={opt.bps}
                   onClick={() => setSlippageBps(opt.bps)}
+                  aria-pressed={slippageBps === opt.bps}
                   className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
                     slippageBps === opt.bps
                       ? 'bg-p01-cyan text-p01-void'
@@ -277,6 +278,7 @@ export default function Swap() {
                 const v = e.target.value.replace(/[^0-9.]/g, '');
                 if (v.split('.').length <= 2) setInputAmount(v);
               }}
+              aria-label="Amount to swap"
               className="flex-1 bg-transparent text-2xl font-semibold text-white outline-none placeholder-p01-chrome/40 min-w-0"
             />
             <TokenButton token={inputToken} onClick={() => setShowTokenSelector('input')} />
@@ -288,6 +290,7 @@ export default function Swap() {
           <button
             onClick={handleFlip}
             className="w-10 h-10 rounded-full bg-p01-elevated border-2 border-p01-border flex items-center justify-center hover:bg-p01-surface transition-colors"
+            aria-label="Swap input and output tokens"
           >
             <ArrowUpDown className="w-4 h-4 text-p01-cyan" />
           </button>
@@ -441,7 +444,7 @@ export default function Swap() {
             className="absolute inset-0 bg-p01-void flex flex-col z-50"
           >
             <div className="flex items-center gap-3 p-4 border-b border-p01-border">
-              <button onClick={() => { setShowTokenSelector(null); setTokenSearch(''); }} className="p-2 -ml-2 hover:bg-p01-surface rounded-lg">
+              <button onClick={() => { setShowTokenSelector(null); setTokenSearch(''); }} className="p-2 -ml-2 hover:bg-p01-surface rounded-lg" aria-label="Close token selector">
                 <ArrowLeft className="w-5 h-5 text-p01-chrome" />
               </button>
               <h2 className="text-lg font-semibold text-white">Select Token</h2>
@@ -454,6 +457,7 @@ export default function Swap() {
                   placeholder="Search tokens..."
                   value={tokenSearch}
                   onChange={e => setTokenSearch(e.target.value)}
+                  aria-label="Search tokens"
                   className="w-full bg-p01-surface rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-p01-chrome/50 outline-none border border-p01-border focus:border-p01-cyan/50"
                   autoFocus
                 />
@@ -517,7 +521,7 @@ export default function Swap() {
 
 function TokenButton({ token, onClick }: { token: JupiterToken; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-2 px-3 py-2 bg-p01-elevated rounded-xl hover:bg-p01-border transition-colors shrink-0">
+    <button onClick={onClick} aria-label={`Select ${token.symbol} token`} className="flex items-center gap-2 px-3 py-2 bg-p01-elevated rounded-xl hover:bg-p01-border transition-colors shrink-0">
       {token.logoURI ? (
         <img src={token.logoURI} alt="" className="w-5 h-5 rounded-full" />
       ) : (

@@ -139,6 +139,7 @@ export default function Agent() {
             onClick={() => { createConversation(); }}
             className="p-2 hover:bg-p01-surface rounded-lg transition-colors"
             title="New chat"
+            aria-label="New chat"
           >
             <Plus className="w-4 h-4 text-p01-chrome" />
           </button>
@@ -146,6 +147,8 @@ export default function Agent() {
             onClick={() => setShowHistory(!showHistory)}
             className="p-2 hover:bg-p01-surface rounded-lg transition-colors"
             title="Chat history"
+            aria-label="Chat history"
+            aria-expanded={showHistory}
           >
             <MessageSquare className="w-4 h-4 text-p01-chrome" />
           </button>
@@ -158,6 +161,8 @@ export default function Agent() {
             }}
             className="p-2 hover:bg-p01-surface rounded-lg transition-colors"
             title="Settings"
+            aria-label="Settings"
+            aria-expanded={showSettings}
           >
             <Settings className="w-4 h-4 text-p01-chrome" />
           </button>
@@ -199,10 +204,11 @@ export default function Agent() {
 
               {settingsProvider !== 'ollama' && (
                 <div>
-                  <label className="text-xs text-p01-chrome block mb-1.5">
+                  <label htmlFor="agent-api-key" className="text-xs text-p01-chrome block mb-1.5">
                     {settingsProvider === 'groq' ? 'Groq API Key' : 'Google AI API Key'}
                   </label>
                   <input
+                    id="agent-api-key"
                     type="password"
                     value={settingsApiKey}
                     onChange={e => setSettingsApiKey(e.target.value)}
@@ -230,7 +236,7 @@ export default function Agent() {
               </div>
 
               {testResult && (
-                <div className={`flex items-center gap-2 text-xs ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
+                <div className={`flex items-center gap-2 text-xs ${testResult.success ? 'text-green-400' : 'text-red-400'}`} role="status" aria-live="polite">
                   {testResult.success ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
                   {testResult.success ? 'Connected!' : testResult.error || 'Connection failed'}
                 </div>
@@ -267,6 +273,7 @@ export default function Agent() {
                       <button
                         onClick={e => { e.stopPropagation(); deleteConversation(conv.id); }}
                         className="p-1 hover:bg-p01-elevated rounded shrink-0"
+                        aria-label="Delete conversation"
                       >
                         <Trash2 className="w-3 h-3 text-p01-chrome" />
                       </button>
@@ -346,7 +353,7 @@ export default function Agent() {
 
             {/* Error */}
             {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl" role="alert" aria-live="polite">
                 <X className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
                 <div>
                   <p className="text-xs text-red-300">{error}</p>
@@ -368,12 +375,14 @@ export default function Agent() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask P-01 Agent..."
+            aria-label="Message"
             className="flex-1 bg-transparent text-sm text-white placeholder-p01-chrome/40 outline-none min-w-0"
             disabled={isLoading}
           />
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || isLoading}
+            aria-label="Send message"
             className={`p-1.5 rounded-lg transition-colors ${
               input.trim() && !isLoading
                 ? 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90'

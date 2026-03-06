@@ -76,6 +76,7 @@ export default function StealthPayments() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 hover:bg-p01-border transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
@@ -122,8 +123,8 @@ export default function StealthPayments() {
               exit={{ opacity: 0, height: 0 }}
               className="mx-4 mt-4"
             >
-              <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+              <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg" role="alert" aria-live="polite">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" aria-hidden="true" />
                 <span className="text-xs font-mono text-red-400 flex-1">{error}</span>
                 <button
                   onClick={clearError}
@@ -171,6 +172,8 @@ export default function StealthPayments() {
             <button
               onClick={() => setShowClaimed(!showClaimed)}
               className="w-full p-4 flex items-center justify-between hover:bg-p01-surface/30 transition-colors"
+              aria-expanded={showClaimed}
+              aria-label={`Show claimed payments (${claimedPayments.length})`}
             >
               <div className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-green-500" />
@@ -313,6 +316,8 @@ function PaymentCard({
       <button
         onClick={onToggleExpand}
         className="w-full p-3 flex items-center justify-between"
+        aria-expanded={isExpanded}
+        aria-label={`Payment +${formatSol(payment.amount)} SOL, ${isClaimed ? 'claimed' : 'pending'}`}
       >
         <div className="flex items-center gap-3">
           <div
@@ -395,6 +400,7 @@ function PaymentCard({
                   <button
                     onClick={handleCopy}
                     className="p-1 hover:bg-p01-dark rounded transition-colors"
+                    aria-label={copied ? 'Address copied' : 'Copy stealth address'}
                   >
                     {copied ? (
                       <Check className="w-3 h-3 text-p01-cyan" />

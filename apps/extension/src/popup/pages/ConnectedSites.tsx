@@ -79,6 +79,7 @@ export default function ConnectedSites() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
@@ -153,8 +154,9 @@ export default function ConnectedSites() {
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-[#555560] hover:text-p01-cyan transition-colors"
+                          aria-label={`Open ${site.name} in new tab`}
                         >
-                          <ExternalLink className="w-3 h-3" />
+                          <ExternalLink className="w-3 h-3" aria-hidden="true" />
                         </a>
                       </div>
                       <p className="text-[10px] text-[#555560] font-mono truncate mb-2">
@@ -189,6 +191,7 @@ export default function ConnectedSites() {
                     <button
                       onClick={() => handleDisconnect(site.origin)}
                       disabled={disconnecting === site.origin}
+                      aria-label={`Disconnect ${site.name}`}
                       className={cn(
                         'p-2 transition-colors',
                         disconnecting === site.origin

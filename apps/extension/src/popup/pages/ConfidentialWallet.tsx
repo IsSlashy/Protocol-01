@@ -189,6 +189,7 @@ export default function ConfidentialWallet() {
           <button
             onClick={() => navigate('/shielded')}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -203,18 +204,21 @@ export default function ConfidentialWallet() {
             disabled={isLoading || !isInitialized}
             className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
             title="Refresh balance"
+            aria-label="Refresh balance"
           >
             <RefreshCw className={cn('w-5 h-5', isLoading && 'animate-spin')} />
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label={showBalance ? 'Hide balance' : 'Show balance'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
           </button>
           <button
             onClick={() => setShowInfoModal(true)}
             className="p-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Show info"
           >
             <Info className="w-5 h-5" />
           </button>
@@ -273,7 +277,7 @@ export default function ConfidentialWallet() {
 
           {/* Init Error */}
           {initError && (
-            <div className="mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+            <div className="mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30" role="alert" aria-live="polite">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
@@ -308,6 +312,8 @@ export default function ConfidentialWallet() {
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="mx-4 mt-3 p-3 bg-green-500/10 rounded-lg border border-green-500/30 flex items-center gap-2"
+            role="status"
+            aria-live="polite"
           >
             <Check className="w-4 h-4 text-green-400" />
             <p className="text-green-400 text-xs">{successMsg}</p>
@@ -320,6 +326,8 @@ export default function ConfidentialWallet() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="mx-4 mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-center gap-2"
+            role="alert"
+            aria-live="polite"
           >
             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
             <p className="text-red-400 text-xs">{storeError}</p>
@@ -432,7 +440,7 @@ export default function ConfidentialWallet() {
 
       {/* Deposit / Withdraw Modal */}
       {(actionModal === 'deposit' || actionModal === 'withdraw') && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="conf-action-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -450,7 +458,7 @@ export default function ConfidentialWallet() {
                 )}
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white capitalize">
+                <h3 id="conf-action-title" className="text-lg font-display font-bold text-white capitalize">
                   {actionModal} {tokenSymbol}
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -479,6 +487,7 @@ export default function ConfidentialWallet() {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.0"
+                    aria-label={`Amount in ${tokenSymbol}`}
                     className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
                   />
                   <span className="text-p01-chrome text-lg">{tokenSymbol}</span>
@@ -493,6 +502,7 @@ export default function ConfidentialWallet() {
                   key={pct}
                   onClick={() => setPercentage(pct)}
                   className="flex-1 py-2 text-xs font-medium text-p01-chrome bg-p01-void rounded-lg hover:bg-p01-dark hover:text-white transition-colors border border-p01-dark"
+                  aria-label={pct === 100 ? 'Set to max amount' : `Set amount to ${pct}%`}
                 >
                   {pct === 100 ? 'Max' : `${pct}%`}
                 </button>
@@ -502,7 +512,7 @@ export default function ConfidentialWallet() {
             {/* First deposit notice */}
             {actionModal === 'deposit' && !currentHasAccount && (
               <div className="mb-4 p-3 bg-p01-cyan/10 rounded-lg flex items-start gap-2 border border-p01-cyan/20">
-                <Info className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
+                <Info className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" aria-hidden="true" />
                 <p className="text-p01-chrome text-xs">
                   First deposit will create your on-chain confidential {tokenSymbol} account. This is a one-time setup.
                 </p>
@@ -511,8 +521,8 @@ export default function ConfidentialWallet() {
 
             {/* Error */}
             {error && (
-              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-start gap-2" role="alert" aria-live="polite">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
@@ -556,7 +566,7 @@ export default function ConfidentialWallet() {
 
       {/* Transfer Modal */}
       {actionModal === 'transfer' && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="conf-transfer-title">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -567,7 +577,7 @@ export default function ConfidentialWallet() {
                 <Send className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="conf-transfer-title" className="text-lg font-display font-bold text-white">
                   Confidential Transfer
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -579,8 +589,9 @@ export default function ConfidentialWallet() {
             {/* Recipient Input */}
             <div className="mb-3">
               <div className="bg-p01-void rounded-xl p-4">
-                <span className="text-p01-chrome text-xs">Recipient Address</span>
+                <label htmlFor="conf-transfer-recipient" className="text-p01-chrome text-xs">Recipient Address</label>
                 <input
+                  id="conf-transfer-recipient"
                   type="text"
                   value={recipient}
                   onChange={(e) => setRecipient(e.target.value)}
@@ -594,16 +605,18 @@ export default function ConfidentialWallet() {
             <div className="mb-3">
               <div className="bg-p01-void rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-p01-chrome text-xs">Amount</span>
+                  <label htmlFor="conf-transfer-amount" className="text-p01-chrome text-xs">Amount</label>
                   <button
                     onClick={() => setPercentage(100)}
                     className="text-p01-cyan text-xs hover:underline"
+                    aria-label="Set amount to maximum"
                   >
                     Max: {currentDisplayBalance.toFixed(tokenDecimals >= 9 ? 4 : 2)} {tokenSymbol}
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
+                    id="conf-transfer-amount"
                     type="number"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
@@ -621,6 +634,7 @@ export default function ConfidentialWallet() {
                 <button
                   key={pct}
                   onClick={() => setPercentage(pct)}
+                  aria-label={`Set amount to ${pct}% of balance`}
                   className="flex-1 py-2 text-xs font-medium text-p01-chrome bg-p01-void rounded-lg hover:bg-p01-dark hover:text-white transition-colors border border-p01-dark"
                 >
                   {pct === 100 ? 'Max' : `${pct}%`}
@@ -630,8 +644,8 @@ export default function ConfidentialWallet() {
 
             {/* Error */}
             {error && (
-              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="mb-4 p-3 bg-red-500/10 rounded-lg border border-red-500/30 flex items-start gap-2" role="alert" aria-live="polite">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" aria-hidden="true" />
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
@@ -671,7 +685,7 @@ export default function ConfidentialWallet() {
 
       {/* Info Modal */}
       {showInfoModal && (
-        <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="conf-info-title">
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -682,7 +696,7 @@ export default function ConfidentialWallet() {
                 <Shield className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 className="text-lg font-display font-bold text-white">
+                <h3 id="conf-info-title" className="text-lg font-display font-bold text-white">
                   zkSPL Confidential Balances
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -775,6 +789,7 @@ function ActionButton({
       <button
         onClick={onClick}
         disabled={disabled}
+        aria-label={label}
         className={cn(
           'w-12 h-12 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100',
           colorClasses[color]
@@ -782,7 +797,7 @@ function ActionButton({
       >
         {icon}
       </button>
-      <span className={cn('text-xs', disabled ? 'text-p01-chrome/50' : 'text-p01-chrome')}>
+      <span aria-hidden="true" className={cn('text-xs', disabled ? 'text-p01-chrome/50' : 'text-p01-chrome')}>
         {label}
       </span>
     </div>

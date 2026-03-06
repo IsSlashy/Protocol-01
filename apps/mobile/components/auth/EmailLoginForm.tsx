@@ -203,12 +203,12 @@ export function EmailLoginForm({
       {/* Header */}
       <View style={styles.header}>
         {onBack && (
-          <TouchableOpacity onPress={onBack} style={styles.backButton}>
+          <TouchableOpacity onPress={onBack} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
             <Ionicons name="arrow-back" size={24} color={P01.cyan} />
           </TouchableOpacity>
         )}
         <View style={styles.headerText}>
-          <Text style={styles.title}>
+          <Text style={styles.title} accessibilityRole="header">
             {step === 'input'
               ? mode === 'email'
                 ? 'Enter your email'
@@ -250,6 +250,8 @@ export function EmailLoginForm({
                 autoCorrect={false}
                 autoFocus
                 style={styles.input}
+                accessibilityLabel={mode === 'email' ? 'Email address' : 'Phone number'}
+                accessibilityHint={mode === 'email' ? 'Enter your email to receive a verification code' : 'Enter your phone number to receive a verification code'}
               />
             </View>
           </Animated.View>
@@ -268,6 +270,9 @@ export function EmailLoginForm({
             disabled={loading}
             activeOpacity={0.8}
             style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Continue"
+            accessibilityState={{ disabled: loading, busy: loading }}
           >
             {loading ? (
               <ActivityIndicator color={P01.void} />
@@ -303,6 +308,7 @@ export function EmailLoginForm({
                   error && styles.otpInputError,
                 ]}
                 autoFocus={index === 0}
+                accessibilityLabel={`Verification code digit ${index + 1} of 6`}
               />
             ))}
           </Animated.View>
@@ -320,6 +326,9 @@ export function EmailLoginForm({
             onPress={handleResend}
             disabled={countdown > 0 || loading}
             style={styles.resendButton}
+            accessibilityRole="button"
+            accessibilityLabel={countdown > 0 ? `Resend code in ${countdown} seconds` : 'Resend code'}
+            accessibilityState={{ disabled: countdown > 0 || loading }}
           >
             <Text
               style={[
