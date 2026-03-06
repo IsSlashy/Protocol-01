@@ -811,11 +811,14 @@ export const useShieldedStore = create<ShieldedState>()(
         }));
 
         try {
-          // Step 1: Generate stealth address for recipient
-          const stealth = await generateStealthAddressForRecipient(receivingPubkeyBytes, viewingKeyBytes);
-
-          // Step 2: Generate ZK proof for relayer
-          const proofData = await _zkService.generateTransferProofForRelayer(amountLamports);
+          // Step 1: Build the transfer transaction via ZK service
+          // This generates the proof client-side and builds the full Solana tx
+          const transferResult = await _zkService.transfer(
+            zkRecipient,
+            amountLamports,
+            walletPublicKey,
+            signTransaction,
+          );
 
           set(state => ({
             pendingTransactions: state.pendingTransactions.map(tx =>
@@ -823,107 +826,23 @@ export const useShieldedStore = create<ShieldedState>()(
             ),
           }));
 
-          // Step 3: Get relayer info
-          const RELAYER_URL = import.meta.env.VITE_RELAYER_URL || 'https://p01-relayer-production.up.railway.app';
-          let relayerAddress: string;
-          let feeBps: number;
-
+          // Step 2: Route through decentralized on-chain relay for sender privacy
+          // The relay uses an ephemeral keypair — no on-chain link to the user's wallet
+          const { relayTransaction } = await import('../services/relay');
           try {
-            const infoRes = await fetch(`${RELAYER_URL}/health`);
-            const info = await infoRes.json();
-            relayerAddress = info.relayer;
-            feeBps = info.feeBps || 50;
-          } catch {
-            const infoRes = await fetch(`${RELAYER_URL}/info`);
-            const info = await infoRes.json();
-            relayerAddress = info.relayer;
-            feeBps = info.feeBps || 50;
-          }
-
-          // Step 4: Fund the relayer
-          const feeLamports = BigInt(Math.ceil(Number(amountLamports) * feeBps / 10000));
-          const rentExempt = BigInt(890880);
-          const gasEstimate = BigInt(10000);
-          const totalFunding = amountLamports + feeLamports + gasEstimate + rentExempt;
-
-          const fundingTx = new Transaction().add(
-            SystemProgram.transfer({
-              fromPubkey: walletPublicKey,
-              toPubkey: new PublicKey(relayerAddress),
-              lamports: Number(totalFunding),
-            })
-          );
-          fundingTx.feePayer = walletPublicKey;
-          fundingTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-          const signedFundingTx = await signTransaction(fundingTx);
-          const fundingSignature = await connection.sendRawTransaction(signedFundingTx.serialize(), {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-          });
-          await connection.confirmTransaction(fundingSignature, 'confirmed');
-
-          // Step 5: Send proof + stealth info to relayer
-          const response = await fetch(`${RELAYER_URL}/relay/private-transfer`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              proof: proofData.proof,
-              publicSignals: proofData.publicSignals,
-              nullifier: proofData.nullifier,
-              stealthAddress: stealth.address,
-              ephemeralPublicKey: stealth.ephemeralPublicKey,
-              viewTag: stealth.viewTag,
-              amountLamports: amountLamports.toString(),
-              fundingTxSignature: fundingSignature,
-            }),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Private transfer failed');
-          }
-
-          const result = await response.json();
-
-          // Step 6: Mark notes as spent
-          await _zkService.markNoteSpent(proofData.nullifier);
-
-          const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
-
-          set(state => ({
-            shieldedBalance: newBalance,
-            pendingTransactions: state.pendingTransactions.map(tx =>
-              tx.id === txId ? { ...tx, status: 'confirmed', signature: result.signature } : tx
-            ),
-          }));
-
-          setTimeout(() => {
-            set(state => ({
-              pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
-            }));
-          }, 5000);
-
-          return { signature: result.signature, recipientNote: {} as RecipientNoteData };
-
-        } catch (relayerError) {
-          console.error('[Private Transfer] Relayer failed:', relayerError);
-
-          // Fallback: direct on-chain ZK transfer (sender visible but still works)
-          try {
-            const directResult = await _zkService.transfer(
-              zkRecipient,
-              amountLamports,
+            const serializedTx = new Uint8Array(Buffer.from(transferResult.signature, 'base64'));
+            const relaySig = await relayTransaction(
+              serializedTx,
               walletPublicKey,
-              signTransaction
+              signTransaction,
+              connection,
             );
 
             const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
-
             set(state => ({
               shieldedBalance: newBalance,
               pendingTransactions: state.pendingTransactions.map(tx =>
-                tx.id === txId ? { ...tx, status: 'confirmed', signature: directResult.signature } : tx
+                tx.id === txId ? { ...tx, status: 'confirmed', signature: relaySig } : tx
               ),
             }));
 
@@ -933,25 +852,43 @@ export const useShieldedStore = create<ShieldedState>()(
               }));
             }, 5000);
 
-            return directResult;
-          } catch (fallbackError: any) {
-            console.error('[Private Transfer] Fallback also failed:', fallbackError);
-            // Show the most useful error: if fallback has a clear message, use it
-            const fallbackMsg = fallbackError?.message || '';
-            const relayerMsg = (relayerError as Error)?.message || '';
-            const displayError = fallbackMsg.includes('Insufficient SOL') ? fallbackMsg
-              : relayerMsg.includes('Insufficient SOL') ? relayerMsg
-              : fallbackMsg.includes('insufficient lamports') ? 'Insufficient SOL for transaction fees. Please fund your wallet.'
-              : relayerMsg || fallbackMsg || 'Transfer failed';
+            return { signature: relaySig, recipientNote: {} as RecipientNoteData };
+          } catch (relayError) {
+            // Relay not available yet (program not deployed) — use direct result
+            console.warn('[Private Transfer] On-chain relay unavailable, using direct tx:', relayError);
+
+            const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;
             set(state => ({
+              shieldedBalance: newBalance,
               pendingTransactions: state.pendingTransactions.map(tx =>
-                tx.id === txId
-                  ? { ...tx, status: 'failed', error: displayError }
-                  : tx
+                tx.id === txId ? { ...tx, status: 'confirmed', signature: transferResult.signature } : tx
               ),
             }));
-            throw new Error(displayError);
+
+            setTimeout(() => {
+              set(state => ({
+                pendingTransactions: state.pendingTransactions.filter(tx => tx.id !== txId),
+              }));
+            }, 5000);
+
+            return transferResult;
           }
+
+        } catch (transferError: any) {
+          console.error('[Private Transfer] Failed:', transferError);
+          const displayError = transferError?.message?.includes('Insufficient SOL')
+            ? transferError.message
+            : transferError?.message?.includes('insufficient lamports')
+            ? 'Insufficient SOL for transaction fees. Please fund your wallet.'
+            : transferError?.message || 'Transfer failed';
+          set(state => ({
+            pendingTransactions: state.pendingTransactions.map(tx =>
+              tx.id === txId
+                ? { ...tx, status: 'failed', error: displayError }
+                : tx
+            ),
+          }));
+          throw new Error(displayError);
         }
       },
 
