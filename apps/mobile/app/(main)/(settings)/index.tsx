@@ -75,12 +75,12 @@ export default function SettingsScreen() {
 
   const handleDisconnect = () => {
     Alert.alert(
-      'Déconnexion',
-      'Voulez-vous vous déconnecter ? Vous devrez vous authentifier pour accéder à votre wallet.',
+      'Disconnect',
+      'Do you want to disconnect? You will need to authenticate to access your wallet.',
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Déconnecter',
+          text: 'Disconnect',
           onPress: async () => {
             try {
               await privyLogout();
@@ -102,8 +102,8 @@ export default function SettingsScreen() {
 
     if (hasHardware && isEnrolled) {
       const authResult = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Authentifiez-vous pour supprimer le wallet',
-        cancelLabel: 'Annuler',
+        promptMessage: 'Authenticate to delete the wallet',
+        cancelLabel: 'Cancel',
         disableDeviceFallback: false,
       });
 
@@ -114,21 +114,21 @@ export default function SettingsScreen() {
     }
 
     Alert.alert(
-      '⚠️ Supprimer le Wallet',
-      'ATTENTION: Cette action est IRRÉVERSIBLE!\n\nVotre wallet sera définitivement supprimé de cet appareil. Assurez-vous d\'avoir sauvegardé votre phrase de récupération!',
+      '⚠️ Delete Wallet',
+      'WARNING: This action is IRREVERSIBLE!\n\nYour wallet will be permanently deleted from this device. Make sure you have backed up your recovery phrase!',
       [
-        { text: 'Annuler', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Je comprends, supprimer',
+          text: 'I understand, delete',
           style: 'destructive',
           onPress: () => {
             Alert.alert(
-              '🔴 Confirmation Finale',
-              'Tapez "SUPPRIMER" pour confirmer la suppression définitive de votre wallet.',
+              '🔴 Final Confirmation',
+              'This action is IRREVERSIBLE. Your wallet and all associated data will be permanently deleted.',
               [
-                { text: 'Annuler', style: 'cancel' },
+                { text: 'Cancel', style: 'cancel' },
                 {
-                  text: 'Supprimer Définitivement',
+                  text: 'Delete Permanently',
                   style: 'destructive',
                   onPress: async () => {
                     try {
@@ -137,7 +137,7 @@ export default function SettingsScreen() {
                       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                       router.replace('/');
                     } catch (error) {
-                      Alert.alert('Erreur', 'Échec de la suppression. Veuillez réessayer.');
+                      Alert.alert('Error', 'Deletion failed. Please try again.');
                     }
                   },
                 },
@@ -156,6 +156,8 @@ export default function SettingsScreen() {
         <TouchableOpacity
           onPress={() => router.back()}
           className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
@@ -174,6 +176,8 @@ export default function SettingsScreen() {
             className="flex-row items-center justify-between py-4 px-4"
             onPress={handleCopyAddress}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Copy wallet address ${truncatedAddress}`}
           >
             <View className="flex-row items-center flex-1">
               <View className="w-10 h-10 rounded-xl bg-p01-cyan/20 items-center justify-center mr-3">
@@ -303,11 +307,13 @@ export default function SettingsScreen() {
             className="py-4 items-center bg-p01-surface rounded-xl border border-p01-border"
             onPress={handleDisconnect}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Disconnect wallet"
           >
             <View className="flex-row items-center">
               <Ionicons name="log-out-outline" size={18} color="#39c5bb" />
               <Text className="text-p01-cyan text-base font-medium ml-2">
-                Déconnexion
+                Disconnect
               </Text>
             </View>
           </TouchableOpacity>
@@ -319,9 +325,11 @@ export default function SettingsScreen() {
             className="flex-row items-center justify-center py-3"
             onPress={() => setShowAdvanced(!showAdvanced)}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={showAdvanced ? 'Hide advanced options' : 'Show advanced options'}
           >
             <Text className="text-p01-gray/50 text-xs mr-2">
-              {showAdvanced ? 'Masquer les options avancées' : 'Options avancées'}
+              {showAdvanced ? 'Hide advanced options' : 'Advanced options'}
             </Text>
             <Ionicons
               name={showAdvanced ? 'chevron-up' : 'chevron-down'}
@@ -336,17 +344,19 @@ export default function SettingsScreen() {
           <View className="mt-2 mx-4">
             <View className="bg-red-500/5 rounded-xl p-4 border border-red-500/10">
               <Text className="text-red-400/70 text-xs text-center mb-3">
-                ⚠️ Zone Dangereuse - Actions irréversibles
+                ⚠️ Danger Zone - Irreversible actions
               </Text>
               <TouchableOpacity
                 className="py-3 items-center bg-red-500/10 rounded-lg border border-red-500/20"
                 onPress={handleDeleteWallet}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Delete wallet permanently"
               >
                 <View className="flex-row items-center">
                   <Ionicons name="trash-outline" size={16} color="#ef4444" />
                   <Text className="text-red-500 text-sm font-medium ml-2">
-                    Supprimer le Wallet
+                    Delete Wallet
                   </Text>
                 </View>
               </TouchableOpacity>

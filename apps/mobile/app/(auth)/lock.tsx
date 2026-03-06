@@ -206,6 +206,8 @@ export default function LockScreen() {
                   }}
                   disabled={key === ''}
                   activeOpacity={0.6}
+                  accessibilityRole="button"
+                  accessibilityLabel={key === 'delete' ? 'Delete last digit' : key === '' ? undefined : `Digit ${key}`}
                 >
                   {key === 'delete' ? (
                     <Ionicons name="backspace-outline" size={28} color="#ffffff" />
@@ -240,6 +242,9 @@ export default function LockScreen() {
             onPress={authenticate}
             disabled={isAuthenticating}
             style={styles.unlockButton}
+            accessibilityRole="button"
+            accessibilityLabel="Unlock with biometrics"
+            accessibilityState={{ disabled: isAuthenticating }}
           >
             <View style={[styles.fingerprintCircle, isAuthenticating && styles.fingerprintCircleDisabled]}>
               <Ionicons
@@ -267,6 +272,8 @@ export default function LockScreen() {
           onPress={() => router.push('/(onboarding)')}
           style={styles.switchWalletButton}
           activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Use another wallet"
         >
           <Ionicons name="swap-horizontal-outline" size={16} color="#666" />
           <Text style={styles.switchWalletText}>

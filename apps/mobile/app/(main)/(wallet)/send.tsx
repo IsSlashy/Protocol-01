@@ -204,6 +204,8 @@ export default function SendScreen() {
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
             <Ionicons name="arrow-back" size={24} color={Colors.text} />
           </TouchableOpacity>
@@ -228,6 +230,8 @@ export default function SendScreen() {
                 value={amount}
                 onChangeText={handleAmountChange}
                 keyboardType="decimal-pad"
+                accessibilityLabel="Amount in SOL"
+                accessibilityHint="Enter the amount of SOL to send"
               />
               <Text style={styles.amountSymbol}>SOL</Text>
             </View>
@@ -242,6 +246,8 @@ export default function SendScreen() {
                   key={percent}
                   onPress={() => handlePercentage(percent)}
                   style={styles.percentButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={percent === 1 ? 'Maximum amount' : `${percent * 100} percent of balance`}
                 >
                   <Text style={styles.percentButtonText}>
                     {percent === 1 ? 'MAX' : `${percent * 100}%`}
@@ -277,10 +283,14 @@ export default function SendScreen() {
                 autoCorrect={false}
                 multiline
                 numberOfLines={2}
+                accessibilityLabel="Recipient address"
+                accessibilityHint="Enter the Solana wallet address of the recipient"
               />
               <TouchableOpacity
                 onPress={() => router.push('/(main)/(wallet)/scan')}
                 style={styles.scanButton}
+                accessibilityRole="button"
+                accessibilityLabel="Scan QR code"
               >
                 <Ionicons name="scan-outline" size={20} color={Colors.primary} />
               </TouchableOpacity>
@@ -325,6 +335,9 @@ export default function SendScreen() {
           <TouchableOpacity
             onPress={handleSend}
             disabled={!isFormValid}
+            accessibilityRole="button"
+            accessibilityLabel={sending ? 'Sending' : 'Send SOL'}
+            accessibilityState={{ disabled: !isFormValid }}
             style={[
               styles.sendButton,
               !isFormValid ? styles.sendButtonDisabled : null,
@@ -347,6 +360,8 @@ export default function SendScreen() {
               params: { recipient, amount },
             })}
             style={styles.splitSendButton}
+            accessibilityRole="button"
+            accessibilityLabel="Split Send, split into multiple transactions over time"
           >
             <View style={styles.splitSendIcon}>
               <Ionicons name="git-branch" size={18} color={P01.pink} />

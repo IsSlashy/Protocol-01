@@ -74,7 +74,7 @@
         }
       ],
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "P-01 needs microphone access for voice input to the AI agent."
         }

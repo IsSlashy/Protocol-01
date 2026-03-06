@@ -267,6 +267,8 @@ export default function SwapScreen() {
           style={styles.backButton}
           onPress={() => router.back()}
           disabled={isProcessing}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color={Colors.text} />
         </TouchableOpacity>
@@ -277,6 +279,8 @@ export default function SwapScreen() {
             // Cycle slippage: 0.5% → 1% → 2% → 0.5%
             setSlippage(prev => prev === 50 ? 100 : prev === 100 ? 200 : 50);
           }}
+          accessibilityRole="button"
+          accessibilityLabel={`Slippage tolerance ${(slippage / 100).toFixed(1)} percent, tap to change`}
         >
           <Ionicons name="settings-outline" size={20} color={Colors.textSecondary} />
           <Text style={styles.slippageText}>{(slippage / 100).toFixed(1)}%</Text>
@@ -315,7 +319,7 @@ export default function SwapScreen() {
                 Tx: {txSignature.slice(0, 20)}...
               </Text>
             )}
-            <TouchableOpacity style={styles.successButton} onPress={handleReset}>
+            <TouchableOpacity style={styles.successButton} onPress={handleReset} accessibilityRole="button" accessibilityLabel="Start a new swap">
               <Text style={styles.successButtonText}>New Swap</Text>
             </TouchableOpacity>
           </Animated.View>
@@ -329,7 +333,7 @@ export default function SwapScreen() {
               <View style={styles.tokenCardHeader}>
                 <Text style={styles.tokenCardLabel}>You Pay</Text>
                 {inputToken.address === TOKEN_MINTS.SOL && (
-                  <TouchableOpacity onPress={handleMax}>
+                  <TouchableOpacity onPress={handleMax} accessibilityRole="button" accessibilityLabel={`Use maximum balance, ${solBalance.toFixed(4)} SOL`}>
                     <Text style={styles.maxButton}>
                       Balance: {solBalance.toFixed(4)} SOL
                     </Text>
@@ -351,12 +355,16 @@ export default function SwapScreen() {
                   }}
                   keyboardType="decimal-pad"
                   editable={!isProcessing}
+                  accessibilityLabel={`Amount of ${inputToken.symbol} to swap`}
+                  accessibilityHint="Enter the amount you want to swap"
                 />
 
                 <TouchableOpacity
                   style={styles.tokenSelector}
                   onPress={() => openSelector('input')}
                   disabled={isProcessing}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select input token, currently ${inputToken.symbol}`}
                 >
                   {inputToken.logoURI ? (
                     <Image source={{ uri: inputToken.logoURI }} style={styles.tokenSelectorLogo} />
@@ -377,6 +385,8 @@ export default function SwapScreen() {
                 style={styles.flipButton}
                 onPress={handleFlip}
                 disabled={isProcessing}
+                accessibilityRole="button"
+                accessibilityLabel="Swap input and output tokens"
               >
                 <Ionicons name="swap-vertical" size={22} color={Colors.primary} />
               </TouchableOpacity>
@@ -403,6 +413,8 @@ export default function SwapScreen() {
                   style={styles.tokenSelector}
                   onPress={() => openSelector('output')}
                   disabled={isProcessing}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select output token, currently ${outputToken.symbol}`}
                 >
                   {outputToken.logoURI ? (
                     <Image source={{ uri: outputToken.logoURI }} style={styles.tokenSelectorLogo} />
@@ -510,11 +522,16 @@ export default function SwapScreen() {
               onPress={handleSwap}
               disabled={!canSwap}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={!inputAmount ? 'Enter amount' : status === 'quoting' ? 'Getting quote' : status === 'error' ? 'Try again' : 'Swap tokens'}
+              accessibilityState={{ disabled: !canSwap }}
             >
               {status === 'error' ? (
                 <TouchableOpacity
                   style={styles.swapButtonInner}
                   onPress={handleReset}
+                  accessibilityRole="button"
+                  accessibilityLabel="Try again"
                 >
                   <Ionicons name="refresh" size={22} color="#0a0a0c" />
                   <Text style={styles.swapButtonText}>Try Again</Text>

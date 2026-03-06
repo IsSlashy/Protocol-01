@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Haptics from 'expo-haptics';
 import { SettingsSection, SettingsRow, ToggleRow } from '../../../components/settings';
+import { requireNativeModule } from 'expo-modules-core';
 
 const STORAGE_KEYS = {
   BIOMETRICS: 'settings_biometrics',
@@ -101,12 +102,25 @@ export default function SecuritySettingsScreen() {
     await AsyncStorage.setItem(STORAGE_KEYS.BLOCK_SCREENSHOTS, value.toString());
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    if (value) {
-      Alert.alert(
-        'Screenshot Blocking',
-        'Screenshot blocking is enabled but may not be fully supported on all devices.',
-        [{ text: 'OK' }]
-      );
+    // Apply FLAG_SECURE on Android
+    if (Platform.OS === 'android') {
+      try {
+        const ActivityModule = requireNativeModule('ExpoActivity');
+        if (value) {
+          ActivityModule.setWindowFlags(8192, 8192); // FLAG_SECURE = 0x2000
+        } else {
+          ActivityModule.clearWindowFlags(8192);
+        }
+      } catch {
+        // ExpoActivity module not available — fall back to alert
+        if (value) {
+          Alert.alert(
+            'Screenshot Blocking',
+            'Screenshot blocking is enabled but requires a native module for full enforcement. It will take effect on next app restart.',
+            [{ text: 'OK' }]
+          );
+        }
+      }
     }
   };
 

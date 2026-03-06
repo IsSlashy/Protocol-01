@@ -98,7 +98,7 @@ export function useStreams(options: UseStreamsOptions = {}): UseStreamsReturn {
   const [error, setError] = useState<Error | null>(null);
 
   const { wallet } = useWallet();
-  const { isConnected, chainId } = useNetwork();
+  const { isConnected } = useNetwork();
 
   const address = options.address ?? wallet?.address ?? null;
 
@@ -106,7 +106,7 @@ export function useStreams(options: UseStreamsOptions = {}): UseStreamsReturn {
     value: cachedStreams,
     setValue: setCachedStreams,
   } = useAsyncStorage<Stream[]>({
-    key: `${ASYNC_KEYS.STREAM_CACHE}_${chainId}`,
+    key: `${ASYNC_KEYS.STREAM_CACHE}_solana`,
     defaultValue: [],
   });
 

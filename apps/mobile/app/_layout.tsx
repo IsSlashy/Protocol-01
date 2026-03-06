@@ -15,9 +15,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { P01PrivyProvider } from '../providers/PrivyProvider';
 import React from 'react';
-// ZkProverProvider DISABLED - 19MB circuit file freezes app even with lazy loading
-// Metro bundler includes the file in bundle regardless of dynamic import
-// TODO: Host circuits on CDN or use backend prover
+import { ZkProverProvider } from '../providers/ZkProverProvider';
 import { AlertProvider } from '../providers/AlertProvider';
 import { useLoadFonts } from '../hooks/useLoadFonts';
 
@@ -51,6 +49,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#050505' }}>
       <SafeAreaProvider>
         <P01PrivyProvider>
+          <ZkProverProvider>
             <AlertProvider>
               <View style={{ flex: 1, backgroundColor: '#050505' }}>
                 <StatusBar style="light" />
@@ -68,6 +67,7 @@ export default function RootLayout() {
                 </Stack>
               </View>
             </AlertProvider>
+          </ZkProverProvider>
         </P01PrivyProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

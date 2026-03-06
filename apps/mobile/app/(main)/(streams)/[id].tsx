@@ -367,6 +367,8 @@ function StreamDetailContent() {
           onPress={() => router.back()}
           className="w-10 h-10 rounded-full items-center justify-center"
           style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={20} color={ACCENT} />
         </TouchableOpacity>
@@ -571,6 +573,9 @@ function StreamDetailContent() {
                   disabled={processingPayment === stream.id || isZkPaying}
                   className="px-4 py-2 rounded-xl flex-row items-center"
                   style={{ backgroundColor: serviceColor }}
+                  accessibilityRole="button"
+                  accessibilityLabel={stream.useZkPool ? 'Pay now with ZK proof' : 'Pay now'}
+                  accessibilityState={{ disabled: processingPayment === stream.id || isZkPaying }}
                 >
                   {(processingPayment === stream.id || isZkPaying) ? (
                     <View style={{ alignItems: 'center' }}>
@@ -602,6 +607,8 @@ function StreamDetailContent() {
           <TouchableOpacity
             onPress={handleCopyAddress}
             className="flex-row items-center justify-between"
+            accessibilityRole="button"
+            accessibilityLabel={copied ? 'Address copied' : 'Copy recipient address'}
           >
             <View className="flex-1">
               {stream.recipientName && (
@@ -697,6 +704,8 @@ function StreamDetailContent() {
                 onPress={handlePauseResume}
                 className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
                 style={{ backgroundColor: `${serviceColor}20` }}
+                accessibilityRole="button"
+                accessibilityLabel={stream.status === 'active' ? 'Pause stream' : 'Resume stream'}
               >
                 <Ionicons
                   name={stream.status === 'active' ? 'pause' : 'play'}
@@ -712,6 +721,8 @@ function StreamDetailContent() {
                 onPress={handleCancel}
                 className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
                 style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel stream"
               >
                 <Ionicons name="close-circle" size={20} color="#ef4444" />
                 <Text className="font-semibold ml-2 text-red-500">Cancel Stream</Text>
@@ -746,6 +757,8 @@ function StreamDetailContent() {
                     );
                   }
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Payment ${payment.amount.toFixed(4)} SOL, ${payment.status === 'success' ? 'successful' : 'failed'}`}
                 className="flex-row items-center justify-between py-3"
                 style={{
                   borderTopWidth: index > 0 ? 1 : 0,

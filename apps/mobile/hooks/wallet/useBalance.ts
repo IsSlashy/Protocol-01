@@ -74,7 +74,7 @@ export function useBalance({
   const [error, setError] = useState<Error | null>(null);
 
   const intervalRef = useRef<number | null>(null);
-  const { isConnected, provider } = useNetwork();
+  const { isConnected } = useNetwork();
 
   const fetchBalance = useCallback(async (isRefresh = false) => {
     if (!address || !isConnected) {
@@ -151,7 +151,7 @@ export function useBalance({
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [address, isConnected, includeTokens, tokenAddresses, provider]);
+  }, [address, isConnected, includeTokens, tokenAddresses]);
 
   // Initial fetch
   useEffect(() => {

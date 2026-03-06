@@ -89,8 +89,8 @@ export const STEALTH_CONFIG = {
   // Announcement expiry (days)
   announcementExpiry: 30,
 
-  // Registry program ID (placeholder)
-  registryProgramId: 'P01RegistryXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
+  // Registry program ID — not deployed yet, will fail loudly if used
+  registryProgramId: '' as const,
 } as const;
 
 /**

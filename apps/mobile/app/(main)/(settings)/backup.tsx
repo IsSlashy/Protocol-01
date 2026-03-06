@@ -70,6 +70,12 @@ export default function BackupRecoveryScreen() {
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+    // Auto-clear clipboard after 60 seconds for security
+    setTimeout(async () => {
+      try {
+        await Clipboard.setStringAsync('');
+      } catch (_) {}
+    }, 60000);
   };
 
   const handleConfirmBackup = () => {
