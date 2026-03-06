@@ -1439,6 +1439,246 @@ export class ZkService {
   }
 
   /**
+   * Unshield tokens via the decentralized relay for sender privacy.
+   *
+   * Instead of the user's wallet appearing as the payer on-chain,
+   * an ephemeral keypair signs the unshield tx. The relay service
+   * encrypts and posts the job; a relayer executes it.
+   *
+   * Privacy: the user's wallet only appears in a small funding tx
+   * to an ephemeral address — the actual unshield is unlinkable.
+   */
+  async unshieldViaRelay(
+    recipient: PublicKey,
+    amount: bigint,
+    walletPublicKey: PublicKey,
+    signTransaction: (tx: Transaction) => Promise<Transaction>
+  ): Promise<string> {
+    if (!this.spendingKeyHash || !this.ownerPubkey) {
+      throw new Error('ZK Service not initialized');
+    }
+
+    const relayStart = Date.now();
+    console.log('[ZK Relay Unshield] Starting relay unshield of', Number(amount) / 1e9, 'SOL...');
+
+    // ── Note selection (same as regular unshield) ──
+    let { notesToSpend, totalValue } = this.selectNotes(amount);
+    if (totalValue < amount) {
+      throw new Error(`Insufficient shielded balance: ${totalValue} < ${amount}`);
+    }
+
+    const validNotes = await this.validateNotesNotSpent(notesToSpend);
+    if (validNotes.length < notesToSpend.length) {
+      const reselection = this.selectNotes(amount);
+      notesToSpend = reselection.notesToSpend;
+      totalValue = reselection.totalValue;
+      if (totalValue < amount) {
+        throw new Error(`Insufficient shielded balance after removing zombie notes`);
+      }
+      notesToSpend = await this.validateNotesNotSpent(notesToSpend);
+    } else {
+      notesToSpend = validNotes;
+    }
+
+    const tokenMintField = BigInt('0x' + Buffer.from(this.tokenMint.toBytes()).toString('hex'));
+
+    // ── Change note ──
+    const changeAmount = totalValue - amount;
+    let changeNote: Note;
+    if (changeAmount > BigInt(0)) {
+      changeNote = await createNote(changeAmount, this.ownerPubkey, tokenMintField);
+    } else {
+      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+      changeNote = {
+        amount: BigInt(0), ownerPubkey: BigInt(0), randomness: BigInt(0),
+        tokenMint: tokenMintField, commitment: dummyCommitment,
+      };
+    }
+
+    // ── Nullifiers ──
+    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
+    let nullifier2: bigint;
+    let dummyInputNote: Note | undefined;
+
+    if (notesToSpend[1]) {
+      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
+    } else {
+      const dummyRandomness = generateRandomBigInt();
+      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
+      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
+      dummyInputNote = {
+        amount: BigInt(0), ownerPubkey: BigInt(0), randomness: dummyRandomness,
+        tokenMint: tokenMintField, commitment: dummyCommitment,
+      };
+    }
+
+    // ── Merkle proof ──
+    const note1 = notesToSpend[0];
+    if (!note1.merkleRoot) {
+      throw new Error('Note missing Merkle root — was it shielded with an older version?');
+    }
+
+    let proof1: { pathElements: bigint[]; pathIndices: number[] };
+    const merkleRoot = note1.merkleRoot;
+
+    if (note1.merklePathElements && note1.merklePathIndices) {
+      let verifyRoot = note1.commitment;
+      for (let i = 0; i < MERKLE_TREE_DEPTH; i++) {
+        const sibling = note1.merklePathElements[i];
+        const isRight = note1.merklePathIndices[i] === 1;
+        verifyRoot = isRight
+          ? poseidonHash(sibling, verifyRoot)
+          : poseidonHash(verifyRoot, sibling);
+      }
+      if (verifyRoot === merkleRoot) {
+        proof1 = { pathElements: note1.merklePathElements, pathIndices: note1.merklePathIndices };
+      } else {
+        proof1 = await this.reconstructProofFromSubtrees(note1);
+      }
+    } else {
+      proof1 = await this.reconstructProofFromSubtrees(note1);
+    }
+
+    const proof2 = notesToSpend[1]?.merklePathElements
+      ? { pathElements: notesToSpend[1].merklePathElements, pathIndices: notesToSpend[1].merklePathIndices! }
+      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
+
+    // ── ZK proof generation ──
+    const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+    const dummyOutput2: Note = {
+      amount: BigInt(0), ownerPubkey: BigInt(0), randomness: BigInt(0),
+      tokenMint: tokenMintField, commitment: dummyOutput2Commitment,
+    };
+
+    const inputNotesForCircuit = notesToSpend[1]
+      ? notesToSpend
+      : [notesToSpend[0], dummyInputNote!];
+
+    const zkProof = await this.generateProofClientSide({
+      merkleRoot,
+      nullifier1,
+      nullifier2,
+      outputCommitment1: changeNote.commitment,
+      outputCommitment2: dummyOutput2Commitment,
+      publicAmount: -amount,
+      inputNotes: inputNotesForCircuit,
+      outputNotes: [changeNote, dummyOutput2],
+      proofs: [proof1, proof2],
+      spendingKey: this.spendingKey!,
+    });
+
+    // ── Compute newRoot for change commitment ──
+    const onChainState = await this.readOnChainFilledSubtrees();
+    const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
+    const useSubtrees = localSubtrees || onChainState.filledSubtrees;
+    const { newRoot, updatedSubtrees, pathElements: changePathElements, pathIndices: changePathIndices } = this.computeNewRootFromSubtrees(
+      useSubtrees, onChainState.leafCount, changeNote.commitment, onChainState.depth
+    );
+    await this.saveLocalSubtrees(updatedSubtrees, onChainState.leafCount + 1);
+
+    // ── Build unshield instruction with EPHEMERAL payer ──
+    const ephemeralKeypair = Keypair.generate();
+    console.log('[ZK Relay Unshield] Ephemeral payer:', ephemeralKeypair.publicKey.toBase58().slice(0, 12) + '...');
+
+    const [poolPDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()], this.programId
+    );
+    const [merkleTreePDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()], this.programId
+    );
+    const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.NULLIFIER_SET, poolPDA.toBytes()], this.programId
+    );
+    const [vkDataPDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from('vk_data'), poolPDA.toBytes()], this.programId
+    );
+
+    const discriminator = Buffer.from([0x15, 0xe4, 0x37, 0x18, 0xc2, 0x0a, 0x15, 0x16]);
+    const amountBuffer = Buffer.alloc(8);
+    amountBuffer.writeBigUInt64LE(amount, 0);
+
+    const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
+
+    const data = Buffer.concat([
+      discriminator,
+      zkProof.pi_a, zkProof.pi_b, zkProof.pi_c,
+      bigintToLeBytes(nullifier1),
+      bigintToLeBytes(nullifier2),
+      bigintToLeBytes(changeNote.commitment),
+      bigintToLeBytes(dummyCommitment),
+      bigintToLeBytes(merkleRoot),
+      amountBuffer,
+      bigintToLeBytes(newRoot),
+    ]);
+
+    const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+
+    const ix = new TransactionInstruction({
+      programId: this.programId,
+      keys: [
+        { pubkey: ephemeralKeypair.publicKey, isSigner: true, isWritable: true }, // payer = ephemeral
+        { pubkey: recipient, isSigner: false, isWritable: true },
+        { pubkey: poolPDA, isSigner: false, isWritable: true },
+        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
+        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: this.programId, isSigner: false, isWritable: false },
+        { pubkey: this.programId, isSigner: false, isWritable: false },
+      ],
+      data,
+    });
+
+    // Compute budget for Groth16 verification
+    const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+    const computeLimitData = Buffer.alloc(5);
+    computeLimitData.writeUInt8(2, 0);
+    computeLimitData.writeUInt32LE(1_400_000, 1);
+
+    const computeLimitIx = new TransactionInstruction({
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [],
+      data: computeLimitData,
+    });
+
+    // Build the tx with ephemeral as payer, sign with ephemeral
+    const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+    const unshieldTx = new Transaction().add(computeLimitIx).add(ix);
+    unshieldTx.feePayer = ephemeralKeypair.publicKey;
+    unshieldTx.recentBlockhash = blockhash;
+    unshieldTx.sign(ephemeralKeypair);
+
+    const serializedTx = unshieldTx.serialize();
+    console.log('[ZK Relay Unshield] Tx serialized:', serializedTx.length, 'bytes');
+
+    // ── Submit via decentralized relay ──
+    const { relayTransaction } = await import('../relay');
+    const relaySignature = await relayTransaction(
+      serializedTx,
+      walletPublicKey,
+      signTransaction,
+    );
+
+    // ── Update local notes ──
+    this.removeSpentNotes(notesToSpend);
+    if (changeAmount > BigInt(0)) {
+      changeNote.leafIndex = onChainState.leafCount;
+      changeNote.merkleRoot = newRoot;
+      changeNote.merklePathElements = changePathElements;
+      changeNote.merklePathIndices = changePathIndices;
+      changeNote.isOnChain = true;
+      this.addNote(changeNote);
+    }
+    await this.saveNotes();
+
+    const totalTime = Date.now() - relayStart;
+    console.log('[ZK Relay Unshield] SUCCESS in', totalTime, 'ms, relay sig:', relaySignature.slice(0, 20) + '...');
+
+    return relaySignature;
+  }
+
+  /**
    * Unshield tokens to a STEALTH ADDRESS for maximum privacy
    *
    * Instead of sending to a known recipient address, this generates
