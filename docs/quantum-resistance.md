@@ -1,0 +1,742 @@
+# Protocol 01 — Quantum Resistance Assessment & Migration Plan
+
+**Document version:** 1.0
+**Date:** 2026-03-06
+**Status:** Research & planning
+**Classification:** Internal — engineering reference
+
+---
+
+## Executive Summary
+
+Protocol 01 is a privacy layer for Solana using ZK-SNARKs (Groth16), stealth addresses (ECDH), and confidential balances (Poseidon commitments). This document inventories every cryptographic primitive in the protocol, assesses its quantum resistance, and defines a migration path to ensure user privacy remains strong for decades — even against nation-state adversaries with quantum computers.
+
+**Key findings:**
+- **50% of the cryptographic stack is already quantum-resistant** (Poseidon commitments, Merkle trees, symmetric encryption, hash functions)
+- **3 critical components are vulnerable** to Shor's algorithm: Ed25519 wallet signatures, X25519 ECDH stealth addresses, and Groth16 BN254 proof verification
+- **The "Harvest Now, Decrypt Later" (HNDL) threat is already active** — adversaries may be recording on-chain data today for future quantum decryption
+- **Solana ecosystem is actively preparing** — Dilithium testnet (Dec 2025), Winternitz Vault (mainnet), SIMD-0296 (4KB transactions, in review), STARK on-chain verification proven feasible (1.1M CU)
+- **A phased migration is possible** without breaking the existing user experience
+
+### Quantum Resistance Scorecard
+
+| Component | Primitive | Status | Threat | Timeline |
+|-----------|----------|--------|--------|----------|
+| Commitments (zkSPL) | Poseidon | SAFE | Grover (halved, still sufficient) | N/A |
+| Commitments (shielded pool) | Poseidon | SAFE | Grover (halved, still sufficient) | N/A |
+| Merkle trees | Poseidon | SAFE | ~85-bit quantum collision resistance | N/A |
+| Symmetric encryption | XSalsa20-Poly1305 | SAFE | Grover (256→128 bit, sufficient) | N/A |
+| Metadata encryption | AES-256-CBC | SAFE | Grover (256→128 bit, sufficient) | N/A |
+| Hash functions | SHA-256, Keccak256 | SAFE | Grover (128-bit post-quantum) | N/A |
+| Key derivation | HKDF-SHA256 | SAFE | Grover (halved, sufficient) | N/A |
+| Random generation | nacl.randomBytes | SAFE | Not affected by quantum | N/A |
+| **Wallet signatures** | **Ed25519** | **BROKEN** | **Shor — O(n³)** | **2035-2045** |
+| **Stealth addresses** | **X25519 ECDH** | **BROKEN** | **Shor — O(n³)** | **2035-2045** |
+| **ZK proof verification** | **Groth16/BN254** | **BROKEN** | **Shor — O(n³)** | **2035-2045** |
+| **VK on-chain storage** | **BN254 curve points** | **BROKEN** | **Shor — forgeable proofs** | **2035-2045** |
+| **Pedersen commitments** | **Ed25519 (C=vG+rH)** | **BROKEN** | **Shor — unhides values** | **2035-2045** |
+
+---
+
+## 1. Quantum Threat Model
+
+### 1.1 Shor's Algorithm — Breaks Public-Key Cryptography
+
+**Complexity:** Polynomial time O(n³) on a quantum computer
+**What it breaks in Protocol 01:**
+
+| Primitive | Where Used | Impact |
+|-----------|-----------|--------|
+| Ed25519 | Solana wallet keypairs, transaction signing | Attacker can derive private key from public key, steal all funds |
+| X25519 (Curve25519) | Stealth address ECDH key exchange | Attacker can derive shared secrets, de-anonymize all stealth payments |
+| BN254 pairing | Groth16 proof verification (alt_bn128 syscalls) | Attacker can forge proofs, mint tokens, double-spend |
+
+**Estimated timeline for Cryptographically Relevant Quantum Computer (CRQC):**
+- Optimistic: 2030-2035
+- Consensus: 2035-2040
+- Conservative: 2040-2050
+- Required logical qubits for 255-bit ECC: ~4,000 (current largest: ~1,500 noisy)
+
+**NIST recommendation:** Begin migration NOW. NSA CNSA 2.0 mandates PQC for new classified systems by 2027.
+
+### 1.2 Grover's Algorithm — Weakens Symmetric Crypto
+
+**Complexity:** O(√N) — halves effective security bits
+**Impact on Protocol 01:**
+
+| Primitive | Current Security | Post-Quantum Security | Status |
+|-----------|-----------------|----------------------|--------|
+| XSalsa20-Poly1305 (256-bit key) | 256 bits | 128 bits | SAFE |
+| AES-256-CBC | 256 bits | 128 bits | SAFE |
+| SHA-256 | 128-bit collision | 85-bit collision (BHT) | SAFE |
+| Poseidon (BN254 field, 254-bit) | ~127-bit collision | ~85-bit collision | SAFE |
+| Keccak256 | 128-bit collision | ~85-bit collision | SAFE |
+| HKDF-SHA256 | 256-bit PRF | 128-bit PRF | SAFE |
+
+**Mitigation:** All symmetric primitives already use 256-bit keys. No changes needed.
+
+### 1.3 Harvest Now, Decrypt Later (HNDL)
+
+**The most urgent quantum threat.** The HNDL attack model means adversaries (nation-states, intelligence agencies, corporations) record encrypted/obfuscated data today and decrypt it when quantum computers become available.
+
+**Why this matters for Protocol 01:**
+
+1. **Blockchain immutability**: Every transaction, commitment, nullifier, ephemeral public key, and stealth address is permanently recorded on Solana's ledger
+2. **Retroactive de-anonymization**: An adversary who records today's stealth address ephemeral public keys can, in the future:
+   - Derive all ECDH shared secrets using Shor's algorithm
+   - Reconstruct every stealth address mapping (sender → recipient)
+   - De-anonymize the entire history of private transfers
+3. **Proof forgery**: Historical proofs cannot be retroactively forged (they're already verified), but the *ability* to forge new proofs means the proof system must be migrated before CRQC arrives
+4. **The Federal Reserve (2025)** warns: "HNDL is a present and ongoing privacy risk for distributed ledger networks, not a future one"
+
+**Critical implication for Protocol 01:**
+- **Stealth address ephemeral public keys on-chain are the #1 HNDL target**
+- Every `ephemeralPublicKey` stored or emitted on Solana creates a permanent record that can be decrypted by a future quantum computer
+- This cannot be fixed retroactively — only new transactions can use quantum-resistant key exchange
+- Users should be warned: **current stealth transactions provide privacy against classical computers but NOT against future quantum computers**
+
+---
+
+## 2. Complete Cryptographic Primitive Inventory
+
+### 2.1 Layer 1: Wallet Signatures — Ed25519
+
+**Status: BROKEN by Shor's algorithm**
+
+| File | Usage | Library |
+|------|-------|---------|
+| `packages/specter-sdk/src/utils/crypto.ts:291` | `nacl.sign.detached()` — Ed25519 signing | tweetnacl |
+| `packages/specter-sdk/src/utils/crypto.ts:306` | `nacl.sign.detached.verify()` — Ed25519 verification | tweetnacl |
+| `packages/specter-sdk/src/utils/crypto.ts:27` | `nacl.sign.keyPair()` — keypair generation | tweetnacl |
+| `apps/extension/src/shared/services/wallet.ts:70` | `nacl.sign.keyPair.fromSeed()` — wallet creation | tweetnacl |
+| `apps/extension/src/shared/store/authAdapter.ts:172` | `tweetnacl.sign` — auth signatures | tweetnacl |
+| All Solana transactions | `Keypair`, `Transaction.sign()` | @solana/web3.js |
+
+**Quantum attack:** Shor's algorithm derives Ed25519 private key from public key in polynomial time. All wallets whose public key has ever been revealed (i.e., any wallet that has ever sent a transaction) are vulnerable.
+
+**Dependency:** This is a **Solana-level** issue. Protocol 01 cannot fix this independently — it requires Solana protocol support for post-quantum signatures.
+
+**Solana ecosystem status (as of March 2026):**
+- **Winternitz Vault (mainnet):** Hash-based one-time signatures using Keccak256. Available today but limited: each key can only sign once, requires new vault per transaction. Not suitable as default wallet mechanism.
+- **Project Eleven testnet (Dec 2025):** Full replacement of Ed25519 with CRYSTALS-Dilithium (ML-DSA, FIPS 204). Demonstrated ~3,000 TPS with no degradation. Proves feasibility.
+- **SIMD-0296 (in review):** Transaction size limit increase from 1,232→4,096 bytes. Required for Dilithium signatures (2,560 bytes vs Ed25519's 64 bytes).
+- **No mainnet timeline:** Solana has no official PQC mainnet roadmap yet.
+
+**Protocol 01 action items:**
+1. **Monitor** Solana's PQC rollout closely (SIMD-0296, Dilithium precompile)
+2. **Prepare** for hybrid signatures (Ed25519 + Dilithium) when Solana supports them
+3. **Consider** Winternitz Vault for high-value cold storage (available now)
+4. **Document** the risk to users: wallets that have transacted have exposed their public key
+
+### 2.2 Layer 2: Key Exchange — X25519 ECDH (Stealth Addresses)
+
+**Status: BROKEN by Shor's algorithm — HIGHEST PRIORITY for Protocol 01**
+
+This is the component Protocol 01 has the most control over and where HNDL is most dangerous.
+
+**Current implementation (3 separate implementations!):**
+
+#### Implementation A: Extension (`apps/extension/src/shared/store/shielded.ts`)
+```
+Flow: nacl.box.keyPair() → nacl.box.before() → SHA-256 → stealth seed → Keypair.fromSeed()
+- Ephemeral X25519 keypair: nacl.box.keyPair() (line 167)
+- Viewing key derivation: nacl.hash(viewingSeed).slice(0, 32) (line 125)
+- Shared secret: nacl.box.before(theirPub, mySecret) (line 52)
+- View tag: SHA-256(hex(sharedSecret) + 'view_tag').slice(0,2) (line 80-88)
+- Stealth seed: SHA-256(hex(spendingPub || SHA-256(hex(sharedSecret)))) (line 195)
+- Final address: Keypair.fromSeed(stealthSeed) (line 198)
+```
+
+#### Implementation B: Specter SDK (`packages/specter-sdk/src/stealth/derive.ts`)
+```
+Flow: nacl.box.keyPair() → nacl.scalarMult() → SHA-256 → XOR+hash(!) → Keypair.fromSeed()
+- Ephemeral keypair: nacl.box.keyPair() (crypto.ts:20)
+- Shared secret: nacl.scalarMult(privateKey, publicKey) (crypto.ts:39)
+- View tag: SHA-256(sharedSecret)[0] (crypto.ts:82)
+- Stealth pubkey: addPublicKeys(spendingPub, sha256(sharedSecret)) (derive.ts:50-53)
+  WARNING: addPublicKeys uses XOR + hash, NOT proper EC point addition (derive.ts:211-221)
+- Private key derivation: byte-by-byte mod 256 addition (derive.ts:226-237)
+  WARNING: This is NOT correct scalar modular arithmetic
+```
+
+#### Implementation C: Relayer (`services/relayer/src/private-send.ts`)
+```
+Flow: crypto.randomBytes() → SHA-256(ephemeral || viewingPub) → SHA-256(spendingPub || secret)
+- Ephemeral key: crypto.randomBytes(32) (line 71)
+- Shared secret: SHA-256(ephemeralPrivate || recipientViewingPubkey) (lines 75-79)
+  WARNING: NOT actual ECDH — just concatenation + hash
+- Stealth seed: SHA-256(spendingPubkey || sharedSecret) (lines 82-87)
+- View tag: SHA-256(sharedSecret + 'view_tag').slice(0,2) (lines 90-94)
+```
+
+**Quantum vulnerabilities in stealth addresses:**
+
+| Component | Algorithm | Quantum Status | HNDL Risk |
+|-----------|----------|---------------|-----------|
+| Ephemeral keypair | X25519 | BROKEN (Shor) | HIGH — ephemeral public key stored on-chain |
+| Shared secret derivation | X25519 ECDH / nacl.scalarMult | BROKEN (Shor) | CRITICAL — derivable from on-chain ephemeral key |
+| View tag | SHA-256 | SAFE | N/A |
+| Stealth seed derivation | SHA-256 | SAFE | N/A (but input is compromised by above) |
+| Final stealth address | Ed25519 (Keypair.fromSeed) | BROKEN (Shor) | Dependent on Solana PQC |
+
+**The chain of vulnerability:**
+1. Ephemeral X25519 public key `R` is published on-chain (permanent record)
+2. Quantum attacker uses Shor to derive ephemeral private key `r` from `R`
+3. Attacker retrieves recipient's viewing public key `V` from stealth meta-address
+4. Attacker computes `sharedSecret = ECDH(r, V)` — the same value the sender computed
+5. Attacker derives the stealth address and links sender → recipient
+6. **All historical stealth payments are de-anonymized**
+
+**Migration: Hybrid X25519 + ML-KEM (Kyber)**
+
+The migration must use a **hybrid** key exchange: classical X25519 (for backward compatibility during transition) combined with ML-KEM (for quantum resistance). The combined shared secret ensures security even if one scheme is broken.
+
+**Target protocol (Phase 1 — Hybrid):**
+```
+SENDER:
+  1. Generate ephemeral X25519 keypair: (r, R = r*G)
+  2. Generate ML-KEM ciphertext: (ct, pq_secret) = ML-KEM.Encaps(recipient_kem_pubkey)
+  3. Compute classical shared secret: classical_secret = X25519(r, V)
+  4. Combine: shared_secret = SHA-256(classical_secret || pq_secret || "protocol01-hybrid-v1")
+  5. Derive stealth address from shared_secret (same as current)
+  6. Publish on-chain: R (32 bytes) + ct (1,088 bytes for Kyber768) + view_tag (2 bytes)
+
+RECIPIENT (scanning):
+  1. For each announcement: try X25519 + ML-KEM.Decaps
+  2. Quick reject via view tag
+  3. If match: derive stealth private key (same as current)
+```
+
+**Target protocol (Phase 2 — Pure PQC):**
+```
+SENDER:
+  1. (ct, shared_secret) = ML-KEM.Encaps(recipient_kem_pubkey)
+  2. Derive stealth address from shared_secret
+  3. Publish on-chain: ct (1,088 bytes) + view_tag (2 bytes)
+
+RECIPIENT (scanning):
+  1. shared_secret = ML-KEM.Decaps(recipient_kem_privkey, ct)
+  2. Module-LWE SAP scans 66.8% faster than ECDH-based scanning
+```
+
+**Available libraries:**
+- `@noble/post-quantum` — Audited ML-KEM (Kyber) implementation for JS/TS (by Paul Miller, same author as @noble/hashes already used)
+- `mlkem` — FIPS 203 compliant TypeScript implementation, 1.4-1.8x faster
+- `pqcrypto` (Rust) — For the prover service
+
+**Key size impact on Solana:**
+
+| Scheme | Ephemeral Public Key | Ciphertext | Total On-Chain per Payment |
+|--------|---------------------|------------|---------------------------|
+| Current (X25519) | 32 bytes | N/A | 32 + 2 (view tag) = 34 bytes |
+| Hybrid (X25519 + Kyber768) | 32 bytes | 1,088 bytes | 1,122 bytes |
+| Pure ML-KEM-768 | N/A | 1,088 bytes | 1,090 bytes |
+| Pure ML-KEM-1024 | N/A | 1,568 bytes | 1,570 bytes |
+
+**Solana account storage:** These fit comfortably in a Solana account (max 10 MB). The stealth payment PDA currently stores 105 bytes; ML-KEM would increase this to ~1,200 bytes — well within limits.
+
+### 2.3 Layer 3: Symmetric Encryption
+
+**Status: SAFE — no changes required**
+
+| File | Algorithm | Key Size | Post-Quantum Security |
+|------|----------|----------|----------------------|
+| `packages/specter-sdk/src/utils/crypto.ts:95-105` | XSalsa20-Poly1305 (nacl.secretbox) | 256-bit | 128-bit (SAFE) |
+| `packages/specter-sdk/src/utils/crypto.ts:125-139` | X25519+XSalsa20-Poly1305 (nacl.box) | 256-bit | 128-bit key, but X25519 BROKEN |
+| `services/relayer/src/private-send.ts:115` | AES-256-CBC | 256-bit | 128-bit (SAFE) |
+| `apps/mobile/.../share-note.tsx:278` | XSalsa20-Poly1305 (BLE), PIN-derived (NFC) | 256-bit | 128-bit (SAFE) |
+
+**Note:** The `nacl.box()` (authenticated public-key encryption) uses X25519 for key exchange — the encryption itself is safe but the key agreement is vulnerable. When migrating stealth addresses to ML-KEM, the encryption key derivation must also use the hybrid shared secret.
+
+**WARNING — XOR "Encryption" in Mobile:**
+`apps/mobile/utils/crypto/encryption.ts:88-105` contains a custom XOR cipher. This is NOT cryptographically secure even against classical computers. It should be replaced with AES-GCM or XSalsa20-Poly1305 regardless of quantum considerations.
+
+### 2.4 Layer 4: Hash Functions
+
+**Status: SAFE — no changes required**
+
+| Hash Function | Usage | Post-Quantum Security |
+|---------------|-------|----------------------|
+| Poseidon (BN254 field) | Note commitments, nullifier derivation, owner key derivation, Merkle tree | ~85-bit collision, ~127-bit preimage |
+| SHA-256 | View tag generation, stealth seed derivation, key derivation, metadata hashing | ~85-bit collision, ~128-bit preimage |
+| SHA-512 | Ed25519→X25519 private key conversion (internal) | ~170-bit collision, ~256-bit preimage |
+| BLAKE2b | Fast hashing, keyed MAC (in p01-js SDK) | ~85-bit collision, ~128-bit preimage |
+| Keccak256 | Verification key hashing (on-chain), Winternitz Vault | ~85-bit collision, ~128-bit preimage |
+
+All hash functions provide at least 85-bit collision resistance post-quantum, which is computationally infeasible even for quantum computers (2^85 operations ≈ 3.8 × 10^25).
+
+### 2.5 Layer 5: Commitments
+
+**Status: SAFE — already quantum-resistant**
+
+| Commitment Scheme | Construction | Files | Quantum Status |
+|-------------------|-------------|-------|---------------|
+| zkSPL balance commitment | `Poseidon(balance, salt, owner_pubkey, token_mint)` | `circuits/confidential_balance.circom` | SAFE |
+| Shielded pool note commitment | `Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)` | `circuits/denominated_pool.circom` | SAFE |
+| Nullifier | `Poseidon(nullifier_preimage, secret)` | `circuits/denominated_pool.circom` | SAFE |
+| Owner key derivation | `Poseidon(spending_key)` | `circuits/poseidon.circom` | SAFE |
+| Amount hash | `Poseidon(amount, amount_salt, sender_pubkey, recipient_pubkey)` | `circuits/confidential_balance.circom` | SAFE |
+| **Pedersen commitment** | **C = v*G + r*H** | **`packages/p01-js/src/security/crypto.ts:594-730`** | **BROKEN (Shor)** |
+
+**WARNING — Pedersen Commitments:**
+The `p01-js` package contains a full Pedersen commitment implementation (lines 594-730) using Ed25519 curve points. Pedersen commitments rely on the discrete logarithm problem: given C = v*G + r*H, an attacker with Shor's algorithm can compute v and r, breaking the hiding property. This includes:
+- `createPedersenCommitment()` — commit to amount with blinding factor
+- `verifyPedersenCommitment()` — open and verify
+- `addPedersenCommitments()` / `subtractPedersenCommitments()` — homomorphic operations
+- `createZeroCommitment()` — commitment to zero
+
+These Pedersen commitments are NOT used in the current ZK circuits (which use Poseidon), but they exist in the SDK and could be used by downstream code. **They must NOT be used for quantum-sensitive operations.**
+
+**Why Poseidon commitments are quantum-safe:**
+- Poseidon is an algebraic hash function over a prime field (BN254 Fr)
+- It has no dependency on elliptic curve discrete logarithm problems
+- Shor's algorithm does not apply to hash functions
+- Grover's algorithm provides only a quadratic speedup (√N), resulting in ~85-bit collision resistance — still computationally infeasible
+
+**Important distinction:** The Poseidon hash itself runs over the BN254 scalar field, but this is just the arithmetic field for computation — it does NOT depend on the BN254 curve's discrete log hardness. If Protocol 01 migrates from Groth16/BN254 to STARKs, Poseidon can be computed over any sufficiently large prime field.
+
+### 2.6 Layer 6: Zero-Knowledge Proof System — Groth16/BN254
+
+**Status: BROKEN by Shor's algorithm**
+
+**Current stack:**
+
+| Component | Implementation | File |
+|-----------|---------------|------|
+| Circuit language | Circom 2.x | `circuits/*.circom` |
+| Client-side prover | snarkjs 0.7.4/0.7.6 (WASM) | `packages/zk-sdk/src/prover/` |
+| Server-side prover | ark-circom 0.5 (Rust) | `services/prover/src/prover.rs` |
+| On-chain verifier | Custom Groth16 verifier (Rust) | `programs/zk_shielded/src/verifier/groth16.rs` |
+| Pairing operations | Solana alt_bn128 syscalls | `solana-bn254` crate |
+| Trusted setup | Hermez PoT (Phase 1) + single contributor (Phase 2) | `circuits/package.json` scripts |
+
+**What Shor breaks:**
+1. **BN254 elliptic curve pairings** — the alt_bn128 precompile computes `e(G1, G2)` bilinear pairings. Shor's algorithm makes the discrete log on BN254 tractable, allowing an attacker to:
+   - Forge proof elements (π_A, π_B, π_C)
+   - Compute valid proofs without knowing the private inputs
+   - Break the soundness of the proof system entirely
+2. **Verification key points** — the VK contains G1/G2 points (α, β, γ, δ, IC[]). With Shor, an attacker could extract the discrete logarithm relationships between these points.
+
+**What Shor does NOT break:**
+- The Circom circuit logic itself — the R1CS constraint system is mathematical, not cryptographic
+- The Poseidon hash computations within circuits
+- The commitment scheme (Poseidon-based, not EC-based)
+- The Merkle tree structure
+
+**Migration options:**
+
+#### Option A: STARKs (Recommended Long-Term)
+
+| Property | Current (Groth16/BN254) | Target (STARK) |
+|----------|------------------------|----------------|
+| Assumption | Elliptic curve pairings | Hash functions only |
+| Quantum safe | NO | YES |
+| Proof size | ~256 bytes | ~4,000-50,000 bytes |
+| Verify cost | ~200K CU | ~1.1M CU (proven on Solana) |
+| Setup | Trusted (ceremony needed) | Transparent (no ceremony!) |
+| Prover | snarkjs / ark-circom | Winterfell / Stone / Cairo |
+
+**Feasibility on Solana (confirmed by research):**
+A 2025 measurement study (ePrint 2025/1741) demonstrated full STARK verification on Solana L1:
+- Mean verification cost: **1.10 × 10⁶ CU** (fits within Solana's 1.4M CU budget)
+- Proof size: ~4,437 bytes at 128-bit security
+- Used Winterfell 0.12 with SHA-256 hashv syscall optimization
+- Combined STARK + SLH-DSA (SPHINCS+) signature verification: total ~1.6M CU
+- Scaling: approximately linear with proof bytes (~249 CU per proof byte)
+
+**Circuit rewrite required:** Circom circuits would need to be rewritten for a STARK-compatible framework (Cairo, AIR/Winterfell, or Miden Assembly). The constraint logic is portable but the circuit language is not.
+
+#### Option B: Hybrid STARK-inside-Groth16 (Recommended Transition)
+
+```
+Phase 1 (now → CRQC):
+  Inner proof: STARK (quantum-safe, proves the actual statement)
+  Outer proof: Groth16 wrapper (small on-chain footprint, cheap verification)
+
+  On-chain: verify Groth16 wrapper (~200K CU)
+  Off-chain: verify STARK (optional, for users who want quantum safety now)
+
+Phase 2 (when CRQC approaches):
+  Drop the Groth16 wrapper
+  Verify STARKs directly on-chain (~1.1M CU)
+```
+
+This approach preserves the current on-chain verifier and transaction costs while providing a quantum-safe proof path for the future.
+
+#### Option C: Lattice-Based SNARKs (Emerging Research)
+
+Lattice-based SNARKs (based on LWE/SIS assumptions) could provide SNARK-like succinctness with quantum resistance. However, these are still in early research stages (Lattigo, OpenFHE). Not recommended for production planning until 2028+.
+
+### 2.7 Layer 7: Merkle Trees
+
+**Status: SAFE — Poseidon-based**
+
+| Implementation | File | Depth | Hash |
+|---------------|------|-------|------|
+| Client-side incremental tree | `packages/privacy-toolkit/src/merkle/incrementalTree.ts` | 15/20 | Poseidon |
+| Proof from subtrees | `packages/privacy-toolkit/src/merkle/proofFromSubtrees.ts` | 15 | Poseidon |
+| On-chain Merkle state | `programs/zk_shielded/src/state/merkle_tree.rs` | 15 | Root stored (not computed on-chain) |
+| In-circuit verification | `circuits/merkle.circom` | 15/20 | Poseidon |
+
+**Post-quantum security:** ~85-bit collision resistance (Poseidon over BN254 field). This is sufficient — no practical attack is feasible at this security level.
+
+**Future consideration:** If migrating to STARKs, consider using SHA-256 for Merkle trees (native Solana syscall support, higher post-quantum collision resistance at ~128 bits). However, this would change the in-circuit hash function and affect proof generation performance.
+
+### 2.8 Layer 8: Key Derivation
+
+**Status: SAFE with one caveat**
+
+| Implementation | File | Algorithm | Post-Quantum |
+|---------------|------|-----------|--------------|
+| HKDF-SHA256 | `packages/specter-sdk/src/utils/crypto.ts:48-54` | HKDF(sha256) | SAFE (128-bit) |
+| Password-based KDF | `packages/specter-sdk/src/utils/crypto.ts:167-179` | Iterative SHA-256 | WEAK — use Argon2id |
+| Viewing key derivation | `apps/extension/.../shielded.ts:125` | `nacl.hash().slice(0,32)` | SAFE (512→32 bytes) |
+| Stealth seed derivation | `apps/extension/.../shielded.ts:63-73` | SHA-256(SHA-256(hex)) | SAFE |
+
+**Caveat:** The password-based KDF (`deriveKeyFromPassword` in crypto.ts:167-179) uses simple iterative SHA-256 hashing, not a proper memory-hard KDF. This is weak against both classical and quantum brute-force. Should use Argon2id regardless of quantum considerations.
+
+### 2.9 Layer 9: Random Number Generation
+
+**Status: SAFE**
+
+| Implementation | Source | Post-Quantum |
+|---------------|--------|--------------|
+| `nacl.randomBytes()` | System CSPRNG (Web Crypto API / Node.js crypto) | SAFE |
+| `crypto.randomBytes()` | Node.js OpenSSL CSPRNG | SAFE |
+| `crypto.getRandomValues()` | Web Crypto API | SAFE |
+
+Quantum computers do not provide speedups against properly seeded CSPRNGs.
+
+---
+
+## 3. Solana Ecosystem Quantum Readiness
+
+### 3.1 Available Now (Mainnet)
+
+| Feature | Description | Limitation |
+|---------|------------|-----------|
+| **Winternitz Vault** | Hash-based one-time signatures (Keccak256). PDA-based vault that signs once then must be closed/reopened. | One-time use per vault. Not a general-purpose signature scheme. |
+| **alt_bn128 syscalls** | BN254 pairing operations. | Quantum-vulnerable (Shor), but needed until STARK syscalls exist. |
+| **SHA-256 hashv syscall** | Hardware-accelerated SHA-256. | Already quantum-safe. Critical for future STARK verification. |
+
+### 3.2 In Development
+
+| Feature | Status | ETA | Impact on Protocol 01 |
+|---------|--------|-----|----------------------|
+| **SIMD-0296** (4KB transactions) | In review (Dec 2025) | 2026 H2 (est.) | Enables Dilithium signatures (2.5 KB) and larger stealth address announcements with ML-KEM ciphertexts (1 KB) |
+| **Dilithium testnet** (Project Eleven) | Operational | Testnet now | Proves quantum-resistant signatures work at ~3,000 TPS |
+| **STARK verification syscall** | Research prototype | 2027+ (est.) | Would enable native STARK verification at lower CU cost |
+| **Poseidon syscall** | Planned | Unknown | Would enable on-chain Merkle root verification (fixes current trust issue) |
+
+### 3.3 Not Yet Planned
+
+| Feature | Need | Workaround |
+|---------|------|-----------|
+| ML-KEM (Kyber) precompile | Efficient on-chain KEM operations | Do key exchange off-chain, only store ciphertext on-chain |
+| Lattice-based signature precompile | Native PQC signatures | Use Solana's eventual Dilithium support |
+| STARK verifier precompile | Cheaper STARK verification | Use Winterfell with SHA-256 hashv syscall (~1.1M CU) |
+
+---
+
+## 4. HNDL Defense Strategy
+
+### 4.1 What's Already Harvested (Cannot Be Fixed Retroactively)
+
+| Data Type | On-Chain Location | HNDL Vulnerability |
+|-----------|------------------|-------------------|
+| Stealth ephemeral public keys (X25519) | Stealth payment PDAs, transaction logs | CRITICAL — future Shor attack reveals shared secrets |
+| Wallet public keys (Ed25519) | Every transaction, account ownership | HIGH — future Shor attack reveals private keys |
+| Groth16 proofs (BN254 points) | Transaction data | MEDIUM — proofs already verified, but forgery becomes possible |
+| Poseidon commitments | Pool state PDAs | SAFE — hash-based, no ECDLP dependency |
+| Nullifiers | Nullifier PDAs | SAFE — hash-based |
+| Merkle roots | Pool state PDAs | SAFE — hash-based |
+
+### 4.2 Defending New Data (Starting Now)
+
+**Priority 1: Stealth Addresses (Protocol 01 can act independently)**
+- Implement hybrid X25519 + ML-KEM key exchange
+- New stealth payments will be quantum-resistant
+- Old payments remain vulnerable (cannot be retroactively fixed)
+- Users must be warned about this distinction
+
+**Priority 2: Forward Secrecy Enhancement**
+- Add per-transaction key rotation for viewing keys
+- Ensure compromise of one viewing key doesn't expose all past payments
+- Use HKDF with transaction-specific context for key derivation
+
+**Priority 3: User Communication**
+- Document that current stealth payments are not quantum-safe
+- Provide a "quantum-safe migration" flow for high-value users
+- Allow users to "re-shield" through a new quantum-safe stealth address
+
+---
+
+## 5. Implementation Roadmap
+
+### Phase 0: Documentation & Preparation (NOW — Q2 2026)
+
+**Effort:** Low | **Dependencies:** None | **UX Impact:** None
+
+- [x] Complete cryptographic primitive inventory (this document)
+- [x] Assess quantum resistance of each component
+- [ ] Add quantum resistance warnings to user-facing documentation
+- [ ] Add `QUANTUM_SAFE: boolean` flag to SDK types for each operation
+- [ ] Create internal tracking for Solana PQC SIMDs and upgrades
+- [ ] Benchmark @noble/post-quantum ML-KEM performance on mobile (React Native)
+- [ ] Benchmark @noble/post-quantum ML-KEM performance in browser extension
+- [ ] Research Winterfell/STARK circuit equivalents for current Circom circuits
+
+### Phase 1: Stealth Address Hybrid Migration (Q3-Q4 2026)
+
+**Effort:** Medium | **Dependencies:** @noble/post-quantum library | **UX Impact:** Minimal
+
+This is the highest-priority migration because:
+1. Protocol 01 controls this fully (no Solana protocol dependency)
+2. HNDL threat is already active for stealth addresses
+3. ML-KEM libraries are mature and audited
+4. Backward compatibility is achievable through hybrid approach
+
+**Implementation plan:**
+
+1. **Add ML-KEM dependency**
+   - Install `@noble/post-quantum` (audited, by same author as @noble/hashes)
+   - Add to `packages/specter-sdk/package.json` and `apps/*/package.json`
+
+2. **Extend stealth meta-address format**
+   ```
+   Current meta-address: spending_pubkey (32B) || viewing_pubkey (32B) = 64 bytes
+
+   New meta-address v2:
+     version (1B) || spending_pubkey (32B) || viewing_pubkey_x25519 (32B) ||
+     kem_pubkey_mlkem768 (1,184B) = 1,249 bytes
+   ```
+   - Version byte: 0x01 = classical only, 0x02 = hybrid
+   - Backward compatible: v1 clients ignore the KEM pubkey
+
+3. **Implement hybrid key exchange**
+   ```typescript
+   // packages/specter-sdk/src/stealth/derive.ts
+   import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+
+   function deriveHybridSharedSecret(
+     ephemeralX25519Secret: Uint8Array,
+     recipientViewingPubX25519: Uint8Array,
+     recipientKemPubKey: Uint8Array
+   ): { sharedSecret: Uint8Array; kemCiphertext: Uint8Array } {
+     // Classical ECDH
+     const classicalSecret = nacl.scalarMult(ephemeralX25519Secret, recipientViewingPubX25519);
+
+     // Post-quantum KEM
+     const { cipherText, sharedSecret: pqSecret } = ml_kem768.encapsulate(recipientKemPubKey);
+
+     // Combine with domain separation
+     const combined = sha256(
+       new Uint8Array([...classicalSecret, ...pqSecret,
+         ...new TextEncoder().encode('protocol01-hybrid-v1')])
+     );
+
+     return { sharedSecret: combined, kemCiphertext: cipherText };
+   }
+   ```
+
+4. **Update on-chain stealth payment PDA**
+   ```rust
+   // programs/specter/src/state/stealth.rs
+   pub struct StealthPayment {
+       pub recipient_key: Pubkey,          // 32 bytes
+       pub encrypted_amount: [u8; 32],     // 32 bytes
+       pub token_mint: Pubkey,             // 32 bytes
+       pub ephemeral_pub_key: [u8; 32],    // 32 bytes (X25519, kept for backward compat)
+       pub kem_ciphertext: Vec<u8>,        // ~1,088 bytes (ML-KEM-768)
+       pub view_tag: u8,                   // 1 byte
+       pub version: u8,                    // 1 byte (0x01=classical, 0x02=hybrid)
+       pub slot: u64,                      // 8 bytes
+   }
+   // Total: ~1,268 bytes (was ~105 bytes)
+   ```
+
+5. **Update scanning (recipient side)**
+   - For v2 announcements: use hybrid decapsulation
+   - For v1 announcements: use classical X25519 only (backward compatible)
+   - Module-LWE scanning is 66.8% faster than ECDH scanning (per academic benchmarks)
+
+6. **Unify the three stealth implementations**
+   - Currently: extension, specter-sdk, and relayer each have different implementations
+   - Target: single implementation in `packages/specter-sdk/src/stealth/` used by all
+   - Fix the incorrect EC math in specter-sdk (XOR instead of point addition)
+
+**Estimated data size impact:**
+- Stealth payment PDA: 105 → ~1,268 bytes (+1,163 bytes, ~$0.009 rent at current SOL prices)
+- Transaction size: fits within current 1,232-byte limit if ML-KEM ciphertext is stored in a separate instruction
+
+### Phase 2: ZK Proof System Preparation (Q1-Q2 2027)
+
+**Effort:** High | **Dependencies:** STARK library maturity | **UX Impact:** None (backend change)
+
+1. **Research STARK circuit equivalents**
+   - Map each Circom circuit to Winterfell AIR (Algebraic Intermediate Representation)
+   - `denominated_pool.circom` (4,273 constraints) → STARK AIR
+   - `confidential_balance.circom` (1,382 constraints) → STARK AIR
+   - `balance_proof.circom` (644 constraints) → STARK AIR
+
+2. **Implement hybrid proof generation**
+   - Generate both Groth16 (for on-chain verification) and STARK (for quantum safety)
+   - Store STARK proof off-chain (IPFS or Arweave) as backup
+   - When Solana supports STARK verification: switch to on-chain STARKs
+
+3. **Benchmark Winterfell on Solana**
+   - Adapt the ePrint 2025/1741 research prototype
+   - Measure real CU costs for Protocol 01's specific circuits
+   - Ensure it fits within 1.4M CU budget (research shows 1.1M CU is achievable)
+
+### Phase 3: Proof System Migration (Q3 2027 — Q2 2028)
+
+**Effort:** Very High | **Dependencies:** Solana STARK support | **UX Impact:** Proof generation time may increase
+
+1. **Deploy STARK verifier on Solana**
+   - Use Winterfell verifier compiled for BPF/SBF
+   - SHA-256 hashv syscall for performance
+   - Custom bump allocator for memory management
+
+2. **Migration path:**
+   ```
+   Week 1-4: Deploy STARK verifier alongside Groth16 verifier
+   Week 5-8: Generate both proof types, verify both on-chain
+   Week 9-12: Switch default to STARK verification
+   Week 13+: Deprecate Groth16 verifier (keep for legacy proofs)
+   ```
+
+3. **Handle the trusted setup legacy:**
+   - STARKs require NO trusted setup (transparent!)
+   - This eliminates the Phase 2 ceremony concern entirely
+   - All future pool deployments use STARKs — no ceremony needed
+
+### Phase 4: Full Quantum-Safe Stack (2028+)
+
+**Effort:** Medium | **Dependencies:** Solana Dilithium mainnet | **UX Impact:** Wallet migration needed
+
+1. **Wallet signature migration**
+   - When Solana deploys Dilithium (ML-DSA) on mainnet:
+     - Support hybrid Ed25519 + Dilithium keypairs
+     - Users generate new quantum-safe wallet
+     - Migrate funds from old wallet to new wallet
+   - SIMD-0296 (4KB transactions) required for Dilithium signatures
+
+2. **Drop classical-only support**
+   - When sufficient ecosystem adoption (~80%): deprecate v1 stealth addresses
+   - Convert all stealth announcements to pure ML-KEM (drop X25519)
+   - Drop Groth16 verifier (STARK only)
+
+3. **Post-migration security audit**
+   - Full review of quantum-safe stack
+   - Verify no residual classical dependencies
+   - Penetration testing with simulated quantum oracle
+
+---
+
+## 6. Implementation Considerations for Solana
+
+### 6.1 Transaction Size Constraints
+
+| Operation | Current Size | With Hybrid PQC | With SIMD-0296 (4KB) |
+|-----------|-------------|-----------------|---------------------|
+| Stealth payment (shield) | ~400 bytes | ~1,500 bytes | Fits (4,096 bytes) |
+| Stealth payment (announcement) | ~34 bytes | ~1,122 bytes | Fits |
+| Groth16 proof verification | ~450 bytes | Same | Same |
+| STARK proof verification | N/A | ~4,437+ bytes | Fits (4,096 bytes) |
+| Dilithium signature | N/A | ~2,560 bytes | Fits |
+
+**Before SIMD-0296:** Split large operations into multiple transactions or use account-based storage (PDAs) for large data like KEM ciphertexts and STARK proofs.
+
+**After SIMD-0296:** Most operations fit in a single transaction.
+
+### 6.2 Compute Unit Budget
+
+| Operation | CU Cost | Budget (1.4M) |
+|-----------|---------|---------------|
+| Groth16 verification (current) | ~200K | 14% |
+| STARK verification (Winterfell) | ~1.1M | 79% |
+| SLH-DSA signature verification | ~500K | 36% |
+| ML-KEM encapsulation | ~50K (est.) | 4% |
+| ML-KEM decapsulation | ~50K (est.) | 4% |
+
+**Note:** STARK + SLH-DSA combined (~1.6M CU) exceeds the 1.4M budget. Options:
+1. Use two transactions (STARK verify + signature verify)
+2. Wait for Solana CU budget increase
+3. Use recursive STARK compression to reduce proof size
+
+### 6.3 Account Storage Costs
+
+| Account | Current Size | With PQC | Rent Cost (SOL) |
+|---------|-------------|----------|-----------------|
+| Stealth payment PDA | ~105 bytes | ~1,268 bytes | ~0.009 SOL |
+| Stealth meta-address | ~64 bytes | ~1,249 bytes | ~0.009 SOL |
+| STARK proof storage (if needed) | 0 | ~4,437 bytes | ~0.033 SOL |
+| Verification key (STARK) | 0 | ~10,000 bytes | ~0.075 SOL |
+
+Total additional cost per stealth payment: ~0.009 SOL (~$1.35 at $150/SOL). This is acceptable for privacy-preserving payments.
+
+---
+
+## 7. Risk Assessment
+
+### 7.1 Risk of NOT Migrating
+
+| Risk | Probability (10yr) | Impact | Mitigation |
+|------|-------------------|--------|-----------|
+| HNDL de-anonymization of stealth payments | HIGH (recording likely happening now) | CRITICAL — full history exposed | Hybrid stealth addresses (Phase 1) |
+| Groth16 proof forgery | LOW-MEDIUM (CRQC 10-20 years) | CRITICAL — fund theft, inflation | STARK migration (Phase 2-3) |
+| Ed25519 key theft | LOW-MEDIUM (CRQC 10-20 years) | CRITICAL — all wallet funds stolen | Depends on Solana (Phase 4) |
+
+### 7.2 Risk of Migrating Too Aggressively
+
+| Risk | Probability | Impact | Mitigation |
+|------|------------|--------|-----------|
+| PQC algorithm broken classically | LOW (NIST-standardized) | HIGH | Hybrid approach (classical + PQ) |
+| Performance degradation (larger proofs) | MEDIUM | MEDIUM | Benchmark before deployment |
+| User confusion (new key types) | MEDIUM | LOW | Clear UX, automatic migration |
+| Increased transaction costs | HIGH | LOW | ~$0.01/tx increase is acceptable |
+
+### 7.3 What We Can Control vs. What We Can't
+
+| We Control | We Don't Control |
+|-----------|-----------------|
+| Stealth address key exchange protocol | Solana wallet signature scheme |
+| Proof system choice (Groth16 vs STARK) | Solana alt_bn128 syscall availability |
+| On-chain data formats (PDA structures) | Solana transaction size limits |
+| Client-side encryption algorithms | Solana CU budget |
+| SDK and circuit implementation | When CRQC arrives |
+
+---
+
+## 8. References
+
+### Standards
+- NIST FIPS 203: ML-KEM (Kyber) — Module-Lattice-Based Key-Encapsulation Mechanism (Aug 2024)
+- NIST FIPS 204: ML-DSA (Dilithium) — Module-Lattice-Based Digital Signature Algorithm (Aug 2024)
+- NIST FIPS 205: SLH-DSA (SPHINCS+) — Stateless Hash-Based Digital Signature Algorithm (Aug 2024)
+- NSA CNSA 2.0: Commercial National Security Algorithm Suite 2.0 (2022, updated 2024)
+
+### Solana-Specific
+- Helius: "What Would Solana Need to Change to Become Quantum Ready?" (2025)
+- SIMD-0296: Larger Transaction Size (in review, Dec 2025)
+- Project Eleven: Solana Dilithium Testnet (Dec 2025)
+- Dean Little: Solana Winternitz Vault (Jan 2025)
+- ePrint 2025/1741: "Full L1 On-Chain ZK-STARK+PQC Verification on Solana: A Measurement Study" (2025)
+
+### Post-Quantum Stealth Addresses
+- ePrint 2025/112: "Post-Quantum Stealth Address Protocols" — LWE, Ring-LWE, Module-LWE SAPs
+- Module-LWE SAP scanning: 66.8% faster than ECDH-based protocols (ECPDKSAP)
+
+### Libraries
+- @noble/post-quantum: Audited ML-KEM/ML-DSA implementation (Paul Miller)
+- Winterfell: STARK prover/verifier in Rust (Meta/Facebook)
+- mlkem: FIPS 203 compliant TypeScript ML-KEM
+
+### Threat Intelligence
+- Federal Reserve FEDS 2025-093: "Harvest Now Decrypt Later: Examining Post-Quantum Cryptography and the Data Privacy Risks for Distributed Ledger Networks" (Oct 2025)
+- EU PQC Roadmap: Coordinated Implementation Roadmap for Post-Quantum Cryptography Transition (2025)
+
+---
+
+*This document should be updated quarterly as the quantum computing landscape, Solana ecosystem, and PQC standards evolve.*
