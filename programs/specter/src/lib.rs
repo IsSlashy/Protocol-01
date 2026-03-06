@@ -12,6 +12,10 @@ declare_id!("2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp");
 pub mod p01 {
     use super::*;
 
+    // =========================================================================
+    // Wallet
+    // =========================================================================
+
     /// Initialize a new Protocol 01 wallet with viewing and spending keys
     pub fn init_wallet(
         ctx: Context<InitWallet>,
@@ -21,7 +25,11 @@ pub mod p01 {
         instructions::init_wallet::handler(ctx, viewing_key, spending_key)
     }
 
-    /// Send a private payment using stealth addressing
+    // =========================================================================
+    // Stealth Payments — v1 (classical X25519)
+    // =========================================================================
+
+    /// Send a private payment using stealth addressing (v1, classical)
     pub fn send_private(
         ctx: Context<SendPrivate>,
         amount: u64,
@@ -32,13 +40,65 @@ pub mod p01 {
         instructions::send_private::handler(ctx, amount, stealth_address, encrypted_amount, decoy_level)
     }
 
-    /// Claim a stealth payment by providing proof of ownership
+    /// Claim a stealth payment by providing proof of ownership (v1)
     pub fn claim_stealth(
         ctx: Context<ClaimStealth>,
         proof: [u8; 64],
     ) -> Result<()> {
         instructions::claim_stealth::handler(ctx, proof)
     }
+
+    // =========================================================================
+    // Stealth Payments — v2 (hybrid X25519 + ML-KEM-768)
+    // =========================================================================
+
+    /// Send a hybrid quantum-resistant stealth payment (v2).
+    ///
+    /// Stores both an X25519 ephemeral public key (32 bytes) and an
+    /// ML-KEM-768 ciphertext (1088 bytes) on-chain. The recipient uses
+    /// both to derive the stealth private key, ensuring security against
+    /// both classical and quantum adversaries.
+    ///
+    /// PDA size: ~1220 bytes (~0.0093 SOL rent).
+    /// The account can be closed after claiming to reclaim rent.
+    ///
+    /// Emits: `StealthPaymentCreatedV2` event for client-side indexing.
+    pub fn send_private_v2(
+        ctx: Context<SendPrivateV2>,
+        amount: u64,
+        ephemeral_pub_key: [u8; 32],
+        stealth_address: Pubkey,
+        view_tag: u8,
+        kem_ciphertext: [u8; 1088],
+    ) -> Result<()> {
+        instructions::send_private_v2::handler(
+            ctx,
+            amount,
+            ephemeral_pub_key,
+            stealth_address,
+            view_tag,
+            kem_ciphertext,
+        )
+    }
+
+    /// Claim a v2 hybrid stealth payment and close the announcement account.
+    ///
+    /// After the recipient decapsulates the ML-KEM-768 shared secret and
+    /// derives the stealth private key, they call this instruction to:
+    /// 1. Transfer escrowed tokens to their wallet
+    /// 2. Close the 1220-byte PDA and reclaim ~0.0093 SOL rent
+    ///
+    /// Emits: `StealthPaymentClaimed` event.
+    pub fn claim_stealth_v2(
+        ctx: Context<ClaimStealthV2>,
+        proof: [u8; 64],
+    ) -> Result<()> {
+        instructions::claim_stealth_v2::handler(ctx, proof)
+    }
+
+    // =========================================================================
+    // Streaming Payments
+    // =========================================================================
 
     /// Create a new streaming payment
     pub fn create_stream(

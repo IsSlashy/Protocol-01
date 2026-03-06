@@ -88,6 +88,19 @@ pub enum P01Error {
     #[msg("Proof verification failed")]
     ProofVerificationFailed,
 
+    // Stealth V2 / Hybrid KEM Errors (6030-6039)
+    #[msg("Invalid KEM ciphertext length (expected 1088 bytes for ML-KEM-768)")]
+    InvalidKemCiphertextLength,
+
+    #[msg("Invalid ephemeral public key (must not be all zeros)")]
+    InvalidEphemeralPubKey,
+
+    #[msg("Invalid view tag")]
+    InvalidViewTag,
+
+    #[msg("Stealth payment not yet claimable")]
+    StealthNotClaimable,
+
     // General Errors (6060-6069)
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
