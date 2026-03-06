@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   Alert,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -81,6 +82,7 @@ export default function ShieldedWalletScreen() {
   const [amount, setAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [useRelay, setUseRelay] = useState(false); // Decentralized relay for private withdraw
 
   // Stealth recovery state
   const [showRecoveryModal, setShowRecoveryModal] = useState(false);
@@ -211,8 +213,11 @@ export default function ShieldedWalletScreen() {
       const { walletPubkey, signTransaction } = await getWalletSigner();
       setProgressStep(15);
 
-      const interval = runProgress(15, [[30, 'Preparing proof...'], [50, 'Generating ZK proof...'], [70, 'Signing transaction...'], [100, 'Confirming on Solana...']]);
-      await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction);
+      const progressSteps = useRelay
+        ? [[20, 'Preparing proof...'], [40, 'Generating ZK proof...'], [55, 'Encrypting for relayer...'], [70, 'Submitting relay job...'], [85, 'Waiting for relayer...'], [100, 'Confirming on Solana...']]
+        : [[30, 'Preparing proof...'], [50, 'Generating ZK proof...'], [70, 'Signing transaction...'], [100, 'Confirming on Solana...']];
+      const interval = runProgress(15, progressSteps as [number, string][]);
+      await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction, useRelay);
       clearInterval(interval);
 
       setProgressStep(100);
@@ -222,7 +227,9 @@ export default function ShieldedWalletScreen() {
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', 'SOL has been unshielded successfully');
+      Alert.alert('Success', useRelay
+        ? 'SOL has been privately unshielded via relay'
+        : 'SOL has been unshielded successfully');
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', (err as Error).message);
@@ -407,8 +414,8 @@ export default function ShieldedWalletScreen() {
       {actionModal && (
         <AmountInputModal
           visible={actionModal !== null}
-          action={actionModal === 'shield' ? 'Shield' : 'Unshield'}
-          subtitle={actionModal === 'shield' ? 'Move SOL into shielded pool' : 'Withdraw from shielded pool'}
+          action={actionModal === 'shield' ? 'Shield' : (useRelay ? 'Private Unshield' : 'Unshield')}
+          subtitle={actionModal === 'shield' ? 'Move SOL into shielded pool' : (useRelay ? 'Withdraw via decentralized relay' : 'Withdraw from shielded pool')}
           iconName={actionModal === 'shield' ? 'arrow-down' : 'arrow-up'}
           accentColor={actionModal === 'shield' ? P01Colors.cyan : P01Colors.pink}
           dimColor={actionModal === 'shield' ? P01Colors.cyanDim : P01Colors.pinkDim}
@@ -417,8 +424,25 @@ export default function ShieldedWalletScreen() {
           maxAmount={actionModal === 'shield' ? (balance?.sol || 0) : shieldedBalance}
           isProcessing={isProcessing}
           onConfirm={actionModal === 'shield' ? handleShield : handleUnshield}
-          onClose={() => { setActionModal(null); setAmount(''); }}
-        />
+          onClose={() => { setActionModal(null); setAmount(''); setUseRelay(false); }}
+        >
+          {actionModal === 'unshield' && (
+            <View style={styles.relayToggleRow}>
+              <View style={styles.relayToggleLeft}>
+                <Ionicons name="shield-checkmark" size={16} color={useRelay ? P01Colors.cyan : '#666'} />
+                <Text style={[styles.relayToggleLabel, useRelay && { color: P01Colors.cyan }]}>
+                  Private Relay
+                </Text>
+              </View>
+              <Switch
+                value={useRelay}
+                onValueChange={setUseRelay}
+                trackColor={{ false: '#333', true: P01Colors.cyanDim }}
+                thumbColor={useRelay ? P01Colors.cyan : '#888'}
+              />
+            </View>
+          )}
+        </AmountInputModal>
       )}
 
       <PrivacyInfoModal
@@ -558,4 +582,27 @@ const styles = StyleSheet.create({
     color: '#ef4444',
   },
   dismissButton: { padding: 8, marginLeft: 4 },
+  relayToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginHorizontal: 4,
+    marginTop: 8,
+    backgroundColor: 'rgba(57, 197, 187, 0.06)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.12)',
+  },
+  relayToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  relayToggleLabel: {
+    fontSize: 14,
+    fontFamily: FontFamily.medium,
+    color: '#888',
+  },
 });
