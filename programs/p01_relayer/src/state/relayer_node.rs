@@ -1,5 +1,8 @@
 use anchor_lang::prelude::*;
 
+/// ML-KEM-768 public key size (FIPS 203)
+pub const KEM_PUBLIC_KEY_SIZE: usize = 1184;
+
 /// A registered relayer node in the network.
 /// Operators stake SOL and receive encrypted relay jobs.
 ///
@@ -9,7 +12,7 @@ pub struct RelayerNode {
     /// Wallet that controls this relayer
     pub operator: Pubkey,
 
-    /// X25519 public key for job encryption
+    /// X25519 public key for classical job encryption (v1)
     pub encryption_key: [u8; 32],
 
     /// SOL lamports staked (held by this PDA)
@@ -39,6 +42,13 @@ pub struct RelayerNode {
     /// SHA-256 hash of the relayer's public endpoint URL
     pub endpoint_hash: [u8; 32],
 
+    /// Whether this relayer has an ML-KEM-768 public key for hybrid encryption
+    pub has_kem_key: bool,
+
+    /// ML-KEM-768 public key for hybrid post-quantum job encryption (v2)
+    /// All zeros if has_kem_key is false.
+    pub kem_encryption_key: [u8; 1184],
+
     /// PDA bump seed
     pub bump: u8,
 }
@@ -46,19 +56,21 @@ pub struct RelayerNode {
 impl RelayerNode {
     pub const SEED_PREFIX: &'static [u8] = b"relayer_node";
 
-    pub const LEN: usize = 8   // discriminator
-        + 32  // operator
-        + 32  // encryption_key
-        + 8   // stake
-        + 8   // jobs_completed
-        + 8   // jobs_failed
-        + 8   // last_active_slot
-        + 8   // registered_at
-        + 8   // deactivated_at_slot
-        + 1   // is_active
-        + 4   // reputation_score
-        + 32  // endpoint_hash
-        + 1;  // bump
+    pub const LEN: usize = 8      // discriminator
+        + 32   // operator
+        + 32   // encryption_key
+        + 8    // stake
+        + 8    // jobs_completed
+        + 8    // jobs_failed
+        + 8    // last_active_slot
+        + 8    // registered_at
+        + 8    // deactivated_at_slot
+        + 1    // is_active
+        + 4    // reputation_score
+        + 32   // endpoint_hash
+        + 1    // has_kem_key
+        + 1184 // kem_encryption_key
+        + 1;   // bump
 
     /// Maximum reputation score
     pub const MAX_REPUTATION: u32 = 10_000;
