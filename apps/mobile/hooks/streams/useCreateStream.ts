@@ -82,7 +82,7 @@ export function useCreateStream(): UseCreateStreamReturn {
 
   const { wallet, status: walletStatus } = useWallet();
   const { balance } = useBalance({ address: wallet?.address ?? null });
-  const { isConnected, chainId } = useNetwork();
+  const { isConnected } = useNetwork();
   const { generateStealthAddress } = useStealth();
   const { trigger } = useHaptics();
 

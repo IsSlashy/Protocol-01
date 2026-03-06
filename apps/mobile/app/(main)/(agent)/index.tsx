@@ -9,6 +9,7 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -252,6 +253,8 @@ export default function AgentDashboard() {
               {hasMessages && (
                 <TouchableOpacity
                   onPress={handleNewChat}
+                  accessibilityRole="button"
+                  accessibilityLabel="New chat"
                   style={{
                     width: 38,
                     height: 38,
@@ -267,6 +270,8 @@ export default function AgentDashboard() {
               {/* History */}
               <TouchableOpacity
                 onPress={() => router.push('/(main)/(agent)/history')}
+                accessibilityRole="button"
+                accessibilityLabel="Chat history"
                 style={{
                   width: 38,
                   height: 38,
@@ -281,6 +286,8 @@ export default function AgentDashboard() {
               {/* Settings */}
               <TouchableOpacity
                 onPress={() => router.push('/(main)/(agent)/settings')}
+                accessibilityRole="button"
+                accessibilityLabel="Agent settings"
                 style={{
                   width: 38,
                   height: 38,
@@ -453,6 +460,8 @@ export default function AgentDashboard() {
                 {error && (
                   <TouchableOpacity
                     onPress={clearError}
+                    accessibilityRole="button"
+                    accessibilityLabel="Dismiss error"
                     style={{
                       marginHorizontal: Spacing.lg,
                       marginVertical: 8,
@@ -550,6 +559,8 @@ export default function AgentDashboard() {
                   blurOnSubmit={false}
                   returnKeyType="send"
                   editable={!isLoading}
+                  accessibilityLabel="Message input"
+                  accessibilityHint="Type a message to the AI agent"
                 />
               </View>
 
@@ -571,6 +582,9 @@ export default function AgentDashboard() {
                 <TouchableOpacity
                   onPress={handleSend}
                   disabled={isLoading}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  accessibilityState={{ disabled: isLoading }}
                   style={{
                     width: 44,
                     height: 44,

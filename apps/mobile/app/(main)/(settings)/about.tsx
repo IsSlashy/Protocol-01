@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Linking, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -48,6 +48,7 @@ const LinkRow: React.FC<LinkRowProps> = ({ label, onPress }) => (
 
 export default function AboutScreen() {
   const router = useRouter();
+  const devTapCount = useRef(0);
 
   const socialLinks = [
     {
@@ -175,7 +176,13 @@ export default function AboutScreen() {
         {/* Debug Info (could be hidden in production) */}
         <TouchableOpacity
           className="mx-4 mt-4 py-3 items-center"
-          onPress={() => {}}
+          onPress={() => {
+            devTapCount.current += 1;
+            if (devTapCount.current >= 7) {
+              devTapCount.current = 0;
+              router.push('/(main)/(settings)/privacy-test');
+            }
+          }}
           activeOpacity={0.5}
         >
           <Text className="text-p01-gray/30 text-xs">

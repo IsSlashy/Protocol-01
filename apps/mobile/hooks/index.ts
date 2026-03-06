@@ -14,27 +14,12 @@ export {
   useWallet,
   useBalance,
   useTokenBalance,
-  useTransactions,
-  useSend,
-  useReceive,
-  generateQRContent,
-  parseQRContent,
 } from './wallet';
 
 export type {
   P01Wallet,
   WalletBalance,
   TokenBalance,
-  Transaction,
-  TransactionType,
-  TransactionStatus,
-  TransactionFilter,
-  SendParams,
-  GasEstimate,
-  SendStep,
-  SendState,
-  ReceiveAddress,
-  QRCodeData,
 } from './wallet';
 
 // ============================================================================
@@ -43,7 +28,6 @@ export type {
 export {
   useStealth,
   useScan,
-  usePrivacy,
 } from './stealth';
 
 export type {
@@ -53,11 +37,6 @@ export type {
   StealthPayment,
   ScanProgress,
   ScanResult,
-  PrivacyLevel,
-  PrivacyScore,
-  PrivacyFactor,
-  PrivacyRecommendation,
-  PrivacySettings,
 } from './stealth';
 
 // ============================================================================
@@ -91,7 +70,6 @@ export type {
 export {
   useAgent,
   useChat,
-  useExecution,
   createPendingConfirmation,
 } from './agent';
 
@@ -106,11 +84,6 @@ export type {
   MessageType,
   Suggestion,
   ChatContext,
-  Execution,
-  ExecutionStatus,
-  ExecutionType,
-  ExecutionStep,
-  ExecutionResult,
 } from './agent';
 
 // ============================================================================
@@ -146,13 +119,9 @@ export {
   useButtonHaptics,
   useListHaptics,
   useSwipeHaptics,
-  NETWORKS,
 } from './common';
 
 export type {
-  NetworkType,
-  NetworkConfig,
-  NetworkState,
   RefreshConfig,
   MultiRefreshSource,
   AutoRefreshConfig,

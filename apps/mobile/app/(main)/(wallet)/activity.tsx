@@ -404,6 +404,8 @@ export default function ActivityScreen() {
           activeOpacity={0.7}
           onPress={() => handleTransactionPress(tx)}
           className="mb-3"
+          accessibilityRole="button"
+          accessibilityLabel={`${tx.type === 'stream' ? 'Stream' : tx.type} ${tx.type === 'receive' ? 'plus' : 'minus'} ${tx.amount} ${tx.token}, ${tx.status}`}
         >
           <Card variant="default" padding="md">
             <View className="flex-row items-center justify-between">
@@ -511,6 +513,8 @@ export default function ActivityScreen() {
                 className="ml-auto p-1"
                 onPress={() => handleTransactionPress(tx)}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="link"
+                accessibilityLabel="View transaction in explorer"
               >
                 <Ionicons
                   name="open-outline"
@@ -562,6 +566,8 @@ export default function ActivityScreen() {
                 .then(() => setLoadingState('success'))
                 .catch(() => setLoadingState('error'));
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading activity"
           >
             <Text className="text-p01-void font-semibold">Retry</Text>
           </TouchableOpacity>
@@ -594,6 +600,8 @@ export default function ActivityScreen() {
               key={payment.id}
               activeOpacity={0.7}
               onPress={() => router.push(`/(main)/(streams)/${payment.id}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`${payment.streamName}, ${payment.amount.toFixed(4)} SOL ${payment.frequency}, ${formatTimeUntil(payment.nextPaymentDate)}`}
             >
               <Card variant="default" padding="md">
                 <View className="flex-row items-center">
@@ -679,6 +687,8 @@ export default function ActivityScreen() {
         <TouchableOpacity
           onPress={() => router.back()}
           className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color="#ffffff" />
         </TouchableOpacity>
@@ -690,6 +700,8 @@ export default function ActivityScreen() {
             const next = FILTER_TABS[(nextIdx + 1) % FILTER_TABS.length];
             setFilter(next.id);
           }}
+          accessibilityRole="button"
+          accessibilityLabel="Cycle transaction filter"
         >
           <Ionicons name="filter-outline" size={20} color="#ffffff" />
         </TouchableOpacity>
@@ -711,6 +723,9 @@ export default function ActivityScreen() {
                   ? 'bg-p01-cyan'
                   : 'bg-p01-surface border border-p01-border'
               }`}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter by ${tab.label}`}
+              accessibilityState={{ selected: filter === tab.id }}
             >
               <Text
                 className={`font-medium ${
@@ -749,6 +764,8 @@ export default function ActivityScreen() {
               <TouchableOpacity
                 className="items-center py-4 mb-4"
                 onPress={handleLoadMore}
+                accessibilityRole="button"
+                accessibilityLabel={`Load more, ${filteredTransactions.length - visibleCount} remaining`}
               >
                 <View className="flex-row items-center bg-p01-surface border border-p01-border px-6 py-3 rounded-xl">
                   <Ionicons name="chevron-down" size={16} color="#39c5bb" />

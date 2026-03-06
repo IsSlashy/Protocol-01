@@ -17,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useWalletStore } from '@/stores/walletStore';
+import { getCluster } from '@/services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors - NO purple allowed
@@ -70,6 +71,8 @@ export default function ReceiveScreen() {
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={24} color={Colors.text} />
         </TouchableOpacity>
@@ -84,7 +87,7 @@ export default function ReceiveScreen() {
       >
         {/* QR Code Section */}
         <Animated.View entering={FadeInUp.delay(200)} style={styles.qrSection}>
-          <View style={styles.qrContainer}>
+          <View style={styles.qrContainer} accessibilityLabel="QR code for your wallet address" accessibilityRole="image">
             {publicKey ? (
               <QRCode
                 value={`solana:${publicKey}`}
@@ -102,7 +105,9 @@ export default function ReceiveScreen() {
           {/* Network Badge */}
           <View style={styles.networkBadge}>
             <View style={styles.networkDot} />
-            <Text style={styles.networkText}>Solana Devnet</Text>
+            <Text style={styles.networkText}>
+              Solana {getCluster() === 'mainnet-beta' ? 'Mainnet' : getCluster() === 'devnet' ? 'Devnet' : 'Testnet'}
+            </Text>
           </View>
         </Animated.View>
 
@@ -118,6 +123,8 @@ export default function ReceiveScreen() {
             <TouchableOpacity
               style={[styles.actionButton, copied && styles.actionButtonActive]}
               onPress={handleCopy}
+              accessibilityRole="button"
+              accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
             >
               <Ionicons
                 name={copied ? 'checkmark' : 'copy-outline'}
@@ -129,7 +136,7 @@ export default function ReceiveScreen() {
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionButton} onPress={handleShare}>
+            <TouchableOpacity style={styles.actionButton} onPress={handleShare} accessibilityRole="button" accessibilityLabel="Share address">
               <Ionicons name="share-outline" size={20} color={Colors.primary} />
               <Text style={styles.actionButtonText}>Share</Text>
             </TouchableOpacity>

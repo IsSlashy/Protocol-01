@@ -92,6 +92,8 @@ export default function CreatePersonalStreamScreen() {
       >
         <TouchableOpacity
           onPress={() => router.back()}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
           style={{
             width: 40,
             height: 40,

@@ -93,7 +93,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "0.1.1"
+        versionName "0.5.1"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -178,12 +178,5 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
-    }
-}
-
-// Skip JS bundling — we pre-bundle via `expo export` and place in assets/
-project.afterEvaluate {
-    tasks.matching { it.name.startsWith("createBundle") && it.name.contains("JsAndAssets") }.configureEach {
-        enabled = false
     }
 }

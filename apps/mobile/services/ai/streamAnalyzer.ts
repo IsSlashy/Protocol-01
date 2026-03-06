@@ -94,9 +94,9 @@ export function analyzeStreams(
         priority: 'high',
         streamId: stream.id,
         streamName: stream.name,
-        reason: `Aucun paiement depuis ${daysSinceLastPayment} jours`,
+        reason: `No payment in ${daysSinceLastPayment} days`,
         potentialSavings: monthlyAmount,
-        actionText: `Annuler pour économiser ${monthlyAmount.toFixed(4)} SOL/mois`,
+        actionText: `Cancel to save ${monthlyAmount.toFixed(4)} SOL/month`,
       });
       savingsPotential += monthlyAmount;
     }
@@ -109,9 +109,9 @@ export function analyzeStreams(
         priority: 'medium',
         streamId: stream.id,
         streamName: stream.name,
-        reason: `Représente ${percentage}% de vos dépenses mensuelles`,
+        reason: `Represents ${percentage}% of your monthly spending`,
         potentialSavings: monthlyAmount * 0.5, // Assume 50% could be saved
-        actionText: `Vérifier si nécessaire (${monthlyAmount.toFixed(4)} SOL/mois)`,
+        actionText: `Review if needed (${monthlyAmount.toFixed(4)} SOL/month)`,
       });
     }
 
@@ -122,9 +122,9 @@ export function analyzeStreams(
         priority: 'low',
         streamId: stream.id,
         streamName: stream.name,
-        reason: `Nombre max de paiements atteint (${stream.paymentsCompleted}/${stream.totalPayments})`,
+        reason: `Max payments reached (${stream.paymentsCompleted}/${stream.totalPayments})`,
         potentialSavings: 0,
-        actionText: 'Supprimer ce stream terminé',
+        actionText: 'Remove this completed stream',
       });
     }
   });
@@ -141,20 +141,20 @@ export function analyzeStreams(
         type: 'alert',
         priority: 'high',
         streamId: '',
-        streamName: 'Solde bas',
-        reason: `Votre solde sera épuisé dans ~${balanceRunwayDays} jours`,
+        streamName: 'Low balance',
+        reason: `Your balance will be depleted in ~${balanceRunwayDays} days`,
         potentialSavings: 0,
-        actionText: 'Rechargez votre wallet ou réduisez vos streams',
+        actionText: 'Top up your wallet or reduce your streams',
       });
     } else if (balanceRunwayDays < 30) {
       recommendations.push({
         type: 'alert',
         priority: 'medium',
         streamId: '',
-        streamName: 'Prévision solde',
-        reason: `Solde suffisant pour ~${balanceRunwayDays} jours`,
+        streamName: 'Balance forecast',
+        reason: `Balance sufficient for ~${balanceRunwayDays} days`,
         potentialSavings: 0,
-        actionText: 'Pensez à recharger bientôt',
+        actionText: 'Consider topping up soon',
       });
     }
   }
@@ -206,21 +206,21 @@ function calculateMonthlyAmount(amount: number, interval: string): number {
  * Format analysis as AI-friendly text
  */
 export function formatAnalysisForAI(analysis: StreamAnalysis): string {
-  let message = 'ANALYSE DE VOS ABONNEMENTS\n\n';
+  let message = 'SUBSCRIPTION ANALYSIS\n\n';
 
   // Summary
-  message += `RÉSUMÉ:\n`;
-  message += `- ${analysis.activeStreams} streams actifs\n`;
-  message += `- Dépense mensuelle: ${analysis.totalMonthlySpend.toFixed(4)} SOL\n`;
-  message += `- Dépense annuelle: ${analysis.totalYearlySpend.toFixed(4)} SOL\n`;
+  message += `SUMMARY:\n`;
+  message += `- ${analysis.activeStreams} active streams\n`;
+  message += `- Monthly spend: ${analysis.totalMonthlySpend.toFixed(4)} SOL\n`;
+  message += `- Yearly spend: ${analysis.totalYearlySpend.toFixed(4)} SOL\n`;
 
   if (analysis.balanceRunwayDays !== null) {
-    message += `- Autonomie solde: ~${analysis.balanceRunwayDays} jours\n`;
+    message += `- Balance runway: ~${analysis.balanceRunwayDays} days\n`;
   }
 
   // Recommendations
   if (analysis.recommendations.length > 0) {
-    message += `\nRECOMMANDATIONS (${analysis.recommendations.length}):\n`;
+    message += `\nRECOMMENDATIONS (${analysis.recommendations.length}):\n`;
 
     const highPriority = analysis.recommendations.filter(r => r.priority === 'high');
     const mediumPriority = analysis.recommendations.filter(r => r.priority === 'medium');
@@ -234,27 +234,27 @@ export function formatAnalysisForAI(analysis: StreamAnalysis): string {
     }
 
     if (mediumPriority.length > 0) {
-      message += `\n[À VÉRIFIER]\n`;
+      message += `\n[TO REVIEW]\n`;
       mediumPriority.slice(0, 2).forEach(rec => {
         message += `- ${rec.streamName}: ${rec.reason}\n`;
       });
     }
 
     if (analysis.savingsPotential > 0) {
-      message += `\nÉCONOMIES POTENTIELLES: ${analysis.savingsPotential.toFixed(4)} SOL/mois`;
-      message += ` (${(analysis.savingsPotential * 12).toFixed(4)} SOL/an)\n`;
+      message += `\nPOTENTIAL SAVINGS: ${analysis.savingsPotential.toFixed(4)} SOL/month`;
+      message += ` (${(analysis.savingsPotential * 12).toFixed(4)} SOL/year)\n`;
     }
   } else {
-    message += `\nTout semble optimisé! Aucune recommandation pour le moment.\n`;
+    message += `\nEverything looks optimized! No recommendations at this time.\n`;
   }
 
   // Upcoming payments
   if (analysis.upcomingPayments.length > 0) {
-    message += `\nPROCHAINS PAIEMENTS:\n`;
+    message += `\nUPCOMING PAYMENTS:\n`;
     analysis.upcomingPayments.slice(0, 5).forEach(payment => {
-      const dayText = payment.daysUntil === 0 ? 'Aujourd\'hui' :
-                      payment.daysUntil === 1 ? 'Demain' :
-                      `Dans ${payment.daysUntil} jours`;
+      const dayText = payment.daysUntil === 0 ? 'Today' :
+                      payment.daysUntil === 1 ? 'Tomorrow' :
+                      `In ${payment.daysUntil} days`;
       message += `- ${payment.streamName}: ${payment.amount} SOL (${dayText})\n`;
     });
   }
@@ -269,31 +269,31 @@ export function getBalanceSummary(
   balance: number,
   analysis: StreamAnalysis
 ): string {
-  let message = `VOTRE SOLDE: ${balance.toFixed(4)} SOL\n\n`;
+  let message = `YOUR BALANCE: ${balance.toFixed(4)} SOL\n\n`;
 
   if (analysis.activeStreams === 0) {
-    message += 'Aucun stream actif.\n';
+    message += 'No active streams.\n';
     return message;
   }
 
-  message += `DÉPENSES RÉCURRENTES:\n`;
-  message += `- ${analysis.activeStreams} streams actifs\n`;
-  message += `- ${analysis.totalMonthlySpend.toFixed(4)} SOL/mois\n`;
+  message += `RECURRING EXPENSES:\n`;
+  message += `- ${analysis.activeStreams} active streams\n`;
+  message += `- ${analysis.totalMonthlySpend.toFixed(4)} SOL/month\n`;
 
   if (analysis.balanceRunwayDays !== null) {
     if (analysis.balanceRunwayDays < 7) {
-      message += `\n[ATTENTION] Solde épuisé dans ~${analysis.balanceRunwayDays} jours!\n`;
-      message += `Rechargez ou réduisez vos streams.\n`;
+      message += `\n[WARNING] Balance depleted in ~${analysis.balanceRunwayDays} days!\n`;
+      message += `Top up or reduce your streams.\n`;
     } else if (analysis.balanceRunwayDays < 30) {
-      message += `\nAutonomie: ~${analysis.balanceRunwayDays} jours\n`;
+      message += `\nRunway: ~${analysis.balanceRunwayDays} days\n`;
     } else {
-      message += `\nAutonomie: ~${analysis.balanceRunwayDays} jours (OK)\n`;
+      message += `\nRunway: ~${analysis.balanceRunwayDays} days (OK)\n`;
     }
   }
 
   if (analysis.savingsPotential > 0) {
-    message += `\nÉconomies possibles: ${analysis.savingsPotential.toFixed(4)} SOL/mois\n`;
-    message += `Demandez "analyser mes abonnements" pour plus de détails.`;
+    message += `\nPossible savings: ${analysis.savingsPotential.toFixed(4)} SOL/month\n`;
+    message += `Ask "analyze my subscriptions" for more details.`;
   }
 
   return message;

@@ -67,7 +67,7 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
   const startScanRef = useRef<(fromBlock?: number) => Promise<ScanResult | null>>(null as any);
 
   const { stealthMetaAddress, getViewingPrivateKey } = useStealth();
-  const { isConnected, provider, chainId } = useNetwork();
+  const { isConnected } = useNetwork();
 
   const {
     value: cachedPayments,
@@ -81,7 +81,7 @@ export function useScan(options: UseScanOptions = {}): UseScanReturn {
     value: savedLastBlock,
     setValue: setSavedLastBlock,
   } = useAsyncStorage<number>({
-    key: `${ASYNC_KEYS.LAST_SYNC}_stealth_scan_${chainId}`,
+    key: `${ASYNC_KEYS.LAST_SYNC}_stealth_scan_solana`,
     defaultValue: 0,
   });
 

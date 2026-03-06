@@ -66,7 +66,7 @@ export default function ScanScreen() {
         });
         return;
       } else {
-        setError('QR Code P01 Auth invalide');
+        setError('Invalid P01 Auth QR code');
         setTimeout(() => {
           setError('');
           setIsScanning(true);
