@@ -40,6 +40,11 @@
       "import": "./dist/indexing/index.mjs",
       "require": "./dist/indexing/index.js",
       "types": "./dist/indexing/index.d.ts"
+    },
+    "./relay": {
+      "import": "./dist/relay/index.mjs",
+      "require": "./dist/relay/index.js",
+      "types": "./dist/relay/index.d.ts"
     }
   },
   "files": [
