@@ -153,19 +153,20 @@ export interface KnownPendingCredit {
 
 /** Configuration for proof generation */
 export interface ProverConfig {
-  /** URL of a remote Rust prover (e.g., http://localhost:3001/prove) */
+  /**
+   * When true (DEFAULT), proofs are generated locally via snarkjs WASM.
+   * The spending_key NEVER leaves the device. This is the trustless mode.
+   *
+   * When false, remote backends (relayer/Rust prover) are tried first
+   * for speed, falling back to local. WARNING: remote backends receive
+   * spending_key in plaintext — only use for testing.
+   */
+  localOnly?: boolean;
+  /** URL of a remote Rust prover (ignored when localOnly=true) */
   remoteProverUrl?: string;
   /**
-   * URL of the relayer for proof generation via its zkSPL endpoints.
-   * e.g., "https://relayer.example.com" (without trailing slash).
-   *
-   * When set, the prover will first attempt to generate proofs via:
-   *   POST {relayerUrl}/api/zkspl/prove/deposit
-   *   POST {relayerUrl}/api/zkspl/prove/withdraw
-   *   POST {relayerUrl}/api/zkspl/prove/transfer
-   *   POST {relayerUrl}/api/zkspl/prove/balance-proof
-   *
-   * Falls back to remoteProverUrl (Rust prover), then local snarkjs.
+   * URL of the relayer for proof generation (ignored when localOnly=true).
+   * SECURITY WARNING: The relayer receives spending_key in plaintext.
    */
   relayerUrl?: string;
   /** Path / URL of the confidential_balance circuit WASM */
