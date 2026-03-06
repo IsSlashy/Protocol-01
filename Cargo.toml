@@ -7,12 +7,14 @@ members = [
     "programs/whitelist",
     "programs/p01-fee-splitter",
     "programs/p01_zkspl",
+    "programs/p01_trustless",
+    "programs/p01_relayer",
 ]
 
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.89"
+rust-version = "1.84"
 
 [profile.release]
 overflow-checks = true
@@ -48,3 +50,6 @@ ark-ff = "0.4.0"
 ark-ec = "0.4.0"
 ark-std = "0.4.0"
 sha3 = "0.10"
+
+# Pin blake3 to avoid edition2024 (Solana platform-tools cargo is 1.84)
+blake3 = "=1.8.2"
