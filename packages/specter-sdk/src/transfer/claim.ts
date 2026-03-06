@@ -15,10 +15,86 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
+import nacl from 'tweetnacl';
+import { sha256 } from '@noble/hashes/sha256';
 import type { ClaimResult, StealthPayment, WalletAdapter } from '../types';
 import { SpecterError, SpecterErrorCode } from '../types';
 import { deriveStealthPrivateKey } from '../stealth/derive';
 import { MIN_RENT_EXEMPTION } from '../constants';
+
+// ============================================================================
+// Claim proof construction (Ed25519 signature-based)
+// ============================================================================
+
+/** Domain separator matching the on-chain v1 verifier. */
+const CLAIM_DOMAIN_V1 = new TextEncoder().encode('p01:claim:v1');
+
+/** Domain separator matching the on-chain v2 verifier. */
+const CLAIM_DOMAIN_V2 = new TextEncoder().encode('p01:claim:v2');
+
+/**
+ * Build an Ed25519 claim proof for a v1 stealth payment.
+ *
+ * The proof is a 64-byte Ed25519 signature over:
+ *   SHA-256("p01:claim:v1" || stealthAddress || spendingPubKey)
+ *
+ * signed with the stealth private key. The on-chain verifier reconstructs
+ * the same challenge and verifies the signature against the stealth address
+ * (which is the Ed25519 public key).
+ *
+ * @param stealthKeypair - The derived stealth keypair (has the private key)
+ * @param spendingPubKey - The claimer's spending public key (32 bytes)
+ * @returns 64-byte Ed25519 signature
+ */
+export function buildClaimProof(
+  stealthKeypair: Keypair,
+  spendingPubKey: Uint8Array,
+): Uint8Array {
+  const stealthAddressBytes = stealthKeypair.publicKey.toBytes();
+
+  // challenge = SHA-256(domain || stealth_address || spending_key)
+  const challengeInput = new Uint8Array(
+    CLAIM_DOMAIN_V1.length + 32 + 32
+  );
+  challengeInput.set(CLAIM_DOMAIN_V1, 0);
+  challengeInput.set(stealthAddressBytes, CLAIM_DOMAIN_V1.length);
+  challengeInput.set(spendingPubKey, CLAIM_DOMAIN_V1.length + 32);
+  const challenge = sha256(challengeInput);
+
+  // Sign the challenge with the stealth private key (Ed25519)
+  return nacl.sign.detached(challenge, stealthKeypair.secretKey);
+}
+
+/**
+ * Build an Ed25519 claim proof for a v2 hybrid stealth payment.
+ *
+ * The proof is a 64-byte Ed25519 signature over:
+ *   SHA-256("p01:claim:v2" || stealthAddress || ephemeralPubKey || spendingPubKey)
+ *
+ * @param stealthKeypair - The derived stealth keypair
+ * @param ephemeralPubKey - The sender's ephemeral public key (32 bytes)
+ * @param spendingPubKey - The claimer's spending public key (32 bytes)
+ * @returns 64-byte Ed25519 signature
+ */
+export function buildClaimProofV2(
+  stealthKeypair: Keypair,
+  ephemeralPubKey: Uint8Array,
+  spendingPubKey: Uint8Array,
+): Uint8Array {
+  const stealthAddressBytes = stealthKeypair.publicKey.toBytes();
+
+  // challenge = SHA-256(domain || stealth_address || ephemeral_pub_key || spending_key)
+  const challengeInput = new Uint8Array(
+    CLAIM_DOMAIN_V2.length + 32 + 32 + 32
+  );
+  challengeInput.set(CLAIM_DOMAIN_V2, 0);
+  challengeInput.set(stealthAddressBytes, CLAIM_DOMAIN_V2.length);
+  challengeInput.set(ephemeralPubKey, CLAIM_DOMAIN_V2.length + 32);
+  challengeInput.set(spendingPubKey, CLAIM_DOMAIN_V2.length + 64);
+  const challenge = sha256(challengeInput);
+
+  return nacl.sign.detached(challenge, stealthKeypair.secretKey);
+}
 
 /**
  * Options for claiming a stealth payment

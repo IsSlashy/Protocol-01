@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::hash::hash as sha256;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use ed25519_dalek::{Signature, VerifyingKey};
 
 use crate::errors::P01Error;
 use crate::state::{P01Wallet, StealthAccount};
@@ -117,42 +119,58 @@ pub fn handler(ctx: Context<ClaimStealth>, proof: [u8; 64]) -> Result<()> {
     Ok(())
 }
 
-/// Verify the claim proof
+/// Domain separator for v1 claim proofs to prevent cross-context replay.
+const CLAIM_DOMAIN_V1: &[u8] = b"p01:claim:v1";
+
+/// Build the challenge message that the claimer must sign.
 ///
-/// In a production implementation, this would verify an Ed25519 signature
-/// or a zero-knowledge proof. For the hackathon, we use a simplified check.
+/// challenge = SHA-256(domain || stealth_address || spending_key)
+///
+/// The stealth address (recipient_key) binds the proof to this specific
+/// payment, while the spending key binds it to the claimer's on-chain
+/// wallet. The domain separator prevents cross-version replay.
+fn build_claim_challenge_v1(
+    recipient_key: &[u8; 32],
+    spending_key: &[u8; 32],
+) -> [u8; 32] {
+    let mut data = Vec::with_capacity(CLAIM_DOMAIN_V1.len() + 64);
+    data.extend_from_slice(CLAIM_DOMAIN_V1);
+    data.extend_from_slice(recipient_key);
+    data.extend_from_slice(spending_key);
+    sha256(&data).to_bytes()
+}
+
+/// Verify the claim proof using Ed25519 signature verification.
+///
+/// The claimer proves ownership of the stealth private key by signing a
+/// deterministic challenge derived from the stealth address and spending
+/// key. The 64-byte proof is an Ed25519 signature verified against the
+/// `recipient_key` (stealth public key).
 fn verify_claim_proof(
     proof: &[u8; 64],
     recipient_key: &[u8; 32],
     spending_key: &[u8; 32],
 ) -> bool {
-    // Simplified verification for hackathon:
-    // The proof should contain:
-    // - First 32 bytes: hash of (recipient_key || spending_key)
-    // - Last 32 bytes: signature component
+    // Parse the stealth public key (recipient_key IS the Ed25519 public key)
+    let verifying_key = match VerifyingKey::from_bytes(recipient_key) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
 
-    // For production, implement proper Ed25519 signature verification
-    // or use a ZK-SNARK proof system
+    // Parse the 64-byte proof as an Ed25519 signature
+    let signature = Signature::from_bytes(proof);
 
-    // Basic validation: proof should not be all zeros
-    if proof == &[0u8; 64] {
-        return false;
-    }
+    // Reconstruct the challenge the claimer should have signed
+    let challenge = build_claim_challenge_v1(recipient_key, spending_key);
 
-    // Verify the first part matches expected hash
-    // This is a placeholder - real implementation would use proper crypto
-    let mut expected_prefix = [0u8; 32];
-    for i in 0..32 {
-        expected_prefix[i] = recipient_key[i] ^ spending_key[i];
-    }
-
-    // Check if first 32 bytes of proof match expected prefix
-    proof[..32] == expected_prefix
+    // Verify: signature over challenge, checked against stealth public key
+    verifying_key.verify_strict(&challenge, &signature).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
     fn test_verify_claim_proof_rejects_zeros() {
@@ -165,19 +183,46 @@ mod tests {
 
     #[test]
     fn test_verify_claim_proof_valid() {
-        let recipient_key = [1u8; 32];
-        let spending_key = [2u8; 32];
+        // Generate a real Ed25519 keypair (simulates the stealth keypair)
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let recipient_key: [u8; 32] = signing_key.verifying_key().to_bytes();
+        let spending_key = [0xCDu8; 32];
 
-        // Create valid proof with XOR of keys in first 32 bytes
-        let mut proof = [0u8; 64];
-        for i in 0..32 {
-            proof[i] = recipient_key[i] ^ spending_key[i];
-        }
-        // Fill signature component with non-zero values
-        for i in 32..64 {
-            proof[i] = (i as u8) + 1;
-        }
+        // Build the challenge and sign it
+        let challenge = build_claim_challenge_v1(&recipient_key, &spending_key);
+        let signature = signing_key.sign(&challenge);
+        let proof: [u8; 64] = signature.to_bytes();
 
         assert!(verify_claim_proof(&proof, &recipient_key, &spending_key));
+    }
+
+    #[test]
+    fn test_verify_claim_proof_rejects_wrong_key() {
+        // Sign with one key, verify against a different stealth address
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let wrong_recipient_key = [0xAAu8; 32]; // not the signing key's pubkey
+        let spending_key = [0xCDu8; 32];
+
+        let challenge = build_claim_challenge_v1(&wrong_recipient_key, &spending_key);
+        let signature = signing_key.sign(&challenge);
+        let proof: [u8; 64] = signature.to_bytes();
+
+        assert!(!verify_claim_proof(&proof, &wrong_recipient_key, &spending_key));
+    }
+
+    #[test]
+    fn test_verify_claim_proof_rejects_wrong_spending_key() {
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let recipient_key: [u8; 32] = signing_key.verifying_key().to_bytes();
+        let spending_key = [0xCDu8; 32];
+        let wrong_spending_key = [0xEEu8; 32];
+
+        // Sign with correct spending_key
+        let challenge = build_claim_challenge_v1(&recipient_key, &spending_key);
+        let signature = signing_key.sign(&challenge);
+        let proof: [u8; 64] = signature.to_bytes();
+
+        // Verify with wrong spending_key — should fail
+        assert!(!verify_claim_proof(&proof, &recipient_key, &wrong_spending_key));
     }
 }

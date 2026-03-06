@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::hash::hash as sha256;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use ed25519_dalek::{Signature, VerifyingKey};
 
 use crate::errors::P01Error;
 use crate::state::{P01Wallet, StealthAccountV2, StealthPaymentClaimed};
@@ -107,12 +109,12 @@ pub fn handler(ctx: Context<ClaimStealthV2>, proof: [u8; 64]) -> Result<()> {
         return Err(P01Error::StealthNotClaimable.into());
     }
 
-    // Verify the claim proof
-    // The proof contains a signature proving the claimer owns the stealth
-    // private key corresponding to stealth_account.stealth_address.
-    // The proof is over the ephemeral public key and the claimer's spending key.
+    // Verify the claim proof: an Ed25519 signature over a deterministic
+    // challenge, proving the claimer controls the stealth private key.
+    let stealth_address_bytes: [u8; 32] = stealth_account.stealth_address.to_bytes();
     if !verify_claim_proof_v2(
         &proof,
+        &stealth_address_bytes,
         &stealth_account.ephemeral_pub_key,
         &claimer_wallet.spending_key,
     ) {
@@ -165,59 +167,100 @@ pub fn handler(ctx: Context<ClaimStealthV2>, proof: [u8; 64]) -> Result<()> {
     Ok(())
 }
 
-/// Verify the claim proof for a v2 stealth payment
+/// Domain separator for v2 claim proofs to prevent cross-context replay.
+const CLAIM_DOMAIN_V2: &[u8] = b"p01:claim:v2";
+
+/// Build the challenge message that the claimer must sign (v2).
 ///
-/// In a production implementation, this would verify an Ed25519 signature
-/// proving the claimer derived the correct stealth private key from the
-/// hybrid (X25519 + ML-KEM) key agreement. For now, we use the same
-/// simplified XOR-based check as v1.
+/// challenge = SHA-256(domain || stealth_address || ephemeral_pub_key || spending_key)
+///
+/// The v2 challenge includes the ephemeral public key to bind the proof to
+/// the specific hybrid key agreement. The stealth_address is read from the
+/// account and passed in by the handler.
+fn build_claim_challenge_v2(
+    stealth_address: &[u8; 32],
+    ephemeral_pub_key: &[u8; 32],
+    spending_key: &[u8; 32],
+) -> [u8; 32] {
+    let mut data = Vec::with_capacity(CLAIM_DOMAIN_V2.len() + 96);
+    data.extend_from_slice(CLAIM_DOMAIN_V2);
+    data.extend_from_slice(stealth_address);
+    data.extend_from_slice(ephemeral_pub_key);
+    data.extend_from_slice(spending_key);
+    sha256(&data).to_bytes()
+}
+
+/// Verify the claim proof for a v2 stealth payment using Ed25519 signature
+/// verification.
+///
+/// The claimer proves ownership of the stealth private key by signing a
+/// deterministic challenge. The 64-byte proof is an Ed25519 signature
+/// verified against the stealth address (the Ed25519 public key of the
+/// derived stealth keypair).
 fn verify_claim_proof_v2(
     proof: &[u8; 64],
+    stealth_address: &[u8; 32],
     ephemeral_pub_key: &[u8; 32],
     spending_key: &[u8; 32],
 ) -> bool {
-    // Basic validation: proof should not be all zeros
-    if proof == &[0u8; 64] {
-        return false;
-    }
+    // Parse the stealth address as an Ed25519 public key
+    let verifying_key = match VerifyingKey::from_bytes(stealth_address) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
 
-    // Simplified verification: first 32 bytes = XOR of ephemeral key and spending key
-    // Production: proper Ed25519 or hybrid signature verification
-    let mut expected_prefix = [0u8; 32];
-    for i in 0..32 {
-        expected_prefix[i] = ephemeral_pub_key[i] ^ spending_key[i];
-    }
+    // Parse the 64-byte proof as an Ed25519 signature
+    let signature = Signature::from_bytes(proof);
 
-    proof[..32] == expected_prefix
+    // Reconstruct the challenge
+    let challenge = build_claim_challenge_v2(stealth_address, ephemeral_pub_key, spending_key);
+
+    // Verify: signature over challenge, checked against stealth public key
+    verifying_key.verify_strict(&challenge, &signature).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
     fn test_verify_claim_proof_v2_rejects_zeros() {
         let proof = [0u8; 64];
-        let ephemeral_key = [1u8; 32];
-        let spending_key = [2u8; 32];
+        let stealth_address = [1u8; 32];
+        let ephemeral_key = [2u8; 32];
+        let spending_key = [3u8; 32];
 
-        assert!(!verify_claim_proof_v2(&proof, &ephemeral_key, &spending_key));
+        assert!(!verify_claim_proof_v2(&proof, &stealth_address, &ephemeral_key, &spending_key));
     }
 
     #[test]
     fn test_verify_claim_proof_v2_valid() {
+        // Generate a real Ed25519 keypair (simulates the stealth keypair)
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let stealth_address: [u8; 32] = signing_key.verifying_key().to_bytes();
         let ephemeral_key = [0xABu8; 32];
         let spending_key = [0xCDu8; 32];
 
-        let mut proof = [0u8; 64];
-        for i in 0..32 {
-            proof[i] = ephemeral_key[i] ^ spending_key[i];
-        }
-        // Fill signature component with non-zero values
-        for i in 32..64 {
-            proof[i] = (i as u8) + 1;
-        }
+        // Build the challenge and sign it
+        let challenge = build_claim_challenge_v2(&stealth_address, &ephemeral_key, &spending_key);
+        let signature = signing_key.sign(&challenge);
+        let proof: [u8; 64] = signature.to_bytes();
 
-        assert!(verify_claim_proof_v2(&proof, &ephemeral_key, &spending_key));
+        assert!(verify_claim_proof_v2(&proof, &stealth_address, &ephemeral_key, &spending_key));
+    }
+
+    #[test]
+    fn test_verify_claim_proof_v2_rejects_wrong_key() {
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let wrong_stealth_address = [0xAAu8; 32]; // not the signing key's pubkey
+        let ephemeral_key = [0xABu8; 32];
+        let spending_key = [0xCDu8; 32];
+
+        let challenge = build_claim_challenge_v2(&wrong_stealth_address, &ephemeral_key, &spending_key);
+        let signature = signing_key.sign(&challenge);
+        let proof: [u8; 64] = signature.to_bytes();
+
+        assert!(!verify_claim_proof_v2(&proof, &wrong_stealth_address, &ephemeral_key, &spending_key));
     }
 }
