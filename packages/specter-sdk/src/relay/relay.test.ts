@@ -1,17 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import nacl from 'tweetnacl';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import { encryptForRelayer, decryptRelayJob } from './encrypt';
 import { selectRelayer } from './select';
 import { generateJobId } from './submit';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import type { RelayerNodeInfo } from './types';
 
-describe('relay/encrypt', () => {
+describe('relay/encrypt v1 (classic X25519)', () => {
   it('encrypts and decrypts a payload round-trip', () => {
     const relayerKeys = nacl.box.keyPair();
     const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
 
     const encrypted = encryptForRelayer(payload, relayerKeys.publicKey);
+    expect(encrypted[0]).toBe(0x01); // v1 version byte
     expect(encrypted.length).toBeGreaterThan(payload.length);
 
     const decrypted = decryptRelayJob(encrypted, relayerKeys.secretKey);
@@ -45,10 +47,72 @@ describe('relay/encrypt', () => {
     const relayerKeys = nacl.box.keyPair();
     const encrypted = encryptForRelayer(new Uint8Array([1]), relayerKeys.publicKey);
 
-    // Truncate
     const truncated = encrypted.slice(0, 10);
     const result = decryptRelayJob(truncated, relayerKeys.secretKey);
     expect(result).toBeNull();
+  });
+});
+
+describe('relay/encrypt v2 (hybrid X25519 + ML-KEM-768)', () => {
+  it('encrypts and decrypts with hybrid PQ round-trip', () => {
+    const relayerKeys = nacl.box.keyPair();
+    const kemKeys = ml_kem768.keygen();
+    const payload = new Uint8Array([42, 43, 44, 45]);
+
+    const encrypted = encryptForRelayer(payload, relayerKeys.publicKey, kemKeys.publicKey);
+    expect(encrypted[0]).toBe(0x02); // v2 version byte
+    // v2 overhead: 1 + 32 + 1088 + 24 + 16 = 1161
+    expect(encrypted.length).toBe(payload.length + 1161);
+
+    const decrypted = decryptRelayJob(encrypted, relayerKeys.secretKey, kemKeys.secretKey);
+    expect(decrypted).not.toBeNull();
+    expect(Array.from(decrypted!)).toEqual(Array.from(payload));
+  });
+
+  it('fails v2 decrypt with wrong KEM secret key', () => {
+    const relayerKeys = nacl.box.keyPair();
+    const kemKeys = ml_kem768.keygen();
+    const wrongKemKeys = ml_kem768.keygen();
+    const payload = new Uint8Array([1, 2, 3]);
+
+    const encrypted = encryptForRelayer(payload, relayerKeys.publicKey, kemKeys.publicKey);
+    const decrypted = decryptRelayJob(encrypted, relayerKeys.secretKey, wrongKemKeys.secretKey);
+    expect(decrypted).toBeNull();
+  });
+
+  it('fails v2 decrypt with wrong X25519 key', () => {
+    const relayerKeys = nacl.box.keyPair();
+    const wrongX25519 = nacl.box.keyPair();
+    const kemKeys = ml_kem768.keygen();
+    const payload = new Uint8Array([7, 8, 9]);
+
+    const encrypted = encryptForRelayer(payload, relayerKeys.publicKey, kemKeys.publicKey);
+    const decrypted = decryptRelayJob(encrypted, wrongX25519.secretKey, kemKeys.secretKey);
+    expect(decrypted).toBeNull();
+  });
+
+  it('fails v2 decrypt without KEM secret key', () => {
+    const relayerKeys = nacl.box.keyPair();
+    const kemKeys = ml_kem768.keygen();
+    const payload = new Uint8Array([5]);
+
+    const encrypted = encryptForRelayer(payload, relayerKeys.publicKey, kemKeys.publicKey);
+    // Try decrypting v2 without providing KEM key
+    const decrypted = decryptRelayJob(encrypted, relayerKeys.secretKey);
+    expect(decrypted).toBeNull();
+  });
+
+  it('handles large payloads with hybrid encryption', () => {
+    const relayerKeys = nacl.box.keyPair();
+    const kemKeys = ml_kem768.keygen();
+    const payload = new Uint8Array(1232);
+    payload.fill(0xcd);
+
+    const encrypted = encryptForRelayer(payload, relayerKeys.publicKey, kemKeys.publicKey);
+    const decrypted = decryptRelayJob(encrypted, relayerKeys.secretKey, kemKeys.secretKey);
+    expect(decrypted).not.toBeNull();
+    expect(decrypted!.length).toBe(1232);
+    expect(decrypted![0]).toBe(0xcd);
   });
 });
 
