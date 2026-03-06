@@ -329,7 +329,7 @@ describe('Denominated Pool — Client-Side Proof Generation', () => {
       expect(proof.pi_a).toBeDefined();
       expect(proof.pi_b).toBeDefined();
       expect(proof.pi_c).toBeDefined();
-      expect(publicSignals).toHaveLength(4); // merkle_root, nullifier, min_epoch, token_mint
+      expect(publicSignals).toHaveLength(5); // merkle_root, nullifier, min_epoch, token_mint, enforce_maturity
 
       // 6. Verify proof
       const vk = JSON.parse(fs.readFileSync(VK_PATH, 'utf8'));
