@@ -340,7 +340,7 @@ describe('transfer/claim', () => {
       const result = await claimStealth({
         connection: mockConnection,
         payment,
-        spendingPrivateKey: new Uint8Array(32).fill(0x01),
+        spendingPubKey: new Uint8Array(32).fill(0x01),
         viewingPrivateKey: new Uint8Array(32).fill(0x02),
         destination: Keypair.generate().publicKey,
       });
@@ -358,7 +358,7 @@ describe('transfer/claim', () => {
         claimStealth({
           connection: mockConnection,
           payment,
-          spendingPrivateKey: new Uint8Array(32),
+          spendingPubKey: new Uint8Array(32),
           viewingPrivateKey: new Uint8Array(32),
         })
       ).rejects.toThrow(/already been claimed/i);
@@ -373,7 +373,7 @@ describe('transfer/claim', () => {
         claimStealth({
           connection: mockConnection,
           payment,
-          spendingPrivateKey: new Uint8Array(32).fill(0x01),
+          spendingPubKey: new Uint8Array(32).fill(0x01),
           viewingPrivateKey: new Uint8Array(32).fill(0x02),
         })
       ).rejects.toThrow(/no balance/i);

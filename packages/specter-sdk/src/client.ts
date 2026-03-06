@@ -35,7 +35,6 @@ import {
   generateStealthMetaAddress,
 } from './stealth/generate';
 import { StealthScanner, subscribeToPayments } from './stealth/scan';
-import { deriveStealthPrivateKey } from './stealth/derive';
 
 // Transfer operations
 import { sendPrivate, sendPublic, estimateTransferFee } from './transfer/send';
@@ -417,7 +416,7 @@ export class P01Client {
     const result = await claimStealth({
       connection: this.connection,
       payment,
-      spendingPrivateKey: this.walletState.spendingKeypair.secretKey.slice(0, 32),
+      spendingPubKey: this.walletState.spendingKeypair.publicKey.toBytes(),
       viewingPrivateKey: this.walletState.viewingKeypair.secretKey.slice(0, 32),
       destination: this.walletState.keypair.publicKey,
     });
