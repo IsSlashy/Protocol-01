@@ -1,12 +1,15 @@
 import nacl from 'tweetnacl';
 import { sha256 } from '@noble/hashes/sha256';
 import { hkdf } from '@noble/hashes/hkdf';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem';
 import bs58 from 'bs58';
 import {
   SALT_SIZE,
   IV_SIZE,
   AUTH_TAG_SIZE,
   KDF_ITERATIONS,
+  HYBRID_HKDF_INFO,
+  STEALTH_SEED_INFO,
 } from '../constants';
 
 // ============================================================================
@@ -54,24 +57,17 @@ export function deriveKey(
 }
 
 /**
- * Derive a stealth private key from shared secret and spending key
- * @param spendingPrivateKey - The recipient's spending private key
- * @param sharedSecret - The ECDH shared secret
+ * Derive a deterministic stealth seed from shared secret and spending public key.
+ * Both sender and recipient can compute the same seed, producing matching keypairs.
+ *
+ * @param spendingPubKey - The recipient's spending public key (32 bytes)
+ * @param sharedSecret - The (possibly hybrid) shared secret
  */
-export function deriveStealthPrivateKey(
-  spendingPrivateKey: Uint8Array,
+export function deriveStealthSeed(
+  spendingPubKey: Uint8Array,
   sharedSecret: Uint8Array
 ): Uint8Array {
-  const hashedSecret = sha256(sharedSecret);
-  const privateKey = new Uint8Array(32);
-
-  // Add the hashed secret to the spending private key (mod curve order)
-  // This is a simplified version - in production, use proper scalar addition
-  for (let i = 0; i < 32; i++) {
-    privateKey[i] = (spendingPrivateKey[i]! + hashedSecret[i]!) % 256;
-  }
-
-  return privateKey;
+  return hkdf(sha256, sharedSecret, spendingPubKey, STEALTH_SEED_INFO, 32);
 }
 
 /**
@@ -81,6 +77,61 @@ export function deriveStealthPrivateKey(
 export function computeViewTag(sharedSecret: Uint8Array): number {
   const hash = sha256(sharedSecret);
   return hash[0]!;
+}
+
+// ============================================================================
+// Post-Quantum Hybrid Key Exchange (ML-KEM-768 / FIPS 203)
+// ============================================================================
+
+/**
+ * Generate an ML-KEM-768 keypair for post-quantum hybrid stealth addresses
+ * @returns publicKey (1184 bytes) and secretKey (2400 bytes)
+ */
+export function kemGenerateKeypair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
+  return ml_kem768.keygen();
+}
+
+/**
+ * Encapsulate: sender creates a shared secret using the recipient's KEM public key
+ * @param kemPubKey - Recipient's ML-KEM-768 public key (1184 bytes)
+ * @returns cipherText (1088 bytes) and sharedSecret (32 bytes)
+ */
+export function kemEncapsulate(kemPubKey: Uint8Array): {
+  cipherText: Uint8Array;
+  sharedSecret: Uint8Array;
+} {
+  return ml_kem768.encapsulate(kemPubKey);
+}
+
+/**
+ * Decapsulate: recipient recovers the shared secret from the KEM ciphertext
+ * @param cipherText - KEM ciphertext from sender (1088 bytes)
+ * @param kemSecretKey - Recipient's ML-KEM-768 secret key (2400 bytes)
+ * @returns sharedSecret (32 bytes)
+ */
+export function kemDecapsulate(
+  cipherText: Uint8Array,
+  kemSecretKey: Uint8Array
+): Uint8Array {
+  return ml_kem768.decapsulate(cipherText, kemSecretKey);
+}
+
+/**
+ * Derive a hybrid shared secret by combining classical ECDH and post-quantum KEM secrets.
+ * Security holds if EITHER the classical or post-quantum scheme is secure.
+ *
+ * @param classicSecret - X25519 ECDH shared secret (32 bytes)
+ * @param kemSecret - ML-KEM-768 shared secret (32 bytes)
+ * @returns Combined shared secret (32 bytes)
+ */
+export function deriveHybridSharedSecret(
+  classicSecret: Uint8Array,
+  kemSecret: Uint8Array
+): Uint8Array {
+  const combined = new Uint8Array(classicSecret.length + kemSecret.length);
+  combined.set(classicSecret);
+  combined.set(kemSecret, classicSecret.length);
+  return hkdf(sha256, combined, undefined, HYBRID_HKDF_INFO, 32);
 }
 
 // ============================================================================
