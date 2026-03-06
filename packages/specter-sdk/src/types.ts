@@ -28,6 +28,8 @@ export interface WalletCreateOptions {
   derivationPath?: string;
   /** Entropy strength for mnemonic (128, 160, 192, 224, or 256 bits) */
   strength?: 128 | 160 | 192 | 224 | 256;
+  /** Generate ML-KEM-768 keypair for post-quantum hybrid stealth addresses (v2) */
+  enableHybrid?: boolean;
 }
 
 /**
@@ -82,13 +84,15 @@ export interface Balance {
 
 /**
  * Stealth meta-address used to derive one-time addresses
- * Contains the spending and viewing public keys
+ * Contains the spending and viewing public keys, and optionally a post-quantum KEM key
  */
 export interface StealthMetaAddress {
   /** Spending public key (K) */
   spendingPubKey: Uint8Array;
   /** Viewing public key (V) */
   viewingPubKey: Uint8Array;
+  /** ML-KEM-768 public key for hybrid quantum-resistant key exchange (1184 bytes, v2 only) */
+  kemPubKey?: Uint8Array;
   /** Encoded string representation for sharing */
   encoded: string;
 }
@@ -103,6 +107,8 @@ export interface StealthAddress {
   ephemeralPubKey: Uint8Array;
   /** View tag for efficient scanning */
   viewTag: number;
+  /** ML-KEM-768 ciphertext for hybrid key exchange (1088 bytes, v2 only) */
+  kemCiphertext?: Uint8Array;
   /** Timestamp when generated */
   createdAt: Date;
 }
@@ -137,6 +143,8 @@ export interface StealthPayment {
   claimed: boolean;
   /** View tag for verification */
   viewTag: number;
+  /** ML-KEM-768 ciphertext (present for v2 hybrid payments) */
+  kemCiphertext?: Uint8Array;
 }
 
 /**
