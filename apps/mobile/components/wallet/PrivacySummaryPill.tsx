@@ -20,7 +20,7 @@ export default function PrivacySummaryPill({
 
   return (
     <Animated.View entering={FadeInUp.delay(300)}>
-      <TouchableOpacity onPress={onPress} activeOpacity={0.7}>
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={`Private balance ${total.toFixed(4)} SOL`} accessibilityHint="Opens privacy dashboard">
         <LinearGradient
           colors={[P01Colors.cyanDim, P01Colors.blueDim]}
           start={{ x: 0, y: 0 }}

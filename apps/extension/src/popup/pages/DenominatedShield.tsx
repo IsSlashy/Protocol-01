@@ -57,6 +57,7 @@ export default function DenominatedShield() {
           <button
             onClick={() => navigate('/denominated')}
             className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -79,6 +80,7 @@ export default function DenominatedShield() {
                   setToken(t);
                   setSelectedDenomination(null);
                 }}
+                aria-pressed={token === t}
                 className={cn(
                   'flex-1 py-3 rounded-xl font-medium text-sm transition-colors border',
                   token === t
@@ -117,6 +119,8 @@ export default function DenominatedShield() {
                   key={d}
                   onClick={() => !tooExpensive && setSelectedDenomination(d)}
                   disabled={tooExpensive}
+                  aria-pressed={isSelected}
+                  aria-label={`${d} ${token}`}
                   className={cn(
                     'py-4 rounded-xl font-display font-bold text-lg transition-all border',
                     isSelected
@@ -136,8 +140,8 @@ export default function DenominatedShield() {
 
         {/* Warning */}
         <div className="px-4 mt-4">
-          <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+          <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20 flex items-start gap-2" role="note">
+            <AlertTriangle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
             <p className="text-yellow-200 text-xs">
               Notes require a maturity period (~2 epochs) before they can be unshielded. This prevents timing attacks.
             </p>
@@ -147,7 +151,7 @@ export default function DenominatedShield() {
         {/* Error */}
         {(localError || error) && (
           <div className="px-4 mt-3">
-            <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30">
+            <div className="p-3 bg-red-500/10 rounded-lg border border-red-500/30" role="alert" aria-live="polite">
               <p className="text-red-400 text-sm">{localError || error}</p>
             </div>
           </div>
@@ -156,8 +160,8 @@ export default function DenominatedShield() {
         {/* Progress */}
         {progress && (
           <div className="px-4 mt-3">
-            <div className="p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/20 flex items-center gap-2">
-              <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" />
+            <div className="p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/20 flex items-center gap-2" role="status" aria-live="polite">
+              <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" aria-hidden="true" />
               <p className="text-p01-cyan text-sm">{progress}</p>
             </div>
           </div>

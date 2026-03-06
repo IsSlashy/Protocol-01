@@ -79,7 +79,7 @@ export default function SendConfirm() {
             className="flex items-center gap-2 text-p01-cyan text-xs font-mono hover:underline mb-6"
           >
             VIEW ON SOLSCAN
-            <ExternalLink className="w-3 h-3" />
+            <ExternalLink className="w-3 h-3" aria-hidden="true" />
           </a>
 
           <button
@@ -100,6 +100,7 @@ export default function SendConfirm() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 hover:bg-p01-border transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
@@ -170,8 +171,8 @@ export default function SendConfirm() {
 
         {/* Error */}
         {(localError || error) && (
-          <div className="mt-4 flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <div className="mt-4 flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400" role="alert" aria-live="polite">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
             <span className="text-xs font-mono">{localError || error}</span>
           </div>
         )}

@@ -103,6 +103,10 @@ export const VoiceButton: React.FC<VoiceButtonProps> = ({
           if (isRecording) onStopRecording();
         }}
         disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={isRecording ? 'Stop recording' : 'Start voice recording'}
+        accessibilityHint={isRecording ? 'Release to stop recording' : 'Press and hold to record a voice message'}
+        accessibilityState={{ disabled }}
         style={{
           width: 44,
           height: 44,

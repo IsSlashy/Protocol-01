@@ -72,11 +72,13 @@ export default function PrivacyDashboard() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
-        <Text style={styles.headerTitle}>Privacy</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">Privacy</Text>
         <View style={styles.headerRight}>
           <TouchableOpacity
             style={styles.headerButton}
             onPress={() => router.push('/(main)/(settings)')}
+            accessibilityRole="button"
+            accessibilityLabel={hasLegacyFundsWarning ? 'Settings, attention needed' : 'Settings'}
           >
             <Ionicons name="settings-outline" size={20} color={Colors.text} />
             {hasLegacyFundsWarning && <View style={styles.settingsBadge} />}
@@ -98,6 +100,9 @@ export default function PrivacyDashboard() {
             style={styles.modeCard}
             onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`Privacy Pool, ${activeNoteCount > 0 ? `${activeNoteCount} active notes` : 'fixed-denomination anonymous pool'}`}
+            accessibilityHint="Opens privacy pool notes"
           >
             <LinearGradient
               colors={[P01Colors.cyanDim, 'rgba(57, 197, 187, 0.03)']}
@@ -141,6 +146,9 @@ export default function PrivacyDashboard() {
                 <TouchableOpacity
                   style={[styles.quickAction, { backgroundColor: P01Colors.cyanDim }]}
                   onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Shield SOL"
+                  accessibilityHint="Deposit SOL into the privacy pool"
                 >
                   <Ionicons name="arrow-down" size={16} color={P01Colors.cyan} />
                   <Text style={[styles.quickActionText, { color: P01Colors.cyan }]}>Shield</Text>
@@ -148,6 +156,9 @@ export default function PrivacyDashboard() {
                 <TouchableOpacity
                   style={[styles.quickAction, { backgroundColor: P01Colors.pinkDim }]}
                   onPress={() => router.push('/(main)/(privacy)/denominated-unshield' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Unshield SOL"
+                  accessibilityHint="Withdraw SOL from the privacy pool"
                 >
                   <Ionicons name="arrow-up" size={16} color={P01Colors.pink} />
                   <Text style={[styles.quickActionText, { color: P01Colors.pink }]}>Unshield</Text>
@@ -155,6 +166,8 @@ export default function PrivacyDashboard() {
                 <TouchableOpacity
                   style={[styles.quickAction, { backgroundColor: 'rgba(57, 197, 187, 0.08)' }]}
                   onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="View notes"
                 >
                   <Ionicons name="receipt" size={16} color={P01Colors.cyan} />
                   <Text style={[styles.quickActionText, { color: P01Colors.cyan }]}>Notes</Text>
@@ -165,6 +178,8 @@ export default function PrivacyDashboard() {
                 <TouchableOpacity
                   style={[styles.quickAction, { backgroundColor: 'rgba(139, 139, 255, 0.12)' }]}
                   onPress={() => router.push('/(main)/(privacy)/denominated-transfer' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Send private transfer${matureNoteCount > 0 ? `, ${matureNoteCount} mature notes available` : ''}`}
                 >
                   <Ionicons name="send" size={16} color="#8B8BFF" />
                   <Text style={[styles.quickActionText, { color: '#8B8BFF' }]}>Send</Text>
@@ -177,6 +192,8 @@ export default function PrivacyDashboard() {
                 <TouchableOpacity
                   style={[styles.quickAction, { backgroundColor: 'rgba(139, 139, 255, 0.12)' }]}
                   onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Receive private transfer"
                 >
                   <Ionicons name="download" size={16} color="#8B8BFF" />
                   <Text style={[styles.quickActionText, { color: '#8B8BFF' }]}>Receive</Text>
@@ -212,6 +229,8 @@ export default function PrivacyDashboard() {
               style={styles.modeCard}
               onPress={() => router.push('/(main)/(privacy)/shielded')}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`Shielded Wallet, legacy, ${shieldedInitialized ? `${shieldedBalance.toFixed(4)} SOL shielded` : 'variable-amount privacy pool'}`}
             >
               <LinearGradient
                 colors={['rgba(100, 100, 100, 0.08)', 'rgba(50, 50, 50, 0.03)']}
@@ -245,6 +264,8 @@ export default function PrivacyDashboard() {
                   <TouchableOpacity
                     style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
                     onPress={() => router.push('/(main)/(privacy)/shielded')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Withdraw from shielded wallet"
                   >
                     <Ionicons name="arrow-up" size={16} color={Colors.textSecondary} />
                     <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Withdraw</Text>
@@ -252,6 +273,8 @@ export default function PrivacyDashboard() {
                   <TouchableOpacity
                     style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
                     onPress={() => router.push('/(main)/(privacy)/shielded-transfer')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Transfer from shielded wallet"
                   >
                     <Ionicons name="flash" size={16} color={Colors.textSecondary} />
                     <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Transfer</Text>
@@ -278,6 +301,8 @@ export default function PrivacyDashboard() {
               style={styles.modeCard}
               onPress={() => router.push('/(main)/(privacy)/confidential')}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={`Confidential Balance, legacy, ${confidentialInitialized ? `${confidentialSolBalance.toFixed(4)} SOL confidential` : 'quantum-resistant amount hiding'}`}
             >
               <LinearGradient
                 colors={['rgba(100, 100, 100, 0.08)', 'rgba(50, 50, 50, 0.03)']}
@@ -311,6 +336,8 @@ export default function PrivacyDashboard() {
                   <TouchableOpacity
                     style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
                     onPress={() => router.push('/(main)/(privacy)/confidential')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Withdraw from confidential balance"
                   >
                     <Ionicons name="arrow-up" size={16} color={Colors.textSecondary} />
                     <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Withdraw</Text>
@@ -318,6 +345,8 @@ export default function PrivacyDashboard() {
                   <TouchableOpacity
                     style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
                     onPress={() => router.push('/(main)/(privacy)/confidential')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Transfer from confidential balance"
                   >
                     <Ionicons name="flash" size={16} color={Colors.textSecondary} />
                     <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Transfer</Text>
@@ -334,6 +363,8 @@ export default function PrivacyDashboard() {
             <TouchableOpacity
               style={styles.enableHint}
               onPress={() => router.push('/(main)/(settings)')}
+              accessibilityRole="button"
+              accessibilityLabel="Enable legacy privacy features in Settings"
             >
               <Ionicons name="options-outline" size={16} color={Colors.textTertiary} />
               <Text style={styles.enableHintText}>

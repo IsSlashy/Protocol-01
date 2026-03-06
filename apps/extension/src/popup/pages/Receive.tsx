@@ -61,6 +61,7 @@ export default function Receive() {
         <button
           onClick={() => navigate(-1)}
           className="p-2 -ml-2 hover:bg-p01-border transition-colors"
+          aria-label="Go back"
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
@@ -70,6 +71,8 @@ export default function Receive() {
         {stealthInitialized && (
           <button
             onClick={toggleStealthMode}
+            aria-label={stealthModeEnabled ? 'Switch to normal mode' : 'Switch to stealth mode'}
+            aria-pressed={stealthModeEnabled}
             className={cn(
               'ml-auto flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono font-bold tracking-wider border transition-all rounded',
               stealthModeEnabled
@@ -121,6 +124,8 @@ export default function Receive() {
                     <button
                       onClick={() => setShowStealthInfo(!showStealthInfo)}
                       className="text-p01-cyan/70 hover:text-p01-cyan"
+                      aria-label={showStealthInfo ? 'Hide stealth info' : 'Show stealth info'}
+                      aria-expanded={showStealthInfo}
                     >
                       <Info className="w-3 h-3" />
                     </button>
@@ -210,6 +215,7 @@ export default function Receive() {
             <button
               onClick={handleCopy}
               className="p-1 hover:bg-p01-surface rounded transition-colors"
+              aria-label={copied ? 'Address copied' : 'Copy address'}
             >
               {copied ? (
                 <Check className="w-4 h-4 text-p01-cyan" />
@@ -232,9 +238,10 @@ export default function Receive() {
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 text-[10px] text-p01-cyan font-mono tracking-wider hover:text-p01-cyan-dim transition-colors"
+                aria-label="View address on Solscan"
               >
                 VIEW
-                <ExternalLink className="w-3 h-3" />
+                <ExternalLink className="w-3 h-3" aria-hidden="true" />
               </a>
             )}
           </div>

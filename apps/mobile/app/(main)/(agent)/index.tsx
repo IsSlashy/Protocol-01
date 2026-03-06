@@ -234,6 +234,7 @@ export default function AgentDashboard() {
                     fontSize: FontSize.md,
                   }}
                   numberOfLines={1}
+                  accessibilityRole="header"
                 >
                   {chatTitle}
                 </Text>
@@ -242,6 +243,7 @@ export default function AgentDashboard() {
                     color: isConnected ? Colors.primary : Colors.textTertiary,
                     fontSize: FontSize.xs,
                   }}
+                  accessibilityLabel={`Agent status: ${isConnected ? 'online' : 'offline'}`}
                 >
                   {isConnected ? 'Online' : 'Offline'}
                 </Text>
@@ -350,6 +352,8 @@ export default function AgentDashboard() {
                   {marketData?.prices?.SOL && (
                     <Animated.View
                       entering={FadeIn.delay(400)}
+                      accessibilityRole="text"
+                      accessibilityLabel={`SOL price $${marketData.prices.SOL.toFixed(2)}${marketData.fearGreed ? `, Fear and Greed index ${marketData.fearGreed.value} out of 100` : ''}`}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -407,6 +411,7 @@ export default function AgentDashboard() {
                       marginBottom: 10,
                       color: Colors.textTertiary,
                     }}
+                    accessibilityRole="header"
                   >
                     Quick Actions
                   </Text>
@@ -575,6 +580,8 @@ export default function AgentDashboard() {
                     justifyContent: 'center',
                     backgroundColor: Colors.primaryDim,
                   }}
+                  accessibilityLabel="Transcribing voice input"
+                  accessibilityRole="progressbar"
                 >
                   <ActivityIndicator size="small" color={Colors.primary} />
                 </View>

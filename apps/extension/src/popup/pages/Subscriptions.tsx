@@ -179,7 +179,7 @@ export default function Subscriptions() {
                 onClick={handleSync}
                 disabled={!publicKey || isSyncing}
                 className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors disabled:opacity-50"
-                title="Sync from blockchain"
+                aria-label="Sync from blockchain"
               >
                 {isSyncing ? (
                   <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" />
@@ -190,7 +190,8 @@ export default function Subscriptions() {
               <button
                 onClick={() => setShowPrivacyInfo(!showPrivacyInfo)}
                 className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors"
-                title="Privacy Info"
+                aria-label="Privacy info"
+                aria-expanded={showPrivacyInfo}
               >
                 <Shield className="w-4 h-4 text-p01-cyan" />
               </button>
@@ -290,6 +291,7 @@ export default function Subscriptions() {
         <div className="flex gap-1 p-1 bg-p01-surface rounded-xl">
           <button
             onClick={() => setActiveSection('personal')}
+            aria-pressed={activeSection === 'personal'}
             className={cn(
               'flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all font-medium text-sm',
               activeSection === 'personal'
@@ -302,6 +304,7 @@ export default function Subscriptions() {
           </button>
           <button
             onClick={() => setActiveSection('services')}
+            aria-pressed={activeSection === 'services'}
             className={cn(
               'flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all font-medium text-sm',
               activeSection === 'services'

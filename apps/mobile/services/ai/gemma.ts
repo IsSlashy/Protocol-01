@@ -11,7 +11,19 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AgentCapability } from '../../hooks/agent/useAgent';
+
+/** Agent capability types (inlined from deleted hooks/agent/useAgent.ts) */
+export type AgentCapability =
+  | 'send_transaction'
+  | 'stealth_send'
+  | 'create_stream'
+  | 'manage_stream'
+  | 'check_balance'
+  | 'price_lookup'
+  | 'contact_lookup'
+  | 'explain_transaction'
+  | 'gas_estimation'
+  | 'schedule_payment';
 
 // Gemma 3n Configuration
 export interface GemmaConfig {

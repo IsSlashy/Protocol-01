@@ -141,11 +141,13 @@ export function AuthScreen({
               entering={FadeInDown.delay(100).duration(600)}
               style={styles.logoSection}
             >
-              <Logo size={100} showText={false} animated />
+              <View accessibilityLabel="Protocol 01 logo" accessibilityRole="image">
+                <Logo size={100} showText={false} animated />
+              </View>
 
               <View style={styles.titleContainer}>
                 <Text style={styles.systemLabel}>[ AUTHENTICATION ]</Text>
-                <Text style={styles.title}>CONNECT</Text>
+                <Text style={styles.title} accessibilityRole="header">CONNECT</Text>
                 <View style={styles.statusIndicator}>
                   <View style={styles.statusDot} />
                   <Text style={styles.statusText}>SECURE CHANNEL</Text>
@@ -205,6 +207,8 @@ export function AuthScreen({
                   onPress={onImportWallet}
                   activeOpacity={0.7}
                   style={styles.textButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Import wallet from seed phrase"
                 >
                   <Text style={styles.textButtonLabel}>
                     Have a seed phrase?{' '}
@@ -215,11 +219,11 @@ export function AuthScreen({
             </Animated.View>
 
             {/* Terms */}
-            <Text style={styles.terms}>
+            <Text style={styles.terms} accessibilityRole="text">
               By continuing, you agree to our{' '}
-              <Text style={styles.termsLink}>Terms of Service</Text>
+              <Text style={styles.termsLink} accessibilityRole="link">Terms of Service</Text>
               {' '}and{' '}
-              <Text style={styles.termsLink}>Privacy Policy</Text>
+              <Text style={styles.termsLink} accessibilityRole="link">Privacy Policy</Text>
             </Text>
           </Animated.View>
         ) : (
@@ -243,7 +247,7 @@ export function AuthScreen({
       </ScrollView>
 
       {/* Security Badge */}
-      <View style={styles.securityBadge}>
+      <View style={styles.securityBadge} accessibilityRole="text" accessibilityLabel="End-to-end encrypted">
         <Ionicons name="shield-checkmark" size={14} color={P01.cyan} />
         <Text style={styles.securityText}>End-to-end encrypted</Text>
       </View>

@@ -2,8 +2,8 @@
  * ZK Service for Mobile
  * Bridges the P-01 ZK SDK to React Native
  *
- * Note: snarkjs WASM doesn't run in React Native, so proof generation
- * is delegated to a backend prover service.
+ * Proof generation runs client-side in a hidden WebView (snarkjs + WASM).
+ * Spending keys NEVER leave the device. See WebViewProver + ZkProverProvider.
  */
 
 import { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair } from '@solana/web3.js';
@@ -828,7 +828,7 @@ export class ZkService {
   }
 
   /**
-   * Transfer shielded tokens (requires backend prover)
+   * Transfer shielded tokens (client-side proof via WebView)
    */
   async transfer(
     recipient: ZkAddress,
@@ -904,7 +904,7 @@ export class ZkService {
       console.warn('[ZK Transfer] The sync may have failed. Try refreshing the wallet or resetting ZK state.');
     }
 
-    // Request proof from backend prover
+    // Generate proof locally
     const zkProof = await this.generateProofClientSide({
       merkleRoot: merkleRoot,
       nullifier1,
@@ -1215,7 +1215,7 @@ export class ZkService {
       commitment: dummyOutput2Commitment,
     };
 
-    // Request proof from backend
+    // Generate proof locally
     const inputNotesForCircuit = notesToSpend[1]
       ? notesToSpend
       : [notesToSpend[0], dummyInputNote!];
@@ -1875,10 +1875,8 @@ export class ZkService {
   }
 
   /**
-   * Generate proof - tries backend prover first, then falls back to client-side
-   *
-   * Backend prover is preferred for mobile as it doesn't require bundling 19MB circuits.
-   * Client-side prover requires ZkProverProvider to be mounted with circuit files.
+   * Generate proof client-side via WebView snarkjs.
+   * Requires ZkProverProvider to be mounted with circuit files loaded.
    */
   private async generateProofClientSide(inputs: {
     merkleRoot: bigint;

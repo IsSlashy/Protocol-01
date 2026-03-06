@@ -133,8 +133,8 @@ export default function WalletHomeScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={styles.loadingText}>Loading wallet...</Text>
+          <ActivityIndicator size="large" color={Colors.primary} accessibilityLabel="Loading wallet" />
+          <Text style={styles.loadingText} accessibilityRole="text">Loading wallet...</Text>
         </View>
       </SafeAreaView>
     );
@@ -144,7 +144,7 @@ export default function WalletHomeScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600', marginBottom: 12 }}>
+          <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600', marginBottom: 12 }} accessibilityRole="header">
             No Wallet Found
           </Text>
           <Text style={{ color: '#888', fontSize: 14, textAlign: 'center', marginBottom: 24, paddingHorizontal: 32 }}>
@@ -158,6 +158,8 @@ export default function WalletHomeScreen() {
               paddingVertical: 14,
               borderRadius: 12,
             }}
+            accessibilityRole="button"
+            accessibilityLabel="Set up wallet"
           >
             <Text style={{ color: '#0a0a0c', fontWeight: '700', fontSize: 16 }}>
               Set Up Wallet
@@ -186,7 +188,7 @@ export default function WalletHomeScreen() {
         {/* Balance Card */}
         <Animated.View entering={FadeInUp.delay(200)}>
           <LinearGradient colors={['#111111', '#0a0a0a']} style={styles.balanceCard}>
-            <TouchableOpacity style={styles.addressRow} onPress={copyAddress}>
+            <TouchableOpacity style={styles.addressRow} onPress={copyAddress} accessibilityRole="button" accessibilityLabel={`Copy wallet address ${formattedPublicKey}`} accessibilityHint="Copies full address to clipboard">
               <Text style={styles.addressLabel}>Wallet Address</Text>
               <View style={styles.addressContainer}>
                 <Text style={styles.addressText}>{formattedPublicKey}</Text>
@@ -194,7 +196,7 @@ export default function WalletHomeScreen() {
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={toggleBalanceVisibility} activeOpacity={0.8}>
+            <TouchableOpacity onPress={toggleBalanceVisibility} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={balanceHidden ? 'Show balance' : 'Hide balance'} accessibilityHint="Toggles balance visibility">
               <Animated.View style={[styles.balanceContainer, balanceAnimatedStyle]}>
                 {balanceHidden ? (
                   <View style={styles.hiddenBalance}>

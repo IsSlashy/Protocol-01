@@ -109,6 +109,9 @@ export function PrivyLoginButton({
       onPressOut={handlePressOut}
       disabled={disabled || loading}
       activeOpacity={0.9}
+      accessibilityRole="button"
+      accessibilityLabel={config.label}
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
       style={[
         styles.button,
         animatedStyle,
@@ -217,6 +220,12 @@ interface SocialButtonProps {
   loading?: boolean;
 }
 
+const socialIconLabels: Record<string, string> = {
+  'logo-google': 'Sign in with Google',
+  'logo-apple': 'Sign in with Apple',
+  'logo-twitter': 'Sign in with X',
+};
+
 function SocialButton({ icon, color, onPress, loading }: SocialButtonProps) {
   return (
     <TouchableOpacity
@@ -224,6 +233,9 @@ function SocialButton({ icon, color, onPress, loading }: SocialButtonProps) {
       disabled={loading}
       activeOpacity={0.8}
       style={styles.socialButton}
+      accessibilityRole="button"
+      accessibilityLabel={socialIconLabels[icon] || 'Sign in'}
+      accessibilityState={{ disabled: loading, busy: loading }}
     >
       {loading ? (
         <ActivityIndicator size="small" color={color} />

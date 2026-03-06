@@ -52,6 +52,9 @@ export const QuickActionButton: React.FC<QuickActionButtonProps> = ({
       onPressOut={handlePressOut}
       disabled={disabled}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={description ? `${label}, ${description}` : label}
+      accessibilityState={{ disabled }}
       style={[
         animatedStyle,
         {

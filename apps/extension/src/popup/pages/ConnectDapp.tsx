@@ -212,6 +212,9 @@ export default function ConnectDapp() {
                   animate={{ x: 0, opacity: 1 }}
                   transition={{ delay: 0.25 + index * 0.05 }}
                   onClick={() => togglePermission(permission)}
+                  role="checkbox"
+                  aria-checked={isSelected}
+                  aria-label={label}
                   className={`w-full flex items-center gap-3 p-3 border transition-colors ${
                     isSelected
                       ? 'bg-p01-cyan/5 border-p01-cyan/40'
