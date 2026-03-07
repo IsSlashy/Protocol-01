@@ -16,7 +16,7 @@ import nacl from 'tweetnacl';
 import { generateStealthAddress, scanStealthPayment, type StealthAddress } from '../../utils/crypto/stealth';
 
 // Constants from zk-sdk
-const ZK_SHIELDED_PROGRAM_ID = '8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY';
+const ZK_SHIELDED_PROGRAM_ID = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
 const MERKLE_TREE_DEPTH = 20;
 
 // PDA seeds

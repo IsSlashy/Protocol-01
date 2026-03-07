@@ -4,7 +4,7 @@
 import { Connection, PublicKey, SystemProgram } from '@solana/web3.js';
 import { poseidon2 } from 'poseidon-lite';
 
-const ZK_PROGRAM_ID = new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY');
+const ZK_PROGRAM_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 const TOKEN_MINT = SystemProgram.programId; // Native SOL
 
 // Convert LE bytes to bigint
