@@ -392,3 +392,39 @@ export {
   type RelayJobResult,
   type JobCompletionResult,
 } from './relay';
+
+// ============================================================================
+// Quantum-Safe Vault Module
+// ============================================================================
+//
+// APPLICATION-LAYER DEFENSE AGAINST QUANTUM ATTACKS ON ED25519.
+// Three mechanisms that protect funds even if Shor's algorithm breaks Ed25519:
+// 1. Winternitz OTS (WOTS+) — hash-based one-time signatures
+// 2. Hash-timelock vault — SHA-256 preimage lock for cold storage
+// 3. Commit-then-reveal — two-phase quantum-safe transaction authorization
+//
+export {
+  // WOTS+ key management
+  generateWotsKeypair,
+  wotsSign,
+  wotsVerify,
+  deriveWotsKeypair,
+  computeWithdrawMessage,
+
+  // Hash vault
+  computeHashVaultCommitment,
+  generateVaultSecret,
+
+  // Commit-reveal
+  computeCommitment,
+  generateNonce,
+
+  // WOTS+ types
+  type WotsKeypair,
+  type WotsSignature,
+
+  // Constants
+  WOTS_CHAINS,
+  WOTS_SIG_SIZE,
+  WOTS_PUBKEY_SIZE,
+} from './quantum';
