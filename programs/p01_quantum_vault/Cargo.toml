@@ -1,0 +1,28 @@
+[package]
+name = "p01_quantum_vault"
+version = "0.1.0"
+description = "Protocol 01 - Quantum-safe vault with Winternitz OTS, hash-timelock, and commit-reveal"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "p01_quantum_vault"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+sha2 = "0.10"
+
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = [
+    'cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))',
+    'cfg(target_os, values("solana"))',
+]
