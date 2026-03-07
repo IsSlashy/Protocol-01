@@ -2,8 +2,8 @@ import { Connection, PublicKey, SystemProgram, Transaction } from '@solana/web3.
 import * as nacl from 'tweetnacl';
 import * as naclUtil from 'tweetnacl-util';
 
-// Program ID - will be updated after deployment
-export const WHITELIST_PROGRAM_ID = PublicKey.default;
+// Program ID (deployed on devnet)
+export const WHITELIST_PROGRAM_ID = new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE');
 
 // Admin public key for encrypting emails (Volta Team)
 // This is the public key that can decrypt the email data

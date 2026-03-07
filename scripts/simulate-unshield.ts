@@ -9,7 +9,7 @@ import * as snarkjs from 'snarkjs';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const ZK_PROGRAM_ID = new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY');
+const ZK_PROGRAM_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 const TOKEN_MINT = SystemProgram.programId;
 const DEPTH = 20;
 const FIELD_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
