@@ -1,0 +1,27 @@
+[package]
+name = "p01-stark"
+version = "0.1.0"
+edition = "2021"
+description = "Protocol 01 - STARK proof system (quantum-resistant, no trusted setup)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["std"]
+std = ["winterfell/std"]
+wasm = ["wasm-bindgen", "serde", "serde_json", "getrandom"]
+
+[dependencies]
+# Winterfell STARK library (re-exports air, prover, verifier, math, crypto)
+winterfell = { version = "0.10", default-features = false }
+
+# WASM bindings (optional)
+wasm-bindgen = { version = "0.2", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
+
+[dev-dependencies]
+rand = "0.8"
+hex = "0.4"
