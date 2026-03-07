@@ -1255,6 +1255,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01_quantum_vault"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "p01_registry"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+]
+
+[[package]]
 name = "p01_relayer"
 version = "0.1.0"
 dependencies = [
