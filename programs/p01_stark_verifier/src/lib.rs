@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("11111111111111111111111111111111");
+declare_id!("hqu2QaRpNFbiaTQdThui7X714YdViNKQTsMb7WR7r12");
 
 /// On-chain STARK proof verifier for Protocol 01.
 ///
