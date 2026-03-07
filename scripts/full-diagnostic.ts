@@ -6,7 +6,7 @@ import { Connection, PublicKey, SystemProgram } from '@solana/web3.js';
 import { poseidon1, poseidon2, poseidon4 } from 'poseidon-lite';
 import * as crypto from 'crypto';
 
-const ZK_PROGRAM_ID = new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY');
+const ZK_PROGRAM_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 const TOKEN_MINT = SystemProgram.programId;
 const DEPTH = 20;
 

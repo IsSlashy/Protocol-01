@@ -9,10 +9,10 @@ import type { Cluster } from './types';
  * Specter Protocol program IDs for different networks
  */
 export const PROGRAM_IDS: Record<Cluster, PublicKey> = {
-  'mainnet-beta': PublicKey.default,
-  'testnet': PublicKey.default,
-  'devnet': PublicKey.default,
-  'localnet': PublicKey.default,
+  'mainnet-beta': PublicKey.default, // not deployed yet
+  'testnet': PublicKey.default, // not deployed yet
+  'devnet': new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
+  'localnet': new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
 };
 
 /**
