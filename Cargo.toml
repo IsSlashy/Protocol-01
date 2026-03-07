@@ -9,6 +9,8 @@ members = [
     "programs/p01_zkspl",
     "programs/p01_trustless",
     "programs/p01_relayer",
+    "programs/p01_stark_verifier",
+    "stark",
 ]
 
 resolver = "2"
