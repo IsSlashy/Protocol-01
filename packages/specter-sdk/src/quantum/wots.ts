@@ -64,19 +64,19 @@ export function generateWotsKeypair(seed: Uint8Array): WotsKeypair {
     // Derive chain secret: SHA-256(seed || chain_index)
     const indexBuf = new Uint8Array(4);
     new DataView(indexBuf.buffer).setUint32(0, i, true);
-    const chainSecret = sha256(concatBytes(seed, indexBuf));
+    const chainSecret = new Uint8Array(sha256(concatBytes(seed, indexBuf)));
     secretKey.set(chainSecret, i * HASH_SIZE);
 
     // Compute chain endpoint: hash^15(chain_secret)
-    let current = chainSecret;
+    let current: Uint8Array = chainSecret;
     for (let step = 0; step < WOTS_MAX_VAL; step++) {
-      current = sha256(current);
+      current = new Uint8Array(sha256(current));
     }
     publicKey.set(current, i * HASH_SIZE);
   }
 
   // Public key hash = SHA-256(all chain endpoints concatenated)
-  const publicKeyHash = sha256(publicKey);
+  const publicKeyHash = new Uint8Array(sha256(publicKey));
 
   return { secretKey, publicKey, publicKeyHash };
 }
@@ -103,16 +103,15 @@ export function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignatu
   for (let i = 0; i < WOTS_CHAINS; i++) {
     // Extract nibble from message
     const byteIdx = Math.floor(i / 2);
-    const nibble = i % 2 === 0
-      ? (message[byteIdx] >> 4) & 0x0f
-      : message[byteIdx] & 0x0f;
+    const byte = message[byteIdx]!;
+    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
 
     // Signature value = hash^(15 - nibble)(secret_i)
     const stepsToHash = WOTS_MAX_VAL - nibble;
-    let current = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
+    let current: Uint8Array = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
 
     for (let step = 0; step < stepsToHash; step++) {
-      current = sha256(current);
+      current = new Uint8Array(sha256(current));
     }
 
     signature.set(current, i * HASH_SIZE);
@@ -142,19 +141,18 @@ export function wotsVerify(
   if (sig.publicKey.length !== WOTS_PUBKEY_SIZE) return false;
 
   // Verify public key hash
-  const computedHash = sha256(sig.publicKey);
+  const computedHash = new Uint8Array(sha256(sig.publicKey));
   if (!constantTimeEqual(computedHash, publicKeyHash)) return false;
 
   // Verify each chain
   for (let i = 0; i < WOTS_CHAINS; i++) {
     const byteIdx = Math.floor(i / 2);
-    const nibble = i % 2 === 0
-      ? (message[byteIdx] >> 4) & 0x0f
-      : message[byteIdx] & 0x0f;
+    const byte = message[byteIdx]!;
+    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
 
-    let current = sig.signature.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
+    let current: Uint8Array = sig.signature.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
     for (let step = 0; step < nibble; step++) {
-      current = sha256(current);
+      current = new Uint8Array(sha256(current));
     }
 
     const expected = sig.publicKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
@@ -182,7 +180,7 @@ export function computeWithdrawMessage(
   const countBuf = new Uint8Array(8);
   new DataView(countBuf.buffer).setBigUint64(0, withdrawalCount, true);
 
-  return sha256(concatBytes(amountBuf, destination, countBuf));
+  return new Uint8Array(sha256(concatBytes(amountBuf, destination, countBuf)));
 }
 
 // ── Key Chain Management ──────────────────────────────────────────
@@ -202,9 +200,9 @@ export function deriveWotsKeypair(masterSeed: Uint8Array, index: number): WotsKe
   new DataView(indexBuf.buffer).setUint32(0, index, true);
 
   // Derive per-index seed: SHA-256("wots-key" || masterSeed || index)
-  const keySeed = sha256(
+  const keySeed = new Uint8Array(sha256(
     concatBytes(new TextEncoder().encode('wots-key'), masterSeed, indexBuf)
-  );
+  ));
 
   return generateWotsKeypair(keySeed);
 }
@@ -226,7 +224,7 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) {
-    diff |= a[i] ^ b[i];
+    diff |= a[i]! ^ b[i]!;
   }
   return diff === 0;
 }
