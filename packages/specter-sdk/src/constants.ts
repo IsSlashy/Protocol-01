@@ -253,6 +253,13 @@ export const ACCOUNT_NAMES = {
   USER_REGISTRY: 'UserRegistry',
 } as const;
 
+/**
+ * Registry program ID (stealth meta-address on-chain directory)
+ */
+export const REGISTRY_PROGRAM_ID = new PublicKey(
+  'Hz4ZULacefgJzq94YJTSq3WmQAySyYuzCRiEzNXCA2sZ'
+);
+
 // ============================================================================
 // Feature Flags
 // ============================================================================

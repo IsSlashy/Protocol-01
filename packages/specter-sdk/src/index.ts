@@ -428,3 +428,25 @@ export {
   WOTS_SIG_SIZE,
   WOTS_PUBKEY_SIZE,
 } from './quantum';
+
+// ============================================================================
+// Registry Module (On-Chain Stealth Address Book)
+// ============================================================================
+//
+// Publish your stealth meta-address on-chain so anyone can look you up
+// by wallet address and send you a private payment. No out-of-band sharing.
+//
+export {
+  // Lookup
+  lookupMetaAddress,
+  lookupMultiple,
+  isRegistered,
+  getRegistryPDA,
+  entryToMetaAddress,
+
+  // Constants
+  REGISTRY_PROGRAM_ID,
+
+  // Types
+  type RegistryEntry,
+} from './registry';
