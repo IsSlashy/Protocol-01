@@ -7,27 +7,35 @@ import {
   TextInput,
   StyleSheet,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { PublicKey, SystemProgram } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
+import { sha256 } from '@noble/hashes/sha256';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { receiptFromJSON, findPool } from '@/services/denominatedPool';
 import type { ProofGenerator } from '@/services/denominatedPool';
+import { useStarkProver } from '@/providers/StarkProverProvider';
+import { submitStarkProof, type CompactStarkProof } from '@/services/stark';
+import { useZkProver } from '@/providers/ZkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 export default function SubscribePrivateScreen() {
   const router = useRouter();
   const { notes } = useDenominatedPoolStore();
   const { subscribePrivateAction, isLoading, progress } = useSubscriptionVaultStore();
+  const { isReady: starkReady, generateProof: starkGenerate } = useStarkProver();
+  const { generateRawProof } = useZkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [retailer, setRetailer] = useState('');
   const [rate, setRate] = useState('');
   const [intervalSlots, setIntervalSlots] = useState('7200');
+  const [starkStatus, setStarkStatus] = useState<string | null>(null);
 
   const matureNotes = notes.filter(n => n.status === 'mature');
 
@@ -45,7 +53,6 @@ export default function SubscribePrivateScreen() {
       const rateLamports = BigInt(Math.floor(parseFloat(rate || '0') * 1e9));
       const intervalSlotsNum = BigInt(parseInt(intervalSlots, 10));
 
-      // Look up the selected note and reconstruct the ShieldReceipt + PoolConfig
       const note = notes.find(n => n.id === selectedNoteId);
       if (!note) throw new Error('Selected note not found');
       const receipt = receiptFromJSON(note.receiptJSON);
@@ -58,12 +65,44 @@ export default function SubscribePrivateScreen() {
         intervalSlots: intervalSlotsNum,
       };
 
-      // TODO: subscriberSecret, vkHashSubscriber, and proofGenerator should be
-      // provided by the privacy proving layer (e.g. WebView prover).
       const subscriberSecret = receipt.secret;
-      const vkHashSubscriber = new Uint8Array(32);
+
+      // Generate STARK commitment for vkHashSubscriber
+      // The STARK commitment is a Poseidon hash in the Goldilocks field.
+      // We truncate the SHA-256 of the STARK commitment hex to 32 bytes for the vk_hash.
+      let vkHashSubscriber: Uint8Array;
+      if (starkReady) {
+        setStarkStatus('Computing STARK commitment...');
+        const starkResult = await starkGenerate(subscriberSecret.toString());
+        // Hash the STARK commitment to get a 32-byte vk_hash
+        vkHashSubscriber = sha256(Buffer.from(starkResult.commitment, 'hex'));
+
+        // Submit STARK proof on-chain for quantum-resistant verification
+        setStarkStatus('Submitting STARK proof on-chain...');
+        const starkProof: CompactStarkProof = {
+          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+          commitment: BigInt(starkResult.commitment),
+          proofSize: starkResult.proofSize,
+        };
+        await submitStarkProof(starkProof, undefined, (step) => {
+          setStarkStatus(step);
+        });
+        setStarkStatus('STARK verified on-chain!');
+      } else {
+        // Fallback: zero vk_hash if STARK not ready (less secure)
+        vkHashSubscriber = new Uint8Array(32);
+      }
+
+      // Groth16 proof generator for the pool unshield circuit
       const proofGenerator: ProofGenerator = async (inputs, circuit) => {
-        throw new Error('Proof generation not yet wired for private subscriptions');
+        if (circuit === 'subscriber') {
+          // For subscriber ownership proof, use Groth16 (the on-chain subscription
+          // program verifies Groth16 proofs inline). STARK proof was submitted
+          // separately above for quantum resistance.
+          return generateRawProof(inputs as Record<string, string>);
+        }
+        // Default: pool/transfer circuit
+        return generateRawProof(inputs as Record<string, string>);
       };
 
       const sig = await subscribePrivateAction(
@@ -75,9 +114,11 @@ export default function SubscribePrivateScreen() {
         proofGenerator,
       );
 
+      setStarkStatus(null);
       Alert.alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
       router.back();
     } catch (err) {
+      setStarkStatus(null);
       Alert.alert('Error', (err as Error).message);
     }
   };
@@ -93,7 +134,24 @@ export default function SubscribePrivateScreen() {
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* STARK status badge */}
+        <View style={styles.starkBadge}>
+          <Ionicons
+            name="hardware-chip"
+            size={16}
+            color={starkReady ? '#10B981' : Colors.textTertiary}
+          />
+          <Text style={[styles.starkBadgeText, starkReady && { color: '#10B981' }]}>
+            {starkReady ? 'STARK Ready — Quantum-resistant proof' : 'STARK loading...'}
+          </Text>
+        </View>
+
         <Text style={styles.label}>Select Note</Text>
+        {matureNotes.length === 0 && (
+          <Text style={styles.emptyText}>
+            No mature notes available. Shield SOL first and wait for maturity.
+          </Text>
+        )}
         {matureNotes.map(note => (
           <TouchableOpacity
             key={note.id}
@@ -128,11 +186,22 @@ export default function SubscribePrivateScreen() {
           keyboardType="decimal-pad"
         />
 
+        {/* Progress indicator */}
+        {(isLoading || starkStatus) && (
+          <View style={styles.progressCard}>
+            <ActivityIndicator size="small" color="#8B5CF6" />
+            <Text style={styles.progressText}>
+              {starkStatus ?? progress ?? 'Processing...'}
+            </Text>
+          </View>
+        )}
+
         <TouchableOpacity
           style={[styles.submitBtn, isLoading && styles.submitBtnDisabled]}
           onPress={handleSubmit}
           disabled={isLoading}
         >
+          <Ionicons name="shield-checkmark" size={18} color="#000" />
           <Text style={styles.submitText}>Create Private Subscription</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -164,12 +233,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingBottom: 120,
   },
+  starkBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  starkBadgeText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+    color: Colors.textTertiary,
+  },
   label: {
     fontSize: 14,
     fontFamily: FontFamily.semibold,
     color: Colors.text,
     marginBottom: Spacing.sm,
     marginTop: Spacing.lg,
+  },
+  emptyText: {
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    lineHeight: 18,
   },
   input: {
     backgroundColor: Colors.surface,
@@ -198,12 +288,32 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     color: Colors.text,
   },
+  progressCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginTop: Spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  progressText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+    color: '#8B5CF6',
+    flex: 1,
+  },
   submitBtn: {
     backgroundColor: P01Colors.pink,
     borderRadius: BorderRadius.md,
     padding: Spacing.lg,
     marginTop: Spacing.xl,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
   },
   submitBtnDisabled: {
     opacity: 0.5,
