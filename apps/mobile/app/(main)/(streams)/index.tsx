@@ -15,6 +15,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeIn } from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
@@ -207,7 +208,7 @@ export default function StreamsDashboard() {
     : null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.void }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{
@@ -225,18 +226,15 @@ export default function StreamsDashboard() {
       >
         {/* Summary Card */}
         <View style={{ padding: 16 }}>
-          <Animated.View entering={FadeIn.duration(300)}>
-            <LinearGradient
-              colors={['rgba(57, 197, 187, 0.15)', COLORS.surface]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{
-                borderRadius: 16,
-                padding: 16,
-                borderWidth: 1,
-                borderColor: 'rgba(57, 197, 187, 0.3)',
-              }}
-            >
+          <Animated.View entering={FadeIn.duration(300)} style={{ borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.07)' }}>
+            <BlurView intensity={15} tint="dark" style={{ padding: 16, backgroundColor: 'rgba(12, 12, 14, 0.65)' }}>
+              <LinearGradient
+                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                pointerEvents="none"
+              />
               {/* Header row */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -310,7 +308,7 @@ export default function StreamsDashboard() {
                   </View>
                 </View>
               )}
-            </LinearGradient>
+            </BlurView>
           </Animated.View>
 
           {/* Privacy Info Panel */}
@@ -319,11 +317,11 @@ export default function StreamsDashboard() {
               entering={FadeInDown.duration(200)}
               style={{
                 marginTop: 12,
-                backgroundColor: COLORS.surface,
-                borderRadius: 16,
+                backgroundColor: 'rgba(12, 12, 14, 0.5)',
+                borderRadius: 20,
                 padding: 16,
                 borderWidth: 1,
-                borderColor: 'rgba(57, 197, 187, 0.3)',
+                borderColor: 'rgba(57, 197, 187, 0.07)',
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -368,7 +366,7 @@ export default function StreamsDashboard() {
 
         {/* Section Toggle */}
         <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
-          <View style={{ flexDirection: 'row', gap: 4, padding: 4, backgroundColor: COLORS.surface, borderRadius: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 4, padding: 4, backgroundColor: 'rgba(255, 255, 255, 0.03)', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.04)' }}>
             <Pressable
               onPress={() => {
                 Haptics.selectionAsync();
@@ -451,19 +449,15 @@ export default function StreamsDashboard() {
             </View>
 
             {/* Private Balance Card */}
-            <Animated.View entering={FadeInDown.delay(50).springify()}>
-              <LinearGradient
-                colors={['rgba(255, 119, 168, 0.12)', 'rgba(21, 21, 24, 0.9)']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={{
-                  borderRadius: 14,
-                  padding: 16,
-                  marginBottom: 16,
-                  borderWidth: 1,
-                  borderColor: 'rgba(255, 119, 168, 0.25)',
-                }}
-              >
+            <Animated.View entering={FadeInDown.delay(50).springify()} style={{ borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 119, 168, 0.07)', marginBottom: 16 }}>
+              <BlurView intensity={12} tint="dark" style={{ padding: 16, backgroundColor: 'rgba(12, 12, 14, 0.6)' }}>
+                <LinearGradient
+                  colors={['rgba(255, 119, 168, 0.05)', 'transparent']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                  pointerEvents="none"
+                />
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <View style={{
@@ -562,7 +556,7 @@ export default function StreamsDashboard() {
                     </Text>
                   </View>
                 )}
-              </LinearGradient>
+              </BlurView>
             </Animated.View>
 
             {/* Info Banner */}
@@ -771,10 +765,10 @@ function ServiceCard({
           alignItems: 'center',
           gap: 12,
           padding: 14,
-          backgroundColor: COLORS.surface,
-          borderRadius: 12,
+          backgroundColor: 'rgba(12, 12, 14, 0.5)',
+          borderRadius: 16,
           borderWidth: 1,
-          borderColor: isSubscribed ? 'rgba(0, 255, 136, 0.3)' : COLORS.border,
+          borderColor: isSubscribed ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 255, 255, 0.04)',
         }}
       >
         {/* Icon - fixed size */}
@@ -901,8 +895,10 @@ function SubscriptionCard({
           alignItems: 'center',
           gap: 12,
           padding: 14,
-          backgroundColor: COLORS.surface,
-          borderRadius: 12,
+          backgroundColor: 'rgba(12, 12, 14, 0.5)',
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: 'rgba(255, 255, 255, 0.04)',
         }}
       >
         {/* Logo */}
