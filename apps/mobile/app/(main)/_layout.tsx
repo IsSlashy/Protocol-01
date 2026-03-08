@@ -49,7 +49,6 @@ export default function MainLayout() {
       />
       <Tabs
         tabBar={(props) => <LiquidGlassTabBar {...props} />}
-        sceneContainerStyle={{ backgroundColor: 'transparent' }}
         screenOptions={{
         headerShown: false,
         sceneStyle: { backgroundColor: 'transparent' },

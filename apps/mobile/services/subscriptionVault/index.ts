@@ -846,6 +846,330 @@ export async function cancelPrivate(
   return sig;
 }
 
+// ---------------------------------------------------------------------------
+// STARK Variants (quantum-resistant, no inline Groth16)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a private (ZK-authenticated) subscription from a denominated pool note
+ * using STARK proof verification (quantum-resistant).
+ *
+ * Flow:
+ *   1. Generate pool_commitment STARK proof on-device
+ *   2. Submit + verify STARK proof on-chain (buffer stays open)
+ *   3. Call subscribe_private_stark which reads the verified proof buffer
+ *   4. Close proof buffer and recover rent
+ */
+export async function subscribePrivateStark(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  vaultConfig: SubscribePrivateConfig,
+  subscriberSecret: bigint,
+  vkHashSubscriber: Uint8Array,
+  starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<string> {
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_POOL_COMMITMENT,
+  } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  onProgress?.('Computing subscriber commitment...');
+  const subscriberCommitment = poseidon1([subscriberSecret]);
+  const subscriberCommitmentBytes = bigintToLeBytes32(subscriberCommitment);
+
+  onProgress?.('Deriving vault PDA...');
+  const [vaultPDA] = deriveVaultPDA(
+    vaultConfig.retailer,
+    new Uint8Array(subscriberCommitmentBytes),
+    poolConfig.tokenMint
+  );
+
+  onProgress?.('Preparing unshield proof...');
+  const slot = await connection.getSlot('confirmed');
+  const currentEpoch = BigInt(Math.floor(slot / 7200));
+
+  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
+    throw new Error('Receipt missing Merkle proof data');
+  }
+
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const nullifierBytes = bigintToLeBytes32(nullifier);
+  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
+  const minEpoch = currentEpoch - 1n;
+
+  // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
+  onProgress?.('Submitting STARK proof on-chain...');
+  const { proofBuffer } = await submitAndVerifyStarkProof(
+    {
+      proofBytes: starkProofData.proofBytes,
+      circuitId: CIRCUIT_POOL_COMMITMENT,
+      publicInputs: starkProofData.publicInputs,
+      proofSize: starkProofData.proofSize,
+    },
+    walletSigner,
+    onProgress,
+    connection,
+  );
+
+  // Step 2: Build + send subscribe_private_stark instruction
+  onProgress?.('Building subscription transaction...');
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+  const ix = buildSubscribePrivateStarkIx(
+    walletPubkey,
+    vaultConfig.retailer,
+    vaultPDA,
+    poolConfig.poolPDA,
+    poolConfig.treePDA,
+    nullifierPDA,
+    proofBuffer,
+    Array.from(nullifierBytes),
+    merkleRootBytes,
+    minEpoch,
+    subscriberCommitmentBytes,
+    vaultConfig.rate,
+    vaultConfig.intervalSlots,
+    vkHashSubscriber,
+  );
+
+  onProgress?.('Sending subscription transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(300_000));
+  tx.add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  // Step 3: Close proof buffer (recover rent)
+  onProgress?.('Closing proof buffer...');
+  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+/**
+ * Pause a private subscription using STARK proof (quantum-resistant).
+ *
+ * Flow:
+ *   1. Generate subscriber_ownership STARK proof on-device
+ *   2. Submit + verify STARK proof on-chain (buffer stays open)
+ *   3. Call pause_private_stark which reads the verified proof buffer
+ *   4. Close proof buffer and recover rent
+ */
+export async function pausePrivateStark(
+  vaultPDA: PublicKey,
+  starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<string> {
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_SUBSCRIBER_OWNERSHIP,
+  } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
+  onProgress?.('Submitting STARK proof on-chain...');
+  const { proofBuffer } = await submitAndVerifyStarkProof(
+    {
+      proofBytes: starkProofData.proofBytes,
+      circuitId: CIRCUIT_SUBSCRIBER_OWNERSHIP,
+      publicInputs: [starkProofData.commitment],
+      proofSize: starkProofData.proofSize,
+    },
+    walletSigner,
+    onProgress,
+    connection,
+  );
+
+  // Step 2: Build + send pause_private_stark instruction
+  onProgress?.('Building pause transaction...');
+  const ix = buildPausePrivateStarkIx(walletPubkey, vaultPDA, proofBuffer);
+
+  onProgress?.('Sending pause transaction...');
+  const tx = new Transaction().add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  // Step 3: Close proof buffer (recover rent)
+  onProgress?.('Closing proof buffer...');
+  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+/**
+ * Resume a private subscription using STARK proof (quantum-resistant).
+ *
+ * Flow:
+ *   1. Generate subscriber_ownership STARK proof on-device
+ *   2. Submit + verify STARK proof on-chain (buffer stays open)
+ *   3. Call resume_private_stark which reads the verified proof buffer
+ *   4. Close proof buffer and recover rent
+ */
+export async function resumePrivateStark(
+  vaultPDA: PublicKey,
+  starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<string> {
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_SUBSCRIBER_OWNERSHIP,
+  } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
+  onProgress?.('Submitting STARK proof on-chain...');
+  const { proofBuffer } = await submitAndVerifyStarkProof(
+    {
+      proofBytes: starkProofData.proofBytes,
+      circuitId: CIRCUIT_SUBSCRIBER_OWNERSHIP,
+      publicInputs: [starkProofData.commitment],
+      proofSize: starkProofData.proofSize,
+    },
+    walletSigner,
+    onProgress,
+    connection,
+  );
+
+  // Step 2: Build + send resume_private_stark instruction
+  onProgress?.('Building resume transaction...');
+  const ix = buildResumePrivateStarkIx(walletPubkey, vaultPDA, proofBuffer);
+
+  onProgress?.('Sending resume transaction...');
+  const tx = new Transaction().add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  // Step 3: Close proof buffer (recover rent)
+  onProgress?.('Closing proof buffer...');
+  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+// ---------------------------------------------------------------------------
+// STARK Instruction Builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Build subscribe_private_stark instruction.
+ * The on-chain program reads the pre-verified STARK proof buffer (circuit 1: pool_commitment)
+ * instead of verifying a Groth16 proof inline.
+ */
+function buildSubscribePrivateStarkIx(
+  payer: PublicKey,
+  retailer: PublicKey,
+  vaultPDA: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  starkProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  subscriberCommitmentBytes: number[],
+  rate: bigint,
+  intervalSlots: bigint,
+  vkHashSubscriber: Uint8Array,
+): TransactionInstruction {
+  const disc = getDiscriminator('subscribe_private_stark');
+
+  // Args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64,
+  //       subscriber_commitment: [u8;32], rate: u64, interval_slots: u64, vk_hash_subscriber: [u8;32]
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  Buffer.from(subscriberCommitmentBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(rate, offset); offset += 8;
+  data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
+  Buffer.from(vkHashSubscriber).copy(data, offset);
+
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: retailer, isSigner: false, isWritable: false },
+    { pubkey: vaultPDA, isSigner: false, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+/**
+ * Build pause_private_stark instruction.
+ * The on-chain program reads the pre-verified STARK proof buffer (circuit 0: subscriber_ownership).
+ */
+function buildPausePrivateStarkIx(
+  payer: PublicKey,
+  vaultPDA: PublicKey,
+  starkProofBuffer: PublicKey,
+): TransactionInstruction {
+  const disc = getDiscriminator('pause_private_stark');
+  const data = Buffer.alloc(8);
+  disc.copy(data, 0);
+
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: false },
+    { pubkey: vaultPDA, isSigner: false, isWritable: true },
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+/**
+ * Build resume_private_stark instruction.
+ * The on-chain program reads the pre-verified STARK proof buffer (circuit 0: subscriber_ownership).
+ */
+function buildResumePrivateStarkIx(
+  payer: PublicKey,
+  vaultPDA: PublicKey,
+  starkProofBuffer: PublicKey,
+): TransactionInstruction {
+  const disc = getDiscriminator('resume_private_stark');
+  const data = Buffer.alloc(8);
+  disc.copy(data, 0);
+
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: false },
+    { pubkey: vaultPDA, isSigner: false, isWritable: true },
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
 /**
  * Fetch a vault account from on-chain.
  */
