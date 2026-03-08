@@ -177,6 +177,18 @@ pub mod zk_shielded {
         instructions::unshield_denominated::handler(ctx, proof, nullifier, merkle_root, min_epoch)
     }
 
+    /// Unshield from denominated pool using STARK proof (quantum-resistant).
+    /// Requires a pre-verified STARK proof buffer from p01_stark_verifier.
+    /// The STARK proof replaces Groth16 — no elliptic curve pairings needed.
+    pub fn unshield_denominated_stark(
+        ctx: Context<UnshieldDenominatedStark>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+    ) -> Result<()> {
+        instructions::unshield_denominated_stark::handler(ctx, nullifier, merkle_root, min_epoch)
+    }
+
     /// Emergency unshield from a denominated pool (bypass maturity check)
     /// Same as unshield but with enforce_maturity=0 in the circuit proof.
     /// PRIVACY WARNING: Emergency unshields are distinguishable on-chain.
