@@ -15,13 +15,13 @@ react {
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
 
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
-    // Use Expo CLI to bundle the app, this ensures the Metro config
-    // works correctly with Expo projects.
-    cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
+    // Use a wrapper script that fixes entry file paths for pnpm monorepo on Windows.
+    // The wrapper converts relative --entry-file to absolute before forwarding to expo CLI.
+    cliFile = new File(projectRoot, "scripts/bundle-fix.js")
     bundleCommand = "export:embed"
 
     /* Folders */
-    //root = file("../../")
+    root = file(projectRoot)
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
