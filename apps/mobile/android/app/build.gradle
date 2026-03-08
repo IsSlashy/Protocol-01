@@ -21,8 +21,7 @@ react {
     bundleCommand = "export:embed"
 
     /* Folders */
-     //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
+    //root = file("../../")
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
@@ -96,6 +95,10 @@ android {
         versionName "0.5.1"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
     }
     signingConfigs {
         debug {
@@ -148,6 +151,19 @@ android {
         // Ex: android.packagingOptions.pickFirsts += '**/SCCS/**'
         options.each {
             android.packagingOptions[prop] += it
+        }
+    }
+}
+
+// Fix llama.rn task dependency: syncRNLlamaHtpAssets writes to the android dir
+// but isn't declared as a dependency of the JS bundling task.
+afterEvaluate {
+    tasks.configureEach { task ->
+        if (task.name.contains('createBundle') && task.name.contains('JsAndAssets')) {
+            def syncTask = tasks.findByName('syncRNLlamaHtpAssets')
+            if (syncTask != null) {
+                task.dependsOn(syncTask)
+            }
         }
     }
 }
