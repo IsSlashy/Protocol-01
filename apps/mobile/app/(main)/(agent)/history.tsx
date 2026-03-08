@@ -158,7 +158,7 @@ export default function ChatHistory() {
   }, [activeConversationId, handleSelectConversation, handleDeleteConversation]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent', paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ overflow: 'hidden' }}>
         <BlurView
