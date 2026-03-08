@@ -180,6 +180,7 @@ const techsRow1 = [
   { name: "Circom", category: "ZK Circuits" },
   { name: "ark-circom", category: "Rust Prover" },
   { name: "Groth16", category: "ZK Proof System" },
+  { name: "STARK", category: "Quantum-Safe Proofs" },
   { name: "Poseidon", category: "ZK Hash" },
   { name: "Jupiter", category: "DEX Aggregator" },
   { name: "React Native", category: "Mobile" },
@@ -190,12 +191,13 @@ const techsRow1 = [
 ];
 
 const techsRow2 = [
+  { name: "Winterfell", category: "STARK Prover" },
   { name: "BN254", category: "Elliptic Curve" },
+  { name: "Goldilocks", category: "Quantum-Safe Field" },
   { name: "Curve25519", category: "ECDH" },
   { name: "Merkle Trees", category: "Data Structure" },
   { name: "Nullifiers", category: "Anti Double-Spend" },
-  { name: "snarkjs", category: "JS Verifier" },
-  { name: "axum", category: "Rust HTTP" },
+  { name: "ML-KEM", category: "Post-Quantum KEM" },
   { name: "Zustand", category: "State Mgmt" },
   { name: "Reanimated", category: "Animations" },
   { name: "Tailwind", category: "Styling" },
@@ -307,8 +309,8 @@ function Ecosystem() {
           className="flex items-center justify-center gap-6 mt-10 px-6"
         >
           {[
-            { value: "24+", label: "Technologies" },
-            { value: "7", label: "On-chain Programs" },
+            { value: "28+", label: "Technologies" },
+            { value: "12", label: "On-chain Programs" },
             { value: "4", label: "Client SDKs" },
             { value: "100%", label: "Open Source" },
           ].map((s) => (

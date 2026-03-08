@@ -23,7 +23,7 @@ const steps = [
     num: "03",
     icon: Send,
     title: "TRANSFER",
-    desc: "Send privately via Groth16 ZK proofs",
+    desc: "Send privately via ZK proofs (Groth16 + STARK)",
     color: "#00ffe5",
   },
   {

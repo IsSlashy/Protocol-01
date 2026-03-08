@@ -65,29 +65,29 @@ const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);`,
   },
   {
     id: "zk-proofs",
-    title: "Zero-Knowledge Proofs (Groth16)",
+    title: "Zero-Knowledge Proofs (Groth16 + STARK)",
     icon: <Shield className="w-6 h-6" />,
     description:
-      "ZK-SNARKs hide basic transfers on-chain — amounts, senders, and recipients are invisible. This applies to direct private transfers only. Streams and subscriptions use a separate obscurement module (noise). Proofs are verified on-chain using Solana's native alt_bn128 syscalls.",
+      "Dual proof system: Groth16 ZK-SNARKs for compact on-chain verification via BN254 pairing, and STARKs (Winterfell) for quantum-resistant proofs over the Goldilocks field. STARKs are hash-based — immune to Shor's algorithm — and are now the default for denominated pool unshielding.",
     details: [
-      "Used for private transfers only (not streams or subscriptions)",
-      "Circom circuits with ~12,000 constraints for efficient proving",
-      "Poseidon hash function (ZK-friendly) for commitments and Merkle trees",
-      "Groth16 verification using Solana's native BN254 pairing precompiles",
-      "Rust native Groth16 prover (ark-circom + axum) — 10x faster than snarkjs",
-      "Instant ZK operations: shield + unshield in ~3 seconds total",
+      "Groth16: Circom circuits (~12,000 constraints), BN254 pairing precompiles, ~200K CU",
+      "STARK: Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR",
+      "4 STARK circuits deployed: subscriber_ownership, pool_commitment, balance_proof, merkle_path",
+      "Compact STARK proofs (~9KB) with Blake3 Merkle trees, 16 FRI queries",
+      "On-chain STARK verifier: custom FRI implementation, ~889K CU per verification",
+      "Mobile WASM STARK prover via WebView (82KB module, all 5 proof functions)",
+      "Quantum-safe: STARKs resist both Shor's and Grover's algorithms",
     ],
-    codeExample: `// Generate ZK proof for private transfer
-// Client-side (snarkjs fallback):
+    codeExample: `// Groth16 proof (BN254, compact, fast verification)
 const { proof, publicSignals } = await snarkjs.groth16.fullProve(
   { inputs, merkle_path, nullifiers },
-  "transfer.wasm",
-  "transfer.zkey"
+  "transfer.wasm", "transfer.zkey"
 );
 
-// Server-side (Rust native prover — 10x faster):
-// POST /prove { circuit, inputs }
-// → ark-circom Groth16 proof in ~300ms`,
+// STARK proof (quantum-resistant, hash-based)
+const starkProof = await starkProver.generateProof(secret);
+// Upload proof buffer → verify on-chain → ~889K CU
+await submitStarkProof(program, proofBuffer, commitment, circuitId);`,
   },
   {
     id: "shielded-pool",
@@ -96,7 +96,7 @@ const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     description:
       "Private transfers go through the relayer. The user generates a ZK proof client-side, funds the relayer, and the relayer executes the transfer to a stealth address. On-chain, only the relayer-to-stealth-address link is visible — the original sender is completely hidden.",
     details: [
-      "User generates Groth16 proof locally (sender never revealed)",
+      "User generates ZK proof locally — Groth16 or STARK (sender never revealed)",
       "User funds relayer with amount + 0.5% fee + gas",
       "Relayer verifies proof off-chain, then sends to stealth address",
       "On-chain visibility: Relayer → Stealth Address only",
@@ -122,10 +122,10 @@ const tx = await relayer.privateSend(proof, stealthAddress);`,
     description:
       "Poseidon is a ZK-friendly hash function designed specifically for use inside arithmetic circuits. It's significantly more efficient than traditional hashes like SHA-256 or Keccak in ZK contexts.",
     details: [
-      "Operates natively over prime fields (BN254 scalar field)",
+      "Operates natively over prime fields (BN254 for Groth16, Goldilocks for STARK)",
       "~300x fewer constraints than Keccak in Circom circuits",
       "Used for commitments, nullifiers, and Merkle tree hashing",
-      "Parameters: BN254 curve, x^5 S-box, 8 full rounds",
+      "Parameters: BN254 (x^5 S-box, 8 full rounds) + Goldilocks (x^7 S-box, 30 full rounds)",
       "Compatible with circomlib implementation",
     ],
     codeExample: `// Poseidon commitment in circuit
@@ -189,49 +189,49 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     description:
       "Protocol 01 leverages Solana's native cryptographic syscalls for efficient on-chain ZK proof verification, achieving verification in under 200K compute units.",
     details: [
-      "alt_bn128 syscalls for BN254 curve operations",
-      "Native pairing checks for Groth16 verification",
-      "Anchor framework for type-safe program development",
-      "Compute budget: ~200K CU for full proof verification",
-      "Cross-program invocations for token transfers",
+      "alt_bn128 syscalls for BN254 Groth16 verification (~200K CU)",
+      "Custom FRI verifier for STARK proofs — Goldilocks field (~889K CU)",
+      "12 Anchor programs: zk_shielded, zkSPL, specter, subscriptions, streams, quantum vault, STARK verifier, registry, relayer, trustless, fee-splitter, whitelist",
+      "Quantum vault: WOTS+ signatures, hash-timelock, commit-then-reveal (SHA-256 based)",
+      "Cross-program invocations for token transfers and proof verification",
     ],
-    codeExample: `// On-chain Groth16 verification
-let pairing_result = sol_alt_bn128_pairing(
-    &[pi_a_neg, vk_alpha, pi_b, vk_beta, pi_c, vk_gamma, ...]
-);
-require!(pairing_result == 1, "Invalid proof");`,
+    codeExample: `// On-chain Groth16 verification (BN254)
+let pairing_result = sol_alt_bn128_pairing(&[...]);
+require!(pairing_result == 1, "Invalid Groth16 proof");
+
+// On-chain STARK verification (Goldilocks + Blake3)
+let positions = fiat_shamir_positions(trace_root, commitment);
+for pos in positions {
+    verify_merkle_path(proof, pos, trace_root)?;
+    verify_poseidon_round(trace_row, round_constants)?;
+}`,
   },
   {
     id: "private-relay",
-    title: "Private Relay Architecture",
+    title: "On-Chain Relayer (Trustless)",
     icon: <Zap className="w-6 h-6" />,
     description:
-      "User-funded relayer that verifies ZK proofs and executes private transfers to stealth addresses, breaking the on-chain link between sender and recipient.",
+      "Fully on-chain relayer program (p01_relayer) that verifies ZK proofs and executes private transfers to stealth addresses. No backend server — the relayer is a Solana program, eliminating trust in any third party.",
     details: [
-      "User funds relayer with transfer amount + fee (0.5%) + gas + rent",
-      "Rust native Groth16 prover (ark-circom + axum) generates proofs in ~300ms",
-      "Dual verification: Rust prover generates, snarkjs verifies as safety net",
-      "Relayer sends to stealth address — no on-chain link to the sender",
-      "Node.js relayer + Rust prover deployed via Docker multi-stage build",
-      "Roadmap: on-chain Solana program for fully decentralized relay",
+      "On-chain Solana program — no backend server, fully trustless",
+      "User generates ZK proof client-side (spending key never leaves device)",
+      "Relayer PDA escrows transfer amount + fee (0.5%) + gas + rent",
+      "On-chain verification: proof checked by the program before executing transfer",
+      "Sends to stealth address — no on-chain link to the original sender",
+      "Local-only proving: snarkjs in WebView (mobile) or browser (extension)",
     ],
-    codeExample: `// Private relay flow
-// 1. User generates ZK proof (Rust prover or snarkjs fallback)
-const { proof, publicSignals } = await relayer.prove(circuit, inputs);
-// Rust prover: ~300ms | snarkjs fallback: ~3s
+    codeExample: `// Trustless on-chain relay flow
+// 1. User generates ZK proof locally (spending key stays on device)
+const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+  { inputs, merkle_path, nullifiers },
+  "transfer.wasm", "transfer.zkey"
+);
 
-// 2. User funds relayer with amount + fee + gas
-const fundTx = await fundRelayer(amount, fee, gasCost, rentCost);
-
-// 3. Relayer dual-verifies and sends to stealth address
-// POST /api/private-send
-{
-  proof,           // Groth16 ZK proof (Rust-generated)
-  publicSignals,   // Nullifier + commitments
-  recipient,       // Stealth address (unlinkable)
-  amount           // Transfer amount
-}
-// Safety: snarkjs re-verifies before on-chain submission`,
+// 2. Submit proof to on-chain relayer program
+await program.methods.relayTransfer(proof, publicSignals, stealthAddress)
+  .accounts({ relayerPda, pool, recipient: stealthAddress })
+  .rpc();
+// On-chain: relayer verifies proof → transfers to stealth address`,
   },
   {
     id: "streams-privacy",
@@ -280,14 +280,16 @@ await program.methods.shieldDenominated(commitment, epoch)
   .accounts({ pool, depositor, systemProgram })
   .rpc();
 
-// Unshield with ZK proof (proves membership without revealing which note)
-const { proof } = await snarkjs.groth16.fullProve(
-  { nullifier_preimage, secret, deposit_epoch, token_mint,
-    path_elements, path_indices, root, min_epoch },
-  "denominated_pool.wasm", "denominated_pool.zkey"
-);
+// Unshield with STARK proof (quantum-resistant, default)
+const starkProof = await starkProver.generateProof(secret);
+await program.methods.unshieldDenominatedStark(starkProof, commitment)
+  .accounts({ pool, recipient, nullifierPda, starkBuffer })
+  .rpc();
+
+// Or with Groth16 proof (classic, faster verification)
+const { proof } = await snarkjs.groth16.fullProve(inputs,
+  "denominated_pool.wasm", "denominated_pool.zkey");
 await program.methods.unshieldDenominated(proof, nullifier, root, minEpoch)
-  .accounts({ pool, recipient, nullifierPda })
   .rpc();`,
   },
   {
@@ -387,7 +389,7 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
     details: [
       "TypeScript SDKs with full type definitions",
       "Stealth address generation & scanning (ECDH)",
-      "Groth16 proof generation for shielded transfers",
+      "Groth16 + STARK proof generation for shielded transfers",
       "Confidential balance management with ZkSplProver",
       "Payment streams & recurring subscriptions",
       "React hooks for wallet, streams and subscriptions",
@@ -442,7 +444,7 @@ const docsArchLayers = [
     nodes: [
       { label: "@p01/sdk", sub: "Merchant Integration" },
       { label: "@p01/specter-sdk", sub: "Stealth & Wallets" },
-      { label: "@p01/zk-sdk", sub: "Groth16 Prover" },
+      { label: "@p01/zk-sdk", sub: "Groth16 + STARK Prover" },
       { label: "@p01/zkspl-sdk", sub: "Confidential Balances" },
     ],
   },
@@ -459,11 +461,12 @@ const docsArchLayers = [
     ],
   },
   {
-    name: "Relay Layer",
+    name: "Verification Layer",
     hex: "#ff77a8",
     nodes: [
-      { label: "RELAYER", sub: "ZK Verify + Transfer" },
-      { label: "RUST PROVER", sub: "Native Groth16 (ark-circom)" },
+      { label: "ON-CHAIN RELAYER", sub: "Trustless ZK Relay" },
+      { label: "STARK VERIFIER", sub: "FRI + Goldilocks" },
+      { label: "QUANTUM VAULT", sub: "WOTS+ / Hash-Timelock" },
       { label: "CRANK", sub: "Auto Subscription Payments" },
     ],
   },
@@ -471,9 +474,9 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "7 PROGRAMS", sub: "Anchor / Rust" },
+      { label: "12 PROGRAMS", sub: "Anchor / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
-      { label: "alt_bn128", sub: "ZK Curve Ops" },
+      { label: "alt_bn128 + FRI", sub: "ZK Verification" },
     ],
   },
 ];
