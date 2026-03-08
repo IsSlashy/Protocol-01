@@ -96,6 +96,9 @@ importers:
       '@noble/post-quantum':
         specifier: ^0.2.1
         version: 0.2.1
+      '@p01/specter-sdk':
+        specifier: workspace:*
+        version: link:../../packages/specter-sdk
       '@p01/zkspl-sdk':
         specifier: workspace:*
         version: link:../../packages/zkspl-sdk
