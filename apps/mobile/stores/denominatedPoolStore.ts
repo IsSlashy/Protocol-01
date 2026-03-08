@@ -16,6 +16,7 @@ import {
   fetchPoolInfo,
   shield,
   unshield,
+  unshieldStark,
   emergencyUnshield,
   transferNote as serviceTransferNote,
   importNote as serviceImportNote,
@@ -86,6 +87,13 @@ interface DenominatedPoolState {
     noteId: string,
     recipient: string,
     proofGenerator: ProofGenerator,
+  ) => Promise<string>;
+  /** Quantum-resistant STARK unshield (no Groth16 proof needed) */
+  unshieldNoteStark: (
+    noteId: string,
+    recipient: string,
+    starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    emergency?: boolean,
   ) => Promise<string>;
   emergencyUnshieldNote: (
     noteId: string,
@@ -297,11 +305,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       // ------------------------------------------------------------------
 
       shieldNote: async (pool) => {
+        console.log('[DenomStore] shieldNote start:', pool.denomination, pool.token);
         set({ isLoading: true, error: null, progress: 'Preparing...' });
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
+          console.log('[DenomStore] walletSigner:', walletSigner ? `Privy(${walletSigner.publicKey.toBase58().slice(0,8)})` : 'local keypair');
           const receipt = await shield(pool, (step) => {
+            console.log('[DenomStore] progress:', step);
             set({ progress: step });
           }, walletSigner);
 
@@ -316,6 +327,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             source: 'shielded',
           };
 
+          console.log('[DenomStore] Note stored:', storedNote.id, 'status:', storedNote.status);
           set(state => ({
             isLoading: false,
             progress: null,
@@ -324,7 +336,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           return storedNote.id;
         } catch (err) {
-          console.error('[DenomPool] Shield error:', err);
+          console.error('[DenomStore] Shield error:', err);
           set({ isLoading: false, progress: null, error: (err as Error).message });
           throw err;
         }
@@ -375,6 +387,56 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           return sig;
         } catch (err) {
           console.error('[DenomPool] Unshield error:', err);
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // STARK Unshield (quantum-resistant — no Groth16 proof)
+      // ------------------------------------------------------------------
+
+      unshieldNoteStark: async (noteId, recipientAddress, starkProofData, emergency) => {
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+
+        const receipt = receiptFromJSON(note.receiptJSON);
+        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('Pool config not found for this note');
+
+        const { PublicKey } = await import('@solana/web3.js');
+        const recipient = new PublicKey(recipientAddress);
+
+        set({ isLoading: true, isProving: false, error: null, progress: emergency ? 'Preparing emergency unshield...' : 'Preparing STARK unshield...' });
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const sig = await unshieldStark(
+            receipt,
+            pool,
+            recipient,
+            starkProofData,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+              set({ progress: step, isProving: proving });
+            },
+            walletSigner,
+            emergency,
+          );
+
+          set(state => ({
+            isLoading: false,
+            isProving: false,
+            progress: null,
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
+            ),
+          }));
+
+          return sig;
+        } catch (err) {
+          console.error('[DenomPool] STARK unshield error:', err);
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
           throw err;
         }
