@@ -1,13 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  Platform,
+  StyleSheet,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Haptics from 'expo-haptics';
-import { SettingsSection, SettingsRow, ToggleRow } from '../../../components/settings';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { requireNativeModule } from 'expo-modules-core';
+
+import { SettingsRow, ToggleRow } from '../../../components/settings';
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 const STORAGE_KEYS = {
   BIOMETRICS: 'settings_biometrics',
@@ -24,6 +37,48 @@ const LOCK_TIMEOUTS = [
   { label: '15 minutes', value: 900 },
   { label: 'Never', value: -1 },
 ];
+
+/* ──────────────────────── Glass Card ──────────────────────── */
+
+interface GlassCardProps {
+  children: React.ReactNode;
+  delay?: number;
+  style?: object;
+}
+
+const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
+  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
+    <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+      <LinearGradient
+        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      {children}
+    </BlurView>
+  </Animated.View>
+);
+
+/* ──────────────────────── Section Title ──────────────────────── */
+
+const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
+  <Animated.Text
+    entering={FadeInDown.delay(delay).duration(300)}
+    style={styles.sectionTitle}
+  >
+    {title}
+  </Animated.Text>
+);
+
+/* ──────────────────────── Divider ──────────────────────── */
+
+const GlassDivider: React.FC = () => (
+  <View style={styles.divider} />
+);
+
+/* ──────────────────────── Screen ──────────────────────── */
 
 export default function SecuritySettingsScreen() {
   const router = useRouter();
@@ -153,32 +208,35 @@ export default function SecuritySettingsScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 py-4">
+      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">Security Settings</Text>
-        <View className="w-10" />
-      </View>
+        <Text style={styles.headerTitle}>Security Settings</Text>
+        <View style={{ width: 40 }} />
+      </Animated.View>
 
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* AUTHENTICATION */}
-        <SettingsSection title="Authentication">
+        <SectionTitle title="AUTHENTICATION" delay={80} />
+        <GlassCard delay={100}>
           <SettingsRow
             label="Change PIN"
             leftIcon="keypad-outline"
             onPress={handleChangePIN}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <ToggleRow
             label="Biometrics"
             description={
@@ -190,55 +248,152 @@ export default function SecuritySettingsScreen() {
             onValueChange={handleBiometricsToggle}
             disabled={!biometricsAvailable}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* AUTO-LOCK */}
-        <SettingsSection title="Auto-Lock">
+        <SectionTitle title="AUTO-LOCK" delay={150} />
+        <GlassCard delay={170}>
           <SettingsRow
             label="Lock after"
             value={getLockTimeoutLabel()}
             leftIcon="time-outline"
             onPress={handleLockTimeoutSelect}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* TRANSACTION SECURITY */}
-        <SettingsSection title="Transaction Security">
+        <SectionTitle title="TRANSACTION SECURITY" delay={220} />
+        <GlassCard delay={240}>
           <ToggleRow
             label="Require auth for sends"
             description="Authenticate before sending transactions"
             value={requireAuthForSends}
             onValueChange={handleAuthForSendsToggle}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* ADVANCED */}
-        <SettingsSection title="Advanced">
+        <SectionTitle title="ADVANCED" delay={290} />
+        <GlassCard delay={310}>
           <ToggleRow
             label="Hide balance by default"
             description="Balance hidden until tapped"
             value={hideBalance}
             onValueChange={handleHideBalanceToggle}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <ToggleRow
             label="Block screenshots"
             description="Prevent screenshots in the app"
             value={blockScreenshots}
             onValueChange={handleBlockScreenshotsToggle}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* Info Card */}
-        <View style={{ marginHorizontal: 16, marginTop: 8, padding: 16, backgroundColor: '#18181b', borderRadius: 16, borderWidth: 1, borderColor: '#3f3f46' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <Ionicons name="information-circle" size={20} color="#06b6d4" />
-            <Text style={{ color: '#9ca3af', fontSize: 14, marginLeft: 12, flex: 1 }}>
-              Enabling biometrics and transaction authentication adds an extra layer of security to protect your assets.
-            </Text>
-          </View>
-        </View>
+        <Animated.View entering={FadeInDown.delay(380).duration(350)} style={styles.infoOuter}>
+          <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.infoContent}>
+              <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
+              <Text style={styles.infoText}>
+                Enabling biometrics and transaction authentication adds an extra layer of security to protect your assets.
+              </Text>
+            </View>
+          </BlurView>
+        </Animated.View>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+/* ──────────────────────── Styles ──────────────────────── */
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+
+  /* Header */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  headerTitle: {
+    color: Colors.text,
+    fontSize: 18,
+    fontFamily: FontFamily.semibold,
+  },
+
+  /* Section Title */
+  sectionTitle: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+    letterSpacing: 1,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.lg,
+  },
+
+  /* Glass Card */
+  glassOuter: {
+    marginHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  glassBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  },
+
+  /* Divider */
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(57, 197, 187, 0.07)',
+    marginHorizontal: Spacing.lg,
+  },
+
+  /* Info Card */
+  infoOuter: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  infoContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: Spacing.lg,
+  },
+  infoText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    marginLeft: Spacing.md,
+    flex: 1,
+    lineHeight: 20,
+  },
+});

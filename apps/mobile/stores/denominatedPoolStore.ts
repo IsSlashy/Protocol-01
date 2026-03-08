@@ -260,12 +260,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
             const cached = get().poolCache[note.poolPDA];
             const epochDelay = cached?.info.epochDelay ?? 1n;
+            const dynamicDelay = BigInt(cached?.info.dynamicDelay ?? 2);
+            const totalDelay = epochDelay + dynamicDelay;
 
-            const minEpoch = currentEpoch - epochDelay;
-            const epochMature = receipt.depositEpoch <= minEpoch;
-            // Enforce 1 hour minimum from deposit time
-            const timeMature = (Date.now() - note.shieldedAt) >= 60 * 60 * 1000;
-            const isMature = epochMature && timeMature;
+            const minEpoch = currentEpoch - totalDelay;
+            const isMature = receipt.depositEpoch <= minEpoch;
 
             // imported notes go to mature when ready, pending/imported when not
             const newStatus: NoteStatus = isMature ? 'mature' : (note.status === 'imported' ? 'imported' : 'pending');
@@ -557,7 +556,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             token: noteData.token,
             denomination: noteData.denominationHuman,
             poolPDA: noteData.pool,
-            shieldedAt: Date.now(),
+            shieldedAt: receipt.shieldedAt || Date.now(),
             status: 'imported',
             source,
           };
@@ -565,13 +564,23 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // Check if note already exists
           const existing = get().notes.find(n => n.id === storedNote.id);
           if (existing) {
-            throw new Error('This note already exists in your wallet');
+            // If the existing note was transferred out, replace it with the incoming one
+            if (existing.status === 'transferred') {
+              set(state => ({
+                notes: state.notes.map(n =>
+                  n.id === storedNote.id ? storedNote : n
+                ),
+                error: null,
+              }));
+            } else {
+              throw new Error('This note already exists in your wallet');
+            }
+          } else {
+            set(state => ({
+              notes: [storedNote, ...state.notes],
+              error: null,
+            }));
           }
-
-          set(state => ({
-            notes: [storedNote, ...state.notes],
-            error: null,
-          }));
         } catch (err) {
           console.error('[DenomPool] Import error:', err);
           set({ error: (err as Error).message });

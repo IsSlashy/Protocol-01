@@ -1,11 +1,31 @@
 import React, { useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Linking, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Linking, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Colors, FontFamily, P01Colors } from '@/constants/theme';
 
 const APP_VERSION = '1.0.0';
 const BUILD_NUMBER = '1';
+
+function GlassCard({ children, style }: { children: React.ReactNode; style?: any }) {
+  return (
+    <View style={[{ borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.07)' }, style]}>
+      <BlurView intensity={14} tint="dark" style={{ backgroundColor: 'rgba(12, 12, 14, 0.65)' }}>
+        <LinearGradient
+          colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        {children}
+      </BlurView>
+    </View>
+  );
+}
 
 interface SocialLinkProps {
   icon: keyof typeof Ionicons.glyphMap;
@@ -16,17 +36,24 @@ interface SocialLinkProps {
 
 const SocialLink: React.FC<SocialLinkProps> = ({ icon, label, url, color }) => (
   <TouchableOpacity
-    className="items-center"
+    style={{ alignItems: 'center' }}
     onPress={() => Linking.openURL(url)}
     activeOpacity={0.7}
   >
     <View
-      className="w-14 h-14 rounded-2xl items-center justify-center mb-2"
-      style={{ backgroundColor: `${color}20` }}
+      style={{
+        width: 56,
+        height: 56,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 8,
+        backgroundColor: `${color}20`,
+      }}
     >
       <Ionicons name={icon} size={26} color={color} />
     </View>
-    <Text className="text-p01-gray text-xs">{label}</Text>
+    <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{label}</Text>
   </TouchableOpacity>
 );
 
@@ -37,12 +64,12 @@ interface LinkRowProps {
 
 const LinkRow: React.FC<LinkRowProps> = ({ label, onPress }) => (
   <TouchableOpacity
-    className="flex-row items-center justify-between py-4 px-4"
+    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 16, paddingHorizontal: 16 }}
     onPress={onPress}
     activeOpacity={0.7}
   >
-    <Text className="text-white text-base">{label}</Text>
-    <Ionicons name="open-outline" size={18} color="#666" />
+    <Text style={{ color: '#ffffff', fontSize: 16 }}>{label}</Text>
+    <Ionicons name="open-outline" size={18} color={Colors.textSecondary} />
   </TouchableOpacity>
 );
 
@@ -55,7 +82,7 @@ export default function AboutScreen() {
       icon: 'globe-outline' as const,
       label: 'Website',
       url: 'https://protocol-01.vercel.app',
-      color: '#39c5bb',
+      color: P01Colors.cyan,
     },
     {
       icon: 'logo-github' as const,
@@ -78,104 +105,123 @@ export default function AboutScreen() {
   ];
 
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
+    <SafeAreaView style={{ flex: 1, backgroundColor: 'transparent' }}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 py-4">
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 16 }}>
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+          style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255, 255, 255, 0.06)', alignItems: 'center', justifyContent: 'center' }}
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">About</Text>
-        <View className="w-10" />
+        <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>About</Text>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* Logo and Version */}
-        <View className="items-center py-8">
-          {/* P-01 Logo Placeholder */}
-          <View className="w-24 h-24 rounded-3xl bg-p01-surface items-center justify-center mb-4 border border-p01-cyan/30">
-            <Text className="text-p01-cyan text-4xl font-bold">01</Text>
+        <Animated.View entering={FadeInDown.delay(100).duration(400)} style={{ alignItems: 'center', paddingVertical: 32 }}>
+          <View style={{
+            width: 96,
+            height: 96,
+            borderRadius: 24,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: 'rgba(57, 197, 187, 0.3)',
+            backgroundColor: 'rgba(57, 197, 187, 0.08)',
+          }}>
+            <Text style={{ color: P01Colors.cyan, fontSize: 36, fontWeight: '700' }}>01</Text>
           </View>
-          <Text className="text-white text-2xl font-bold">Protocol 01</Text>
-          <Text className="text-p01-cyan text-base mt-1">P-01 Wallet</Text>
-          <View className="flex-row items-center mt-3">
-            <Text className="text-p01-gray text-sm">Version {APP_VERSION}</Text>
-            <Text className="text-p01-gray/50 text-sm mx-2">|</Text>
-            <Text className="text-p01-gray text-sm">Build {BUILD_NUMBER}</Text>
+          <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: '700' }}>Protocol 01</Text>
+          <Text style={{ color: P01Colors.cyan, fontSize: 16, marginTop: 4 }}>P-01 Wallet</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
+            <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>Version {APP_VERSION}</Text>
+            <Text style={{ color: Colors.textTertiary, fontSize: 14, marginHorizontal: 8 }}>|</Text>
+            <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>Build {BUILD_NUMBER}</Text>
           </View>
-        </View>
+        </Animated.View>
 
         {/* Social Links */}
-        <View className="flex-row justify-center gap-6 py-6 mx-4">
+        <Animated.View entering={FadeInDown.delay(200).duration(400)} style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, paddingVertical: 24, marginHorizontal: 16 }}>
           {socialLinks.map((link) => (
             <SocialLink key={link.label} {...link} />
           ))}
-        </View>
+        </Animated.View>
 
         {/* Description */}
-        <View className="mx-4 mb-6 p-4 bg-p01-surface rounded-2xl">
-          <Text className="text-p01-gray text-sm leading-6 text-center">
-            Protocol 01 is a privacy-focused Solana wallet that uses advanced cryptographic techniques including stealth addresses, ring signatures, and decoy transactions to protect your financial privacy.
-          </Text>
-        </View>
+        <Animated.View entering={FadeInDown.delay(300).duration(400)} style={{ marginHorizontal: 16, marginBottom: 24 }}>
+          <GlassCard>
+            <View style={{ padding: 16 }}>
+              <Text style={{ color: Colors.textSecondary, fontSize: 14, lineHeight: 22, textAlign: 'center' }}>
+                Protocol 01 is a privacy-focused Solana wallet that uses advanced cryptographic techniques including stealth addresses, ring signatures, and decoy transactions to protect your financial privacy.
+              </Text>
+            </View>
+          </GlassCard>
+        </Animated.View>
 
         {/* Legal Links */}
-        <View className="mx-4 mb-6">
-          <Text className="text-p01-gray text-xs font-semibold tracking-wider uppercase mb-2 px-4">
+        <Animated.View entering={FadeInDown.delay(400).duration(400)} style={{ marginHorizontal: 16, marginBottom: 24 }}>
+          <Text style={{ color: Colors.textTertiary, fontSize: 12, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8, paddingHorizontal: 16 }}>
             Legal
           </Text>
-          <View className="bg-p01-surface rounded-2xl overflow-hidden">
-            <LinkRow
-              label="Privacy Policy"
-              onPress={() => Linking.openURL('https://protocol-01.vercel.app/privacy')}
-            />
-            <View className="h-px bg-p01-border mx-4" />
-            <LinkRow
-              label="Terms of Service"
-              onPress={() => Linking.openURL('https://protocol-01.vercel.app/terms')}
-            />
-            <View className="h-px bg-p01-border mx-4" />
-            <LinkRow
-              label="Open Source Licenses"
-              onPress={() => Linking.openURL('https://protocol-01.vercel.app/licenses')}
-            />
-          </View>
-        </View>
+          <GlassCard>
+            <View>
+              <LinkRow
+                label="Privacy Policy"
+                onPress={() => Linking.openURL('https://protocol-01.vercel.app/privacy')}
+              />
+              <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: 16 }} />
+              <LinkRow
+                label="Terms of Service"
+                onPress={() => Linking.openURL('https://protocol-01.vercel.app/terms')}
+              />
+              <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: 16 }} />
+              <LinkRow
+                label="Open Source Licenses"
+                onPress={() => Linking.openURL('https://protocol-01.vercel.app/licenses')}
+              />
+            </View>
+          </GlassCard>
+        </Animated.View>
 
         {/* Tech Stack */}
-        <View className="mx-4 mb-6 p-4 bg-p01-surface rounded-2xl">
-          <Text className="text-white text-sm font-semibold mb-3">Built With</Text>
-          <View className="flex-row flex-wrap gap-2">
-            {['Solana', 'React Native', 'Expo', 'Light Protocol', 'ZK Compression'].map((tech) => (
-              <View key={tech} className="px-3 py-1.5 bg-p01-void rounded-full">
-                <Text className="text-p01-gray text-xs">{tech}</Text>
+        <Animated.View entering={FadeInDown.delay(500).duration(400)} style={{ marginHorizontal: 16, marginBottom: 24 }}>
+          <GlassCard>
+            <View style={{ padding: 16 }}>
+              <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600', marginBottom: 12 }}>Built With</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {['Solana', 'React Native', 'Expo', 'Light Protocol', 'ZK Compression'].map((tech) => (
+                  <View key={tech} style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: 'rgba(255, 255, 255, 0.06)', borderRadius: 9999 }}>
+                    <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{tech}</Text>
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-        </View>
+            </View>
+          </GlassCard>
+        </Animated.View>
 
         {/* Credits */}
-        <View className="items-center py-4">
-          <Text className="text-p01-gray/50 text-xs">
+        <Animated.View entering={FadeInDown.delay(600).duration(400)} style={{ alignItems: 'center', paddingVertical: 16 }}>
+          <Text style={{ color: Colors.textTertiary, fontSize: 12 }}>
             Made with privacy in mind
           </Text>
-          <View className="flex-row items-center mt-2">
-            <Ionicons name="shield-checkmark" size={14} color="#39c5bb" />
-            <Text className="text-p01-cyan/70 text-xs ml-1">
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+            <Ionicons name="shield-checkmark" size={14} color={P01Colors.cyan} />
+            <Text style={{ color: 'rgba(57, 197, 187, 0.7)', fontSize: 12, marginLeft: 4 }}>
               Your keys, your coins
             </Text>
           </View>
-        </View>
+        </Animated.View>
 
         {/* Debug Info (could be hidden in production) */}
         <TouchableOpacity
-          className="mx-4 mt-4 py-3 items-center"
+          style={{ marginHorizontal: 16, marginTop: 16, paddingVertical: 12, alignItems: 'center' }}
           onPress={() => {
             devTapCount.current += 1;
             if (devTapCount.current >= 7) {
@@ -185,7 +231,7 @@ export default function AboutScreen() {
           }}
           activeOpacity={0.5}
         >
-          <Text className="text-p01-gray/30 text-xs">
+          <Text style={{ color: 'rgba(255, 255, 255, 0.15)', fontSize: 12 }}>
             Tap 7 times to enable developer mode
           </Text>
         </TouchableOpacity>
