@@ -4,3 +4,6 @@
 //! verified without trusted setup using FRI-based STARK proofs.
 
 pub mod subscriber_ownership;
+pub mod merkle_path;
+pub mod denominated_pool;
+pub mod balance_proof;
