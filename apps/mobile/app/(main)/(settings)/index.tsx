@@ -1,18 +1,72 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  StyleSheet,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { SettingsSection, SettingsRow, ToggleRow, CurrencyModal } from '../../../components/settings';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+
+import { SettingsRow, ToggleRow, CurrencyModal } from '../../../components/settings';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/settingsStore';
 import { useShieldedStore } from '../../../stores/shieldedStore';
 import { useConfidentialStore } from '../../../stores/confidentialStore';
 import { getCluster } from '../../../services/solana/connection';
 import { useAuth } from '../../../providers/PrivyProvider';
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+
+/* ──────────────────────── Glass Card ──────────────────────── */
+
+interface GlassCardProps {
+  children: React.ReactNode;
+  delay?: number;
+  style?: object;
+}
+
+const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
+  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
+    <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+      <LinearGradient
+        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      {children}
+    </BlurView>
+  </Animated.View>
+);
+
+/* ──────────────────────── Section Title ──────────────────────── */
+
+const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
+  <Animated.Text
+    entering={FadeInDown.delay(delay).duration(300)}
+    style={styles.sectionTitle}
+  >
+    {title}
+  </Animated.Text>
+);
+
+/* ──────────────────────── Divider ──────────────────────── */
+
+const GlassDivider: React.FC = () => (
+  <View style={styles.divider} />
+);
+
+/* ──────────────────────── Screen ──────────────────────── */
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -150,85 +204,89 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 py-4">
+      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+          style={styles.backButton}
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">Settings</Text>
-        <View className="w-10" />
-      </View>
+        <Text style={styles.headerTitle}>Settings</Text>
+        <View style={{ width: 40 }} />
+      </Animated.View>
 
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* WALLET */}
-        <SettingsSection title="Wallet">
+        <SectionTitle title="WALLET" delay={80} />
+        <GlassCard delay={100}>
           <TouchableOpacity
-            className="flex-row items-center justify-between py-4 px-4"
+            style={styles.walletRow}
             onPress={handleCopyAddress}
             activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel={`Copy wallet address ${truncatedAddress}`}
           >
-            <View className="flex-row items-center flex-1">
-              <View className="w-10 h-10 rounded-xl bg-p01-cyan/20 items-center justify-center mr-3">
-                <Ionicons name="wallet-outline" size={20} color="#39c5bb" />
+            <View style={styles.walletRowLeft}>
+              <View style={styles.walletIcon}>
+                <Ionicons name="wallet-outline" size={20} color={P01Colors.cyan} />
               </View>
-              <View className="flex-1">
-                <Text className="text-white text-base font-medium">Account</Text>
-                <Text className="text-p01-gray text-sm mt-0.5">
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>Account</Text>
+                <Text style={styles.rowSublabel}>
                   {walletAddress ? truncatedAddress : 'No wallet connected'}
                 </Text>
               </View>
             </View>
-            <View className="flex-row items-center">
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               {copied ? (
-                <View className="flex-row items-center">
-                  <Ionicons name="checkmark" size={16} color="#39c5bb" />
-                  <Text className="text-p01-cyan text-xs ml-1">Copied!</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="checkmark" size={16} color={P01Colors.cyan} />
+                  <Text style={styles.copiedText}>Copied!</Text>
                 </View>
               ) : (
                 <Ionicons name="copy-outline" size={18} color="#666" />
               )}
             </View>
           </TouchableOpacity>
-        </SettingsSection>
+        </GlassCard>
 
         {/* SECURITY */}
-        <SettingsSection title="Security">
+        <SectionTitle title="SECURITY" delay={130} />
+        <GlassCard delay={150}>
           <SettingsRow
             label="Security Settings"
             leftIcon="shield-outline"
             onPress={() => router.push('/(main)/(settings)/security')}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <SettingsRow
             label="Backup & Recovery"
             leftIcon="key-outline"
             onPress={() => router.push('/(main)/(settings)/backup')}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* PRIVACY */}
-        <SettingsSection title="Privacy">
+        <SectionTitle title="PRIVACY" delay={180} />
+        <GlassCard delay={200}>
           <SettingsRow
             label="Privacy Settings"
             leftIcon="eye-off-outline"
             onPress={() => router.push('/(main)/(settings)/privacy')}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* PRIVACY FEATURES */}
-        <SettingsSection title="Privacy Features">
+        <SectionTitle title="PRIVACY FEATURES" delay={230} />
+        <GlassCard delay={250}>
           <ToggleRow
             label="Shielded Wallet (Legacy)"
             description={hasShieldedFunds
@@ -237,7 +295,7 @@ export default function SettingsScreen() {
             value={shieldedWalletEnabled}
             onValueChange={setShieldedWalletEnabled}
           />
-          <View style={{ height: 1, backgroundColor: '#27272a', marginHorizontal: 16 }} />
+          <GlassDivider />
           <ToggleRow
             label="Confidential Balance"
             description={hasConfidentialFunds
@@ -246,89 +304,87 @@ export default function SettingsScreen() {
             value={confidentialBalanceEnabled}
             onValueChange={setConfidentialBalanceEnabled}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* NETWORK */}
-        <SettingsSection title="Network">
+        <SectionTitle title="NETWORK" delay={280} />
+        <GlassCard delay={300}>
           <SettingsRow
             label="Network"
             value={networkDisplay}
             leftIcon="globe-outline"
             onPress={() => router.push('/(main)/(settings)/network')}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <SettingsRow
             label="RPC"
             value="Solana"
             leftIcon="server-outline"
             onPress={() => router.push('/(main)/(settings)/network')}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* PREFERENCES */}
-        <SettingsSection title="Preferences">
+        <SectionTitle title="PREFERENCES" delay={330} />
+        <GlassCard delay={350}>
           <SettingsRow
             label="Currency"
             value={currency}
             leftIcon="cash-outline"
             onPress={handleCurrencySelect}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <SettingsRow
             label="Notifications"
             leftIcon="notifications-outline"
             onPress={handleNotifications}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* ABOUT */}
-        <SettingsSection title="About">
+        <SectionTitle title="ABOUT" delay={380} />
+        <GlassCard delay={400}>
           <SettingsRow
             label="About P-01"
             value="v1.0.0"
             leftIcon="information-circle-outline"
             onPress={() => router.push('/(main)/(settings)/about')}
           />
-        </SettingsSection>
+        </GlassCard>
 
-        {/* DEVELOPER */}
-        <SettingsSection title="Developer">
-          <SettingsRow
-            label="Privacy Tech Test"
-            value="Devnet"
-            leftIcon="flask-outline"
-            onPress={() => router.push('/(main)/(settings)/privacy-test')}
-          />
-        </SettingsSection>
+        {/* Disconnect Button */}
+        <Animated.View entering={FadeInDown.delay(450).duration(350)} style={styles.disconnectOuter}>
+          <BlurView intensity={12} tint="dark" style={styles.disconnectBlur}>
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <TouchableOpacity
+              style={styles.disconnectTouch}
+              onPress={handleDisconnect}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Disconnect wallet"
+            >
+              <Ionicons name="log-out-outline" size={18} color={P01Colors.cyan} />
+              <Text style={styles.disconnectText}>Disconnect</Text>
+            </TouchableOpacity>
+          </BlurView>
+        </Animated.View>
 
-        {/* Session */}
-        <View className="mt-4 mx-4">
+        {/* Advanced Section Toggle */}
+        <Animated.View entering={FadeInDown.delay(510).duration(300)} style={styles.advancedToggle}>
           <TouchableOpacity
-            className="py-4 items-center bg-p01-surface rounded-xl border border-p01-border"
-            onPress={handleDisconnect}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Disconnect wallet"
-          >
-            <View className="flex-row items-center">
-              <Ionicons name="log-out-outline" size={18} color="#39c5bb" />
-              <Text className="text-p01-cyan text-base font-medium ml-2">
-                Disconnect
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* Advanced Section - Hidden by default */}
-        <View className="mt-6 mx-4">
-          <TouchableOpacity
-            className="flex-row items-center justify-center py-3"
+            style={styles.advancedToggleTouch}
             onPress={() => setShowAdvanced(!showAdvanced)}
             activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel={showAdvanced ? 'Hide advanced options' : 'Show advanced options'}
           >
-            <Text className="text-p01-gray/50 text-xs mr-2">
+            <Text style={styles.advancedToggleText}>
               {showAdvanced ? 'Hide advanced options' : 'Advanced options'}
             </Text>
             <Ionicons
@@ -337,42 +393,41 @@ export default function SettingsScreen() {
               color="#666"
             />
           </TouchableOpacity>
-        </View>
+        </Animated.View>
 
-        {/* Danger Zone - Only visible when advanced is shown */}
+        {/* Danger Zone */}
         {showAdvanced && (
-          <View className="mt-2 mx-4">
-            <View className="bg-red-500/5 rounded-xl p-4 border border-red-500/10">
-              <Text className="text-red-400/70 text-xs text-center mb-3">
-                ⚠️ Danger Zone - Irreversible actions
+          <Animated.View entering={FadeInDown.duration(250)} style={styles.dangerOuter}>
+            <BlurView intensity={12} tint="dark" style={styles.dangerBlur}>
+              <LinearGradient
+                colors={['rgba(255, 51, 102, 0.06)', 'rgba(255, 51, 102, 0.02)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+              <Text style={styles.dangerLabel}>
+                Danger Zone - Irreversible actions
               </Text>
               <TouchableOpacity
-                className="py-3 items-center bg-red-500/10 rounded-lg border border-red-500/20"
+                style={styles.deleteButton}
                 onPress={handleDeleteWallet}
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Delete wallet permanently"
               >
-                <View className="flex-row items-center">
-                  <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                  <Text className="text-red-500 text-sm font-medium ml-2">
-                    Delete Wallet
-                  </Text>
-                </View>
+                <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                <Text style={styles.deleteButtonText}>Delete Wallet</Text>
               </TouchableOpacity>
-            </View>
-          </View>
+            </BlurView>
+          </Animated.View>
         )}
 
         {/* Version Footer */}
-        <View className="items-center mt-8">
-          <Text className="text-p01-gray/50 text-xs">
-            Protocol 01 v1.0.0
-          </Text>
-          <Text className="text-p01-gray/30 text-xs mt-1">
-            Built on Solana
-          </Text>
-        </View>
+        <Animated.View entering={FadeInDown.delay(540).duration(300)} style={styles.footer}>
+          <Text style={styles.footerVersion}>Protocol 01 v1.0.0</Text>
+          <Text style={styles.footerBuilt}>Built on Solana</Text>
+        </Animated.View>
       </ScrollView>
 
       {/* Currency Selection Modal */}
@@ -385,3 +440,197 @@ export default function SettingsScreen() {
     </SafeAreaView>
   );
 }
+
+/* ──────────────────────── Styles ──────────────────────── */
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+
+  /* Header */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  headerTitle: {
+    color: Colors.text,
+    fontSize: 18,
+    fontFamily: FontFamily.semibold,
+  },
+
+  /* Section Title */
+  sectionTitle: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+    letterSpacing: 1,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.lg,
+  },
+
+  /* Glass Card */
+  glassOuter: {
+    marginHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  glassBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  },
+
+  /* Divider */
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(57, 197, 187, 0.07)',
+    marginHorizontal: Spacing.lg,
+  },
+
+  /* Wallet Row */
+  walletRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+  },
+  walletRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  walletIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(57, 197, 187, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  rowLabel: {
+    color: Colors.text,
+    fontSize: 16,
+    fontFamily: FontFamily.medium,
+  },
+  rowSublabel: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    marginTop: 2,
+  },
+  copiedText: {
+    color: P01Colors.cyan,
+    fontSize: 12,
+    marginLeft: 4,
+  },
+
+  /* Disconnect */
+  disconnectOuter: {
+    marginTop: Spacing.lg,
+    marginHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  disconnectBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  },
+  disconnectTouch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+  },
+  disconnectText: {
+    color: P01Colors.cyan,
+    fontSize: 16,
+    fontFamily: FontFamily.medium,
+    marginLeft: Spacing.sm,
+  },
+
+  /* Advanced Toggle */
+  advancedToggle: {
+    marginTop: Spacing['2xl'],
+    marginHorizontal: Spacing.lg,
+  },
+  advancedToggleTouch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+  },
+  advancedToggleText: {
+    color: 'rgba(136, 136, 146, 0.5)',
+    fontSize: 12,
+    marginRight: Spacing.sm,
+  },
+
+  /* Danger Zone */
+  dangerOuter: {
+    marginTop: Spacing.sm,
+    marginHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 51, 102, 0.12)',
+  },
+  dangerBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    padding: Spacing.lg,
+  },
+  dangerLabel: {
+    color: 'rgba(239, 68, 68, 0.7)',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+  },
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.15)',
+  },
+  deleteButtonText: {
+    color: '#ef4444',
+    fontSize: 14,
+    fontFamily: FontFamily.medium,
+    marginLeft: Spacing.sm,
+  },
+
+  /* Footer */
+  footer: {
+    alignItems: 'center',
+    marginTop: Spacing['3xl'],
+  },
+  footerVersion: {
+    color: 'rgba(136, 136, 146, 0.5)',
+    fontSize: 12,
+  },
+  footerBuilt: {
+    color: 'rgba(136, 136, 146, 0.3)',
+    fontSize: 12,
+    marginTop: 4,
+  },
+});

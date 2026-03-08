@@ -68,12 +68,22 @@ pub use air::balance_proof::{
     build_balance_proof_trace, compute_balance_commitment, BalanceProofAir,
     BalanceProofPublicInputs,
 };
+pub use air::confidential_balance::{
+    build_confidential_balance_trace, compute_confidential_balance, ConfidentialBalanceAir,
+    ConfidentialBalancePublicInputs,
+};
+pub use air::transfer::{
+    build_transfer_trace, compute_transfer, TransferAir, TransferPublicInputs,
+    TransferInput, TransferOutput,
+};
 pub use prover::{prove_subscriber_ownership, StarkProofBytes};
 pub use compact::{
     generate_pool_commitment_proof, generate_balance_compact_proof,
-    generate_merkle_path_compact_proof, GenericCompactProofData,
+    generate_merkle_path_compact_proof, generate_confidential_balance_compact_proof,
+    generate_transfer_compact_proof, GenericCompactProofData,
     CIRCUIT_SUBSCRIBER_OWNERSHIP, CIRCUIT_POOL_COMMITMENT,
     CIRCUIT_BALANCE_PROOF, CIRCUIT_MERKLE_PATH,
+    CIRCUIT_CONFIDENTIAL_BALANCE, CIRCUIT_TRANSFER,
 };
 pub use winterfell::math::fields::f64::BaseElement;
 
@@ -87,6 +97,7 @@ mod wasm_api {
     use crate::compact::{
         generate_compact_proof, generate_pool_commitment_proof,
         generate_balance_compact_proof, generate_merkle_path_compact_proof,
+        generate_confidential_balance_compact_proof, generate_transfer_compact_proof,
     };
 
     /// Generate a compact STARK proof for subscriber_ownership.
@@ -167,6 +178,39 @@ mod wasm_api {
         )
     }
 
+    /// Generate a compact STARK proof for confidential balance update.
+    /// Returns JSON: { circuit_id: 4, old_commitment, new_commitment, amount_hash, token_mint, proof_hex, proof_size }
+    #[wasm_bindgen]
+    pub fn generate_confidential_balance_stark_proof(
+        spending_key: u64,
+        old_balance: u64,
+        old_salt: u64,
+        new_balance: u64,
+        new_salt: u64,
+        amount: u64,
+        amount_salt: u64,
+        token_mint: u64,
+    ) -> String {
+        let proof_data = generate_confidential_balance_compact_proof(
+            spending_key, old_balance, old_salt, new_balance, new_salt,
+            amount, amount_salt, token_mint,
+        );
+        let proof_hex = proof_data.proof_bytes.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        format!(
+            r#"{{"circuit_id":{},"old_commitment":"{}","new_commitment":"{}","amount_hash":"{}","token_mint":"{}","proof_hex":"{}","proof_size":{}}}"#,
+            proof_data.circuit_id,
+            proof_data.public_inputs[0],
+            proof_data.public_inputs[1],
+            proof_data.public_inputs[2],
+            proof_data.public_inputs[3],
+            proof_hex,
+            proof_data.proof_bytes.len()
+        )
+    }
+
     /// Generate a compact STARK proof for Merkle path inclusion.
     /// path_elements and path_indices are comma-separated strings.
     /// Returns JSON: { circuit_id: 3, leaf: string, root: string, proof_hex: string, proof_size: number }
@@ -197,6 +241,50 @@ mod wasm_api {
             proof_data.circuit_id,
             proof_data.public_inputs[0],
             proof_data.public_inputs[1],
+            proof_hex,
+            proof_data.proof_bytes.len()
+        )
+    }
+
+    /// Generate a compact STARK proof for a 2-in-2-out shielded transfer.
+    /// Returns JSON: { circuit_id: 5, nullifier_1, nullifier_2, output_commitment_1, output_commitment_2,
+    ///                  public_amount, token_mint, proof_hex, proof_size }
+    #[wasm_bindgen]
+    pub fn generate_transfer_stark_proof(
+        spending_key: u64,
+        token_mint: u64,
+        in_amount_1: u64,
+        in_rand_1: u64,
+        in_amount_2: u64,
+        in_rand_2: u64,
+        out_amount_1: u64,
+        out_recipient_1: u64,
+        out_rand_1: u64,
+        out_amount_2: u64,
+        out_recipient_2: u64,
+        out_rand_2: u64,
+        public_amount: u64,
+    ) -> String {
+        let proof_data = generate_transfer_compact_proof(
+            spending_key, token_mint,
+            in_amount_1, in_rand_1, in_amount_2, in_rand_2,
+            out_amount_1, out_recipient_1, out_rand_1,
+            out_amount_2, out_recipient_2, out_rand_2,
+            public_amount,
+        );
+        let proof_hex = proof_data.proof_bytes.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        format!(
+            r#"{{"circuit_id":{},"nullifier_1":"{}","nullifier_2":"{}","output_commitment_1":"{}","output_commitment_2":"{}","public_amount":"{}","token_mint":"{}","proof_hex":"{}","proof_size":{}}}"#,
+            proof_data.circuit_id,
+            proof_data.public_inputs[0],
+            proof_data.public_inputs[1],
+            proof_data.public_inputs[2],
+            proof_data.public_inputs[3],
+            proof_data.public_inputs[4],
+            proof_data.public_inputs[5],
             proof_hex,
             proof_data.proof_bytes.len()
         )

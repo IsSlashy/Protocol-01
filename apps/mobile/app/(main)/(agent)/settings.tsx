@@ -8,17 +8,19 @@ import {
   ActivityIndicator,
   TextInput,
   Switch,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { useAIStore } from '@/stores/aiStore';
 import { MODEL_INFO, isOnDeviceAvailable } from '@/services/ai/llamaService';
 import { DEFAULT_CONFIGS } from '@/services/ai/agent';
-import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
+import { Colors, FontSize, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 type ProviderOption = {
   id: string;
@@ -208,16 +210,16 @@ export default function AISettingsScreen() {
         {/* AI Provider Selector */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
           <SectionTitle title="AI PROVIDER" />
-          <SettingsCard>
+          <GlassCard>
             <SettingsRow icon="sparkles" label="Active" value={providerLabel} />
-            <Divider />
+            <GlassDivider />
             <SettingsRow
               icon="wifi"
               label="Status"
               value={isConnected ? 'Connected' : 'Offline'}
               valueColor={isConnected ? Colors.success : Colors.yellow}
             />
-          </SettingsCard>
+          </GlassCard>
 
           {/* Provider pills */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
@@ -233,18 +235,43 @@ export default function AISettingsScreen() {
                     paddingHorizontal: 14,
                     paddingVertical: 10,
                     borderRadius: 14,
-                    backgroundColor: isActive ? Colors.primaryDim : 'rgba(21,21,24,0.8)',
-                    borderWidth: 1,
-                    borderColor: isActive ? 'rgba(57,197,187,0.3)' : Colors.border,
+                    overflow: 'hidden',
                   }}
                 >
+                  <View style={StyleSheet.absoluteFill}>
+                    <BlurView
+                      intensity={12}
+                      tint="dark"
+                      style={[
+                        StyleSheet.absoluteFill,
+                        {
+                          backgroundColor: isActive
+                            ? 'rgba(57, 197, 187, 0.1)'
+                            : 'rgba(12, 12, 14, 0.65)',
+                        },
+                      ]}
+                    />
+                  </View>
+                  <View
+                    style={[
+                      StyleSheet.absoluteFill,
+                      {
+                        borderRadius: 14,
+                        borderWidth: 1,
+                        borderColor: isActive
+                          ? 'rgba(57, 197, 187, 0.3)'
+                          : 'rgba(57, 197, 187, 0.07)',
+                      },
+                    ]}
+                    pointerEvents="none"
+                  />
                   <Ionicons
                     name={p.icon as any}
                     size={16}
-                    color={isActive ? Colors.primary : Colors.textSecondary}
+                    color={isActive ? P01Colors.cyan : Colors.textSecondary}
                   />
                   <View style={{ marginLeft: 8 }}>
-                    <Text style={{ color: isActive ? Colors.primary : Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium }}>
+                    <Text style={{ color: isActive ? P01Colors.cyan : Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium }}>
                       {p.label}
                     </Text>
                     <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
@@ -260,7 +287,7 @@ export default function AISettingsScreen() {
         {/* API Keys */}
         <Animated.View entering={FadeInDown.delay(150).springify()}>
           <SectionTitle title="API KEYS" />
-          <SettingsCard>
+          <GlassCard>
             {/* Groq Key */}
             <View style={{ padding: 14 }}>
               <Text style={{ color: Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium, marginBottom: 6 }}>
@@ -272,11 +299,11 @@ export default function AISettingsScreen() {
                     flex: 1,
                     flexDirection: 'row',
                     alignItems: 'center',
-                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.3)',
                     borderRadius: 10,
                     paddingHorizontal: 12,
                     borderWidth: 1,
-                    borderColor: Colors.border,
+                    borderColor: 'rgba(57, 197, 187, 0.07)',
                     height: 40,
                   }}
                 >
@@ -310,7 +337,7 @@ export default function AISettingsScreen() {
               </Text>
             </View>
 
-            <Divider />
+            <GlassDivider />
 
             {/* Gemini Key */}
             <View style={{ padding: 14 }}>
@@ -323,11 +350,11 @@ export default function AISettingsScreen() {
                     flex: 1,
                     flexDirection: 'row',
                     alignItems: 'center',
-                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.3)',
                     borderRadius: 10,
                     paddingHorizontal: 12,
                     borderWidth: 1,
-                    borderColor: Colors.border,
+                    borderColor: 'rgba(57, 197, 187, 0.07)',
                     height: 40,
                   }}
                 >
@@ -360,16 +387,16 @@ export default function AISettingsScreen() {
                 Free at aistudio.google.com — Gemini Flash fallback
               </Text>
             </View>
-          </SettingsCard>
+          </GlassCard>
         </Animated.View>
 
         {/* Voice Settings */}
         <Animated.View entering={FadeInDown.delay(200).springify()}>
           <SectionTitle title="VOICE INPUT" />
-          <SettingsCard>
+          <GlassCard>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <IconBox icon="mic-outline" color={Colors.primary} />
+                <IconBox icon="mic-outline" color={P01Colors.cyan} />
                 <Text style={{ color: Colors.text, fontSize: FontSize.md, marginLeft: 12 }}>
                   Voice Input
                 </Text>
@@ -377,14 +404,14 @@ export default function AISettingsScreen() {
               <Switch
                 value={config.voiceEnabled !== false}
                 onValueChange={(v) => updateConfig({ voiceEnabled: v })}
-                trackColor={{ false: Colors.border, true: 'rgba(57,197,187,0.3)' }}
-                thumbColor={config.voiceEnabled !== false ? Colors.primary : Colors.textTertiary}
+                trackColor={{ false: 'rgba(42, 42, 48, 0.5)', true: 'rgba(57, 197, 187, 0.3)' }}
+                thumbColor={config.voiceEnabled !== false ? P01Colors.cyan : Colors.textTertiary}
               />
             </View>
-            <Divider />
+            <GlassDivider />
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <IconBox icon="send-outline" color={Colors.yellow} />
+                <IconBox icon="send-outline" color={P01Colors.yellow} />
                 <View style={{ marginLeft: 12 }}>
                   <Text style={{ color: Colors.text, fontSize: FontSize.md }}>Auto-Send</Text>
                   <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
@@ -395,20 +422,20 @@ export default function AISettingsScreen() {
               <Switch
                 value={config.voiceAutoSend === true}
                 onValueChange={(v) => updateConfig({ voiceAutoSend: v })}
-                trackColor={{ false: Colors.border, true: 'rgba(255,204,0,0.3)' }}
-                thumbColor={config.voiceAutoSend ? Colors.yellow : Colors.textTertiary}
+                trackColor={{ false: 'rgba(42, 42, 48, 0.5)', true: 'rgba(255, 204, 0, 0.3)' }}
+                thumbColor={config.voiceAutoSend ? P01Colors.yellow : Colors.textTertiary}
               />
             </View>
-          </SettingsCard>
+          </GlassCard>
           <InfoBox text="Voice uses Groq Whisper for transcription. Requires Groq API key." />
         </Animated.View>
 
         {/* On-Device AI */}
         <Animated.View entering={FadeInDown.delay(250).springify()}>
           <SectionTitle title="ON-DEVICE AI" />
-          <SettingsCard>
+          <GlassCard>
             <SettingsRow icon="hardware-chip-outline" label={MODEL_INFO.name} value={`${MODEL_INFO.quantization} | ${MODEL_INFO.fileSizeMB}MB`} />
-            <Divider />
+            <GlassDivider />
             <SettingsRow icon="radio-button-on" label="Status" value={modelStatusLabel} valueColor={modelStatusColor} />
 
             {/* Progress bar */}
@@ -418,7 +445,7 @@ export default function AISettingsScreen() {
                   style={{
                     height: 4,
                     borderRadius: 2,
-                    backgroundColor: Colors.primaryDim,
+                    backgroundColor: 'rgba(57, 197, 187, 0.15)',
                     marginLeft: 48,
                   }}
                 >
@@ -426,7 +453,7 @@ export default function AISettingsScreen() {
                     style={{
                       height: 4,
                       borderRadius: 2,
-                      backgroundColor: Colors.primary,
+                      backgroundColor: P01Colors.cyan,
                       width: `${modelStatus === 'downloading' ? modelDownloadProgress : modelLoadProgress}%`,
                     }}
                   />
@@ -441,22 +468,22 @@ export default function AISettingsScreen() {
               </View>
             )}
 
-            <Divider />
+            <GlassDivider />
 
             {/* Action buttons */}
             {modelStatus === 'not_downloaded' && (
-              <ActionButton icon="cloud-download-outline" label="Download Model" sublabel={`~${MODEL_INFO.fileSizeMB}MB | Works fully offline`} color={Colors.primary} onPress={handleDownloadModel} />
+              <ActionButton icon="cloud-download-outline" label="Download Model" sublabel={`~${MODEL_INFO.fileSizeMB}MB | Works fully offline`} color={P01Colors.cyan} onPress={handleDownloadModel} />
             )}
 
             {modelStatus === 'downloading' && (
-              <ActionButton icon="close-circle-outline" label={`Downloading... ${modelDownloadProgress}%`} sublabel="Tap to cancel" color={Colors.yellow} onPress={cancelDownload} />
+              <ActionButton icon="close-circle-outline" label={`Downloading... ${modelDownloadProgress}%`} sublabel="Tap to cancel" color={P01Colors.yellow} onPress={cancelDownload} />
             )}
 
             {modelStatus === 'ready' && (
               <>
                 {!nativeAvailable && (
                   <View style={{ paddingHorizontal: 14, paddingBottom: 10, marginLeft: 48 }}>
-                    <Text style={{ color: Colors.yellow, fontSize: FontSize.xs }}>
+                    <Text style={{ color: P01Colors.yellow, fontSize: FontSize.xs }}>
                       Requires native build (EAS). Use Groq or Gemini instead.
                     </Text>
                   </View>
@@ -474,17 +501,17 @@ export default function AISettingsScreen() {
                     }
                   }}
                 />
-                <Divider />
+                <GlassDivider />
                 <ActionButton icon="trash-outline" label="Delete Model" color={Colors.error} onPress={handleDeleteModel} />
               </>
             )}
 
             {modelStatus === 'loading' && (
               <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14 }}>
-                <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.warningDim, marginRight: 12 }}>
-                  <ActivityIndicator size="small" color={Colors.yellow} />
+                <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: P01Colors.yellowDim, marginRight: 12 }}>
+                  <ActivityIndicator size="small" color={P01Colors.yellow} />
                 </View>
-                <Text style={{ color: Colors.yellow, fontSize: FontSize.md }}>Loading... {modelLoadProgress}%</Text>
+                <Text style={{ color: P01Colors.yellow, fontSize: FontSize.md }}>Loading... {modelLoadProgress}%</Text>
               </View>
             )}
 
@@ -497,8 +524,8 @@ export default function AISettingsScreen() {
                     <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>Processing queries on-device</Text>
                   </View>
                 </View>
-                <Divider />
-                <ActionButton icon="pause-outline" label="Unload (Free RAM)" color={Colors.yellow} onPress={() => releaseModel()} />
+                <GlassDivider />
+                <ActionButton icon="pause-outline" label="Unload (Free RAM)" color={P01Colors.yellow} onPress={() => releaseModel()} />
               </>
             )}
 
@@ -506,7 +533,7 @@ export default function AISettingsScreen() {
               <>
                 {!nativeAvailable && (
                   <View style={{ paddingHorizontal: 14, paddingBottom: 10, marginLeft: 48 }}>
-                    <Text style={{ color: Colors.yellow, fontSize: FontSize.xs }}>
+                    <Text style={{ color: P01Colors.yellow, fontSize: FontSize.xs }}>
                       Native module not found — needs EAS build. Use Groq or Gemini.
                     </Text>
                   </View>
@@ -520,17 +547,17 @@ export default function AISettingsScreen() {
                 }} />
               </>
             )}
-          </SettingsCard>
+          </GlassCard>
           <InfoBox text="On-device AI runs entirely on your phone. No data sent to servers. Works offline." />
         </Animated.View>
 
         {/* Generation Settings */}
         <Animated.View entering={FadeInDown.delay(300).springify()}>
           <SectionTitle title="GENERATION" />
-          <SettingsCard>
+          <GlassCard>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <IconBox icon="thermometer-outline" color={Colors.primary} />
+                <IconBox icon="thermometer-outline" color={P01Colors.cyan} />
                 <View style={{ marginLeft: 12 }}>
                   <Text style={{ color: Colors.text, fontSize: FontSize.md }}>Temperature</Text>
                   <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
@@ -541,34 +568,34 @@ export default function AISettingsScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <TouchableOpacity
                   onPress={() => handleTemperatureChange(-0.1)}
-                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
+                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)' }}
                 >
                   <Ionicons name="remove" size={18} color={Colors.textSecondary} />
                 </TouchableOpacity>
-                <Text style={{ color: Colors.primary, fontSize: FontSize.lg, fontFamily: FontFamily.semibold, width: 32, textAlign: 'center' }}>
+                <Text style={{ color: P01Colors.cyan, fontSize: FontSize.lg, fontFamily: FontFamily.semibold, width: 32, textAlign: 'center' }}>
                   {temperature.toFixed(1)}
                 </Text>
                 <TouchableOpacity
                   onPress={() => handleTemperatureChange(0.1)}
-                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)' }}
+                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)' }}
                 >
                   <Ionicons name="add" size={18} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
             </View>
-          </SettingsCard>
+          </GlassCard>
         </Animated.View>
 
         {/* Chat Data */}
         <Animated.View entering={FadeInDown.delay(350).springify()}>
           <SectionTitle title="DATA" />
-          <SettingsCard>
+          <GlassCard>
             <SettingsRow icon="chatbubbles-outline" label="Messages" value={`${messages.length} in current chat`} />
-            <Divider />
+            <GlassDivider />
             <SettingsRow icon="albums-outline" label="Conversations" value={`${conversations.length} saved`} />
-            <Divider />
+            <GlassDivider />
             <ActionButton icon="trash-outline" label="Clear All Chat Data" color={Colors.error} onPress={handleClearHistory} />
-          </SettingsCard>
+          </GlassCard>
         </Animated.View>
       </ScrollView>
     </View>
@@ -594,18 +621,29 @@ function SectionTitle({ title }: { title: string }) {
   );
 }
 
-function SettingsCard({ children }: { children: React.ReactNode }) {
+function GlassCard({ children }: { children: React.ReactNode }) {
   return (
     <View
       style={{
-        borderRadius: 16,
+        borderRadius: 20,
         overflow: 'hidden',
-        backgroundColor: Colors.surface,
         borderWidth: 1,
-        borderColor: Colors.border,
+        borderColor: 'rgba(57, 197, 187, 0.07)',
       }}
     >
-      {children}
+      <BlurView
+        intensity={15}
+        tint="dark"
+        style={{ backgroundColor: 'rgba(12, 12, 14, 0.65)' }}
+      >
+        <LinearGradient
+          colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        {children}
+      </BlurView>
     </View>
   );
 }
@@ -624,7 +662,7 @@ function SettingsRow({
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
-        <IconBox icon={icon} color={Colors.primary} />
+        <IconBox icon={icon} color={P01Colors.cyan} />
         <Text style={{ color: Colors.text, fontSize: FontSize.md, marginLeft: 12 }}>{label}</Text>
       </View>
       <Text
@@ -688,36 +726,48 @@ function ActionButton({
   );
 }
 
-function Divider() {
-  return <View style={{ height: 1, backgroundColor: Colors.border, marginLeft: 62 }} />;
+function GlassDivider() {
+  return <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginLeft: 62 }} />;
 }
 
 function InfoBox({ text }: { text: string }) {
   return (
     <View
       style={{
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        padding: 12,
+        borderRadius: 14,
+        overflow: 'hidden',
         marginTop: 8,
-        borderRadius: 12,
-        backgroundColor: Colors.primaryDim,
-        borderWidth: 1,
-        borderColor: 'rgba(57, 197, 187, 0.15)',
       }}
     >
-      <Ionicons name="shield-checkmark-outline" size={16} color={Colors.primary} style={{ marginTop: 1 }} />
-      <Text
+      <BlurView
+        intensity={12}
+        tint="dark"
         style={{
-          color: Colors.textTertiary,
-          fontSize: FontSize.xs,
-          lineHeight: 18,
-          marginLeft: 8,
-          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          padding: 12,
+          backgroundColor: 'rgba(12, 12, 14, 0.5)',
         }}
       >
-        {text}
-      </Text>
+        <LinearGradient
+          colors={['rgba(57, 197, 187, 0.06)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <Ionicons name="shield-checkmark-outline" size={16} color={P01Colors.cyan} style={{ marginTop: 1 }} />
+        <Text
+          style={{
+            color: Colors.textTertiary,
+            fontSize: FontSize.xs,
+            lineHeight: 18,
+            marginLeft: 8,
+            flex: 1,
+          }}
+        >
+          {text}
+        </Text>
+      </BlurView>
     </View>
   );
 }

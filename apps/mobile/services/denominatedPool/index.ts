@@ -235,6 +235,7 @@ export interface ShareableNote {
   leafIndex: number;
   token: 'SOL' | 'USDC';
   denominationHuman: number;
+  shieldedAt?: number; // original shield timestamp (ms)
   merkle_path_elements?: string[];
   merkle_path_indices?: number[];
   merkle_root?: string;
@@ -1387,6 +1388,7 @@ export function exportNote(receipt: ShieldReceipt, poolConfig: PoolConfig): Shar
     leafIndex: receipt.leafIndex,
     token: poolConfig.token,
     denominationHuman: poolConfig.denomination,
+    shieldedAt: receipt.shieldedAt,
     merkle_path_elements: receipt.merklePathElements?.map(e => e.toString()),
     merkle_path_indices: receipt.merklePathIndices,
     merkle_root: receipt.merkleRoot?.toString(),
@@ -1426,7 +1428,7 @@ export function importNote(noteData: ShareableNote): ShieldReceipt {
     pool: noteData.pool,
     token: noteData.token,
     denominationHuman: noteData.denominationHuman,
-    shieldedAt: Date.now(),
+    shieldedAt: noteData.shieldedAt || Date.now(),
     merklePathElements: noteData.merkle_path_elements?.map(e => BigInt(e)),
     merklePathIndices: noteData.merkle_path_indices,
     merkleRoot: noteData.merkle_root ? BigInt(noteData.merkle_root) : undefined,

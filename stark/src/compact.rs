@@ -159,7 +159,6 @@ fn get_lde_domain_generator() -> BaseElement {
 /// Lagrange interpolation to get polynomial coefficients from trace values.
 /// Input: values at positions g^0, g^1, ..., g^(n-1) where g is n-th root of unity.
 fn interpolate_poly(values: &[BaseElement]) -> Vec<BaseElement> {
-    let n = values.len();
     // Use inverse FFT (NTT) for interpolation over roots of unity
     // For n=32, this is efficient.
     let g = get_trace_domain_generator();
@@ -515,6 +514,42 @@ mod tests {
         assert!(proof.proof_bytes.len() < 30_000, "Merkle proof too large: {}", proof.proof_bytes.len());
         println!("Merkle path (depth 3) proof size: {} bytes", proof.proof_bytes.len());
     }
+
+    #[test]
+    fn test_confidential_balance_compact_proof() {
+        let proof = generate_confidential_balance_compact_proof(
+            42, 1000, 111, 800, 222, 200, 333, 999,
+        );
+        assert_eq!(proof.circuit_id, CIRCUIT_CONFIDENTIAL_BALANCE);
+        assert_eq!(proof.public_inputs.len(), 4);
+        assert!(!proof.proof_bytes.is_empty());
+        assert!(proof.proof_bytes.len() < 50_000, "Confidential balance proof too large: {}", proof.proof_bytes.len());
+        println!("Confidential balance proof size: {} bytes", proof.proof_bytes.len());
+    }
+
+    #[test]
+    fn test_transfer_compact_proof() {
+        let proof = generate_transfer_compact_proof(
+            42,   // spending_key
+            999,  // token_mint
+            100,  // in_amount_1
+            111,  // in_rand_1
+            50,   // in_amount_2
+            222,  // in_rand_2
+            80,   // out_amount_1
+            555,  // out_recipient_1
+            333,  // out_rand_1
+            70,   // out_amount_2
+            666,  // out_recipient_2
+            444,  // out_rand_2
+            0,    // public_amount (balanced: 100+50 = 80+70)
+        );
+        assert_eq!(proof.circuit_id, CIRCUIT_TRANSFER);
+        assert_eq!(proof.public_inputs.len(), 6);
+        assert!(!proof.proof_bytes.is_empty());
+        assert!(proof.proof_bytes.len() < 100_000, "Transfer proof too large: {}", proof.proof_bytes.len());
+        println!("Transfer proof size: {} bytes", proof.proof_bytes.len());
+    }
 }
 
 // ============================================================================
@@ -526,6 +561,8 @@ pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
 pub const CIRCUIT_BALANCE_PROOF: u8 = 2;
 pub const CIRCUIT_MERKLE_PATH: u8 = 3;
+pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
+pub const CIRCUIT_TRANSFER: u8 = 5;
 
 /// Generic compact proof data for any circuit.
 #[derive(Clone, Debug)]
@@ -868,5 +905,120 @@ pub fn generate_merkle_path_compact_proof(
         circuit_id: CIRCUIT_MERKLE_PATH,
         public_inputs: vec![leaf, root_u64],
         root: merkle_root,
+    }
+}
+
+/// Generate compact proof for confidential balance update.
+///
+/// Proves: commitments are correctly formed from private balances, salts, and spending key.
+/// Public inputs: old_commitment, new_commitment, amount_hash, token_mint
+pub fn generate_confidential_balance_compact_proof(
+    spending_key: u64,
+    old_balance: u64,
+    old_salt: u64,
+    new_balance: u64,
+    new_salt: u64,
+    amount: u64,
+    amount_salt: u64,
+    token_mint: u64,
+) -> GenericCompactProofData {
+    let sk = BaseElement::new(spending_key);
+    let ob = BaseElement::new(old_balance);
+    let os = BaseElement::new(old_salt);
+    let nb = BaseElement::new(new_balance);
+    let ns = BaseElement::new(new_salt);
+    let a = BaseElement::new(amount);
+    let as_ = BaseElement::new(amount_salt);
+    let mint = BaseElement::new(token_mint);
+
+    let (trace, oc, nc, ah) =
+        crate::air::confidential_balance::build_confidential_balance_trace(
+            sk, ob, os, nb, ns, a, as_, mint,
+        );
+
+    let oc_u64 = oc.as_int();
+    let nc_u64 = nc.as_int();
+    let ah_u64 = ah.as_int();
+
+    let mut pub_bytes = Vec::new();
+    pub_bytes.extend_from_slice(&oc_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&nc_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&ah_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&token_mint.to_le_bytes());
+
+    let (proof_bytes, root) = generate_compact_proof_from_trace(
+        &trace, &pub_bytes, GENERIC_BLOWUP, GENERIC_NUM_QUERIES,
+    );
+
+    GenericCompactProofData {
+        proof_bytes,
+        circuit_id: CIRCUIT_CONFIDENTIAL_BALANCE,
+        public_inputs: vec![oc_u64, nc_u64, ah_u64, token_mint],
+        root,
+    }
+}
+
+/// Generate compact proof for a 2-in-2-out shielded transfer.
+///
+/// Proves: nullifiers and output commitments are correctly derived from the spending key,
+/// input notes, and output notes.
+/// Public inputs: nullifier_1, nullifier_2, output_commitment_1, output_commitment_2, public_amount, token_mint
+pub fn generate_transfer_compact_proof(
+    spending_key: u64,
+    token_mint: u64,
+    in_amount_1: u64,
+    in_rand_1: u64,
+    in_amount_2: u64,
+    in_rand_2: u64,
+    out_amount_1: u64,
+    out_recipient_1: u64,
+    out_rand_1: u64,
+    out_amount_2: u64,
+    out_recipient_2: u64,
+    out_rand_2: u64,
+    public_amount: u64,
+) -> GenericCompactProofData {
+    use crate::air::transfer::{TransferInput, TransferOutput, build_transfer_trace};
+
+    let sk = BaseElement::new(spending_key);
+    let mint = BaseElement::new(token_mint);
+    let input_1 = TransferInput { amount: BaseElement::new(in_amount_1), randomness: BaseElement::new(in_rand_1) };
+    let input_2 = TransferInput { amount: BaseElement::new(in_amount_2), randomness: BaseElement::new(in_rand_2) };
+    let output_1 = TransferOutput {
+        amount: BaseElement::new(out_amount_1),
+        recipient: BaseElement::new(out_recipient_1),
+        randomness: BaseElement::new(out_rand_1),
+    };
+    let output_2 = TransferOutput {
+        amount: BaseElement::new(out_amount_2),
+        recipient: BaseElement::new(out_recipient_2),
+        randomness: BaseElement::new(out_rand_2),
+    };
+
+    let (trace, n1, n2, _, _, oc1, oc2) =
+        build_transfer_trace(sk, mint, &input_1, &input_2, &output_1, &output_2);
+
+    let n1_u64 = n1.as_int();
+    let n2_u64 = n2.as_int();
+    let oc1_u64 = oc1.as_int();
+    let oc2_u64 = oc2.as_int();
+
+    let mut pub_bytes = Vec::new();
+    pub_bytes.extend_from_slice(&n1_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&n2_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&oc1_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&oc2_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&public_amount.to_le_bytes());
+    pub_bytes.extend_from_slice(&token_mint.to_le_bytes());
+
+    let (proof_bytes, root) = generate_compact_proof_from_trace(
+        &trace, &pub_bytes, GENERIC_BLOWUP, GENERIC_NUM_QUERIES,
+    );
+
+    GenericCompactProofData {
+        proof_bytes,
+        circuit_id: CIRCUIT_TRANSFER,
+        public_inputs: vec![n1_u64, n2_u64, oc1_u64, oc2_u64, public_amount, token_mint],
+        root,
     }
 }

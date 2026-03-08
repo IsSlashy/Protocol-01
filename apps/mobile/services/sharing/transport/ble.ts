@@ -184,33 +184,53 @@ export class BleTransport {
   async connectToPeer(peerId: string): Promise<Device> {
     this.stopScanning();
 
-    const device = await this.manager.connectToDevice(peerId, {
-      requestMTU: BLE_TARGET_MTU,
-    });
-
-    await device.discoverAllServicesAndCharacteristics();
-
-    try {
-      const mtuDevice = await device.requestMTU(BLE_TARGET_MTU);
-      this.negotiatedMtu = mtuDevice.mtu;
-    } catch {
-      this.negotiatedMtu = 20;
-    }
+    console.log('[BLE-DBG] connectToPeer: connecting to', peerId);
+    const device = await this.connectAndSetup(peerId);
+    console.log('[BLE-DBG] connectToPeer: connected, MTU=', this.negotiatedMtu);
 
     this.connectedDevice = device;
 
-    device.onDisconnected(() => {
+    device.onDisconnected((err) => {
+      console.log('[BLE-DBG] onDisconnected fired:', err?.message || 'no error');
       this.connectedDevice = null;
       this.callbacks.onPeerDisconnected(peerId);
     });
 
     // Subscribe to notifications from peripheral
+    console.log('[BLE-DBG] connectToPeer: subscribing to notifications');
     this.monitorCharacteristic(device, BLE_PUBKEY_CHAR_UUID, peerId);
     this.monitorCharacteristic(device, BLE_DATA_CHAR_UUID, peerId);
+    console.log('[BLE-DBG] connectToPeer: subscribed OK');
 
     const peer = this.discoveredPeers.get(peerId);
     if (peer) {
       this.callbacks.onPeerConnected(peer);
+    }
+
+    return device;
+  }
+
+  /**
+   * Connect, discover services, and negotiate MTU.
+   * Serialises GATT operations with small delays to avoid Samsung Exynos BLE bugs.
+   */
+  private async connectAndSetup(peerId: string): Promise<Device> {
+    const device = await this.manager.connectToDevice(peerId);
+
+    // Small delay before service discovery (Samsung GATT stability)
+    await new Promise((r) => setTimeout(r, 300));
+
+    await device.discoverAllServicesAndCharacteristics();
+
+    // Small delay before MTU request
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Negotiate MTU for larger chunks
+    try {
+      const mtuDevice = await device.requestMTU(BLE_TARGET_MTU);
+      this.negotiatedMtu = mtuDevice.mtu;
+    } catch {
+      this.negotiatedMtu = 20;
     }
 
     return device;
@@ -221,17 +241,26 @@ export class BleTransport {
   // -----------------------------------------------------------------------
 
   async sendPublicKey(publicKeyBase64: string): Promise<void> {
+    console.log('[BLE-DBG] sendPublicKey: connectedDevice=', !!this.connectedDevice);
     if (!this.connectedDevice) throw new Error('Not connected');
 
     const data = Buffer.from(publicKeyBase64, 'utf-8');
     const chunks = this.fragment(MSG_TYPE_PUBKEY, new Uint8Array(data));
+    console.log('[BLE-DBG] sendPublicKey: writing', chunks.length, 'chunks to', BLE_PUBKEY_CHAR_UUID);
 
-    for (const chunk of chunks) {
-      await this.connectedDevice.writeCharacteristicWithResponseForService(
-        BLE_SERVICE_UUID,
-        BLE_PUBKEY_CHAR_UUID,
-        Buffer.from(chunk).toString('base64'),
-      );
+    for (let i = 0; i < chunks.length; i++) {
+      console.log('[BLE-DBG] sendPublicKey: writing chunk', i + 1, '/', chunks.length);
+      try {
+        await this.connectedDevice.writeCharacteristicWithResponseForService(
+          BLE_SERVICE_UUID,
+          BLE_PUBKEY_CHAR_UUID,
+          Buffer.from(chunks[i]).toString('base64'),
+        );
+        console.log('[BLE-DBG] sendPublicKey: chunk', i + 1, 'written OK');
+      } catch (err: any) {
+        console.log('[BLE-DBG] sendPublicKey: chunk', i + 1, 'FAILED:', err?.reason, err?.message, err?.errorCode);
+        throw err;
+      }
     }
   }
 

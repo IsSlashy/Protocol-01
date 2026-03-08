@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -31,7 +32,7 @@ import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constant
 
 const SLOTS_PER_EPOCH = 7200;
 const DEFAULT_SLOT_DURATION_MS = 500; // fallback before we measure
-const MIN_MATURITY_MS = 60 * 60 * 1000; // 1 hour minimum from deposit
+// No hardcoded minimum — maturity is determined by on-chain epoch delay
 
 function formatTimeRemaining(ms: number): string {
   if (ms <= 0) return 'Ready';
@@ -40,6 +41,23 @@ function formatTimeRemaining(ms: number): string {
   const hrs = Math.floor(mins / 60);
   const remainMins = mins % 60;
   return remainMins > 0 ? `~${hrs}h ${remainMins}m` : `~${hrs}h`;
+}
+
+/* ── Glass card wrapper ─────────────────────────────────────────── */
+function GlassCard({ children, style }: { children: React.ReactNode; style?: any }) {
+  return (
+    <View style={[styles.glassOuter, style]}>
+      <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+        <LinearGradient
+          colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        {children}
+      </BlurView>
+    </View>
+  );
 }
 
 export default function DenominatedNotesScreen() {
@@ -111,18 +129,11 @@ export default function DenominatedNotesScreen() {
   }, []);
 
   const getMaturityInfo = useCallback((note: StoredNote) => {
-    // Time-based minimum: 1 hour from deposit
-    const timeSinceDeposit = Date.now() - note.shieldedAt;
-    const timeRemaining = Math.max(0, MIN_MATURITY_MS - timeSinceDeposit);
-
     if (note.status === 'mature') {
-      // Even if on-chain says mature, enforce 1h minimum in UI
-      if (timeRemaining > 0) return { isMature: false, remainingMs: timeRemaining };
       return { isMature: true, remainingMs: 0 };
     }
     if (!currentSlot) {
-      // No slot data yet — use time-based estimate
-      return { isMature: false, remainingMs: timeRemaining > 0 ? timeRemaining : -1 };
+      return { isMature: false, remainingMs: -1 }; // no slot data yet
     }
 
     try {
@@ -130,23 +141,21 @@ export default function DenominatedNotesScreen() {
       const currentEpoch = slotToEpoch(currentSlot);
       const cached = poolCache[note.poolPDA];
       const epochDelay = cached?.info.epochDelay ?? 1n;
-      const minEpoch = currentEpoch - epochDelay;
+      const dynamicDelay = BigInt(cached?.info.dynamicDelay ?? 2);
+      const totalDelay = epochDelay + dynamicDelay;
+      const minEpoch = currentEpoch - totalDelay;
 
       if (receipt.depositEpoch <= minEpoch) {
-        // On-chain mature — but enforce 1h minimum
-        if (timeRemaining > 0) return { isMature: false, remainingMs: timeRemaining };
         return { isMature: true, remainingMs: 0 };
       }
 
-      // The note matures when slot reaches: (depositEpoch + epochDelay) * SLOTS_PER_EPOCH
-      const maturitySlot = Number(receipt.depositEpoch + epochDelay) * SLOTS_PER_EPOCH;
+      // Maturity slot = (depositEpoch + totalDelay) * SLOTS_PER_EPOCH
+      const maturitySlot = Number(receipt.depositEpoch + totalDelay) * SLOTS_PER_EPOCH;
       const slotsLeft = Math.max(0, maturitySlot - currentSlot);
-      const epochRemaining = slotsLeft * slotDurationMs;
-      // Show whichever is longer
-      const remainingMs = Math.max(epochRemaining, timeRemaining);
+      const remainingMs = slotsLeft * slotDurationMs;
       return { isMature: false, remainingMs };
     } catch {
-      return { isMature: false, remainingMs: timeRemaining > 0 ? timeRemaining : -1 };
+      return { isMature: false, remainingMs: -1 };
     }
   }, [currentSlot, slotDurationMs, poolCache]);
 
@@ -323,7 +332,7 @@ export default function DenominatedNotesScreen() {
           icon: 'close-circle' as const,
           color: Colors.textTertiary,
           label: 'Spent',
-          bgColor: Colors.surfaceSecondary,
+          bgColor: 'rgba(255, 255, 255, 0.05)',
         };
       case 'transferred':
         return {
@@ -349,124 +358,128 @@ export default function DenominatedNotesScreen() {
 
     return (
       <Animated.View key={note.id} entering={FadeInUp.delay(100 + index * 60)}>
-        <View style={styles.noteCard}>
-          <View style={styles.noteHeader}>
-            <View style={styles.noteLeft}>
-              <View style={[styles.statusIcon, { backgroundColor: cfg.bgColor }]}>
-                <Ionicons name={cfg.icon} size={20} color={cfg.color} />
-              </View>
-              <View>
-                <Text style={styles.noteAmount}>{note.denomination} {note.token}</Text>
-                <Text style={styles.noteTime}>
-                  {sourceLabel(note)} · {new Date(note.shieldedAt).toLocaleString()}
-                </Text>
-              </View>
-            </View>
-            <View style={[styles.statusBadge, { borderColor: cfg.color }]}>
-              <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
-            </View>
-          </View>
-
-          {/* Pool address (truncated) */}
-          <View style={styles.noteDetail}>
-            <Text style={styles.noteDetailLabel}>Pool</Text>
-            <Text style={styles.noteDetailValue}>
-              {note.poolPDA.slice(0, 12)}...{note.poolPDA.slice(-6)}
-            </Text>
-          </View>
-
-          <View style={styles.noteDetail}>
-            <Text style={styles.noteDetailLabel}>Note ID</Text>
-            <Text style={styles.noteDetailValue}>{note.id}</Text>
-          </View>
-
-          {note.spentTxSig && (
-            <TouchableOpacity style={styles.noteDetail} onPress={() => handleViewTx(note.spentTxSig!)}>
-              <Text style={styles.noteDetailLabel}>Tx</Text>
-              <Text style={[styles.noteDetailValue, { color: P01Colors.cyan }]}>
-                {note.spentTxSig.slice(0, 16)}... ↗
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {note.status === 'transferred' && note.transferredTo && (
-            <TouchableOpacity style={styles.noteDetail} onPress={() => handleReshareNote(note)}>
-              <Text style={styles.noteDetailLabel}>Sent to</Text>
-              <Text style={[styles.noteDetailValue, { color: '#8B8BFF' }]}>
-                Re-share note link ↗
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Status + Actions */}
-          {note.status === 'mature' && (
-            <>
-              <View style={styles.readyBanner}>
-                <Ionicons name="shield-checkmark" size={14} color={P01Colors.green} />
-                <Text style={styles.readyBannerText}>Mature · Ready</Text>
-              </View>
-              <View style={styles.noteActions}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleUnshield(note)}>
-                  <Ionicons name="arrow-up-circle" size={16} color={P01Colors.cyan} />
-                  <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Withdraw</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: P01Colors.cyanDim }]}
-                  onPress={() => handleNearbyShare(note)}
-                >
-                  <Ionicons name="radio-outline" size={16} color={P01Colors.cyan} />
-                  <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Nearby</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: '#1a1a3a' }]}
-                  onPress={() => handleTransfer(note)}
-                >
-                  <Ionicons name="swap-horizontal" size={16} color="#8B8BFF" />
-                  <Text style={[styles.actionText, { color: '#8B8BFF' }]}>Send</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: Colors.surfaceSecondary }]}
-                  onPress={() => handleManualShare(note)}
-                >
-                  <Ionicons name="alert-circle-outline" size={16} color={Colors.textSecondary} />
-                  <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Share</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-          {(note.status === 'pending' || note.status === 'imported') && (() => {
-            const maturity = getMaturityInfo(note);
-            const timeStr = maturity.remainingMs > 0
-              ? formatTimeRemaining(maturity.remainingMs)
-              : maturity.remainingMs === 0 ? 'Ready' : 'Calculating...';
-            return (
-              <>
-                <View style={styles.pendingBanner}>
-                  <Ionicons name="hourglass-outline" size={14} color={P01Colors.yellow} />
-                  <Text style={styles.pendingBannerText}>
-                    Available in {timeStr}
+        <GlassCard style={{ marginBottom: Spacing.md }}>
+          <View style={styles.noteCardInner}>
+            <View style={styles.noteHeader}>
+              <View style={styles.noteLeft}>
+                <View style={[styles.statusIcon, { backgroundColor: cfg.bgColor }]}>
+                  <Ionicons name={cfg.icon} size={20} color={cfg.color} />
+                </View>
+                <View>
+                  <Text style={styles.noteAmount}>{note.denomination} {note.token}</Text>
+                  <Text style={styles.noteTime}>
+                    {sourceLabel(note)} · {new Date(note.shieldedAt).toLocaleString()}
                   </Text>
                 </View>
+              </View>
+              <View style={[styles.statusBadge, { borderColor: cfg.color }]}>
+                <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
+              </View>
+            </View>
+
+            {/* Pool address (truncated) */}
+            <View style={styles.noteDetail}>
+              <Text style={styles.noteDetailLabel}>Pool</Text>
+              <Text style={styles.noteDetailValue}>
+                {note.poolPDA.slice(0, 12)}...{note.poolPDA.slice(-6)}
+              </Text>
+            </View>
+
+            <View style={styles.noteDetail}>
+              <Text style={styles.noteDetailLabel}>Note ID</Text>
+              <Text style={styles.noteDetailValue}>{note.id}</Text>
+            </View>
+
+            {note.spentTxSig && (
+              <TouchableOpacity style={styles.noteDetail} onPress={() => handleViewTx(note.spentTxSig!)}>
+                <Text style={styles.noteDetailLabel}>Tx</Text>
+                <Text style={[styles.noteDetailValue, { color: P01Colors.cyan }]}>
+                  {note.spentTxSig.slice(0, 16)}... ↗
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {note.status === 'transferred' && note.transferredTo && (
+              <TouchableOpacity style={styles.noteDetail} onPress={() => handleReshareNote(note)}>
+                <Text style={styles.noteDetailLabel}>Sent to</Text>
+                <Text style={[styles.noteDetailValue, { color: '#8B8BFF' }]}>
+                  Re-share note link ↗
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Status + Actions */}
+            {note.status === 'mature' && (
+              <>
+                <View style={styles.readyBanner}>
+                  <Ionicons name="shield-checkmark" size={14} color={P01Colors.green} />
+                  <Text style={styles.readyBannerText}>Mature · Ready</Text>
+                </View>
                 <View style={styles.noteActions}>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
-                    onPress={() => handleEmergencyUnshield(note)}
-                  >
-                    <Ionicons name="flash" size={16} color={Colors.error} />
-                    <Text style={[styles.actionText, { color: Colors.error }]}>Emergency</Text>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => handleUnshield(note)}>
+                    <Ionicons name="arrow-up-circle" size={16} color={P01Colors.cyan} />
+                    <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Withdraw</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: Colors.surfaceSecondary }]}
-                    onPress={() => handleExportNote(note)}
+                    style={[styles.actionBtn, { backgroundColor: P01Colors.cyanDim }]}
+                    onPress={() => handleNearbyShare(note)}
                   >
-                    <Ionicons name="cloud-upload-outline" size={16} color={Colors.textSecondary} />
-                    <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Backup</Text>
+                    <Ionicons name="radio-outline" size={16} color={P01Colors.cyan} />
+                    <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Nearby</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: 'rgba(139, 139, 255, 0.12)' }]}
+                    onPress={() => handleTransfer(note)}
+                  >
+                    <Ionicons name="swap-horizontal" size={16} color="#8B8BFF" />
+                    <Text style={[styles.actionText, { color: '#8B8BFF' }]}>Send</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}
+                    onPress={() => handleManualShare(note)}
+                  >
+                    <Ionicons name="alert-circle-outline" size={16} color={Colors.textSecondary} />
+                    <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Share</Text>
                   </TouchableOpacity>
                 </View>
               </>
-            );
-          })()}
-        </View>
+            )}
+            {(note.status === 'pending' || note.status === 'imported') && (() => {
+              const maturity = getMaturityInfo(note);
+              const timeStr = maturity.remainingMs > 0
+                ? formatTimeRemaining(maturity.remainingMs)
+                : maturity.remainingMs === 0 ? 'Ready' : 'Calculating...';
+              return (
+                <>
+                  <View style={styles.pendingBanner}>
+                    <Ionicons name="hourglass-outline" size={14} color={P01Colors.yellow} />
+                    <Text style={styles.pendingBannerText}>
+                      Available in {timeStr}
+                    </Text>
+                  </View>
+                  <View style={styles.noteActions}>
+                    {note.source === 'shielded' && (
+                      <TouchableOpacity
+                        style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
+                        onPress={() => handleEmergencyUnshield(note)}
+                      >
+                        <Ionicons name="flash" size={16} color={Colors.error} />
+                        <Text style={[styles.actionText, { color: Colors.error }]}>Emergency</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={[styles.actionBtn, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}
+                      onPress={() => handleExportNote(note)}
+                    >
+                      <Ionicons name="cloud-upload-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Backup</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </GlassCard>
       </Animated.View>
     );
   };
@@ -474,7 +487,7 @@ export default function DenominatedNotesScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
-      <View style={styles.header}>
+      <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
@@ -490,7 +503,7 @@ export default function DenominatedNotesScreen() {
             <Ionicons name="add" size={22} color={P01Colors.cyan} />
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
 
       <ScrollView
         style={styles.scrollView}
@@ -501,85 +514,104 @@ export default function DenominatedNotesScreen() {
         }
       >
         {/* Quick actions: Receive + Import */}
-        <View style={styles.quickActions}>
-          <TouchableOpacity
-            style={styles.quickActionBtn}
-            onPress={() => router.push('/(main)/(privacy)/receive-note' as any)}
-          >
-            <Ionicons name="bluetooth" size={20} color={P01Colors.blue} />
-            <Text style={styles.quickActionLabel}>Receive Nearby</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.quickActionBtn}
-            onPress={handleImport}
-          >
-            <Ionicons name="clipboard-outline" size={20} color={P01Colors.cyan} />
-            <Text style={styles.quickActionLabel}>Import Note</Text>
-          </TouchableOpacity>
-        </View>
+        <Animated.View entering={FadeInUp.delay(80)}>
+          <View style={styles.quickActions}>
+            <TouchableOpacity
+              style={styles.quickActionBtn}
+              onPress={() => router.push('/(main)/(privacy)/receive-note' as any)}
+            >
+              <BlurView intensity={12} tint="dark" style={styles.quickActionBlur}>
+                <LinearGradient
+                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <Ionicons name="bluetooth" size={20} color={P01Colors.blue} />
+                <Text style={styles.quickActionLabel}>Receive Nearby</Text>
+              </BlurView>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.quickActionBtn}
+              onPress={handleImport}
+            >
+              <BlurView intensity={12} tint="dark" style={styles.quickActionBlur}>
+                <LinearGradient
+                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <Ionicons name="clipboard-outline" size={20} color={P01Colors.cyan} />
+                <Text style={styles.quickActionLabel}>Import Note</Text>
+              </BlurView>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
 
         {/* Summary Card */}
         {notes.length > 0 && (
-          <Animated.View entering={FadeInDown.delay(50)}>
-            <LinearGradient
-              colors={['#111111', '#0a0a0a']}
-              style={styles.summaryCard}
-            >
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryItem}>
-                  <Text style={styles.summaryValue}>{activeNotes.length}</Text>
-                  <Text style={styles.summaryLabel}>Active</Text>
-                </View>
-                <View style={styles.summaryDivider} />
-                <View style={styles.summaryItem}>
-                  <Text style={[styles.summaryValue, { color: P01Colors.cyan }]}>
-                    {activeNotes.filter(n => n.status === 'mature').length}
-                  </Text>
-                  <Text style={styles.summaryLabel}>Ready</Text>
-                </View>
-                <View style={styles.summaryDivider} />
-                <View style={styles.summaryItem}>
-                  <Text style={[styles.summaryValue, { color: P01Colors.yellow }]}>
-                    {activeNotes.filter(n => n.status === 'pending' || n.status === 'imported').length}
-                  </Text>
-                  <Text style={styles.summaryLabel}>Pending</Text>
-                </View>
-                <View style={styles.summaryDivider} />
-                <View style={styles.summaryItem}>
-                  <Text style={styles.summaryValue}>{historyNotes.length}</Text>
-                  <Text style={styles.summaryLabel}>History</Text>
+          <Animated.View entering={FadeInDown.delay(100)}>
+            <GlassCard style={{ marginBottom: Spacing.lg }}>
+              <View style={styles.summaryInner}>
+                <View style={styles.summaryRow}>
+                  <View style={styles.summaryItem}>
+                    <Text style={styles.summaryValue}>{activeNotes.length}</Text>
+                    <Text style={styles.summaryLabel}>Active</Text>
+                  </View>
+                  <View style={styles.summaryDivider} />
+                  <View style={styles.summaryItem}>
+                    <Text style={[styles.summaryValue, { color: P01Colors.cyan }]}>
+                      {activeNotes.filter(n => n.status === 'mature').length}
+                    </Text>
+                    <Text style={styles.summaryLabel}>Ready</Text>
+                  </View>
+                  <View style={styles.summaryDivider} />
+                  <View style={styles.summaryItem}>
+                    <Text style={[styles.summaryValue, { color: P01Colors.yellow }]}>
+                      {activeNotes.filter(n => n.status === 'pending' || n.status === 'imported').length}
+                    </Text>
+                    <Text style={styles.summaryLabel}>Pending</Text>
+                  </View>
+                  <View style={styles.summaryDivider} />
+                  <View style={styles.summaryItem}>
+                    <Text style={styles.summaryValue}>{historyNotes.length}</Text>
+                    <Text style={styles.summaryLabel}>History</Text>
+                  </View>
                 </View>
               </View>
-            </LinearGradient>
+            </GlassCard>
           </Animated.View>
         )}
 
         {/* Empty State */}
         {notes.length === 0 && (
           <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.emptyCard}>
-              <Ionicons name="receipt-outline" size={48} color={Colors.textTertiary} />
-              <Text style={styles.emptyTitle}>No Notes Yet</Text>
-              <Text style={styles.emptyText}>
-                Shield some funds into a denomination pool to create your first private note.
-              </Text>
-              <View style={styles.emptyActions}>
-                <TouchableOpacity
-                  style={styles.emptyAction}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-                >
-                  <Ionicons name="shield-checkmark" size={18} color="#000" />
-                  <Text style={styles.emptyActionText}>Shield</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.emptyAction, { backgroundColor: '#8B8BFF' }]}
-                  onPress={handleImport}
-                >
-                  <Ionicons name="download" size={18} color="#000" />
-                  <Text style={styles.emptyActionText}>Receive</Text>
-                </TouchableOpacity>
+            <GlassCard style={{ marginTop: Spacing['3xl'] }}>
+              <View style={styles.emptyInner}>
+                <Ionicons name="receipt-outline" size={48} color={Colors.textTertiary} />
+                <Text style={styles.emptyTitle}>No Notes Yet</Text>
+                <Text style={styles.emptyText}>
+                  Shield some funds into a denomination pool to create your first private note.
+                </Text>
+                <View style={styles.emptyActions}>
+                  <TouchableOpacity
+                    style={styles.emptyAction}
+                    onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+                  >
+                    <Ionicons name="shield-checkmark" size={18} color="#000" />
+                    <Text style={styles.emptyActionText}>Shield</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.emptyAction, { backgroundColor: '#8B8BFF' }]}
+                    onPress={handleImport}
+                  >
+                    <Ionicons name="download" size={18} color="#000" />
+                    <Text style={styles.emptyActionText}>Receive</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
+            </GlassCard>
           </Animated.View>
         )}
 
@@ -614,11 +646,21 @@ export default function DenominatedNotesScreen() {
         {/* Explainer */}
         <Animated.View entering={FadeInUp.delay(400)}>
           <View style={styles.explainer}>
-            <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
-            <Text style={styles.explainerText}>
-              Notes are stored locally on your device. If you delete them, the funds are lost forever.
-              Back up your notes before clearing app data.
-            </Text>
+            <BlurView intensity={12} tint="dark" style={styles.explainerBlur}>
+              <LinearGradient
+                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.explainerContent}>
+                <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
+                <Text style={styles.explainerText}>
+                  Notes are stored locally on your device. If you delete them, the funds are lost forever.
+                  Back up your notes before clearing app data.
+                </Text>
+              </View>
+            </BlurView>
           </View>
         </Animated.View>
       </ScrollView>
@@ -627,17 +669,18 @@ export default function DenominatedNotesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
+    backgroundColor: 'transparent',
   },
   backBtn: {
     width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     justifyContent: 'center', alignItems: 'center',
   },
   headerTitle: {
@@ -647,7 +690,7 @@ const styles = StyleSheet.create({
   },
   headerActionBtn: {
     width: 36, height: 36, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     justifyContent: 'center', alignItems: 'center',
   },
   addBtn: {
@@ -660,6 +703,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingBottom: 120,
   },
+
+  /* ── Glass card primitives ──────────────────────────────────── */
+  glassOuter: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  glassBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  },
+
+  /* ── Quick actions ──────────────────────────────────────────── */
   quickActions: {
     flexDirection: 'row',
     gap: Spacing.sm,
@@ -667,27 +723,28 @@ const styles = StyleSheet.create({
   },
   quickActionBtn: {
     flex: 1,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  quickActionBlur: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
   },
   quickActionLabel: {
     fontSize: 14,
     fontFamily: FontFamily.semibold,
     color: Colors.text,
   },
-  summaryCard: {
-    borderRadius: BorderRadius.xl,
+
+  /* ── Summary card ───────────────────────────────────────────── */
+  summaryInner: {
     padding: Spacing.xl,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   summaryRow: {
     flexDirection: 'row',
@@ -709,18 +766,15 @@ const styles = StyleSheet.create({
   },
   summaryDivider: {
     width: 1,
-    backgroundColor: Colors.border,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     marginHorizontal: 4,
   },
-  emptyCard: {
+
+  /* ── Empty state ────────────────────────────────────────────── */
+  emptyInner: {
     alignItems: 'center',
     gap: Spacing.md,
     padding: Spacing['3xl'],
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginTop: Spacing['3xl'],
   },
   emptyTitle: {
     fontSize: 18,
@@ -753,6 +807,8 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.bold,
     color: '#000',
   },
+
+  /* ── Section headers ────────────────────────────────────────── */
   sectionTitle: {
     fontSize: 15,
     fontFamily: FontFamily.semibold,
@@ -767,13 +823,10 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     paddingVertical: Spacing.sm,
   },
-  noteCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
+
+  /* ── Note card inner ────────────────────────────────────────── */
+  noteCardInner: {
     padding: Spacing.lg,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   noteHeader: {
     flexDirection: 'row',
@@ -829,11 +882,13 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     color: Colors.textSecondary,
   },
+
+  /* ── Banners ────────────────────────────────────────────────── */
   readyBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: P01Colors.greenDim,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
     borderRadius: BorderRadius.sm,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -848,7 +903,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: P01Colors.yellowDim,
+    backgroundColor: 'rgba(255, 204, 0, 0.08)',
     borderRadius: BorderRadius.sm,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -859,6 +914,8 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.medium,
     color: P01Colors.yellow,
   },
+
+  /* ── Note actions ───────────────────────────────────────────── */
   noteActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -867,7 +924,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
     paddingTop: Spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    borderTopColor: 'rgba(255, 255, 255, 0.04)',
   },
   actionBtn: {
     flexDirection: 'row',
@@ -891,16 +948,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: FontFamily.medium,
   },
+
+  /* ── Explainer ──────────────────────────────────────────────── */
   explainer: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.04)',
+    marginTop: Spacing.xl,
+  },
+  explainerBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.55)',
+  },
+  explainerContent: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.md,
     padding: Spacing.md,
-    marginTop: Spacing.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
   explainerText: {
     flex: 1,
