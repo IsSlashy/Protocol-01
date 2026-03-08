@@ -16,11 +16,22 @@ wasm = ["wasm-bindgen", "serde", "serde_json", "getrandom"]
 # Winterfell STARK library (re-exports air, prover, verifier, math, crypto)
 winterfell = { version = "0.10", default-features = false }
 
+# Blake3 for Merkle tree in compact proof format
+blake3 = { workspace = true }
+
+# Hex encoding for proof output
+hex = "0.4"
+
 # WASM bindings (optional)
 wasm-bindgen = { version = "0.2", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
+
+[[bin]]
+name = "gen_proof"
+path = "src/bin/gen_proof.rs"
+required-features = ["std"]
 
 [dev-dependencies]
 rand = "0.8"
