@@ -49,6 +49,8 @@ export interface StarkProverHandle {
   generatePoolCommitmentProof(id: string, np: string, secret: string, epoch: string, mint: string): void;
   generateBalanceProof(id: string, sk: string, balance: string, salt: string, mint: string): void;
   generateMerklePathProof(id: string, leaf: string, pathElements: string[], pathIndices: number[]): void;
+  generateConfidentialBalanceProof(id: string, spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string): void;
+  generateTransferProof(id: string, spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string): void;
   isMounted(): boolean;
 }
 
@@ -179,6 +181,12 @@ const STARK_HTML = `<!DOCTYPE html>
         break;
       case 'generateMerklePathProof':
         generateMerklePathProofFn(data.id, data.leaf, data.pathElements, data.pathIndices);
+        break;
+      case 'generateConfidentialBalanceProof':
+        generateConfidentialBalanceProofFn(data.id, data);
+        break;
+      case 'generateTransferProof':
+        generateTransferProofFn(data.id, data);
         break;
     }
   }
@@ -337,6 +345,73 @@ const STARK_HTML = `<!DOCTYPE html>
     }
   }
 
+  function generateConfidentialBalanceProofFn(id, data) {
+    try {
+      if (!wasmInstance) throw new Error('WASM not initialized');
+      var startTime = performance.now();
+      var ret = wasmInstance.exports.generate_confidential_balance_stark_proof(
+        BigInt(data.spendingKey),
+        BigInt(data.oldBalance),
+        BigInt(data.oldSalt),
+        BigInt(data.newBalance),
+        BigInt(data.newSalt),
+        BigInt(data.amount),
+        BigInt(data.amountSalt),
+        BigInt(data.tokenMint)
+      );
+      var jsonStr = getStringFromWasm(ret[0], ret[1]);
+      wasmInstance.exports.__wbindgen_free(ret[0], ret[1], 1);
+      var elapsed = Math.round(performance.now() - startTime);
+      var result = JSON.parse(jsonStr);
+      post({
+        type: 'proof', id: id,
+        circuitId: 4,
+        publicInputs: [result.old_commitment, result.new_commitment, result.amount_hash, result.token_mint],
+        proofHex: result.proof_hex,
+        proofSize: result.proof_size,
+        durationMs: elapsed
+      });
+    } catch(e) {
+      post({ type: 'error', id: id, error: e.message || 'Confidential balance proof failed' });
+    }
+  }
+
+  function generateTransferProofFn(id, data) {
+    try {
+      if (!wasmInstance) throw new Error('WASM not initialized');
+      var startTime = performance.now();
+      var ret = wasmInstance.exports.generate_transfer_stark_proof(
+        BigInt(data.spendingKey),
+        BigInt(data.tokenMint),
+        BigInt(data.inAmount1),
+        BigInt(data.inRand1),
+        BigInt(data.inAmount2),
+        BigInt(data.inRand2),
+        BigInt(data.outAmount1),
+        BigInt(data.outRand1),
+        BigInt(data.outRecipient1),
+        BigInt(data.outAmount2),
+        BigInt(data.outRand2),
+        BigInt(data.outRecipient2),
+        BigInt(data.publicAmount)
+      );
+      var jsonStr = getStringFromWasm(ret[0], ret[1]);
+      wasmInstance.exports.__wbindgen_free(ret[0], ret[1], 1);
+      var elapsed = Math.round(performance.now() - startTime);
+      var result = JSON.parse(jsonStr);
+      post({
+        type: 'proof', id: id,
+        circuitId: 5,
+        publicInputs: [result.nullifier_1, result.nullifier_2, result.output_commitment_1, result.output_commitment_2, result.public_amount, result.token_mint],
+        proofHex: result.proof_hex,
+        proofSize: result.proof_size,
+        durationMs: elapsed
+      });
+    } catch(e) {
+      post({ type: 'error', id: id, error: e.message || 'Transfer proof failed' });
+    }
+  }
+
   post({ type: 'ready' });
 })();
 </script>
@@ -423,6 +498,26 @@ export const StarkProver = forwardRef<StarkProverHandle, StarkProverProps>(
       generateMerklePathProof(id: string, leaf: string, pathElements: string[], pathIndices: number[]) {
         if (!webViewRef.current) return;
         inject(JSON.stringify({ type: 'generateMerklePathProof', id, leaf, pathElements, pathIndices }));
+      },
+
+      generateConfidentialBalanceProof(id: string, spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string) {
+        if (!webViewRef.current) return;
+        inject(JSON.stringify({
+          type: 'generateConfidentialBalanceProof', id,
+          spendingKey, oldBalance, oldSalt, newBalance, newSalt, amount, amountSalt, tokenMint,
+        }));
+      },
+
+      generateTransferProof(id: string, spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string) {
+        if (!webViewRef.current) return;
+        inject(JSON.stringify({
+          type: 'generateTransferProof', id,
+          spendingKey, tokenMint,
+          inAmount1, inRand1, inAmount2, inRand2,
+          outAmount1, outRand1, outRecipient1,
+          outAmount2, outRand2, outRecipient2,
+          publicAmount,
+        }));
       },
 
       isMounted() {

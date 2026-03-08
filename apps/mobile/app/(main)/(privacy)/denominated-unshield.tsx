@@ -25,6 +25,7 @@ import { receiptFromJSON } from '@/services/denominatedPool';
 import { getKeypair } from '@/services/solana/wallet';
 import { useWalletStore } from '@/stores/walletStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { requireBiometricAuth } from '@/utils/biometricGate';
 
 export default function DenominatedUnshieldScreen() {
   return <UnshieldScreenContent />;
@@ -103,6 +104,13 @@ function UnshieldScreenContent() {
     }
     if (!recipient || recipient.length < 32) {
       Alert.alert('Invalid Recipient', 'Please enter a valid Solana address.');
+      return;
+    }
+
+    // Biometric gate — require auth before unshielding funds
+    const authed = await requireBiometricAuth('Authenticate to unshield funds');
+    if (!authed) {
+      Alert.alert('Authentication Required', 'You must authenticate to unshield funds.');
       return;
     }
 

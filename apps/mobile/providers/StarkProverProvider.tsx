@@ -51,6 +51,8 @@ interface StarkProverContextType {
   computeCommitment: (subscriberSecret: string) => Promise<string>;
   generatePoolCommitmentProof: (np: string, secret: string, epoch: string, mint: string) => Promise<GenericStarkProofResult>;
   generateBalanceProof: (sk: string, balance: string, salt: string, mint: string) => Promise<GenericStarkProofResult>;
+  generateConfidentialBalanceProof: (spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string) => Promise<GenericStarkProofResult>;
+  generateTransferProof: (spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string) => Promise<GenericStarkProofResult>;
   error: string | null;
 }
 
@@ -203,12 +205,65 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     [sendRequestRaw],
   );
 
+  const generateConfidentialBalanceProof = useCallback(
+    async (
+      spendingKey: string, oldBalance: string, oldSalt: string,
+      newBalance: string, newSalt: string,
+      amount: string, amountSalt: string, tokenMint: string,
+    ): Promise<GenericStarkProofResult> => {
+      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
+        proverRef.current!.generateConfidentialBalanceProof(
+          id, spendingKey, oldBalance, oldSalt, newBalance, newSalt, amount, amountSalt, tokenMint,
+        );
+      });
+      return {
+        circuitId: msg.circuitId ?? 4,
+        publicInputs: msg.publicInputs ?? [],
+        proofHex: msg.proofHex!,
+        proofSize: msg.proofSize!,
+        durationMs: msg.durationMs!,
+      };
+    },
+    [sendRequestRaw],
+  );
+
+  const generateTransferProof = useCallback(
+    async (
+      spendingKey: string, tokenMint: string,
+      inAmount1: string, inRand1: string,
+      inAmount2: string, inRand2: string,
+      outAmount1: string, outRand1: string, outRecipient1: string,
+      outAmount2: string, outRand2: string, outRecipient2: string,
+      publicAmount: string,
+    ): Promise<GenericStarkProofResult> => {
+      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
+        proverRef.current!.generateTransferProof(
+          id, spendingKey, tokenMint,
+          inAmount1, inRand1, inAmount2, inRand2,
+          outAmount1, outRand1, outRecipient1,
+          outAmount2, outRand2, outRecipient2,
+          publicAmount,
+        );
+      });
+      return {
+        circuitId: msg.circuitId ?? 5,
+        publicInputs: msg.publicInputs ?? [],
+        proofHex: msg.proofHex!,
+        proofSize: msg.proofSize!,
+        durationMs: msg.durationMs!,
+      };
+    },
+    [sendRequestRaw],
+  );
+
   const contextValue: StarkProverContextType = {
     isReady,
     generateProof,
     computeCommitment,
     generatePoolCommitmentProof,
     generateBalanceProof,
+    generateConfidentialBalanceProof,
+    generateTransferProof,
     error,
   };
 
@@ -234,6 +289,8 @@ export function useStarkProver(): StarkProverContextType {
       computeCommitment: notAvailable as any,
       generatePoolCommitmentProof: notAvailable as any,
       generateBalanceProof: notAvailable as any,
+      generateConfidentialBalanceProof: notAvailable as any,
+      generateTransferProof: notAvailable as any,
       error: 'StarkProverProvider not in component tree',
     };
   }

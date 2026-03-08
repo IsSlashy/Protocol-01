@@ -26,6 +26,7 @@ import {
   TransactionResult,
 } from '../services/solana/transactions';
 import { PublicKey, Transaction } from '@solana/web3.js';
+import { resetAllPrivacyStores } from './resetStores';
 
 // Store Privy signer for transactions
 let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
@@ -260,6 +261,9 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         ]);
       }
 
+      // Reset all privacy-related stores so no data leaks from the previous wallet
+      await resetAllPrivacyStores();
+
       const wallet = await importWallet(mnemonic);
 
       // Reset state completely with new wallet
@@ -290,6 +294,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     try {
       set({ loading: true, error: null });
       await deleteWallet();
+      // Reset all privacy-related stores so no data leaks to the next wallet
+      await resetAllPrivacyStores();
       set({
         hasWallet: false,
         publicKey: null,

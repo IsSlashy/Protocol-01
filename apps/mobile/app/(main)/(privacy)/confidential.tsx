@@ -28,6 +28,7 @@ import {
   formatTokenAmount,
 } from '@/services/zkspl';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { requireBiometricAuth } from '@/utils/biometricGate';
 
 import ConfidentialBalanceCard from '@/components/privacy/ConfidentialBalanceCard';
 import ConfidentialActions from '@/components/privacy/ConfidentialActions';
@@ -152,6 +153,13 @@ export default function ConfidentialBalanceScreen() {
     if (!amount || parseFloat(amount) <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount'); return; }
     if (parseFloat(amount) > confidentialBalance) { Alert.alert('Insufficient Balance', `You do not have enough confidential ${tokenSymbol}`); return; }
     if (!publicKey) { Alert.alert('Error', 'Wallet not connected'); return; }
+
+    // Biometric gate — require auth before withdrawing funds
+    const authed = await requireBiometricAuth('Authenticate to withdraw funds');
+    if (!authed) {
+      Alert.alert('Authentication Required', 'You must authenticate to withdraw funds.');
+      return;
+    }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsProcessing(true);
