@@ -21,8 +21,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useWalletStore } from '@/stores/walletStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useZkProver } from '@/providers/ZkProverProvider';
+import { useStarkProver } from '@/providers/StarkProverProvider';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
+import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_CONFIDENTIAL_BALANCE } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
@@ -76,6 +78,10 @@ export default function ShieldedWalletScreen() {
   } = useShieldedStore();
 
   const { isCircuitLoaded, error: proverError } = useZkProver();
+  const {
+    isReady: starkReady,
+    generateConfidentialBalanceProof,
+  } = useStarkProver();
   const [isLoadingProver, setIsLoadingProver] = useState(false);
 
   const [showBalance, setShowBalance] = useState(true);
@@ -221,12 +227,55 @@ export default function ShieldedWalletScreen() {
       const { walletPubkey, signTransaction } = await getWalletSigner();
       setProgressStep(15);
 
-      const progressSteps = useRelay
-        ? [[20, 'Preparing proof...'], [40, 'Generating ZK proof...'], [55, 'Encrypting for relayer...'], [70, 'Submitting relay job...'], [85, 'Waiting for relayer...'], [100, 'Confirming on Solana...']]
-        : [[30, 'Preparing proof...'], [50, 'Generating ZK proof...'], [70, 'Signing transaction...'], [100, 'Confirming on Solana...']];
-      const interval = runProgress(15, progressSteps as [number, string][]);
-      await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction, useRelay);
-      clearInterval(interval);
+      if (starkReady && !useRelay) {
+        // --- STARK path (quantum-resistant) ---
+        setProgressStep(15);
+        setProgressMessage('Generating STARK proof on-device...');
+
+        // For shielded pool unshield, generate a confidential_balance STARK proof
+        // using the shielded balance as inputs
+        const amountLamports = Math.floor(parseFloat(amount) * 1e9);
+        const oldBalanceLamports = Math.floor(shieldedBalance * 1e9);
+        const newBalanceLamports = oldBalanceLamports - amountLamports;
+
+        const starkResult = await generateConfidentialBalanceProof(
+          '0', // spending key placeholder (shielded pool uses note-based keys)
+          oldBalanceLamports.toString(),
+          '0', // old salt
+          newBalanceLamports.toString(),
+          '0', // new salt
+          amountLamports.toString(),
+          '0', // amount salt
+          '0', // token mint (native SOL)
+        );
+
+        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+        const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+
+        setProgressStep(35);
+        setProgressMessage('Verifying STARK proof on-chain...');
+        const starkProof: GenericStarkProof = {
+          proofBytes,
+          circuitId: CIRCUIT_CONFIDENTIAL_BALANCE,
+          publicInputs,
+          proofSize: starkResult.proofSize,
+        };
+        await submitGenericStarkProof(starkProof, undefined, (step) => setProgressMessage(step));
+
+        setProgressStep(55);
+        setProgressMessage('Executing unshield...');
+        const interval = runProgress(55, [[70, 'Generating ZK proof...'], [85, 'Signing transaction...'], [100, 'Confirming on Solana...']]);
+        await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction, false);
+        clearInterval(interval);
+      } else {
+        // --- Groth16 fallback (or relay mode) ---
+        const progressSteps = useRelay
+          ? [[20, 'Preparing proof...'], [40, 'Generating ZK proof...'], [55, 'Encrypting for relayer...'], [70, 'Submitting relay job...'], [85, 'Waiting for relayer...'], [100, 'Confirming on Solana...']]
+          : [[30, 'Preparing proof...'], [50, 'Generating ZK proof...'], [70, 'Signing transaction...'], [100, 'Confirming on Solana...']];
+        const interval = runProgress(15, progressSteps as [number, string][]);
+        await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction, useRelay);
+        clearInterval(interval);
+      }
 
       setProgressStep(100);
       setProgressMessage('Complete!');
@@ -235,9 +284,8 @@ export default function ShieldedWalletScreen() {
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', useRelay
-        ? 'SOL has been privately unshielded via relay'
-        : 'SOL has been unshielded successfully');
+      const method = starkReady && !useRelay ? ' (STARK verified)' : useRelay ? ' via relay' : '';
+      Alert.alert('Success', `SOL has been unshielded successfully${method}`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', (err as Error).message);

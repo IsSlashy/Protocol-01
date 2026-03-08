@@ -15,6 +15,12 @@ import {
   getTokenSymbol,
   type ZkSplService,
 } from '../services/zkspl';
+import {
+  submitGenericStarkProof,
+  type GenericStarkProof,
+  CIRCUIT_CONFIDENTIAL_BALANCE,
+  CIRCUIT_TRANSFER,
+} from '../services/stark';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +34,13 @@ interface StateValidation {
   localBalance: number;
   commitmentMatches: boolean;
   details: string;
+}
+
+/** STARK proof data for confidential balance operations */
+export interface ConfidentialStarkProofData {
+  proofBytes: Uint8Array;
+  publicInputs: bigint[];
+  proofSize: number;
 }
 
 interface ConfidentialState {
@@ -71,6 +84,63 @@ interface ConfidentialState {
     recipient: string,
     amount: number,
   ) => Promise<string>;
+  /** Deposit with supplementary STARK proof (quantum-resistant redundancy) */
+  depositStark: (
+    tokenMint: string,
+    amount: number,
+    starkProofData: ConfidentialStarkProofData,
+    onStarkProgress?: (step: string) => void,
+  ) => Promise<string>;
+  /** Withdraw with supplementary STARK proof (quantum-resistant redundancy) */
+  withdrawStark: (
+    tokenMint: string,
+    amount: number,
+    starkProofData: ConfidentialStarkProofData,
+    onStarkProgress?: (step: string) => void,
+  ) => Promise<string>;
+  /** Transfer with supplementary STARK proof (quantum-resistant redundancy) */
+  confidentialTransferStark: (
+    tokenMint: string,
+    recipient: string,
+    amount: number,
+    starkProofData: ConfidentialStarkProofData,
+    onStarkProgress?: (step: string) => void,
+  ) => Promise<string>;
+  /** Get STARK proof inputs for confidential balance operations */
+  getConfidentialProofInputs: (
+    tokenMint: string,
+    amount: number,
+    isDebit: boolean,
+  ) => Promise<{
+    spendingKey: string;
+    oldBalance: string;
+    oldSalt: string;
+    newBalance: string;
+    newSalt: string;
+    amount: string;
+    amountSalt: string;
+    tokenMint: string;
+  }>;
+  /** Get STARK proof inputs for transfer operations */
+  getTransferProofInputs: (
+    tokenMint: string,
+    amount: number,
+    recipientPubkey: string,
+  ) => Promise<{
+    spendingKey: string;
+    tokenMint: string;
+    inAmount1: string;
+    inRand1: string;
+    inAmount2: string;
+    inRand2: string;
+    outAmount1: string;
+    outRand1: string;
+    outRecipient1: string;
+    outAmount2: string;
+    outRand2: string;
+    outRecipient2: string;
+    publicAmount: string;
+  }>;
   applyPending: (
     tokenMint: string,
     amount: number,
@@ -671,6 +741,164 @@ export const useConfidentialStore = create<ConfidentialState>()(
           return signature;
         } catch (error) {
           console.error('[Confidential] Transfer error:', error);
+          set({ isLoading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      /**
+       * Get STARK proof inputs for confidential balance (circuit 4).
+       * Must be called before deposit/withdraw to capture the pre-op state.
+       */
+      getConfidentialProofInputs: async (
+        tokenMint: string,
+        amount: number,
+        isDebit: boolean,
+      ) => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) throw new Error('ZkSPL service not initialized');
+        const { _service } = get();
+        if (!_service) throw new Error('ZkSPL service not available');
+
+        const decimals = getTokenDecimals(tokenMint);
+        const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
+        return _service.getConfidentialProofInputs(
+          new PublicKey(tokenMint),
+          amountAtomic,
+          isDebit,
+        );
+      },
+
+      /**
+       * Get STARK proof inputs for transfer (circuit 5).
+       * Must be called before confidentialTransfer to capture the pre-op state.
+       */
+      getTransferProofInputs: async (
+        tokenMint: string,
+        amount: number,
+        recipientPubkey: string,
+      ) => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) throw new Error('ZkSPL service not initialized');
+        const { _service } = get();
+        if (!_service) throw new Error('ZkSPL service not available');
+
+        const decimals = getTokenDecimals(tokenMint);
+        const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
+        return _service.getTransferProofInputs(
+          new PublicKey(tokenMint),
+          amountAtomic,
+          new PublicKey(recipientPubkey),
+        );
+      },
+
+      /**
+       * Deposit with supplementary STARK proof (quantum-resistant).
+       * Generates STARK proof for circuit 4, verifies on-chain, then deposits via Groth16.
+       */
+      depositStark: async (
+        tokenMint: string,
+        amount: number,
+        starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+        onStarkProgress?: (step: string) => void,
+      ) => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) throw new Error('ZkSPL service not initialized');
+        const { _service } = get();
+        if (!_service) throw new Error('ZkSPL service not available');
+
+        set({ isLoading: true, error: null });
+
+        try {
+          // Step 1: Submit STARK proof to on-chain verifier (quantum-resistant audit)
+          onStarkProgress?.('Verifying STARK proof on-chain...');
+          const starkProof: GenericStarkProof = {
+            proofBytes: starkProofData.proofBytes,
+            circuitId: CIRCUIT_CONFIDENTIAL_BALANCE,
+            publicInputs: starkProofData.publicInputs,
+            proofSize: starkProofData.proofSize,
+          };
+          await submitGenericStarkProof(starkProof, undefined, onStarkProgress);
+
+          // Step 2: Execute the Groth16 deposit (existing flow)
+          onStarkProgress?.('Executing deposit...');
+          const signature = await get().deposit(tokenMint, amount);
+          return signature;
+        } catch (error) {
+          console.error('[Confidential] STARK deposit error:', error);
+          set({ isLoading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      /**
+       * Withdraw with supplementary STARK proof (quantum-resistant).
+       */
+      withdrawStark: async (
+        tokenMint: string,
+        amount: number,
+        starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+        onStarkProgress?: (step: string) => void,
+      ) => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) throw new Error('ZkSPL service not initialized');
+        const { _service } = get();
+        if (!_service) throw new Error('ZkSPL service not available');
+
+        set({ isLoading: true, error: null });
+
+        try {
+          onStarkProgress?.('Verifying STARK proof on-chain...');
+          const starkProof: GenericStarkProof = {
+            proofBytes: starkProofData.proofBytes,
+            circuitId: CIRCUIT_CONFIDENTIAL_BALANCE,
+            publicInputs: starkProofData.publicInputs,
+            proofSize: starkProofData.proofSize,
+          };
+          await submitGenericStarkProof(starkProof, undefined, onStarkProgress);
+
+          onStarkProgress?.('Executing withdrawal...');
+          const signature = await get().withdraw(tokenMint, amount);
+          return signature;
+        } catch (error) {
+          console.error('[Confidential] STARK withdraw error:', error);
+          set({ isLoading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      /**
+       * Confidential transfer with supplementary STARK proof (quantum-resistant).
+       */
+      confidentialTransferStark: async (
+        tokenMint: string,
+        recipient: string,
+        amount: number,
+        starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+        onStarkProgress?: (step: string) => void,
+      ) => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) throw new Error('ZkSPL service not initialized');
+        const { _service } = get();
+        if (!_service) throw new Error('ZkSPL service not available');
+
+        set({ isLoading: true, error: null });
+
+        try {
+          onStarkProgress?.('Verifying STARK proof on-chain...');
+          const starkProof: GenericStarkProof = {
+            proofBytes: starkProofData.proofBytes,
+            circuitId: CIRCUIT_TRANSFER,
+            publicInputs: starkProofData.publicInputs,
+            proofSize: starkProofData.proofSize,
+          };
+          await submitGenericStarkProof(starkProof, undefined, onStarkProgress);
+
+          onStarkProgress?.('Executing transfer...');
+          const signature = await get().confidentialTransfer(tokenMint, recipient, amount);
+          return signature;
+        } catch (error) {
+          console.error('[Confidential] STARK transfer error:', error);
           set({ isLoading: false, error: (error as Error).message });
           throw error;
         }

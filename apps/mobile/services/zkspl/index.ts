@@ -31,6 +31,9 @@ import {
   LocalStateManager,
   poseidonHash,
   bytesToField,
+  pubkeyToField,
+  deriveOwnerPubkey,
+  deriveDeterministicSalt,
   type StateStore,
   type ConfidentialAccountData,
   type ZkSplTxResult,
@@ -403,6 +406,119 @@ export class ZkSplService {
    */
   getWalletPublicKey(): PublicKey {
     return this.walletPublicKey;
+  }
+
+  // -----------------------------------------------------------------------
+  // STARK proof inputs — expose internal state for STARK proof generation
+  // -----------------------------------------------------------------------
+
+  /**
+   * Get the inputs needed for STARK confidential_balance proof generation.
+   * This reads the current local state (balance, salt, nonce) and computes
+   * the values the STARK circuit expects.
+   *
+   * @param tokenMint - The SPL token mint
+   * @param amount - The operation amount (in atomic units)
+   * @param isDebit - Whether this is a withdrawal/transfer (debit) vs deposit (credit)
+   * @returns All values needed for STARK circuit 4 (confidential_balance)
+   */
+  async getConfidentialProofInputs(
+    tokenMint: PublicKey,
+    amount: bigint,
+    isDebit: boolean,
+  ): Promise<{
+    spendingKey: string;
+    oldBalance: string;
+    oldSalt: string;
+    newBalance: string;
+    newSalt: string;
+    amount: string;
+    amountSalt: string;
+    tokenMint: string;
+  }> {
+    const tokenMintField = pubkeyToField(tokenMint.toBytes());
+
+    const state = await this.client.getLocalState(tokenMint);
+    if (!state) {
+      throw new Error('No local state. Call createAccount() first.');
+    }
+
+    const oldBalance = state.balance;
+    const oldSalt = state.salt;
+    const currentNonce = state.nonce;
+    const newBalance = isDebit ? oldBalance - amount : oldBalance + amount;
+    const newSalt = deriveDeterministicSalt(this.spendingKey, currentNonce + 1n);
+
+    return {
+      spendingKey: this.spendingKey.toString(),
+      oldBalance: oldBalance.toString(),
+      oldSalt: oldSalt.toString(),
+      newBalance: newBalance.toString(),
+      newSalt: newSalt.toString(),
+      amount: amount.toString(),
+      amountSalt: '0', // deposit/withdraw use zero amount salt
+      tokenMint: tokenMintField.toString(),
+    };
+  }
+
+  /**
+   * Get the inputs needed for STARK transfer proof generation.
+   * Used for confidential transfers (circuit 5).
+   *
+   * @param tokenMint - The SPL token mint
+   * @param amount - The transfer amount (in atomic units)
+   * @param recipientPubkey - The recipient's public key
+   * @returns All values needed for STARK circuit 5 (transfer)
+   */
+  async getTransferProofInputs(
+    tokenMint: PublicKey,
+    amount: bigint,
+    recipientPubkey: PublicKey,
+  ): Promise<{
+    spendingKey: string;
+    tokenMint: string;
+    inAmount1: string;
+    inRand1: string;
+    inAmount2: string;
+    inRand2: string;
+    outAmount1: string;
+    outRand1: string;
+    outRecipient1: string;
+    outAmount2: string;
+    outRand2: string;
+    outRecipient2: string;
+    publicAmount: string;
+  }> {
+    const tokenMintField = pubkeyToField(tokenMint.toBytes());
+    const ownerPubkey = deriveOwnerPubkey(this.spendingKey);
+
+    const state = await this.client.getLocalState(tokenMint);
+    if (!state) {
+      throw new Error('No local state. Call createAccount() first.');
+    }
+
+    const currentNonce = state.nonce;
+    const oldBalance = state.balance;
+    const oldSalt = state.salt;
+    const newBalance = oldBalance - amount;
+    const newSalt = deriveDeterministicSalt(this.spendingKey, currentNonce + 1n);
+    const recipientField = pubkeyToField(recipientPubkey.toBytes());
+
+    return {
+      spendingKey: this.spendingKey.toString(),
+      tokenMint: tokenMintField.toString(),
+      inAmount1: oldBalance.toString(),
+      inRand1: oldSalt.toString(),
+      inAmount2: '0', // dummy second input
+      inRand2: '0',
+      outAmount1: amount.toString(),
+      outRand1: newSalt.toString(),
+      outRecipient1: recipientField.toString(),
+      outAmount2: newBalance.toString(),
+      outRand2: newSalt.toString(),
+      outRecipient2: ownerPubkey.toString(), // change output back to sender
+      publicAmount: '0', // no public amount in confidential transfer
+    };
   }
 
   // -----------------------------------------------------------------------
