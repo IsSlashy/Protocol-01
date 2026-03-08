@@ -5,8 +5,9 @@ import {
   TextInput,
   TouchableOpacity,
   FlatList,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
+  Dimensions,
   ActivityIndicator,
   RefreshControl,
   Alert,
@@ -16,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
+
 
 import { AgentAvatar, ChatBubble, SuggestionChip, QuickActionButton } from '@/components/agent';
 import { VoiceButton } from '@/components/agent/VoiceButton';
@@ -42,6 +43,8 @@ export default function AgentDashboard() {
 
   const [inputText, setInputText] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const {
     messages,
@@ -84,6 +87,33 @@ export default function AgentDashboard() {
       }, 100);
     }
   }, [messages.length, isLoading, streamingMessage]);
+
+  // Track keyboard visibility and height — manually offset content instead of KAV
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        // Use screenY for accurate height — endCoordinates.height can exclude
+        // the navigation bar on edge-to-edge Android layouts
+        const screenH = Dimensions.get('screen').height;
+        setKeyboardHeight(screenH - e.endCoordinates.screenY);
+        setKeyboardVisible(true);
+        if (messages.length > 0) {
+          setTimeout(() => {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          }, 300);
+        }
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+        setKeyboardVisible(false);
+      },
+    );
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, [messages.length]);
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
@@ -195,18 +225,8 @@ export default function AgentDashboard() {
   }, [messages.length, streamingMessage]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      {/* Background gradient */}
-      <LinearGradient
-        colors={['rgba(57, 197, 187, 0.04)', 'transparent']}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 200 }}
-      />
-
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
-      >
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+      <View style={{ flex: 1 }}>
         {/* Glass Header */}
         <View style={{ overflow: 'hidden' }}>
           <BlurView
@@ -319,11 +339,11 @@ export default function AgentDashboard() {
               />
             }
             ListHeaderComponent={
-              <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 32 }}>
+              <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 24 }}>
                 {/* Avatar + Greeting */}
                 <Animated.View
                   entering={FadeInDown.delay(100).springify()}
-                  style={{ alignItems: 'center', marginBottom: 32 }}
+                  style={{ alignItems: 'center', marginBottom: 20 }}
                 >
                   <AgentAvatar size="lg" isActive={true} />
                   <Text
@@ -401,7 +421,7 @@ export default function AgentDashboard() {
                 </Animated.View>
 
                 {/* Quick Actions Grid */}
-                <Animated.View entering={FadeInUp.delay(200).springify()}>
+                <Animated.View entering={FadeInUp.delay(200).springify()} style={{ marginBottom: 120 }}>
                   <Text
                     style={{
                       fontSize: FontSize.xs,
@@ -419,15 +439,16 @@ export default function AgentDashboard() {
                     style={{
                       flexDirection: 'row',
                       flexWrap: 'wrap',
-                      gap: 10,
+                      gap: 8,
                     }}
                   >
                     {QUICK_ACTIONS.map((action) => (
-                      <View key={action.label} style={{ width: '48%' }}>
+                      <View key={action.label} style={{ width: '31%' }}>
                         <QuickActionButton
                           icon={action.icon}
                           label={action.label}
                           color={action.color}
+                          variant="compact"
                           onPress={() => handleQuickAction(action.label)}
                         />
                       </View>
@@ -445,6 +466,11 @@ export default function AgentDashboard() {
             renderItem={renderMessage}
             keyExtractor={(item) => item.id}
             contentContainerStyle={{ paddingTop: 12, paddingBottom: 8 }}
+            onContentSizeChange={() => {
+              if (keyboardVisible) {
+                flatListRef.current?.scrollToEnd({ animated: true });
+              }
+            }}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -515,7 +541,7 @@ export default function AgentDashboard() {
             intensity={25}
             tint="dark"
             style={{
-              paddingBottom: (insets.bottom || 8) + 92,
+              paddingBottom: keyboardVisible ? 8 : (insets.bottom + 88),
               backgroundColor: 'rgba(10, 10, 12, 0.8)',
               borderTopWidth: 1,
               borderTopColor: 'rgba(57, 197, 187, 0.08)',
@@ -620,7 +646,10 @@ export default function AgentDashboard() {
             </View>
           </BlurView>
         </View>
-      </KeyboardAvoidingView>
+
+        {/* Keyboard spacer — pushes content up when keyboard is visible */}
+        {keyboardHeight > 0 && <View style={{ height: keyboardHeight }} />}
+      </View>
     </View>
   );
 }
