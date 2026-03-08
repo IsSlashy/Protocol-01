@@ -50,6 +50,8 @@ pub fn verify_generic(
         1 => verify_transition_pool_commitment(proof, config),
         2 => verify_transition_balance_proof(proof, config),
         3 => verify_transition_merkle_path(proof, config),
+        4 => verify_transition_confidential_balance(proof, config),
+        5 => verify_transition_transfer(proof, config),
         _ => Err(VerifyError::UnsupportedCircuit),
     }
 }
@@ -361,6 +363,100 @@ fn verify_transition_merkle_path(
         // Only check Poseidon rounds in active hash cycles
         let active_rows = config.trace_length; // all rows up to trace_length could be active
         if trace_row < active_rows && pos_in_cycle < config.num_rounds {
+            // Active Poseidon round on columns 0-2
+            let current = [query.trace_values[0], query.trace_values[1], query.trace_values[2]];
+            let rc = poseidon_consts::round_constants(pos_in_cycle);
+            let expected = poseidon_round(&current, &rc);
+
+            for col in 0..3 {
+                if query.next_trace_values[col] != expected[col] {
+                    return Err(VerifyError::TransitionConstraintFailed);
+                }
+            }
+        } else if pos_in_cycle == hash_cycle_len - 1 {
+            // Boundary: free transition
+        } else {
+            // Padding: identity on cols 0-2
+            for col in 0..3 {
+                if query.next_trace_values[col] != query.trace_values[col] {
+                    return Err(VerifyError::TransitionConstraintFailed);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Circuit 4: confidential_balance transition constraints
+// ============================================================================
+
+/// Confidential balance: 8 hash cycles of 32 rows (256 total), 4 columns
+/// Cycles 0-6 (rows 0-223): Active Poseidon rounds on cols 0-2
+/// Cycle 7 (rows 224-255): Padding (dummy hash)
+/// Col 3 is a carry column (holds owner_mint from cycle 1)
+fn verify_transition_confidential_balance(
+    proof: &GenericCompactProof,
+    config: &CircuitConfig,
+) -> Result<(), VerifyError> {
+    let hash_cycle_len = 32usize;
+
+    for query in &proof.queries {
+        if query.position as usize % config.blowup != 0 {
+            continue;
+        }
+
+        let trace_row = (query.position as usize / config.blowup) % config.trace_length;
+        let pos_in_cycle = trace_row % hash_cycle_len;
+
+        if pos_in_cycle < config.num_rounds {
+            // Active Poseidon round on columns 0-2
+            let current = [query.trace_values[0], query.trace_values[1], query.trace_values[2]];
+            let rc = poseidon_consts::round_constants(pos_in_cycle);
+            let expected = poseidon_round(&current, &rc);
+
+            for col in 0..3 {
+                if query.next_trace_values[col] != expected[col] {
+                    return Err(VerifyError::TransitionConstraintFailed);
+                }
+            }
+        } else if pos_in_cycle == hash_cycle_len - 1 {
+            // Boundary: free transition (new hash cycle starts next)
+        } else {
+            // Padding: identity on cols 0-2
+            for col in 0..3 {
+                if query.next_trace_values[col] != query.trace_values[col] {
+                    return Err(VerifyError::TransitionConstraintFailed);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Circuit 5: transfer transition constraints
+// ============================================================================
+
+/// Transfer: 16 hash cycles of 32 rows (512 total), 6 columns
+/// Cycles 0-13 (rows 0-447): Active Poseidon rounds on cols 0-2
+/// Cycles 14-15 (rows 448-511): Padding
+/// Cols 3-5 are carry columns
+fn verify_transition_transfer(
+    proof: &GenericCompactProof,
+    config: &CircuitConfig,
+) -> Result<(), VerifyError> {
+    let hash_cycle_len = 32usize;
+
+    for query in &proof.queries {
+        if query.position as usize % config.blowup != 0 {
+            continue;
+        }
+
+        let trace_row = (query.position as usize / config.blowup) % config.trace_length;
+        let pos_in_cycle = trace_row % hash_cycle_len;
+
+        if pos_in_cycle < config.num_rounds {
             // Active Poseidon round on columns 0-2
             let current = [query.trace_values[0], query.trace_values[1], query.trace_values[2]];
             let rc = poseidon_consts::round_constants(pos_in_cycle);

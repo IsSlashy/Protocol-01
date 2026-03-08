@@ -289,6 +289,30 @@ pub mod zk_shielded {
         instructions::subscribe_private::handler(ctx, proof, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber)
     }
 
+    /// Create a private subscription vault using STARK proof (quantum-resistant)
+    pub fn subscribe_private_stark(
+        ctx: Context<SubscribePrivateStark>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        subscriber_commitment: [u8; 32],
+        rate: u64,
+        interval_slots: u64,
+        vk_hash_subscriber: [u8; 32],
+    ) -> Result<()> {
+        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber)
+    }
+
+    /// Pause a private subscription vault using STARK proof (quantum-resistant)
+    pub fn pause_private_stark(ctx: Context<PausePrivateStark>) -> Result<()> {
+        instructions::pause_private_stark::handler(ctx)
+    }
+
+    /// Resume a private subscription vault using STARK proof (quantum-resistant)
+    pub fn resume_private_stark(ctx: Context<ResumePrivateStark>) -> Result<()> {
+        instructions::resume_private_stark::handler(ctx)
+    }
+
     /// Claim accrued periods from a subscription vault (retailer only)
     pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
         instructions::claim_period::handler(ctx)
