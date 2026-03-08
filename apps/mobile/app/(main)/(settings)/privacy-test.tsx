@@ -27,6 +27,7 @@ import {
 } from '../../../services/solana/decoyTransactions';
 import { sendSol } from '../../../services/solana/transactions';
 import { Keypair, PublicKey } from '@solana/web3.js';
+import { useStarkProver } from '../../../providers/StarkProverProvider';
 
 const COLORS = {
   void: '#0a0a0c',
@@ -49,6 +50,7 @@ interface LogEntry {
 export default function PrivacyTestScreen() {
   const router = useRouter();
   const { publicKey, balance, refreshBalance } = useWalletStore();
+  const { isReady: starkReady, generateProof: starkGenerateProof } = useStarkProver();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentTest, setCurrentTest] = useState<string | null>(null);
@@ -319,6 +321,47 @@ export default function PrivacyTestScreen() {
   };
 
   // ============================================
+  // TEST 5: STARK PROOF (Quantum-Resistant)
+  // ============================================
+  const testStarkProof = async () => {
+    setCurrentTest('stark');
+    setIsLoading(true);
+    addLog('=== TEST STARK PROOF (QUANTUM-RESISTANT) ===', 'info');
+
+    try {
+      if (!starkReady) {
+        addLog('STARK WASM prover not ready', 'error');
+        return;
+      }
+
+      addLog('WASM prover loaded, generating proof...', 'info');
+      const testSecret = '123456789012345678';
+      addLog(`Test secret: ${testSecret}`, 'info');
+
+      const start = Date.now();
+      const result = await starkGenerateProof(testSecret);
+      const elapsed = Date.now() - start;
+
+      addLog(`Proof generated in ${result.durationMs}ms (wall: ${elapsed}ms)`, 'success');
+      addLog(`Proof size: ${result.proofSize} bytes`, 'success');
+      addLog(`Commitment: ${result.commitment.slice(0, 32)}...`, 'success');
+      addLog(`Proof hex: ${result.proofHex.slice(0, 40)}...`, 'info');
+      addLog('', 'info');
+      addLog('Properties:', 'info');
+      addLog('  - Hash-based (no elliptic curves)', 'info');
+      addLog('  - Quantum-resistant (Shor-safe)', 'info');
+      addLog('  - ~9KB compact proof', 'info');
+      addLog('  - Goldilocks field (2^64 - 2^32 + 1)', 'info');
+      addLog('=== STARK PROOF TEST COMPLETE ===', 'success');
+    } catch (error: any) {
+      addLog(`Error: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+      setCurrentTest(null);
+    }
+  };
+
+  // ============================================
   // FULL PRIVACY TEST (Amount + Timing + Stealth simulation)
   // ============================================
   const runAllTests = async () => {
@@ -489,6 +532,36 @@ export default function PrivacyTestScreen() {
         </View>
 
         <TouchableOpacity
+          onPress={testStarkProof}
+          disabled={isLoading || !starkReady}
+          style={{
+            padding: 14,
+            backgroundColor: currentTest === 'stark' ? '#8B5CF6' : COLORS.surface,
+            borderRadius: 12,
+            alignItems: 'center',
+            flexDirection: 'row',
+            justifyContent: 'center',
+            gap: 8,
+            marginBottom: 8,
+            borderWidth: 1,
+            borderColor: '#8B5CF6' + '50',
+            opacity: starkReady ? 1 : 0.5,
+          }}
+        >
+          {currentTest === 'stark' ? (
+            <ActivityIndicator color={COLORS.text} />
+          ) : (
+            <>
+              <Ionicons name="hardware-chip" size={18} color="#8B5CF6" />
+              <Text style={{ color: COLORS.text, fontSize: 13, fontWeight: '600' }}>
+                STARK Proof {starkReady ? '' : '(loading WASM...)'}
+              </Text>
+              <Text style={{ color: '#8B5CF6', fontSize: 9 }}>PQ-SAFE</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
           onPress={runAllTests}
           disabled={isLoading}
           style={{
@@ -567,6 +640,7 @@ export default function PrivacyTestScreen() {
             { name: 'Timing Noise', icon: 'time' },
             { name: 'Stealth Addr', icon: 'eye-off' },
             { name: 'Decoy TX', icon: 'shuffle' },
+            { name: 'STARK Proof', icon: 'hardware-chip' },
           ].map((item, i) => (
             <View
               key={i}

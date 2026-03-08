@@ -406,7 +406,7 @@ export default function ShieldedWalletScreen() {
 
         <PrivacyInfoCard
           title="ZK-SNARK Protection"
-          description="Your shielded transactions use Groth16 zero-knowledge proofs. No one can see amounts, senders, or recipients on-chain."
+          description="Your shielded transactions use STARK zero-knowledge proofs (quantum-resistant). No one can see amounts, senders, or recipients on-chain."
         />
       </ScrollView>
 

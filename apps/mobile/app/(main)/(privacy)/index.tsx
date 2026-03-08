@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
@@ -104,10 +105,13 @@ export default function PrivacyDashboard() {
             accessibilityLabel={`Privacy Pool, ${activeNoteCount > 0 ? `${activeNoteCount} active notes` : 'fixed-denomination anonymous pool'}`}
             accessibilityHint="Opens privacy pool notes"
           >
-            <LinearGradient
-              colors={[P01Colors.cyanDim, 'rgba(57, 197, 187, 0.03)']}
-              style={styles.heroGradient}
-            >
+            <BlurView intensity={15} tint="dark" style={styles.heroGradient}>
+              <LinearGradient
+                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
               <View style={styles.modeCardHeader}>
                 <View style={[styles.modeIconContainer, { backgroundColor: P01Colors.cyanDim }]}>
                   <Ionicons name="shield-checkmark" size={28} color={P01Colors.cyan} />
@@ -126,7 +130,7 @@ export default function PrivacyDashboard() {
               {/* Quick Stats */}
               <View style={styles.quickStats}>
                 <View style={styles.statItem}>
-                  <Text style={styles.statValue}>Groth16</Text>
+                  <Text style={styles.statValue}>STARK</Text>
                   <Text style={styles.statLabel}>Proof System</Text>
                 </View>
                 <View style={styles.statDivider} />
@@ -199,7 +203,7 @@ export default function PrivacyDashboard() {
                   <Text style={[styles.quickActionText, { color: '#8B8BFF' }]}>Receive</Text>
                 </TouchableOpacity>
               </View>
-            </LinearGradient>
+            </BlurView>
           </TouchableOpacity>
         </Animated.View>
 
@@ -208,7 +212,7 @@ export default function PrivacyDashboard() {
           <View style={styles.explainerCard}>
             <Ionicons name="information-circle-outline" size={18} color={Colors.textTertiary} />
             <Text style={styles.explainerText}>
-              Privacy Pool uses Groth16 ZK-SNARKs with fixed denominations (Tornado-style) for maximum anonymity. All proofs are generated on your device — no private data leaves your phone.
+              Privacy Pool uses STARK proofs (quantum-resistant, hash-based) with fixed denominations for maximum anonymity. All proofs are generated on your device — no private data leaves your phone.
             </Text>
           </View>
         </Animated.View>
@@ -232,10 +236,7 @@ export default function PrivacyDashboard() {
               accessibilityRole="button"
               accessibilityLabel={`Shielded Wallet, legacy, ${shieldedInitialized ? `${shieldedBalance.toFixed(4)} SOL shielded` : 'variable-amount privacy pool'}`}
             >
-              <LinearGradient
-                colors={['rgba(100, 100, 100, 0.08)', 'rgba(50, 50, 50, 0.03)']}
-                style={styles.modeCardGradient}
-              >
+              <BlurView intensity={10} tint="dark" style={styles.modeCardGradient}>
                 <View style={styles.modeCardHeader}>
                   <View style={[styles.modeIconContainer, { backgroundColor: 'rgba(100,100,100,0.15)' }]}>
                     <Ionicons name="shield-half" size={24} color={Colors.textSecondary} />
@@ -280,7 +281,7 @@ export default function PrivacyDashboard() {
                     <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Transfer</Text>
                   </TouchableOpacity>
                 </View>
-              </LinearGradient>
+              </BlurView>
             </TouchableOpacity>
           </Animated.View>
         )}
@@ -304,10 +305,7 @@ export default function PrivacyDashboard() {
               accessibilityRole="button"
               accessibilityLabel={`Confidential Balance, legacy, ${confidentialInitialized ? `${confidentialSolBalance.toFixed(4)} SOL confidential` : 'quantum-resistant amount hiding'}`}
             >
-              <LinearGradient
-                colors={['rgba(100, 100, 100, 0.08)', 'rgba(50, 50, 50, 0.03)']}
-                style={styles.modeCardGradient}
-              >
+              <BlurView intensity={10} tint="dark" style={styles.modeCardGradient}>
                 <View style={styles.modeCardHeader}>
                   <View style={[styles.modeIconContainer, { backgroundColor: 'rgba(100,100,100,0.15)' }]}>
                     <Ionicons name="lock-closed" size={24} color={Colors.textSecondary} />
@@ -352,7 +350,7 @@ export default function PrivacyDashboard() {
                     <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Transfer</Text>
                   </TouchableOpacity>
                 </View>
-              </LinearGradient>
+              </BlurView>
             </TouchableOpacity>
           </Animated.View>
         )}
@@ -379,7 +377,7 @@ export default function PrivacyDashboard() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -420,21 +418,19 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
   },
   modeCard: {
-    borderRadius: BorderRadius.lg,
+    borderRadius: 20,
     overflow: 'hidden',
     marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   heroGradient: {
-    borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
-    borderWidth: 1.5,
-    borderColor: P01Colors.cyan + '40',
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
   },
   modeCardGradient: {
-    borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: 'rgba(12, 12, 14, 0.6)',
   },
   modeCardHeader: {
     flexDirection: 'row',
@@ -442,9 +438,9 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   modeIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: BorderRadius.md,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.md,
@@ -492,8 +488,8 @@ const styles = StyleSheet.create({
   },
   quickStats: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 14,
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
@@ -527,8 +523,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
+    paddingVertical: 10,
+    borderRadius: 12,
   },
   quickActionText: {
     fontSize: 13,
@@ -552,11 +548,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 14,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.04)',
     marginBottom: Spacing.lg,
   },
   explainerText: {
