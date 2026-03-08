@@ -24,6 +24,7 @@ pub mod resume_private;
 pub mod cancel_normal;
 pub mod cancel_private;
 pub mod store_subscriber_vk_data;
+pub mod unshield_denominated_stark;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -52,3 +53,4 @@ pub use resume_private::*;
 pub use cancel_normal::*;
 pub use cancel_private::*;
 pub use store_subscriber_vk_data::*;
+pub use unshield_denominated_stark::*;
