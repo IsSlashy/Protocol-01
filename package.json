@@ -19,6 +19,7 @@
     "test:e2e-auth": "ts-mocha -p tsconfig.test.json tests/e2e-auth-flow.test.ts --timeout 120000",
     "test:e2e-privacy": "ts-mocha -p tsconfig.test.json tests/e2e-privacy-modes.test.ts --timeout 300000",
     "test:e2e": "ts-mocha -p tsconfig.test.json tests/e2e-*.test.ts --timeout 300000",
+    "test:stark": "ts-mocha -p tsconfig.test.json tests/p01-stark-verifier.test.ts --timeout 300000",
     "android": "expo run:android",
     "ios": "expo run:ios"
   },

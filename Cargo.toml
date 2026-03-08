@@ -57,3 +57,6 @@ sha3 = "0.10"
 
 # Pin blake3 to avoid edition2024 (Solana platform-tools cargo is 1.84)
 blake3 = "=1.8.2"
+
+# Pin base64ct to avoid edition2024 (pulled by spki → pkcs8 → signature)
+base64ct = "=1.7.3"
