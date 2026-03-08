@@ -653,7 +653,9 @@ export async function shield(
 
   // Read on-chain Merkle tree
   const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
-  if (!treeAccount) throw new Error('Merkle tree account not found');
+  if (!treeAccount) {
+    throw new Error('Merkle tree account not found');
+  }
 
   const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
 
@@ -986,6 +988,182 @@ export async function unshield(
 }
 
 // ---------------------------------------------------------------------------
+// STARK Unshield (quantum-resistant — replaces Groth16 verification)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build unshield_denominated_stark instruction.
+ * No Groth16 proof — instead references a pre-verified STARK proof buffer.
+ */
+function buildUnshieldDenominatedStarkIx(
+  payer: PublicKey,
+  recipient: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  starkProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  tokenProgram?: PublicKey,
+  poolVault?: PublicKey,
+  recipientTokenAccount?: PublicKey
+): TransactionInstruction {
+  const disc = getDiscriminator('unshield_denominated_stark');
+
+  // On-chain args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64
+  // (No Groth16 proof — proof is in the STARK buffer account)
+  const data = Buffer.alloc(8 + 32 + 32 + 8);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset);
+
+  // Account ordering must match on-chain UnshieldDenominatedStark struct:
+  // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
+  // stark_proof_buffer, system_program, token_program?, pool_vault?, recipient_token_account?
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: recipient, isSigner: false, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Optional accounts (program ID as None sentinel for Anchor 0.32)
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+/**
+ * Unshield from a denominated pool using STARK proof (quantum-resistant).
+ *
+ * Flow:
+ * 1. Generate pool_commitment STARK proof (on-device via WASM WebView)
+ * 2. Submit + verify STARK proof on-chain (init → upload → verify)
+ * 3. Call unshield_denominated_stark instruction (reads verified proof buffer)
+ * 4. Close proof buffer (recover rent)
+ */
+export async function unshieldStark(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+  emergency?: boolean,
+): Promise<string> {
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  onProgress?.(emergency ? 'Preparing emergency unshield...' : 'Checking note maturity...');
+  const slot = await connection.getSlot('confirmed');
+  const currentEpoch = slotToEpoch(slot);
+
+  const poolInfo = await fetchPoolInfo(connection, poolConfig);
+  if (!poolInfo) throw new Error('Pool not found');
+
+  // Reconstruct Merkle proof if missing
+  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
+    onProgress?.('Reconstructing Merkle proof from on-chain...');
+    const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
+    if (!treeAccount) throw new Error('Merkle tree account not found');
+    const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+
+    if (receipt.leafIndex >= leafCount) {
+      throw new Error(`Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}`);
+    }
+
+    const { newRoot, pathElements, pathIndices } = computeNewRootFromSubtrees(
+      receipt.commitment, receipt.leafIndex, subtrees
+    );
+    receipt.merklePathElements = pathElements;
+    receipt.merklePathIndices = pathIndices;
+
+    let onChainRoot = 0n;
+    for (let i = 31; i >= 0; i--) {
+      onChainRoot = (onChainRoot << 8n) | BigInt(poolInfo.currentRoot[i]);
+    }
+
+    receipt.merkleRoot = newRoot === onChainRoot ? onChainRoot : newRoot;
+  }
+
+  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
+  const nullifierBytes = bigintToLeBytes32(nullifier);
+  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
+  // Emergency: min_epoch=0 bypasses maturity (on-chain check: current_epoch >= 0 + dynamic_delay → always true)
+  const minEpoch = emergency ? 0n : currentEpoch - (poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay));
+
+  // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
+  onProgress?.('Submitting STARK proof on-chain...');
+  const { proofBuffer } = await submitAndVerifyStarkProof(
+    {
+      proofBytes: starkProofData.proofBytes,
+      circuitId: CIRCUIT_POOL_COMMITMENT,
+      publicInputs: starkProofData.publicInputs,
+      proofSize: starkProofData.proofSize,
+    },
+    walletSigner,
+    onProgress,
+    connection,
+  );
+
+  // Step 2: Build + send unshield_denominated_stark instruction
+  onProgress?.('Building unshield transaction...');
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+  let tokenProgram: PublicKey | undefined;
+  let recipientTokenAccount: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+
+  if (!isNativeSOL) {
+    tokenProgram = TOKEN_PROGRAM_ID;
+    recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+    poolVault = poolConfig.vaultATA;
+  }
+
+  const ix = buildUnshieldDenominatedStarkIx(
+    walletPubkey,
+    recipient,
+    poolConfig.poolPDA,
+    poolConfig.treePDA,
+    nullifierPDA,
+    proofBuffer,
+    Array.from(nullifierBytes),
+    merkleRootBytes,
+    minEpoch,
+    tokenProgram,
+    poolVault,
+    recipientTokenAccount
+  );
+
+  onProgress?.('Sending unshield transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(300_000));
+  tx.add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  // Step 3: Close proof buffer (recover rent)
+  onProgress?.('Closing proof buffer...');
+  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+// ---------------------------------------------------------------------------
 // Emergency Unshield (bypass maturity)
 // ---------------------------------------------------------------------------
 
@@ -1156,25 +1334,6 @@ export async function transferNote(
 
   // Transfer VK data PDA — separate from unshield VK, validated against pool.vk_hash_transfer
   const vkDataPDA = getTransferVkDataPDA();
-
-  console.log('[Transfer] Pool PDA:', poolConfig.poolPDA.toBase58());
-  console.log('[Transfer] Tree PDA:', poolConfig.treePDA.toBase58());
-  console.log('[Transfer] Nullifier PDA:', nullifierPDA.toBase58());
-  console.log('[Transfer] VK Data PDA:', vkDataPDA.toBase58());
-  console.log('[Transfer] minEpoch:', minEpoch.toString());
-  console.log('[Transfer] currentEpoch:', currentEpoch.toString());
-  console.log('[Transfer] dynamicDelay:', poolInfo.dynamicDelay);
-  console.log('[Transfer] epochDelay:', poolInfo.epochDelay.toString());
-
-  // Pre-flight: verify VK data account exists
-  try {
-    const vkAcct = await connection.getAccountInfo(vkDataPDA);
-    if (vkAcct) {
-      console.log('[Transfer] VK data account size:', vkAcct.data.length, 'owner:', vkAcct.owner.toBase58());
-    } else {
-      console.error('[Transfer] VK DATA ACCOUNT NOT FOUND!');
-    }
-  } catch (e) { console.error('[Transfer] VK preflight error:', e); }
 
   const keys = [
     { pubkey: walletPubkey, isSigner: true, isWritable: true },
