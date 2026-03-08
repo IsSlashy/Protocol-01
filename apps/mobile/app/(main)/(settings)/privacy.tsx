@@ -1,11 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  StyleSheet,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import { SettingsSection, SettingsRow, RadioOption, ToggleRow } from '../../../components/settings';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+
+import { SettingsRow, RadioOption, ToggleRow } from '../../../components/settings';
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import {
   PRIVACY_LEVELS,
   calculateDecoyFees,
@@ -27,6 +39,48 @@ const AUTO_SCAN_OPTIONS = [
   { label: 'Every 15 min', value: 900 },
   { label: 'Manual only', value: -1 },
 ];
+
+/* ──────────────────────── Glass Card ──────────────────────── */
+
+interface GlassCardProps {
+  children: React.ReactNode;
+  delay?: number;
+  style?: object;
+}
+
+const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
+  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
+    <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+      <LinearGradient
+        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      {children}
+    </BlurView>
+  </Animated.View>
+);
+
+/* ──────────────────────── Section Title ──────────────────────── */
+
+const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
+  <Animated.Text
+    entering={FadeInDown.delay(delay).duration(300)}
+    style={styles.sectionTitle}
+  >
+    {title}
+  </Animated.Text>
+);
+
+/* ──────────────────────── Divider ──────────────────────── */
+
+const GlassDivider: React.FC = () => (
+  <View style={styles.divider} />
+);
+
+/* ──────────────────────── Screen ──────────────────────── */
 
 export default function PrivacySettingsScreen() {
   const router = useRouter();
@@ -120,144 +174,343 @@ export default function PrivacySettingsScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 py-4">
+      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 rounded-full bg-p01-surface items-center justify-center"
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">Privacy Settings</Text>
-        <View className="w-10" />
-      </View>
+        <Text style={styles.headerTitle}>Privacy Settings</Text>
+        <View style={{ width: 40 }} />
+      </Animated.View>
 
       <ScrollView
-        className="flex-1"
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
         {/* DEFAULT PRIVACY LEVEL */}
-        <SettingsSection title="Default Privacy Level">
+        <SectionTitle title="DEFAULT PRIVACY LEVEL" delay={80} />
+        <GlassCard delay={100}>
           <RadioOption
             label="Standard"
             description="1 decoy transaction"
             selected={privacyLevel === 'standard'}
             onSelect={() => handlePrivacyLevelChange('standard')}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <RadioOption
             label="Enhanced"
             description="5 decoy transactions (Recommended)"
             selected={privacyLevel === 'enhanced'}
             onSelect={() => handlePrivacyLevelChange('enhanced')}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <RadioOption
             label="Maximum"
             description="10 decoy transactions"
             selected={privacyLevel === 'maximum'}
             onSelect={() => handlePrivacyLevelChange('maximum')}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* Privacy Level Info */}
-        <View className="mx-4 mb-6 p-4 bg-p01-surface rounded-2xl border border-p01-cyan/20">
-          <View className="flex-row items-center mb-2">
-            <Ionicons name="shield-checkmark" size={18} color="#39c5bb" />
-            <Text className="text-p01-cyan text-sm font-semibold ml-2">
-              {privacyLevel === 'standard' ? 'Basic Privacy' :
-               privacyLevel === 'enhanced' ? 'Enhanced Privacy' : 'Maximum Privacy'}
-            </Text>
-          </View>
-          <Text style={{ color: '#9ca3af', fontSize: 14, marginBottom: 8 }}>
-            {privacyLevel === 'standard'
-              ? 'Minimal privacy protection with lower fees. Best for small transactions.'
-              : privacyLevel === 'enhanced'
-              ? 'Balanced privacy and cost. Recommended for most users.'
-              : 'Maximum anonymity with highest decoy count. Higher fees apply.'}
-          </Text>
-          <View className="bg-p01-void/50 rounded-lg p-3 mt-2">
-            <Text className="text-p01-text-muted text-xs mb-1">Features:</Text>
-            <Text className="text-white text-sm">
-              {getPrivacyLevelDescription(privacyLevel)}
-            </Text>
-            <Text className="text-p01-text-muted text-xs mt-2">
-              Est. extra fee: ~{calculateDecoyFees(privacyLevel, 1).totalFees.toFixed(6)} SOL per transaction
-            </Text>
-          </View>
-        </View>
+        <Animated.View entering={FadeInDown.delay(170).duration(350)} style={styles.privacyInfoOuter}>
+          <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.privacyInfoContent}>
+              <View style={styles.privacyInfoHeader}>
+                <Ionicons name="shield-checkmark" size={18} color={P01Colors.cyan} />
+                <Text style={styles.privacyInfoTitle}>
+                  {privacyLevel === 'standard' ? 'Basic Privacy' :
+                   privacyLevel === 'enhanced' ? 'Enhanced Privacy' : 'Maximum Privacy'}
+                </Text>
+              </View>
+              <Text style={styles.privacyInfoDesc}>
+                {privacyLevel === 'standard'
+                  ? 'Minimal privacy protection with lower fees. Best for small transactions.'
+                  : privacyLevel === 'enhanced'
+                  ? 'Balanced privacy and cost. Recommended for most users.'
+                  : 'Maximum anonymity with highest decoy count. Higher fees apply.'}
+              </Text>
+              <View style={styles.privacyInfoFeatures}>
+                <Text style={styles.privacyInfoFeaturesLabel}>Features:</Text>
+                <Text style={styles.privacyInfoFeaturesText}>
+                  {getPrivacyLevelDescription(privacyLevel)}
+                </Text>
+                <Text style={styles.privacyInfoFee}>
+                  Est. extra fee: ~{calculateDecoyFees(privacyLevel, 1).totalFees.toFixed(6)} SOL per transaction
+                </Text>
+              </View>
+            </View>
+          </BlurView>
+        </Animated.View>
 
         {/* STEALTH ADDRESSES */}
-        <SettingsSection title="Stealth Addresses">
+        <SectionTitle title="STEALTH ADDRESSES" delay={220} />
+        <GlassCard delay={240}>
           <ToggleRow
             label="Always use stealth"
             description="Generate new addresses for each transaction"
             value={alwaysUseStealth}
             onValueChange={handleStealthToggle}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <SettingsRow
             label="Auto-scan"
             value={getAutoScanLabel()}
             leftIcon="refresh-outline"
             onPress={handleAutoScanSelect}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* TRANSACTIONS */}
-        <SettingsSection title="Transactions">
+        <SectionTitle title="TRANSACTIONS" delay={290} />
+        <GlassCard delay={310}>
           <ToggleRow
             label="Hide amounts"
             description="Mask transaction amounts in history"
             value={hideAmounts}
             onValueChange={handleHideAmountsToggle}
           />
-          <View className="h-px bg-p01-border mx-4" />
+          <GlassDivider />
           <ToggleRow
             label="Private by default"
             description="Enable privacy features on all sends"
             value={privateByDefault}
             onValueChange={handlePrivateDefaultToggle}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* AGENT */}
-        <SettingsSection title="Agent">
+        <SectionTitle title="AGENT" delay={360} />
+        <GlassCard delay={380}>
           <ToggleRow
             label="Ephemeral wallets"
             description="Use temporary wallets for agent operations"
             value={ephemeralWallets}
             onValueChange={handleEphemeralToggle}
           />
-        </SettingsSection>
+        </GlassCard>
 
         {/* How Decoys Work */}
-        <View className="mx-4 mt-2 p-4 bg-p01-cyan/10 rounded-2xl border border-p01-cyan/30">
-          <View className="flex-row items-start">
-            <Ionicons name="information-circle" size={20} color="#39c5bb" />
-            <View className="ml-3 flex-1">
-              <Text className="text-p01-cyan font-medium mb-1">How Decoy Transactions Work</Text>
-              <Text className="text-p01-text-muted text-sm">
-                Decoys are small self-transfers sent before your real transaction to confuse chain analysis.
-                They create noise on the blockchain, making it harder to identify your actual payment.
-              </Text>
+        <Animated.View entering={FadeInDown.delay(430).duration(350)} style={styles.infoOuter}>
+          <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.infoContent}>
+              <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
+              <View style={{ marginLeft: Spacing.md, flex: 1 }}>
+                <Text style={styles.infoTitle}>How Decoy Transactions Work</Text>
+                <Text style={styles.infoText}>
+                  Decoys are small self-transfers sent before your real transaction to confuse chain analysis.
+                  They create noise on the blockchain, making it harder to identify your actual payment.
+                </Text>
+              </View>
             </View>
-          </View>
-        </View>
+          </BlurView>
+        </Animated.View>
 
         {/* Warning */}
-        <View className="mx-4 mt-4 p-4 bg-yellow-500/10 rounded-2xl border border-yellow-500/30">
-          <View className="flex-row items-start">
-            <Ionicons name="warning" size={20} color="#eab308" />
-            <Text className="text-yellow-500 text-sm ml-3 flex-1">
-              Higher privacy levels send more decoy transactions, resulting in additional network fees (~0.000005 SOL each).
-              Decoys are self-transfers and do not reduce your balance beyond fees.
-            </Text>
-          </View>
-        </View>
+        <Animated.View entering={FadeInDown.delay(500).duration(350)} style={styles.warningOuter}>
+          <BlurView intensity={14} tint="dark" style={styles.warningBlur}>
+            <LinearGradient
+              colors={['rgba(255, 204, 0, 0.06)', 'rgba(255, 204, 0, 0.02)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.warningContent}>
+              <Ionicons name="warning" size={20} color="#eab308" />
+              <Text style={styles.warningText}>
+                Higher privacy levels send more decoy transactions, resulting in additional network fees (~0.000005 SOL each).
+                Decoys are self-transfers and do not reduce your balance beyond fees.
+              </Text>
+            </View>
+          </BlurView>
+        </Animated.View>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+/* ──────────────────────── Styles ──────────────────────── */
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+
+  /* Header */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.lg,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  headerTitle: {
+    color: Colors.text,
+    fontSize: 18,
+    fontFamily: FontFamily.semibold,
+  },
+
+  /* Section Title */
+  sectionTitle: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+    letterSpacing: 1,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    marginTop: Spacing.lg,
+  },
+
+  /* Glass Card */
+  glassOuter: {
+    marginHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  glassBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  },
+
+  /* Divider */
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(57, 197, 187, 0.07)',
+    marginHorizontal: Spacing.lg,
+  },
+
+  /* Privacy Level Info Card */
+  privacyInfoOuter: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.md,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  privacyInfoContent: {
+    padding: Spacing.lg,
+  },
+  privacyInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  privacyInfoTitle: {
+    color: P01Colors.cyan,
+    fontSize: 14,
+    fontFamily: FontFamily.semibold,
+    marginLeft: Spacing.sm,
+  },
+  privacyInfoDesc: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    marginBottom: Spacing.sm,
+    lineHeight: 20,
+  },
+  privacyInfoFeatures: {
+    backgroundColor: 'rgba(12, 12, 14, 0.4)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+  },
+  privacyInfoFeaturesLabel: {
+    color: Colors.textTertiary,
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  privacyInfoFeaturesText: {
+    color: Colors.text,
+    fontSize: 14,
+  },
+  privacyInfoFee: {
+    color: Colors.textTertiary,
+    fontSize: 12,
+    marginTop: Spacing.sm,
+  },
+
+  /* Info Card (How Decoys Work) */
+  infoOuter: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
+  },
+  infoContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: Spacing.lg,
+  },
+  infoTitle: {
+    color: P01Colors.cyan,
+    fontSize: 14,
+    fontFamily: FontFamily.medium,
+    marginBottom: 4,
+  },
+  infoText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
+  /* Warning Card */
+  warningOuter: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.md,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 204, 0, 0.12)',
+  },
+  warningBlur: {
+    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  },
+  warningContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: Spacing.lg,
+  },
+  warningText: {
+    color: '#eab308',
+    fontSize: 14,
+    marginLeft: Spacing.md,
+    flex: 1,
+    lineHeight: 20,
+  },
+});

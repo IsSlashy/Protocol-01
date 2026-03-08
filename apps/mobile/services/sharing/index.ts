@@ -124,7 +124,13 @@ export class ShareService {
       onPeerDisconnected: (peerId) => {
         this.callbacks?.onPeerRemoved(peerId);
         if (this.currentSession.peer?.id === peerId) {
-          this.updateSession({ state: 'error', error: 'Peer disconnected' });
+          // Only treat disconnect as fatal if we're past the connection/key-exchange phase.
+          // During connecting/key-exchange, BLE may cycle connections (Samsung GATT quirk)
+          // and the retry logic in BleTransport will handle it.
+          const s = this.currentSession.state;
+          if (s && s !== 'scanning' && s !== 'connecting' && s !== 'key-exchange') {
+            this.updateSession({ state: 'error', error: 'Peer disconnected' });
+          }
         }
       },
       onPublicKeyReceived: (peerId, pubKeyB64) => {
@@ -191,12 +197,18 @@ export class ShareService {
     if (!this.bleTransport) throw new Error('BLE not initialized');
 
     this.updateSession({ state: 'connecting' });
+    console.log('[BLE-DBG] connectToPeer: calling bleTransport.connectToPeer');
     await this.bleTransport.connectToPeer(peerId);
+    console.log('[BLE-DBG] connectToPeer: connected, sending public key');
 
     // Send our public key
     if (this.ephemeralKeyPair) {
       const pubB64 = Buffer.from(this.ephemeralKeyPair.publicKey).toString('base64');
+      console.log('[BLE-DBG] connectToPeer: calling sendPublicKey');
       await this.bleTransport.sendPublicKey(pubB64);
+      console.log('[BLE-DBG] connectToPeer: pubkey sent successfully');
+    } else {
+      console.log('[BLE-DBG] connectToPeer: NO ephemeralKeyPair!');
     }
   }
 
