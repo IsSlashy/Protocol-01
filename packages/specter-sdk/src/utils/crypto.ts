@@ -466,10 +466,10 @@ export function ed25519SecretKeyToX25519(ed25519Seed: Uint8Array): Uint8Array {
   const h = sha512(ed25519Seed);
   const scalar = new Uint8Array(h.slice(0, 32));
 
-  // RFC 7748 clamping
-  scalar[0] &= 248;
-  scalar[31] &= 127;
-  scalar[31] |= 64;
+  // RFC 7748 clamping (scalar is always 32 bytes from sha512 slice)
+  scalar[0] = scalar[0]! & 248;
+  scalar[31] = scalar[31]! & 127;
+  scalar[31] = scalar[31]! | 64;
 
   return scalar;
 }
