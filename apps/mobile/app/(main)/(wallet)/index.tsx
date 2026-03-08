@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -185,29 +186,36 @@ export default function WalletHomeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
       >
-        {/* Balance Card */}
-        <Animated.View entering={FadeInUp.delay(200)}>
-          <LinearGradient colors={['#111111', '#0a0a0a']} style={styles.balanceCard}>
-            <TouchableOpacity style={styles.addressRow} onPress={copyAddress} accessibilityRole="button" accessibilityLabel={`Copy wallet address ${formattedPublicKey}`} accessibilityHint="Copies full address to clipboard">
-              <Text style={styles.addressLabel}>Wallet Address</Text>
-              <View style={styles.addressContainer}>
-                <Text style={styles.addressText}>{formattedPublicKey}</Text>
-                <Ionicons name="copy-outline" size={14} color={Colors.textSecondary} />
-              </View>
+        {/* Balance Card — Liquid Glass */}
+        <Animated.View entering={FadeInUp.delay(200)} style={styles.balanceCardOuter}>
+          <BlurView intensity={18} tint="dark" style={styles.balanceCard}>
+            {/* Subtle gradient glow */}
+            <LinearGradient
+              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.04)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+
+            {/* Address chip */}
+            <TouchableOpacity style={styles.addressChip} onPress={copyAddress} accessibilityRole="button" accessibilityLabel={`Copy wallet address ${formattedPublicKey}`} accessibilityHint="Copies full address to clipboard">
+              <View style={styles.addressDot} />
+              <Text style={styles.addressText}>{formattedPublicKey}</Text>
+              <Ionicons name="copy-outline" size={12} color={Colors.textTertiary} />
             </TouchableOpacity>
 
+            {/* Balance */}
             <TouchableOpacity onPress={toggleBalanceVisibility} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={balanceHidden ? 'Show balance' : 'Hide balance'} accessibilityHint="Toggles balance visibility">
               <Animated.View style={[styles.balanceContainer, balanceAnimatedStyle]}>
                 {balanceHidden ? (
                   <View style={styles.hiddenBalance}>
                     <Text style={styles.hiddenBalanceText}>------</Text>
-                    <Ionicons name="eye-outline" size={24} color={Colors.textSecondary} />
+                    <Ionicons name="eye-outline" size={22} color={Colors.textTertiary} />
                   </View>
                 ) : (
                   <>
                     <Text style={styles.balanceAmount}>{formattedBalance}</Text>
                     <View style={styles.solBalanceRow}>
-                      <Ionicons name="logo-bitcoin" size={16} color={Colors.primary} />
                       <Text style={styles.solBalance}>{formattedSolBalance} SOL</Text>
                     </View>
                   </>
@@ -215,38 +223,39 @@ export default function WalletHomeScreen() {
               </Animated.View>
             </TouchableOpacity>
 
+            {/* Action buttons */}
             <View style={[styles.actionButtons, isDevnet() && styles.actionButtonsDevnet]}>
-              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/send')} accessibilityLabel="Send tokens" accessibilityRole="button">
-                <LinearGradient colors={[P01Colors.cyan, P01Colors.cyanBright]} style={styles.actionIconGradient}>
-                  <Ionicons name="arrow-up" size={18} color="#0a0a0c" />
-                </LinearGradient>
-                <Text style={styles.actionLabel}>Send</Text>
+              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/send')} accessibilityLabel="Send tokens" accessibilityRole="button">
+                <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.12)' }]}>
+                  <Ionicons name="arrow-up" size={20} color={P01Colors.cyan} />
+                </View>
+                <Text style={[styles.actionLabel, { color: P01Colors.cyan }]}>Send</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/receive')} accessibilityLabel="Receive tokens" accessibilityRole="button">
-                <View style={[styles.actionIcon, { backgroundColor: Colors.primaryDim }]}>
-                  <Ionicons name="arrow-down" size={18} color={Colors.primary} />
+              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/receive')} accessibilityLabel="Receive tokens" accessibilityRole="button">
+                <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.08)' }]}>
+                  <Ionicons name="arrow-down" size={20} color={P01Colors.cyan} />
                 </View>
-                <Text style={[styles.actionLabel, { color: Colors.primary }]}>Receive</Text>
+                <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>Receive</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.actionButton, isDevnet() && styles.actionButtonWide]} onPress={() => router.push('/(main)/(wallet)/swap')} accessibilityLabel="Swap tokens" accessibilityRole="button">
-                <View style={[styles.actionIcon, { backgroundColor: P01Colors.blueDim }]}>
-                  <Ionicons name="swap-horizontal" size={18} color={P01Colors.blue} />
+              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/swap')} accessibilityLabel="Swap tokens" accessibilityRole="button">
+                <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.08)' }]}>
+                  <Ionicons name="swap-horizontal" size={20} color={P01Colors.pink} />
                 </View>
-                <Text style={[styles.actionLabel, { color: P01Colors.blue }]}>Swap</Text>
+                <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>Swap</Text>
               </TouchableOpacity>
 
               {!isDevnet() && (
                 <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/buy')} accessibilityLabel="Buy crypto" accessibilityRole="button">
-                  <View style={[styles.actionIcon, { backgroundColor: P01Colors.pinkDim }]}>
-                    <Ionicons name="card" size={18} color={P01Colors.pink} />
+                  <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.06)' }]}>
+                    <Ionicons name="card" size={20} color={P01Colors.pink} />
                   </View>
-                  <Text style={[styles.actionLabel, { color: P01Colors.pink }]}>Buy</Text>
+                  <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>Buy</Text>
                 </TouchableOpacity>
               )}
             </View>
-          </LinearGradient>
+          </BlurView>
         </Animated.View>
 
         {/* Privacy Summary Pill — taps to Privacy tab */}
@@ -283,33 +292,58 @@ export default function WalletHomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: Spacing.lg, color: Colors.textSecondary, fontFamily: FontFamily.medium, fontSize: 15 },
   scrollView: { flex: 1 },
   scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
-  balanceCard: {
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.xl,
+  balanceCardOuter: {
+    borderRadius: 24,
+    overflow: 'hidden',
     marginBottom: Spacing.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
-  addressRow: { marginBottom: Spacing.xl },
-  addressLabel: { color: Colors.textTertiary, fontSize: 12, fontFamily: FontFamily.medium, marginBottom: 4 },
-  addressContainer: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  addressText: { color: Colors.textSecondary, fontSize: 14, fontFamily: FontFamily.mono },
-  balanceContainer: { alignItems: 'center', marginBottom: Spacing['2xl'] },
+  balanceCard: {
+    padding: Spacing.xl,
+    paddingTop: 20,
+    backgroundColor: 'rgba(12, 12, 14, 0.7)',
+  },
+  addressChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    marginBottom: 20,
+  },
+  addressDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: P01Colors.cyan,
+  },
+  addressText: { color: Colors.textTertiary, fontSize: 13, fontFamily: FontFamily.mono },
+  balanceContainer: { alignItems: 'center', marginBottom: 28 },
   hiddenBalance: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  hiddenBalanceText: { color: Colors.text, fontSize: 40, fontFamily: FontFamily.bold, letterSpacing: 4 },
-  balanceAmount: { color: Colors.text, fontSize: 40, fontFamily: FontFamily.bold },
-  solBalanceRow: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.sm, gap: Spacing.xs },
-  solBalance: { color: Colors.textSecondary, fontSize: 15, fontFamily: FontFamily.medium },
-  actionButtons: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: Spacing.sm },
-  actionButtonsDevnet: { justifyContent: 'space-around' },
-  actionButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.sm, minWidth: 60 },
-  actionButtonWide: { minWidth: 80 },
-  actionIconGradient: { width: 48, height: 48, borderRadius: 9999, justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.xs },
-  actionIcon: { width: 48, height: 48, borderRadius: 9999, justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.xs },
-  actionLabel: { color: Colors.text, fontSize: 12, fontFamily: FontFamily.medium },
+  hiddenBalanceText: { color: Colors.text, fontSize: 38, fontFamily: FontFamily.bold, letterSpacing: 4 },
+  balanceAmount: { color: Colors.text, fontSize: 42, fontFamily: FontFamily.bold, letterSpacing: -1 },
+  solBalanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+  },
+  solBalance: { color: Colors.textTertiary, fontSize: 14, fontFamily: FontFamily.medium },
+  actionButtons: { flexDirection: 'row', justifyContent: 'space-evenly' },
+  actionButtonsDevnet: { justifyContent: 'space-evenly' },
+  actionButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xs, minWidth: 64 },
+  actionIcon: { width: 50, height: 50, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
+  actionLabel: { color: Colors.textSecondary, fontSize: 12, fontFamily: FontFamily.medium },
 });
