@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
+import { View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/theme';
 import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
@@ -36,10 +38,21 @@ export default function MainLayout() {
   }, [initialized]);
 
   return (
-    <Tabs
-      tabBar={(props) => <LiquidGlassTabBar {...props} />}
-      screenOptions={{
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      {/* Ambient glow — visible on every tab */}
+      <LinearGradient
+        colors={['rgba(57, 197, 187, 0.045)', 'rgba(255, 119, 168, 0.025)', 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0 }}
+        pointerEvents="none"
+      />
+      <Tabs
+        tabBar={(props) => <LiquidGlassTabBar {...props} />}
+        sceneContainerStyle={{ backgroundColor: 'transparent' }}
+        screenOptions={{
         headerShown: false,
+        sceneStyle: { backgroundColor: 'transparent' },
         tabBarStyle: {
           position: 'absolute',
           backgroundColor: 'transparent',
@@ -111,5 +124,6 @@ export default function MainLayout() {
         }}
       />
     </Tabs>
+    </View>
   );
 }

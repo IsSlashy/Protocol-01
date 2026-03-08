@@ -5,7 +5,7 @@ export default function StreamsLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: '#050505' },
+        contentStyle: { backgroundColor: 'transparent' },
       }}
     />
   );

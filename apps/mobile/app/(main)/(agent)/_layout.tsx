@@ -5,7 +5,7 @@ export default function AgentLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: '#050505' },
+        contentStyle: { backgroundColor: 'transparent' },
       }}
     />
   );
