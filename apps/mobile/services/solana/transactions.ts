@@ -329,19 +329,37 @@ export async function getTransactionHistory(
 
     for (let i = 0; i < signatures.length; i += BATCH_SIZE) {
       const batch = signatures.slice(i, i + BATCH_SIZE).map(s => s.signature);
-      try {
-        const results = await withTimeout(
-          connection.getParsedTransactions(batch, {
-            maxSupportedTransactionVersion: 0,
-          }),
-          TIMEOUT_MS,
-          'getParsedTransactions',
-        );
-        allParsed.push(...results);
-      } catch (batchError: any) {
-        // On batch failure, push nulls so indices stay aligned and continue
-        console.warn('[Transactions] Batch fetch failed, skipping batch:', batchError?.message?.slice(0, 80));
-        allParsed.push(...batch.map(() => null));
+      let batchRetries = 3;
+      let batchSuccess = false;
+
+      while (batchRetries > 0 && !batchSuccess) {
+        try {
+          const results = await withTimeout(
+            connection.getParsedTransactions(batch, {
+              maxSupportedTransactionVersion: 0,
+            }),
+            TIMEOUT_MS,
+            'getParsedTransactions',
+          );
+          allParsed.push(...results);
+          batchSuccess = true;
+        } catch (batchError: any) {
+          const errMsg = batchError?.message || String(batchError);
+          batchRetries--;
+          if ((errMsg.includes('429') || errMsg.includes('Too many')) && batchRetries > 0) {
+            // Rate limited — back off before retry
+            await new Promise(resolve => setTimeout(resolve, 1500 * (3 - batchRetries)));
+          } else {
+            console.warn('[Transactions] Batch fetch failed, skipping batch:', errMsg.slice(0, 80));
+            allParsed.push(...batch.map(() => null));
+            batchSuccess = true; // exit loop, already pushed nulls
+          }
+        }
+      }
+
+      // Small delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < signatures.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
