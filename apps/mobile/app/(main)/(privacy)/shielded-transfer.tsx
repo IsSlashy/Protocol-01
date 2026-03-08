@@ -22,8 +22,10 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useWalletStore } from '@/stores/walletStore';
 import { useZkProver } from '@/providers/ZkProverProvider';
+import { useStarkProver } from '@/providers/StarkProverProvider';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
+import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_TRANSFER } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
@@ -41,6 +43,10 @@ export default function ShieldedTransferScreen() {
   const { publicKey, isPrivyWallet } = useWalletStore();
   const { solanaWallet: privyWallet } = usePrivyAuth();
   const { isCircuitLoaded, error: proverError } = useZkProver();
+  const {
+    isReady: starkReady,
+    generateTransferProof: generateStarkTransferProof,
+  } = useStarkProver();
 
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
@@ -106,17 +112,52 @@ export default function ShieldedTransferScreen() {
         signTransaction = async (tx: Transaction): Promise<Transaction> => { tx.sign(keypair); return tx; };
       }
 
-      let currentProgress = 0;
+      // STARK path: generate and verify STARK transfer proof before Groth16 transfer
+      if (starkReady) {
+        setProofProgress(5);
+        setProofStatus('Generating STARK transfer proof...');
+
+        const amountLamports = Math.floor(parseFloat(amount) * 1e9);
+        const balanceLamports = Math.floor(shieldedBalance * 1e9);
+        const newBalanceLamports = balanceLamports - amountLamports;
+
+        const starkResult = await generateStarkTransferProof(
+          '0', // spending key placeholder (shielded pool uses note-based keys)
+          '0', // token mint (native SOL)
+          balanceLamports.toString(), '0', // input 1
+          '0', '0', // input 2 (dummy)
+          amountLamports.toString(), '0', recipient.slice(3), // output 1 (to recipient)
+          newBalanceLamports.toString(), '0', walletPubkey.toBase58(), // output 2 (change)
+          '0', // public amount
+        );
+
+        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+        const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+
+        setProofProgress(30);
+        setProofStatus('Verifying STARK proof on-chain...');
+        const starkProof: GenericStarkProof = {
+          proofBytes,
+          circuitId: CIRCUIT_TRANSFER,
+          publicInputs,
+          proofSize: starkResult.proofSize,
+        };
+        await submitGenericStarkProof(starkProof, undefined, (step) => setProofStatus(step));
+        setProofProgress(50);
+        setProofStatus('STARK verified, executing transfer...');
+      }
+
+      let currentProgress = starkReady ? 50 : 0;
       const progressInterval = setInterval(() => {
         if (currentProgress >= 90) { currentProgress = 90; } else {
           currentProgress = currentProgress + Math.random() * 15;
           if (currentProgress > 90) currentProgress = 90;
         }
         setProofProgress(currentProgress);
-        if (currentProgress < 20) setProofStatus('Selecting notes...');
-        else if (currentProgress < 40) setProofStatus('Building witness...');
-        else if (currentProgress < 60) setProofStatus('Generating ZK proof...');
-        else if (currentProgress < 80) setProofStatus('Finalizing proof...');
+        if (currentProgress < 60) setProofStatus('Selecting notes...');
+        else if (currentProgress < 70) setProofStatus('Building witness...');
+        else if (currentProgress < 80) setProofStatus('Generating ZK proof...');
+        else if (currentProgress < 85) setProofStatus('Finalizing proof...');
         else setProofStatus('Submitting transaction...');
       }, 500);
 
@@ -132,7 +173,7 @@ export default function ShieldedTransferScreen() {
       if (lastNote) {
         await Clipboard.setStringAsync(lastNote.noteString);
         Alert.alert(
-          'Transfer Successful',
+          `Transfer Successful${starkReady ? ' (STARK)' : ''}`,
           `${amount} SOL has been sent privately.\n\nNote copied to clipboard!\n\nIMPORTANT: Share this note with the recipient so they can import it and receive the funds.`,
           [
             { text: 'Copy Again', onPress: async () => { await Clipboard.setStringAsync(lastNote.noteString); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } },
@@ -140,7 +181,7 @@ export default function ShieldedTransferScreen() {
           ]
         );
       } else {
-        Alert.alert('Transfer Successful', `${amount} SOL has been sent privately to the recipient.`, [{ text: 'OK', onPress: () => router.back() }]);
+        Alert.alert('Transfer Successful', `${amount} SOL has been sent privately to the recipient.${starkReady ? '\n\nSTARK proof verified on-chain.' : ''}`, [{ text: 'OK', onPress: () => router.back() }]);
       }
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
