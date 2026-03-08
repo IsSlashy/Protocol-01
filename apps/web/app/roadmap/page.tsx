@@ -94,15 +94,15 @@ const roadmap: RoadmapPhase[] = [
         icon: <Eye className="w-5 h-5" />,
       },
       {
-        title: "ZK Shielded Pool",
+        title: "ZK Shielded Pool (Groth16 + STARK)",
         description:
-          "Groth16 zero-knowledge proofs for private transfers. Amounts and participants are hidden on-chain using Solana's native alt_bn128 syscalls.",
+          "Dual proof system: Groth16 ZK-SNARKs (BN254) for compact verification + STARKs (Winterfell/Goldilocks) for quantum-resistant proofs. 4 STARK circuits deployed on-chain.",
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "Backend Relayer + Rust Prover",
+        title: "On-Chain Relayer + Quantum Vault",
         description:
-          "Relayer service with Rust native Groth16 prover (ark-circom + axum). Dual verification: Rust generates proofs, snarkjs verifies as safety net. Docker multi-stage deploy.",
+          "Fully on-chain trustless relayer (no backend server). Quantum vault with WOTS+ signatures, hash-timelock, and commit-then-reveal for quantum-safe withdrawals.",
         icon: <Radio className="w-5 h-5" />,
       },
       {
@@ -132,13 +132,13 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "Instant ZK Operations",
         description:
-          "Shield and unshield in ~3 seconds total via filledSubtrees optimization. Rust native Groth16 prover generates proofs 10x faster than snarkjs.",
+          "Shield and unshield in ~3 seconds total via filledSubtrees optimization. Local-only proving via snarkjs (WebView on mobile) — spending key never leaves device.",
         icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "On-Chain Smart Contracts",
         description:
-          "7 on-chain Solana programs deployed to devnet. Trustless, permissionless privacy — no server required for core operations.",
+          "12 on-chain Solana programs deployed to devnet. Trustless, permissionless privacy — no server required for core operations.",
         icon: <Code className="w-5 h-5" />,
       },
       {
@@ -194,7 +194,7 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "Mainnet Audit",
         description:
-          "Comprehensive security audit of all 7 on-chain programs, ZK circuits, and client SDKs before mainnet deployment.",
+          "Comprehensive security audit of all 12 on-chain programs, ZK circuits, STARK AIRs, and client SDKs before mainnet deployment.",
         icon: <Shield className="w-5 h-5" />,
       },
       {

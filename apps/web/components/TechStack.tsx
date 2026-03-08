@@ -10,8 +10,8 @@ const technologies = [
     category: "Zero-Knowledge",
     icon: Lock,
     items: [
-      { name: "Circom", description: "ZK circuit language" },
-      { name: "ark-circom", description: "Rust native Groth16 prover" },
+      { name: "Groth16 + STARK", description: "Dual proof systems" },
+      { name: "Winterfell", description: "Quantum-safe STARK prover" },
       { name: "Poseidon", description: "ZK-friendly hash" },
     ],
     color: "cyan",
@@ -27,12 +27,12 @@ const technologies = [
     color: "pink",
   },
   {
-    category: "Private Relay",
+    category: "Quantum Defense",
     icon: Cpu,
     items: [
-      { name: "Rust Prover", description: "Native Groth16 (10x faster)" },
-      { name: "Stealth Transfers", description: "Sender-recipient unlinking" },
-      { name: "Dual Verification", description: "Rust + snarkjs safety net" },
+      { name: "STARK Verifier", description: "On-chain hash-based proofs" },
+      { name: "Quantum Vault", description: "WOTS+ / Hash-Timelock" },
+      { name: "ML-KEM-768", description: "Post-quantum key exchange" },
     ],
     color: "bright-cyan",
   },
@@ -56,12 +56,12 @@ const architectureLayers = [
   },
   {
     name: "Privacy Layer",
-    description: "ZK Proofs, Stealth Addresses, Encryption, zkSPL Confidential Balances",
+    description: "Groth16 + STARK Proofs, Stealth Addresses, Encryption, zkSPL Confidential Balances",
     color: "p01-pink",
   },
   {
     name: "Execution Layer",
-    description: "Private Relayer, Rust Prover, Subscription Crank",
+    description: "On-chain Relayer, STARK Verifier, Quantum Vault, Subscription Crank",
     color: "p01-bright-cyan",
   },
   {
