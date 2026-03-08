@@ -5,7 +5,7 @@ pub mod state;
 
 use state::*;
 
-declare_id!("DrcALZu194DwnHUuxWCixFcFH7zJhhVUH9biHZR9cotW");
+declare_id!("HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o");
 
 // ============================================================================
 // Program
