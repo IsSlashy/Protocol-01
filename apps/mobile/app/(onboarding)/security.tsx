@@ -9,6 +9,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import { PinInput } from '../../components/onboarding';
+import { useWalletStore } from '../../stores/walletStore';
 
 async function hashPin(pin: string): Promise<string> {
   return await Crypto.digestStringAsync(
@@ -104,10 +105,8 @@ export default function SecurityScreen() {
   const handleContinue = useCallback(async () => {
     if (selectedMethod === 'biometrics') {
       await SecureStore.setItemAsync('security_method', 'biometrics');
-    } else {
-      await SecureStore.setItemAsync('security_method', 'none');
+      completeOnboarding();
     }
-    completeOnboarding();
   }, [selectedMethod]);
 
   const completeOnboarding = async () => {
@@ -115,29 +114,13 @@ export default function SecurityScreen() {
     // Clean up temp mnemonic from both keychain services
     await SecureStore.deleteItemAsync('p01_temp_mnemonic', { keychainService: 'protocol-01' }).catch(() => {});
     await SecureStore.deleteItemAsync('p01_temp_mnemonic').catch(() => {});
+    // Initialize wallet store so the wallet screen finds the wallet
+    await useWalletStore.getState().initialize();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     // Go directly to wallet — user just authenticated during onboarding
     // Lock screen is for app re-opens, not first-time setup
     router.replace('/(main)/(wallet)');
   };
-
-  const handleSkip = useCallback(() => {
-    Alert.alert(
-      'Skip Security Setup?',
-      'Your wallet will be less secure without PIN or biometric protection.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Skip',
-          style: 'destructive',
-          onPress: async () => {
-            await SecureStore.setItemAsync('security_method', 'none');
-            completeOnboarding();
-          },
-        },
-      ]
-    );
-  }, []);
 
   // PIN Setup View
   if (showPinSetup) {
@@ -246,7 +229,7 @@ export default function SecurityScreen() {
             Secure Your Wallet
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            Add an extra layer of protection
+            Choose a security method to protect your wallet
           </Text>
         </Animated.View>
 
@@ -398,15 +381,6 @@ export default function SecurityScreen() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={handleSkip}
-            activeOpacity={0.7}
-            style={{ paddingVertical: 12, alignItems: 'center' }}
-            accessibilityRole="button"
-            accessibilityLabel="Skip for now"
-          >
-            <Text style={{ color: '#555560', fontSize: 16 }}>Skip for now</Text>
-          </TouchableOpacity>
         </Animated.View>
       </View>
     </SafeAreaView>

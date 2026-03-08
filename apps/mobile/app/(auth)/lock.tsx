@@ -265,18 +265,23 @@ export default function LockScreen() {
 
   // Biometric / Default View
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, 24) }]}>
+      {/* Top spacer */}
+      <View style={{ flex: 1 }} />
+
       {/* Logo */}
       <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.logoContainer}>
-        <GlassCard style={styles.logoCardWrapper}>
-          <Text style={styles.logoText}>01</Text>
-        </GlassCard>
+        <View style={styles.logoGlowRing}>
+          <GlassCard style={styles.logoCardWrapper}>
+            <Text style={styles.logoText}>01</Text>
+          </GlassCard>
+        </View>
         <Text style={styles.title}>P-01</Text>
-        <Text style={styles.subtitle}>Locked</Text>
+        <Text style={styles.subtitle}>Tap to unlock your wallet</Text>
       </Animated.View>
 
       {/* Unlock Button */}
-      <Animated.View entering={FadeInDown.delay(300).springify()}>
+      <Animated.View entering={FadeInDown.delay(300).springify()} style={{ marginTop: 48 }}>
         {isBiometricSupported ? (
           <Pressable
             onPress={authenticate}
@@ -292,8 +297,8 @@ export default function LockScreen() {
                   colors={[
                     isAuthenticating
                       ? 'rgba(85, 85, 96, 0.08)'
-                      : 'rgba(57, 197, 187, 0.08)',
-                    'rgba(255, 119, 168, 0.03)',
+                      : 'rgba(57, 197, 187, 0.12)',
+                    'rgba(255, 119, 168, 0.04)',
                     'transparent',
                   ]}
                   start={{ x: 0, y: 0 }}
@@ -302,7 +307,7 @@ export default function LockScreen() {
                 />
                 <Ionicons
                   name="finger-print"
-                  size={40}
+                  size={44}
                   color={isAuthenticating ? Colors.textTertiary : P01Colors.cyan}
                 />
               </BlurView>
@@ -320,7 +325,10 @@ export default function LockScreen() {
         )}
       </Animated.View>
 
-      {/* Switch/Add Wallet Option */}
+      {/* Bottom spacer */}
+      <View style={{ flex: 1.2 }} />
+
+      {/* Switch/Add Wallet Option — safely above gesture bar */}
       <Animated.View entering={FadeInDown.delay(500)} style={styles.switchWalletContainer}>
         <TouchableOpacity
           onPress={() => router.push('/(onboarding)')}
@@ -352,17 +360,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'transparent',
     alignItems: 'center',
-    justifyContent: 'center',
     paddingHorizontal: Spacing['2xl'],
   },
 
   // Logo area
   logoContainer: {
     alignItems: 'center',
-    marginBottom: Spacing['5xl'],
+  },
+  logoGlowRing: {
+    borderRadius: 999,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.12)',
+    shadowColor: P01Colors.cyan,
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
   logoCardWrapper: {
-    marginBottom: Spacing.xl,
+    marginBottom: 0,
   },
   logoText: {
     color: P01Colors.cyan,
@@ -372,15 +389,17 @@ const styles = StyleSheet.create({
   },
   title: {
     color: Colors.text,
-    fontSize: 24,
+    fontSize: 28,
     fontFamily: FontFamily.bold,
     fontWeight: 'bold',
+    marginTop: Spacing.xl,
+    letterSpacing: 2,
   },
   subtitle: {
     color: Colors.textSecondary,
     fontSize: 14,
     fontFamily: FontFamily.regular,
-    marginTop: Spacing.xs,
+    marginTop: Spacing.sm,
   },
   subtitleError: {
     color: Colors.error,
@@ -408,13 +427,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   fingerprintOuter: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.15)',
+    borderColor: 'rgba(57, 197, 187, 0.2)',
     marginBottom: Spacing.lg,
+    shadowColor: P01Colors.cyan,
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
   },
   fingerprintBlur: {
     flex: 1,
@@ -496,9 +520,8 @@ const styles = StyleSheet.create({
 
   // Switch wallet
   switchWalletContainer: {
-    position: 'absolute',
-    bottom: 40,
     alignItems: 'center',
+    marginBottom: 16,
   },
   switchWalletButton: {
     borderRadius: BorderRadius.lg,

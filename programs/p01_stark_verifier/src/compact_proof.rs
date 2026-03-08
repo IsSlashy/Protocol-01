@@ -60,12 +60,34 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     num_rounds: 30,
 };
 
+/// confidential_balance: 4 cols, 256 rows (7 hash cycles of 32 + 1 padding cycle)
+pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
+    trace_width: 4,
+    trace_length: 256,
+    blowup: 8,
+    lde_size: 2048,
+    merkle_depth: 11,  // log2(2048) = 11
+    num_rounds: 30,
+};
+
+/// transfer: 6 cols, 512 rows (14 hash cycles of 32 + 2 padding cycles)
+pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
+    trace_width: 6,
+    trace_length: 512,
+    blowup: 8,
+    lde_size: 4096,
+    merkle_depth: 12,  // log2(4096) = 12
+    num_rounds: 30,
+};
+
 pub fn get_circuit_config(circuit_id: u8) -> Option<&'static CircuitConfig> {
     match circuit_id {
         0 => Some(&CONFIG_SUBSCRIBER_OWNERSHIP),
         1 => Some(&CONFIG_POOL_COMMITMENT),
         2 => Some(&CONFIG_BALANCE_PROOF),
         3 => Some(&CONFIG_MERKLE_PATH),
+        4 => Some(&CONFIG_CONFIDENTIAL_BALANCE),
+        5 => Some(&CONFIG_TRANSFER),
         _ => None,
     }
 }
