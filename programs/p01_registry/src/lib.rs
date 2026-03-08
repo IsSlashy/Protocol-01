@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 pub mod state;
 use state::*;
 
-declare_id!("Hz4ZULacefgJzq94YJTSq3WmQAySyYuzCRiEzNXCA2sZ");
+declare_id!("QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB");
 
 #[program]
 pub mod p01_registry {
