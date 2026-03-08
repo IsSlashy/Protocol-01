@@ -20,20 +20,14 @@ import {
   type StoredNote,
   type NoteStatus,
 } from '@/stores/denominatedPoolStore';
-import {
-  DenominatedPoolProverProvider,
-  useDenominatedPoolProver,
-} from '@/components/privacy/DenominatedPoolProver';
+import { useStarkProver } from '@/providers/StarkProverProvider';
+import { receiptFromJSON } from '@/services/denominatedPool';
 import { getKeypair } from '@/services/solana/wallet';
 import { useWalletStore } from '@/stores/walletStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 export default function DenominatedUnshieldScreen() {
-  return (
-    <DenominatedPoolProverProvider>
-      <UnshieldScreenContent />
-    </DenominatedPoolProverProvider>
-  );
+  return <UnshieldScreenContent />;
 }
 
 function UnshieldScreenContent() {
@@ -47,13 +41,13 @@ function UnshieldScreenContent() {
     isProving,
     error,
     progress,
-    unshieldNote,
+    unshieldNoteStark,
     emergencyUnshieldNote,
     refreshNoteStatuses,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
-  const { generateProof, preloadCircuit, isCircuitLoaded } = useDenominatedPoolProver();
+  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
 
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [recipient, setRecipient] = useState('');
@@ -64,14 +58,13 @@ function UnshieldScreenContent() {
   const pendingNotes = notes.filter(n => n.status === 'pending');
   const selectableNotes = emergencyToggle ? [...matureNotes, ...pendingNotes] : matureNotes;
 
-  // Pre-select note from params + preload circuit
+  // Pre-select note from params
   useEffect(() => {
     if (params.noteId) {
       const note = notes.find(n => n.id === params.noteId);
       if (note) setSelectedNote(note);
     }
     refreshNoteStatuses();
-    preloadCircuit();
   }, [params.noteId]);
 
   // Load own wallet address — use walletStore publicKey as fallback for Privy wallets
@@ -116,13 +109,39 @@ function UnshieldScreenContent() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const sig = emergency
-        ? await emergencyUnshieldNote(selectedNote.id, recipient, generateProof)
-        : await unshieldNote(selectedNote.id, recipient, generateProof);
+      let sig: string;
+
+      // Both normal and emergency use STARK (quantum-resistant)
+      // Emergency passes emergency=true which sets minEpoch=0 on-chain (bypasses maturity)
+      if (!starkReady) {
+        Alert.alert('STARK Not Ready', 'STARK prover is still loading. Please wait a moment.');
+        return;
+      }
+
+      // Parse receipt to get note secrets for STARK proof
+      const receipt = receiptFromJSON(selectedNote.receiptJSON);
+
+      // Generate pool_commitment STARK proof on-device
+      const starkResult = await generatePoolCommitmentProof(
+        receipt.nullifierPreimage.toString(),
+        receipt.secret.toString(),
+        receipt.depositEpoch.toString(),
+        receipt.tokenMint.toString(),
+      );
+
+      // Parse STARK proof result
+      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+      const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+
+      sig = await unshieldNoteStark(selectedNote.id, recipient, {
+        proofBytes,
+        publicInputs,
+        proofSize: starkResult.proofSize,
+      }, emergency);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
-        emergency ? 'Emergency Unshield Complete' : 'Unshielded!',
+        emergency ? 'Emergency Unshield Complete' : 'Unshielded (STARK)!',
         `${selectedNote.denomination} ${selectedNote.token} withdrawn to ${recipient.slice(0, 8)}...\n\nTx: ${sig.slice(0, 16)}...`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
@@ -130,7 +149,7 @@ function UnshieldScreenContent() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Unshield Failed', err.message);
     }
-  }, [selectedNote, recipient, unshieldNote, emergencyUnshieldNote, generateProof, router]);
+  }, [selectedNote, recipient, unshieldNoteStark, emergencyUnshieldNote, starkReady, generatePoolCommitmentProof, router]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {
@@ -360,7 +379,7 @@ function UnshieldScreenContent() {
           <View style={styles.privacyNote}>
             <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
             <Text style={styles.privacyNoteText}>
-              Proof is generated on your device. No private data leaves your phone.
+              STARK proof generated on-device (quantum-resistant). No private data leaves your phone.
             </Text>
           </View>
         </Animated.View>

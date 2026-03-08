@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,22 +6,45 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { type VaultInfo } from '@/services/subscriptionVault';
+import { useStarkProver } from '@/providers/StarkProverProvider';
+import { useZkProver } from '@/providers/ZkProverProvider';
+import { submitStarkProof, type CompactStarkProof } from '@/services/stark';
+import type { ProofGenerator } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+
+const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 
 export default function VaultDetailScreen() {
   const router = useRouter();
   const { vaultAddress } = useLocalSearchParams<{ vaultAddress: string }>();
-  const { refreshVault, pauseNormalAction, resumeNormalAction, cancelNormalAction, isLoading } =
-    useSubscriptionVaultStore();
+  const {
+    vaults,
+    refreshVault,
+    pauseNormalAction,
+    resumeNormalAction,
+    cancelNormalAction,
+    pausePrivateAction,
+    resumePrivateAction,
+    isLoading,
+    progress,
+  } = useSubscriptionVaultStore();
+  const { isReady: starkReady, generateProof: starkGenerate } = useStarkProver();
+  const { generateRawProof } = useZkProver();
 
   const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
+  const [starkStatus, setStarkStatus] = useState<string | null>(null);
+
+  const storedVault = vaults.find(v => v.vaultAddress === vaultAddress);
+  const isPrivate = storedVault?.isPrivateMode ?? false;
 
   useEffect(() => {
     const load = async () => {
@@ -33,14 +56,58 @@ export default function VaultDetailScreen() {
     load();
   }, [vaultAddress, refreshVault]);
 
+  // Build a ProofGenerator that uses Groth16 for the on-chain subscription program
+  // and optionally submits a STARK proof for quantum resistance
+  const buildProofGenerator = useCallback((): ProofGenerator => {
+    return async (inputs, circuit) => {
+      return generateRawProof(inputs as Record<string, string>);
+    };
+  }, [generateRawProof]);
+
+  // Load subscriber secret from SecureStore
+  const loadSecret = useCallback(async (): Promise<bigint> => {
+    if (!vaultAddress) throw new Error('No vault address');
+    const secretStr = await SecureStore.getItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`);
+    if (!secretStr) throw new Error('Subscriber secret not found. Was this vault created on this device?');
+    return BigInt(secretStr);
+  }, [vaultAddress]);
+
+  // Submit STARK proof for quantum-resistant verification (optional enhancement)
+  const submitStarkIfReady = useCallback(async (secret: bigint) => {
+    if (!starkReady) return;
+    try {
+      setStarkStatus('Generating STARK proof...');
+      const result = await starkGenerate(secret.toString());
+      setStarkStatus('Submitting STARK proof on-chain...');
+      const proof: CompactStarkProof = {
+        proofBytes: Buffer.from(result.proofHex, 'hex'),
+        commitment: BigInt(result.commitment),
+        proofSize: result.proofSize,
+      };
+      await submitStarkProof(proof, undefined, (step) => setStarkStatus(step));
+      setStarkStatus('STARK verified!');
+    } catch (err) {
+      console.warn('[VaultDetail] STARK proof failed (non-blocking):', err);
+      setStarkStatus(null);
+    }
+  }, [starkReady, starkGenerate]);
+
   const handlePause = async () => {
     if (!vaultAddress) return;
     try {
-      await pauseNormalAction(vaultAddress);
+      if (isPrivate) {
+        const secret = await loadSecret();
+        await submitStarkIfReady(secret);
+        await pausePrivateAction(vaultAddress, secret, buildProofGenerator());
+      } else {
+        await pauseNormalAction(vaultAddress);
+      }
       Alert.alert('Success', 'Subscription paused');
       const info = await refreshVault(vaultAddress);
       setVaultInfo(info);
+      setStarkStatus(null);
     } catch (err) {
+      setStarkStatus(null);
       Alert.alert('Error', (err as Error).message);
     }
   };
@@ -48,11 +115,19 @@ export default function VaultDetailScreen() {
   const handleResume = async () => {
     if (!vaultAddress) return;
     try {
-      await resumeNormalAction(vaultAddress);
+      if (isPrivate) {
+        const secret = await loadSecret();
+        await submitStarkIfReady(secret);
+        await resumePrivateAction(vaultAddress, secret, buildProofGenerator());
+      } else {
+        await resumeNormalAction(vaultAddress);
+      }
       Alert.alert('Success', 'Subscription resumed');
       const info = await refreshVault(vaultAddress);
       setVaultInfo(info);
+      setStarkStatus(null);
     } catch (err) {
+      setStarkStatus(null);
       Alert.alert('Error', (err as Error).message);
     }
   };
@@ -69,6 +144,15 @@ export default function VaultDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              if (isPrivate) {
+                // Private cancel requires re-shielding — not yet fully wired
+                // (needs new commitments + new root from the pool)
+                Alert.alert(
+                  'Not Available',
+                  'Private subscription cancellation requires pool re-shielding which is not yet implemented. Contact support.',
+                );
+                return;
+              }
               await cancelNormalAction(vaultAddress, vaultInfo.retailer);
               Alert.alert('Success', 'Subscription cancelled');
               router.back();
@@ -107,6 +191,16 @@ export default function VaultDetailScreen() {
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Mode badge */}
+        {isPrivate && (
+          <View style={styles.privateBadge}>
+            <Ionicons name="hardware-chip" size={16} color="#8B5CF6" />
+            <Text style={styles.privateBadgeText}>
+              Private Mode {starkReady ? '— STARK Ready' : ''}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.detailCard}>
           <Text style={styles.detailLabel}>Status</Text>
           <Text style={styles.detailValue}>
@@ -138,28 +232,44 @@ export default function VaultDetailScreen() {
           <Text style={styles.detailValue}>{Number(vaultInfo.claimedPeriods)}</Text>
         </View>
 
+        {/* STARK progress */}
+        {starkStatus && (
+          <View style={styles.starkProgress}>
+            <ActivityIndicator size="small" color="#8B5CF6" />
+            <Text style={styles.starkProgressText}>{starkStatus}</Text>
+          </View>
+        )}
+
         <View style={styles.actions}>
-          {vaultInfo.isActive && !vaultInfo.isPaused && vaultInfo.isNormalMode && (
+          {vaultInfo.isActive && !vaultInfo.isPaused && (
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: P01Colors.yellowDim }]}
               onPress={handlePause}
               disabled={isLoading}
             >
-              <Text style={[styles.actionText, { color: P01Colors.yellow }]}>Pause</Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={P01Colors.yellow} />
+              ) : (
+                <Text style={[styles.actionText, { color: P01Colors.yellow }]}>Pause</Text>
+              )}
             </TouchableOpacity>
           )}
 
-          {vaultInfo.isActive && vaultInfo.isPaused && vaultInfo.isNormalMode && (
+          {vaultInfo.isActive && vaultInfo.isPaused && (
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: P01Colors.cyanDim }]}
               onPress={handleResume}
               disabled={isLoading}
             >
-              <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Resume</Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={P01Colors.cyan} />
+              ) : (
+                <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Resume</Text>
+              )}
             </TouchableOpacity>
           )}
 
-          {vaultInfo.isActive && vaultInfo.isNormalMode && (
+          {vaultInfo.isActive && (
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
               onPress={handleCancel}
@@ -169,6 +279,14 @@ export default function VaultDetailScreen() {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Progress from store */}
+        {isLoading && progress && (
+          <View style={styles.starkProgress}>
+            <ActivityIndicator size="small" color={P01Colors.cyan} />
+            <Text style={[styles.starkProgressText, { color: P01Colors.cyan }]}>{progress}</Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -205,6 +323,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing['3xl'],
   },
+  privateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  privateBadgeText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+    color: '#8B5CF6',
+  },
   detailCard: {
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.md,
@@ -223,6 +357,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: FontFamily.mono,
     color: Colors.text,
+  },
+  starkProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  starkProgressText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+    color: '#8B5CF6',
+    flex: 1,
   },
   actions: {
     flexDirection: 'row',

@@ -8,7 +8,7 @@ import {
   Alert,
   StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -22,6 +22,7 @@ type ImportSource = 'received' | 'imported_backup';
 
 export default function DenominatedImportScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { importNote } = useDenominatedPoolStore();
 
   const [noteData, setNoteData] = useState('');
@@ -260,7 +261,7 @@ export default function DenominatedImportScreen() {
       </ScrollView>
 
       {/* Import button */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(Spacing.xl, insets.bottom + 96) }]}>
         <TouchableOpacity
           style={[styles.importBtn, !preview && styles.disabledBtn]}
           onPress={handleImport}
