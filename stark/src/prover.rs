@@ -145,6 +145,88 @@ pub fn prove_subscriber_ownership(
     Ok((proof, pub_inputs))
 }
 
+// ============================================================================
+// Generic prover/verifier (works with any AIR)
+// ============================================================================
+
+struct GenericProver<A: winterfell::Air<BaseField = BaseElement> + 'static> {
+    options: ProofOptions,
+    pub_inputs: A::PublicInputs,
+}
+
+impl<A> Prover for GenericProver<A>
+where
+    A: winterfell::Air<BaseField = BaseElement, PublicInputs: Clone> + 'static,
+{
+    type BaseField = BaseElement;
+    type Air = A;
+    type Trace = TraceTable<BaseElement>;
+    type HashFn = P01HashFn;
+    type VC = P01VC;
+    type RandomCoin = P01RandomCoin;
+    type TraceLde<E: FieldElement<BaseField = BaseElement>> =
+        DefaultTraceLde<E, Self::HashFn, Self::VC>;
+    type ConstraintEvaluator<'a, E: FieldElement<BaseField = BaseElement>> =
+        DefaultConstraintEvaluator<'a, Self::Air, E>;
+
+    fn get_pub_inputs(&self, _trace: &Self::Trace) -> A::PublicInputs {
+        self.pub_inputs.clone()
+    }
+
+    fn options(&self) -> &ProofOptions {
+        &self.options
+    }
+
+    fn new_trace_lde<E: FieldElement<BaseField = BaseElement>>(
+        &self,
+        trace_info: &TraceInfo,
+        main_trace: &ColMatrix<BaseElement>,
+        domain: &StarkDomain<BaseElement>,
+        partition_option: PartitionOptions,
+    ) -> (Self::TraceLde<E>, TracePolyTable<E>) {
+        DefaultTraceLde::new(trace_info, main_trace, domain, partition_option)
+    }
+
+    fn new_evaluator<'a, E: FieldElement<BaseField = BaseElement>>(
+        &self,
+        air: &'a Self::Air,
+        aux_rand_elements: Option<AuxRandElements<E>>,
+        composition_coefficients: ConstraintCompositionCoefficients<E>,
+    ) -> Self::ConstraintEvaluator<'a, E> {
+        DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
+    }
+}
+
+/// Generate a proof for any AIR using the standard P01 hash config.
+pub fn prove_generic<A>(
+    trace_data: Vec<Vec<BaseElement>>,
+    pub_inputs: A::PublicInputs,
+) -> Result<(Proof, A::PublicInputs), ProverError>
+where
+    A: winterfell::Air<BaseField = BaseElement, PublicInputs: Clone> + 'static,
+{
+    let trace = TraceTable::init(trace_data);
+    let prover = GenericProver::<A> {
+        options: default_proof_options(),
+        pub_inputs: pub_inputs.clone(),
+    };
+    let proof = prover.prove(trace)?;
+    Ok((proof, pub_inputs))
+}
+
+/// Verify a proof for any AIR using the standard P01 hash config.
+#[cfg(feature = "std")]
+pub fn verify_generic<A>(
+    proof: Proof,
+    pub_inputs: A::PublicInputs,
+) -> Result<(), winterfell::VerifierError>
+where
+    A: winterfell::Air<BaseField = BaseElement, PublicInputs: Clone> + 'static,
+{
+    let acceptable = winterfell::AcceptableOptions::OptionSet(vec![default_proof_options()]);
+    winterfell::verify::<A, P01HashFn, P01RandomCoin, P01VC>(proof, pub_inputs, &acceptable)
+}
+
 /// Serialize proof to bytes for on-chain submission or transport.
 pub fn serialize_proof(
     proof: &Proof,
