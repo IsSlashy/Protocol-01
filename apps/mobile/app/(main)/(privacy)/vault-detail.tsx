@@ -17,7 +17,6 @@ import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { type VaultInfo } from '@/services/subscriptionVault';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useZkProver } from '@/providers/ZkProverProvider';
-import { submitStarkProof, type CompactStarkProof } from '@/services/stark';
 import type { ProofGenerator } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
@@ -33,7 +32,9 @@ export default function VaultDetailScreen() {
     resumeNormalAction,
     cancelNormalAction,
     pausePrivateAction,
+    pausePrivateStarkAction,
     resumePrivateAction,
+    resumePrivateStarkAction,
     isLoading,
     progress,
   } = useSubscriptionVaultStore();
@@ -56,10 +57,9 @@ export default function VaultDetailScreen() {
     load();
   }, [vaultAddress, refreshVault]);
 
-  // Build a ProofGenerator that uses Groth16 for the on-chain subscription program
-  // and optionally submits a STARK proof for quantum resistance
+  // Build a ProofGenerator that uses Groth16 (fallback for when STARK isn't ready)
   const buildProofGenerator = useCallback((): ProofGenerator => {
-    return async (inputs, circuit) => {
+    return async (inputs, _circuit) => {
       return generateRawProof(inputs as Record<string, string>);
     };
   }, [generateRawProof]);
@@ -72,33 +72,29 @@ export default function VaultDetailScreen() {
     return BigInt(secretStr);
   }, [vaultAddress]);
 
-  // Submit STARK proof for quantum-resistant verification (optional enhancement)
-  const submitStarkIfReady = useCallback(async (secret: bigint) => {
-    if (!starkReady) return;
-    try {
-      setStarkStatus('Generating STARK proof...');
-      const result = await starkGenerate(secret.toString());
-      setStarkStatus('Submitting STARK proof on-chain...');
-      const proof: CompactStarkProof = {
-        proofBytes: Buffer.from(result.proofHex, 'hex'),
-        commitment: BigInt(result.commitment),
-        proofSize: result.proofSize,
-      };
-      await submitStarkProof(proof, undefined, (step) => setStarkStatus(step));
-      setStarkStatus('STARK verified!');
-    } catch (err) {
-      console.warn('[VaultDetail] STARK proof failed (non-blocking):', err);
-      setStarkStatus(null);
-    }
-  }, [starkReady, starkGenerate]);
-
   const handlePause = async () => {
     if (!vaultAddress) return;
     try {
       if (isPrivate) {
         const secret = await loadSecret();
-        await submitStarkIfReady(secret);
-        await pausePrivateAction(vaultAddress, secret, buildProofGenerator());
+
+        if (starkReady) {
+          // --- STARK path (quantum-resistant) ---
+          // Generate subscriber_ownership proof on-device, then submit + verify
+          // the proof buffer on-chain, then call pause_private_stark which reads it.
+          setStarkStatus('Generating STARK ownership proof...');
+          const starkResult = await starkGenerate(secret.toString());
+
+          setStarkStatus('Submitting STARK pause...');
+          await pausePrivateStarkAction(vaultAddress, {
+            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+            commitment: BigInt(starkResult.commitment),
+            proofSize: starkResult.proofSize,
+          });
+        } else {
+          // --- Groth16 fallback ---
+          await pausePrivateAction(vaultAddress, secret, buildProofGenerator());
+        }
       } else {
         await pauseNormalAction(vaultAddress);
       }
@@ -117,8 +113,24 @@ export default function VaultDetailScreen() {
     try {
       if (isPrivate) {
         const secret = await loadSecret();
-        await submitStarkIfReady(secret);
-        await resumePrivateAction(vaultAddress, secret, buildProofGenerator());
+
+        if (starkReady) {
+          // --- STARK path (quantum-resistant) ---
+          // Generate subscriber_ownership proof on-device, then submit + verify
+          // the proof buffer on-chain, then call resume_private_stark which reads it.
+          setStarkStatus('Generating STARK ownership proof...');
+          const starkResult = await starkGenerate(secret.toString());
+
+          setStarkStatus('Submitting STARK resume...');
+          await resumePrivateStarkAction(vaultAddress, {
+            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+            commitment: BigInt(starkResult.commitment),
+            proofSize: starkResult.proofSize,
+          });
+        } else {
+          // --- Groth16 fallback ---
+          await resumePrivateAction(vaultAddress, secret, buildProofGenerator());
+        }
       } else {
         await resumeNormalAction(vaultAddress);
       }

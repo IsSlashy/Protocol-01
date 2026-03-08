@@ -12,11 +12,14 @@ import {
   type WalletSigner,
   subscribeNormal,
   subscribePrivate,
+  subscribePrivateStark,
   claimPeriod,
   pauseNormal,
   pausePrivate,
+  pausePrivateStark,
   resumeNormal,
   resumePrivate,
+  resumePrivateStark,
   cancelNormal,
   cancelPrivate,
   fetchVault,
@@ -71,6 +74,15 @@ interface SubscriptionVaultState {
     vkHashSubscriber: Uint8Array,
     proofGenerator: ProofGenerator,
   ) => Promise<string>;
+  /** STARK variant: quantum-resistant subscribe_private using pre-verified proof buffer */
+  subscribePrivateStarkAction: (
+    receipt: ShieldReceipt,
+    poolConfig: PoolConfig,
+    vaultConfig: SubscribePrivateConfig,
+    subscriberSecret: bigint,
+    vkHashSubscriber: Uint8Array,
+    starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<string>;
   claimPeriodAction: (vaultAddress: string) => Promise<string>;
   pauseNormalAction: (vaultAddress: string) => Promise<string>;
   pausePrivateAction: (
@@ -78,11 +90,21 @@ interface SubscriptionVaultState {
     subscriberSecret: bigint,
     proofGenerator: ProofGenerator,
   ) => Promise<string>;
+  /** STARK variant: quantum-resistant pause_private using pre-verified proof buffer */
+  pausePrivateStarkAction: (
+    vaultAddress: string,
+    starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
+  ) => Promise<string>;
   resumeNormalAction: (vaultAddress: string) => Promise<string>;
   resumePrivateAction: (
     vaultAddress: string,
     subscriberSecret: bigint,
     proofGenerator: ProofGenerator,
+  ) => Promise<string>;
+  /** STARK variant: quantum-resistant resume_private using pre-verified proof buffer */
+  resumePrivateStarkAction: (
+    vaultAddress: string,
+    starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
   cancelNormalAction: (vaultAddress: string, retailer: string) => Promise<string>;
   cancelPrivateAction: (
@@ -308,6 +330,79 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // ------------------------------------------------------------------
+      // Subscribe Private (STARK — quantum-resistant)
+      // ------------------------------------------------------------------
+
+      subscribePrivateStarkAction: async (
+        receipt,
+        poolConfig,
+        vaultConfig,
+        subscriberSecret,
+        vkHashSubscriber,
+        starkProofData,
+      ) => {
+        set({ isLoading: true, error: null, progress: 'Preparing STARK subscription...' });
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const sig = await subscribePrivateStark(
+            receipt,
+            poolConfig,
+            vaultConfig,
+            subscriberSecret,
+            vkHashSubscriber,
+            starkProofData,
+            (step) => {
+              set({ progress: step });
+            },
+            walletSigner,
+          );
+
+          // Add vault to store
+          const subscriberCommitment = poseidon1([subscriberSecret]);
+          const subscriberCommitmentBytes = new Uint8Array(32);
+          let tmpCommitment = subscriberCommitment;
+          for (let i = 0; i < 32; i++) {
+            subscriberCommitmentBytes[i] = Number(tmpCommitment & 0xFFn);
+            tmpCommitment >>= 8n;
+          }
+
+          const { deriveVaultPDA } = await import('../services/subscriptionVault');
+          const [vaultPDA] = deriveVaultPDA(
+            vaultConfig.retailer,
+            subscriberCommitmentBytes,
+            poolConfig.tokenMint
+          );
+
+          const storedVault: StoredVaultInfo = {
+            vaultAddress: vaultPDA.toBase58(),
+            retailer: vaultConfig.retailer.toBase58(),
+            tokenMint: poolConfig.tokenMint.toBase58(),
+            rate: vaultConfig.rate.toString(),
+            intervalSlots: vaultConfig.intervalSlots.toString(),
+            isNormalMode: false,
+            isPrivateMode: true,
+            createdAt: Date.now(),
+          };
+
+          // Save secret to SecureStore (not AsyncStorage)
+          await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
+
+          set(state => ({
+            isLoading: false,
+            progress: null,
+            vaults: [storedVault, ...state.vaults],
+          }));
+
+          return sig;
+        } catch (err) {
+          console.error('[SubscriptionVault] subscribePrivateStark error:', err);
+          set({ isLoading: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
       // Claim Period
       // ------------------------------------------------------------------
 
@@ -391,6 +486,34 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // ------------------------------------------------------------------
+      // Pause Private (STARK — quantum-resistant)
+      // ------------------------------------------------------------------
+
+      pausePrivateStarkAction: async (vaultAddress, starkProofData) => {
+        set({ isLoading: true, error: null, progress: 'Pausing (STARK)...' });
+
+        try {
+          const vaultPDA = new PublicKey(vaultAddress);
+          const walletSigner = getWalletSignerIfPrivy();
+          const sig = await pausePrivateStark(
+            vaultPDA,
+            starkProofData,
+            (step) => {
+              set({ progress: step });
+            },
+            walletSigner,
+          );
+
+          set({ isLoading: false, progress: null });
+          return sig;
+        } catch (err) {
+          console.error('[SubscriptionVault] pausePrivateStark error:', err);
+          set({ isLoading: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
       // Resume Normal
       // ------------------------------------------------------------------
 
@@ -441,6 +564,34 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] resumePrivate error:', err);
+          set({ isLoading: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // Resume Private (STARK — quantum-resistant)
+      // ------------------------------------------------------------------
+
+      resumePrivateStarkAction: async (vaultAddress, starkProofData) => {
+        set({ isLoading: true, error: null, progress: 'Resuming (STARK)...' });
+
+        try {
+          const vaultPDA = new PublicKey(vaultAddress);
+          const walletSigner = getWalletSignerIfPrivy();
+          const sig = await resumePrivateStark(
+            vaultPDA,
+            starkProofData,
+            (step) => {
+              set({ progress: step });
+            },
+            walletSigner,
+          );
+
+          set({ isLoading: false, progress: null });
+          return sig;
+        } catch (err) {
+          console.error('[SubscriptionVault] resumePrivateStark error:', err);
           set({ isLoading: false, progress: null, error: (err as Error).message });
           throw err;
         }
