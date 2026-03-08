@@ -3,6 +3,7 @@ import 'react-native-get-random-values';
 import { Buffer } from 'buffer';
 global.Buffer = Buffer;
 import '@ethersproject/shims';
+import '../polyfills/pda-fix';
 
 import '../global.css';
 
@@ -16,6 +17,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { P01PrivyProvider } from '../providers/PrivyProvider';
 import React from 'react';
 import { ZkProverProvider } from '../providers/ZkProverProvider';
+import { StarkProverProvider } from '../providers/StarkProverProvider';
 import { AlertProvider } from '../providers/AlertProvider';
 import { useLoadFonts } from '../hooks/useLoadFonts';
 
@@ -50,6 +52,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <P01PrivyProvider>
           <ZkProverProvider>
+          <StarkProverProvider>
             <AlertProvider>
               <View style={{ flex: 1, backgroundColor: '#050505' }}>
                 <StatusBar style="light" />
@@ -67,6 +70,7 @@ export default function RootLayout() {
                 </Stack>
               </View>
             </AlertProvider>
+          </StarkProverProvider>
           </ZkProverProvider>
         </P01PrivyProvider>
       </SafeAreaProvider>
