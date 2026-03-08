@@ -1,41 +1,20 @@
 use anchor_lang::prelude::*;
 
-declare_id!("hqu2QaRpNFbiaTQdThui7X714YdViNKQTsMb7WR7r12");
+mod compact_proof;
+mod goldilocks;
+mod merkle;
+mod poseidon_consts;
+mod verify;
 
-/// On-chain STARK proof verifier for Protocol 01.
-///
-/// Verifies FRI-based STARK proofs using only hash operations (Blake3).
-/// No elliptic curve pairings needed — quantum-resistant by design.
-///
-/// # Architecture
-///
-/// STARK proofs are larger than Groth16 (~8-80KB vs 200 bytes), so they
-/// can't be passed inline in a single Solana instruction (max 1232 bytes).
-/// Instead, the proof is uploaded to a temporary PDA in chunks, then
-/// verified in a separate instruction.
-///
-/// ## Instruction Flow
-///
-/// 1. `init_proof_buffer` — Create PDA to hold proof bytes
-/// 2. `write_proof_chunk` — Upload proof in 800-byte chunks (multiple txs)
-/// 3. `verify_stark_proof` — Verify the complete proof (~1.1M CU)
-/// 4. Buffer is closed and rent returned after verification
-///
-/// # Compute Budget
-///
-/// STARK verification cost depends on:
-/// - Number of FRI queries (32 for 128-bit security)
-/// - Hash operations (Blake3, ~150 CU per hash)
-/// - Trace width and constraint count
-///
-/// Estimated: ~800K-1.2M CU for subscriber_ownership circuit
-/// Solana max: 1.4M CU per transaction (with priority fees)
-///
-/// # Status: SCAFFOLD
-///
-/// This program defines the account structure and instruction interfaces.
-/// The actual FRI verification logic will be ported from winter-verifier
-/// once the off-chain prover/verifier is fully validated.
+use compact_proof::{CompactStarkProof, GenericCompactProof, get_circuit_config};
+use goldilocks::Felt;
+
+declare_id!("DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs");
+
+pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
+pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
+pub const CIRCUIT_BALANCE_PROOF: u8 = 2;
+pub const CIRCUIT_MERKLE_PATH: u8 = 3;
 
 #[program]
 pub mod p01_stark_verifier {
@@ -47,6 +26,11 @@ pub mod p01_stark_verifier {
         proof_size: u32,
         circuit_id: u8,
     ) -> Result<()> {
+        require!(
+            circuit_id <= CIRCUIT_MERKLE_PATH,
+            StarkVerifierError::UnsupportedCircuit
+        );
+
         let buffer = &mut ctx.accounts.proof_buffer;
         buffer.authority = ctx.accounts.authority.key();
         buffer.circuit_id = circuit_id;
@@ -73,11 +57,9 @@ pub mod p01_stark_verifier {
             StarkVerifierError::ChunkOutOfBounds
         );
 
-        // Update write cursor
         let new_written = offset + data.len() as u32;
         buffer.bytes_written = buffer.bytes_written.max(new_written);
 
-        // Write data to raw account data (after Anchor discriminator + struct fields)
         let info = buffer.to_account_info();
         let mut account_data = info.data.borrow_mut();
         let start = ProofBuffer::PROOF_DATA_OFFSET + offset as usize;
@@ -89,11 +71,13 @@ pub mod p01_stark_verifier {
 
     /// Verify the STARK proof stored in the buffer.
     ///
-    /// This is the compute-intensive instruction (~800K-1.2M CU).
-    /// The proof buffer must be fully written before calling this.
+    /// For circuit 0 (subscriber_ownership): public_inputs = [commitment]
+    /// For circuit 1 (pool_commitment): public_inputs = [nullifier, commitment]
+    /// For circuit 2 (balance_proof): public_inputs = [commitment, token_mint]
+    /// For circuit 3 (merkle_path): public_inputs = [leaf, root]
     pub fn verify_stark_proof(
         ctx: Context<VerifyStarkProof>,
-        _public_inputs: Vec<u8>,
+        commitment: u64,
     ) -> Result<()> {
         let buffer = &mut ctx.accounts.proof_buffer;
 
@@ -106,11 +90,111 @@ pub mod p01_stark_verifier {
             StarkVerifierError::IncompleteProof
         );
 
-        // TODO: Implement FRI verification
-        // This will be ported from winter-verifier compiled to SBF.
-        // For now, mark as scaffold.
-        msg!("STARK verification not yet implemented on-chain");
-        return Err(StarkVerifierError::NotImplemented.into());
+        let circuit_id = buffer.circuit_id;
+
+        // Read proof bytes from account
+        let info = buffer.to_account_info();
+        let account_data = info.data.borrow();
+        let proof_start = ProofBuffer::PROOF_DATA_OFFSET;
+        let proof_end = proof_start + buffer.proof_size as usize;
+        let proof_bytes = &account_data[proof_start..proof_end];
+
+        if circuit_id == CIRCUIT_SUBSCRIBER_OWNERSHIP {
+            // Legacy path for backward compatibility
+            let proof = CompactStarkProof::from_bytes(proof_bytes)
+                .ok_or(StarkVerifierError::DeserializationError)?;
+            let commitment_felt = Felt::new(commitment);
+            verify::verify_subscriber_ownership(&proof, commitment_felt)
+                .map_err(|_| StarkVerifierError::InvalidProof)?;
+        } else {
+            // Generic path for new circuits
+            let config = get_circuit_config(circuit_id)
+                .ok_or(StarkVerifierError::UnsupportedCircuit)?;
+            let proof = GenericCompactProof::from_bytes(proof_bytes, config)
+                .ok_or(StarkVerifierError::DeserializationError)?;
+
+            // Build public inputs array from commitment parameter
+            // For circuits with multiple public inputs, they're packed into the commitment field
+            // or passed via additional accounts. For now, use commitment as primary input.
+            let public_inputs = vec![commitment];
+
+            verify::verify_generic(&proof, circuit_id, &public_inputs, config)
+                .map_err(|_| StarkVerifierError::InvalidProof)?;
+        }
+
+        // Mark verified
+        drop(account_data);
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.verified = true;
+
+        msg!("STARK proof verified for circuit {}", circuit_id);
+        Ok(())
+    }
+
+    /// Verify a STARK proof with multiple public inputs.
+    ///
+    /// Used for circuits that need more than one public input value.
+    pub fn verify_stark_proof_v2(
+        ctx: Context<VerifyStarkProof>,
+        public_inputs: Vec<u64>,
+    ) -> Result<()> {
+        let buffer = &mut ctx.accounts.proof_buffer;
+
+        require!(
+            !buffer.verified,
+            StarkVerifierError::AlreadyVerified
+        );
+        require!(
+            buffer.bytes_written >= buffer.proof_size,
+            StarkVerifierError::IncompleteProof
+        );
+
+        let circuit_id = buffer.circuit_id;
+        let config = get_circuit_config(circuit_id)
+            .ok_or(StarkVerifierError::UnsupportedCircuit)?;
+
+        // Read proof bytes
+        let info = buffer.to_account_info();
+        let account_data = info.data.borrow();
+        let proof_start = ProofBuffer::PROOF_DATA_OFFSET;
+        let proof_end = proof_start + buffer.proof_size as usize;
+        let proof_bytes = &account_data[proof_start..proof_end];
+
+        let proof = GenericCompactProof::from_bytes(proof_bytes, config)
+            .ok_or(StarkVerifierError::DeserializationError)?;
+
+        verify::verify_generic(&proof, circuit_id, &public_inputs, config)
+            .map_err(|_| StarkVerifierError::InvalidProof)?;
+
+        // Mark verified
+        drop(account_data);
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.verified = true;
+
+        msg!("STARK proof verified for circuit {}", circuit_id);
+        Ok(())
+    }
+
+    /// Resize a proof buffer to accommodate larger proofs (>10KB).
+    /// Must be called after init_proof_buffer when proof_size > 10190.
+    pub fn resize_proof_buffer(
+        ctx: Context<ResizeProofBuffer>,
+    ) -> Result<()> {
+        // Reallocation is handled by Anchor's realloc constraint.
+        // We just need to verify state.
+        let buffer = &ctx.accounts.proof_buffer;
+        require!(
+            !buffer.verified,
+            StarkVerifierError::AlreadyVerified
+        );
+        Ok(())
+    }
+
+    /// Close the proof buffer and return rent to authority.
+    pub fn close_proof_buffer(
+        _ctx: Context<CloseProofBuffer>,
+    ) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -124,7 +208,8 @@ pub struct InitProofBuffer<'info> {
     #[account(
         init,
         payer = authority,
-        space = ProofBuffer::space(proof_size as usize),
+        // Cap init allocation at 10KB; use resize_proof_buffer for larger proofs
+        space = ProofBuffer::init_space(proof_size as usize),
         seeds = [b"stark_proof", authority.key().as_ref(), &[circuit_id]],
         bump,
     )]
@@ -135,22 +220,43 @@ pub struct InitProofBuffer<'info> {
 }
 
 #[derive(Accounts)]
-pub struct WriteProofChunk<'info> {
+pub struct ResizeProofBuffer<'info> {
     #[account(
         mut,
         has_one = authority,
+        realloc = ProofBuffer::space(proof_buffer.proof_size as usize),
+        realloc::payer = authority,
+        realloc::zero = false,
     )]
+    pub proof_buffer: Account<'info, ProofBuffer>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct WriteProofChunk<'info> {
+    #[account(mut, has_one = authority)]
     pub proof_buffer: Account<'info, ProofBuffer>,
     pub authority: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct VerifyStarkProof<'info> {
+    #[account(mut, has_one = authority)]
+    pub proof_buffer: Account<'info, ProofBuffer>,
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CloseProofBuffer<'info> {
     #[account(
         mut,
         has_one = authority,
+        close = authority,
     )]
     pub proof_buffer: Account<'info, ProofBuffer>,
+    #[account(mut)]
     pub authority: Signer<'info>,
 }
 
@@ -158,31 +264,27 @@ pub struct VerifyStarkProof<'info> {
 // State
 // ============================================================================
 
-/// Temporary buffer for STARK proof upload and verification.
-///
-/// Proofs are uploaded in chunks (max ~800 bytes per instruction),
-/// then verified in a single compute-intensive instruction.
 #[account]
 pub struct ProofBuffer {
-    /// Who created this buffer (and can write/verify)
     pub authority: Pubkey,
-    /// Which circuit this proof is for (0 = subscriber_ownership, etc.)
     pub circuit_id: u8,
-    /// Total expected proof size in bytes
     pub proof_size: u32,
-    /// How many bytes have been written so far
     pub bytes_written: u32,
-    /// Whether verification has been completed
     pub verified: bool,
-    // Proof data follows in the account data (variable length)
 }
 
 impl ProofBuffer {
-    /// Offset where proof data starts in the account
-    const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1; // discriminator + fields
+    pub const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1; // 50
+    pub const MAX_INIT_SIZE: usize = 10_240; // 10KB Solana create_account limit
 
-    fn space(proof_size: usize) -> usize {
+    pub fn space(proof_size: usize) -> usize {
         Self::PROOF_DATA_OFFSET + proof_size
+    }
+
+    /// Capped space for init (max 10KB). For larger proofs, use resize_proof_buffer after init.
+    pub fn init_space(proof_size: usize) -> usize {
+        let full = Self::PROOF_DATA_OFFSET + proof_size;
+        if full <= Self::MAX_INIT_SIZE { full } else { Self::MAX_INIT_SIZE }
     }
 }
 
@@ -198,10 +300,12 @@ pub enum StarkVerifierError {
     ChunkOutOfBounds,
     #[msg("Proof upload incomplete")]
     IncompleteProof,
-    #[msg("STARK verification not yet implemented on-chain")]
-    NotImplemented,
-    #[msg("Invalid proof: FRI verification failed")]
+    #[msg("Invalid proof: verification failed")]
     InvalidProof,
-    #[msg("Public inputs do not match")]
-    PublicInputMismatch,
+    #[msg("Failed to deserialize proof bytes")]
+    DeserializationError,
+    #[msg("Unsupported circuit ID")]
+    UnsupportedCircuit,
+    #[msg("Proof has not been verified yet")]
+    NotYetVerified,
 }
