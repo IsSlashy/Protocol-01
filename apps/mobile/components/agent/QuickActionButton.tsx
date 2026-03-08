@@ -59,7 +59,7 @@ export const QuickActionButton: React.FC<QuickActionButtonProps> = ({
         animatedStyle,
         {
           flex: 1,
-          minHeight: isCompact ? 56 : 90,
+          minHeight: isCompact ? 72 : 90,
           opacity: disabled ? 0.5 : 1,
           borderRadius: 16,
           overflow: 'hidden',
@@ -73,39 +73,40 @@ export const QuickActionButton: React.FC<QuickActionButtonProps> = ({
         tint="dark"
         style={{
           flex: 1,
-          padding: isCompact ? 12 : 16,
-          flexDirection: isCompact ? 'row' : 'column',
+          padding: isCompact ? 10 : 16,
+          flexDirection: 'column',
           alignItems: 'center',
-          justifyContent: isCompact ? 'flex-start' : 'center',
+          justifyContent: 'center',
           backgroundColor: 'rgba(21, 21, 24, 0.6)',
         }}
       >
         <View
           style={{
-            width: isCompact ? 40 : 44,
-            height: isCompact ? 40 : 44,
-            borderRadius: isCompact ? 12 : 14,
+            width: isCompact ? 32 : 44,
+            height: isCompact ? 32 : 44,
+            borderRadius: isCompact ? 10 : 14,
             backgroundColor: `${color}18`,
             alignItems: 'center',
             justifyContent: 'center',
-            marginBottom: isCompact ? 0 : 10,
-            marginRight: isCompact ? 12 : 0,
+            marginBottom: isCompact ? 6 : 10,
           }}
         >
-          <Ionicons name={icon} size={isCompact ? 20 : 22} color={color} />
+          <Ionicons name={icon} size={isCompact ? 16 : 22} color={color} />
         </View>
 
-        <View style={{ alignItems: isCompact ? 'flex-start' : 'center' }}>
+        <View style={{ alignItems: 'center' }}>
           <Text
             style={{
               color: Colors.text,
-              fontSize: isCompact ? FontSize.md : FontSize.sm,
+              fontSize: isCompact ? 10 : FontSize.sm,
               fontFamily: FontFamily.semibold,
+              textAlign: 'center',
             }}
+            numberOfLines={1}
           >
             {label}
           </Text>
-          {description && (
+          {description && !isCompact && (
             <Text
               style={{
                 color: Colors.textSecondary,
@@ -118,12 +119,6 @@ export const QuickActionButton: React.FC<QuickActionButtonProps> = ({
             </Text>
           )}
         </View>
-
-        {isCompact && (
-          <View style={{ marginLeft: 'auto' }}>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
-          </View>
-        )}
       </BlurView>
     </AnimatedTouchable>
   );

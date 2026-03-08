@@ -159,7 +159,7 @@ export default function AISettingsScreen() {
   })();
 
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top }}>
+    <View style={{ flex: 1, backgroundColor: 'transparent', paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ overflow: 'hidden' }}>
         <BlurView
@@ -203,7 +203,7 @@ export default function AISettingsScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: Spacing.xl, paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{ padding: Spacing.xl, paddingBottom: insets.bottom + 120 }}
       >
         {/* AI Provider Selector */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
