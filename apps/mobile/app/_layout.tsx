@@ -19,6 +19,7 @@ import React from 'react';
 import { ZkProverProvider } from '../providers/ZkProverProvider';
 import { StarkProverProvider } from '../providers/StarkProverProvider';
 import { AlertProvider } from '../providers/AlertProvider';
+import { ArciumProvider } from '../providers/ArciumProvider';
 import { useLoadFonts } from '../hooks/useLoadFonts';
 
 // Prevent splash screen from auto-hiding
@@ -53,6 +54,7 @@ export default function RootLayout() {
         <P01PrivyProvider>
           <ZkProverProvider>
           <StarkProverProvider>
+          <ArciumProvider>
             <AlertProvider>
               <View style={{ flex: 1, backgroundColor: '#050505' }}>
                 <StatusBar style="light" />
@@ -70,6 +72,7 @@ export default function RootLayout() {
                 </Stack>
               </View>
             </AlertProvider>
+          </ArciumProvider>
           </StarkProverProvider>
           </ZkProverProvider>
         </P01PrivyProvider>

@@ -19,6 +19,7 @@ import { useShieldedStore } from '@/stores/shieldedStore';
 import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useArcium } from '@/providers/ArciumProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 export default function PrivacyDashboard() {
@@ -48,6 +49,8 @@ export default function PrivacyDashboard() {
     confidentialBalanceEnabled,
     initialize: initSettings,
   } = useSettingsStore();
+
+  const { isMpcActive, programAvailable } = useArcium();
 
   useEffect(() => { initSettings(); }, []);
 
@@ -216,6 +219,30 @@ export default function PrivacyDashboard() {
             </Text>
           </View>
         </Animated.View>
+
+        {/* ═══════ MPC ENHANCEMENT: Arcium status (conditional) ═══════ */}
+        {(isMpcActive || programAvailable) && (
+          <Animated.View entering={FadeInUp.delay(250)}>
+            <View style={styles.mpcCard}>
+              <View style={styles.mpcCardRow}>
+                <View style={styles.mpcIconWrap}>
+                  <Ionicons name="git-network" size={16} color="#f59e0b" />
+                </View>
+                <View style={styles.mpcCardInfo}>
+                  <Text style={styles.mpcCardTitle}>
+                    Multi-Party Computation
+                  </Text>
+                  <Text style={styles.mpcCardDesc}>
+                    {isMpcActive
+                      ? 'Arcium MPC active — privacy operations use decentralized threshold computation'
+                      : 'Arcium program detected. Enable MPC in Settings → Privacy for threshold privacy.'}
+                  </Text>
+                </View>
+                <View style={[styles.mpcStatusDot, isMpcActive ? styles.mpcDotActive : styles.mpcDotIdle]} />
+              </View>
+            </View>
+          </Animated.View>
+        )}
 
         {/* ═══════ LEGACY: Shielded Wallet (conditional) ═══════ */}
         {showShielded && (
@@ -579,6 +606,52 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.regular,
     color: P01Colors.yellow,
     lineHeight: 16,
+  },
+  mpcCard: {
+    backgroundColor: 'rgba(245, 158, 11, 0.04)',
+    borderRadius: 14,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.10)',
+    marginBottom: Spacing.lg,
+  },
+  mpcCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  mpcIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245, 158, 11, 0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mpcCardInfo: { flex: 1 },
+  mpcCardTitle: {
+    fontSize: 12,
+    fontFamily: FontFamily.bold,
+    color: '#f59e0b',
+    letterSpacing: 0.3,
+    marginBottom: 2,
+  },
+  mpcCardDesc: {
+    fontSize: 11,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    lineHeight: 16,
+  },
+  mpcStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  mpcDotActive: {
+    backgroundColor: '#22c55e',
+  },
+  mpcDotIdle: {
+    backgroundColor: 'rgba(245, 158, 11, 0.4)',
   },
   enableHint: {
     flexDirection: 'row',

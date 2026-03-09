@@ -1652,13 +1652,17 @@ export class ZkService {
     const serializedTx = unshieldTx.serialize();
     console.log('[ZK Relay Unshield] Tx serialized:', serializedTx.length, 'bytes');
 
-    // ── Submit via decentralized relay ──
-    const { relayTransaction } = await import('../relay');
-    const relaySignature = await relayTransaction(
+    // ── Submit via relay — MPC threshold decryption if enabled ──
+    const { confidentialRelay } = await import('../arcium/confidentialRelay');
+    const relayResult = await confidentialRelay(
       serializedTx,
       walletPublicKey,
       signTransaction,
     );
+    const relaySignature = relayResult.signature;
+    if (relayResult.wasMpcProtected) {
+      console.log('[ZK Relay Unshield] Relayed via MPC threshold decryption');
+    }
 
     // ── Update local notes ──
     this.removeSpentNotes(notesToSpend);
@@ -1697,6 +1701,23 @@ export class ZkService {
    * @param signTransaction - Transaction signing function
    * @returns StealthUnshieldResult with info for recipient to find funds
    */
+  /**
+   * Resolve a wallet address to stealth meta-address via registry.
+   * Uses MPC private_lookup when enabled (hides the query from RPC).
+   */
+  async resolveRecipientStealth(
+    walletAddress: PublicKey
+  ): Promise<{ spendingPubKey: Uint8Array; viewingPubKey: Uint8Array; wasMpcProtected: boolean } | null> {
+    const { lookupMetaAddress } = await import('../arcium/privateLookup');
+    const result = await lookupMetaAddress(walletAddress);
+    if (!result.isRegistered || !result.spendingPubKey || !result.viewingPubKey) return null;
+    return {
+      spendingPubKey: result.spendingPubKey,
+      viewingPubKey: result.viewingPubKey,
+      wasMpcProtected: result.wasMpcProtected,
+    };
+  }
+
   async unshieldStealth(
     recipientSpendingPubKey: string,
     recipientViewingPubKey: string,
@@ -3429,13 +3450,17 @@ export class ZkService {
       const serializedTx = unshieldTx.serialize();
       console.log('[ZK Private Send] Tx serialized:', serializedTx.length, 'bytes, submitting via relay...');
 
-      // 6. Submit via decentralized on-chain relay
-      const { relayTransaction } = await import('../relay');
-      const txSignature = await relayTransaction(
+      // 6. Submit via relay — MPC threshold decryption if enabled, else standard
+      const { confidentialRelay } = await import('../arcium/confidentialRelay');
+      const relayResult = await confidentialRelay(
         serializedTx,
         walletPublicKey,
         signTransaction,
       );
+      const txSignature = relayResult.signature;
+      if (relayResult.wasMpcProtected) {
+        console.log('[ZK Private Send] Relayed via MPC threshold decryption');
+      }
 
       // 7. Mark notes as spent locally and add change note
       this.removeSpentNotes(notesToSpend);

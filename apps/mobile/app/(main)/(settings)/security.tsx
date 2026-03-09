@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   Alert,
-  Platform,
+  Modal,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -15,11 +15,14 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
+import * as ScreenCapture from 'expo-screen-capture';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { requireNativeModule } from 'expo-modules-core';
+import Animated, { FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 
 import { SettingsRow, ToggleRow } from '../../../components/settings';
+import { PinInput } from '../../../components/onboarding';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 const STORAGE_KEYS = {
@@ -37,6 +40,13 @@ const LOCK_TIMEOUTS = [
   { label: '15 minutes', value: 900 },
   { label: 'Never', value: -1 },
 ];
+
+async function hashPin(pin: string): Promise<string> {
+  return await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    'p01_pin_v1:' + pin
+  );
+}
 
 /* ──────────────────────── Glass Card ──────────────────────── */
 
@@ -78,6 +88,203 @@ const GlassDivider: React.FC = () => (
   <View style={styles.divider} />
 );
 
+/* ──────────────────────── Change PIN Modal ──────────────────────── */
+
+type PinStep = 'verify' | 'new' | 'confirm';
+
+interface ChangePinModalProps {
+  visible: boolean;
+  hasPinSet: boolean;
+  biometricsEnabled: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSuccess }: ChangePinModalProps) {
+  const [step, setStep] = useState<PinStep>('new');
+  const [pin, setPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [error, setError] = useState(false);
+  const [verified, setVerified] = useState(false);
+  // Increment key to force PinInput remount (re-triggers autoFocus + timer)
+  const [pinKey, setPinKey] = useState(0);
+
+  // On open: determine auth method
+  useEffect(() => {
+    if (!visible) return;
+    setPin('');
+    setNewPin('');
+    setError(false);
+    setVerified(false);
+    setPinKey(k => k + 1);
+
+    if (!hasPinSet) {
+      // No PIN set yet — go straight to new
+      setStep('new');
+      return;
+    }
+
+    // Has existing PIN — need to verify identity first
+    if (biometricsEnabled) {
+      // Use biometrics to verify
+      verifyWithBiometrics();
+    } else {
+      // Use old PIN to verify
+      setStep('verify');
+    }
+  }, [visible]);
+
+  const verifyWithBiometrics = async () => {
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Verify your identity to change PIN',
+        cancelLabel: 'Use PIN',
+        disableDeviceFallback: false,
+        fallbackLabel: 'Use PIN',
+      });
+      if (result.success) {
+        setVerified(true);
+        setStep('new');
+        setPinKey(k => k + 1);
+      } else {
+        // Biometrics cancelled/failed — fall back to PIN verification
+        setStep('verify');
+        setPinKey(k => k + 1);
+      }
+    } catch {
+      // Biometrics error — fall back to PIN
+      setStep('verify');
+      setPinKey(k => k + 1);
+    }
+  };
+
+  const getTitle = () => {
+    switch (step) {
+      case 'verify': return 'Enter Current PIN';
+      case 'new': return hasPinSet ? 'Enter New PIN' : 'Set PIN';
+      case 'confirm': return 'Confirm New PIN';
+    }
+  };
+
+  const getSubtitle = () => {
+    switch (step) {
+      case 'verify': return 'Verify your identity';
+      case 'new': return 'Choose a 6-digit PIN';
+      case 'confirm': return 'Re-enter to confirm';
+    }
+  };
+
+  const handleComplete = useCallback(async (enteredPin: string) => {
+    if (step === 'verify') {
+      const storedHash = await SecureStore.getItemAsync('wallet_pin');
+      const enteredHash = await hashPin(enteredPin);
+      if (enteredHash === storedHash) {
+        setVerified(true);
+        setPin('');
+        setStep('new');
+        setPinKey(k => k + 1);
+      } else {
+        setError(true);
+        setPin('');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setTimeout(() => setError(false), 1500);
+      }
+    } else if (step === 'new') {
+      setNewPin(enteredPin);
+      setPin('');
+      setStep('confirm');
+      setPinKey(k => k + 1);
+    } else if (step === 'confirm') {
+      if (enteredPin === newPin) {
+        const pinHash = await hashPin(enteredPin);
+        await SecureStore.setItemAsync('wallet_pin', pinHash);
+        await SecureStore.setItemAsync('security_method', 'pin');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onSuccess();
+      } else {
+        setError(true);
+        setPin('');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setTimeout(() => {
+          setError(false);
+          setStep('new');
+          setNewPin('');
+          setPinKey(k => k + 1);
+        }, 1500);
+      }
+    }
+  }, [step, newPin, onSuccess]);
+
+  const allSteps: PinStep[] = hasPinSet && !verified ? ['verify', 'new', 'confirm'] : ['new', 'confirm'];
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <View style={pm.overlay}>
+        <TouchableOpacity style={pm.backdrop} activeOpacity={1} onPress={onClose} />
+        <Animated.View
+          entering={SlideInDown.duration(200)}
+          exiting={SlideOutDown.duration(150)}
+          style={pm.sheet}
+        >
+          <View style={pm.dragRow}>
+            <View style={pm.dragHandle} />
+          </View>
+
+          {/* Header */}
+          <View style={pm.header}>
+            <LinearGradient
+              colors={[P01Colors.cyanDim, 'rgba(57, 197, 187, 0.05)']}
+              style={pm.iconWrap}
+            >
+              <Ionicons name="keypad" size={28} color={P01Colors.cyan} />
+            </LinearGradient>
+            <View style={{ flex: 1 }}>
+              <Text style={pm.title}>{getTitle()}</Text>
+              <Text style={pm.subtitle}>{getSubtitle()}</Text>
+            </View>
+          </View>
+
+          {/* Step indicator */}
+          <View style={pm.steps}>
+            {allSteps.map((s, i) => (
+              <View key={s} style={pm.stepRow}>
+                <View style={[
+                  pm.stepDot,
+                  s === step && pm.stepDotActive,
+                  allSteps.indexOf(s) < allSteps.indexOf(step) && pm.stepDotDone,
+                ]} />
+                {i < allSteps.length - 1 && <View style={pm.stepLine} />}
+              </View>
+            ))}
+          </View>
+
+          {/* PIN Input — key forces remount on step change */}
+          <View style={pm.pinWrap}>
+            <PinInput
+              key={pinKey}
+              value={pin}
+              onChange={setPin}
+              onComplete={handleComplete}
+              error={error}
+            />
+          </View>
+
+          {/* Cancel */}
+          <TouchableOpacity style={pm.cancelBtn} onPress={onClose}>
+            <Text style={pm.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
 /* ──────────────────────── Screen ──────────────────────── */
 
 export default function SecuritySettingsScreen() {
@@ -89,11 +296,19 @@ export default function SecuritySettingsScreen() {
   const [hideBalance, setHideBalance] = useState(false);
   const [blockScreenshots, setBlockScreenshots] = useState(false);
   const [lockTimeout, setLockTimeout] = useState(60);
+  const [hasPinSet, setHasPinSet] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
 
   useEffect(() => {
     loadSettings();
     checkBiometrics();
+    checkPinStatus();
   }, []);
+
+  const checkPinStatus = async () => {
+    const storedPin = await SecureStore.getItemAsync('wallet_pin');
+    setHasPinSet(!!storedPin);
+  };
 
   const checkBiometrics = async () => {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
@@ -123,7 +338,6 @@ export default function SecuritySettingsScreen() {
 
   const handleBiometricsToggle = async (value: boolean) => {
     if (value && biometricsAvailable) {
-      // Verify biometrics before enabling
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Verify your identity to enable biometrics',
         fallbackLabel: 'Cancel',
@@ -157,25 +371,15 @@ export default function SecuritySettingsScreen() {
     await AsyncStorage.setItem(STORAGE_KEYS.BLOCK_SCREENSHOTS, value.toString());
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    // Apply FLAG_SECURE on Android
-    if (Platform.OS === 'android') {
-      try {
-        const ActivityModule = requireNativeModule('ExpoActivity');
-        if (value) {
-          ActivityModule.setWindowFlags(8192, 8192); // FLAG_SECURE = 0x2000
-        } else {
-          ActivityModule.clearWindowFlags(8192);
-        }
-      } catch {
-        // ExpoActivity module not available — fall back to alert
-        if (value) {
-          Alert.alert(
-            'Screenshot Blocking',
-            'Screenshot blocking is enabled but requires a native module for full enforcement. It will take effect on next app restart.',
-            [{ text: 'OK' }]
-          );
-        }
+    // Apply immediately using expo-screen-capture
+    try {
+      if (value) {
+        await ScreenCapture.preventScreenCaptureAsync();
+      } else {
+        await ScreenCapture.allowScreenCaptureAsync();
       }
+    } catch (err) {
+      console.warn('[Security] Screen capture API error:', err);
     }
   };
 
@@ -195,11 +399,13 @@ export default function SecuritySettingsScreen() {
   };
 
   const handleChangePIN = () => {
-    Alert.alert(
-      'Change PIN',
-      'PIN lock will be available in a future update. Your wallet is secured by biometric authentication.',
-      [{ text: 'OK' }]
-    );
+    setShowPinModal(true);
+  };
+
+  const handlePinSuccess = () => {
+    setShowPinModal(false);
+    setHasPinSet(true);
+    Alert.alert('PIN Updated', hasPinSet ? 'Your PIN has been changed.' : 'Your PIN has been set.');
   };
 
   const getLockTimeoutLabel = () => {
@@ -232,7 +438,7 @@ export default function SecuritySettingsScreen() {
         <SectionTitle title="AUTHENTICATION" delay={80} />
         <GlassCard delay={100}>
           <SettingsRow
-            label="Change PIN"
+            label={hasPinSet ? 'Change PIN' : 'Set PIN'}
             leftIcon="keypad-outline"
             onPress={handleChangePIN}
           />
@@ -309,6 +515,15 @@ export default function SecuritySettingsScreen() {
           </BlurView>
         </Animated.View>
       </ScrollView>
+
+      {/* Change PIN Modal */}
+      <ChangePinModal
+        visible={showPinModal}
+        hasPinSet={hasPinSet}
+        biometricsEnabled={biometricsEnabled && biometricsAvailable}
+        onClose={() => setShowPinModal(false)}
+        onSuccess={handlePinSuccess}
+      />
     </SafeAreaView>
   );
 }
@@ -395,5 +610,110 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.md,
     flex: 1,
     lineHeight: 20,
+  },
+});
+
+/* ──────────────────────── PIN Modal Styles ──────────────────────── */
+
+const pm = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: 40,
+    borderTopWidth: 1,
+    borderTopColor: `${P01Colors.cyan}30`,
+  },
+  dragRow: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: Spacing.md,
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: Spacing.lg,
+  },
+  iconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 20,
+    fontFamily: FontFamily.bold,
+    color: Colors.text,
+  },
+  subtitle: {
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  steps: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.xl,
+    gap: 4,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stepDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.border,
+  },
+  stepDotActive: {
+    backgroundColor: P01Colors.cyan,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  stepDotDone: {
+    backgroundColor: P01Colors.green,
+  },
+  stepLine: {
+    width: 32,
+    height: 2,
+    backgroundColor: Colors.border,
+  },
+  pinWrap: {
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.xl,
+  },
+  cancelBtn: {
+    paddingVertical: 14,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelText: {
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
   },
 });

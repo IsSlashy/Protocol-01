@@ -115,9 +115,14 @@ class NfcShareService : HostApduService() {
     }
 
     override fun onDeactivated(reason: Int) {
-        Log.d(TAG, "Deactivated: reason=$reason dataWasRead=$dataWasRead bytesRead=$bytesRead")
-        // If deactivated before all data was read, still notify if partial read happened
-        if (dataWasRead && onTransferComplete != null) {
+        val data = noteData
+        val totalSize = data?.size ?: 0
+        Log.d(TAG, "Deactivated: reason=$reason dataWasRead=$dataWasRead bytesRead=$bytesRead/$totalSize")
+        // Only fire transfer complete if ALL data was read.
+        // Previously this fired on any partial read, which caused data loss:
+        // the sender marked the note as "transferred" but the receiver only
+        // got a partial/corrupt payload and crashed.
+        if (dataWasRead && bytesRead >= totalSize && totalSize > 0 && onTransferComplete != null) {
             onTransferComplete?.invoke()
             onTransferComplete = null
         }

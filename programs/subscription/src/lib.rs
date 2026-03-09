@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, Approve, Revoke};
 
-declare_id!("5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt");
+declare_id!("3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW");
 
 /// P01 Subscription Program
 ///

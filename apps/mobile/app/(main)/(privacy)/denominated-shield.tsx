@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   Modal,
   StyleSheet,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -15,19 +14,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, {
-  FadeInDown,
-  FadeInUp,
   FadeIn,
   SlideInDown,
   SlideOutDown,
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  withSequence,
-  withDelay,
-  Easing,
-  interpolateColor,
 } from 'react-native-reanimated';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 
@@ -41,8 +30,6 @@ import {
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type TokenTab = 'SOL' | 'USDC';
 
@@ -68,28 +55,6 @@ function ConfirmSheet({
   onConfirm,
   onClose,
 }: ConfirmSheetProps) {
-  const pulseAnim = useSharedValue(0);
-
-  useEffect(() => {
-    if (visible) {
-      pulseAnim.value = withRepeat(
-        withSequence(
-          withTiming(1, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
-          withTiming(0, { duration: 1200, easing: Easing.inOut(Easing.ease) }),
-        ),
-        -1,
-      );
-    }
-  }, [visible]);
-
-  const glowStyle = useAnimatedStyle(() => ({
-    borderColor: interpolateColor(
-      pulseAnim.value,
-      [0, 1],
-      ['rgba(57, 197, 187, 0.2)', 'rgba(57, 197, 187, 0.6)'],
-    ),
-  }));
-
   if (!pool) return null;
 
   const denomination = pool.denomination;
@@ -115,8 +80,8 @@ function ConfirmSheet({
         <TouchableOpacity style={cs.backdrop} activeOpacity={1} onPress={isProcessing ? undefined : onClose} />
 
         <Animated.View
-          entering={SlideInDown.springify().damping(18).stiffness(140)}
-          exiting={SlideOutDown.duration(250)}
+          entering={SlideInDown.duration(200)}
+          exiting={SlideOutDown.duration(150)}
           style={cs.sheet}
         >
           {/* Drag handle */}
@@ -139,10 +104,10 @@ function ConfirmSheet({
           </View>
 
           {/* Amount display */}
-          <Animated.View style={[cs.amountCard, glowStyle]}>
+          <View style={cs.amountCard}>
             <Text style={cs.amountValue}>{denomination}</Text>
             <Text style={cs.amountToken}>{token}</Text>
-          </Animated.View>
+          </View>
 
           {/* Details */}
           <View style={cs.detailsCard}>
@@ -266,41 +231,19 @@ interface ResultModalProps {
 function ResultModal({ visible, type, title, message, actions, onDismiss }: ResultModalProps) {
   const iconColor = type === 'success' ? P01Colors.cyan : '#EF4444';
   const iconName = type === 'success' ? 'checkmark-circle' : 'alert-circle';
-  const pulseAnim = useSharedValue(0);
-
-  useEffect(() => {
-    if (visible) {
-      pulseAnim.value = withRepeat(
-        withSequence(
-          withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
-          withTiming(0, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
-        ),
-        -1,
-      );
-    }
-  }, [visible]);
-
-  const glowStyle = useAnimatedStyle(() => ({
-    borderColor: interpolateColor(
-      pulseAnim.value,
-      [0, 1],
-      [`${iconColor}33`, `${iconColor}88`],
-    ),
-  }));
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="none"
+      animationType="fade"
       statusBarTranslucent
       onRequestClose={onDismiss}
     >
       <View style={rm.overlay}>
         <TouchableOpacity style={rm.backdrop} activeOpacity={1} onPress={onDismiss} />
-        <Animated.View
-          entering={FadeInUp.springify().damping(14).stiffness(100)}
-          style={[rm.card, glowStyle]}
+        <View
+          style={[rm.card, { borderColor: `${iconColor}55` }]}
         >
           {/* Top accent */}
           <View style={[rm.topAccent, { backgroundColor: iconColor }]} />
@@ -342,7 +285,7 @@ function ResultModal({ visible, type, title, message, actions, onDismiss }: Resu
           <View style={[rm.corner, rm.cornerBLv, { backgroundColor: `${iconColor}60` }]} />
           <View style={[rm.corner, rm.cornerBR, { backgroundColor: `${iconColor}60` }]} />
           <View style={[rm.corner, rm.cornerBRv, { backgroundColor: `${iconColor}60` }]} />
-        </Animated.View>
+        </View>
       </View>
     </Modal>
   );
@@ -509,26 +452,24 @@ export default function DenominatedShieldScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Wallet Balance Card */}
-        <Animated.View entering={FadeInDown.delay(50)}>
-          <LinearGradient
-            colors={['rgba(57,197,187,0.06)', 'rgba(57,197,187,0.01)']}
-            style={styles.balanceCard}
-          >
-            <View style={styles.balanceLeft}>
-              <Text style={styles.balanceLabel}>Available</Text>
-              <Text style={styles.balanceValue}>
-                {loadingBalance ? '...' : (walletBalance / LAMPORTS_PER_SOL).toFixed(4)}
-              </Text>
-              <Text style={styles.balanceSuffix}>SOL</Text>
-            </View>
-            <TouchableOpacity onPress={fetchBalance} style={styles.refreshBtn}>
-              <Ionicons name="refresh" size={18} color={P01Colors.cyan} />
-            </TouchableOpacity>
-          </LinearGradient>
-        </Animated.View>
+        <LinearGradient
+          colors={['rgba(57,197,187,0.06)', 'rgba(57,197,187,0.01)']}
+          style={styles.balanceCard}
+        >
+          <View style={styles.balanceLeft}>
+            <Text style={styles.balanceLabel}>Available</Text>
+            <Text style={styles.balanceValue}>
+              {loadingBalance ? '...' : (walletBalance / LAMPORTS_PER_SOL).toFixed(4)}
+            </Text>
+            <Text style={styles.balanceSuffix}>SOL</Text>
+          </View>
+          <TouchableOpacity onPress={fetchBalance} style={styles.refreshBtn}>
+            <Ionicons name="refresh" size={18} color={P01Colors.cyan} />
+          </TouchableOpacity>
+        </LinearGradient>
 
         {/* Token Tabs */}
-        <Animated.View entering={FadeInUp.delay(100)} style={styles.tabRow}>
+        <View style={styles.tabRow}>
           {(['SOL', 'USDC'] as TokenTab[]).map(tab => (
             <TouchableOpacity
               key={tab}
@@ -544,25 +485,21 @@ export default function DenominatedShieldScreen() {
               </Text>
             </TouchableOpacity>
           ))}
-        </Animated.View>
+        </View>
 
         {/* Explainer */}
-        <Animated.View entering={FadeInUp.delay(150)}>
-          <View style={styles.explainer}>
-            <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
-            <Text style={styles.explainerText}>
-              Choose a denomination. Same-size deposits are indistinguishable — the larger the pool, the stronger your privacy.
-            </Text>
-          </View>
-        </Animated.View>
+        <View style={styles.explainer}>
+          <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
+          <Text style={styles.explainerText}>
+            Choose a denomination. Same-size deposits are indistinguishable — the larger the pool, the stronger your privacy.
+          </Text>
+        </View>
 
         {/* Section label */}
-        <Animated.View entering={FadeInUp.delay(180)}>
-          <Text style={styles.sectionLabel}>SELECT AMOUNT</Text>
-        </Animated.View>
+        <Text style={styles.sectionLabel}>SELECT AMOUNT</Text>
 
         {/* Pool Cards */}
-        {pools.map((pool, i) => {
+        {pools.map((pool) => {
           const noteCount = getPoolNoteCount(pool);
           const anonymityLevel = noteCount === 0 ? 0 :
             noteCount < 10 ? 1 : noteCount < 100 ? 2 : 3;
@@ -572,70 +509,69 @@ export default function DenominatedShieldScreen() {
           const canAfford = pool.token === 'SOL' ? balanceSol >= pool.denomination : true;
 
           return (
-            <Animated.View key={pool.poolPDA.toBase58()} entering={FadeInUp.delay(220 + i * 60)}>
-              <TouchableOpacity
-                style={[styles.poolCard, !canAfford && styles.poolCardDimmed]}
-                onPress={() => handleSelectPool(pool)}
-                disabled={isLoading}
-                activeOpacity={0.7}
+            <TouchableOpacity
+              key={pool.poolPDA.toBase58()}
+              style={[styles.poolCard, !canAfford && styles.poolCardDimmed]}
+              onPress={() => handleSelectPool(pool)}
+              disabled={isLoading}
+              activeOpacity={0.7}
+            >
+              <LinearGradient
+                colors={canAfford
+                  ? [P01Colors.cyanDim, 'rgba(57, 197, 187, 0.02)']
+                  : ['rgba(50,50,50,0.08)', 'rgba(30,30,30,0.02)']}
+                style={[styles.poolCardGradient, !canAfford && { borderColor: Colors.border }]}
               >
-                <LinearGradient
-                  colors={canAfford
-                    ? [P01Colors.cyanDim, 'rgba(57, 197, 187, 0.02)']
-                    : ['rgba(50,50,50,0.08)', 'rgba(30,30,30,0.02)']}
-                  style={[styles.poolCardGradient, !canAfford && { borderColor: Colors.border }]}
-                >
-                  <View style={styles.poolHeader}>
-                    {/* Left: amount */}
-                    <View style={styles.poolLeft}>
-                      <Text style={[styles.poolAmount, !canAfford && { color: Colors.textSecondary }]}>
-                        {pool.denomination}
+                <View style={styles.poolHeader}>
+                  {/* Left: amount */}
+                  <View style={styles.poolLeft}>
+                    <Text style={[styles.poolAmount, !canAfford && { color: Colors.textSecondary }]}>
+                      {pool.denomination}
+                    </Text>
+                    <Text style={styles.poolToken}>{pool.token}</Text>
+                  </View>
+
+                  {/* Right: anonymity + chevron */}
+                  <View style={styles.poolRight}>
+                    <View style={[styles.anonymityBadge, { borderColor: anonymityColor }]}>
+                      <View style={[styles.anonymityDot, { backgroundColor: anonymityColor }]} />
+                      <Text style={[styles.anonymityText, { color: anonymityColor }]}>
+                        {anonymityLabel}
                       </Text>
-                      <Text style={styles.poolToken}>{pool.token}</Text>
                     </View>
-
-                    {/* Right: anonymity + chevron */}
-                    <View style={styles.poolRight}>
-                      <View style={[styles.anonymityBadge, { borderColor: anonymityColor }]}>
-                        <View style={[styles.anonymityDot, { backgroundColor: anonymityColor }]} />
-                        <Text style={[styles.anonymityText, { color: anonymityColor }]}>
-                          {anonymityLabel}
-                        </Text>
-                      </View>
-                      <Ionicons
-                        name="chevron-forward"
-                        size={20}
-                        color={canAfford ? P01Colors.cyan : Colors.textTertiary}
-                      />
-                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={20}
+                      color={canAfford ? P01Colors.cyan : Colors.textTertiary}
+                    />
                   </View>
+                </View>
 
-                  {/* Bottom row: pool stats */}
-                  <View style={styles.poolMeta}>
-                    <View style={styles.poolMetaItem}>
-                      <Ionicons name="people" size={12} color={Colors.textTertiary} />
-                      <Text style={styles.poolMetaText}>{noteCount} notes</Text>
-                    </View>
-                    <View style={styles.poolMetaDot} />
-                    <View style={styles.poolMetaItem}>
-                      <Ionicons name="time" size={12} color={Colors.textTertiary} />
-                      <Text style={styles.poolMetaText}>~1h maturity</Text>
-                    </View>
-                    <View style={styles.poolMetaDot} />
-                    <View style={styles.poolMetaItem}>
-                      <Ionicons name="hardware-chip" size={12} color={Colors.textTertiary} />
-                      <Text style={styles.poolMetaText}>STARK</Text>
-                    </View>
-                    {!canAfford && (
-                      <>
-                        <View style={styles.poolMetaDot} />
-                        <Text style={[styles.poolMetaText, { color: '#EF4444' }]}>Insufficient</Text>
-                      </>
-                    )}
+                {/* Bottom row: pool stats */}
+                <View style={styles.poolMeta}>
+                  <View style={styles.poolMetaItem}>
+                    <Ionicons name="people" size={12} color={Colors.textTertiary} />
+                    <Text style={styles.poolMetaText}>{noteCount} notes</Text>
                   </View>
-                </LinearGradient>
-              </TouchableOpacity>
-            </Animated.View>
+                  <View style={styles.poolMetaDot} />
+                  <View style={styles.poolMetaItem}>
+                    <Ionicons name="time" size={12} color={Colors.textTertiary} />
+                    <Text style={styles.poolMetaText}>~1h maturity</Text>
+                  </View>
+                  <View style={styles.poolMetaDot} />
+                  <View style={styles.poolMetaItem}>
+                    <Ionicons name="hardware-chip" size={12} color={Colors.textTertiary} />
+                    <Text style={styles.poolMetaText}>STARK</Text>
+                  </View>
+                  {!canAfford && (
+                    <>
+                      <View style={styles.poolMetaDot} />
+                      <Text style={[styles.poolMetaText, { color: '#EF4444' }]}>Insufficient</Text>
+                    </>
+                  )}
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
           );
         })}
 
@@ -949,6 +885,7 @@ const cs = StyleSheet.create({
     paddingVertical: Spacing.xl,
     marginBottom: Spacing.lg,
     borderWidth: 1.5,
+    borderColor: 'rgba(57, 197, 187, 0.35)',
   },
   amountValue: {
     fontSize: 44,
