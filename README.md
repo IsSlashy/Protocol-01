@@ -21,7 +21,6 @@
 > **PROPRIETARY SOFTWARE &mdash; ALL RIGHTS RESERVED**
 >
 > &copy; 2026 Volta Team | Developed by Slashy Fx
-> Ps:"There no team Im all alone XD"
 >
 > This repository is visible for **hackathon evaluation purposes only**.
 > No license is granted to use, copy, modify, fork, or distribute this code.
@@ -675,3 +674,4 @@ These libraries are used in production by Protocol 01 and are free to use under 
   <strong>Built on Solana</strong><br/>
   <sub>&copy; 2026 Volta Team &mdash; All rights reserved</sub>
 </p>
+
