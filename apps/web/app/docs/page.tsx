@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   ExternalLink,
   CheckCircle,
+  Network,
 } from "lucide-react";
 
 // ============ P-01 Theme Constants ============
@@ -234,6 +235,39 @@ await program.methods.relayTransfer(proof, publicSignals, stealthAddress)
 // On-chain: relayer verifies proof → transfers to stealth address`,
   },
   {
+    id: "arcium-mpc",
+    title: "Multi-Party Computation (Arcium)",
+    icon: <Network className="w-6 h-6" />,
+    description:
+      "Decentralized multi-party computation via Arcium's Cerberus protocol. 9 MPC circuits deployed on Solana devnet. Every operation has a graceful fallback — when MPC is disabled, flows degrade to standard (non-MPC) paths with zero overhead.",
+    details: [
+      "Arcium Cerberus protocol: 1-of-N honest node guarantees correctness",
+      "9 compiled circuits (Arcis language): relay, lookup, nullifier, audit, stealth scan, vote, etc.",
+      "Rescue-CTR encryption for encrypted payloads to MPC nodes",
+      "X25519 key exchange between client and MXE (Multi-eXecution Environment)",
+      "6 use cases: confidential relay, anonymous lookup, hidden nullifier, balance audit, threshold stealth scan, private governance",
+      "Mobile toggle: amber UI indicators, ArciumProvider lazy-init, zero overhead when disabled",
+      "Program ID: FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT (devnet, cluster 456)",
+    ],
+    codeExample: `// @p01/arcium-sdk — MPC confidential compute
+import { ArciumClient } from '@p01/arcium-sdk';
+
+const mpc = new ArciumClient({ connection, wallet, programId });
+await mpc.initialize(); // X25519 key exchange + Rescue cipher setup
+
+// Threshold relay — TX split across MPC nodes, no single node sees plaintext
+await mpc.confidentialRelay(encryptedTransaction);
+
+// Private registry lookup — query stealth meta-address without revealing target
+const metaAddress = await mpc.privateLookup(targetHash);
+
+// Hidden nullifier — SHA3 commitment on-chain, actual nullifier encrypted in MPC
+await mpc.commitNullifier(nullifierPreimage, secret);
+
+// Confidential balance audit — prove solvency without individual balance exposure
+await mpc.submitBalanceForAudit(encryptedBalances);`,
+  },
+  {
     id: "streams-privacy",
     title: "Streams & Subscriptions Privacy",
     icon: <Layers className="w-6 h-6" />,
@@ -446,6 +480,7 @@ const docsArchLayers = [
       { label: "@p01/specter-sdk", sub: "Stealth & Wallets" },
       { label: "@p01/zk-sdk", sub: "Groth16 + STARK Prover" },
       { label: "@p01/zkspl-sdk", sub: "Confidential Balances" },
+      { label: "@p01/arcium-sdk", sub: "MPC Confidential Compute" },
     ],
   },
   {
@@ -458,6 +493,7 @@ const docsArchLayers = [
       { label: "zkSPL", sub: "Confidential Balances" },
       { label: "PAYMENTS", sub: "Streams & Subscriptions" },
       { label: "VAULTS", sub: "Subscription Vaults" },
+      { label: "MPC", sub: "Arcium Cerberus" },
     ],
   },
   {
@@ -474,7 +510,7 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "12 PROGRAMS", sub: "Anchor / Rust" },
+      { label: "13 PROGRAMS", sub: "Anchor / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
       { label: "alt_bn128 + FRI", sub: "ZK Verification" },
     ],
@@ -703,7 +739,7 @@ export default function DocsPage() {
               Privacy Technologies
             </h1>
             <p className="text-lg text-[#888892] max-w-2xl mx-auto leading-relaxed">
-              Protocol 01 combines cutting-edge cryptography to deliver true financial privacy on Solana.
+              Protocol 01 combines zero-knowledge proofs, multi-party computation, and post-quantum cryptography to deliver true financial privacy on Solana.
               <br className="hidden sm:block" />
               Every component is built from scratch for maximum security and efficiency.
             </p>
@@ -828,6 +864,10 @@ export default function DocsPage() {
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
                   <span>No double-spending: Nullifiers are unique per commitment</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>MPC threshold: 1-of-N honest node via Arcium Cerberus protocol</span>
                 </li>
               </ul>
             </div>
