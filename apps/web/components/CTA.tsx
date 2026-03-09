@@ -10,8 +10,8 @@ const downloadOptions = [
     platform: "Android",
     icon: Smartphone,
     description: "Instant Download APK",
-    filename: "protocol-01-v0.6.0.apk",
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.6.0/protocol-01-v0.6.0.apk",
+    filename: "protocol-01-v0.7.0.apk",
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.7.0/protocol-01-v0.7.0.apk",
     size: "200 MB",
   },
   {
@@ -19,7 +19,7 @@ const downloadOptions = [
     icon: Chrome,
     description: "Instant Download ZIP",
     filename: "P01-Extension-v0.3.0.zip",
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.6.0/P01-Extension-v0.3.0.zip",
+    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.7.0/P01-Extension-v0.3.0.zip",
     size: "10 MB",
   },
 ];
