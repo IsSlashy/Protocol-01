@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>The privacy layer for Solana.</strong><br/>
-  Zero-knowledge proofs &middot; Confidential balances &middot; Stealth addresses &middot; Shielded transfers
+  Zero-knowledge proofs &middot; Multi-party computation &middot; Confidential balances &middot; Stealth addresses &middot; Shielded transfers
 </p>
 
 <p align="center">
@@ -162,6 +162,12 @@ Subscription:     5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt
 Stream:           2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws
 Fee Splitter:     muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD
 Whitelist:        AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE
+P01 Arcium MPC:   FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT
+Trustless:        FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q
+Relayer:          2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW
+Quantum Vault:    HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o
+Registry:         QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB
+STARK Verifier:   DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
 ```
 
 ---
@@ -169,17 +175,20 @@ Whitelist:        AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE
 ## What is Protocol 01?
 
 Protocol 01 is a privacy-first financial ecosystem on Solana.
-It combines **Groth16 zero-knowledge proofs**, **ECDH stealth addresses**, and a **private relay network** to deliver fully untraceable transactions.
+It combines **Groth16 zero-knowledge proofs**, **Arcium decentralized MPC**, **ECDH stealth addresses**, and a **trustless on-chain relay** to deliver fully untraceable transactions.
+
+P-01 couples ZK proofs with Arcium's multi-party computation network for threshold operations that ZK alone cannot handle — such as distributed key generation, private registry lookups, and encrypted governance votes. Where ZK proves correctness locally, MPC distributes trust across a decentralized cluster so no single node ever sees plaintext data.
 
 Unlike mixers or tumblers, P-01 provides **cryptographic privacy** at the protocol level.
-Amounts, senders, and recipients are hidden by default through ZK circuits, not operational obfuscation.
+Amounts, senders, and recipients are hidden by default through ZK circuits and MPC protocols, not operational obfuscation.
 
 ```
-User creates ZK proof (Groth16)
-    -> Proof sent to relayer
-        -> Relayer verifies off-chain (snarkjs)
+User creates ZK proof (Groth16 / STARK)
+    -> Proof submitted to on-chain trustless relayer
+        -> Relayer verifies proof on-chain (Solana alt_bn128 / FRI)
             -> Funds sent to stealth address
                 -> No on-chain link between sender and recipient
+    (optional) MPC threshold decryption via Arcium Cerberus
 ```
 
 ---
@@ -197,6 +206,7 @@ protocol-01/
 │   ├── specter-sdk/        # @p01/specter-sdk — Stealth wallets & transfers (P01Client)
 │   ├── zk-sdk/             # @p01/zk-sdk — ZK proof generation (ShieldedClient)
 │   ├── zkspl-sdk/          # @p01/zkspl-sdk — Confidential balances (ZkSplClient)
+│   ├── arcium-sdk/         # @p01/arcium-sdk — MPC confidential compute (6 use cases)
 │   ├── auth-sdk/           # @p01/auth-sdk — "Login with P-01" authentication
 │   ├── whitelist-sdk/      # @p01/whitelist-sdk — On-chain developer whitelist
 │   ├── specter-js/         # @p01/js — Pay button & browser SDK
@@ -210,16 +220,22 @@ protocol-01/
 │   ├── merkle.circom                # Merkle tree membership proof
 │   └── poseidon.circom              # ZK-friendly hash function
 ├── programs/
-│   ├── zk_shielded/        # Shielded pool — shield/transfer/unshield with Groth16
+│   ├── zk_shielded/        # Shielded pool — shield/transfer/unshield with Groth16 + STARK
 │   ├── p01_zkspl/          # zkSPL — confidential balances with Poseidon commitments
 │   ├── specter/            # Stealth address registry + private streams
+│   ├── p01_arcium/         # MPC circuits — 9 Arcis circuits on Arcium network
+│   ├── p01_trustless/      # On-chain trustless relayer (no backend server)
+│   ├── p01_relayer/        # Relay instruction handlers + fee accounting
+│   ├── p01_quantum_vault/  # Quantum-safe vault (WOTS+, hash-timelock, commit-reveal)
+│   ├── p01_registry/       # Stealth meta-address directory (EIP-5564 style)
+│   ├── p01_stark_verifier/ # On-chain STARK/FRI verifier (6 circuits, Goldilocks field)
 │   ├── subscription/       # Recurring payments with delegated authority
 │   ├── stream/             # Time-locked payment streaming (escrow)
 │   ├── whitelist/          # Developer access control
 │   └── p01-fee-splitter/   # Fee routing (0.5% protocol fee)
+├── stark/                  # Winterfell STARK prover (Poseidon AIR, WASM bindings)
 └── services/
-    ├── prover/             # Rust native Groth16 prover (ark-circom, ~50ms proofs)
-    └── relayer/            # Express.js — ZK verification, proof gen, subscription crank
+    └── prover/             # Rust native Groth16 prover (ark-circom, ~50ms proofs)
 ```
 
 ---
@@ -299,18 +315,38 @@ Pedersen commitments (`C = v·G + r·H`) rely on elliptic curves — broken by S
 Poseidon commitments (`C = Hash(v, r, ...)`) rely on algebraic hashes — immune to quantum attacks.
 The Groth16 proof system is ephemeral and can be migrated to STARKs later.
 
-### Private Relay
+### Private Relay (On-Chain Trustless)
 
-The relayer breaks the on-chain link between sender and recipient:
+The on-chain trustless relayer breaks the link between sender and recipient without any backend server:
 
-1. User generates a ZK proof client-side
-2. User funds the relayer (amount + 0.5% fee + gas)
-3. Relayer verifies the proof off-chain (snarkjs)
-4. Relayer sends funds from its own wallet to the stealth address
-5. On-chain: only `Relayer -> Stealth Address` is visible
+1. User generates a ZK proof client-side (Groth16 or STARK)
+2. User submits the proof + encrypted note to the `p01_trustless` program
+3. The program verifies the proof on-chain (Solana `alt_bn128` syscalls or FRI verifier)
+4. Funds are routed to the stealth address via the `p01_relayer` program
+5. On-chain: only `Relayer PDA -> Stealth Address` is visible
 
-The relayer network supports **health checks**, **load balancing**, and **random selection**.
-Maximum privacy through relay diversity.
+No backend server, no trust assumptions. The relayer is a Solana program.
+
+### Multi-Party Computation (Arcium MPC)
+
+Decentralized MPC via Arcium's **Cerberus protocol** — as long as 1 honest node exists in the cluster, security holds. 9 Arcis circuits deployed on the Arcium network handle threshold operations that ZK proofs alone cannot cover.
+
+| Parameter | Value |
+|-----------|-------|
+| MPC Network | Arcium (Cerberus protocol) |
+| Circuits | 9 (relay, lookup, nullifier, audit, stealth, vote, etc.) |
+| Security model | 1-of-N honest node guarantee |
+| Cluster | Devnet offset 456 |
+| Fallback | Every MPC op degrades gracefully to standard path |
+
+**6 Use Cases:**
+
+1. **Confidential Relay** — Threshold TX decryption: the encrypted transaction is split across MPC nodes, and only the combined output is revealed to the relayer for on-chain submission.
+2. **Anonymous Registry Lookup** — Private stealth meta-address query: the target address stays hidden from any individual node during the lookup.
+3. **Hidden Nullifier** — SHA3 commitment posted on-chain; the actual nullifier stays encrypted inside the MPC cluster, preventing front-running.
+4. **Confidential Balance Audit** — Solvency proof without exposure: MPC nodes jointly compute whether a balance exceeds a threshold, revealing only the boolean result.
+5. **Threshold Stealth Scan** — Viewing key sharded across MPC nodes: no single node can scan for incoming payments alone.
+6. **Private Governance Vote** — Encrypted ballots submitted to the MPC cluster; only the final tally is revealed on-chain.
 
 ---
 
@@ -343,6 +379,7 @@ Privacy on the go.
 - AI-powered assistant
 - Payment streams management
 - Cloud backup (Privy integration)
+- MPC-enhanced privacy via Arcium (toggle in settings)
 
 **Stack:** React Native, Expo, Expo Router, NativeWind, Reanimated 3
 
@@ -394,6 +431,23 @@ await client.proveBalance(tokenMint, 500_000_000n);            // Prove balance 
 ```
 
 ```typescript
+// @p01/arcium-sdk — MPC confidential compute via Arcium
+import { ArciumClient } from '@p01/arcium-sdk';
+
+const mpc = new ArciumClient({ connection, wallet, programId });
+await mpc.initialize();
+
+// Threshold relay — no single node sees plaintext
+await mpc.confidentialRelay(encryptedTx);
+
+// Private registry lookup — query without revealing target
+const meta = await mpc.privateLookup(targetHash);
+
+// Hidden nullifier — SHA3 committed on-chain, actual stays encrypted
+await mpc.commitNullifier(nullifierPreimage);
+```
+
+```typescript
 // @p01/sdk — Merchant integration & subscriptions
 import { Protocol01 } from '@p01/sdk';
 
@@ -417,6 +471,7 @@ await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 | Double-spend | Nullifiers are unique per note, stored on-chain |
 | Quantum resistance | Poseidon commitments immune to Shor's algorithm |
 | Balance hiding | Commitments reveal nothing about the underlying balance |
+| MPC threshold | Arcium Cerberus: 1-of-N honest node guarantees correctness |
 
 **Threat model:**
 Blockchain observers cannot link senders to recipients.
@@ -483,7 +538,7 @@ Protocol 01 maintains comprehensive test coverage across all layers of the stack
 
 | Layer | Suite | Tests | Status |
 |---|---|---|---|
-| **Smart Contracts** | Anchor/Rust (7 programs) | 340+ | Localnet |
+| **Smart Contracts** | Anchor/Rust (13 programs) | 340+ | Localnet |
 | **Extension** | React components (14 files) | 195 | Passing |
 | **Web App** | Next.js components + API (18 files) | 369 | Passing |
 | **Mobile App** | Stores, services, crypto (17 files) | 426 | Passing |
@@ -555,6 +610,7 @@ P01 contributes reusable ZK tooling to the Solana ecosystem:
 | [@p01/solana-verifier](packages/solana-verifier/) | On-chain Groth16 verification for Solana | `cargo add p01-solana-verifier` |
 | [@p01/privacy-toolkit](packages/privacy-toolkit/) | Merkle trees, Poseidon commitments, proof formatting | `npm i @p01/privacy-toolkit` |
 | [@p01/zk-pipeline](packages/zk-pipeline/) | Complete guide: circuit → mobile → Solana | [Read the guide](packages/zk-pipeline/) |
+| [@p01/arcium-sdk](packages/arcium-sdk/) | MPC confidential compute via Arcium (6 use cases) | `npm i @p01/arcium-sdk` |
 
 These libraries are used in production by Protocol 01 and are free to use under the MIT license.
 
@@ -580,12 +636,16 @@ These libraries are used in production by Protocol 01 and are free to use under 
 - [x] Private ZK transfers (2-in-2-out UTXO within shielded pool)
 - [x] Private ZK subscriptions (recurring payments with ZK proofs)
 - [x] Instant ZK operations (~3s shield + unshield, down from ~3min)
+- [x] STARK verifier on-chain (quantum-resistant FRI + Goldilocks field)
+- [x] Quantum vault (WOTS+ signatures, hash-timelock, commit-then-reveal)
+- [x] On-chain registry (stealth meta-address directory)
+- [x] Arcium MPC integration (9 circuits, 6 use cases, mobile wired)
+- [x] On-chain trustless relayer (no backend server)
 
 ### In Progress
 
 - [ ] DeFi composability spec (balance proof verification for lending/DEX)
 - [ ] Mainnet security audit
-- [ ] Decentralized relayer network
 
 ### Future
 
