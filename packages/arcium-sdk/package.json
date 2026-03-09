@@ -1,0 +1,67 @@
+{
+  "name": "@p01/arcium-sdk",
+  "version": "0.1.0",
+  "description": "Protocol 01 × Arcium MPC integration — confidential computation layer",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./relay": {
+      "import": "./dist/relay/index.mjs",
+      "require": "./dist/relay/index.js",
+      "types": "./dist/relay/index.d.ts"
+    },
+    "./stealth": {
+      "import": "./dist/stealth/index.mjs",
+      "require": "./dist/stealth/index.js",
+      "types": "./dist/stealth/index.d.ts"
+    },
+    "./registry": {
+      "import": "./dist/registry/index.mjs",
+      "require": "./dist/registry/index.js",
+      "types": "./dist/registry/index.d.ts"
+    },
+    "./nullifier": {
+      "import": "./dist/nullifier/index.mjs",
+      "require": "./dist/nullifier/index.js",
+      "types": "./dist/nullifier/index.d.ts"
+    },
+    "./audit": {
+      "import": "./dist/audit/index.mjs",
+      "require": "./dist/audit/index.js",
+      "types": "./dist/audit/index.d.ts"
+    },
+    "./governance": {
+      "import": "./dist/governance/index.mjs",
+      "require": "./dist/governance/index.js",
+      "types": "./dist/governance/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@arcium-hq/client": "0.8.5",
+    "@arcium-hq/reader": "0.8.5",
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/web3.js": "^1.98.4",
+    "@noble/curves": "^1.9.0",
+    "@noble/hashes": "^1.7.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

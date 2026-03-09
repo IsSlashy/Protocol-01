@@ -24,6 +24,8 @@ import {
   getPrivacyLevelDescription,
   type PrivacyLevel,
 } from '../../../services/solana/decoyTransactions';
+import { useArciumStore } from '@/stores/arciumStore';
+import { useArcium } from '@/providers/ArciumProvider';
 
 const STORAGE_KEYS = {
   PRIVACY_LEVEL: 'settings_privacy_level',
@@ -91,6 +93,8 @@ export default function PrivacySettingsScreen() {
   const [hideAmounts, setHideAmounts] = useState(false);
   const [privateByDefault, setPrivateByDefault] = useState(true);
   const [ephemeralWallets, setEphemeralWallets] = useState(false);
+  const { mpcEnabled, setMpcEnabled } = useArciumStore();
+  const { programAvailable } = useArcium();
 
   useEffect(() => {
     loadSettings();
@@ -293,9 +297,47 @@ export default function PrivacySettingsScreen() {
           />
         </GlassCard>
 
+        {/* MPC PRIVACY (ARCIUM) */}
+        <SectionTitle title="MULTI-PARTY COMPUTATION" delay={340} />
+        <GlassCard delay={360}>
+          <ToggleRow
+            label="MPC-enhanced privacy"
+            description="Encrypt operations across distributed MPC nodes"
+            value={mpcEnabled}
+            onValueChange={async (v) => {
+              await setMpcEnabled(v);
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          />
+        </GlassCard>
+
+        {mpcEnabled && (
+          <Animated.View entering={FadeInDown.delay(380).duration(350)} style={styles.privacyInfoOuter}>
+            <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
+              <LinearGradient
+                colors={['rgba(245, 158, 11, 0.06)', 'rgba(245, 158, 11, 0.02)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+              <View style={styles.privacyInfoContent}>
+                <View style={styles.privacyInfoHeader}>
+                  <Ionicons name="git-network" size={18} color="#f59e0b" />
+                  <Text style={[styles.privacyInfoTitle, { color: '#f59e0b' }]}>Arcium MPC Active</Text>
+                </View>
+                <Text style={styles.privacyInfoDesc}>
+                  Stealth lookups, nullifier commits, and relay jobs are now processed through Arcium's
+                  distributed MPC network. No single node sees your data.
+                </Text>
+              </View>
+            </BlurView>
+          </Animated.View>
+        )}
+
         {/* AGENT */}
-        <SectionTitle title="AGENT" delay={360} />
-        <GlassCard delay={380}>
+        <SectionTitle title="AGENT" delay={420} />
+        <GlassCard delay={440}>
           <ToggleRow
             label="Ephemeral wallets"
             description="Use temporary wallets for agent operations"

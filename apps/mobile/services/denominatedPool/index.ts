@@ -1106,6 +1106,18 @@ export async function unshieldStark(
   // Emergency: min_epoch=0 bypasses maturity (on-chain check: current_epoch >= 0 + dynamic_delay → always true)
   const minEpoch = emergency ? 0n : currentEpoch - (poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay));
 
+  // MPC: Try hidden nullifier commitment (prevents on-chain nullifier linkage)
+  let mpcNullifierResult: any = null;
+  try {
+    const { commitNullifier: mpcCommit } = await import('../arcium/nullifierCommit');
+    mpcNullifierResult = await mpcCommit(poolConfig.poolPDA, new Uint8Array(nullifierBytes), ZK_SHIELDED_PROGRAM_ID);
+    if (mpcNullifierResult.wasMpcProtected) {
+      onProgress?.('Nullifier committed via MPC (hidden)');
+    }
+  } catch {
+    // MPC not available — standard nullifier PDA used below
+  }
+
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
   onProgress?.('Submitting STARK proof on-chain...');
   const { proofBuffer } = await submitAndVerifyStarkProof(

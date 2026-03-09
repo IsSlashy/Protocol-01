@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { View, Text, TextInput, Pressable } from 'react-native';
+import React, { useRef, useEffect, useCallback } from 'react';
+import { View, Text, TextInput, Pressable, Platform } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -29,6 +29,14 @@ export const PinInput: React.FC<PinInputProps> = ({
   const inputRef = useRef<TextInput>(null);
   const shakeX = useSharedValue(0);
   const dotScales = useRef(Array(length).fill(null).map(() => useSharedValue(1))).current;
+
+  // Force focus after mount — autoFocus is unreliable inside modals on Android
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      inputRef.current?.focus();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (error) {
@@ -73,7 +81,7 @@ export const PinInput: React.FC<PinInputProps> = ({
 
   return (
     <View style={{ width: '100%' }}>
-      {/* Hidden input */}
+      {/* Hidden input — needs real size on Android or keyboard won't open */}
       <TextInput
         ref={inputRef}
         value={value}
@@ -81,7 +89,7 @@ export const PinInput: React.FC<PinInputProps> = ({
         keyboardType="number-pad"
         maxLength={length}
         autoFocus
-        style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+        style={{ position: 'absolute', opacity: 0, width: 1, height: 1, top: 0, left: 0 }}
         caretHidden
       />
 

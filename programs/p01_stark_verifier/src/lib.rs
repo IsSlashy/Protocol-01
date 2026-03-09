@@ -9,7 +9,7 @@ mod verify;
 use compact_proof::{CompactStarkProof, GenericCompactProof, get_circuit_config};
 use goldilocks::Felt;
 
-declare_id!("DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs");
+declare_id!("EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z");
 
 pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;

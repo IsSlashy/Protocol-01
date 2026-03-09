@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { Colors, FontFamily, P01Colors } from '@/constants/theme';
+import { useArcium } from '@/providers/ArciumProvider';
 
 interface PrivacySummaryPillProps {
   shieldedBalance: number;
@@ -17,16 +18,25 @@ export default function PrivacySummaryPill({
   onPress,
 }: PrivacySummaryPillProps) {
   const total = shieldedBalance + confidentialBalance;
+  const { isMpcActive } = useArcium();
 
   return (
     <Animated.View entering={FadeInUp.delay(300)} style={styles.outer}>
-      <TouchableOpacity onPress={onPress} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={`Private balance ${total.toFixed(4)} SOL`} accessibilityHint="Opens privacy dashboard">
+      <TouchableOpacity onPress={onPress} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={`Private balance ${total.toFixed(4)} SOL${isMpcActive ? ', MPC active' : ''}`} accessibilityHint="Opens privacy dashboard">
         <BlurView intensity={12} tint="dark" style={styles.pill}>
           <View style={styles.iconWrap}>
             <Ionicons name="shield-half" size={16} color={P01Colors.cyan} />
           </View>
           <View style={styles.info}>
-            <Text style={styles.label}>Private Balance</Text>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Private Balance</Text>
+              {isMpcActive && (
+                <View style={styles.mpcBadge}>
+                  <Ionicons name="git-network" size={9} color="#f59e0b" />
+                  <Text style={styles.mpcLabel}>MPC</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.amount}>{total.toFixed(4)} SOL</Text>
           </View>
           <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
@@ -61,6 +71,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   info: { flex: 1 },
+  labelRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  mpcBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 3,
+    backgroundColor: 'rgba(245, 158, 11, 0.10)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  mpcLabel: {
+    fontSize: 9,
+    fontFamily: FontFamily.bold,
+    color: '#f59e0b',
+    letterSpacing: 0.5,
+  },
   label: {
     fontSize: 11,
     fontFamily: FontFamily.medium,

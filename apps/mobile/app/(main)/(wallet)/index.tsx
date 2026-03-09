@@ -41,9 +41,10 @@ import DevnetAirdropFAB from '@/components/wallet/DevnetAirdropFAB';
 
 export default function WalletHomeScreen() {
   const router = useRouter();
-  const { settings: securitySettings } = useSecuritySettings();
+  const { settings: securitySettings, isLoading: securityLoading } = useSecuritySettings();
   const { formatAmount, initialize: initSettings } = useSettingsStore();
-  const [balanceHidden, setBalanceHidden] = useState(false);
+  // Start hidden until security settings load — prevents flash of visible balance
+  const [balanceHidden, setBalanceHidden] = useState(true);
 
   const { isAuthenticated, walletAddress: privyWalletAddress } = useAuth();
 
@@ -92,8 +93,10 @@ export default function WalletHomeScreen() {
   );
 
   useEffect(() => {
-    setBalanceHidden(securitySettings.hideBalanceByDefault);
-  }, [securitySettings.hideBalanceByDefault]);
+    if (!securityLoading) {
+      setBalanceHidden(securitySettings.hideBalanceByDefault);
+    }
+  }, [securitySettings.hideBalanceByDefault, securityLoading]);
 
   const formattedBalance = formatAmount(balance?.totalUsd || 0);
 

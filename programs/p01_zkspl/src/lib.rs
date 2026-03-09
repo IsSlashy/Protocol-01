@@ -7,7 +7,7 @@ pub mod verifier;
 
 use instructions::*;
 
-declare_id!("EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah");
+declare_id!("AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT");
 
 #[program]
 pub mod p01_zkspl {

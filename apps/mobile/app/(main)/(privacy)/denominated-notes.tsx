@@ -28,6 +28,7 @@ import {
   receiptFromJSON,
   slotToEpoch,
 } from '@/services/denominatedPool';
+import { getCluster } from '@/services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 const SLOTS_PER_EPOCH = 7200;
@@ -74,10 +75,13 @@ export default function DenominatedNotesScreen() {
     exportAllNotes,
     exportNote,
     poolCache,
+    recoverTransferredNotes,
   } = useDenominatedPoolStore();
 
-  const activeNotes = notes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
-  const historyNotes = notes.filter(n => n.status === 'spent' || n.status === 'transferred');
+  const cluster = getCluster();
+  const clusterNotes = notes.filter(n => (n.cluster ?? 'devnet') === cluster);
+  const activeNotes = clusterNotes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
+  const historyNotes = clusterNotes.filter(n => n.status === 'spent' || n.status === 'transferred');
 
   // Measure real slot duration by taking two readings, then poll every 30s
   useEffect(() => {
@@ -292,6 +296,31 @@ export default function DenominatedNotesScreen() {
     router.push('/(main)/(privacy)/denominated-import' as any);
   };
 
+  const handleRecoverNotes = () => {
+    const transferredCount = clusterNotes.filter(n => n.status === 'transferred' && !n.spentTxSig).length;
+    if (transferredCount === 0) {
+      Alert.alert('Nothing to Recover', 'No failed transfers found.');
+      return;
+    }
+    Alert.alert(
+      'Recover Notes',
+      `Found ${transferredCount} note(s) marked as transferred but never confirmed on-chain. ` +
+      'This can happen if a nearby share (NFC/Bluetooth) failed mid-transfer.\n\n' +
+      'Recover them?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Recover',
+          onPress: () => {
+            const count = recoverTransferredNotes();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('Recovered', `${count} note(s) restored to your active notes.`);
+          },
+        },
+      ],
+    );
+  };
+
   const handleViewTx = (txSig: string) => {
     Linking.openURL(`https://explorer.solana.com/tx/${txSig}?cluster=devnet`);
   };
@@ -493,6 +522,11 @@ export default function DenominatedNotesScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Notes</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
+          {clusterNotes.some(n => n.status === 'transferred' && !n.spentTxSig) && (
+            <TouchableOpacity onPress={handleRecoverNotes} style={styles.headerActionBtn}>
+              <Ionicons name="refresh-circle-outline" size={18} color={P01Colors.yellow} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={handleBackup} style={styles.headerActionBtn}>
             <Ionicons name="cloud-upload-outline" size={18} color={Colors.textSecondary} />
           </TouchableOpacity>
@@ -550,7 +584,7 @@ export default function DenominatedNotesScreen() {
         </Animated.View>
 
         {/* Summary Card */}
-        {notes.length > 0 && (
+        {clusterNotes.length > 0 && (
           <Animated.View entering={FadeInDown.delay(100)}>
             <GlassCard style={{ marginBottom: Spacing.lg }}>
               <View style={styles.summaryInner}>
@@ -585,7 +619,7 @@ export default function DenominatedNotesScreen() {
         )}
 
         {/* Empty State */}
-        {notes.length === 0 && (
+        {clusterNotes.length === 0 && (
           <Animated.View entering={FadeInUp.delay(100)}>
             <GlassCard style={{ marginTop: Spacing['3xl'] }}>
               <View style={styles.emptyInner}>

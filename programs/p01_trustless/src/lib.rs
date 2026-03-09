@@ -7,7 +7,7 @@ pub mod verifier;
 
 use instructions::*;
 
-declare_id!("FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q");
+declare_id!("5x8qr9UwF6BTN4ySb4gPwL4TYgZiiLCzg4mKDmQrnjyJ");
 
 #[program]
 pub mod p01_trustless {

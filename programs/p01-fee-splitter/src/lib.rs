@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD");
+declare_id!("AwHRR8mbZz7u98NCRcYCSPc6R4FtjbLhaV1ekMi5jTMQ");
 
 /// P-01 Network Fee Splitter
 /// Automatically takes a fee on incoming transfers and forwards the rest to the recipient.

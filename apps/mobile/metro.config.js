@@ -2,7 +2,8 @@ const { getDefaultConfig } = require('expo/metro-config');
 const { withNativeWind } = require('nativewind/metro');
 const path = require('path');
 
-const projectRoot = __dirname;
+// Force absolute path to avoid junction/symlink __dirname issues on Windows
+const projectRoot = path.resolve(__dirname);
 const workspaceRoot = path.resolve(projectRoot, '../..');
 
 const config = getDefaultConfig(projectRoot);
@@ -51,8 +52,12 @@ try {
 config.resolver.extraNodeModules = {
   ...config.resolver.extraNodeModules,
   stream: require.resolve('readable-stream'),
-  crypto: require.resolve('react-native-get-random-values'),
+  crypto: path.resolve(projectRoot, 'polyfills/crypto-shim.js'),
   buffer: require.resolve('buffer'),
+  // Shims for @coral-xyz/anchor and @arcium-hq/client
+  path: path.resolve(projectRoot, 'polyfills/empty.js'),
+  fs: path.resolve(projectRoot, 'polyfills/empty.js'),
+  os: path.resolve(projectRoot, 'polyfills/empty.js'),
   // Map @noble/hashes subpaths directly to ESM files
   '@noble/hashes/sha256': path.join(nobleHashesPath, 'esm/sha256.js'),
   '@noble/hashes/sha3': path.join(nobleHashesPath, 'esm/sha3.js'),
