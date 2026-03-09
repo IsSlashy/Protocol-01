@@ -66,6 +66,7 @@ config.resolver.extraNodeModules = {
   '@noble/hashes/hmac': path.join(nobleHashesPath, 'esm/hmac.js'),
   '@noble/hashes/pbkdf2': path.join(nobleHashesPath, 'esm/pbkdf2.js'),
   '@noble/hashes/hkdf': path.join(nobleHashesPath, 'esm/hkdf.js'),
+  '@noble/hashes/sha512': path.join(nobleHashesPath, 'esm/sha512.js'),
   // Map @scure/bip39 subpaths
   '@scure/bip39/wordlists/english': path.join(scureBip39Path, 'esm/wordlists/english.js'),
 };
@@ -121,6 +122,35 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       filePath: path.resolve(projectRoot, 'polyfills/ox-erc8010.js'),
       type: 'sourceFile',
     };
+  }
+
+  // Hermes-compatible shims for @noble/curves modules that fail in React Native.
+  // twistedEdwards() crashes because BigInt arithmetic produces wrong results
+  // for generator validation (isEdValidXY) in Hermes, causing ed25519.CURVE = undefined.
+  if (moduleName === '@noble/curves/ed25519') {
+    return {
+      filePath: path.resolve(projectRoot, 'polyfills/noble-ed25519-shim.js'),
+      type: 'sourceFile',
+    };
+  }
+  if (moduleName === '@noble/curves/abstract/edwards') {
+    return {
+      filePath: path.resolve(projectRoot, 'polyfills/noble-edwards-shim.js'),
+      type: 'sourceFile',
+    };
+  }
+
+  // Handle @noble/curves subpath exports (abstract/modular, abstract/montgomery, etc.)
+  if (moduleName.startsWith('@noble/curves/')) {
+    const subpath = moduleName.replace('@noble/curves/', '');
+    const esmPath = findInNodeModules(`@noble/curves/esm/${subpath}.js`, config.resolver.nodeModulesPaths, context.originModulePath);
+    if (esmPath) {
+      return { filePath: esmPath, type: 'sourceFile' };
+    }
+    const regularPath = findInNodeModules(`@noble/curves/${subpath}.js`, config.resolver.nodeModulesPaths, context.originModulePath);
+    if (regularPath) {
+      return { filePath: regularPath, type: 'sourceFile' };
+    }
   }
 
   // Handle @noble/hashes subpath exports (sha256, sha3, ripemd160, utils, etc.)
