@@ -239,15 +239,16 @@ await program.methods.relayTransfer(proof, publicSignals, stealthAddress)
     title: "Multi-Party Computation (Arcium)",
     icon: <Network className="w-6 h-6" />,
     description:
-      "Decentralized multi-party computation via Arcium's Cerberus protocol. 9 MPC circuits deployed on Solana devnet. Every operation has a graceful fallback — when MPC is disabled, flows degrade to standard (non-MPC) paths with zero overhead.",
+      "ZK proofs hide amounts and break the sender-receiver link. But some metadata remains: the relayer sees your transaction, nullifiers are posted in the clear, and registry lookups are observable. Arcium MPC eliminates these residual leaks by distributing every sensitive operation across a decentralized network of nodes — no single node ever sees the plaintext. It is an optional layer that users toggle on for maximum privacy.",
     details: [
-      "Arcium Cerberus protocol: 1-of-N honest node guarantees correctness",
-      "9 compiled circuits (Arcis language): relay, lookup, nullifier, audit, stealth scan, vote, etc.",
-      "Rescue-CTR encryption for encrypted payloads to MPC nodes",
-      "X25519 key exchange between client and MXE (Multi-eXecution Environment)",
-      "6 use cases: confidential relay, anonymous lookup, hidden nullifier, balance audit, threshold stealth scan, private governance",
-      "Mobile toggle: amber UI indicators, ArciumProvider lazy-init, zero overhead when disabled",
-      "Program ID: FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT (devnet, cluster 456)",
+      "Nullifier hiding: MPC nodes jointly compute SHA3(nullifier) — only the hash goes on-chain, the actual nullifier stays encrypted",
+      "Confidential relay: your transaction is encrypted and split across MPC nodes (Rescue-CTR). They reconstruct and execute it together — no single relayer sees the content",
+      "Anonymous registry lookup: query a stealth meta-address through MPC — nobody knows who you looked up",
+      "Confidential balance audit: prove solvency to an auditor without revealing individual balances",
+      "Threshold stealth scan: your viewing key is sharded across nodes — no single node can scan your payments",
+      "Private governance: encrypted ballots tallied inside MPC — only the final result is revealed",
+      "Cerberus protocol: 1-of-N honest node guarantees correctness. 9 circuits deployed on Solana devnet",
+      "Graceful fallback: every MPC operation degrades to the standard (non-MPC) path when disabled — zero overhead",
     ],
     codeExample: `// @p01/arcium-sdk — MPC confidential compute
 import { ArciumClient } from '@p01/arcium-sdk';
@@ -255,17 +256,17 @@ import { ArciumClient } from '@p01/arcium-sdk';
 const mpc = new ArciumClient({ connection, wallet, programId });
 await mpc.initialize(); // X25519 key exchange + Rescue cipher setup
 
-// Threshold relay — TX split across MPC nodes, no single node sees plaintext
-await mpc.confidentialRelay(encryptedTransaction);
-
-// Private registry lookup — query stealth meta-address without revealing target
-const metaAddress = await mpc.privateLookup(targetHash);
-
-// Hidden nullifier — SHA3 commitment on-chain, actual nullifier encrypted in MPC
+// Without MPC: nullifier posted in the clear on-chain
+// With MPC:    nodes compute SHA3(nullifier) together, only hash goes on-chain
 await mpc.commitNullifier(nullifierPreimage, secret);
 
-// Confidential balance audit — prove solvency without individual balance exposure
-await mpc.submitBalanceForAudit(encryptedBalances);`,
+// Without MPC: relayer sees full transaction content
+// With MPC:    transaction split across nodes, nobody sees the plaintext
+await mpc.confidentialRelay(encryptedTransaction);
+
+// Without MPC: RPC lookup reveals who you searched for
+// With MPC:    query goes through MPC, target stays anonymous
+const metaAddress = await mpc.privateLookup(targetHash);`,
   },
   {
     id: "streams-privacy",
@@ -872,6 +873,132 @@ export default function DocsPage() {
               </ul>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Privacy: With vs Without MPC */}
+      <section id="mpc-comparison" className="py-12 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
+        <div className="max-w-7xl mx-auto">
+          <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
+            <Network className="w-6 h-6 text-[#f59e0b]" />
+            Privacy: With &amp; Without MPC
+          </h2>
+          <p className="text-[#888892] mb-8 max-w-3xl">
+            Protocol 01 is private by default — ZK proofs hide amounts and break the sender-receiver link.
+            Arcium MPC is an <strong className="text-white">optional upgrade</strong> that eliminates the remaining metadata leaks.
+            Toggle it on in the app for maximum privacy, or leave it off for fast, already-private transactions.
+          </p>
+
+          {/* Comparison table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#2a2a30]">
+                  <th className="text-left py-3 px-4 text-[#555560] font-mono uppercase tracking-wider text-xs">Operation</th>
+                  <th className="text-left py-3 px-4 text-[#39c5bb] font-mono uppercase tracking-wider text-xs">Without MPC</th>
+                  <th className="text-left py-3 px-4 text-[#f59e0b] font-mono uppercase tracking-wider text-xs">With MPC (Arcium)</th>
+                </tr>
+              </thead>
+              <tbody className="text-[#888892]">
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Amounts</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Hidden by ZK proof</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Hidden by ZK proof</td>
+                </tr>
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Sender → Receiver link</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Broken by stealth addresses</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Broken by stealth addresses</td>
+                </tr>
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Nullifier</td>
+                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />Posted in the clear on-chain</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />MPC nodes compute SHA3 jointly — only hash on-chain</td>
+                </tr>
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Relay</td>
+                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />On-chain relayer sees TX content</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />TX split &amp; encrypted — no single node sees plaintext</td>
+                </tr>
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Registry lookup</td>
+                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />RPC query reveals search target</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />Query goes through MPC — target stays anonymous</td>
+                </tr>
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Balance audit</td>
+                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> Not available</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />Prove solvency without revealing individual balances</td>
+                </tr>
+                <tr className="border-b border-[#2a2a30]/50">
+                  <td className="py-3 px-4 font-medium text-white">Governance vote</td>
+                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> Not available</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />Encrypted ballots — only final tally revealed</td>
+                </tr>
+                <tr>
+                  <td className="py-3 px-4 font-medium text-white">Trust assumption</td>
+                  <td className="py-3 px-4 text-[#888892]">Relayer is honest (can't steal, can observe)</td>
+                  <td className="py-3 px-4 text-[#888892]">1-of-N honest node (Cerberus protocol)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Visual summary */}
+          <div className="grid md:grid-cols-2 gap-6 mt-8">
+            <div className="bg-[#151518] border border-[#39c5bb]/20 p-6 rounded-lg">
+              <div className="flex items-center gap-3 mb-4">
+                <Shield className="w-5 h-5 text-[#39c5bb]" />
+                <h3 className="text-lg font-bold text-white">MPC Off — Already Private</h3>
+              </div>
+              <ul className="space-y-2 text-sm text-[#888892]">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>STARK &amp; Groth16 proofs hide amounts and ownership</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Stealth addresses make every payment unlinkable</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Denominated pools prevent amount-based correlation</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
+                  <span>Some metadata visible: nullifiers, relay content, lookup targets</span>
+                </li>
+              </ul>
+            </div>
+            <div className="bg-[#151518] border border-[#f59e0b]/20 p-6 rounded-lg">
+              <div className="flex items-center gap-3 mb-4">
+                <Network className="w-5 h-5 text-[#f59e0b]" />
+                <h3 className="text-lg font-bold text-white">MPC On — Maximum Privacy</h3>
+              </div>
+              <ul className="space-y-2 text-sm text-[#888892]">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <span>Everything above, plus all metadata leaks eliminated</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <span>Nullifiers encrypted — only SHA3 hash reaches the chain</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <span>Relay is threshold-decrypted — no single point of observation</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
+                  <span>Unlocks balance audits, private voting, threshold stealth scan</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <p className="text-xs text-[#555560] mt-6 text-center font-mono">
+            MPC adds ~1-2s per operation · Zero overhead when disabled · Toggle on/off in Privacy Zone
+          </p>
         </div>
       </section>
 

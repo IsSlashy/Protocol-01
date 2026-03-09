@@ -3,6 +3,7 @@ import {
   View,
   Text,
   ScrollView,
+  Switch,
   TouchableOpacity,
   RefreshControl,
   StyleSheet,
@@ -20,6 +21,7 @@ import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useArcium } from '@/providers/ArciumProvider';
+import { useArciumStore } from '@/stores/arciumStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 export default function PrivacyDashboard() {
@@ -51,6 +53,7 @@ export default function PrivacyDashboard() {
   } = useSettingsStore();
 
   const { isMpcActive, programAvailable } = useArcium();
+  const { mpcEnabled, setMpcEnabled } = useArciumStore();
 
   useEffect(() => { initSettings(); }, []);
 
@@ -220,29 +223,35 @@ export default function PrivacyDashboard() {
           </View>
         </Animated.View>
 
-        {/* ═══════ MPC ENHANCEMENT: Arcium status (conditional) ═══════ */}
-        {(isMpcActive || programAvailable) && (
-          <Animated.View entering={FadeInUp.delay(250)}>
-            <View style={styles.mpcCard}>
-              <View style={styles.mpcCardRow}>
-                <View style={styles.mpcIconWrap}>
-                  <Ionicons name="git-network" size={16} color="#f59e0b" />
-                </View>
-                <View style={styles.mpcCardInfo}>
-                  <Text style={styles.mpcCardTitle}>
-                    Multi-Party Computation
-                  </Text>
-                  <Text style={styles.mpcCardDesc}>
-                    {isMpcActive
-                      ? 'Arcium MPC active — privacy operations use decentralized threshold computation'
-                      : 'Arcium program detected. Enable MPC in Settings → Privacy for threshold privacy.'}
-                  </Text>
-                </View>
-                <View style={[styles.mpcStatusDot, isMpcActive ? styles.mpcDotActive : styles.mpcDotIdle]} />
+        {/* ═══════ MPC ENHANCEMENT: Arcium toggle + status ═══════ */}
+        <Animated.View entering={FadeInUp.delay(250)}>
+          <View style={styles.mpcCard}>
+            <View style={styles.mpcCardRow}>
+              <View style={styles.mpcIconWrap}>
+                <Ionicons name="git-network" size={16} color="#f59e0b" />
               </View>
+              <View style={styles.mpcCardInfo}>
+                <Text style={styles.mpcCardTitle}>
+                  Multi-Party Computation
+                </Text>
+                <Text style={styles.mpcCardDesc}>
+                  {isMpcActive
+                    ? 'Arcium MPC active — threshold computation enabled'
+                    : 'Distribute trust across MPC nodes via Arcium'}
+                </Text>
+              </View>
+              <Switch
+                value={mpcEnabled}
+                onValueChange={async (v) => {
+                  await setMpcEnabled(v);
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                trackColor={{ false: '#2a2a30', true: '#f59e0b' }}
+                thumbColor={mpcEnabled ? '#fff' : '#888'}
+              />
             </View>
-          </Animated.View>
-        )}
+          </View>
+        </Animated.View>
 
         {/* ═══════ LEGACY: Shielded Wallet (conditional) ═══════ */}
         {showShielded && (
