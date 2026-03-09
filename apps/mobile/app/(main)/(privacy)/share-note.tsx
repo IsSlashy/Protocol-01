@@ -66,6 +66,7 @@ export default function ShareNoteScreen() {
   // (NFC: once data leaves the device, receiver may have it even if sender gets an error)
   const markNoteTransferred = useCallback(() => {
     if (params.noteId) {
+      console.log('[ShareNote] markNoteTransferred:', params.noteId);
       useDenominatedPoolStore.setState((state) => ({
         notes: state.notes.map((n) =>
           n.id === params.noteId ? { ...n, status: 'transferred' as any } : n
@@ -122,9 +123,17 @@ export default function ShareNoteScreen() {
   }, [connectToPeer]);
 
   const handleFingerprintConfirm = useCallback(async () => {
-    markNoteTransferred();
-    try { await confirmFingerprintAndSend('denominated-pool', noteData); }
-    catch (err) { Alert.alert('Send Failed', (err as Error).message); }
+    try {
+      console.log('[ShareNote:BLE] Starting BLE send...');
+      await confirmFingerprintAndSend('denominated-pool', noteData);
+      console.log('[ShareNote:BLE] Send + ACK success, marking transferred');
+      // Only mark transferred AFTER successful send + ACK
+      markNoteTransferred();
+      console.log('[ShareNote:BLE] Note marked transferred');
+    } catch (err) {
+      console.error('[ShareNote:BLE] Send failed:', (err as Error).message);
+      Alert.alert('Send Failed', (err as Error).message);
+    }
   }, [confirmFingerprintAndSend, noteData, markNoteTransferred]);
 
   const handleFingerprintReject = useCallback(async () => {
@@ -139,13 +148,19 @@ export default function ShareNoteScreen() {
     const pin = generateNfcPin();
     setNfcPinInput(pin);
     setShowNfcOverlay(true);
-    // Mark as transferred immediately — once NFC data is set on HCE,
-    // the receiver may get it even if sender sees a transceive error
-    markNoteTransferred();
+    console.log('[ShareNote:NFC] Starting NFC send, pin generated');
     try {
       await sendViaNfc('denominated-pool', noteData, pin);
+      console.log('[ShareNote:NFC] HCE confirms receiver read ALL data, marking transferred');
+      // Only mark transferred AFTER HCE confirms the receiver read ALL the data.
+      // Previously this was called before sendViaNfc — if the receiver crashed
+      // mid-transfer, the note would disappear from both devices.
+      markNoteTransferred();
+      console.log('[ShareNote:NFC] Note marked transferred');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
+      // Transfer failed — note is NOT marked transferred, user can retry
+      console.error('[ShareNote:NFC] Transfer failed:', (err as Error).message);
       Alert.alert('NFC Error', (err as Error).message);
     } finally {
       setShowNfcOverlay(false);

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { formatUSD, formatPriceChange } from '@/utils/format/currency';
 import { useWalletStore } from '@/stores/walletStore';
+import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 
 const { width } = Dimensions.get('window');
 
@@ -127,7 +128,14 @@ export default function TokenDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingState, setLoadingState] = useState<LoadingState>('success');
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('24h');
-  const [balanceHidden, setBalanceHidden] = useState(false);
+  const { settings: securitySettings, isLoading: securityLoading } = useSecuritySettings();
+  const [balanceHidden, setBalanceHidden] = useState(true);
+
+  useEffect(() => {
+    if (!securityLoading) {
+      setBalanceHidden(securitySettings.hideBalanceByDefault);
+    }
+  }, [securitySettings.hideBalanceByDefault, securityLoading]);
 
   // Get real balance from wallet store
   const walletBalance = useWalletStore((state) => state.balance);

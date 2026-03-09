@@ -7,7 +7,7 @@ pub mod verifier;
 
 use instructions::*;
 
-declare_id!("GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c");
+declare_id!("2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms");
 
 #[program]
 pub mod zk_shielded {

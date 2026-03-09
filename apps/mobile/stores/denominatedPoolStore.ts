@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PublicKey } from '@solana/web3.js';
-import { getConnection } from '../services/solana/connection';
+import { getConnection, getCluster } from '../services/solana/connection';
 import {
   type PoolConfig,
   type ShieldReceipt,
@@ -49,6 +49,7 @@ export interface StoredNote {
   shieldedAt: number;
   status: NoteStatus;
   source: NoteSource;
+  cluster?: 'devnet' | 'mainnet-beta' | 'testnet'; // network where note was created
   spentTxSig?: string;
   transferredTo?: string; // encoded shareable note (for re-display)
 }
@@ -110,6 +111,7 @@ interface DenominatedPoolState {
   getFilteredPools: () => PoolConfig[];
   getNotesForPool: (poolPDA: string) => StoredNote[];
   getActiveNotes: () => StoredNote[];
+  recoverTransferredNotes: () => number;
   reset: () => void;
 }
 
@@ -214,9 +216,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const slot = await connection.getSlot('confirmed');
           const currentEpoch = slotToEpoch(slot);
 
-          // Check nullifier PDAs on-chain for non-terminal notes
+          // Check nullifier PDAs on-chain for non-terminal notes (current cluster only)
           // If a nullifier PDA exists, the note was already spent (possibly on another device)
-          const activeNotes = notes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
+          const cluster = getCluster();
+          const activeNotes = notes.filter(n =>
+            n.status !== 'spent' && n.status !== 'transferred' &&
+            (n.cluster ?? 'devnet') === cluster
+          );
           const nullifierPDAs: { noteId: string; pda: PublicKey }[] = [];
 
           for (const note of activeNotes) {
@@ -296,7 +302,32 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       getActiveNotes: () => {
-        return get().notes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
+        const cluster = getCluster();
+        return get().notes.filter(n =>
+          n.status !== 'spent' && n.status !== 'transferred' &&
+          // Only show notes from the current network (legacy notes without cluster default to devnet)
+          (n.cluster ?? 'devnet') === cluster
+        );
+      },
+
+      recoverTransferredNotes: () => {
+        // Recover notes that were marked 'transferred' due to a failed NFC/BLE
+        // transfer (the receiver never got the data, so the note is still ours).
+        // Only recovers notes that have NO spentTxSig (not spent on-chain).
+        const notes = get().notes;
+        const recoverable = notes.filter(
+          n => n.status === 'transferred' && !n.spentTxSig,
+        );
+        if (recoverable.length === 0) return 0;
+        set({
+          notes: notes.map(n =>
+            n.status === 'transferred' && !n.spentTxSig
+              ? { ...n, status: 'mature' as NoteStatus, transferredTo: undefined }
+              : n
+          ),
+        });
+        console.log(`[DenomStore] Recovered ${recoverable.length} transferred note(s)`);
+        return recoverable.length;
       },
 
       // ------------------------------------------------------------------
@@ -324,6 +355,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             shieldedAt: receipt.shieldedAt,
             status: 'pending',
             source: 'shielded',
+            cluster: getCluster(),
           };
 
           console.log('[DenomStore] Note stored:', storedNote.id, 'status:', storedNote.status);
@@ -544,6 +576,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       // ------------------------------------------------------------------
 
       importNote: (encodedNote, source: NoteSource = 'received') => {
+        console.log('[DenomStore] importNote called, source:', source, 'dataLen:', encodedNote.length);
         try {
           const noteData = decodeShareableNote(encodedNote);
           const receipt = serviceImportNote(noteData);
@@ -559,6 +592,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             shieldedAt: receipt.shieldedAt || Date.now(),
             status: 'imported',
             source,
+            cluster: getCluster(),
           };
 
           // Check if note already exists

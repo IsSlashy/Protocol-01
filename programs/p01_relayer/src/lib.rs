@@ -6,7 +6,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW");
+declare_id!("Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw");
 
 #[program]
 pub mod p01_relayer {

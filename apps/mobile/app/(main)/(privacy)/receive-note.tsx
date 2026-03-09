@@ -11,14 +11,18 @@ import {
   TextInput,
   Alert,
   StyleSheet,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  SlideInDown,
+  SlideOutDown,
+} from 'react-native-reanimated';
 
 import { useSharingStore } from '@/stores/sharingStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
@@ -81,17 +85,20 @@ export default function ReceiveNoteScreen() {
   // -----------------------------------------------------------------------
 
   const handleImportNote = useCallback(async (payload: NotePayload) => {
+    console.log('[ReceiveNote] Importing note, type:', payload.type, 'dataLen:', JSON.stringify(payload.data).length);
     try {
       if (payload.type === 'zk-shielded') {
         await importShieldedNote(payload.data);
       } else if (payload.type === 'denominated-pool') {
         importDenominatedNote(payload.data, 'received' as NoteSource);
       }
+      console.log('[ReceiveNote] Import SUCCESS');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setImported(true);
       setImportedNote(payload);
       clearPendingNote();
     } catch (err) {
+      console.error('[ReceiveNote] Import FAILED:', (err as Error).message);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Import Failed', (err as Error).message);
     }
@@ -145,9 +152,12 @@ export default function ReceiveNoteScreen() {
     }
     setShowNfcPinEntry(false);
     setShowNfcOverlay(true);
+    console.log('[ReceiveNote:NFC] Starting NFC receiver with PIN');
     try {
       await startNfcReceiver(nfcPinInput);
+      console.log('[ReceiveNote:NFC] NFC receive completed');
     } catch (err) {
+      console.error('[ReceiveNote:NFC] NFC receive failed:', (err as Error).message);
       Alert.alert('NFC Error', (err as Error).message);
     } finally {
       setShowNfcOverlay(false);
@@ -155,113 +165,154 @@ export default function ReceiveNoteScreen() {
   }, [nfcPinInput, startNfcReceiver]);
 
   // -----------------------------------------------------------------------
-  // Success
+  // Success result modal
   // -----------------------------------------------------------------------
 
   if (imported && importedNote) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={22} color={Colors.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Receive Note</Text>
+          <View style={styles.headerCenter}>
+            <Ionicons name="download" size={20} color={P01Colors.green} />
+            <Text style={styles.headerTitle}>Receive</Text>
+          </View>
           <View style={{ width: 40 }} />
-        </Animated.View>
+        </View>
         <View style={styles.centered}>
-          <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.successGlassOuter}>
-              <BlurView intensity={15} tint="dark" style={styles.successGlass}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="checkmark-circle" size={64} color={P01Colors.green} />
-                <Text style={styles.successTitle}>Note Received!</Text>
-                <Text style={styles.successDetail}>
-                  A {importedNote.type === 'zk-shielded' ? 'ZK Shielded' : 'Denominated Pool'} note
-                  has been imported to your wallet.
-                </Text>
-                <TouchableOpacity
-                  style={styles.doneBtn}
-                  onPress={() => {
-                    cancelSession();
-                    if (importedNote.type === 'denominated-pool') {
-                      router.push('/(main)/(privacy)/denominated-notes' as any);
-                    } else {
-                      router.push('/(main)/(privacy)/shielded' as any);
-                    }
-                  }}
-                >
-                  <Text style={styles.doneBtnText}>View Notes</Text>
-                </TouchableOpacity>
-              </BlurView>
+          <View style={styles.successCard}>
+            <View style={styles.successIconWrap}>
+              <Ionicons name="checkmark-circle" size={56} color={P01Colors.green} />
             </View>
-          </Animated.View>
+            <Text style={styles.successTitle}>Note Received!</Text>
+            <Text style={styles.successDetail}>
+              A {importedNote.type === 'zk-shielded' ? 'ZK Shielded' : 'Denominated Pool'} note
+              has been imported to your wallet.
+            </Text>
+            <View style={styles.successActions}>
+              <TouchableOpacity
+                style={styles.successBtnPrimary}
+                onPress={() => {
+                  cancelSession();
+                  if (importedNote.type === 'denominated-pool') {
+                    router.push('/(main)/(privacy)/denominated-notes' as any);
+                  } else {
+                    router.push('/(main)/(privacy)/shielded' as any);
+                  }
+                }}
+              >
+                <LinearGradient
+                  colors={[P01Colors.green, '#20A89E']}
+                  style={styles.successBtnGradient}
+                >
+                  <Ionicons name="eye" size={18} color="#000" />
+                  <Text style={styles.successBtnPrimaryText}>View Notes</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.successBtnSecondary}
+                onPress={() => {
+                  cancelSession();
+                  router.back();
+                }}
+              >
+                <Text style={styles.successBtnSecondaryText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </SafeAreaView>
     );
   }
 
   // -----------------------------------------------------------------------
-  // NFC PIN entry
+  // NFC PIN Entry (bottom sheet modal)
   // -----------------------------------------------------------------------
 
-  if (showNfcPinEntry) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
-          <TouchableOpacity
-            onPress={() => setShowNfcPinEntry(false)}
-            style={styles.backBtn}
-          >
-            <Ionicons name="arrow-back" size={22} color={Colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Enter PIN</Text>
-          <View style={{ width: 40 }} />
+  const nfcPinModal = (
+    <Modal
+      visible={showNfcPinEntry}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={() => setShowNfcPinEntry(false)}
+    >
+      <View style={ms.overlay}>
+        <TouchableOpacity
+          style={ms.backdrop}
+          activeOpacity={1}
+          onPress={() => setShowNfcPinEntry(false)}
+        />
+        <Animated.View
+          entering={SlideInDown.duration(200)}
+          exiting={SlideOutDown.duration(150)}
+          style={ms.sheet}
+        >
+          <View style={ms.dragRow}>
+            <View style={ms.dragHandle} />
+          </View>
+
+          {/* Header */}
+          <View style={ms.sheetHeader}>
+            <LinearGradient
+              colors={[P01Colors.cyanDim, 'rgba(57, 197, 187, 0.05)']}
+              style={ms.sheetIconWrap}
+            >
+              <Ionicons name="key" size={28} color={P01Colors.cyan} />
+            </LinearGradient>
+            <View style={{ flex: 1 }}>
+              <Text style={ms.sheetTitle}>Enter PIN</Text>
+              <Text style={ms.sheetSubtitle}>Ask the sender for the 6-digit code</Text>
+            </View>
+          </View>
+
+          {/* PIN input */}
+          <View style={ms.pinInputWrap}>
+            <TextInput
+              style={ms.pinInput}
+              value={nfcPinInput}
+              onChangeText={(t) => setNfcPinInput(t.replace(/[^0-9]/g, '').slice(0, 6))}
+              placeholder="000000"
+              placeholderTextColor={Colors.textTertiary}
+              keyboardType="number-pad"
+              maxLength={6}
+              textAlign="center"
+              autoFocus
+            />
+          </View>
+
+          {/* Buttons */}
+          <View style={ms.sheetActions}>
+            <TouchableOpacity
+              style={ms.cancelBtn}
+              onPress={() => setShowNfcPinEntry(false)}
+            >
+              <Text style={ms.cancelBtnText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleNfcPinSubmit}
+              disabled={nfcPinInput.length !== 6}
+              activeOpacity={0.8}
+              style={{ flex: 1 }}
+            >
+              <LinearGradient
+                colors={nfcPinInput.length !== 6
+                  ? ['rgba(57,197,187,0.3)', 'rgba(57,197,187,0.15)']
+                  : [P01Colors.cyan, '#20A89E']}
+                style={ms.confirmBtn}
+              >
+                <Ionicons name="phone-portrait" size={18} color="#000" />
+                <Text style={ms.confirmBtnText}>Start NFC Scan</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
-        <View style={styles.pinContainer}>
-          <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.pinGlassOuter}>
-              <BlurView intensity={15} tint="dark" style={styles.pinGlass}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="key" size={40} color={P01Colors.cyan} />
-                <Text style={styles.pinTitle}>Enter the code from the sender</Text>
-                <Text style={styles.pinSubtitle}>
-                  Ask the sender for the 6-digit code displayed on their screen.
-                </Text>
-                <TextInput
-                  style={styles.pinInput}
-                  value={nfcPinInput}
-                  onChangeText={(t) => setNfcPinInput(t.replace(/[^0-9]/g, '').slice(0, 6))}
-                  placeholder="000000"
-                  placeholderTextColor={Colors.textTertiary}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                  textAlign="center"
-                />
-                <TouchableOpacity
-                  style={[styles.pinSubmitBtn, nfcPinInput.length !== 6 && styles.disabledBtn]}
-                  onPress={handleNfcPinSubmit}
-                  disabled={nfcPinInput.length !== 6}
-                >
-                  <Ionicons name="phone-portrait" size={18} color="#000" />
-                  <Text style={styles.pinSubmitText}>Start NFC Scan</Text>
-                </TouchableOpacity>
-              </BlurView>
-            </View>
-          </Animated.View>
-        </View>
-      </SafeAreaView>
-    );
-  }
+      </View>
+    </Modal>
+  );
 
   // -----------------------------------------------------------------------
   // NFC Overlay
@@ -287,7 +338,8 @@ export default function ReceiveNoteScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
+      {/* Header */}
+      <View style={styles.header}>
         <TouchableOpacity
           onPress={() => {
             cancelSession();
@@ -297,168 +349,137 @@ export default function ReceiveNoteScreen() {
         >
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Receive Note</Text>
+        <View style={styles.headerCenter}>
+          <Ionicons name="download" size={20} color={P01Colors.cyan} />
+          <Text style={styles.headerTitle}>Receive</Text>
+        </View>
         <View style={{ width: 40 }} />
-      </Animated.View>
+      </View>
 
       {/* Progress */}
       {sessionState !== 'idle' && (
         <ShareProgressIndicator state={sessionState} />
       )}
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Info */}
-        <Animated.View entering={FadeInUp.delay(100)}>
-          <View style={styles.infoCardOuter}>
-            <BlurView intensity={12} tint="dark" style={styles.infoCardGlass}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <Ionicons name="download" size={18} color={P01Colors.cyan} />
-              <Text style={styles.infoText}>
-                Receive a shielded note from another P01 user nearby.
-                Choose Bluetooth for medium range or NFC for tap-to-receive.
-              </Text>
-            </BlurView>
-          </View>
-        </Animated.View>
-
-        {/* Transport selector */}
-        <Animated.View entering={FadeInUp.delay(150)}>
-          <Text style={styles.label}>Transport Method</Text>
-        </Animated.View>
-        <View style={styles.transportRow}>
-          <Animated.View entering={FadeInUp.delay(200)} style={{ flex: 1 }}>
-            <TouchableOpacity
-              style={[
-                styles.transportCardOuter,
-                selectedTransport === 'ble' && styles.transportCardOuterActive,
-                !isBleAvailable && styles.transportCardDisabled,
-              ]}
-              onPress={handleStartBle}
-              disabled={!isBleAvailable}
-            >
-              <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
-                <LinearGradient
-                  colors={selectedTransport === 'ble'
-                    ? ['rgba(57, 197, 187, 0.10)', 'rgba(57, 197, 187, 0.03)', 'transparent']
-                    : ['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="bluetooth" size={28} color={isBleAvailable ? P01Colors.blue : Colors.textTertiary} />
-                <Text style={styles.transportTitle}>Bluetooth</Text>
-                <Text style={styles.transportDesc}>
-                  {isBleAvailable ? 'Wait for nearby sender' : 'Bluetooth unavailable'}
-                </Text>
-              </BlurView>
-            </TouchableOpacity>
-          </Animated.View>
-
-          <Animated.View entering={FadeInUp.delay(260)} style={{ flex: 1 }}>
-            <TouchableOpacity
-              style={[
-                styles.transportCardOuter,
-                selectedTransport === 'nfc' && styles.transportCardOuterActive,
-                !isNfcAvailable && styles.transportCardDisabled,
-              ]}
-              onPress={handleStartNfc}
-              disabled={!isNfcAvailable}
-            >
-              <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
-                <LinearGradient
-                  colors={selectedTransport === 'nfc'
-                    ? ['rgba(255, 119, 168, 0.10)', 'rgba(57, 197, 187, 0.03)', 'transparent']
-                    : ['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="phone-portrait" size={28} color={isNfcAvailable ? P01Colors.pink : Colors.textTertiary} />
-                <Text style={styles.transportTitle}>NFC Tap</Text>
-                <Text style={styles.transportDesc}>
-                  {isNfcAvailable ? 'Tap phones together' : 'NFC unavailable'}
-                </Text>
-              </BlurView>
-            </TouchableOpacity>
-          </Animated.View>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Explainer */}
+        <View style={styles.explainer}>
+          <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
+          <Text style={styles.explainerText}>
+            Receive a shielded note from another P01 user nearby.
+            Choose Bluetooth for medium range or NFC for tap-to-receive.
+          </Text>
         </View>
 
-        {/* BLE receiver: waiting for sender to connect */}
+        {/* Section label */}
+        <Text style={styles.sectionLabel}>TRANSPORT METHOD</Text>
+
+        {/* Transport cards */}
+        <View style={styles.transportRow}>
+          <TouchableOpacity
+            style={[
+              styles.transportCard,
+              selectedTransport === 'ble' && styles.transportCardActive,
+              !isBleAvailable && styles.transportCardDisabled,
+            ]}
+            onPress={handleStartBle}
+            disabled={!isBleAvailable}
+            activeOpacity={0.7}
+          >
+            <LinearGradient
+              colors={selectedTransport === 'ble'
+                ? ['rgba(59, 130, 246, 0.12)', 'rgba(59, 130, 246, 0.03)']
+                : ['rgba(59, 130, 246, 0.06)', 'rgba(59, 130, 246, 0.01)']}
+              style={styles.transportCardGradient}
+            >
+              <View style={[styles.transportIconWrap, { backgroundColor: `${P01Colors.blue}15` }]}>
+                <Ionicons name="bluetooth" size={24} color={isBleAvailable ? P01Colors.blue : Colors.textTertiary} />
+              </View>
+              <Text style={styles.transportTitle}>Bluetooth</Text>
+              <Text style={styles.transportDesc}>
+                {isBleAvailable ? 'Wait for nearby sender' : 'Unavailable'}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.transportCard,
+              selectedTransport === 'nfc' && styles.transportCardActive,
+              !isNfcAvailable && styles.transportCardDisabled,
+            ]}
+            onPress={handleStartNfc}
+            disabled={!isNfcAvailable}
+            activeOpacity={0.7}
+          >
+            <LinearGradient
+              colors={selectedTransport === 'nfc'
+                ? ['rgba(255, 119, 168, 0.12)', 'rgba(255, 119, 168, 0.03)']
+                : ['rgba(255, 119, 168, 0.06)', 'rgba(255, 119, 168, 0.01)']}
+              style={styles.transportCardGradient}
+            >
+              <View style={[styles.transportIconWrap, { backgroundColor: `${P01Colors.pink}15` }]}>
+                <Ionicons name="phone-portrait" size={24} color={isNfcAvailable ? P01Colors.pink : Colors.textTertiary} />
+              </View>
+              <Text style={styles.transportTitle}>NFC Tap</Text>
+              <Text style={styles.transportDesc}>
+                {isNfcAvailable ? 'Tap phones together' : 'Unavailable'}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+
+        {/* BLE: waiting for sender */}
         {selectedTransport === 'ble' && (sessionState === 'scanning' || sessionState === 'connecting' || sessionState === 'key-exchange') && (
-          <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.waitingCardOuter}>
-              <BlurView intensity={15} tint="dark" style={styles.waitingCardGlass}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={styles.waitingPulse}>
-                  <Ionicons name="bluetooth" size={32} color={P01Colors.blue} />
-                </View>
-                <Text style={styles.waitingTitle}>Waiting for sender...</Text>
-                <Text style={styles.waitingDesc}>
-                  Ask the sender to open their note and tap "Nearby". Your device is visible to nearby P01 users.
-                </Text>
-              </BlurView>
-            </View>
-          </Animated.View>
+          <View style={styles.waitingCard}>
+            <LinearGradient
+              colors={['rgba(59, 130, 246, 0.08)', 'rgba(59, 130, 246, 0.02)']}
+              style={styles.waitingCardGradient}
+            >
+              <View style={styles.waitingIconWrap}>
+                <Ionicons name="bluetooth" size={28} color={P01Colors.blue} />
+              </View>
+              <Text style={styles.waitingTitle}>Waiting for sender...</Text>
+              <Text style={styles.waitingDesc}>
+                Ask the sender to open their note and tap "Nearby".{'\n'}Your device is visible to nearby P01 users.
+              </Text>
+            </LinearGradient>
+          </View>
         )}
 
         {/* Live transfer animation */}
         {(sessionState === 'receiving' || sessionState === 'decrypting' || sessionState === 'importing') && (
-          <Animated.View entering={FadeInUp.delay(100)}>
-            <TransferAnimation
-              isSending={false}
-              transport={selectedTransport || 'ble'}
-              peerName={activeSession?.peer?.displayName}
-            />
-          </Animated.View>
+          <TransferAnimation
+            isSending={false}
+            transport={selectedTransport || 'ble'}
+            peerName={activeSession?.peer?.displayName}
+          />
         )}
 
         {/* Error */}
         {error && (
-          <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.errorCardOuter}>
-              <BlurView intensity={12} tint="dark" style={styles.errorCardGlass}>
-                <LinearGradient
-                  colors={['rgba(239, 68, 68, 0.08)', 'rgba(239, 68, 68, 0.02)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="alert-circle" size={16} color={Colors.error} />
-                <Text style={styles.errorText}>{error}</Text>
-              </BlurView>
-            </View>
-          </Animated.View>
+          <View style={styles.errorCard}>
+            <Ionicons name="warning" size={18} color={Colors.error} />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
         )}
 
         {/* Security note */}
-        <Animated.View entering={FadeInUp.delay(320)}>
-          <View style={styles.securityOuter}>
-            <BlurView intensity={8} tint="dark" style={styles.securityGlass}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.04)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <Ionicons name="shield-checkmark" size={14} color={Colors.textTertiary} />
-              <Text style={styles.securityText}>
-                Notes are verified cryptographically before import.
-                BLE connections require visual fingerprint confirmation.
-              </Text>
-            </BlurView>
-          </View>
-        </Animated.View>
+        <View style={styles.securityCard}>
+          <Ionicons name="shield-checkmark" size={14} color={Colors.textTertiary} />
+          <Text style={styles.securityText}>
+            Notes are verified cryptographically before import.
+            BLE connections require visual fingerprint confirmation.
+          </Text>
+        </View>
       </ScrollView>
+
+      {/* NFC PIN bottom sheet */}
+      {nfcPinModal}
 
       {/* Fingerprint modal */}
       {showFingerprint && (
@@ -474,8 +495,9 @@ export default function ReceiveNoteScreen() {
   );
 }
 
+// ─── Main Styles ───────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'transparent' },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -483,159 +505,127 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
   },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   backBtn: {
     width: 40,
     height: 40,
     borderRadius: 9999,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: Colors.surfaceSecondary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  headerTitle: { color: Colors.text, fontSize: 20, fontFamily: FontFamily.bold },
+  headerTitle: {
+    color: Colors.text,
+    fontSize: 20,
+    fontFamily: FontFamily.bold,
+  },
   scrollView: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
-
-  /* Success glass card */
-  successGlassOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
+  scrollContent: {
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: 120,
   },
-  successGlass: {
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.lg,
-    padding: Spacing.xl * 2,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    paddingHorizontal: Spacing.xl,
   },
-  successTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  successDetail: {
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    paddingHorizontal: Spacing.md,
-  },
-  doneBtn: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: BorderRadius.md,
-    backgroundColor: P01Colors.cyanDim,
-    marginTop: Spacing.md,
-  },
-  doneBtnText: { fontSize: 15, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
 
-  /* Info glass card */
-  infoCardOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-    marginBottom: Spacing.xl,
-  },
-  infoCardGlass: {
+  /* Explainer */
+  explainer: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.md,
     padding: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  infoText: {
+  explainerText: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-    lineHeight: 19,
-  },
-  label: {
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.sm,
+    color: Colors.textTertiary,
+    lineHeight: 18,
   },
 
-  /* Transport glass cards */
-  transportRow: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.xl },
-  transportCardOuter: {
-    borderRadius: 20,
+  /* Section label */
+  sectionLabel: {
+    fontSize: 11,
+    fontFamily: FontFamily.bold,
+    color: Colors.textTertiary,
+    letterSpacing: 1.2,
+    marginBottom: Spacing.md,
+  },
+
+  /* Transport cards */
+  transportRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.xl,
+  },
+  transportCard: {
+    flex: 1,
+    borderRadius: BorderRadius.lg,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
-  transportCardOuterActive: {
-    borderColor: P01Colors.cyan,
-  },
-  transportCardGlass: {
+  transportCardActive: {},
+  transportCardDisabled: { opacity: 0.4 },
+  transportCardGradient: {
     alignItems: 'center',
     gap: 8,
     paddingVertical: Spacing.xl,
     paddingHorizontal: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
-  },
-  transportCardDisabled: { opacity: 0.4 },
-  transportTitle: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
-  transportDesc: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, textAlign: 'center' },
-
-  /* Error glass card */
-  errorCardOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
+    borderRadius: BorderRadius.lg,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.15)',
-    marginBottom: Spacing.lg,
+    borderColor: Colors.border,
   },
-  errorCardGlass: {
-    flexDirection: 'row',
+  transportIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     alignItems: 'center',
-    gap: 8,
-    padding: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    justifyContent: 'center',
+    marginBottom: 4,
   },
-  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
-
-  /* Security footer glass */
-  securityOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.05)',
+  transportTitle: {
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
   },
-  securityGlass: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.45)',
-  },
-  securityText: {
-    flex: 1,
+  transportDesc: {
     fontSize: 11,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
-    lineHeight: 16,
+    textAlign: 'center',
   },
 
-  /* Waiting glass card */
-  waitingCardOuter: {
-    borderRadius: 20,
+  /* Waiting card */
+  waitingCard: {
+    borderRadius: BorderRadius.lg,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
     marginBottom: Spacing.xl,
   },
-  waitingCardGlass: {
+  waitingCardGradient: {
     alignItems: 'center',
     gap: Spacing.md,
-    paddingVertical: Spacing.xl * 2,
+    paddingVertical: Spacing.xl * 1.5,
     paddingHorizontal: Spacing.xl,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: `${P01Colors.blue}25`,
   },
-  waitingPulse: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: P01Colors.blue + '15',
+  waitingIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: `${P01Colors.blue}15`,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -652,58 +642,215 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
-  /* NFC PIN entry glass */
-  pinContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  /* Error card */
+  errorCard: {
+    flexDirection: 'row',
     alignItems: 'center',
-    padding: Spacing.xl,
-  },
-  pinGlassOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
+    gap: 10,
+    backgroundColor: Colors.errorDim,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-    width: '100%',
+    borderColor: Colors.error,
+    marginBottom: Spacing.lg,
   },
-  pinGlass: {
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    color: Colors.error,
+  },
+
+  /* Security footer */
+  securityCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  securityText: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    lineHeight: 16,
+  },
+
+  /* Success screen */
+  successCard: {
+    width: '100%',
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
     alignItems: 'center',
     padding: Spacing.xl * 1.5,
-    gap: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    borderWidth: 1,
+    borderColor: `${P01Colors.green}30`,
   },
-  pinTitle: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text },
-  pinSubtitle: {
+  successIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: `${P01Colors.green}12`,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  successTitle: {
+    fontSize: 22,
+    fontFamily: FontFamily.bold,
+    color: Colors.text,
+    marginBottom: Spacing.sm,
+  },
+  successDetail: {
     fontSize: 14,
     fontFamily: FontFamily.regular,
     color: Colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
+    marginBottom: Spacing.xl,
   },
-  pinInput: {
-    width: 200,
-    fontSize: 32,
-    fontFamily: FontFamily.mono,
-    color: P01Colors.cyan,
-    letterSpacing: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  successActions: {
+    width: '100%',
+    gap: Spacing.sm,
+  },
+  successBtnPrimary: {
     borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: P01Colors.cyan + '40',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.xl,
-    marginVertical: Spacing.lg,
+    overflow: 'hidden',
   },
-  pinSubmitBtn: {
+  successBtnGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: P01Colors.cyan,
+    paddingVertical: 14,
+    borderRadius: BorderRadius.md,
   },
-  pinSubmitText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
-  disabledBtn: { opacity: 0.4 },
+  successBtnPrimaryText: {
+    fontSize: 15,
+    fontFamily: FontFamily.bold,
+    color: '#000',
+  },
+  successBtnSecondary: {
+    paddingVertical: 14,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  successBtnSecondaryText: {
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
+  },
+});
+
+// ─── NFC PIN Bottom Sheet Styles ────────────────────────────────────
+const ms = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: 40,
+    borderTopWidth: 1,
+    borderTopColor: `${P01Colors.cyan}30`,
+  },
+  dragRow: {
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: Spacing.md,
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.border,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: Spacing.xl,
+  },
+  sheetIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetTitle: {
+    fontSize: 20,
+    fontFamily: FontFamily.bold,
+    color: Colors.text,
+  },
+  sheetSubtitle: {
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  pinInputWrap: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  pinInput: {
+    width: 220,
+    fontSize: 32,
+    fontFamily: FontFamily.mono,
+    color: P01Colors.cyan,
+    letterSpacing: 8,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: `${P01Colors.cyan}35`,
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
+    textAlign: 'center',
+  },
+  sheetActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  cancelBtn: {
+    flex: 0.4,
+    paddingVertical: 14,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelBtnText: {
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
+  },
+  confirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: BorderRadius.md,
+  },
+  confirmBtnText: {
+    fontSize: 15,
+    fontFamily: FontFamily.bold,
+    color: '#000',
+  },
 });

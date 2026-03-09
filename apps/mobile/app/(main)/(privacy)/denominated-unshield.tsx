@@ -21,6 +21,7 @@ import {
   type NoteStatus,
 } from '@/stores/denominatedPoolStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
+import { useArcium } from '@/providers/ArciumProvider';
 import { receiptFromJSON } from '@/services/denominatedPool';
 import { getKeypair } from '@/services/solana/wallet';
 import { useWalletStore } from '@/stores/walletStore';
@@ -49,6 +50,7 @@ function UnshieldScreenContent() {
 
   const { publicKey: walletPublicKey } = useWalletStore();
   const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
+  const { isMpcActive } = useArcium();
 
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [recipient, setRecipient] = useState('');
@@ -148,9 +150,10 @@ function UnshieldScreenContent() {
       }, emergency);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const proofLabel = isMpcActive ? 'STARK + MPC' : 'STARK';
       Alert.alert(
-        emergency ? 'Emergency Unshield Complete' : 'Unshielded (STARK)!',
-        `${selectedNote.denomination} ${selectedNote.token} withdrawn to ${recipient.slice(0, 8)}...\n\nTx: ${sig.slice(0, 16)}...`,
+        emergency ? 'Emergency Unshield Complete' : `Unshielded (${proofLabel})!`,
+        `${selectedNote.denomination} ${selectedNote.token} withdrawn to ${recipient.slice(0, 8)}...${isMpcActive ? '\n\nNullifier hidden via MPC — withdrawal unlinkable.' : ''}\n\nTx: ${sig.slice(0, 16)}...`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } catch (err: any) {

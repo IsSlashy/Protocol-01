@@ -1,0 +1,30 @@
+[package]
+name = "p01-arcium"
+version = "0.1.0"
+description = "Protocol 01 × Arcium — Confidential computation bridge"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "p01_arcium"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+arcium-client = { version = "0.8.5", default-features = false }
+arcium-macros = "0.8.5"
+arcium-anchor = "0.8.5"
+
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = [
+    'cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))',
+    'cfg(target_os, values("solana"))',
+]
