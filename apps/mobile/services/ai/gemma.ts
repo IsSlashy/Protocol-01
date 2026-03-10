@@ -224,6 +224,7 @@ export async function testGemmaConnection(config?: GemmaConfig): Promise<{
         return { success: false, error: 'Google AI API key required' };
       }
 
+      // Google AI REST API requires ?key= query param (no header-based auth available)
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models?key=${cfg.googleApiKey}`
       );
@@ -306,6 +307,13 @@ export async function processWithGemma(
  * Send messages to Ollama with Gemma model
  */
 async function sendToOllama(messages: GemmaMessage[], config: GemmaConfig): Promise<string> {
+  // Warn if remote Ollama endpoint is not using HTTPS (L11)
+  if (config.ollamaUrl
+    && !config.ollamaUrl.startsWith('https://')
+    && !config.ollamaUrl.includes('localhost')
+    && !config.ollamaUrl.includes('127.0.0.1')) {
+    if (__DEV__) console.warn('[Gemma] Remote Ollama endpoint should use HTTPS for security');
+  }
   const response = await fetch(`${config.ollamaUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -343,6 +351,7 @@ async function sendToGoogleAI(messages: GemmaMessage[], config: GemmaConfig): Pr
     throw new Error('Google AI API key required');
   }
 
+  // Google AI REST API requires ?key= query param (no header-based auth available)
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${config.googleModel}:generateContent?key=${config.googleApiKey}`,
     {

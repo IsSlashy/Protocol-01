@@ -1,5 +1,6 @@
-// TODO: Add certificate pinning for Helius RPC endpoint before mainnet
-// Use react-native-ssl-pinning or custom fetch wrapper
+// TODO: Add certificate pinning for Helius RPC endpoint before mainnet.
+// Use react-native-ssl-pinning or TrustKit for production cert pinning.
+// See: https://github.com/nickhudkins/react-native-ssl-pinning
 
 import { Connection, clusterApiUrl, Commitment } from '@solana/web3.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -16,6 +17,28 @@ const NETWORK_STORAGE_KEY = 'settings_network';
 // Helius API key from environment (optional but recommended)
 const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 
+/**
+ * Strip API keys from RPC URLs before logging (M10).
+ * Helius requires ?api-key= as a query param — this is their required auth method.
+ * There is no header-based auth option for Helius RPC endpoints.
+ */
+function sanitizeRpcUrl(url: string): string {
+  return url.replace(/([?&])(api-key|key|apiKey)=[^&]+/gi, '$1$2=***');
+}
+
+/**
+ * Validate that an RPC endpoint uses HTTPS (M9).
+ * Allows http://localhost for local development only.
+ */
+function validateRpcEndpoint(url: string): void {
+  if (!url.startsWith('https://') && !url.startsWith('wss://') && !url.startsWith('http://localhost') && !url.startsWith('ws://localhost')) {
+    throw new Error(`RPC endpoint must use HTTPS: ${sanitizeRpcUrl(url)}`);
+  }
+}
+
+// Helius requires the API key as a query parameter (?api-key=...).
+// This is Helius's required auth method — no header-based auth is available.
+// URLs containing the key are NEVER logged directly; use sanitizeRpcUrl() for safe output.
 // RPC endpoints - Helius first (if configured), then official Solana fallback
 const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
   'devnet': HELIUS_API_KEY
@@ -83,6 +106,7 @@ export function getConnection(): Connection {
   if (!connectionInstance) {
     const endpoints = RPC_ENDPOINTS[currentCluster];
     const endpoint = endpoints[currentEndpointIndex];
+    validateRpcEndpoint(endpoint.http);
     connectionInstance = new Connection(
       endpoint.http,
       {
@@ -103,6 +127,7 @@ export function switchEndpoint(): void {
   const endpoints = RPC_ENDPOINTS[currentCluster];
   currentEndpointIndex = (currentEndpointIndex + 1) % endpoints.length;
   const endpoint = endpoints[currentEndpointIndex];
+  validateRpcEndpoint(endpoint.http);
   connectionInstance = new Connection(
     endpoint.http,
     {

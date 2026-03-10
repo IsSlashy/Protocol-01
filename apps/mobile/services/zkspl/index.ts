@@ -203,7 +203,7 @@ export class ZkSplService {
     // TRUSTLESS MODE: All proofs generated locally via snarkjs WASM.
     // The spending_key NEVER leaves the device. No relayer dependency.
     // Circuit files loaded from app assets at runtime.
-    console.log('[ZkSPL] Trustless mode: local-only proving (spending_key stays on device)');
+    if (__DEV__) console.log('[ZkSPL] Trustless mode: local-only proving (spending_key stays on device)');
 
     this.client = new ZkSplClient({
       connection,
@@ -648,26 +648,26 @@ async function resolveKeypair(): Promise<Keypair | null> {
   // 1. Fast path — private key already in SecureStore
   const kp = await getKeypair();
   if (kp) {
-    console.log('[ZkSPL] Keypair from SecureStore private key');
+    if (__DEV__) console.log('[ZkSPL] Keypair from SecureStore private key');
     return kp;
   }
 
   // 2. Derive from mnemonic
   const mnemonic = await SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTIONS);
   if (mnemonic) {
-    console.log('[ZkSPL] Deriving keypair from mnemonic');
+    if (__DEV__) console.log('[ZkSPL] Deriving keypair from mnemonic');
     return deriveKeypairFromMnemonic(mnemonic);
   }
 
   // 3. Derive from existing ZK seed (Privy users who already initialised shielded)
   let zkSeed = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS);
   if (zkSeed) {
-    console.log('[ZkSPL] Deriving keypair from ZK seed');
+    if (__DEV__) console.log('[ZkSPL] Deriving keypair from ZK seed');
     return deriveKeypairFromMnemonic(zkSeed);
   }
 
   // 4. Generate a brand-new ZK seed (first-time Privy user)
-  console.log('[ZkSPL] Generating new ZK seed for Privy user');
+  if (__DEV__) console.log('[ZkSPL] Generating new ZK seed for Privy user');
   zkSeed = generateMnemonic(wordlist, 128);
   await SecureStore.setItemAsync(ZK_SEED_KEY, zkSeed, SECURE_OPTIONS);
   return deriveKeypairFromMnemonic(zkSeed);
@@ -692,7 +692,7 @@ export async function getZkSplService(): Promise<ZkSplService | null> {
     const spendingKey = deriveSpendingKey(keypair.secretKey);
 
     _service = new ZkSplService(connection, wallet as any, spendingKey, keypair);
-    console.log('[ZkSPL] Service initialized, wallet:', keypair.publicKey.toBase58());
+    if (__DEV__) console.log('[ZkSPL] Service initialized, wallet:', keypair.publicKey.toBase58());
     return _service;
   } catch (error) {
     console.error('[ZkSPL] Failed to create service:', error);
