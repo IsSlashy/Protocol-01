@@ -1,4 +1,5 @@
-import { View, Text, Pressable, Alert, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, Pressable, StyleSheet, TouchableOpacity } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect, useState } from 'react';
@@ -12,6 +13,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { scheduleLocalNotification } from '@/services/notifications';
+import { unlockVault, unlockVaultBiometric, isVaultEnabled } from '@/utils/crypto/noteVault';
 import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
 
 export default function LockScreen() {
@@ -69,6 +71,7 @@ export default function LockScreen() {
             fallbackLabel: 'Use Passcode',
           });
           if (result.success) {
+            if (await isVaultEnabled()) await unlockVaultBiometric();
             await AsyncStorage.setItem('p01_session_unlocked', 'true');
             router.replace('/(main)/(wallet)');
           }
@@ -82,6 +85,7 @@ export default function LockScreen() {
             cancelLabel: 'Cancel',
           });
           if (deviceResult.success) {
+            if (await isVaultEnabled()) await unlockVaultBiometric();
             await AsyncStorage.setItem('p01_session_unlocked', 'true');
             router.replace('/(main)/(wallet)');
           }
@@ -128,7 +132,7 @@ export default function LockScreen() {
       const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
       setPinError(true);
       setPin('');
-      Alert.alert('Too many attempts', `Try again in ${remaining} seconds.`);
+      p01Alert('Too many attempts', `Try again in ${remaining} seconds.`);
       return;
     }
 
@@ -139,6 +143,10 @@ export default function LockScreen() {
     if (storedPinHash && constantTimeEqual(enteredPinHash, storedPinHash)) {
       await updateLockout(0, 0);
       await SecureStore.deleteItemAsync('p01_lockout_state');
+      // Unlock note vault with PIN-derived key (protects shielded notes at rest)
+      if (await isVaultEnabled()) {
+        await unlockVault(enteredPinHash);
+      }
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await AsyncStorage.setItem('p01_session_unlocked', 'true');
       router.replace('/(main)/(wallet)');
@@ -203,6 +211,7 @@ export default function LockScreen() {
 
       if (result.success) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (await isVaultEnabled()) await unlockVaultBiometric();
         await AsyncStorage.setItem('p01_session_unlocked', 'true');
         router.replace('/(main)/(wallet)');
       } else {
@@ -216,7 +225,7 @@ export default function LockScreen() {
       }
     } catch (error) {
       console.error('[Lock] Authentication error:', error);
-      Alert.alert('Error', 'Authentication failed. Please try again.');
+      p01Alert('Error', 'Authentication failed. Please try again.');
     } finally {
       setIsAuthenticating(false);
     }

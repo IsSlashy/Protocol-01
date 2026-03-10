@@ -5,10 +5,10 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -162,7 +162,7 @@ export default function NetworkSettingsScreen() {
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      Alert.alert(
+      p01Alert(
         'Network Updated',
         `Switched to ${selectedNetwork === 'mainnet-beta' ? 'Mainnet' :
                        selectedNetwork === 'devnet' ? 'Devnet' : 'Testnet'}. ` +
@@ -176,7 +176,7 @@ export default function NetworkSettingsScreen() {
       );
     } catch (error) {
       console.error('Failed to save network:', error);
-      Alert.alert('Error', 'Failed to save network settings. Please try again.');
+      p01Alert('Error', 'Failed to save network settings. Please try again.');
     } finally {
       setIsSaving(false);
     }

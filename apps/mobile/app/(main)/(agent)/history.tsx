@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   FlatList,
   TextInput,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +15,7 @@ import * as Haptics from 'expo-haptics';
 
 import { useAIStore, Conversation } from '@/stores/aiStore';
 import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 export default function ChatHistory() {
   const router = useRouter();
@@ -51,7 +51,7 @@ export default function ChatHistory() {
 
   const handleDeleteConversation = useCallback((conv: Conversation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(
+    p01Alert(
       'Delete Conversation',
       `Delete "${conv.title}"?`,
       [

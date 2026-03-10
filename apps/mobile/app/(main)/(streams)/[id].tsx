@@ -14,7 +14,7 @@ import {
   SystemProgram,
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
-import { useAlert } from '../../../providers/AlertProvider';
+import { p01Alert } from '../../../stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -62,7 +62,7 @@ export default function StreamDetailScreen() {
 function StreamDetailContent() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { showConfirm, showAlert } = useAlert();
+  // p01Alert imported at top level (no hook needed)
   const {
     streams,
     processingPayment,
@@ -132,39 +132,43 @@ function StreamDetailContent() {
       ? `Are you sure you want to cancel "${stream.name}"? ${remaining > 0 ? `${remaining.toFixed(4)} SOL remains in your private balance.` : 'All payments have been processed.'}`
       : `Are you sure you want to cancel "${stream.name}"? This will stop all future payments and remove the subscription.`;
 
-    showConfirm(
+    p01Alert(
       'Cancel Stream',
       cancelMessage,
-      {
-        icon: 'warning',
-        confirmText: 'Yes, Cancel',
-        confirmStyle: 'destructive',
-        cancelText: 'No',
-        onConfirm: async () => {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          await cancelStream(stream.id);
-          await deleteStream(stream.id);
-          router.back();
+      [
+        {
+          text: 'Yes, Cancel',
+          style: 'destructive',
+          onPress: async () => {
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            await cancelStream(stream.id);
+            await deleteStream(stream.id);
+            router.back();
+          },
         },
-      }
+        { text: 'No', style: 'cancel' },
+      ],
+      'warning',
     );
   };
 
   const handleDelete = () => {
-    showConfirm(
+    p01Alert(
       'Delete Stream',
       'Are you sure you want to delete this stream? This will remove it from your history.',
-      {
-        icon: 'warning',
-        confirmText: 'Yes, Delete',
-        confirmStyle: 'destructive',
-        cancelText: 'No',
-        onConfirm: async () => {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          await deleteStream(stream.id);
-          router.back();
+      [
+        {
+          text: 'Yes, Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            await deleteStream(stream.id);
+            router.back();
+          },
         },
-      }
+        { text: 'No', style: 'cancel' },
+      ],
+      'warning',
     );
   };
 
@@ -180,20 +184,18 @@ function StreamDetailContent() {
       const availableNote = matureNotes.find((n: any) => n.denomination >= stream.amountPerPayment);
 
       if (!availableNote) {
-        showAlert('Insufficient Balance', 'No mature shielded notes available. Shield more SOL first.', {
-          icon: 'error',
-        });
+        p01Alert('Insufficient Balance', 'No mature shielded notes available. Shield more SOL first.', undefined, 'error');
         return;
       }
 
-      showConfirm(
+      p01Alert(
         'Private Payment',
         `Unshield ${availableNote.denomination} SOL note to pay ${stream.name}? This generates a ZK proof and sends a real on-chain transaction.`,
-        {
-          icon: 'question',
-          confirmText: 'Pay with ZK Proof',
-          cancelText: 'Cancel',
-          onConfirm: async () => {
+        [
+          {
+            text: 'Pay with ZK Proof',
+            style: 'default',
+            onPress: async () => {
             try {
               setIsZkPaying(true);
               setZkPayProgress('Generating ZK proof...');
@@ -237,30 +239,29 @@ function StreamDetailContent() {
               await refresh();
 
               setZkPayProgress(null);
-              showAlert('Payment Sent!', `${availableNote.denomination} SOL paid on-chain via ZK proof. Tx: ${sig.slice(0, 8)}...`, {
-                icon: 'success',
-              });
+              p01Alert('Payment Sent!', `${availableNote.denomination} SOL paid on-chain via ZK proof. Tx: ${sig.slice(0, 8)}...`, undefined, 'success');
             } catch (error: any) {
-              showAlert('Payment Failed', error.message || 'ZK payment failed.', {
-                icon: 'error',
-              });
+              p01Alert('Payment Failed', error.message || 'ZK payment failed.', undefined, 'error');
             } finally {
               setIsZkPaying(false);
               setZkPayProgress(null);
             }
           },
-        }
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+        'question',
       );
     } else {
       // Normal wallet: real SOL transfer
-      showConfirm(
+      p01Alert(
         'Process Payment',
         `Send ${stream.amountPerPayment.toFixed(4)} SOL to ${stream.recipientAddress.slice(0, 8)}...?`,
-        {
-          icon: 'question',
-          confirmText: 'Pay Now',
-          cancelText: 'Cancel',
-          onConfirm: async () => {
+        [
+          {
+            text: 'Pay Now',
+            style: 'default',
+            onPress: async () => {
             try {
               await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
               setIsZkPaying(true);
@@ -313,19 +314,18 @@ function StreamDetailContent() {
               });
               await refresh();
 
-              showAlert('Payment Sent!', `${stream.amountPerPayment.toFixed(4)} SOL confirmed on-chain. Tx: ${sig.slice(0, 8)}...`, {
-                icon: 'success',
-              });
+              p01Alert('Payment Sent!', `${stream.amountPerPayment.toFixed(4)} SOL confirmed on-chain. Tx: ${sig.slice(0, 8)}...`, undefined, 'success');
             } catch (error: any) {
-              showAlert('Payment Failed', error.message || 'Transaction failed.', {
-                icon: 'error',
-              });
+              p01Alert('Payment Failed', error.message || 'Transaction failed.', undefined, 'error');
             } finally {
               setIsZkPaying(false);
               setZkPayProgress(null);
             }
           },
-        }
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+        'question',
       );
     }
   };
@@ -748,12 +748,13 @@ function StreamDetailContent() {
                   if (payment.signature) {
                     openExplorer(payment.signature);
                   } else {
-                    showAlert(
+                    p01Alert(
                       'No Transaction',
                       payment.status === 'failed'
                         ? `This payment failed: ${payment.error || 'Unknown error'}`
                         : 'This payment was recorded locally but not sent to the blockchain.',
-                      { icon: payment.status === 'failed' ? 'error' : 'info' }
+                      undefined,
+                      payment.status === 'failed' ? 'error' : 'info',
                     );
                   }
                 }}

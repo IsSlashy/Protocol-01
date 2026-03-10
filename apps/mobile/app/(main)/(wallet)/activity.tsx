@@ -16,7 +16,7 @@ import { formatUSD } from '@/utils/format/currency';
 import { useWalletStore } from '@/stores/walletStore';
 import { useStreamStore } from '@/stores/streamStore';
 import { getExplorerUrl } from '@/services/solana/connection';
-import { useAlert } from '@/providers/AlertProvider';
+import { p01Alert } from '@/stores/alertStore';
 
 // Types
 type TransactionType = 'all' | 'sent' | 'received' | 'streams' | 'scheduled';
@@ -98,7 +98,7 @@ function TransactionSkeleton() {
 
 export default function ActivityScreen() {
   const router = useRouter();
-  const { showAlert } = useAlert();
+  // p01Alert imported at top level (no hook needed)
 
   const {
     transactions: storeTransactions,
@@ -134,15 +134,16 @@ export default function ActivityScreen() {
       openExplorer(tx.id);
     } else {
       // Stream payment without blockchain signature
-      showAlert(
+      p01Alert(
         'Local Transaction',
         tx.status === 'failed'
           ? 'This payment failed and was not sent to the blockchain.'
           : 'This payment was recorded locally. ZK stream payments are processed privately.',
-        { icon: tx.status === 'failed' ? 'error' : 'info' }
+        undefined,
+        tx.status === 'failed' ? 'error' : 'info',
       );
     }
-  }, [openExplorer, showAlert]);
+  }, [openExplorer]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
 

@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -28,6 +27,7 @@ import { getKeypair } from '@/services/solana/wallet';
 import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_TRANSFER } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 export default function ShieldedTransferScreen() {
   const router = useRouter();
@@ -60,7 +60,7 @@ export default function ShieldedTransferScreen() {
       const ready = await ensureInitialized();
       setIsReady(ready);
       if (!ready) {
-        Alert.alert('Not Initialized', 'Please initialize your shielded wallet first.');
+        p01Alert('Not Initialized', 'Please initialize your shielded wallet first.');
         router.replace('/(main)/(wallet)');
       }
     };
@@ -73,7 +73,7 @@ export default function ShieldedTransferScreen() {
   };
 
   const handleScan = () => {
-    Alert.alert('QR Scanner', 'QR code scanning will be available in a future update. Please paste the address manually.');
+    p01Alert('QR Scanner', 'QR code scanning will be available in a future update. Please paste the address manually.');
   };
 
   const handleSetMax = () => {
@@ -82,11 +82,11 @@ export default function ShieldedTransferScreen() {
   };
 
   const validateInputs = (): boolean => {
-    if (!recipient.trim()) { Alert.alert('Missing Recipient', 'Please enter a ZK address.'); return false; }
-    if (!recipient.startsWith('zk:')) { Alert.alert('Invalid Address', 'ZK addresses must start with "zk:"'); return false; }
+    if (!recipient.trim()) { p01Alert('Missing Recipient', 'Please enter a ZK address.'); return false; }
+    if (!recipient.startsWith('zk:')) { p01Alert('Invalid Address', 'ZK addresses must start with "zk:"'); return false; }
     const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount greater than 0.'); return false; }
-    if (amountNum > shieldedBalance) { Alert.alert('Insufficient Balance', `You only have ${shieldedBalance.toFixed(4)} SOL shielded.`); return false; }
+    if (isNaN(amountNum) || amountNum <= 0) { p01Alert('Invalid Amount', 'Please enter a valid amount greater than 0.'); return false; }
+    if (amountNum > shieldedBalance) { p01Alert('Insufficient Balance', `You only have ${shieldedBalance.toFixed(4)} SOL shielded.`); return false; }
     return true;
   };
 
@@ -173,7 +173,7 @@ export default function ShieldedTransferScreen() {
       if (lastNote) {
         await Clipboard.setStringAsync(lastNote.noteString);
         setTimeout(() => Clipboard.setStringAsync(''), 60000);
-        Alert.alert(
+        p01Alert(
           `Transfer Successful${starkReady ? ' (STARK)' : ''}`,
           `${amount} SOL has been sent privately.\n\nNote copied to clipboard (auto-clears in 60s)!\n\nIMPORTANT: Share this note with the recipient so they can import it and receive the funds.`,
           [
@@ -182,11 +182,11 @@ export default function ShieldedTransferScreen() {
           ]
         );
       } else {
-        Alert.alert('Transfer Successful', `${amount} SOL has been sent privately to the recipient.${starkReady ? '\n\nSTARK proof verified on-chain.' : ''}`, [{ text: 'OK', onPress: () => router.back() }]);
+        p01Alert('Transfer Successful', `${amount} SOL has been sent privately to the recipient.${starkReady ? '\n\nSTARK proof verified on-chain.' : ''}`, [{ text: 'OK', onPress: () => router.back() }]);
       }
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Transfer Failed', (err as Error).message);
+      p01Alert('Transfer Failed', (err as Error).message);
     } finally {
       setIsProcessing(false);
       setProofProgress(0);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Alert } from 'react-native';
+import { View, Text } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -108,7 +109,7 @@ export default function CreateWalletScreen() {
       setError(err.message || 'Failed to create wallet');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
-      Alert.alert(
+      p01Alert(
         'Error',
         err.message || 'Failed to create wallet. Please try again.',
         [{ text: 'Retry', onPress: () => startWalletCreation() }]

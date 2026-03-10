@@ -7,7 +7,6 @@ import {
   RefreshControl,
   TextInput,
   StyleSheet,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -30,6 +29,7 @@ import {
 } from '@/services/zkspl';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
+import { p01Alert } from '@/stores/alertStore';
 
 import ConfidentialBalanceCard from '@/components/privacy/ConfidentialBalanceCard';
 import ConfidentialActions from '@/components/privacy/ConfidentialActions';
@@ -132,12 +132,12 @@ export default function ConfidentialBalanceScreen() {
   };
 
   const handleDeposit = async () => {
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount'); return; }
-    if (!publicKey) { Alert.alert('Error', 'Wallet not connected'); return; }
+    if (!amount || parseFloat(amount) <= 0) { p01Alert('Invalid Amount', 'Please enter a valid amount'); return; }
+    if (!publicKey) { p01Alert('Error', 'Wallet not connected'); return; }
 
     // For non-SOL tokens, check if the account exists and create it if needed
     if (selectedToken !== NATIVE_SOL_MINT_STR && !accounts[selectedToken]) {
-      Alert.alert('Account Required', `A confidential ${tokenSymbol} account needs to be created first. This will be done automatically.`);
+      p01Alert('Account Required', `A confidential ${tokenSymbol} account needs to be created first. This will be done automatically.`);
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -182,22 +182,22 @@ export default function ConfidentialBalanceScreen() {
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', `${tokenSymbol} deposited into confidential balance${starkReady ? ' (STARK verified)' : ''}`);
+      p01Alert('Success', `${tokenSymbol} deposited into confidential balance${starkReady ? ' (STARK verified)' : ''}`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     } finally { resetProgress(); }
   };
 
   const handleWithdraw = async () => {
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount'); return; }
-    if (parseFloat(amount) > confidentialBalance) { Alert.alert('Insufficient Balance', `You do not have enough confidential ${tokenSymbol}`); return; }
-    if (!publicKey) { Alert.alert('Error', 'Wallet not connected'); return; }
+    if (!amount || parseFloat(amount) <= 0) { p01Alert('Invalid Amount', 'Please enter a valid amount'); return; }
+    if (parseFloat(amount) > confidentialBalance) { p01Alert('Insufficient Balance', `You do not have enough confidential ${tokenSymbol}`); return; }
+    if (!publicKey) { p01Alert('Error', 'Wallet not connected'); return; }
 
     // Biometric gate — require auth before withdrawing funds
     const authed = await requireBiometricAuth('Authenticate to withdraw funds');
     if (!authed) {
-      Alert.alert('Authentication Required', 'You must authenticate to withdraw funds.');
+      p01Alert('Authentication Required', 'You must authenticate to withdraw funds.');
       return;
     }
 
@@ -243,18 +243,18 @@ export default function ConfidentialBalanceScreen() {
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', `${tokenSymbol} withdrawn from confidential balance${starkReady ? ' (STARK verified)' : ''}`);
+      p01Alert('Success', `${tokenSymbol} withdrawn from confidential balance${starkReady ? ' (STARK verified)' : ''}`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     } finally { resetProgress(); }
   };
 
   const handleTransfer = async () => {
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount'); return; }
-    if (!recipientAddress.trim()) { Alert.alert('Missing Recipient', 'Please enter a recipient address'); return; }
-    if (parseFloat(amount) > confidentialBalance) { Alert.alert('Insufficient Balance', `You do not have enough confidential ${tokenSymbol}`); return; }
-    try { new (require('@solana/web3.js').PublicKey)(recipientAddress.trim()); } catch { Alert.alert('Invalid Address', 'Please enter a valid Solana address'); return; }
+    if (!amount || parseFloat(amount) <= 0) { p01Alert('Invalid Amount', 'Please enter a valid amount'); return; }
+    if (!recipientAddress.trim()) { p01Alert('Missing Recipient', 'Please enter a recipient address'); return; }
+    if (parseFloat(amount) > confidentialBalance) { p01Alert('Insufficient Balance', `You do not have enough confidential ${tokenSymbol}`); return; }
+    try { new (require('@solana/web3.js').PublicKey)(recipientAddress.trim()); } catch { p01Alert('Invalid Address', 'Please enter a valid Solana address'); return; }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsProcessing(true);
@@ -302,16 +302,16 @@ export default function ConfidentialBalanceScreen() {
       setAmount('');
       setRecipientAddress('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Transfer Sent', `The confidential ${tokenSymbol} transfer has been sent${starkReady ? ' (STARK verified)' : ''}. The recipient will see a pending credit they need to apply.`);
+      p01Alert('Transfer Sent', `The confidential ${tokenSymbol} transfer has been sent${starkReady ? ' (STARK verified)' : ''}. The recipient will see a pending credit they need to apply.`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     } finally { resetProgress(); }
   };
 
   const handleSweepToMain = async () => {
-    if (!publicKey) { Alert.alert('Error', 'Main wallet not connected'); return; }
-    if (!zkWalletAddress || zkWalletAddress === publicKey) { Alert.alert('Same Wallet', 'ZK wallet and main wallet are the same address'); return; }
+    if (!publicKey) { p01Alert('Error', 'Main wallet not connected'); return; }
+    if (!zkWalletAddress || zkWalletAddress === publicKey) { p01Alert('Same Wallet', 'ZK wallet and main wallet are the same address'); return; }
 
     // Fetch real on-chain balance before showing confirmation
     let realBalance = zkWalletBalance;
@@ -322,9 +322,9 @@ export default function ConfidentialBalanceScreen() {
     } catch {}
 
     const available = (realBalance / 1e9) - 0.001; // reserve 1M lamports for rent + shield/unshield fees
-    if (available <= 0) { Alert.alert('No Funds', 'No funds available to send back'); return; }
+    if (available <= 0) { p01Alert('No Funds', 'No funds available to send back'); return; }
 
-    Alert.alert(
+    p01Alert(
       'Private Sweep to Main Wallet',
       `Privately send ${available.toFixed(4)} SOL to your main wallet via the shielded pool?\n\nThis breaks the on-chain link between wallets.\n\n${publicKey.slice(0, 8)}...${publicKey.slice(-6)}`,
       [
@@ -351,10 +351,10 @@ export default function ConfidentialBalanceScreen() {
               setProgressMessage('Complete!');
               await new Promise(r => setTimeout(r, 500));
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              Alert.alert('Success', `${available.toFixed(4)} SOL privately swept to your main wallet`);
+              p01Alert('Success', `${available.toFixed(4)} SOL privately swept to your main wallet`);
             } catch (err) {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-              Alert.alert('Error', (err as Error).message);
+              p01Alert('Error', (err as Error).message);
             } finally { resetProgress(); }
           },
         },
@@ -383,7 +383,7 @@ export default function ConfidentialBalanceScreen() {
       Clipboard.setStringAsync(zkWalletAddress);
       setTimeout(() => Clipboard.setStringAsync(''), 60000);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      Alert.alert('Copied', 'ZK wallet address copied to clipboard. Clipboard will be cleared in 60 seconds.');
+      p01Alert('Copied', 'ZK wallet address copied to clipboard. Clipboard will be cleared in 60 seconds.');
     }
   };
 
@@ -541,7 +541,7 @@ export default function ConfidentialBalanceScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Emergency reset"
                   onPress={() => {
-                    Alert.alert(
+                    p01Alert(
                       'Emergency Reset',
                       'This will clear your local state for this token. Any confidential balance that cannot be recovered will be lost.\n\nYou will need to deposit fresh funds after reset.\n\nAre you sure?',
                       [
@@ -554,9 +554,9 @@ export default function ConfidentialBalanceScreen() {
                               await emergencyReset(selectedToken);
                               await refreshAllBalances();
                               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                              Alert.alert('State Reset', 'Local state has been cleared. You can now deposit fresh funds.');
+                              p01Alert('State Reset', 'Local state has been cleared. You can now deposit fresh funds.');
                             } catch (err) {
-                              Alert.alert('Error', (err as Error).message);
+                              p01Alert('Error', (err as Error).message);
                             }
                           },
                         },

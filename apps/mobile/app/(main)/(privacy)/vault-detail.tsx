@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,6 +18,7 @@ import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useZkProver } from '@/providers/ZkProverProvider';
 import type { ProofGenerator } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 
@@ -98,13 +98,13 @@ export default function VaultDetailScreen() {
       } else {
         await pauseNormalAction(vaultAddress);
       }
-      Alert.alert('Success', 'Subscription paused');
+      p01Alert('Success', 'Subscription paused');
       const info = await refreshVault(vaultAddress);
       setVaultInfo(info);
       setStarkStatus(null);
     } catch (err) {
       setStarkStatus(null);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     }
   };
 
@@ -134,19 +134,19 @@ export default function VaultDetailScreen() {
       } else {
         await resumeNormalAction(vaultAddress);
       }
-      Alert.alert('Success', 'Subscription resumed');
+      p01Alert('Success', 'Subscription resumed');
       const info = await refreshVault(vaultAddress);
       setVaultInfo(info);
       setStarkStatus(null);
     } catch (err) {
       setStarkStatus(null);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     }
   };
 
   const handleCancel = async () => {
     if (!vaultAddress || !vaultInfo) return;
-    Alert.alert(
+    p01Alert(
       'Cancel Subscription',
       'This will refund the remaining balance and close the vault.',
       [
@@ -159,17 +159,17 @@ export default function VaultDetailScreen() {
               if (isPrivate) {
                 // Private cancel requires re-shielding — not yet fully wired
                 // (needs new commitments + new root from the pool)
-                Alert.alert(
+                p01Alert(
                   'Not Available',
                   'Private subscription cancellation requires pool re-shielding which is not yet implemented. Contact support.',
                 );
                 return;
               }
               await cancelNormalAction(vaultAddress, vaultInfo.retailer);
-              Alert.alert('Success', 'Subscription cancelled');
+              p01Alert('Success', 'Subscription cancelled');
               router.back();
             } catch (err) {
-              Alert.alert('Error', (err as Error).message);
+              p01Alert('Error', (err as Error).message);
             }
           },
         },

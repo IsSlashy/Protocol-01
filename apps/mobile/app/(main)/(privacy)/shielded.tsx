@@ -7,7 +7,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   StyleSheet,
-  Alert,
   Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +27,7 @@ import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_CONFIDENTIAL_B
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
+import { p01Alert } from '@/stores/alertStore';
 
 import ShieldedBalanceCard from '@/components/privacy/ShieldedBalanceCard';
 import ShieldedActions from '@/components/privacy/ShieldedActions';
@@ -127,7 +127,7 @@ export default function ShieldedWalletScreen() {
     if (zkAddress) {
       await Clipboard.setStringAsync(zkAddress);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Copied', 'ZK address copied to clipboard');
+      p01Alert('Copied', 'ZK address copied to clipboard');
     }
   };
 
@@ -166,8 +166,8 @@ export default function ShieldedWalletScreen() {
   };
 
   const handleShield = async () => {
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount'); return; }
-    if (!publicKey) { Alert.alert('Error', 'Wallet not connected'); return; }
+    if (!amount || parseFloat(amount) <= 0) { p01Alert('Invalid Amount', 'Please enter a valid amount'); return; }
+    if (!publicKey) { p01Alert('Error', 'Wallet not connected'); return; }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsProcessing(true);
@@ -192,10 +192,10 @@ export default function ShieldedWalletScreen() {
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Success', 'SOL has been shielded successfully');
+      p01Alert('Success', 'SOL has been shielded successfully');
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     } finally {
       setIsProcessing(false);
       setProgressOperation(null);
@@ -205,14 +205,14 @@ export default function ShieldedWalletScreen() {
   };
 
   const handleUnshield = async () => {
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert('Invalid Amount', 'Please enter a valid amount'); return; }
-    if (parseFloat(amount) > shieldedBalance) { Alert.alert('Insufficient Balance', 'You do not have enough shielded SOL'); return; }
-    if (!publicKey) { Alert.alert('Error', 'Wallet not connected'); return; }
+    if (!amount || parseFloat(amount) <= 0) { p01Alert('Invalid Amount', 'Please enter a valid amount'); return; }
+    if (parseFloat(amount) > shieldedBalance) { p01Alert('Insufficient Balance', 'You do not have enough shielded SOL'); return; }
+    if (!publicKey) { p01Alert('Error', 'Wallet not connected'); return; }
 
     // Biometric gate — require auth before unshielding funds
     const authed = await requireBiometricAuth('Authenticate to unshield funds');
     if (!authed) {
-      Alert.alert('Authentication Required', 'You must authenticate to unshield funds.');
+      p01Alert('Authentication Required', 'You must authenticate to unshield funds.');
       return;
     }
 
@@ -285,10 +285,10 @@ export default function ShieldedWalletScreen() {
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const method = starkReady && !useRelay ? ' (STARK verified)' : useRelay ? ' via relay' : '';
-      Alert.alert('Success', `SOL has been unshielded successfully${method}`);
+      p01Alert('Success', `SOL has been unshielded successfully${method}`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     } finally {
       setIsProcessing(false);
       setProgressOperation(null);
@@ -316,30 +316,30 @@ export default function ShieldedWalletScreen() {
         if (pending.length > 0) setFoundPayments(pending);
       }
     } catch (err) {
-      Alert.alert('Scan Error', (err as Error).message);
+      p01Alert('Scan Error', (err as Error).message);
     } finally { setIsScanning(false); }
   };
 
   const handleSweepAll = async () => {
-    if (!publicKey) { Alert.alert('Error', 'Wallet not connected'); return; }
+    if (!publicKey) { p01Alert('Error', 'Wallet not connected'); return; }
     setIsSweeping(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     try {
       const result = await sweepAllStealthPayments(publicKey);
       if (result.success && result.swept > 0) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert('Recovery Complete!', `Recovered ${result.totalAmount.toFixed(4)} SOL from ${result.swept} stealth payment(s).\n\nFunds are now in your transparent wallet.`,
+        p01Alert('Recovery Complete!', `Recovered ${result.totalAmount.toFixed(4)} SOL from ${result.swept} stealth payment(s).\n\nFunds are now in your transparent wallet.`,
           [{ text: 'OK', onPress: () => setShowRecoveryModal(false) }]);
         setFoundPayments([]);
         await refreshBalance();
       } else if (result.errors.length > 0) {
-        Alert.alert('Partial Recovery', `Some payments failed:\n${result.errors.join('\n')}`);
+        p01Alert('Partial Recovery', `Some payments failed:\n${result.errors.join('\n')}`);
       } else {
-        Alert.alert('Nothing to Recover', 'No stealth payments found to sweep.');
+        p01Alert('Nothing to Recover', 'No stealth payments found to sweep.');
       }
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Sweep Error', (err as Error).message);
+      p01Alert('Sweep Error', (err as Error).message);
     } finally { setIsSweeping(false); }
   };
 

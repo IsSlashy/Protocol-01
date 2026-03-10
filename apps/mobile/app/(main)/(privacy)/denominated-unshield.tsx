@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +27,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { PublicKey } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
+import { p01Alert } from '@/stores/alertStore';
 
 export default function DenominatedUnshieldScreen() {
   return <UnshieldScreenContent />;
@@ -86,7 +86,7 @@ function UnshieldScreenContent() {
   }, [useOwnWallet, walletPublicKey]);
 
   const confirmEmergencyUnshield = useCallback(() => {
-    Alert.alert(
+    p01Alert(
       'Privacy Warning',
       'Emergency unshield bypasses the maturity delay. This may reduce your privacy by creating a timing link between your deposit and withdrawal.\n\nOnly use this if you urgently need your funds.',
       [
@@ -102,7 +102,7 @@ function UnshieldScreenContent() {
 
   const executeUnshield = useCallback(async (emergency: boolean) => {
     if (!selectedNote) {
-      Alert.alert('Select a Note', 'Please select a note to withdraw.');
+      p01Alert('Select a Note', 'Please select a note to withdraw.');
       return;
     }
     // M5: Validate recipient is a valid Solana address using PublicKey constructor
@@ -112,14 +112,14 @@ function UnshieldScreenContent() {
       isValidRecipient = true;
     } catch {}
     if (!recipient || !isValidRecipient) {
-      Alert.alert('Invalid Recipient', 'Please enter a valid Solana address.');
+      p01Alert('Invalid Recipient', 'Please enter a valid Solana address.');
       return;
     }
 
     // Biometric gate — require auth before unshielding funds
     const authed = await requireBiometricAuth('Authenticate to unshield funds');
     if (!authed) {
-      Alert.alert('Authentication Required', 'You must authenticate to unshield funds.');
+      p01Alert('Authentication Required', 'You must authenticate to unshield funds.');
       return;
     }
 
@@ -131,7 +131,7 @@ function UnshieldScreenContent() {
       // Both normal and emergency use STARK (quantum-resistant)
       // Emergency passes emergency=true which sets minEpoch=0 on-chain (bypasses maturity)
       if (!starkReady) {
-        Alert.alert('STARK Not Ready', 'STARK prover is still loading. Please wait a moment.');
+        p01Alert('STARK Not Ready', 'STARK prover is still loading. Please wait a moment.');
         return;
       }
 
@@ -158,14 +158,14 @@ function UnshieldScreenContent() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const proofLabel = isMpcActive ? 'STARK + MPC' : 'STARK';
-      Alert.alert(
+      p01Alert(
         emergency ? 'Emergency Unshield Complete' : `Unshielded (${proofLabel})!`,
         `${selectedNote.denomination} ${selectedNote.token} withdrawn to ${recipient.slice(0, 8)}...${isMpcActive ? '\n\nNullifier hidden via MPC — withdrawal unlinkable.' : ''}\n\nTx: ${sig.slice(0, 16)}...`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Unshield Failed', err.message);
+      p01Alert('Unshield Failed', err.message);
     }
   }, [selectedNote, recipient, unshieldNoteStark, emergencyUnshieldNote, starkReady, generatePoolCommitmentProof, router]);
 

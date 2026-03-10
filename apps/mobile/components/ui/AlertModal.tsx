@@ -1,10 +1,8 @@
 /**
- * AlertModal - Custom styled alert to replace Alert.alert
+ * AlertModal — Protocol 01 styled alert dialog.
  *
- * Features:
- * - Glitch button animations
- * - Protocol 01 cyber aesthetic
- * - Smooth entrance/exit animations
+ * Driven by the global useAlertStore. Mount once in _layout.tsx.
+ * Replaces all native Alert.alert() calls with the P01 cyber aesthetic.
  */
 
 import React, { useEffect, useRef } from 'react';
@@ -12,265 +10,279 @@ import {
   Modal,
   View,
   Text,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  StyleSheet,
   Animated,
   Easing,
-  Dimensions,
-  TouchableWithoutFeedback,
+  Platform,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { GlitchButton } from './GlitchButton';
+import * as Haptics from 'expo-haptics';
+import { useAlertStore, type AlertButton } from '@/stores/alertStore';
+import { Colors, FontFamily, P01Colors } from '@/constants/theme';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-export interface AlertButton {
-  text: string;
-  style?: 'default' | 'cancel' | 'destructive';
-  onPress?: () => void;
-}
-
-export interface AlertModalProps {
-  visible: boolean;
-  title: string;
-  message?: string;
-  buttons?: AlertButton[];
-  icon?: 'warning' | 'error' | 'success' | 'info' | 'question';
-  onDismiss?: () => void;
-}
-
+// ---------------------------------------------------------------------------
+// Icon mapping
+// ---------------------------------------------------------------------------
 const iconConfig: Record<string, { name: keyof typeof Ionicons.glyphMap; color: string }> = {
-  warning: { name: 'warning', color: '#ffcc00' },
+  warning: { name: 'warning', color: '#eab308' },
   error: { name: 'alert-circle', color: '#ff3366' },
-  success: { name: 'checkmark-circle', color: '#39c5bb' },
-  info: { name: 'information-circle', color: '#39c5bb' },
-  question: { name: 'help-circle', color: '#ff77a8' },
+  success: { name: 'checkmark-circle', color: P01Colors.cyan },
+  info: { name: 'information-circle', color: P01Colors.cyan },
+  question: { name: 'help-circle', color: P01Colors.pink },
 };
 
-export const AlertModal: React.FC<AlertModalProps> = ({
-  visible,
-  title,
-  message,
-  buttons = [{ text: 'OK', style: 'default' }],
-  icon,
-  onDismiss,
-}) => {
-  const scaleAnim = useRef(new Animated.Value(0.8)).current;
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+export default function AlertModal() {
+  const { visible, title, message, buttons, icon, dismiss } = useAlertStore();
+
+  const scaleAnim = useRef(new Animated.Value(0.85)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
-  const translateYAnim = useRef(new Animated.Value(20)).current;
-  const glitchLineAnim = useRef(new Animated.Value(0)).current;
-  const borderGlowAnim = useRef(new Animated.Value(0)).current;
+  const borderGlow = useRef(new Animated.Value(0)).current;
+  const scanLine = useRef(new Animated.Value(-40)).current;
 
   useEffect(() => {
     if (visible) {
-      // Enter animation
+      scaleAnim.setValue(0.85);
+      opacityAnim.setValue(0);
       Animated.parallel([
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          friction: 8,
-          tension: 65,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.spring(translateYAnim, {
-          toValue: 0,
-          friction: 8,
-          tension: 65,
-          useNativeDriver: true,
-        }),
+        Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: true }),
+        Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
 
       // Border glow pulse
       Animated.loop(
         Animated.sequence([
-          Animated.timing(borderGlowAnim, {
-            toValue: 1,
-            duration: 1500,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: false,
-          }),
-          Animated.timing(borderGlowAnim, {
-            toValue: 0,
-            duration: 1500,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: false,
-          }),
-        ])
+          Animated.timing(borderGlow, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(borderGlow, { toValue: 0, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        ]),
       ).start();
 
-      // Glitch line animation
+      // Scan line sweep
       Animated.loop(
         Animated.sequence([
-          Animated.delay(1000 + Math.random() * 2000),
-          Animated.timing(glitchLineAnim, {
-            toValue: 1,
-            duration: 100,
-            useNativeDriver: true,
-          }),
-          Animated.timing(glitchLineAnim, {
-            toValue: 0,
-            duration: 50,
-            useNativeDriver: true,
-          }),
-        ])
+          Animated.delay(800 + Math.random() * 1500),
+          Animated.timing(scanLine, { toValue: 120, duration: 300, useNativeDriver: true }),
+          Animated.timing(scanLine, { toValue: -40, duration: 0, useNativeDriver: true }),
+        ]),
       ).start();
     } else {
-      // Exit animation
-      Animated.parallel([
-        Animated.timing(scaleAnim, {
-          toValue: 0.8,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 0,
-          duration: 150,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      borderGlow.stopAnimation();
+      scanLine.stopAnimation();
     }
-  }, [visible, scaleAnim, opacityAnim, translateYAnim, glitchLineAnim, borderGlowAnim]);
+  }, [visible]);
 
-  const handleButtonPress = (button: AlertButton) => {
-    button.onPress?.();
-    onDismiss?.();
+  const handleButton = (btn: AlertButton) => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    dismiss();
+    // Slight delay so modal closes before callback runs
+    setTimeout(() => btn.onPress?.(), 150);
   };
 
-  const getButtonVariant = (style?: string) => {
-    if (style === 'destructive') return 'danger';
-    if (style === 'cancel') return 'ghost';
-    return 'primary';
-  };
+  const borderColor = borderGlow.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['rgba(57, 197, 187, 0.15)', 'rgba(57, 197, 187, 0.45)'],
+  });
 
   const iconInfo = icon ? iconConfig[icon] : null;
 
-  const borderColor = borderGlowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(57, 197, 187, 0.2)', 'rgba(57, 197, 187, 0.5)'],
-  });
-
-  const shadowOpacity = borderGlowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.2, 0.5],
-  });
-
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={onDismiss}
-      statusBarTranslucent
-    >
-      <TouchableWithoutFeedback onPress={onDismiss}>
-        <View className="flex-1 items-center justify-center">
-          {/* Background blur */}
-          <BlurView
-            intensity={30}
-            tint="dark"
-            className="absolute inset-0"
-            style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)' }}
-          />
+    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={dismiss}>
+      <TouchableWithoutFeedback onPress={dismiss}>
+        <View style={s.overlay}>
+          <BlurView intensity={25} tint="dark" style={StyleSheet.absoluteFill} />
+          <View style={s.backdropTint} />
 
           <TouchableWithoutFeedback>
-            <Animated.View
-              className="w-[85%] max-w-sm bg-p01-surface rounded-2xl overflow-hidden"
-              style={{
-                opacity: opacityAnim,
-                transform: [
-                  { scale: scaleAnim },
-                  { translateY: translateYAnim },
-                ],
-              }}
-            >
-              {/* Animated border */}
-              <Animated.View
-                className="absolute inset-0 rounded-2xl"
-                style={{
-                  borderWidth: 1,
-                  borderColor,
-                  shadowColor: '#39c5bb',
-                  shadowRadius: 20,
-                  shadowOpacity,
-                }}
-              />
+            <Animated.View style={[s.card, { opacity: opacityAnim, transform: [{ scale: scaleAnim }] }]}>
+              {/* Animated border glow */}
+              <Animated.View style={[s.borderGlow, { borderColor }]} />
 
               {/* Top accent line */}
-              <View className="h-[2px] bg-p01-cyan" />
+              <View style={s.accentLine} />
+
+              {/* Scan line effect */}
+              <Animated.View style={[s.scanLine, { transform: [{ translateY: scanLine }] }]} />
 
               {/* Content */}
-              <View className="px-6 py-6">
+              <View style={s.content}>
                 {/* Icon */}
                 {iconInfo && (
-                  <View className="items-center mb-4">
-                    <View
-                      className="w-14 h-14 rounded-full items-center justify-center"
-                      style={{ backgroundColor: `${iconInfo.color}15` }}
-                    >
-                      <Ionicons
-                        name={iconInfo.name}
-                        size={32}
-                        color={iconInfo.color}
-                      />
+                  <View style={s.iconRow}>
+                    <View style={[s.iconCircle, { backgroundColor: `${iconInfo.color}18` }]}>
+                      <Ionicons name={iconInfo.name} size={32} color={iconInfo.color} />
                     </View>
                   </View>
                 )}
 
                 {/* Title */}
-                <Text className="text-white text-lg font-semibold text-center mb-2">
-                  {title}
-                </Text>
+                <Text style={s.title}>{title}</Text>
 
                 {/* Message */}
-                {message && (
-                  <Text className="text-p01-gray text-center text-sm leading-5 mb-6">
-                    {message}
-                  </Text>
-                )}
-
-                {/* Glitch scan line */}
-                <Animated.View
-                  className="absolute left-0 right-0 h-[1px] bg-p01-cyan/30"
-                  style={{
-                    opacity: glitchLineAnim,
-                    transform: [{
-                      translateY: glitchLineAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, 80],
-                      }),
-                    }],
-                  }}
-                />
+                {!!message && <Text style={s.message}>{message}</Text>}
 
                 {/* Buttons */}
-                <View className="gap-3">
-                  {buttons.map((button, index) => (
-                    <GlitchButton
-                      key={index}
-                      variant={getButtonVariant(button.style)}
-                      onPress={() => handleButtonPress(button)}
-                      fullWidth
-                    >
-                      {button.text}
-                    </GlitchButton>
-                  ))}
+                <View style={s.buttonsWrap}>
+                  {buttons.map((btn, i) => {
+                    const isDestructive = btn.style === 'destructive';
+                    const isCancel = btn.style === 'cancel';
+                    const isPrimary = !isDestructive && !isCancel;
+
+                    return (
+                      <TouchableOpacity
+                        key={i}
+                        onPress={() => handleButton(btn)}
+                        activeOpacity={0.8}
+                        style={[
+                          s.button,
+                          isPrimary && s.buttonPrimary,
+                          isDestructive && s.buttonDestructive,
+                          isCancel && s.buttonCancel,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            s.buttonText,
+                            isPrimary && s.buttonTextPrimary,
+                            isDestructive && s.buttonTextDestructive,
+                            isCancel && s.buttonTextCancel,
+                          ]}
+                        >
+                          {btn.text}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
 
-              {/* Bottom corner accents */}
-              <View className="absolute bottom-0 left-0 w-8 h-[2px] bg-p01-cyan/50" />
-              <View className="absolute bottom-0 left-0 w-[2px] h-8 bg-p01-cyan/50" />
-              <View className="absolute bottom-0 right-0 w-8 h-[2px] bg-p01-cyan/50" />
-              <View className="absolute bottom-0 right-0 w-[2px] h-8 bg-p01-cyan/50" />
+              {/* Corner accents */}
+              <View style={[s.corner, s.cornerBL]} />
+              <View style={[s.corner, s.cornerBLV]} />
+              <View style={[s.corner, s.cornerBR]} />
+              <View style={[s.corner, s.cornerBRV]} />
             </Animated.View>
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
     </Modal>
   );
-};
+}
 
-export default AlertModal;
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+const s = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backdropTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+  },
+  card: {
+    width: '85%',
+    maxWidth: 360,
+    backgroundColor: Colors.surface ?? '#111113',
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  borderGlow: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  accentLine: {
+    height: 2,
+    backgroundColor: P01Colors.cyan,
+  },
+  scanLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(57, 197, 187, 0.18)',
+  },
+  content: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 24,
+  },
+  iconRow: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  iconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 18,
+    fontFamily: FontFamily.bold,
+    color: Colors.text,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  message: {
+    fontSize: 14,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  buttonsWrap: {
+    gap: 10,
+  },
+  button: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonPrimary: {
+    backgroundColor: P01Colors.cyan,
+  },
+  buttonDestructive: {
+    backgroundColor: '#ff3366',
+  },
+  buttonCancel: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  buttonText: {
+    fontSize: 15,
+    fontFamily: FontFamily.bold,
+    letterSpacing: 0.3,
+  },
+  buttonTextPrimary: {
+    color: '#0a0a0c',
+  },
+  buttonTextDestructive: {
+    color: '#fff',
+  },
+  buttonTextCancel: {
+    color: Colors.textTertiary,
+  },
+  // Corner accents
+  corner: {
+    position: 'absolute',
+    backgroundColor: `${P01Colors.cyan}80`,
+  },
+  cornerBL: { bottom: 0, left: 0, width: 24, height: 2 },
+  cornerBLV: { bottom: 0, left: 0, width: 2, height: 24 },
+  cornerBR: { bottom: 0, right: 0, width: 24, height: 2 },
+  cornerBRV: { bottom: 0, right: 0, width: 2, height: 24 },
+});
+
+export { AlertModal };

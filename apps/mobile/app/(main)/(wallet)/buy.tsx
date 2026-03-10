@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
-  Alert,
   Platform,
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -25,6 +24,7 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 import { isMainnet } from '@/services/solana/connection';
 import {
   getCryptoPrices,
@@ -79,7 +79,7 @@ export default function BuyScreen() {
   // Redirect to wallet if not on mainnet
   useEffect(() => {
     if (!isOnMainnet) {
-      Alert.alert(
+      p01Alert(
         'Mainnet Only',
         'Buying crypto is only available on mainnet. Switch to mainnet in settings to access this feature.',
         [{ text: 'OK', onPress: () => router.back() }]
@@ -148,23 +148,23 @@ export default function BuyScreen() {
 
   const handleBuy = async () => {
     if (!publicKey) {
-      Alert.alert('No Wallet', 'Please create or import a wallet first');
+      p01Alert('No Wallet', 'Please create or import a wallet first');
       return;
     }
 
     if (!quote) {
-      Alert.alert('Error', 'Unable to get quote. Please try again.');
+      p01Alert('Error', 'Unable to get quote. Please try again.');
       return;
     }
 
     const numAmount = parseFloat(amount) || 0;
     if (numAmount < selectedPayment.minAmount) {
-      Alert.alert('Minimum Amount', `Minimum purchase is ${selectedFiat.symbol}${selectedPayment.minAmount}`);
+      p01Alert('Minimum Amount', `Minimum purchase is ${selectedFiat.symbol}${selectedPayment.minAmount}`);
       return;
     }
 
     if (numAmount > selectedPayment.maxAmount) {
-      Alert.alert('Maximum Amount', `Maximum purchase is ${selectedFiat.symbol}${selectedPayment.maxAmount.toLocaleString()}`);
+      p01Alert('Maximum Amount', `Maximum purchase is ${selectedFiat.symbol}${selectedPayment.maxAmount.toLocaleString()}`);
       return;
     }
 
@@ -187,7 +187,7 @@ export default function BuyScreen() {
       setShowPaymentModal(true);
     } catch (error) {
       console.error('Payment error:', error);
-      Alert.alert('Error', 'Failed to initiate payment. Please try again.');
+      p01Alert('Error', 'Failed to initiate payment. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -196,7 +196,7 @@ export default function BuyScreen() {
   // Handle direct deposit
   const handleDirectDeposit = () => {
     if (!publicKey) {
-      Alert.alert('No Wallet', 'Please create or import a wallet first');
+      p01Alert('No Wallet', 'Please create or import a wallet first');
       return;
     }
     if (Platform.OS !== 'web') {
@@ -212,7 +212,7 @@ export default function BuyScreen() {
       if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
-      Alert.alert('Copied', 'Wallet address copied to clipboard');
+      p01Alert('Copied', 'Wallet address copied to clipboard');
     }
   };
 
@@ -231,7 +231,7 @@ export default function BuyScreen() {
     // Check for success URLs to close the modal
     if (navState.url?.includes('success') || navState.url?.includes('complete')) {
       setShowPaymentModal(false);
-      Alert.alert(
+      p01Alert(
         'Payment Initiated',
         `Your purchase of ${quote?.cryptoAmount.toFixed(4)} ${quote?.cryptoSymbol} is being processed. You will receive your crypto once the payment is confirmed.`,
         [{ text: 'OK' }]

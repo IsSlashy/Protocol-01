@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
@@ -10,6 +11,7 @@ import * as SecureStore from 'expo-secure-store';
 import { PinInput } from '../../components/onboarding';
 import { useWalletStore } from '../../stores/walletStore';
 import { hashPin } from '../../utils/crypto/pinHash';
+import { enableVault, unlockVault } from '../../utils/crypto/noteVault';
 
 type SecurityMethod = 'none' | 'pin' | 'biometrics';
 
@@ -57,7 +59,7 @@ export default function SecurityScreen() {
 
       if (!result.success) {
         setSelectedMethod('none');
-        Alert.alert('Authentication Failed', 'Please try again or choose another method.');
+        p01Alert('Authentication Failed', 'Please try again or choose another method.');
       }
     }
   }, []);
@@ -89,9 +91,12 @@ export default function SecurityScreen() {
       const pinHash = await hashPin(pinCode);
       await SecureStore.setItemAsync('wallet_pin', pinHash);
       await SecureStore.setItemAsync('security_method', 'pin');
+      // Enable note vault — shielded note receipts will be PIN-encrypted
+      await enableVault();
+      await unlockVault(pinHash);
       completeOnboarding();
     } catch (error) {
-      Alert.alert('Error', 'Failed to save PIN. Please try again.');
+      p01Alert('Error', 'Failed to save PIN. Please try again.');
     }
   };
 

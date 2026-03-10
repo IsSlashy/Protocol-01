@@ -16,8 +16,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   Switch,
-  Alert,
 } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -116,7 +116,7 @@ export default function NetworkPrivacyScreen() {
 
   const handlePrivacyLevelChange = (level: PrivacyLevel) => {
     if (level === 'tor' && !torAvailable) {
-      Alert.alert(
+      p01Alert(
         'Tor Not Available',
         'Tor integration requires the Orbot app to be installed and running.',
         [
@@ -162,7 +162,7 @@ export default function NetworkPrivacyScreen() {
     const newEndpoint = proxy.rotateEndpoint();
     setCurrentEndpoint(newEndpoint.url);
 
-    Alert.alert('Rotated', `Now using: ${newEndpoint.name}`);
+    p01Alert('Rotated', `Now using: ${newEndpoint.name}`);
   };
 
   const selectedLevel = PRIVACY_LEVELS.find(l => l.level === privacyLevel);

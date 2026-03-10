@@ -27,7 +27,7 @@ import {
 } from '../services/solana/transactions';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { getSolanaWebSocket } from '../services/solana/websocket';
-import { resetAllPrivacyStores } from './resetStores';
+import { resetAllPrivacyStores, restorePrivacyStoresForWallet } from './resetStores';
 import { scheduleLocalNotification } from '../services/notifications';
 
 // Store Privy signer for transactions
@@ -193,6 +193,12 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
 
       set({ initialized: true, loading: false });
+
+      // Restore any previously archived notes for this wallet
+      const currentPk = get().publicKey;
+      if (currentPk) {
+        restorePrivacyStoresForWallet(currentPk).catch(() => {});
+      }
     } catch (error: any) {
       // Even if init fails, check for wallet existence so we don't lose it
       try {
@@ -234,6 +240,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         loading: false,
       });
 
+      // Restore any previously archived notes for this Privy wallet
+      await restorePrivacyStoresForWallet(address);
 
       // Background refresh balance
       setTimeout(async () => {
@@ -304,8 +312,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         ]);
       }
 
-      // Reset all privacy-related stores so no data leaks from the previous wallet
-      await resetAllPrivacyStores();
+      // Archive notes for outgoing wallet, then reset stores
+      await resetAllPrivacyStores(oldPublicKey ?? undefined);
 
       const wallet = await importWallet(mnemonic);
 
@@ -319,6 +327,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         error: null,
       });
 
+      // Restore any previously archived notes for this wallet
+      await restorePrivacyStoresForWallet(wallet.publicKey);
 
       // Refresh balance for new wallet
       get().refreshBalance();
@@ -341,9 +351,10 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         const ws = getSolanaWebSocket();
         await ws.disconnect();
       } catch {}
+      const outgoingAddress = get().publicKey;
       await deleteWallet();
-      // Reset all privacy-related stores so no data leaks to the next wallet
-      await resetAllPrivacyStores();
+      // Archive notes for outgoing wallet, then reset stores
+      await resetAllPrivacyStores(outgoingAddress ?? undefined);
       set({
         hasWallet: false,
         publicKey: null,

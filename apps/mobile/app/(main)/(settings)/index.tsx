@@ -4,10 +4,10 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Linking from 'expo-linking';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { SettingsRow, ToggleRow, CurrencyModal } from '../../../components/settings';
@@ -22,6 +23,9 @@ import { useWalletStore } from '../../../stores/walletStore';
 import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/settingsStore';
 import { useShieldedStore } from '../../../stores/shieldedStore';
 import { useConfidentialStore } from '../../../stores/confidentialStore';
+import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
+import { resetAllPrivacyStores } from '../../../stores/resetStores';
+import { lockVault } from '../../../utils/crypto/noteVault';
 import { getCluster } from '../../../services/solana/connection';
 import { useAuth } from '../../../providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -70,7 +74,7 @@ const GlassDivider: React.FC = () => (
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { publicKey: localPublicKey, logout: walletLogout, hasWallet: hasLocalWallet } = useWalletStore();
+  const { publicKey: localPublicKey, logout: walletLogout, hasWallet: hasLocalWallet, balance } = useWalletStore();
   const { logout: privyLogout, walletAddress: privyWalletAddress } = useAuth();
   const {
     currency,
@@ -84,10 +88,15 @@ export default function SettingsScreen() {
   const { shieldedBalance, notes: shieldedNotes } = useShieldedStore();
   const { balances: confidentialBalances, pendingCredits } = useConfidentialStore();
 
+  const { getActiveNotes } = useDenominatedPoolStore();
+  const denominatedNotes = getActiveNotes();
+  const hasDenominatedFunds = denominatedNotes.length > 0;
   const hasShieldedFunds = shieldedBalance > 0 || shieldedNotes.filter(n => Number(n.amount) > 0).length > 0;
   const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
   const hasConfidentialFunds = confidentialSolBalance > 0 || (pendingCredits['11111111111111111111111111111111'] || 0) > 0;
   const hasLegacyFunds = hasShieldedFunds || hasConfidentialFunds;
+  const solBalance = balance?.sol ?? 0;
+  const hasAnyFunds = solBalance > 0.01 || hasLegacyFunds || hasDenominatedFunds;
   const [copied, setCopied] = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -120,15 +129,11 @@ export default function SettingsScreen() {
   };
 
   const handleNotifications = () => {
-    Alert.alert(
-      'Notifications',
-      'Notification settings are not yet available.',
-      [{ text: 'OK' }]
-    );
+    Linking.openSettings();
   };
 
   const handleDisconnect = () => {
-    Alert.alert(
+    p01Alert(
       'Disconnect',
       'Do you want to disconnect? You will need to authenticate to access your wallet.',
       [
@@ -136,11 +141,17 @@ export default function SettingsScreen() {
         {
           text: 'Disconnect',
           onPress: async () => {
+            // Archive notes before disconnecting so they persist across sessions
+            const currentAddress = privyWalletAddress || localPublicKey;
+            if (currentAddress) {
+              await resetAllPrivacyStores(currentAddress);
+            }
             try {
               await privyLogout();
             } catch (e) {
               console.warn('[Settings] Privy logout error:', e);
             }
+            lockVault(); // Wipe vault key from memory
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             router.replace('/(auth)/login');
           },
@@ -150,6 +161,26 @@ export default function SettingsScreen() {
   };
 
   const handleDeleteWallet = async () => {
+    // Block deletion if wallet still has funds
+    if (hasAnyFunds) {
+      const parts: string[] = [];
+      if (solBalance > 0.01) parts.push(`${solBalance.toFixed(4)} SOL`);
+      if (hasDenominatedFunds) parts.push(`${denominatedNotes.length} shielded note${denominatedNotes.length !== 1 ? 's' : ''}`);
+      if (hasShieldedFunds) parts.push('shielded balance');
+      if (hasConfidentialFunds) parts.push('confidential balance');
+
+      p01Alert(
+        'Wallet Not Empty',
+        `You still have funds in this wallet:\n\n${parts.join('\n')}\n\nTransfer all funds to another wallet before deleting. This protects you from losing assets.`,
+        [
+          { text: 'Go to Send', onPress: () => router.push('/(main)/(wallet)/send') },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+        'warning',
+      );
+      return;
+    }
+
     // Require biometric authentication first
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
@@ -167,8 +198,8 @@ export default function SettingsScreen() {
       }
     }
 
-    Alert.alert(
-      '⚠️ Delete Wallet',
+    p01Alert(
+      'Delete Wallet',
       'WARNING: This action is IRREVERSIBLE!\n\nYour wallet will be permanently deleted from this device. Make sure you have backed up your recovery phrase!',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -176,8 +207,8 @@ export default function SettingsScreen() {
           text: 'I understand, delete',
           style: 'destructive',
           onPress: () => {
-            Alert.alert(
-              '🔴 Final Confirmation',
+            p01Alert(
+              'Final Confirmation',
               'This action is IRREVERSIBLE. Your wallet and all associated data will be permanently deleted.',
               [
                 { text: 'Cancel', style: 'cancel' },
@@ -191,7 +222,7 @@ export default function SettingsScreen() {
                       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                       router.replace('/');
                     } catch (error) {
-                      Alert.alert('Error', 'Deletion failed. Please try again.');
+                      p01Alert('Error', 'Deletion failed. Please try again.');
                     }
                   },
                 },

@@ -4,9 +4,9 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -233,19 +233,19 @@ export default function PrivacyTestScreen() {
   // ============================================
   const testDecoyTransactions = async () => {
     if (!publicKey) {
-      Alert.alert('Error', 'Wallet not connected');
+      p01Alert('Error', 'Wallet not connected');
       return;
     }
 
     const solBalance = balance?.sol || 0;
     if (solBalance < 0.01) {
-      Alert.alert('Insufficient Balance', `You need at least 0.01 SOL. Current: ${solBalance.toFixed(4)} SOL`);
+      p01Alert('Insufficient Balance', `You need at least 0.01 SOL. Current: ${solBalance.toFixed(4)} SOL`);
       return;
     }
 
     const feeEstimate = calculateDecoyFees('standard', 0.001);
 
-    Alert.alert(
+    p01Alert(
       'Test Decoy Transactions',
       `This will send REAL transactions on devnet:\n\n` +
       `- ${feeEstimate.decoyCount} decoy self-transfer(s)\n` +

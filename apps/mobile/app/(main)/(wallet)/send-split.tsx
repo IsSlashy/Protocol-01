@@ -14,7 +14,6 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -33,6 +32,7 @@ import { useSplitTransactionStore } from '@/stores/splitTransactionStore';
 import { TransactionSplitter, DEFAULT_SPLIT_CONFIG } from '@/services/privacy/transactionSplitter';
 import { getKeypair } from '@/services/solana/wallet';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 // P-01 Design System Colors
 const P01 = {
@@ -90,7 +90,7 @@ export default function SendSplitScreen() {
     // Split transactions require local keypair (secret key) access
     // Privy wallets don't expose secret keys for security reasons
     if (isPrivyWallet) {
-      Alert.alert(
+      p01Alert(
         'Feature Not Available',
         'Split transactions are not available with Privy wallets. This feature requires direct key access for creating temporary wallets.\n\nUse the Shielded Wallet for private transactions instead.',
         [{ text: 'OK' }]
@@ -99,19 +99,19 @@ export default function SendSplitScreen() {
     }
 
     if (!recipient.trim()) {
-      Alert.alert('Missing Recipient', 'Please enter a wallet address.');
+      p01Alert('Missing Recipient', 'Please enter a wallet address.');
       return false;
     }
 
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum < 0.01) {
-      Alert.alert('Invalid Amount', 'Minimum amount for split transactions is 0.01 SOL.');
+      p01Alert('Invalid Amount', 'Minimum amount for split transactions is 0.01 SOL.');
       return false;
     }
 
     const totalWithFees = amountNum + TransactionSplitter.estimateFees(numSplits);
     if (totalWithFees > (balance?.sol || 0)) {
-      Alert.alert('Insufficient Balance', `You need ${totalWithFees.toFixed(4)} SOL (including fees).`);
+      p01Alert('Insufficient Balance', `You need ${totalWithFees.toFixed(4)} SOL (including fees).`);
       return false;
     }
 
@@ -139,7 +139,7 @@ export default function SendSplitScreen() {
       setSplitPreview(schedule);
       setStep('preview');
     } catch (error) {
-      Alert.alert('Error', (error as Error).message);
+      p01Alert('Error', (error as Error).message);
     }
   };
 
@@ -167,14 +167,14 @@ export default function SendSplitScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      Alert.alert(
+      p01Alert(
         'Split Transaction Started',
         `Your ${numSplits} payments will be delivered over the next ${timeWindow} hours. You'll receive notifications as each part completes.`,
         [{ text: 'OK', onPress: () => router.back() }]
       );
     } catch (error) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', (error as Error).message);
+      p01Alert('Error', (error as Error).message);
       setStep('preview');
     }
   };

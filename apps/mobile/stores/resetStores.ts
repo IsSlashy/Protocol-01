@@ -1,16 +1,26 @@
 /**
  * Resets all privacy-related stores when switching wallets.
- * Prevents data leaking from one wallet to another.
+ * Archives notes for the outgoing wallet first, so they can be restored later.
  */
 
-import { useShieldedStore } from './shieldedStore';
-import { useDenominatedPoolStore } from './denominatedPoolStore';
+import { useShieldedStore, archiveShieldedForWallet, restoreShieldedForWallet } from './shieldedStore';
+import { useDenominatedPoolStore, archiveNotesForWallet, restoreNotesForWallet } from './denominatedPoolStore';
 import { useConfidentialStore } from './confidentialStore';
 import { useStreamStore } from './streamStore';
 import { useSubscriptionVaultStore } from './subscriptionVaultStore';
 import { useSharingStore } from './sharingStore';
 
-export async function resetAllPrivacyStores(): Promise<void> {
+/**
+ * Archive notes for the current wallet, then reset all privacy stores.
+ * Call this BEFORE switching wallets so notes are not lost.
+ */
+export async function resetAllPrivacyStores(outgoingWalletAddress?: string): Promise<void> {
+  // Archive notes for the outgoing wallet before wiping
+  if (outgoingWalletAddress) {
+    await archiveNotesForWallet(outgoingWalletAddress);
+    await archiveShieldedForWallet(outgoingWalletAddress);
+  }
+
   // Reset shielded notes (ZK)
   try { useShieldedStore.getState().reset(); } catch {}
 
@@ -28,4 +38,14 @@ export async function resetAllPrivacyStores(): Promise<void> {
 
   // Cancel any active sharing session
   try { useSharingStore.getState().cancelSession(); } catch {}
+}
+
+/**
+ * Restore archived notes for a wallet after switching to it.
+ * Call this AFTER the wallet is initialized.
+ */
+export async function restorePrivacyStoresForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  await restoreNotesForWallet(walletAddress);
+  await restoreShieldedForWallet(walletAddress);
 }

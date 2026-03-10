@@ -4,7 +4,6 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
   TextInput,
   Switch,
@@ -21,6 +20,7 @@ import { useAIStore } from '@/stores/aiStore';
 import { MODEL_INFO, isOnDeviceAvailable } from '@/services/ai/llamaService';
 import { DEFAULT_CONFIGS } from '@/services/ai/agent';
 import { Colors, FontSize, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 type ProviderOption = {
   id: string;
@@ -77,7 +77,7 @@ export default function AISettingsScreen() {
   };
 
   const handleClearHistory = () => {
-    Alert.alert(
+    p01Alert(
       'Clear All Data',
       'Delete all messages and conversations? This cannot be undone.',
       [
@@ -89,7 +89,7 @@ export default function AISettingsScreen() {
             clearMessages();
             // Delete all conversations
             conversations.forEach((c: any) => deleteConversation(c.id));
-            Alert.alert('Done', 'All chat data cleared.');
+            p01Alert('Done', 'All chat data cleared.');
           },
         },
       ]
@@ -103,7 +103,7 @@ export default function AISettingsScreen() {
   };
 
   const handleDownloadModel = () => {
-    Alert.alert(
+    p01Alert(
       'Download Gemma 3 1B',
       `This will download ~${MODEL_INFO.fileSizeMB}MB. Wi-Fi recommended.`,
       [
@@ -114,7 +114,7 @@ export default function AISettingsScreen() {
   };
 
   const handleDeleteModel = () => {
-    Alert.alert(
+    p01Alert(
       'Delete Model',
       `Free ~${MODEL_INFO.fileSizeMB}MB of storage?`,
       [
@@ -520,7 +520,7 @@ export default function AISettingsScreen() {
                   color={nativeAvailable ? Colors.success : Colors.textTertiary}
                   onPress={() => {
                     if (!nativeAvailable) {
-                      Alert.alert('Native Build Required', 'On-device inference needs a full EAS build with llama.rn. Use Groq or Gemini cloud providers for now.');
+                      p01Alert('Native Build Required', 'On-device inference needs a full EAS build with llama.rn. Use Groq or Gemini cloud providers for now.');
                     } else {
                       initModel();
                     }
@@ -565,7 +565,7 @@ export default function AISettingsScreen() {
                 )}
                 <ActionButton icon="refresh-outline" label="Retry Loading" color={Colors.error} onPress={() => {
                   if (!nativeAvailable) {
-                    Alert.alert('Native Build Required', 'On-device inference needs a full EAS build with llama.rn. Use Groq or Gemini cloud providers for now.');
+                    p01Alert('Native Build Required', 'On-device inference needs a full EAS build with llama.rn. Use Groq or Gemini cloud providers for now.');
                   } else {
                     initModel();
                   }
