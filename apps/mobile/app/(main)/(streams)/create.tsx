@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,6 +8,7 @@ import { PublicKey } from '@solana/web3.js';
 import { CreateStreamForm, StreamFormData } from '../../../components/streams';
 import { useStreamStore } from '../../../stores/streamStore';
 import { StreamFrequency } from '../../../services/solana/streams';
+import { p01Alert } from '@/stores/alertStore';
 
 // Protocol 01 Color System
 const COLORS = {
@@ -32,7 +33,7 @@ export default function CreatePersonalStreamScreen() {
       try {
         new PublicKey(data.recipient);
       } catch {
-        Alert.alert('Invalid Address', 'Please enter a valid Solana wallet address.');
+        p01Alert('Invalid Address', 'Please enter a valid Solana wallet address.');
         setIsSubmitting(false);
         return;
       }
@@ -55,7 +56,7 @@ export default function CreatePersonalStreamScreen() {
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      Alert.alert(
+      p01Alert(
         'Payment Stream Created!',
         `Your recurring payment of ${data.amount} ${data.token} has been set up.\n\nFirst payment will be processed immediately.`,
         [
@@ -71,7 +72,7 @@ export default function CreatePersonalStreamScreen() {
       );
     } catch (error: any) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', error.message || 'Failed to create payment stream. Please try again.');
+      p01Alert('Error', error.message || 'Failed to create payment stream. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

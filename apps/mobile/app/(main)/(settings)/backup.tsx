@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Modal,
   TextInput,
   ActivityIndicator,
@@ -12,6 +11,7 @@ import {
   Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -72,7 +72,7 @@ const GlassDivider: React.FC = () => <View style={styles.divider} />;
 export default function BackupRecoveryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { getBackupMnemonic, publicKey } = useWalletStore();
+  const { getBackupMnemonic, publicKey, isPrivyWallet } = useWalletStore();
   const { getActiveNotes, exportAllNotes, importNote } = useDenominatedPoolStore();
 
   // Backup status (persisted)
@@ -128,6 +128,14 @@ export default function BackupRecoveryScreen() {
   // ── Seed Phrase ──
 
   const handleShowSeedPhrase = async () => {
+    if (isPrivyWallet) {
+      p01Alert(
+        'Privy Wallet',
+        'Your wallet is managed by Privy. The private key is secured by Privy\'s infrastructure and cannot be exported as a seed phrase.\n\nUse the Encrypted Backup feature below to back up your privacy pool notes.',
+        [{ text: 'OK' }],
+      );
+      return;
+    }
     try {
       // M8: Always require authentication — fall back to device PIN when biometrics unavailable
       const result = await LocalAuthentication.authenticateAsync({
@@ -143,10 +151,10 @@ export default function BackupRecoveryScreen() {
         setShowSeedModal(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } else {
-        Alert.alert('Error', 'Could not retrieve seed phrase.');
+        p01Alert('Error', 'Could not retrieve seed phrase. If you imported via Privy, seed phrases are managed by Privy.');
       }
     } catch {
-      Alert.alert('Authentication Failed', 'Please try again.');
+      p01Alert('Authentication Failed', 'Please try again.');
     }
   };
 
@@ -182,7 +190,7 @@ export default function BackupRecoveryScreen() {
       });
       if (!result.success) return;
     } catch {
-      Alert.alert('Authentication Failed', 'Please try again.');
+      p01Alert('Authentication Failed', 'Please try again.');
       return;
     }
 
@@ -194,11 +202,11 @@ export default function BackupRecoveryScreen() {
 
   const handleCreateBackup = async () => {
     if (exportPassword.length < 8) {
-      Alert.alert('Weak Password', 'Password must be at least 8 characters.');
+      p01Alert('Weak Password', 'Password must be at least 8 characters.');
       return;
     }
     if (exportPassword !== exportConfirmPassword) {
-      Alert.alert('Mismatch', 'Passwords do not match.');
+      p01Alert('Mismatch', 'Passwords do not match.');
       return;
     }
 
@@ -212,7 +220,7 @@ export default function BackupRecoveryScreen() {
       setLastBackupAt(Date.now());
 
       // Offer to copy or share
-      Alert.alert(
+      p01Alert(
         'Backup Created',
         `Encrypted backup with ${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''} created successfully.`,
         [
@@ -247,7 +255,7 @@ export default function BackupRecoveryScreen() {
       ).catch(() => {});
     } catch (err) {
       setExporting(false);
-      Alert.alert('Backup Failed', (err as Error).message);
+      p01Alert('Backup Failed', (err as Error).message);
     }
   };
 
@@ -272,11 +280,11 @@ export default function BackupRecoveryScreen() {
 
   const handleRestoreBackup = async () => {
     if (!importData.trim()) {
-      Alert.alert('Error', 'Paste your encrypted backup data.');
+      p01Alert('Error', 'Paste your encrypted backup data.');
       return;
     }
     if (!importPassword) {
-      Alert.alert('Error', 'Enter the backup password.');
+      p01Alert('Error', 'Enter the backup password.');
       return;
     }
 
@@ -294,7 +302,7 @@ export default function BackupRecoveryScreen() {
         setImporting(false);
         setShowImportModal(false);
 
-        Alert.alert(
+        p01Alert(
           'Notes Restored',
           `${imported} note${imported !== 1 ? 's' : ''} imported from backup.`,
         );
@@ -302,7 +310,7 @@ export default function BackupRecoveryScreen() {
         // Different wallet — warn and ask
         setImporting(false);
 
-        Alert.alert(
+        p01Alert(
           'Different Wallet Detected',
           `This backup is from wallet ${payload.publicKey.slice(0, 4)}...${payload.publicKey.slice(-4)}. ` +
           `Restoring will replace your current wallet. Continue?`,
@@ -313,7 +321,7 @@ export default function BackupRecoveryScreen() {
               onPress: () => {
                 const imported = restoreNotes(payload);
                 setShowImportModal(false);
-                Alert.alert('Done', `${imported} notes imported (wallet unchanged).`);
+                p01Alert('Done', `${imported} notes imported (wallet unchanged).`);
               },
             },
             {
@@ -324,12 +332,12 @@ export default function BackupRecoveryScreen() {
                   await importWallet(payload.mnemonic);
                   const imported = restoreNotes(payload);
                   setShowImportModal(false);
-                  Alert.alert(
+                  p01Alert(
                     'Wallet Restored',
                     `Wallet and ${imported} notes restored from backup. Restart the app for full effect.`,
                   );
                 } catch (err) {
-                  Alert.alert('Restore Failed', (err as Error).message);
+                  p01Alert('Restore Failed', (err as Error).message);
                 }
               },
             },
@@ -338,7 +346,7 @@ export default function BackupRecoveryScreen() {
       }
     } catch (err) {
       setImporting(false);
-      Alert.alert('Restore Failed', (err as Error).message);
+      p01Alert('Restore Failed', (err as Error).message);
     }
   };
 
@@ -347,14 +355,14 @@ export default function BackupRecoveryScreen() {
   const handleExportNotes = async () => {
     const encoded = exportAllNotes();
     if (encoded.length === 0) {
-      Alert.alert('No Notes', 'No active notes to export.');
+      p01Alert('No Notes', 'No active notes to export.');
       return;
     }
 
     const data = JSON.stringify(encoded);
     await Clipboard.setStringAsync(data);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert(
+    p01Alert(
       'Notes Exported',
       `${encoded.length} note${encoded.length !== 1 ? 's' : ''} copied to clipboard. Store safely — contains private keys. Auto-clears in 60s.`,
     );

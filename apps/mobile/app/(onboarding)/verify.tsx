@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown, FadeInUp, Layout } from 'react-native-reanimated';
@@ -77,7 +78,7 @@ export default function VerifyScreen() {
   }, [isComplete, isCorrect, router]);
 
   const handleSkip = useCallback(() => {
-    Alert.alert(
+    p01Alert(
       'Skip Verification?',
       'Are you sure you have backed up your recovery phrase? You cannot recover your wallet without it.',
       [

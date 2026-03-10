@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   RefreshControl,
   Pressable,
-  Alert,
   ActivityIndicator,
   Dimensions,
 } from 'react-native';
@@ -21,6 +20,7 @@ import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { Stream, formatFrequency } from '../../../services/solana/streams';
+import { p01Alert } from '@/stores/alertStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TAB_BAR_HEIGHT = 85;
@@ -132,14 +132,14 @@ export default function StreamsDashboard() {
 
   const handleSync = async () => {
     if (!publicKey) {
-      Alert.alert('Wallet Required', 'Connect a wallet to sync from blockchain.');
+      p01Alert('Wallet Required', 'Connect a wallet to sync from blockchain.');
       return;
     }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       const result = await syncFromChain(publicKey);
       if (result.newStreams > 0 || result.updatedStreams > 0) {
-        Alert.alert('Sync Complete', `Found ${result.newStreams} new, ${result.updatedStreams} updated`);
+        p01Alert('Sync Complete', `Found ${result.newStreams} new, ${result.updatedStreams} updated`);
       }
     } catch (error) {
       console.error('Sync failed:', error);

@@ -169,6 +169,61 @@ function decryptShieldedData(encrypted: string, key: Uint8Array): string {
   return new TextDecoder().decode(decrypted);
 }
 
+// ---------------------------------------------------------------------------
+// Wallet-scoped archival (prevents note loss on wallet switch)
+// ---------------------------------------------------------------------------
+
+const SHIELDED_ARCHIVE_PREFIX = 'p01_shielded_archive_';
+
+/** Archive shielded state for a wallet before switching. */
+export async function archiveShieldedForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  const { notes, shieldedBalance, zkAddress, lastSyncedIndex, merkleRoot } = useShieldedStore.getState();
+  if (notes.length === 0 && shieldedBalance === 0) return;
+  try {
+    const key = await getShieldedEncryptionKey();
+    const data = JSON.stringify({ notes, shieldedBalance, zkAddress, lastSyncedIndex, merkleRoot });
+    const encrypted = encryptShieldedData(data, key);
+    await AsyncStorage.setItem(`${SHIELDED_ARCHIVE_PREFIX}${walletAddress}`, encrypted);
+    console.log(`[Shielded] Archived ${notes.length} notes for wallet ${walletAddress.slice(0, 8)}...`);
+  } catch (err) {
+    console.error('[Shielded] Failed to archive:', (err as Error).message);
+  }
+}
+
+/** Restore archived shielded state when switching back to a wallet. */
+export async function restoreShieldedForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  try {
+    const raw = await AsyncStorage.getItem(`${SHIELDED_ARCHIVE_PREFIX}${walletAddress}`);
+    if (!raw) return;
+    const key = await getShieldedEncryptionKey();
+    let decrypted: string;
+    try {
+      decrypted = decryptShieldedData(raw, key);
+    } catch {
+      decrypted = raw;
+    }
+    const archived = JSON.parse(decrypted);
+    if (!archived || !Array.isArray(archived.notes)) return;
+
+    const current = useShieldedStore.getState();
+    if (current.notes.length === 0 && archived.notes.length > 0) {
+      useShieldedStore.setState({
+        notes: archived.notes,
+        shieldedBalance: archived.shieldedBalance ?? 0,
+        zkAddress: archived.zkAddress ?? null,
+        lastSyncedIndex: archived.lastSyncedIndex ?? 0,
+        merkleRoot: archived.merkleRoot ?? null,
+        isInitialized: true,
+      });
+      console.log(`[Shielded] Restored ${archived.notes.length} notes for wallet ${walletAddress.slice(0, 8)}...`);
+    }
+  } catch (err) {
+    console.error('[Shielded] Failed to restore:', (err as Error).message);
+  }
+}
+
 /** AsyncStorage wrapper that encrypts values at rest using nacl.secretbox */
 const encryptedShieldedStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {

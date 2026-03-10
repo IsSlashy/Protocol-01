@@ -49,7 +49,6 @@ export interface StoredVaultInfo {
 interface SubscriptionVaultState {
   // Persisted
   vaults: StoredVaultInfo[];
-  subscriberSecrets: Record<string, string>; // vault address → encrypted secret (private mode)
 
   // Transient (not persisted)
   isLoading: boolean;
@@ -176,7 +175,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
     (set, get) => ({
       // Initial state
       vaults: [],
-      subscriberSecrets: {},
       isLoading: false,
       error: null,
       progress: null,
@@ -262,7 +260,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({
             isLoading: false,
             progress: null,
-            vaults: [storedVault, ...state.vaults],
+            vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
 
           notifySubscriptionEvent(
@@ -341,7 +339,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({
             isLoading: false,
             progress: null,
-            vaults: [storedVault, ...state.vaults],
+            vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
 
           notifySubscriptionEvent(
@@ -420,7 +418,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({
             isLoading: false,
             progress: null,
-            vaults: [storedVault, ...state.vaults],
+            vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
 
           notifySubscriptionEvent(
@@ -787,7 +785,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }
         set({
           vaults: [],
-          subscriberSecrets: {},
           isLoading: false,
           error: null,
           progress: null,

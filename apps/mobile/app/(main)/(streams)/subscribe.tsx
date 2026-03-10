@@ -6,7 +6,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { useAlert } from '../../../providers/AlertProvider';
+import { p01Alert } from '../../../stores/alertStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -69,7 +69,7 @@ export default function SubscribeScreen() {
 function SubscribeScreenContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { showAlert, showCustom } = useAlert();
+  // p01Alert imported at top level (no hook needed)
   const params = useLocalSearchParams<{
     serviceId: string;
     serviceName: string;
@@ -105,9 +105,7 @@ function SubscribeScreenContent() {
 
   const handleSubscribe = async () => {
     if (!publicKey) {
-      showAlert('Wallet Required', 'Please connect your wallet to subscribe.', {
-        icon: 'warning',
-      });
+      p01Alert('Wallet Required', 'Please connect your wallet to subscribe.', undefined, 'warning');
       return;
     }
 
@@ -201,13 +199,12 @@ function SubscribeScreenContent() {
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      showCustom({
-        title: useZkPool ? 'Privately Subscribed!' : 'Subscribed!',
-        message: useZkPool
+      p01Alert(
+        useZkPool ? 'Privately Subscribed!' : 'Subscribed!',
+        useZkPool
           ? `${paymentAmount} SOL paid on-chain via ZK proof. Tx: ${paymentSignature.slice(0, 8)}... — ${serviceName} is active, your identity is hidden.`
           : `First payment of ${firstPayment} SOL confirmed on-chain. Tx: ${paymentSignature.slice(0, 8)}... — ${serviceName} is now active.`,
-        icon: 'success',
-        buttons: [
+        [
           {
             text: 'View Subscription',
             style: 'default',
@@ -219,12 +216,11 @@ function SubscribeScreenContent() {
             onPress: () => router.replace('/(main)/(streams)'),
           },
         ],
-      });
+        'success',
+      );
     } catch (error: any) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      showAlert('Error', error.message || 'Failed to subscribe. Please try again.', {
-        icon: 'error',
-      });
+      p01Alert('Error', error.message || 'Failed to subscribe. Please try again.', undefined, 'error');
     } finally {
       setIsSubscribing(false);
       setProgressMessage(null);

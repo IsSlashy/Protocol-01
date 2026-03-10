@@ -9,9 +9,10 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   StyleSheet,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -29,6 +30,7 @@ import { useShieldedStore } from '@/stores/shieldedStore';
 import { useDenominatedPoolStore, type NoteSource } from '@/stores/denominatedPoolStore';
 import type { TransportType, NotePayload } from '@/services/sharing/types';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 import FingerprintVerification from '@/components/sharing/FingerprintVerification';
 import NfcTapOverlay from '@/components/sharing/NfcTapOverlay';
@@ -100,7 +102,7 @@ export default function ReceiveNoteScreen() {
     } catch (err) {
       console.error('[ReceiveNote] Import FAILED:', (err as Error).message);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Import Failed', (err as Error).message);
+      p01Alert('Import Failed', (err as Error).message);
     }
   }, [importShieldedNote, importDenominatedNote, clearPendingNote]);
 
@@ -115,7 +117,7 @@ export default function ReceiveNoteScreen() {
       await startBleReceiver();
     } catch (err: any) {
       const msg = err?.reason || err?.message || 'Unknown BLE error';
-      Alert.alert('Bluetooth Error', msg);
+      p01Alert('Bluetooth Error', msg);
     }
   }, [startBleReceiver, clearError]);
 
@@ -123,13 +125,13 @@ export default function ReceiveNoteScreen() {
     try {
       await confirmFingerprintAndReceive();
     } catch (err) {
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     }
   }, [confirmFingerprintAndReceive]);
 
   const handleFingerprintReject = useCallback(async () => {
     await cancelSession();
-    Alert.alert(
+    p01Alert(
       'Connection Cancelled',
       'The fingerprint did not match. The connection has been terminated for safety.',
     );
@@ -147,7 +149,7 @@ export default function ReceiveNoteScreen() {
 
   const handleNfcPinSubmit = useCallback(async () => {
     if (nfcPinInput.length !== 6) {
-      Alert.alert('Invalid PIN', 'Please enter the 6-digit code from the sender.');
+      p01Alert('Invalid PIN', 'Please enter the 6-digit code from the sender.');
       return;
     }
     setShowNfcPinEntry(false);
@@ -158,7 +160,7 @@ export default function ReceiveNoteScreen() {
       console.log('[ReceiveNote:NFC] NFC receive completed');
     } catch (err) {
       console.error('[ReceiveNote:NFC] NFC receive failed:', (err as Error).message);
-      Alert.alert('NFC Error', (err as Error).message);
+      p01Alert('NFC Error', (err as Error).message);
     } finally {
       setShowNfcOverlay(false);
     }
@@ -239,7 +241,10 @@ export default function ReceiveNoteScreen() {
       statusBarTranslucent
       onRequestClose={() => setShowNfcPinEntry(false)}
     >
-      <View style={ms.overlay}>
+      <KeyboardAvoidingView
+        style={ms.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
         <TouchableOpacity
           style={ms.backdrop}
           activeOpacity={1}
@@ -310,7 +315,7 @@ export default function ReceiveNoteScreen() {
             </TouchableOpacity>
           </View>
         </Animated.View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 

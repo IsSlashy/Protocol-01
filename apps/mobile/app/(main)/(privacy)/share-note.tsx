@@ -8,7 +8,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +22,7 @@ import { useSharingStore } from '@/stores/sharingStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import type { TransportType } from '@/services/sharing/types';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 import BleDeviceList from '@/components/sharing/BleDeviceList';
 import FingerprintVerification from '@/components/sharing/FingerprintVerification';
@@ -111,14 +111,14 @@ export default function ShareNoteScreen() {
     setSelectedTransport('ble');
     clearError();
     try { await startBleScan(); }
-    catch (err) { Alert.alert('Bluetooth Error', (err as Error).message); }
+    catch (err) { p01Alert('Bluetooth Error', (err as Error).message); }
   }, [startBleScan, clearError]);
 
   const handleSelectPeer = useCallback(async (peer: any) => {
     try { await connectToPeer(peer.id); }
     catch (err: any) {
       const msg = err?.reason || err?.message || 'Unknown BLE error';
-      Alert.alert('Connection Failed', msg);
+      p01Alert('Connection Failed', msg);
     }
   }, [connectToPeer]);
 
@@ -132,13 +132,13 @@ export default function ShareNoteScreen() {
       console.log('[ShareNote:BLE] Note marked transferred');
     } catch (err) {
       console.error('[ShareNote:BLE] Send failed:', (err as Error).message);
-      Alert.alert('Send Failed', (err as Error).message);
+      p01Alert('Send Failed', (err as Error).message);
     }
   }, [confirmFingerprintAndSend, noteData, markNoteTransferred]);
 
   const handleFingerprintReject = useCallback(async () => {
     await cancelSession();
-    Alert.alert('Connection Cancelled', 'Fingerprint mismatch — connection terminated for safety.');
+    p01Alert('Connection Cancelled', 'Fingerprint mismatch — connection terminated for safety.');
   }, [cancelSession]);
 
   // --- NFC ---
@@ -161,7 +161,7 @@ export default function ShareNoteScreen() {
     } catch (err) {
       // Transfer failed — note is NOT marked transferred, user can retry
       console.error('[ShareNote:NFC] Transfer failed:', (err as Error).message);
-      Alert.alert('NFC Error', (err as Error).message);
+      p01Alert('NFC Error', (err as Error).message);
     } finally {
       setShowNfcOverlay(false);
     }

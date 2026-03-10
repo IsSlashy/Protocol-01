@@ -4,13 +4,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Alert,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -59,7 +59,7 @@ export default function ImportWalletScreen() {
       // Mark as onboarded and go to security setup
       await SecureStore.setItemAsync('p01_onboarded', 'true');
 
-      Alert.alert(
+      p01Alert(
         'Wallet Imported!',
         `Your wallet has been successfully imported.\n\nAddress: ${pubKey.slice(0, 8)}...${pubKey.slice(-8)}`,
         [

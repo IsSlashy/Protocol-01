@@ -14,7 +14,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   Modal,
   TextInput,
@@ -31,6 +30,7 @@ import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { useShieldedStore } from '@/stores/shieldedStore';
+import { p01Alert } from '@/stores/alertStore';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors
@@ -79,7 +79,7 @@ export default function ViewKeysScreen() {
   // Check initialization
   useEffect(() => {
     if (!isInitialized) {
-      Alert.alert(
+      p01Alert(
         'Shielded Wallet Required',
         'Please initialize your shielded wallet first.',
         [{ text: 'OK', onPress: () => router.back() }]
@@ -124,7 +124,7 @@ export default function ViewKeysScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
-      Alert.alert('Error', 'Failed to generate viewing key');
+      p01Alert('Error', 'Failed to generate viewing key');
     } finally {
       setIsGenerating(false);
     }
@@ -146,7 +146,7 @@ export default function ViewKeysScreen() {
   const copyKey = async (key: string) => {
     await Clipboard.setStringAsync(key);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Copied', 'Viewing key copied to clipboard. It will be cleared in 60 seconds.');
+    p01Alert('Copied', 'Viewing key copied to clipboard. It will be cleared in 60 seconds.');
     // Security: Auto-clear clipboard after 60 seconds
     setTimeout(async () => {
       try {
@@ -164,7 +164,7 @@ export default function ViewKeysScreen() {
     try {
       if (await Sharing.isAvailableAsync()) {
         // Create a temporary file for sharing
-        Alert.alert(
+        p01Alert(
           'Share Viewing Key',
           'How would you like to share?',
           [
@@ -185,14 +185,14 @@ export default function ViewKeysScreen() {
 
   const handleImport = () => {
     if (!importKey.trim()) {
-      Alert.alert('Error', 'Please enter a viewing key');
+      p01Alert('Error', 'Please enter a viewing key');
       return;
     }
 
     // Validate key format
     const keyMatch = importKey.match(/^(FVK|IVK|OVK)_[a-f0-9]{64}$/i);
     if (!keyMatch) {
-      Alert.alert('Invalid Key', 'The viewing key format is invalid');
+      p01Alert('Invalid Key', 'The viewing key format is invalid');
       return;
     }
 
@@ -222,7 +222,7 @@ export default function ViewKeysScreen() {
     setImportKey('');
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Success', 'Viewing key imported successfully');
+    p01Alert('Success', 'Viewing key imported successfully');
   };
 
   return (

@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 import { PublicKey } from '@solana/web3.js';
+import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../utils/crypto/noteVault';
 import { getConnection, getCluster } from '../services/solana/connection';
 import {
   type PoolConfig,
@@ -184,6 +185,64 @@ const encryptedStorage: StateStorage = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Wallet-scoped note archival (prevents note loss on wallet switch)
+// ---------------------------------------------------------------------------
+
+const ARCHIVE_PREFIX = 'p01_notes_archive_';
+
+/**
+ * Archive current notes for a specific wallet address before switching.
+ * Notes are encrypted and saved under a wallet-specific key.
+ */
+export async function archiveNotesForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  const { notes } = useDenominatedPoolStore.getState();
+  if (notes.length === 0) return;
+  try {
+    const key = await getNoteEncryptionKey();
+    const data = JSON.stringify(notes);
+    const encrypted = encryptData(data, key);
+    await AsyncStorage.setItem(`${ARCHIVE_PREFIX}${walletAddress}`, encrypted);
+    console.log(`[DenomStore] Archived ${notes.length} notes for wallet ${walletAddress.slice(0, 8)}...`);
+  } catch (err) {
+    console.error('[DenomStore] Failed to archive notes:', (err as Error).message);
+  }
+}
+
+/**
+ * Restore archived notes for a wallet address after switching back.
+ * Merges with any existing notes (deduplicates by id).
+ */
+export async function restoreNotesForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  try {
+    const raw = await AsyncStorage.getItem(`${ARCHIVE_PREFIX}${walletAddress}`);
+    if (!raw) return;
+    const key = await getNoteEncryptionKey();
+    let decrypted: string;
+    try {
+      decrypted = decryptData(raw, key);
+    } catch {
+      // May be unencrypted legacy data
+      decrypted = raw;
+    }
+    const archived: StoredNote[] = JSON.parse(decrypted);
+    if (!Array.isArray(archived) || archived.length === 0) return;
+
+    const { notes: currentNotes } = useDenominatedPoolStore.getState();
+    const existingIds = new Set(currentNotes.map(n => n.id));
+    const newNotes = archived.filter(n => !existingIds.has(n.id));
+
+    if (newNotes.length > 0) {
+      useDenominatedPoolStore.setState({ notes: [...currentNotes, ...newNotes] });
+      console.log(`[DenomStore] Restored ${newNotes.length} notes for wallet ${walletAddress.slice(0, 8)}...`);
+    }
+  } catch (err) {
+    console.error('[DenomStore] Failed to restore notes:', (err as Error).message);
+  }
+}
+
 const POOL_CACHE_TTL = 30_000; // 30s
 
 /** Build a WalletSigner for Privy wallets, or undefined for local keypair wallets. */
@@ -197,6 +256,18 @@ function getWalletSignerIfPrivy(): WalletSigner | undefined {
 
 function noteIdFromReceipt(receipt: ShieldReceipt): string {
   return receipt.commitment.toString(16).slice(0, 16);
+}
+
+/** Encrypt receipt before storing — adds vault layer if PIN is set. */
+function secureReceipt(receipt: ShieldReceipt): string {
+  const json = receiptToJSON(receipt);
+  return isVaultUnlocked() ? vaultEncrypt(json) : json;
+}
+
+/** Decrypt receipt before using — unwraps vault layer if present. */
+function readReceipt(storedReceipt: string): ShieldReceipt {
+  const json = vaultDecrypt(storedReceipt); // no-op if not vault-encrypted
+  return receiptFromJSON(json);
 }
 
 function serializablePoolInfo(info: PoolOnChainInfo): PoolOnChainInfo {
@@ -292,7 +363,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           for (const note of activeNotes) {
             try {
-              const receipt = receiptFromJSON(note.receiptJSON);
+              const receipt = readReceipt(note.receiptJSON);
               const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
               const nullifierBytes = bigintToLeBytes32(nullifier);
               const poolKey = new PublicKey(note.poolPDA);
@@ -325,7 +396,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               return { ...note, status: 'spent' as NoteStatus };
             }
 
-            const receipt = receiptFromJSON(note.receiptJSON);
+            const receipt = readReceipt(note.receiptJSON);
             const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
             if (!pool) return note;
 
@@ -413,7 +484,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           const storedNote: StoredNote = {
             id: noteIdFromReceipt(receipt),
-            receiptJSON: receiptToJSON(receipt),
+            receiptJSON: secureReceipt(receipt),
             token: pool.token,
             denomination: pool.denomination,
             poolPDA: pool.poolPDA.toBase58(),
@@ -461,7 +532,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
 
-        const receipt = receiptFromJSON(note.receiptJSON);
+        const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
@@ -524,7 +595,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
 
-        const receipt = receiptFromJSON(note.receiptJSON);
+        const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
@@ -587,7 +658,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
 
-        const receipt = receiptFromJSON(note.receiptJSON);
+        const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
@@ -650,7 +721,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         if (note.status === 'spent') throw new Error('Note already spent');
         if (note.status !== 'mature') throw new Error('Note must be mature for transfer');
 
-        const receipt = receiptFromJSON(note.receiptJSON);
+        const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
@@ -703,7 +774,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           const storedNote: StoredNote = {
             id: noteIdFromReceipt(receipt),
-            receiptJSON: receiptToJSON(receipt),
+            receiptJSON: secureReceipt(receipt),
             token: noteData.token,
             denomination: noteData.denominationHuman,
             poolPDA: noteData.pool,
@@ -745,7 +816,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         return notes
           .filter(n => n.status !== 'spent')
           .map(n => {
-            const receipt = receiptFromJSON(n.receiptJSON);
+            const receipt = readReceipt(n.receiptJSON);
             const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === n.poolPDA);
             if (!pool) return '';
             return encodeShareableNote(serviceExportNote(receipt, pool));
@@ -756,7 +827,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       exportNote: (noteId) => {
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
-        const receipt = receiptFromJSON(note.receiptJSON);
+        const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found');
         return encodeShareableNote(serviceExportNote(receipt, pool));
@@ -783,6 +854,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         notes: state.notes,
         selectedToken: state.selectedToken,
       }),
+      migrate: (persistedState: any, version: number) => {
+        // v1 → v2: storage changed from plain AsyncStorage to encrypted;
+        // data shape is the same, just accept it as-is.
+        return persistedState as any;
+      },
     },
   ),
 );

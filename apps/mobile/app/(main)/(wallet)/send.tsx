@@ -8,7 +8,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -23,6 +22,7 @@ import { isValidAddress } from '@/services/solana/transactions';
 import { isDevnet, getCluster } from '@/services/solana/connection';
 import { formatBalance } from '@/services/solana/balance';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 // P-01 Design System Colors - NO purple allowed
 const P01 = {
@@ -152,11 +152,11 @@ export default function SendScreen() {
     // Authenticate before sending (if enabled in settings)
     const authenticated = await authenticateForSend();
     if (!authenticated) {
-      Alert.alert('Authentication Required', 'Please authenticate to send this transaction.');
+      p01Alert('Authentication Required', 'Please authenticate to send this transaction.');
       return;
     }
 
-    Alert.alert(
+    p01Alert(
       'Confirm Transaction',
       `Send ${amount} SOL to ${recipient.slice(0, 8)}...${recipient.slice(-8)}?`,
       [
@@ -185,13 +185,13 @@ export default function SendScreen() {
                 if (Platform.OS !== 'web') {
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
                 }
-                Alert.alert('Transaction Failed', result.error || 'Unknown error');
+                p01Alert('Transaction Failed', result.error || 'Unknown error');
               }
             } catch (error: any) {
               if (Platform.OS !== 'web') {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
               }
-              Alert.alert('Error', error.message || 'Transaction failed');
+              p01Alert('Error', error.message || 'Transaction failed');
             } finally {
               setSending(false);
             }

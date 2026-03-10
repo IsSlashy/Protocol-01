@@ -143,8 +143,6 @@ async function addCancelledId(streamId: string): Promise<void> {
   cancelledIds.add(streamId);
   const idsArray = [...cancelledIds];
   await AsyncStorage.setItem(CANCELLED_IDS_KEY, JSON.stringify(idsArray));
-  // Verify write
-  const verify = await AsyncStorage.getItem(CANCELLED_IDS_KEY);
 }
 
 // Helper to get paused stream IDs
@@ -544,8 +542,23 @@ export async function deleteStream(streamId: string): Promise<boolean> {
   return true;
 }
 
+// Guard against concurrent payment processing for the same stream
+const _paymentLocks = new Set<string>();
+
 // Process a payment for a stream
 export async function processStreamPayment(streamId: string): Promise<StreamPayment | null> {
+  // Prevent concurrent payments for the same stream
+  if (_paymentLocks.has(streamId)) return null;
+  _paymentLocks.add(streamId);
+
+  try {
+    return await _processStreamPaymentInner(streamId);
+  } finally {
+    _paymentLocks.delete(streamId);
+  }
+}
+
+async function _processStreamPaymentInner(streamId: string): Promise<StreamPayment | null> {
   const stream = await getStream(streamId);
   if (!stream || stream.status !== 'active') return null;
 
@@ -881,11 +894,11 @@ export async function cancelAllStreams(): Promise<number> {
     await addCancelledId(stream.id);
   }
 
-  // Update all to cancelled status
-  const updatedStreams = streams.map(s => ({
-    ...s,
-    status: 'cancelled' as StreamStatus,
-  }));
+  // Update only active/paused to cancelled (preserve completed/failed status)
+  const activeIds = new Set(activeStreams.map(s => s.id));
+  const updatedStreams = streams.map(s =>
+    activeIds.has(s.id) ? { ...s, status: 'cancelled' as StreamStatus } : s
+  );
 
   await saveStreams(updatedStreams);
   return activeStreams.length;

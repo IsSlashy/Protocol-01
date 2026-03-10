@@ -4,11 +4,11 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Modal,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -377,7 +377,7 @@ export default function SecuritySettingsScreen() {
   };
 
   const handleLockTimeoutSelect = () => {
-    Alert.alert(
+    p01Alert(
       'Auto-Lock Timer',
       'Select how long before the app locks automatically',
       LOCK_TIMEOUTS.map((option) => ({
@@ -398,7 +398,7 @@ export default function SecuritySettingsScreen() {
   const handlePinSuccess = () => {
     setShowPinModal(false);
     setHasPinSet(true);
-    Alert.alert('PIN Updated', hasPinSet ? 'Your PIN has been changed.' : 'Your PIN has been set.');
+    p01Alert('PIN Updated', hasPinSet ? 'Your PIN has been changed.' : 'Your PIN has been set.');
   };
 
   const getLockTimeoutLabel = () => {

@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  Alert,
   StyleSheet,
   Linking,
   Share,
@@ -30,6 +29,7 @@ import {
 } from '@/services/denominatedPool';
 import { getCluster } from '@/services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 const SLOTS_PER_EPOCH = 7200;
 const DEFAULT_SLOT_DURATION_MS = 500; // fallback before we measure
@@ -170,7 +170,7 @@ export default function DenominatedNotesScreen() {
 
   const handleUnshield = (note: StoredNote) => {
     if (note.status !== 'mature') {
-      Alert.alert('Not Ready', 'This note is still maturing. Please wait ~1 epoch (~1 hour).');
+      p01Alert('Not Ready', 'This note is still maturing. Please wait ~1 epoch (~1 hour).');
       return;
     }
     router.push({
@@ -181,7 +181,7 @@ export default function DenominatedNotesScreen() {
 
   const handleTransfer = (note: StoredNote) => {
     if (note.status !== 'mature') {
-      Alert.alert('Not Ready', 'This note must be mature before transfer.');
+      p01Alert('Not Ready', 'This note must be mature before transfer.');
       return;
     }
     router.push({
@@ -191,7 +191,7 @@ export default function DenominatedNotesScreen() {
   };
 
   const handleEmergencyUnshield = (note: StoredNote) => {
-    Alert.alert(
+    p01Alert(
       'Emergency Unshield',
       'PRIVACY WARNING: Emergency unshield bypasses the maturity period. ' +
       'This withdrawal will be distinguishable on-chain, reducing your privacy.\n\n' +
@@ -217,7 +217,7 @@ export default function DenominatedNotesScreen() {
       const encoded = exportNote(note.id);
       await Clipboard.setStringAsync(encoded);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
+      p01Alert(
         'Note Exported',
         'Note backup copied to clipboard. Store it safely — it contains your private keys. Clipboard will be cleared in 60 seconds.',
       );
@@ -231,12 +231,12 @@ export default function DenominatedNotesScreen() {
         } catch (_) {}
       }, 60000);
     } catch (err) {
-      Alert.alert('Export Failed', (err as Error).message);
+      p01Alert('Export Failed', (err as Error).message);
     }
   };
 
   const handleManualShare = (note: StoredNote) => {
-    Alert.alert(
+    p01Alert(
       'Less Secure Sharing',
       'Nearby sharing uses end-to-end encryption. Manual sharing exposes your note to other apps on your device.\n\nOnly use this if Nearby isn\'t available.',
       [
@@ -250,7 +250,7 @@ export default function DenominatedNotesScreen() {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               Share.share({ message: encoded, title: 'Protocol 01 — Private Note' });
             } catch (err) {
-              Alert.alert('Error', (err as Error).message);
+              p01Alert('Error', (err as Error).message);
             }
           },
         },
@@ -267,17 +267,17 @@ export default function DenominatedNotesScreen() {
         params: { noteData: encoded, noteId: note.id },
       });
     } catch (err) {
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     }
   };
 
   const handleBackup = () => {
     const encoded = exportAllNotes();
     if (encoded.length === 0) {
-      Alert.alert('No Notes', 'No active notes to back up.');
+      p01Alert('No Notes', 'No active notes to back up.');
       return;
     }
-    Alert.alert(
+    p01Alert(
       'Backup Notes',
       `${encoded.length} note(s) will be copied. Keep this data safe — it contains your private keys.`,
       [
@@ -301,10 +301,10 @@ export default function DenominatedNotesScreen() {
   const handleRecoverNotes = () => {
     const transferredCount = clusterNotes.filter(n => n.status === 'transferred' && !n.spentTxSig).length;
     if (transferredCount === 0) {
-      Alert.alert('Nothing to Recover', 'No failed transfers found.');
+      p01Alert('Nothing to Recover', 'No failed transfers found.');
       return;
     }
-    Alert.alert(
+    p01Alert(
       'Recover Notes',
       `Found ${transferredCount} note(s) marked as transferred but never confirmed on-chain. ` +
       'This can happen if a nearby share (NFC/Bluetooth) failed mid-transfer.\n\n' +
@@ -316,7 +316,7 @@ export default function DenominatedNotesScreen() {
           onPress: () => {
             const count = recoverTransferredNotes();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            Alert.alert('Recovered', `${count} note(s) restored to your active notes.`);
+            p01Alert('Recovered', `${count} note(s) restored to your active notes.`);
           },
         },
       ],

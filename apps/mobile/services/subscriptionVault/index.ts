@@ -432,12 +432,12 @@ async function signAndSend(
     });
   }
   if (walletSigner) {
-    const { blockhash } = await connection.getLatestBlockhash();
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     tx.recentBlockhash = blockhash;
     tx.feePayer = walletSigner.publicKey;
     const signed = await walletSigner.signTransaction(tx);
     const sig = await connection.sendRawTransaction(signed.serialize());
-    await connection.confirmTransaction(sig, 'confirmed');
+    await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
     return sig;
   }
   throw new Error('No wallet available for signing');
@@ -491,7 +491,9 @@ export async function subscribeNormal(
   );
 
   onProgress?.('Sending transaction...');
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(300_000));
+  tx.add(ix);
   const sig = await signAndSend(connection, tx, keypair, walletSigner);
 
   onProgress?.('Done!');
