@@ -9,15 +9,17 @@ import { useArcium } from '@/providers/ArciumProvider';
 interface PrivacySummaryPillProps {
   shieldedBalance: number;
   confidentialBalance: number;
+  denominatedBalance?: number;
   onPress: () => void;
 }
 
 export default function PrivacySummaryPill({
   shieldedBalance,
   confidentialBalance,
+  denominatedBalance = 0,
   onPress,
 }: PrivacySummaryPillProps) {
-  const total = shieldedBalance + confidentialBalance;
+  const total = shieldedBalance + confidentialBalance + denominatedBalance;
   const { isMpcActive } = useArcium();
 
   return (
