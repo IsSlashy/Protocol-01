@@ -33,7 +33,7 @@
 
 ### Mobile App (Android)
 
-**Download APK:** [Protocol-01 v0.7.0](https://github.com/IsSlashy/Protocol-01/releases/download/v0.7.0/protocol-01-v0.7.0.apk)
+**Download APK:** [Protocol-01 v0.8.0](https://github.com/IsSlashy/Protocol-01/releases/download/v0.8.0/protocol-01-v0.8.0.apk)
 
 #### Installation Steps:
 1. Download the APK on your Android device
