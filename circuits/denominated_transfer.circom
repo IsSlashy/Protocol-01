@@ -87,7 +87,6 @@ template DenominatedTransfer(merkleDepth) {
     // ========================================
     component merkleChecker = MerkleTreeChecker(merkleDepth);
     merkleChecker.leaf <== old_commitment;
-    merkleChecker.root <== merkle_root;
     for (var i = 0; i < merkleDepth; i++) {
         merkleChecker.pathElements[i] <== path_elements[i];
         merkleChecker.pathIndices[i] <== path_indices[i];

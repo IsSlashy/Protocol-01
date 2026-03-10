@@ -355,6 +355,15 @@ template ConfidentialBalance() {
 
     component rangeCheckPublicDebit = Num2Bits(64);
     rangeCheckPublicDebit.in <== public_debit;
+
+
+    // ========================================================================
+    // STEP 8: Credit/debit mutual exclusivity (M3)
+    // ========================================================================
+    // A single operation cannot simultaneously deposit AND withdraw.
+    // If public_credit > 0, then public_debit must be 0, and vice versa.
+    // Constraint: public_credit * public_debit === 0
+    public_credit * public_debit === 0;
 }
 
 

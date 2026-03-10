@@ -20,7 +20,7 @@ function poseidonHash(inputs) {
 }
 
 function createCommitment(subscriberSecret) {
-    return poseidonHash([subscriberSecret]);
+    return poseidonHash([subscriberSecret, BigInt(1234567890)]);
 }
 
 let passed = 0;
