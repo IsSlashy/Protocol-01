@@ -213,22 +213,18 @@ export function verifyStealthOwnership(
 
 /**
  * Compute the expected stealth address from public components.
- * Only works for v1 (classic ECDH). For v2 hybrid, use verifyStealthOwnership instead.
  *
- * @deprecated Use verifyStealthOwnership for proper verification
+ * @deprecated This function is cryptographically incorrect — it concatenates public keys
+ * as a proxy for ECDH, which does NOT produce a valid shared secret.
+ * Use `verifyStealthOwnership` (which uses actual ECDH) instead.
  */
 export function computeStealthAddress(
-  spendingPubKey: Uint8Array,
-  viewingPubKey: Uint8Array,
-  ephemeralPubKey: Uint8Array
-): PublicKey {
-  // Without the viewing private key, we can't compute ECDH.
-  // This function concatenates public keys as a proxy (NOT cryptographically correct).
-  // Use verifyStealthOwnership for proper verification.
-  const pseudoSecret = sha256(
-    new Uint8Array([...ephemeralPubKey, ...viewingPubKey])
+  _spendingPubKey: Uint8Array,
+  _viewingPubKey: Uint8Array,
+  _ephemeralPubKey: Uint8Array
+): never {
+  throw new Error(
+    'computeStealthAddress is deprecated and cryptographically insecure. ' +
+    'Use verifyStealthOwnership (which performs actual ECDH) instead.'
   );
-  const stealthSeed = deriveStealthSeed(spendingPubKey, pseudoSecret);
-  const keypair = nacl.sign.keyPair.fromSeed(stealthSeed);
-  return new PublicKey(keypair.publicKey);
 }

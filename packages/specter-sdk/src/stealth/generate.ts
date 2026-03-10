@@ -88,13 +88,18 @@ export function generateStealthAddress(
     const { stealthPubKey, ephemeralPubKey, viewTag, kemCiphertext } =
       deriveStealthPublicKey(metaAddress, ephemeralKeypair.secretKey);
 
+    // Copy ephemeral private key for caller, then zero the original.
+    // Callers MUST zero their copy when no longer needed.
+    const ephemeralPrivateKeyCopy = new Uint8Array(ephemeralKeypair.secretKey);
+    ephemeralKeypair.secretKey.fill(0);
+
     return {
       address: stealthPubKey,
       ephemeralPubKey,
       viewTag,
       kemCiphertext,
       createdAt: new Date(),
-      ephemeralPrivateKey: ephemeralKeypair.secretKey,
+      ephemeralPrivateKey: ephemeralPrivateKeyCopy,
     };
   } catch (error) {
     if (error instanceof SpecterError) throw error;

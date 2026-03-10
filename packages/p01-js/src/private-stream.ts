@@ -113,12 +113,21 @@ const BASE_RETRY_DELAY_MS = 1_000;
 
 // ============ Helpers ============
 
+/** CSPRNG-backed random float in [0, 1) */
+function secureRandom(): number {
+  const arr = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(arr);
+  return arr[0] / 0x100000000;
+}
+
 /**
  * Generate a unique stream ID.
  */
 function generateStreamId(): string {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 10);
+  const bytes = new Uint8Array(6);
+  globalThis.crypto.getRandomValues(bytes);
+  const random = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
   return `pstream_${timestamp}${random}`;
 }
 
@@ -126,7 +135,7 @@ function generateStreamId(): string {
  * Compute a random integer in [min, max] (inclusive).
  */
 function randomIntInRange(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(secureRandom() * (max - min + 1)) + min;
 }
 
 /**

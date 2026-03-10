@@ -213,8 +213,15 @@ export function decryptFromSender(
 // ============================================================================
 
 /**
- * Derive a key from a password using iterative HMAC-SHA256 key stretching (PBKDF2-like).
- * Uses the full KDF_ITERATIONS (100K) and re-incorporates the salt at each round.
+ * Derive a key from a password using iterative SHA-256 key stretching.
+ *
+ * NOTE: This is a CUSTOM KDF construction, NOT standard PBKDF2 or Argon2.
+ * It iterates SHA-256(key || salt) for KDF_ITERATIONS rounds. While it provides
+ * key stretching, it lacks the HMAC-PRF structure of PBKDF2 and the memory-hard
+ * properties of Argon2. Prefer Web Crypto PBKDF2 (`crypto.subtle.deriveBits`)
+ * for new code. This function is retained for backward compatibility with existing
+ * encrypted data (changing it would make old data undecryptable).
+ *
  * @param password - The password string
  * @param salt - Salt for derivation
  */
@@ -222,10 +229,10 @@ export function deriveKeyFromPassword(
   password: string,
   salt: Uint8Array
 ): Uint8Array {
-  // Use iterative HMAC-SHA256 for key stretching (PBKDF2-like)
+  // Custom iterative SHA-256 key stretching (NOT standard PBKDF2)
   let key = new Uint8Array(sha256(new Uint8Array([...salt, ...new TextEncoder().encode(password)])));
   for (let i = 0; i < KDF_ITERATIONS; i++) {
-    // Re-incorporate salt each round (PBKDF2 behavior)
+    // Re-incorporate salt each round
     const input = new Uint8Array(key.length + salt.length);
     input.set(key, 0);
     input.set(salt, key.length);

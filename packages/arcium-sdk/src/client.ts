@@ -15,7 +15,19 @@ import {
   awaitComputationFinalization,
   getArciumProgramId,
 } from '@arcium-hq/client';
-import { randomBytes } from 'crypto';
+/**
+ * Cross-platform CSPRNG — works in browsers, React Native, and Node.js.
+ * Replaces Node-only `crypto.randomBytes`.
+ */
+function getRandomBytes(n: number): Uint8Array {
+  const bytes = new Uint8Array(n);
+  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    throw new Error('CSPRNG not available — globalThis.crypto.getRandomValues is required');
+  }
+  return bytes;
+}
 
 /** Protocol 01 Arcium program ID (deployed on devnet) */
 export const P01_ARCIUM_PROGRAM_ID = new PublicKey(
@@ -152,7 +164,7 @@ export class ArciumClient {
   /** Encrypt values for MPC computation. Returns number[][] (Rescue CTR blocks). */
   encrypt(values: bigint[]): EncryptedPayload {
     if (!this.cipher) throw new Error('Client not initialized — call initialize() first');
-    const nonce = randomBytes(16);
+    const nonce = getRandomBytes(16);
     const ciphertexts: number[][] = this.cipher.encrypt(values, nonce);
     return {
       ciphertexts,
@@ -169,7 +181,7 @@ export class ArciumClient {
 
   /** Generate a random computation offset (unique per invocation) */
   newComputationOffset(): anchor.BN {
-    return new anchor.BN(randomBytes(8), 'hex');
+    return new anchor.BN(Buffer.from(getRandomBytes(8)).toString('hex'), 'hex');
   }
 
   /** Derive nonce as u128 BN from raw bytes */

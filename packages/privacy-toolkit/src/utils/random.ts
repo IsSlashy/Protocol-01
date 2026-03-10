@@ -10,15 +10,17 @@ const FIELD_ORDER = BigInt(
  * Requires crypto.getRandomValues (CSPRNG) — no insecure fallback.
  */
 export function randomFieldElement(): FieldElement {
-  const bytes = new Uint8Array(32);
-  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
+  if (typeof globalThis.crypto === 'undefined' || !globalThis.crypto.getRandomValues) {
     throw new Error('CSPRNG not available — crypto.getRandomValues is required for secure operation');
   }
-  let n = 0n;
-  for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
-  return n % FIELD_ORDER;
+  // Rejection sampling: avoid modular bias by only accepting values < FIELD_ORDER
+  while (true) {
+    const bytes = new Uint8Array(32);
+    globalThis.crypto.getRandomValues(bytes);
+    let n = 0n;
+    for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
+    if (n < FIELD_ORDER) return n;
+  }
 }
 
 /**
