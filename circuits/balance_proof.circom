@@ -48,13 +48,14 @@ template BalanceCommitmentProof() {
 }
 
 
-// Owner derivation template (same pattern)
+// Owner derivation template (domain tag 0, matches SpendingKeyDerivation)
 template OwnerDerivationProof() {
     signal input spending_key;
     signal output owner_pubkey;
 
-    component hasher = Poseidon(1);
+    component hasher = Poseidon(2);
     hasher.inputs[0] <== spending_key;
+    hasher.inputs[1] <== 0;
 
     owner_pubkey <== hasher.out;
 }
@@ -141,6 +142,10 @@ template BalanceSufficiency() {
     // Also range-check the balance itself for safety
     component rangeCheckBalance = Num2Bits(64);
     rangeCheckBalance.in <== balance;
+
+    // M4: Range check threshold to prevent field wraparound
+    component thresholdRange = Num2Bits(64);
+    thresholdRange.in <== threshold;
 }
 
 
