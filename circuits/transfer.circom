@@ -105,7 +105,6 @@ template Transfer(merkleDepth) {
     // ========================================
     component merkleChecker1 = MerkleTreeChecker(merkleDepth);
     merkleChecker1.leaf <== inCommitment1.commitment;
-    merkleChecker1.root <== merkle_root;
     for (var i = 0; i < merkleDepth; i++) {
         merkleChecker1.pathIndices[i] <== in_path_indices_1[i];
         merkleChecker1.pathElements[i] <== in_path_elements_1[i];
@@ -115,7 +114,6 @@ template Transfer(merkleDepth) {
 
     component merkleChecker2 = MerkleTreeChecker(merkleDepth);
     merkleChecker2.leaf <== inCommitment2.commitment;
-    merkleChecker2.root <== merkle_root;
     for (var i = 0; i < merkleDepth; i++) {
         merkleChecker2.pathIndices[i] <== in_path_indices_2[i];
         merkleChecker2.pathElements[i] <== in_path_elements_2[i];

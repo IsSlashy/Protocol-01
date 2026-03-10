@@ -89,7 +89,6 @@ template DenominatedPool(merkleDepth) {
     // ========================================
     component merkleChecker = MerkleTreeChecker(merkleDepth);
     merkleChecker.leaf <== commitment;
-    merkleChecker.root <== merkle_root;
     for (var i = 0; i < merkleDepth; i++) {
         merkleChecker.pathElements[i] <== path_elements[i];
         merkleChecker.pathIndices[i] <== path_indices[i];
@@ -114,6 +113,10 @@ template DenominatedPool(merkleDepth) {
     // When enforce_maturity=0 (emergency), we substitute epoch_diff=0
     // so the range check always passes. The on-chain program controls
     // which value of enforce_maturity is allowed per instruction.
+    // M1: Range check deposit_epoch to prevent overflow
+    component depositEpochRange = Num2Bits(40);
+    depositEpochRange.in <== deposit_epoch;
+
     signal epoch_diff_raw;
     epoch_diff_raw <== min_epoch - deposit_epoch;
 

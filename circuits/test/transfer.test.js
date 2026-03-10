@@ -55,9 +55,9 @@ function createNullifier(commitment, spendingKeyHash) {
     return poseidonHash([commitment, spendingKeyHash]);
 }
 
-// Derive owner pubkey from spending key
+// Derive owner pubkey from spending key — domain tag 0
 function deriveOwnerPubkey(spendingKey) {
-    return poseidonHash([spendingKey]);
+    return poseidonHash([spendingKey, BigInt(0)]);
 }
 
 // Main test
@@ -71,7 +71,7 @@ async function runTest() {
     // Generate test keys
     const spendingKey = BigInt('12345678901234567890');
     const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const spendingKeyHash = poseidonHash([spendingKey]);
+    const spendingKeyHash = poseidonHash([spendingKey, BigInt(1)]);
 
     console.log('Spending Key:', spendingKey.toString());
     console.log('Owner Pubkey:', ownerPubkey.toString());

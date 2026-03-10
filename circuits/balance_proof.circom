@@ -29,18 +29,25 @@ include "circomlib/circuits/comparators.circom";
 // ============================================================================
 
 
-// Balance commitment template (same as confidential_balance.circom)
+// Balance commitment template (matches confidential_balance.circom BalanceCommitment)
+// commitment = Poseidon(balance, Poseidon(salt, nonce), owner_pubkey, token_mint)
 template BalanceCommitmentProof() {
     signal input balance;
     signal input salt;
+    signal input nonce;
     signal input owner_pubkey;
     signal input token_mint;
 
     signal output commitment;
 
+    // Bind nonce into salt to match confidential_balance.circom
+    component augSalt = Poseidon(2);
+    augSalt.inputs[0] <== salt;
+    augSalt.inputs[1] <== nonce;
+
     component hasher = Poseidon(4);
     hasher.inputs[0] <== balance;
-    hasher.inputs[1] <== salt;
+    hasher.inputs[1] <== augSalt.out;
     hasher.inputs[2] <== owner_pubkey;
     hasher.inputs[3] <== token_mint;
 
@@ -91,6 +98,9 @@ template BalanceSufficiency() {
     // Your commitment salt (secret)
     signal input salt;
 
+    // Anti-replay nonce (must match the nonce used in the commitment)
+    signal input nonce;
+
     // Your spending key (proves ownership)
     signal input spending_key;
 
@@ -114,6 +124,7 @@ template BalanceSufficiency() {
     component commCheck = BalanceCommitmentProof();
     commCheck.balance <== balance;
     commCheck.salt <== salt;
+    commCheck.nonce <== nonce;
     commCheck.owner_pubkey <== owner_pubkey;
     commCheck.token_mint <== token_mint;
 
