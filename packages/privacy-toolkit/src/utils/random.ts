@@ -7,14 +7,14 @@ const FIELD_ORDER = BigInt(
 
 /**
  * Generate a cryptographically random field element in the BN254 scalar field.
- * Uses crypto.getRandomValues when available, falls back to Math.random.
+ * Requires crypto.getRandomValues (CSPRNG) — no insecure fallback.
  */
 export function randomFieldElement(): FieldElement {
   const bytes = new Uint8Array(32);
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes);
   } else {
-    for (let i = 0; i < 32; i++) bytes[i] = Math.floor(Math.random() * 256);
+    throw new Error('CSPRNG not available — crypto.getRandomValues is required for secure operation');
   }
   let n = 0n;
   for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);

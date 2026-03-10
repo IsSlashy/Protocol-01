@@ -310,8 +310,14 @@ export class RelayerNetwork {
       return null;
     }
 
-    // Random selection for privacy
-    const index = Math.floor(Math.random() * candidates.length);
+    // Cryptographically random selection for privacy
+    const buf = new Uint8Array(4);
+    if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+      globalThis.crypto.getRandomValues(buf);
+    } else {
+      throw new Error('CSPRNG not available — crypto.getRandomValues is required for secure relayer selection');
+    }
+    const index = new DataView(buf.buffer).getUint32(0, true) % candidates.length;
     return candidates[index];
   }
 

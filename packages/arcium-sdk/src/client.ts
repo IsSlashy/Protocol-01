@@ -3,7 +3,6 @@ import * as anchor from '@coral-xyz/anchor';
 import {
   RescueCipher,
   x25519,
-  getMXEPublicKey,
   deserializeLE,
   getArciumEnv,
   getComputationAccAddress,
@@ -94,14 +93,60 @@ export class ArciumClient {
     this.ephemeralPublicKey = x25519.getPublicKey(this.ephemeralPrivateKey);
   }
 
-  /** Initialize shared secret with MXE's x25519 public key */
+  /**
+   * Initialize shared secret with MXE's x25519 public key.
+   * Bypasses Anchor borsh coder (which chokes on SetUnset<T> generics in RN/Hermes)
+   * by manually parsing the raw MXE account data.
+   */
   async initialize(): Promise<void> {
-    const mxePublicKey = await getMXEPublicKey(this.provider, this.programId);
+    const mxePublicKey = await this.fetchMxeX25519Key();
     if (!mxePublicKey) {
       throw new Error('MXE public key not found — is the program deployed and MXE initialized?');
     }
     this.sharedSecret = x25519.getSharedSecret(this.ephemeralPrivateKey, mxePublicKey);
     this.cipher = new RescueCipher(this.sharedSecret);
+  }
+
+  /**
+   * Fetch x25519 public key from MXE account by parsing raw bytes.
+   * Layout: 8 disc + Option<u32> cluster + u64 keygen + u64 recovery +
+   *         32 programId + Option<Pubkey> authority + SetUnset<UtilityPubkeys> + ...
+   * UtilityPubkeys starts with x25519_pubkey (32 bytes).
+   */
+  private async fetchMxeX25519Key(): Promise<Uint8Array | null> {
+    const mxeAccAddress = getMXEAccAddress(this.programId);
+    const accInfo = await this.connection.getAccountInfo(mxeAccAddress);
+    if (!accInfo || !accInfo.data) return null;
+
+    const data = accInfo.data;
+    let offset = 8; // skip discriminator
+
+    // cluster: Option<u32>
+    const clusterTag = data[offset]; offset++;
+    if (clusterTag === 1) offset += 4; // skip u32 value
+
+    // keygen_offset: u64
+    offset += 8;
+    // key_recovery_init_offset: u64
+    offset += 8;
+    // mxe_program_id: Pubkey (32 bytes)
+    offset += 32;
+
+    // authority: Option<Pubkey>
+    const authTag = data[offset]; offset++;
+    if (authTag === 1) offset += 32; // skip Pubkey
+
+    // utility_pubkeys: SetUnset<UtilityPubkeys>
+    const setUnsetTag = data[offset]; offset++;
+    // 0 = Set(T), 1 = Unset(T, Vec<bool>)
+    // Either way, T = UtilityPubkeys starts immediately, with x25519_pubkey first (32 bytes)
+    if (offset + 32 > data.length) return null;
+
+    const x25519Key = new Uint8Array(data.slice(offset, offset + 32));
+    // Verify it's not all zeros
+    if (x25519Key.every((b) => b === 0)) return null;
+
+    return x25519Key;
   }
 
   /** Encrypt values for MPC computation. Returns number[][] (Rescue CTR blocks). */
