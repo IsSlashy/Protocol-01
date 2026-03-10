@@ -105,6 +105,13 @@ template DenominatedTransfer(merkleDepth) {
     rangeCheck.in <== epoch_diff;
 
     // ========================================
+    // STEP 4b: Range check new_deposit_epoch (H4)
+    // ========================================
+    // Prevent overflow: new_deposit_epoch must fit in 40 bits
+    component newEpochRange = Num2Bits(40);
+    newEpochRange.in <== new_deposit_epoch;
+
+    // ========================================
     // STEP 5: Compute and verify new commitment
     // ========================================
     component newCommitHasher = Poseidon(4);

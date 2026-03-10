@@ -39,25 +39,30 @@ template NullifierComputation() {
     nullifier <== hasher.out;
 }
 
-// Public key derivation from spending key
-// owner_pubkey = Poseidon(spending_key)
+// Public key derivation from spending key (domain tag = 0)
+// owner_pubkey = Poseidon(spending_key, 0)
+// Domain-separated from SpendingKeyHash to prevent cross-use
 template SpendingKeyDerivation() {
     signal input spending_key;
     signal output owner_pubkey;
 
-    component hasher = Poseidon(1);
+    component hasher = Poseidon(2);
     hasher.inputs[0] <== spending_key;
+    hasher.inputs[1] <== 0;
 
     owner_pubkey <== hasher.out;
 }
 
-// Spending key hash for nullifier
+// Spending key hash for nullifier (domain tag = 1)
+// spending_key_hash = Poseidon(spending_key, 1)
+// Domain-separated from SpendingKeyDerivation to prevent cross-use
 template SpendingKeyHash() {
     signal input spending_key;
     signal output spending_key_hash;
 
-    component hasher = Poseidon(1);
+    component hasher = Poseidon(2);
     hasher.inputs[0] <== spending_key;
+    hasher.inputs[1] <== 1;
 
     spending_key_hash <== hasher.out;
 }

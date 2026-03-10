@@ -9,7 +9,8 @@ pragma circom 2.1.0;
 // subscription vaults: the subscriber proves they own the vault without
 // revealing their identity.
 //
-// Commitment = Poseidon(subscriber_secret)
+// Commitment = Poseidon(subscriber_secret, 1234567890)
+// The domain constant 1234567890 prevents cross-circuit commitment reuse.
 // Public input:  commitment
 // Private input: subscriber_secret
 //
@@ -27,9 +28,11 @@ template SubscriberOwnership() {
     // Private input
     signal input subscriber_secret;
 
-    // Compute Poseidon(subscriber_secret)
-    component hasher = Poseidon(1);
+    // Compute Poseidon(subscriber_secret, 1234567890)
+    // Domain constant 1234567890 prevents cross-circuit commitment reuse
+    component hasher = Poseidon(2);
     hasher.inputs[0] <== subscriber_secret;
+    hasher.inputs[1] <== 1234567890;
 
     // Constrain: hash must equal the public commitment
     commitment === hasher.out;

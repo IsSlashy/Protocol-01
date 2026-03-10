@@ -39,24 +39,35 @@ include "circomlib/circuits/comparators.circom";
 // Creates a "locked box" containing your balance.
 // Nobody can open it without knowing all 4 ingredients.
 //
-// commitment = Poseidon(balance, salt, owner_pubkey, token_mint)
+// commitment = Poseidon(balance, augmented_salt, owner_pubkey, token_mint)
+// where augmented_salt = Poseidon(salt, nonce)
 //
 // - balance:      Your actual token balance (e.g., 100 USDC)
 // - salt:         A random number only you know (prevents guessing)
+// - nonce:        Anti-replay counter (bound into commitment)
 // - owner_pubkey: Your public key (derived from spending_key)
 // - token_mint:   Which token (USDC, SOL, etc.)
 // ----------------------------------------------------------------------------
 template BalanceCommitment() {
     signal input balance;
     signal input salt;
+    signal input nonce;
     signal input owner_pubkey;
     signal input token_mint;
 
     signal output commitment;
 
+    // Bind nonce into salt to prevent replay attacks
+    component nonceHasher = Poseidon(2);
+    nonceHasher.inputs[0] <== salt;
+    nonceHasher.inputs[1] <== nonce;
+
+    signal augmented_salt;
+    augmented_salt <== nonceHasher.out;
+
     component hasher = Poseidon(4);
     hasher.inputs[0] <== balance;
-    hasher.inputs[1] <== salt;
+    hasher.inputs[1] <== augmented_salt;
     hasher.inputs[2] <== owner_pubkey;
     hasher.inputs[3] <== token_mint;
 
@@ -92,18 +103,20 @@ template AmountCommitment() {
 // ----------------------------------------------------------------------------
 // Owner Key Derivation  (reuses pattern from existing poseidon.circom)
 // ----------------------------------------------------------------------------
-// owner_pubkey = Poseidon(spending_key)
+// owner_pubkey = Poseidon(spending_key, 0)
 //
 // Your spending_key is SECRET (like a password).
 // Your owner_pubkey is PUBLIC (like a username).
 // Nobody can reverse the hash to find your spending_key.
+// Domain tag 0 separates this from SpendingKeyHash (tag 1).
 // ----------------------------------------------------------------------------
 template OwnerDerivation() {
     signal input spending_key;
     signal output owner_pubkey;
 
-    component hasher = Poseidon(1);
+    component hasher = Poseidon(2);
     hasher.inputs[0] <== spending_key;
+    hasher.inputs[1] <== 0;
 
     owner_pubkey <== hasher.out;
 }
@@ -216,6 +229,7 @@ template ConfidentialBalance() {
     component oldCommCheck = BalanceCommitment();
     oldCommCheck.balance <== old_balance;
     oldCommCheck.salt <== old_salt;
+    oldCommCheck.nonce <== nonce;
     oldCommCheck.owner_pubkey <== owner_pubkey;
     oldCommCheck.token_mint <== token_mint;
 
@@ -232,6 +246,7 @@ template ConfidentialBalance() {
     component newCommCheck = BalanceCommitment();
     newCommCheck.balance <== new_balance;
     newCommCheck.salt <== new_salt;
+    newCommCheck.nonce <== nonce;
     newCommCheck.owner_pubkey <== owner_pubkey;
     newCommCheck.token_mint <== token_mint;
 
