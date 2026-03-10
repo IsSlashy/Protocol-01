@@ -246,6 +246,7 @@ export default function DenominatedNotesScreen() {
             try {
               const encoded = exportNote(note.id);
               await Clipboard.setStringAsync(encoded);
+              setTimeout(() => Clipboard.setStringAsync(''), 60000);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               Share.share({ message: encoded, title: 'Protocol 01 — Private Note' });
             } catch (err) {
@@ -284,6 +285,7 @@ export default function DenominatedNotesScreen() {
           text: 'Copy to Clipboard',
           onPress: async () => {
             await Clipboard.setStringAsync(JSON.stringify(encoded));
+            setTimeout(() => Clipboard.setStringAsync(''), 60000);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           },
         },

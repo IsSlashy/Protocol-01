@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
@@ -7,6 +7,7 @@ import { getZkService, ZkService, ZkAddress, Note } from '../services/zk';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import nacl from 'tweetnacl';
+import { Buffer } from 'buffer';
 
 const MNEMONIC_KEY = 'p01_mnemonic';
 const ZK_SEED_KEY = 'p01_zk_seed'; // Separate seed for ZK features (Privy users)
@@ -129,6 +130,67 @@ interface ShieldedState {
     errors: string[];
   }>;
 }
+
+// ---------------------------------------------------------------------------
+// Encrypted storage adapter (H2 — shielded notes and merkleRoot must not sit in AsyncStorage plaintext)
+// ---------------------------------------------------------------------------
+
+let _shieldedEncryptionKey: Uint8Array | null = null;
+
+async function getShieldedEncryptionKey(): Promise<Uint8Array> {
+  if (_shieldedEncryptionKey) return _shieldedEncryptionKey;
+  const existing = await SecureStore.getItemAsync('p01_shielded_encryption_key');
+  if (existing) {
+    _shieldedEncryptionKey = new Uint8Array(Buffer.from(existing, 'base64'));
+    return _shieldedEncryptionKey;
+  }
+  const key = nacl.randomBytes(32);
+  await SecureStore.setItemAsync('p01_shielded_encryption_key', Buffer.from(key).toString('base64'));
+  _shieldedEncryptionKey = key;
+  return key;
+}
+
+function encryptShieldedData(data: string, key: Uint8Array): string {
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const encrypted = nacl.secretbox(new TextEncoder().encode(data), nonce, key);
+  if (!encrypted) throw new Error('Encryption failed');
+  const combined = new Uint8Array(nonce.length + encrypted.length);
+  combined.set(nonce);
+  combined.set(encrypted, nonce.length);
+  return Buffer.from(combined).toString('base64');
+}
+
+function decryptShieldedData(encrypted: string, key: Uint8Array): string {
+  const data = new Uint8Array(Buffer.from(encrypted, 'base64'));
+  const nonce = data.slice(0, nacl.secretbox.nonceLength);
+  const ciphertext = data.slice(nacl.secretbox.nonceLength);
+  const decrypted = nacl.secretbox.open(ciphertext, nonce, key);
+  if (!decrypted) throw new Error('Decryption failed');
+  return new TextDecoder().decode(decrypted);
+}
+
+/** AsyncStorage wrapper that encrypts values at rest using nacl.secretbox */
+const encryptedShieldedStorage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    const raw = await AsyncStorage.getItem(name);
+    if (!raw) return null;
+    try {
+      const key = await getShieldedEncryptionKey();
+      return decryptShieldedData(raw, key);
+    } catch {
+      // Fallback: if decryption fails, data may be unencrypted (migration from old format)
+      return raw;
+    }
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    const key = await getShieldedEncryptionKey();
+    const encrypted = encryptShieldedData(value, key);
+    await AsyncStorage.setItem(name, encrypted);
+  },
+  removeItem: async (name: string): Promise<void> => {
+    await AsyncStorage.removeItem(name);
+  },
+};
 
 // Helper to generate UUID
 const generateUUID = (): string => {
@@ -916,8 +978,8 @@ export const useShieldedStore = create<ShieldedState>()(
     }),
     {
       name: 'p01-shielded-mobile',
-      version: 2, // Increment when data format changes
-      storage: createJSONStorage(() => AsyncStorage),
+      version: 3, // v3: encrypted storage (H2)
+      storage: createJSONStorage(() => encryptedShieldedStorage),
       partialize: (state) => ({
         isInitialized: state.isInitialized,
         zkAddress: state.zkAddress,
@@ -926,14 +988,14 @@ export const useShieldedStore = create<ShieldedState>()(
         lastSyncedIndex: state.lastSyncedIndex,
         merkleRoot: state.merkleRoot,
       }),
-      // Migration: reset on version change (key derivation fix)
+      // Migration: reset on version change (key derivation fix / encrypted storage)
       migrate: (persistedState: any, version: number) => {
-        if (version < 2) {
+        if (version < 3) {
           // Also clear ZK service SecureStore notes (async, fire-and-forget)
           ZkService.resetStorage().catch(err =>
             console.error('[Shielded] Failed to reset ZK storage:', err)
           );
-          // Return fresh state - old notes are incompatible
+          // Return fresh state - old notes are incompatible / need re-encryption
           return {
             isInitialized: false,
             isLoading: false,

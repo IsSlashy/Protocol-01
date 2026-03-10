@@ -1,6 +1,9 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import nacl from 'tweetnacl';
+import { Buffer } from 'buffer';
 import { PublicKey } from '@solana/web3.js';
 import { getConnection, getCluster } from '../services/solana/connection';
 import {
@@ -119,6 +122,67 @@ interface DenominatedPoolState {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Encrypted storage adapter (H1 — note secrets must not sit in AsyncStorage plaintext)
+// ---------------------------------------------------------------------------
+
+let _noteEncryptionKey: Uint8Array | null = null;
+
+async function getNoteEncryptionKey(): Promise<Uint8Array> {
+  if (_noteEncryptionKey) return _noteEncryptionKey;
+  const existing = await SecureStore.getItemAsync('p01_note_encryption_key');
+  if (existing) {
+    _noteEncryptionKey = new Uint8Array(Buffer.from(existing, 'base64'));
+    return _noteEncryptionKey;
+  }
+  const key = nacl.randomBytes(32);
+  await SecureStore.setItemAsync('p01_note_encryption_key', Buffer.from(key).toString('base64'));
+  _noteEncryptionKey = key;
+  return key;
+}
+
+function encryptData(data: string, key: Uint8Array): string {
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const encrypted = nacl.secretbox(new TextEncoder().encode(data), nonce, key);
+  if (!encrypted) throw new Error('Encryption failed');
+  const combined = new Uint8Array(nonce.length + encrypted.length);
+  combined.set(nonce);
+  combined.set(encrypted, nonce.length);
+  return Buffer.from(combined).toString('base64');
+}
+
+function decryptData(encrypted: string, key: Uint8Array): string {
+  const data = new Uint8Array(Buffer.from(encrypted, 'base64'));
+  const nonce = data.slice(0, nacl.secretbox.nonceLength);
+  const ciphertext = data.slice(nacl.secretbox.nonceLength);
+  const decrypted = nacl.secretbox.open(ciphertext, nonce, key);
+  if (!decrypted) throw new Error('Decryption failed');
+  return new TextDecoder().decode(decrypted);
+}
+
+/** AsyncStorage wrapper that encrypts values at rest using nacl.secretbox */
+const encryptedStorage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    const raw = await AsyncStorage.getItem(name);
+    if (!raw) return null;
+    try {
+      const key = await getNoteEncryptionKey();
+      return decryptData(raw, key);
+    } catch {
+      // Fallback: if decryption fails, data may be unencrypted (migration from old format)
+      return raw;
+    }
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    const key = await getNoteEncryptionKey();
+    const encrypted = encryptData(value, key);
+    await AsyncStorage.setItem(name, encrypted);
+  },
+  removeItem: async (name: string): Promise<void> => {
+    await AsyncStorage.removeItem(name);
+  },
+};
 
 const POOL_CACHE_TTL = 30_000; // 30s
 
@@ -713,12 +777,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
     }),
     {
       name: 'p01-denominated-pool',
-      version: 1,
-      storage: createJSONStorage(() => AsyncStorage),
-      // TODO (M8): receiptJSON contains note secrets (commitment, secret, nullifier preimage).
-      // These should be encrypted with the session key before persisting to AsyncStorage,
-      // or migrated to SecureStore. Use apps/mobile/utils/crypto/encryption.ts or
-      // expo-secure-store to encrypt each note's receiptJSON field.
+      version: 2,
+      storage: createJSONStorage(() => encryptedStorage),
       partialize: (state) => ({
         notes: state.notes,
         selectedToken: state.selectedToken,

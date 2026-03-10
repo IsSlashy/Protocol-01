@@ -34,6 +34,9 @@ export default function CreateWalletScreen() {
 
   useEffect(() => {
     startWalletCreation();
+    return () => {
+      setMnemonic(null);
+    };
   }, []);
 
   const startWalletCreation = async () => {
