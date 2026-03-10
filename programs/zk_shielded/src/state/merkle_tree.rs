@@ -69,9 +69,34 @@ impl MerkleTreeState {
         self.root = Self::ZEROS[depth as usize];
     }
 
+    /// Insert a leaf without updating the root. Used when inserting multiple
+    /// leaves in a single transaction where only the final root matters.
+    /// The root will be set by a subsequent `insert_with_root` call.
+    pub fn insert_leaf_only(&mut self, leaf: [u8; 32]) -> Result<u64> {
+        let leaf_index = self.leaf_count;
+        let max_leaves = 1u64 << self.depth;
+        require!(
+            leaf_index < max_leaves,
+            crate::errors::ZkShieldedError::MerkleTreeFull
+        );
+        self.filled_subtrees[0] = leaf;
+        self.leaf_count += 1;
+        Ok(leaf_index)
+    }
+
     /// Insert a new leaf with client-computed root
     /// Since Poseidon syscall isn't enabled on devnet/mainnet yet,
-    /// the client computes the new root off-chain and we verify the insertion
+    /// the client computes the new root off-chain and we verify the insertion.
+    ///
+    /// WARNING: This method accepts client-computed roots because Poseidon hash
+    /// is not available as a syscall on Solana yet. The ZK proof itself validates
+    /// the Merkle path, so a malicious root would cause subsequent proof
+    /// verifications to fail. However, a poisoned root could DoS the pool until
+    /// the historical root window rolls over.
+    ///
+    /// TODO(poseidon-syscall): When solana_poseidon is enabled on mainnet,
+    /// replace this with on-chain Poseidon computation to fully eliminate the
+    /// client-trust assumption. Track: https://github.com/solana-labs/solana/issues/XXXXX
     pub fn insert_with_root(&mut self, leaf: [u8; 32], new_root: [u8; 32]) -> Result<u64> {
         let leaf_index = self.leaf_count;
 
@@ -82,6 +107,20 @@ impl MerkleTreeState {
             crate::errors::ZkShieldedError::MerkleTreeFull
         );
 
+        // Sanity guard: reject all-zeros root (would indicate uninitialized/malicious input)
+        require!(
+            new_root != [0u8; 32],
+            crate::errors::ZkShieldedError::InvalidMerkleRoot
+        );
+
+        // Sanity guard: new root must differ from old root (inserting a leaf must change the root)
+        require!(
+            new_root != self.root,
+            crate::errors::ZkShieldedError::InvalidMerkleRoot
+        );
+
+        let old_root = self.root;
+
         // Update filled subtree at level 0 with the new leaf
         self.filled_subtrees[0] = leaf;
 
@@ -91,6 +130,15 @@ impl MerkleTreeState {
         // recomputing subtrees locally when using readOnChainFilledSubtrees().
         self.root = new_root;
         self.leaf_count += 1;
+
+        // Emit root change event so off-chain monitors can detect potential poisoning
+        emit!(MerkleRootChanged {
+            pool: self.pool,
+            old_root,
+            new_root,
+            leaf_index,
+            leaf,
+        });
 
         Ok(leaf_index)
     }
@@ -283,4 +331,16 @@ impl MerkleProof {
         // This is safe because the ZK proof already validates the Merkle path
         self.leaf != [0u8; 32] && *root != [0u8; 32]
     }
+}
+
+/// Event emitted whenever the Merkle root changes.
+/// Off-chain monitors should watch for unexpected root transitions to detect
+/// potential root poisoning attempts.
+#[event]
+pub struct MerkleRootChanged {
+    pub pool: Pubkey,
+    pub old_root: [u8; 32],
+    pub new_root: [u8; 32],
+    pub leaf_index: u64,
+    pub leaf: [u8; 32],
 }

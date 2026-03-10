@@ -131,8 +131,16 @@ pub mod p01_quantum_vault {
             );
         }
 
-        // Step 4: Transfer funds
+        // Step 4: Ensure vault remains rent-exempt after withdrawal
         let vault_info = ctx.accounts.vault.to_account_info();
+        let rent = Rent::get()?;
+        let min_balance = rent.minimum_balance(vault_info.data_len());
+        require!(
+            vault_info.lamports().checked_sub(amount).unwrap_or(0) >= min_balance,
+            QVaultError::InsufficientFundsForRent
+        );
+
+        // Transfer funds
         let dest_info = ctx.accounts.destination.to_account_info();
         **vault_info.try_borrow_mut_lamports()? -= amount;
         **dest_info.try_borrow_mut_lamports()? += amount;
@@ -234,6 +242,14 @@ pub mod p01_quantum_vault {
             QVaultError::PreimageMismatch
         );
 
+        // Enforce full withdrawal to prevent preimage reuse.
+        // Once the preimage is revealed on-chain, anyone can see it,
+        // so partial withdrawals would leave remaining funds vulnerable.
+        require!(
+            amount == vault.balance,
+            QVaultError::MustWithdrawFullBalance
+        );
+
         // Transfer
         let vault_info = ctx.accounts.vault.to_account_info();
         let dest_info = ctx.accounts.destination.to_account_info();
@@ -241,10 +257,8 @@ pub mod p01_quantum_vault {
         **dest_info.try_borrow_mut_lamports()? += amount;
 
         let vault = &mut ctx.accounts.vault;
-        vault.balance = vault.balance.checked_sub(amount).ok_or(QVaultError::Overflow)?;
-        if vault.balance == 0 {
-            vault.drained = true;
-        }
+        vault.balance = 0;
+        vault.drained = true;
 
         msg!("Hash vault withdrawal: {} lamports", amount);
         Ok(())
@@ -467,4 +481,8 @@ pub enum QVaultError {
     InvalidRevealWindow,
     #[msg("Commitment hash mismatch")]
     CommitmentMismatch,
+    #[msg("Withdrawal would leave vault below rent-exempt minimum")]
+    InsufficientFundsForRent,
+    #[msg("Hash vault requires full withdrawal (amount must equal balance)")]
+    MustWithdrawFullBalance,
 }

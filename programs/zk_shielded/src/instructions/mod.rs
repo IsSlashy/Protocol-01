@@ -28,6 +28,8 @@ pub mod unshield_denominated_stark;
 pub mod subscribe_private_stark;
 pub mod pause_private_stark;
 pub mod resume_private_stark;
+pub mod propose_authority_transfer;
+pub mod accept_authority_transfer;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -60,3 +62,5 @@ pub use unshield_denominated_stark::*;
 pub use subscribe_private_stark::*;
 pub use pause_private_stark::*;
 pub use resume_private_stark::*;
+pub use propose_authority_transfer::*;
+pub use accept_authority_transfer::*;
