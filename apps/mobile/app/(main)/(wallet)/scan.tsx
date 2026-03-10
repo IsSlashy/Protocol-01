@@ -82,8 +82,19 @@ export default function ScanScreen() {
       address = parsed;
     }
 
-    // Validate scanned data
-    if (isValidSolanaAddress(address) || address.endsWith('.sol') || address.startsWith('zk:')) {
+    // L6: Validate scanned data — route zk: addresses to shielded transfer
+    if (address.startsWith('zk:')) {
+      const zkAddr = address.slice(3);
+      if (zkAddr.length >= 32) {
+        router.push({
+          pathname: '/(main)/(privacy)/shielded-transfer',
+          params: { address: zkAddr },
+        } as any);
+      } else {
+        setError('Invalid ZK address format.');
+        setTimeout(() => { setError(''); setIsScanning(true); }, 3000);
+      }
+    } else if (isValidSolanaAddress(address) || address.endsWith('.sol')) {
       // Navigate back to send screen with the address
       router.push({
         pathname: '/(main)/(wallet)/send',

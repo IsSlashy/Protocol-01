@@ -26,6 +26,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import * as Sharing from 'expo-sharing';
+import * as ScreenCapture from 'expo-screen-capture';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -65,6 +66,15 @@ export default function ViewKeysScreen() {
   const [selectedKey, setSelectedKey] = useState<ViewingKey | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importKey, setImportKey] = useState('');
+
+  // H3: Block screenshots when viewing keys
+  useEffect(() => {
+    if (showKeyModal) {
+      ScreenCapture.preventScreenCaptureAsync();
+    } else {
+      ScreenCapture.allowScreenCaptureAsync();
+    }
+  }, [showKeyModal]);
 
   // Check initialization
   useEffect(() => {

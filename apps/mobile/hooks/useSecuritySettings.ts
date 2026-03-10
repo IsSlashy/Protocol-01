@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import * as ScreenCapture from 'expo-screen-capture';
 import * as LocalAuthentication from 'expo-local-authentication';
 
@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS: SecuritySettings = {
   biometricsEnabled: false,
   requireAuthForSends: true,
   hideBalanceByDefault: false,
-  blockScreenshots: false,
+  blockScreenshots: true, // L4: Default to ON for security
   lockTimeout: 60,
 };
 
@@ -53,23 +53,23 @@ export function useSecuritySettings(): UseSecuritySettingsReturn {
     setBiometricsAvailable(hasHardware && isEnrolled);
   }, []);
 
-  // Load settings from AsyncStorage
+  // L9: Load settings from SecureStore (migrated from AsyncStorage)
   const loadSettings = useCallback(async () => {
     try {
       setIsLoading(true);
       const [bio, auth, hide, block, timeout] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.BIOMETRICS),
-        AsyncStorage.getItem(STORAGE_KEYS.AUTH_FOR_SENDS),
-        AsyncStorage.getItem(STORAGE_KEYS.HIDE_BALANCE),
-        AsyncStorage.getItem(STORAGE_KEYS.BLOCK_SCREENSHOTS),
-        AsyncStorage.getItem(STORAGE_KEYS.LOCK_TIMEOUT),
+        SecureStore.getItemAsync(STORAGE_KEYS.BIOMETRICS),
+        SecureStore.getItemAsync(STORAGE_KEYS.AUTH_FOR_SENDS),
+        SecureStore.getItemAsync(STORAGE_KEYS.HIDE_BALANCE),
+        SecureStore.getItemAsync(STORAGE_KEYS.BLOCK_SCREENSHOTS),
+        SecureStore.getItemAsync(STORAGE_KEYS.LOCK_TIMEOUT),
       ]);
 
       const newSettings: SecuritySettings = {
         biometricsEnabled: bio === 'true',
         requireAuthForSends: auth !== 'false', // Default to true
         hideBalanceByDefault: hide === 'true',
-        blockScreenshots: block === 'true',
+        blockScreenshots: block !== 'false', // L4: Default to true (ON)
         lockTimeout: timeout ? parseInt(timeout, 10) : 60,
       };
 
@@ -103,9 +103,20 @@ export function useSecuritySettings(): UseSecuritySettingsReturn {
       return true;
     }
 
-    // If biometrics is not available or not enabled, return true (no auth needed)
+    // H5: If biometrics unavailable or not enabled, fall back to device-level auth
+    // (PIN/pattern/password) instead of silently returning true
     if (!bioAvailable || !bioEnabled) {
-      return true;
+      try {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Authenticate to send transaction',
+          disableDeviceFallback: false, // allows device PIN/pattern/password
+          cancelLabel: 'Cancel',
+        });
+        return result.success;
+      } catch {
+        console.error('Device authentication error occurred');
+        return false;
+      }
     }
 
     try {

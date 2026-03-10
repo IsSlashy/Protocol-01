@@ -430,6 +430,31 @@ export default function AISettingsScreen() {
           <InfoBox text="Voice uses Groq Whisper for transcription. Requires Groq API key." />
         </Animated.View>
 
+        {/* Privacy — wallet context sharing (H8) */}
+        <Animated.View entering={FadeInDown.delay(225).springify()}>
+          <SectionTitle title="PRIVACY" />
+          <GlassCard>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <IconBox icon="eye-off-outline" color={P01Colors.yellow} />
+                <View style={{ marginLeft: 12, flex: 1 }}>
+                  <Text style={{ color: Colors.text, fontSize: FontSize.md }}>Share Wallet Data</Text>
+                  <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
+                    Send balances & streams to cloud AI
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={config.shareWalletContext === true}
+                onValueChange={(v) => updateConfig({ shareWalletContext: v })}
+                trackColor={{ false: 'rgba(42, 42, 48, 0.5)', true: 'rgba(255, 204, 0, 0.3)' }}
+                thumbColor={config.shareWalletContext ? P01Colors.yellow : Colors.textTertiary}
+              />
+            </View>
+          </GlassCard>
+          <InfoBox text="When off, cloud providers (Groq, Gemini, OpenAI) only see market data. On-device AI always has full access — your data never leaves the phone." />
+        </Animated.View>
+
         {/* On-Device AI */}
         <Animated.View entering={FadeInDown.delay(250).springify()}>
           <SectionTitle title="ON-DEVICE AI" />

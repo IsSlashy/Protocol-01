@@ -34,6 +34,7 @@ import {
   QuoteResponse,
   getPopularTokens,
 } from '@/services/jupiter';
+import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 
 type SwapStatus = 'idle' | 'quoting' | 'signing' | 'swapping' | 'confirming' | 'success' | 'error';
 
@@ -63,6 +64,7 @@ export default function SwapScreen() {
   const router = useRouter();
   const { publicKey, balance } = useWalletStore();
   const { walletAddress, signTransaction: privySignTransaction } = useAuth();
+  const { authenticateForSend } = useSecuritySettings();
 
   // Token state
   const [inputToken, setInputToken] = useState<JupiterToken>(DEFAULT_INPUT);
@@ -190,6 +192,10 @@ export default function SwapScreen() {
   // Execute swap
   const handleSwap = async () => {
     if (!quote || !publicKey) return;
+
+    // M4: Require auth before swap transaction
+    const authOk = await authenticateForSend();
+    if (!authOk) return;
 
     Keyboard.dismiss();
     setError(null);
