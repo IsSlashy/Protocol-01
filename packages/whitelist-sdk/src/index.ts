@@ -67,6 +67,10 @@ export function getWhitelistEntryPDA(wallet: PublicKey): [PublicKey, number] {
  * Only the admin can decrypt this data
  */
 export function encryptForAdmin(data: AccessRequest): EncryptedData {
+  if (ADMIN_ENCRYPTION_PUBKEY.every(b => b === 0)) {
+    throw new Error('Admin encryption key not configured — set ADMIN_ENCRYPTION_PUBKEY before use');
+  }
+
   const message = naclUtil.decodeUTF8(JSON.stringify(data));
   const nonce = nacl.randomBytes(nacl.box.nonceLength);
 

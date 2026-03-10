@@ -192,6 +192,8 @@ export function generatePrivatePaymentData(
  */
 function generateSubscriptionId(): string {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 8);
+  const bytes = new Uint8Array(6);
+  globalThis.crypto.getRandomValues(bytes);
+  const random = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
   return `psub_${timestamp}_${random}`;
 }

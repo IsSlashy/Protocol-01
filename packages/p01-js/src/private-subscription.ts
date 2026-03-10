@@ -125,12 +125,21 @@ const MAX_RETRY_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 
 // ============ Helpers ============
 
+/** CSPRNG-backed random float in [0, 1) */
+function secureRandom(): number {
+  const arr = new Uint32Array(1);
+  globalThis.crypto.getRandomValues(arr);
+  return arr[0] / 0x100000000;
+}
+
 /**
  * Generate a random subscription ID.
  */
 function generateSubscriptionId(): string {
   const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).substring(2, 10);
+  const bytes = new Uint8Array(6);
+  globalThis.crypto.getRandomValues(bytes);
+  const rand = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
   return `psub_${ts}${rand}`;
 }
 
@@ -139,7 +148,7 @@ function generateSubscriptionId(): string {
  */
 function computeJitteredDelay(jitter: PrivateSubscriptionConfig['jitter']): number {
   const { minIntervalMs, maxIntervalMs } = jitter;
-  return minIntervalMs + Math.random() * (maxIntervalMs - minIntervalMs);
+  return minIntervalMs + secureRandom() * (maxIntervalMs - minIntervalMs);
 }
 
 /**

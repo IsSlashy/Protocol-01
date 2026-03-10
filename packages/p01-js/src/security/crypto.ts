@@ -17,6 +17,7 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { x25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
+import { sha512 as realSha512 } from '@noble/hashes/sha512';
 import { blake2b } from '@noble/hashes/blake2b';
 import { hkdf } from '@noble/hashes/hkdf';
 import { randomBytes } from '@noble/hashes/utils';
@@ -886,16 +887,10 @@ export function base64ToBytes(base64: string): Uint8Array {
 // ============ Internal Helpers ============
 
 /**
- * Simple SHA-512 implementation for ed25519 to x25519 conversion
- * Uses the same approach as @noble/hashes
+ * SHA-512 using @noble/hashes (real implementation, required for Ed25519→X25519 conversion)
  */
 function sha512(data: Uint8Array): Uint8Array {
-  // Import dynamically to avoid bundling if not needed
-  // For now, use a simplified approach based on SHA-256
-  // In production, import from @noble/hashes/sha512
-  const hash1 = hashSHA256(data);
-  const hash2 = hashSHA256(new Uint8Array([...data, 0x01]));
-  return new Uint8Array([...hash1, ...hash2]);
+  return realSha512(data);
 }
 
 /**
