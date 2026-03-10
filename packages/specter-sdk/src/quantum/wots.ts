@@ -115,7 +115,7 @@ export function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignatu
     const nibble = allNibbles[i];
 
     // Signature value = hash^(15 - nibble)(secret_i)
-    const stepsToHash = WOTS_MAX_VAL - nibble;
+    const stepsToHash = WOTS_MAX_VAL - nibble!;
     let current: Uint8Array = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
 
     for (let step = 0; step < stepsToHash; step++) {
@@ -162,7 +162,7 @@ export function wotsVerify(
     const nibble = allNibbles[i];
 
     let current: Uint8Array = sig.signature.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
-    for (let step = 0; step < nibble; step++) {
+    for (let step = 0; step < nibble!; step++) {
       current = new Uint8Array(sha256(current));
     }
 
@@ -242,7 +242,7 @@ function extractNibbles(message: Uint8Array): number[] {
 function computeChecksum(msgNibbles: number[]): number[] {
   let checksum = 0;
   for (let i = 0; i < msgNibbles.length; i++) {
-    checksum += WOTS_MAX_VAL - msgNibbles[i];
+    checksum += WOTS_MAX_VAL - msgNibbles[i]!;
   }
   // Encode checksum as 3 base-16 nibbles (big-endian)
   const c2 = checksum & 0x0f;
