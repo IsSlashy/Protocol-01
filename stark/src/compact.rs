@@ -6,13 +6,16 @@
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::FieldElement;
 
+/// Goldilocks prime: p = 2^64 - 2^32 + 1
+const GOLDILOCKS_PRIME: u64 = 0xFFFFFFFF00000001;
+
 /// Trace parameters matching the on-chain verifier.
 const TRACE_WIDTH: usize = 3;
 const TRACE_LENGTH: usize = 32;
-const BLOWUP: usize = 8;
+const BLOWUP: usize = 16;
 const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-const NUM_QUERIES: usize = 16;
-const MERKLE_DEPTH: usize = 8;
+const NUM_QUERIES: usize = 128;
+const MERKLE_DEPTH: usize = 9; // log2(512) = 9
 const NUM_ROUNDS: usize = 30;
 
 /// Generate a compact proof for subscriber_ownership.
@@ -26,17 +29,33 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
     let trace = crate::air::subscriber_ownership::build_trace(secret);
     let commitment = trace[0][NUM_ROUNDS].as_int();
 
-    // 2. Compute LDE: evaluate trace polynomial at 256 points
+    // 2. Compute LDE: evaluate trace polynomial at LDE_SIZE points
     let lde = compute_lde(&trace);
 
     // 3. Build Merkle tree over LDE rows
     let (root, tree) = build_merkle_tree(&lde);
 
-    // 4. Derive query positions from Fiat-Shamir
+    // 4. [H10] Derive OOD point from Fiat-Shamir transcript
     let commitment_bytes = commitment.to_le_bytes();
-    let positions = derive_query_positions(&root, &commitment_bytes);
+    let ood_z = derive_ood_point(&root, &commitment_bytes);
 
-    // 5. Build query proofs with Merkle paths
+    // 5. Compute OOD evaluations by evaluating trace polynomials at ood_z
+    let ood_z_felt = BaseElement::new(ood_z);
+    let trace_g = get_trace_domain_generator();
+    let ood_z_next = ood_z_felt * trace_g; // z * g (next row in trace domain)
+    let mut ood_current = [0u64; 3];
+    let mut ood_next = [0u64; 3];
+    for col in 0..TRACE_WIDTH {
+        let poly = interpolate_poly(&trace[col]);
+        ood_current[col] = evaluate_poly(&poly, ood_z_felt).as_int();
+        ood_next[col] = evaluate_poly(&poly, ood_z_next).as_int();
+    }
+
+    // 6. [H9] Include OOD evaluations in Fiat-Shamir transcript before deriving queries
+    let positions = derive_query_positions_with_ood(&root, &commitment_bytes, &ood_current, &ood_next);
+
+    // 7. Build query proofs with Merkle paths
+    let lde_g = get_lde_domain_generator();
     let mut queries = Vec::new();
     for &pos in &positions {
         let next_pos = (pos + BLOWUP) % LDE_SIZE;
@@ -68,15 +87,14 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
         });
     }
 
-    // 6. OOD evaluations (simplified: use trace values at index 1 as representative)
-    let ood_z = 0x123456789ABCDEF0_u64; // deterministic OOD point
-    let ood_current = [lde[0][1].as_int(), lde[1][1].as_int(), lde[2][1].as_int()];
-    let ood_next = [lde[0][1 + TRACE_LENGTH].as_int(), lde[1][1 + TRACE_LENGTH].as_int(), lde[2][1 + TRACE_LENGTH].as_int()];
+    // 8. [H11] Compute actual quotient polynomial values
+    let quotient_values: Vec<u64> = positions.iter().map(|&pos| {
+        compute_quotient_at_position(
+            &lde, pos, BLOWUP, TRACE_LENGTH, TRACE_WIDTH, NUM_ROUNDS, &lde_g,
+        )
+    }).collect();
 
-    // 7. Quotient values (placeholder — real verifier checks constraint polynomial)
-    let quotient_values: Vec<u64> = positions.iter().map(|_| 0u64).collect();
-
-    // 8. Serialize
+    // 9. Serialize
     let bytes = serialize_compact_proof(
         &root,
         &ood_current,
@@ -107,27 +125,241 @@ struct CompactQuery {
     next_merkle_path: [[u8; 32]; MERKLE_DEPTH],
 }
 
+/// [H10] Derive OOD evaluation point from Fiat-Shamir transcript.
+/// Uses blake3(trace_root || commitment_bytes) to derive a field element.
+fn derive_ood_point(root: &[u8; 32], commitment_bytes: &[u8]) -> u64 {
+    let mut data = Vec::with_capacity(32 + commitment_bytes.len());
+    data.extend_from_slice(root);
+    data.extend_from_slice(commitment_bytes);
+    let hash = blake3::hash(&data);
+    let mut ood_z = u64::from_le_bytes(hash.as_bytes()[0..8].try_into().unwrap()) % GOLDILOCKS_PRIME;
+    // Ensure ood_z is not zero (not in any trace domain)
+    if ood_z == 0 { ood_z = 1; }
+    ood_z
+}
+
+/// [H10] Derive OOD evaluation point from Fiat-Shamir transcript (generic version).
+fn derive_ood_point_generic(root: &[u8; 32], pub_input_bytes: &[u8]) -> u64 {
+    derive_ood_point(root, pub_input_bytes)
+}
+
+/// [H9] Derive query positions with OOD evaluations included in the transcript.
+fn derive_query_positions_with_ood(
+    root: &[u8; 32],
+    commitment_bytes: &[u8],
+    ood_current: &[u64],
+    ood_next: &[u64],
+) -> Vec<usize> {
+    // Build full transcript: trace_root || commitment || ood_current || ood_next
+    let mut transcript = Vec::new();
+    transcript.extend_from_slice(root);
+    transcript.extend_from_slice(commitment_bytes);
+    for val in ood_current {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    for val in ood_next {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    let query_seed = blake3::hash(&transcript);
+
+    let mut positions = Vec::new();
+    let mut counter = 0u32;
+
+    while positions.len() < NUM_QUERIES {
+        let mut input = Vec::with_capacity(32 + 4);
+        input.extend_from_slice(query_seed.as_bytes());
+        input.extend_from_slice(&counter.to_le_bytes());
+
+        let hash = blake3::hash(&input);
+        let bytes = hash.as_bytes();
+
+        for chunk in bytes.chunks(4) {
+            if positions.len() >= NUM_QUERIES {
+                break;
+            }
+            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let pos = (val as usize) % LDE_SIZE;
+            if !positions.contains(&pos) {
+                positions.push(pos);
+            }
+        }
+        counter += 1;
+    }
+
+    positions.sort();
+    positions
+}
+
+/// [H11] Compute the quotient polynomial value Q(x) = C(x) / Z_D(x) at an LDE position.
+///
+/// For subscriber_ownership (circuit 0), the transition constraint is:
+///   For active rounds (row < NUM_ROUNDS): next = MDS * sbox(current + RC)
+///   For padding rows: next = current
+///
+/// The constraint polynomial C(x) evaluates to 0 on the trace domain when constraints hold.
+/// The vanishing polynomial Z_D(x) = x^n - 1 where n = trace_length.
+/// Q(x) = C(x) / Z_D(x) is well-defined when C vanishes on the trace domain.
+fn compute_quotient_at_position(
+    lde: &[Vec<BaseElement>],
+    pos: usize,
+    blowup: usize,
+    trace_length: usize,
+    trace_width: usize,
+    num_rounds: usize,
+    lde_g: &BaseElement,
+) -> u64 {
+    let lde_size = trace_length * blowup;
+    let next_pos = (pos + blowup) % lde_size;
+
+    // Get trace values at this LDE position and the next
+    let current: Vec<BaseElement> = (0..trace_width).map(|col| lde[col][pos]).collect();
+    let next: Vec<BaseElement> = (0..trace_width).map(|col| lde[col][next_pos]).collect();
+
+    // The LDE domain point: omega^pos
+    let domain_point = lde_g.exp(pos as u64);
+
+    // Compute the constraint evaluation
+    // We need to evaluate the combined constraint that uses periodic columns.
+    // The trace domain generator omega_trace = omega_lde^blowup
+    let trace_g = lde_g.exp(blowup as u64);
+
+    // Compute the round position in the trace by figuring out which trace row
+    // this LDE position corresponds to (approximately).
+    // For a proper STARK, we evaluate the constraint polynomial over the LDE,
+    // which requires evaluating periodic columns at the LDE point.
+    //
+    // The periodic column for round flag at LDE point x:
+    //   flag(x) = sum over active trace rows of L_i(x)
+    // where L_i is the Lagrange basis. For simplicity, we use the constraint
+    // polynomial evaluated via the trace polynomial approach.
+
+    // Evaluate constraint: for each column, compute next_col - expected_col
+    // where expected comes from the Poseidon round or identity
+    let constraint_eval = evaluate_transition_constraint(
+        &current, &next, domain_point, trace_g, trace_length, num_rounds,
+    );
+
+    // Vanishing polynomial: Z_D(x) = x^trace_length - 1
+    let x_n = domain_point.exp(trace_length as u64);
+    let vanishing = x_n - BaseElement::ONE;
+
+    // Q(x) = C(x) / Z_D(x)
+    if vanishing == BaseElement::ZERO {
+        0u64
+    } else {
+        let quotient = constraint_eval * vanishing.inv();
+        quotient.as_int()
+    }
+}
+
+/// Evaluate the combined transition constraint polynomial at an LDE point.
+///
+/// The constraint uses a flag polynomial that equals 1 on active round rows and 0 on padding.
+/// Combined: result = next - current - flag(x) * (round_output(x) - current)
+///
+/// For the Poseidon round, we need round constants at this evaluation point.
+/// The periodic columns are polynomials that interpolate the round constants over the trace domain.
+fn evaluate_transition_constraint(
+    current: &[BaseElement],
+    next: &[BaseElement],
+    x: BaseElement, // LDE domain point
+    trace_g: BaseElement, // trace domain generator
+    trace_length: usize,
+    num_rounds: usize,
+) -> BaseElement {
+    let rc = &crate::poseidon::constants::ROUND_CONSTANTS_T3;
+
+    // Build periodic column values at point x by evaluating the interpolated polynomial
+    // Periodic columns are defined by their values at trace domain points
+    let mut rc0_vals = vec![BaseElement::ZERO; trace_length];
+    let mut rc1_vals = vec![BaseElement::ZERO; trace_length];
+    let mut rc2_vals = vec![BaseElement::ZERO; trace_length];
+    let mut flag_vals = vec![BaseElement::ZERO; trace_length];
+
+    for round in 0..num_rounds {
+        rc0_vals[round] = rc[round * 3];
+        rc1_vals[round] = rc[round * 3 + 1];
+        rc2_vals[round] = rc[round * 3 + 2];
+        flag_vals[round] = BaseElement::ONE;
+    }
+
+    // Interpolate and evaluate periodic columns at x
+    let rc0_poly = inverse_ntt(&rc0_vals, trace_g);
+    let rc1_poly = inverse_ntt(&rc1_vals, trace_g);
+    let rc2_poly = inverse_ntt(&rc2_vals, trace_g);
+    let flag_poly = inverse_ntt(&flag_vals, trace_g);
+
+    let rc0_x = evaluate_poly(&rc0_poly, x);
+    let rc1_x = evaluate_poly(&rc1_poly, x);
+    let rc2_x = evaluate_poly(&rc2_poly, x);
+    let flag_x = evaluate_poly(&flag_poly, x);
+
+    // Add round constants
+    let s0 = current[0] + rc0_x;
+    let s1 = current[1] + rc1_x;
+    let s2 = current[2] + rc2_x;
+
+    // S-box: x^7
+    let sb0 = {
+        let x2 = s0 * s0;
+        let x4 = x2 * x2;
+        x4 * x2 * s0
+    };
+    let sb1 = {
+        let x2 = s1 * s1;
+        let x4 = x2 * x2;
+        x4 * x2 * s1
+    };
+    let sb2 = {
+        let x2 = s2 * s2;
+        let x4 = x2 * x2;
+        x4 * x2 * s2
+    };
+
+    // MDS multiplication: [[3,1,1],[1,3,1],[1,1,3]]
+    let three = BaseElement::new(3);
+    let round_out_0 = three * sb0 + sb1 + sb2;
+    let round_out_1 = sb0 + three * sb1 + sb2;
+    let round_out_2 = sb0 + sb1 + three * sb2;
+
+    // Combined constraint: next[i] - current[i] - flag * (round_output[i] - current[i])
+    let c0 = next[0] - current[0] - flag_x * (round_out_0 - current[0]);
+    let c1 = next[1] - current[1] - flag_x * (round_out_1 - current[1]);
+    let c2 = next[2] - current[2] - flag_x * (round_out_2 - current[2]);
+
+    // Sum constraints (they should all be close to zero on trace domain,
+    // but we combine them into a single quotient)
+    c0 + c1 + c2
+}
+
+/// [H11] Compute quotient value for generic circuits.
+/// Uses the Poseidon transition constraint evaluation.
+fn compute_quotient_at_position_generic(
+    lde: &[Vec<BaseElement>],
+    pos: usize,
+    blowup: usize,
+    trace_length: usize,
+    trace_width: usize,
+    num_rounds: usize,
+    lde_g: &BaseElement,
+) -> u64 {
+    // For generic circuits, we compute the Poseidon transition constraint
+    // over the first 3 columns (all circuits use cols 0-2 for Poseidon state).
+    // This is the same structure across all circuits.
+    compute_quotient_at_position(lde, pos, blowup, trace_length, trace_width.min(3), num_rounds, lde_g)
+}
+
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
 /// Uses FFT interpolation + evaluation.
 fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
     let mut lde = vec![vec![BaseElement::ZERO; LDE_SIZE]; TRACE_WIDTH];
 
     for col in 0..TRACE_WIDTH {
-        // Simple approach: the trace defines values at positions 0, BLOWUP, 2*BLOWUP, ...
-        // For a proper LDE, we'd do polynomial interpolation then evaluation.
-        // Simplified: copy trace values to their LDE positions and interpolate linearly.
-        for row in 0..TRACE_LENGTH {
-            lde[col][row * BLOWUP] = trace[col][row];
-        }
-
-        // Interpolate intermediate positions using Lagrange
-        // For simplicity and correctness on-chain, use the trace polynomial approach:
-        // The trace polynomial T(x) passes through all 32 trace points.
-        // Evaluate T at all 256 LDE domain points.
+        // Interpolate: get polynomial coefficients from trace values.
+        // Then evaluate at all LDE domain points.
         let poly = interpolate_poly(&trace[col]);
+        let g = get_lde_domain_generator();
         for i in 0..LDE_SIZE {
-            // LDE domain point: generator^i where generator is a 256th root of unity
-            let g = get_lde_domain_generator();
             let x = g.exp(i as u64);
             lde[col][i] = evaluate_poly(&poly, x);
         }
@@ -136,24 +368,10 @@ fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
     lde
 }
 
-/// Get a primitive 256th root of unity in the Goldilocks field.
+/// Get a primitive LDE_SIZE-th root of unity in the Goldilocks field.
 fn get_lde_domain_generator() -> BaseElement {
-    // The Goldilocks field has a multiplicative group of order 2^64 - 2^32.
-    // A 2^k-th root of unity exists for k up to 32.
-    // g_256 = g_{2^32}^{2^32 / 256} = g_{2^32}^{2^24}
-    // where g_{2^32} is a primitive 2^32-th root of unity.
-    //
-    // A known generator of the multiplicative group: 7
-    // g_{2^32} = 7^((p-1)/2^32)
-    let p_minus_1 = BaseElement::new(0xFFFFFFFF00000000_u64); // p - 1
-    let exp = p_minus_1.as_int() / (1u64 << 32); // (p-1) / 2^32
-    let g_2_32 = BaseElement::new(7).exp_vartime(exp.into());
-    // g_256 = g_2_32^(2^24)
-    let mut g = g_2_32;
-    for _ in 0..24 {
-        g = g * g;
-    }
-    g
+    // Use the generic domain generator for consistency
+    get_domain_generator_generic(LDE_SIZE)
 }
 
 /// Lagrange interpolation to get polynomial coefficients from trace values.
@@ -170,7 +388,8 @@ fn get_trace_domain_generator() -> BaseElement {
     let lde_g = get_lde_domain_generator();
     // trace generator = lde_generator^BLOWUP
     let mut g = lde_g;
-    for _ in 0..3 { // BLOWUP = 8 = 2^3
+    let blowup_log2 = BLOWUP.trailing_zeros(); // BLOWUP = 16 = 2^4
+    for _ in 0..blowup_log2 {
         g = g * g;
     }
     g
@@ -286,38 +505,7 @@ fn get_merkle_proof(tree: &[Vec<[u8; 32]>], index: usize) -> [[u8; 32]; MERKLE_D
     proof
 }
 
-fn derive_query_positions(root: &[u8; 32], commitment_bytes: &[u8; 8]) -> Vec<usize> {
-    let mut seed = [0u8; 40];
-    seed[..32].copy_from_slice(root);
-    seed[32..40].copy_from_slice(commitment_bytes);
-
-    let mut positions = Vec::new();
-    let mut counter = 0u32;
-
-    while positions.len() < NUM_QUERIES {
-        let mut input = [0u8; 44];
-        input[..40].copy_from_slice(&seed);
-        input[40..44].copy_from_slice(&counter.to_le_bytes());
-
-        let hash = blake3::hash(&input);
-        let bytes = hash.as_bytes();
-
-        for chunk in bytes.chunks(4) {
-            if positions.len() >= NUM_QUERIES {
-                break;
-            }
-            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            let pos = (val as usize) % LDE_SIZE;
-            if !positions.contains(&pos) {
-                positions.push(pos);
-            }
-        }
-        counter += 1;
-    }
-
-    positions.sort();
-    positions
-}
+// Legacy derive_query_positions removed — replaced by derive_query_positions_with_ood (H9)
 
 fn serialize_compact_proof(
     root: &[u8; 32],
@@ -387,18 +575,18 @@ mod tests {
 
         assert!(!proof_data.proof_bytes.is_empty());
         assert!(proof_data.commitment != 0);
-        assert!(proof_data.proof_bytes.len() < 20_000, "Proof too large");
+        assert!(proof_data.proof_bytes.len() < 200_000, "Proof too large");
     }
 
     #[test]
     fn test_lde_domain_generator() {
         let g = get_lde_domain_generator();
-        // g^256 should equal 1 (256th root of unity)
-        let g_256 = g.exp(256u64.into());
-        assert_eq!(g_256, BaseElement::ONE, "g^256 should be 1");
-        // g^128 should not be 1 (primitive)
-        let g_128 = g.exp(128u64.into());
-        assert_ne!(g_128, BaseElement::ONE, "g should be primitive 256th root");
+        // g^LDE_SIZE should equal 1 (LDE_SIZE-th root of unity)
+        let g_n = g.exp(LDE_SIZE as u64);
+        assert_eq!(g_n, BaseElement::ONE, "g^LDE_SIZE should be 1");
+        // g^(LDE_SIZE/2) should not be 1 (primitive)
+        let g_half = g.exp((LDE_SIZE / 2) as u64);
+        assert_ne!(g_half, BaseElement::ONE, "g should be primitive LDE_SIZE-th root");
     }
 
     #[test]
@@ -491,7 +679,7 @@ mod tests {
     fn test_pool_commitment_compact_proof() {
         let proof = generate_pool_commitment_proof(111, 222, 333, 444);
         assert!(!proof.proof_bytes.is_empty());
-        assert!(proof.proof_bytes.len() < 30_000, "Pool proof too large: {}", proof.proof_bytes.len());
+        assert!(proof.proof_bytes.len() < 500_000, "Pool proof too large: {}", proof.proof_bytes.len());
         println!("Pool commitment proof size: {} bytes", proof.proof_bytes.len());
         println!("Public inputs: {:?}", proof.public_inputs);
     }
@@ -500,7 +688,7 @@ mod tests {
     fn test_balance_compact_proof() {
         let proof = generate_balance_compact_proof(42, 1000, 777, 999);
         assert!(!proof.proof_bytes.is_empty());
-        assert!(proof.proof_bytes.len() < 30_000, "Balance proof too large: {}", proof.proof_bytes.len());
+        assert!(proof.proof_bytes.len() < 500_000, "Balance proof too large: {}", proof.proof_bytes.len());
         println!("Balance proof size: {} bytes", proof.proof_bytes.len());
     }
 
@@ -511,7 +699,7 @@ mod tests {
         let path_indices = vec![0u8, 1, 0];
         let proof = generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices);
         assert!(!proof.proof_bytes.is_empty());
-        assert!(proof.proof_bytes.len() < 30_000, "Merkle proof too large: {}", proof.proof_bytes.len());
+        assert!(proof.proof_bytes.len() < 500_000, "Merkle proof too large: {}", proof.proof_bytes.len());
         println!("Merkle path (depth 3) proof size: {} bytes", proof.proof_bytes.len());
     }
 
@@ -523,7 +711,7 @@ mod tests {
         assert_eq!(proof.circuit_id, CIRCUIT_CONFIDENTIAL_BALANCE);
         assert_eq!(proof.public_inputs.len(), 4);
         assert!(!proof.proof_bytes.is_empty());
-        assert!(proof.proof_bytes.len() < 50_000, "Confidential balance proof too large: {}", proof.proof_bytes.len());
+        assert!(proof.proof_bytes.len() < 800_000, "Confidential balance proof too large: {}", proof.proof_bytes.len());
         println!("Confidential balance proof size: {} bytes", proof.proof_bytes.len());
     }
 
@@ -547,7 +735,7 @@ mod tests {
         assert_eq!(proof.circuit_id, CIRCUIT_TRANSFER);
         assert_eq!(proof.public_inputs.len(), 6);
         assert!(!proof.proof_bytes.is_empty());
-        assert!(proof.proof_bytes.len() < 100_000, "Transfer proof too large: {}", proof.proof_bytes.len());
+        assert!(proof.proof_bytes.len() < 1_500_000, "Transfer proof too large: {}", proof.proof_bytes.len());
         println!("Transfer proof size: {} bytes", proof.proof_bytes.len());
     }
 }
@@ -681,23 +869,33 @@ fn get_merkle_proof_generic(
     proof
 }
 
-/// Derive query positions using Fiat-Shamir (generic LDE size).
+/// [H9] Derive query positions using Fiat-Shamir with OOD evaluations in transcript (generic).
 fn derive_query_positions_generic(
     root: &[u8; 32],
     pub_input_bytes: &[u8],
+    ood_current: &[u64],
+    ood_next: &[u64],
     lde_size: usize,
     num_queries: usize,
 ) -> Vec<usize> {
-    let mut seed = Vec::with_capacity(32 + pub_input_bytes.len());
-    seed.extend_from_slice(root);
-    seed.extend_from_slice(pub_input_bytes);
+    // Build full transcript: trace_root || pub_inputs || ood_current || ood_next
+    let mut transcript = Vec::new();
+    transcript.extend_from_slice(root);
+    transcript.extend_from_slice(pub_input_bytes);
+    for val in ood_current {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    for val in ood_next {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    let query_seed = blake3::hash(&transcript);
 
     let mut positions = Vec::new();
     let mut counter = 0u32;
 
     while positions.len() < num_queries {
-        let mut input = Vec::with_capacity(seed.len() + 4);
-        input.extend_from_slice(&seed);
+        let mut input = Vec::with_capacity(32 + 4);
+        input.extend_from_slice(query_seed.as_bytes());
         input.extend_from_slice(&counter.to_le_bytes());
 
         let hash = blake3::hash(&input);
@@ -738,24 +936,39 @@ fn generate_compact_proof_from_trace(
     // 2. Build Merkle tree
     let (root, tree) = build_merkle_tree_generic(&lde, trace_width);
 
-    // 3. Derive query positions
-    let positions = derive_query_positions_generic(&root, pub_input_bytes, lde_size, num_queries);
+    // 3. [H10] Derive OOD point from Fiat-Shamir transcript
+    let ood_z = derive_ood_point_generic(&root, pub_input_bytes);
 
-    // 4. Build query proofs
+    // 4. Compute OOD evaluations by evaluating trace polynomials at ood_z
+    let ood_z_felt = BaseElement::new(ood_z);
+    let trace_g = get_domain_generator_generic(trace_length);
+    let ood_z_next = ood_z_felt * trace_g; // z * g (next row in trace domain)
+    let mut ood_current_vals: Vec<u64> = Vec::with_capacity(trace_width);
+    let mut ood_next_vals: Vec<u64> = Vec::with_capacity(trace_width);
+    for col in 0..trace_width {
+        let poly = inverse_ntt(&trace[col], trace_g);
+        ood_current_vals.push(evaluate_poly(&poly, ood_z_felt).as_int());
+        ood_next_vals.push(evaluate_poly(&poly, ood_z_next).as_int());
+    }
+
+    // 5. [H9] Derive query positions with OOD in transcript
+    let positions = derive_query_positions_generic(
+        &root, pub_input_bytes, &ood_current_vals, &ood_next_vals,
+        lde_size, num_queries,
+    );
+
+    // 6. Build query proofs
     let mut bytes = Vec::new();
 
     // Header: trace_root
     bytes.extend_from_slice(&root);
 
-    // OOD evaluations (simplified)
-    let ood_z = 0x123456789ABCDEF0_u64;
-    for col in 0..trace_width {
-        bytes.extend_from_slice(&lde[col][1].as_int().to_le_bytes());
+    // OOD evaluations
+    for val in &ood_current_vals {
+        bytes.extend_from_slice(&val.to_le_bytes());
     }
-    let next_ood_idx = 1 + trace_length;
-    for col in 0..trace_width {
-        let idx = if next_ood_idx < lde_size { next_ood_idx } else { next_ood_idx % lde_size };
-        bytes.extend_from_slice(&lde[col][idx].as_int().to_le_bytes());
+    for val in &ood_next_vals {
+        bytes.extend_from_slice(&val.to_le_bytes());
     }
     bytes.extend_from_slice(&ood_z.to_le_bytes());
 
@@ -788,9 +1001,13 @@ fn generate_compact_proof_from_trace(
         }
     }
 
-    // Quotient values (placeholder)
-    for _ in 0..num_queries {
-        bytes.extend_from_slice(&0u64.to_le_bytes());
+    // 7. [H11] Compute actual quotient polynomial values
+    let lde_g = get_domain_generator_generic(lde_size);
+    for &pos in &positions {
+        let qv = compute_quotient_at_position_generic(
+            &lde, pos, blowup, trace_length, trace_width, NUM_ROUNDS, &lde_g,
+        );
+        bytes.extend_from_slice(&qv.to_le_bytes());
     }
 
     (bytes, root)
@@ -800,8 +1017,8 @@ fn generate_compact_proof_from_trace(
 // Circuit-specific compact proof generators
 // ============================================================================
 
-const GENERIC_BLOWUP: usize = 8;
-const GENERIC_NUM_QUERIES: usize = 16;
+const GENERIC_BLOWUP: usize = 16;
+const GENERIC_NUM_QUERIES: usize = 128;
 
 /// Generate compact proof for denominated pool commitment.
 ///

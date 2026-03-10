@@ -24,9 +24,9 @@ pub struct CircuitConfig {
 pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
     trace_width: 3,
     trace_length: 32,
-    blowup: 8,
-    lde_size: 256,
-    merkle_depth: 8,
+    blowup: 16,
+    lde_size: 512,
+    merkle_depth: 9,   // log2(512) = 9
     num_rounds: 30,
 };
 
@@ -34,9 +34,9 @@ pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
 pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     trace_width: 3,
     trace_length: 128,
-    blowup: 8,
-    lde_size: 1024,
-    merkle_depth: 10,
+    blowup: 16,
+    lde_size: 2048,
+    merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
 };
 
@@ -44,9 +44,9 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
 pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
     trace_width: 4,
     trace_length: 128,
-    blowup: 8,
-    lde_size: 1024,
-    merkle_depth: 10,
+    blowup: 16,
+    lde_size: 2048,
+    merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
 };
 
@@ -54,9 +54,9 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
 pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512, // depth 15: 15 * 32 = 480, next_pow2 = 512
-    blowup: 8,
-    lde_size: 4096,
-    merkle_depth: 12,
+    blowup: 16,
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
 };
 
@@ -64,9 +64,9 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
 pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
     trace_width: 4,
     trace_length: 256,
-    blowup: 8,
-    lde_size: 2048,
-    merkle_depth: 11,  // log2(2048) = 11
+    blowup: 16,
+    lde_size: 4096,
+    merkle_depth: 12,  // log2(4096) = 12
     num_rounds: 30,
 };
 
@@ -74,9 +74,9 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
 pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512,
-    blowup: 8,
-    lde_size: 4096,
-    merkle_depth: 12,  // log2(4096) = 12
+    blowup: 16,
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
 };
 
@@ -98,10 +98,10 @@ pub fn get_circuit_config(circuit_id: u8) -> Option<&'static CircuitConfig> {
 
 pub const TRACE_WIDTH: usize = 3;
 pub const TRACE_LENGTH: usize = 32;
-pub const BLOWUP: usize = 8;
+pub const BLOWUP: usize = 16;
 pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-pub const NUM_QUERIES: usize = 16;
-pub const MERKLE_DEPTH: usize = 8;
+pub const NUM_QUERIES: usize = 128;
+pub const MERKLE_DEPTH: usize = 9; // log2(512) = 9
 pub const NUM_ROUNDS: usize = 30;
 
 // ============================================================================
@@ -166,7 +166,7 @@ impl GenericCompactProof {
         let num_queries = u16::from_le_bytes([data[cursor], data[cursor + 1]]) as usize;
         cursor += 2;
 
-        if num_queries > 64 { return None; }
+        if num_queries > 256 { return None; }
 
         let mut queries = Vec::with_capacity(num_queries);
         for _ in 0..num_queries {
@@ -277,7 +277,7 @@ impl CompactStarkProof {
         if data.len() < cursor + 2 { return None; }
         let num_queries = u16::from_le_bytes([data[cursor], data[cursor + 1]]) as usize;
         cursor += 2;
-        if num_queries > 64 { return None; }
+        if num_queries > 256 { return None; }
 
         let mut queries = Vec::with_capacity(num_queries);
         for _ in 0..num_queries {
@@ -289,8 +289,8 @@ impl CompactStarkProof {
 
             let trace_values = read_felt_array_3(data, &mut cursor)?;
             let next_trace_values = read_felt_array_3(data, &mut cursor)?;
-            let merkle_path = read_hash_array_8(data, &mut cursor)?;
-            let next_merkle_path = read_hash_array_8(data, &mut cursor)?;
+            let merkle_path = read_hash_array(data, &mut cursor)?;
+            let next_merkle_path = read_hash_array(data, &mut cursor)?;
 
             queries.push(LegacyQueryProof {
                 position,
@@ -336,8 +336,8 @@ fn read_felt_array_3(data: &[u8], cursor: &mut usize) -> Option<[Felt; 3]> {
     Some(arr)
 }
 
-fn read_hash_array_8(data: &[u8], cursor: &mut usize) -> Option<[[u8; 32]; 8]> {
-    let mut arr = [[0u8; 32]; 8];
+fn read_hash_array(data: &[u8], cursor: &mut usize) -> Option<[[u8; 32]; MERKLE_DEPTH]> {
+    let mut arr = [[0u8; 32]; MERKLE_DEPTH];
     for item in arr.iter_mut() {
         if data.len() < *cursor + 32 { return None; }
         item.copy_from_slice(&data[*cursor..*cursor + 32]);
