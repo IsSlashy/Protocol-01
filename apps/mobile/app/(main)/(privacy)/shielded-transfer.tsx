@@ -172,11 +172,12 @@ export default function ShieldedTransferScreen() {
       const lastNote = getLastSentNote();
       if (lastNote) {
         await Clipboard.setStringAsync(lastNote.noteString);
+        setTimeout(() => Clipboard.setStringAsync(''), 60000);
         Alert.alert(
           `Transfer Successful${starkReady ? ' (STARK)' : ''}`,
-          `${amount} SOL has been sent privately.\n\nNote copied to clipboard!\n\nIMPORTANT: Share this note with the recipient so they can import it and receive the funds.`,
+          `${amount} SOL has been sent privately.\n\nNote copied to clipboard (auto-clears in 60s)!\n\nIMPORTANT: Share this note with the recipient so they can import it and receive the funds.`,
           [
-            { text: 'Copy Again', onPress: async () => { await Clipboard.setStringAsync(lastNote.noteString); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } },
+            { text: 'Copy Again', onPress: async () => { await Clipboard.setStringAsync(lastNote.noteString); setTimeout(() => Clipboard.setStringAsync(''), 60000); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } },
             { text: 'Done', onPress: () => router.back() },
           ]
         );

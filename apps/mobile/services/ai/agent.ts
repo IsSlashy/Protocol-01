@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { Stream } from '../solana/streams';
 import { analyzeStreams, formatAnalysisForAI, getBalanceSummary, StreamAnalysis } from './streamAnalyzer';
 import { getMarketSummary, formatMarketContext, MarketSummary } from '../crypto/marketData';
@@ -16,6 +17,48 @@ export interface AIConfig {
   gemmaBackend?: 'on-device' | 'google-ai' | 'ollama';
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
+  /** Allow sharing wallet balances/addresses/streams with cloud AI providers.
+   *  Defaults to false for cloud providers. On-device/local providers always have full access. */
+  shareWalletContext?: boolean;
+}
+
+/**
+ * Strip API keys from URLs before logging to prevent credential leakage.
+ * Google AI, Helius, and similar APIs require keys as query params — this
+ * ensures those keys never appear in console output or error reports.
+ */
+function sanitizeUrl(url: string): string {
+  return url.replace(/([?&])(key|api-key|api_key|apiKey)=[^&]+/gi, '$1$2=***');
+}
+
+/**
+ * Check whether a provider runs locally (on-device or local network).
+ * Local providers get full wallet context; cloud providers are gated.
+ */
+function isLocalProvider(config: AIConfig): boolean {
+  return config.provider === 'llama-local'
+    || config.provider === 'ollama'
+    || (config.provider === 'gemma' && config.gemmaBackend === 'on-device');
+}
+
+/**
+ * Build a market-only context string (no wallet addresses, exact balances, or stream data).
+ * Used when the user has not opted in to sharing wallet data with cloud providers.
+ */
+function buildMarketOnlyContext(context: AIContext): string {
+  const parts: string[] = [];
+  if (context.marketData) {
+    parts.push('LIVE MARKET DATA:');
+    parts.push(formatMarketContext(context.marketData));
+  }
+  // Indicate wallet presence without revealing exact balance or address
+  if (context.balance !== undefined) {
+    parts.push('\nWALLET: connected (balance details hidden for privacy)');
+  }
+  if (context.streams && context.streams.length > 0) {
+    parts.push(`\nSTREAMS: ${context.streams.length} active (details hidden for privacy)`);
+  }
+  return parts.join('\n');
 }
 
 // Default configurations for different providers
@@ -180,11 +223,20 @@ export function extractSuggestions(userMessage: string, _response: string): stri
 }
 
 // Load AI configuration from storage
+// API keys are stored in SecureStore (H6), non-sensitive config in AsyncStorage
 export async function loadConfig(): Promise<AIConfig> {
   try {
     const stored = await AsyncStorage.getItem(STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored) as AIConfig;
+      const config = JSON.parse(stored) as AIConfig;
+      // Merge API keys from SecureStore
+      const [secureApiKey, secureGroqKey] = await Promise.all([
+        SecureStore.getItemAsync('p01_ai_api_key'),
+        SecureStore.getItemAsync('p01_ai_groq_key'),
+      ]);
+      if (secureApiKey) config.apiKey = secureApiKey;
+      if (secureGroqKey) config.groqApiKey = secureGroqKey;
+      return config;
     }
   } catch {}
   // Default to Groq if API key available, else Gemma (cloud/on-device)
@@ -195,9 +247,24 @@ export async function loadConfig(): Promise<AIConfig> {
 }
 
 // Save AI configuration
+// API keys are extracted and stored separately in SecureStore (H6)
 export async function saveConfig(config: AIConfig): Promise<void> {
   try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    // Extract API keys into SecureStore
+    if (config.apiKey) {
+      await SecureStore.setItemAsync('p01_ai_api_key', config.apiKey);
+    } else {
+      await SecureStore.deleteItemAsync('p01_ai_api_key');
+    }
+    if (config.groqApiKey) {
+      await SecureStore.setItemAsync('p01_ai_groq_key', config.groqApiKey);
+    } else {
+      await SecureStore.deleteItemAsync('p01_ai_groq_key');
+    }
+
+    // Save non-sensitive config to AsyncStorage (strip keys)
+    const { apiKey, groqApiKey, ...safeConfig } = config;
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(safeConfig));
   } catch (error) {
     console.error('Failed to save AI config:', error);
     throw error;
@@ -224,6 +291,7 @@ export async function testConnection(config: AIConfig): Promise<{ success: boole
       if (config.gemmaBackend === 'google-ai') {
         const key = config.apiKey || GEMINI_API_KEY;
         if (!key) return { success: true }; // Falls back to free tier
+        // Google AI REST API requires ?key= query param (no header-based auth available)
         const response = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`
         );
@@ -318,7 +386,9 @@ export async function sendMessage(
       return { success: false, error: 'Unknown AI provider' };
     }
   } catch (error: any) {
-    console.error('AI request failed:', error);
+    // Sanitize error message to avoid leaking API keys from URLs in stack traces
+    const safeMsg = error.message ? sanitizeUrl(error.message) : 'unknown error';
+    console.error('AI request failed:', safeMsg);
     // Last resort: rule-based
     const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || '';
     return sendToRuleBased(lastUserMsg, context);
@@ -433,9 +503,11 @@ async function streamFromGemini(
       parts: [{ text: m.content }],
     }));
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`,
-    {
+  // Google AI REST API requires the API key as a query parameter (?key=...).
+  // This is a Google API requirement — there is no header-based auth option.
+  // The URL is never logged; see sanitizeUrl() for log-safe redaction.
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const response = await fetch(geminiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -451,7 +523,7 @@ async function streamFromGemini(
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Gemini error (${response.status}): ${err}`);
+    throw new Error(`Gemini streaming error (${response.status}): ${err.slice(0, 200)}`);
   }
 
   // Parse Gemini SSE format
@@ -560,12 +632,20 @@ async function parseSSEStream(
 // ---- Non-streaming Providers ----
 
 function buildEnhancedPrompt(config: AIConfig, context?: AIContext): string {
-  const isLocal = config.provider === 'llama-local' || (config.provider === 'gemma' && config.gemmaBackend === 'on-device');
-  let prompt = isLocal ? SYSTEM_PROMPT_LOCAL : SYSTEM_PROMPT;
+  const local = isLocalProvider(config);
+  let prompt = local ? SYSTEM_PROMPT_LOCAL : SYSTEM_PROMPT;
 
-  const contextStr = context ? buildContextString(context) : '';
-  if (contextStr) {
-    prompt += `\n\n${contextStr}`;
+  if (context) {
+    // Privacy gate: cloud providers only get market data unless user opts in.
+    // On-device/local providers always get full context (data stays on device).
+    const shareWallet = local || config.shareWalletContext === true;
+    const contextStr = shareWallet
+      ? buildContextString(context)
+      : buildMarketOnlyContext(context);
+
+    if (contextStr) {
+      prompt += `\n\n${contextStr}`;
+    }
   }
 
   return prompt;
@@ -620,6 +700,7 @@ async function sendToGemma(messages: ChatMessage[], config: AIConfig, context?: 
         parts: [{ text: m.content }],
       }));
 
+      // Google AI REST API requires ?key= query param (no header-based auth available)
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
         {
@@ -815,6 +896,13 @@ function fmtPrice(price: number): string {
 
 // Ollama API
 async function sendToOllama(messages: ChatMessage[], config: AIConfig): Promise<ChatResponse> {
+  // L11: Warn if remote Ollama endpoint is not using HTTPS
+  if (config.baseUrl
+    && !config.baseUrl.startsWith('https://')
+    && !config.baseUrl.includes('localhost')
+    && !config.baseUrl.includes('127.0.0.1')) {
+    if (__DEV__) console.warn('[AI] Remote Ollama endpoint should use HTTPS for security');
+  }
   const response = await fetch(`${config.baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
