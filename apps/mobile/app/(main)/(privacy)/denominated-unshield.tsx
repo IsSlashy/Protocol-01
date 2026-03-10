@@ -25,6 +25,7 @@ import { useArcium } from '@/providers/ArciumProvider';
 import { receiptFromJSON } from '@/services/denominatedPool';
 import { getKeypair } from '@/services/solana/wallet';
 import { useWalletStore } from '@/stores/walletStore';
+import { PublicKey } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 
@@ -104,7 +105,13 @@ function UnshieldScreenContent() {
       Alert.alert('Select a Note', 'Please select a note to withdraw.');
       return;
     }
-    if (!recipient || recipient.length < 32) {
+    // M5: Validate recipient is a valid Solana address using PublicKey constructor
+    let isValidRecipient = false;
+    try {
+      new PublicKey(recipient);
+      isValidRecipient = true;
+    } catch {}
+    if (!recipient || !isValidRecipient) {
       Alert.alert('Invalid Recipient', 'Please enter a valid Solana address.');
       return;
     }
