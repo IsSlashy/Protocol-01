@@ -56,7 +56,7 @@ pub struct Shield<'info> {
     pub user_token_account: Option<Account<'info, TokenAccount>>,
 
     /// Pool's token vault (optional, only for SPL tokens)
-    /// CHECK: Validated in handler when needed
+    /// When present, ownership is validated in handler (vault authority must be pool PDA).
     #[account(mut)]
     pub pool_vault: Option<Account<'info, TokenAccount>>,
 }
@@ -107,6 +107,11 @@ pub fn handler(ctx: Context<Shield>, amount: u64, commitment: [u8; 32], new_root
         require!(
             pool_vault.mint == pool.token_mint,
             ZkShieldedError::InvalidTokenMint
+        );
+        // Validate vault ownership: the token account owner must be the pool PDA
+        require!(
+            pool_vault.owner == pool.key(),
+            ZkShieldedError::InvalidTokenOwner
         );
 
         let transfer_ctx = CpiContext::new(

@@ -52,4 +52,7 @@ pub enum RelayerError {
 
     #[msg("Invalid encryption key size (expected 1184 bytes for ML-KEM-768)")]
     InvalidEncryptionKey,
+
+    #[msg("Relayer reputation score is below minimum required for job assignment")]
+    InsufficientReputation,
 }

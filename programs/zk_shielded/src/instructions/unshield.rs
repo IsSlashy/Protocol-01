@@ -3,13 +3,16 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
-use crate::state::{MerkleTreeState, NullifierSet, ShieldedPool};
+use crate::state::{MerkleTreeState, NullifierRecord, ShieldedPool};
 use crate::verifier::Groth16Verifier;
 use crate::Groth16Proof;
 
 /// Unshield tokens: withdraw from shielded pool to a transparent address
 /// Requires a valid ZK proof showing ownership of the spent notes
 /// The output includes a change note back to the shielded pool if not withdrawing full amount
+///
+/// Uses PDA-per-nullifier for double-spend detection (replaces Bloom filter).
+/// If a nullifier PDA already exists, `init` fails atomically — zero false positives.
 ///
 /// Supports both native SOL and SPL tokens:
 /// - For native SOL: transfers lamports from pool PDA to recipient
@@ -59,22 +62,41 @@ pub struct Unshield<'info> {
     )]
     pub merkle_tree: Account<'info, MerkleTreeState>,
 
-    /// Nullifier set (zero-copy for large bloom filter)
+    /// Nullifier 1 PDA — created on first use.
+    /// If this PDA already exists, `init` fails → atomic double-spend rejection.
     #[account(
-        mut,
+        init,
+        payer = payer,
+        space = NullifierRecord::LEN,
         seeds = [
-            NullifierSet::SEED_PREFIX,
-            shielded_pool.key().as_ref()
+            NullifierRecord::SEED_PREFIX,
+            shielded_pool.key().as_ref(),
+            nullifier_1.as_ref()
         ],
         bump
     )]
-    pub nullifier_set: AccountLoader<'info, NullifierSet>,
+    pub nullifier_record_1: Account<'info, NullifierRecord>,
+
+    /// Nullifier 2 PDA — created on first use.
+    /// If this PDA already exists, `init` fails → atomic double-spend rejection.
+    #[account(
+        init,
+        payer = payer,
+        space = NullifierRecord::LEN,
+        seeds = [
+            NullifierRecord::SEED_PREFIX,
+            shielded_pool.key().as_ref(),
+            nullifier_2.as_ref()
+        ],
+        bump
+    )]
+    pub nullifier_record_2: Account<'info, NullifierRecord>,
 
     /// Verification key data account
     /// CHECK: Validated by hash comparison
     pub verification_key_data: AccountInfo<'info>,
 
-    /// System program (required for native SOL transfers)
+    /// System program (required for PDA creation + native SOL transfers)
     pub system_program: Program<'info, System>,
 
     /// Token program (optional, for SPL token transfers)
@@ -118,18 +140,16 @@ pub fn handler(
         ZkShieldedError::InsufficientBalance
     );
 
-    // Load nullifier set (zero-copy)
-    let mut nullifier_set = ctx.accounts.nullifier_set.load_mut()?;
+    // Double-spend protection via PDA-per-nullifier.
+    // The `init` constraints on nullifier_record_1 and nullifier_record_2 ensure
+    // that if either nullifier was already spent, the transaction fails atomically.
+    let nullifier_record_1 = &mut ctx.accounts.nullifier_record_1;
+    nullifier_record_1.pool = pool.key();
+    nullifier_record_1.bump = ctx.bumps.nullifier_record_1;
 
-    // Check nullifiers haven't been spent
-    require!(
-        !nullifier_set.might_contain(&nullifier_1),
-        ZkShieldedError::NullifierAlreadySpent
-    );
-    require!(
-        !nullifier_set.might_contain(&nullifier_2),
-        ZkShieldedError::NullifierAlreadySpent
-    );
+    let nullifier_record_2 = &mut ctx.accounts.nullifier_record_2;
+    nullifier_record_2.pool = pool.key();
+    nullifier_record_2.bump = ctx.bumps.nullifier_record_2;
 
     // Load verification key data
     let vk_data = ctx.accounts.verification_key_data.try_borrow_data()?;
@@ -160,9 +180,7 @@ pub fn handler(
 
     require!(is_valid, ZkShieldedError::InvalidProof);
 
-    // Mark nullifiers as spent
-    nullifier_set.add(&nullifier_1);
-    nullifier_set.add(&nullifier_2);
+    // Nullifiers already marked as spent via PDA creation above.
 
     // Insert change commitment if non-zero (output_commitment_1 is the change note)
     // Use insert_with_root since Poseidon syscall not available on devnet

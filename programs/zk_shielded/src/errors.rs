@@ -110,4 +110,16 @@ pub enum ZkShieldedError {
 
     #[msg("Expected private (ZK) mode vault")]
     ExpectedPrivateMode,
+
+    #[msg("Invalid protocol fee wallet")]
+    InvalidFeeWallet,
+
+    #[msg("VK update cooldown period has not elapsed (24h between updates)")]
+    VkUpdateCooldown,
+
+    #[msg("No pending authority transfer")]
+    NoPendingAuthority,
+
+    #[msg("Pending authority does not match signer")]
+    PendingAuthorityMismatch,
 }

@@ -28,9 +28,19 @@ pub struct UpdateVerificationKey<'info> {
 
 pub fn handler(ctx: Context<UpdateVerificationKey>, new_vk_hash: [u8; 32]) -> Result<()> {
     let pool = &mut ctx.accounts.shielded_pool;
-    let old_vk_hash = pool.vk_hash;
+    let clock = Clock::get()?;
 
+    // Enforce 24h cooldown between VK updates to prevent instant rug-pulls
+    if pool.vk_update_slot > 0 {
+        require!(
+            clock.unix_timestamp - pool.vk_update_slot > ShieldedPool::VK_UPDATE_COOLDOWN,
+            ZkShieldedError::VkUpdateCooldown
+        );
+    }
+
+    let old_vk_hash = pool.vk_hash;
     pool.vk_hash = new_vk_hash;
+    pool.vk_update_slot = clock.unix_timestamp;
 
     msg!("Verification key updated");
     msg!("Old VK hash: {:?}", old_vk_hash);
@@ -42,7 +52,7 @@ pub fn handler(ctx: Context<UpdateVerificationKey>, new_vk_hash: [u8; 32]) -> Re
         old_vk_hash,
         new_vk_hash,
         authority: ctx.accounts.authority.key(),
-        timestamp: Clock::get()?.unix_timestamp,
+        timestamp: clock.unix_timestamp,
     });
 
     Ok(())

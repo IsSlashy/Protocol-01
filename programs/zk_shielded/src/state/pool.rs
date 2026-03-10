@@ -49,6 +49,12 @@ pub struct ShieldedPool {
 
     /// Bump seed for PDA
     pub bump: u8,
+
+    /// Timestamp of the last VK update (for 24h cooldown enforcement)
+    pub vk_update_slot: i64,
+
+    /// Pending new authority for two-step authority transfer
+    pub pending_authority: Option<Pubkey>,
 }
 
 impl ShieldedPool {
@@ -69,7 +75,9 @@ impl ShieldedPool {
         + 8   // last_tx_at
         + 2   // relayer_fee_bps
         + 32  // relayer
-        + 1;  // bump
+        + 1   // bump
+        + 8   // vk_update_slot
+        + 1 + 32; // pending_authority (Option<Pubkey>)
 
     /// Seeds for PDA derivation
     pub const SEED_PREFIX: &'static [u8] = b"shielded_pool";
@@ -83,6 +91,9 @@ impl ShieldedPool {
     /// Maximum relayer fee (1% = 100 bps)
     pub const MAX_RELAYER_FEE_BPS: u16 = 100;
 
+    /// VK update cooldown period in seconds (24 hours)
+    pub const VK_UPDATE_COOLDOWN: i64 = 86400;
+
     /// Check if a root is valid (current or historical)
     pub fn is_valid_root(&self, root: &[u8; 32]) -> bool {
         if self.merkle_root == *root {
@@ -91,13 +102,20 @@ impl ShieldedPool {
         self.historical_roots.contains(root)
     }
 
-    /// Update the Merkle root and store old root in history
+    /// Update the Merkle root and store old root in history.
+    /// Uses a circular buffer pattern: once the vec reaches max size,
+    /// we overwrite the oldest entry in-place instead of shifting with remove(0).
     pub fn update_root(&mut self, new_root: [u8; 32]) {
-        // Store current root in history
-        if self.historical_roots.len() >= self.max_historical_roots as usize {
-            self.historical_roots.remove(0);
+        let max = self.max_historical_roots as usize;
+        if self.historical_roots.len() < max {
+            // Still filling the buffer
+            self.historical_roots.push(self.merkle_root);
+        } else if max > 0 {
+            // Circular overwrite: find the oldest slot and replace
+            // We track the write position using next_leaf_index as a monotonic counter
+            let idx = (self.next_leaf_index as usize) % max;
+            self.historical_roots[idx] = self.merkle_root;
         }
-        self.historical_roots.push(self.merkle_root);
 
         // Update to new root
         self.merkle_root = new_root;
@@ -268,12 +286,17 @@ impl DenominatedPool {
         self.historical_roots.contains(root)
     }
 
-    /// Update the Merkle root and store old root in history
+    /// Update the Merkle root and store old root in history.
+    /// Uses a circular buffer pattern: once the vec reaches max size,
+    /// we overwrite the oldest entry in-place instead of shifting with remove(0).
     pub fn update_root(&mut self, new_root: [u8; 32]) {
-        if self.historical_roots.len() >= self.max_historical_roots as usize {
-            self.historical_roots.remove(0);
+        let max = self.max_historical_roots as usize;
+        if self.historical_roots.len() < max {
+            self.historical_roots.push(self.merkle_root);
+        } else if max > 0 {
+            let idx = (self.next_leaf_index as usize) % max;
+            self.historical_roots[idx] = self.merkle_root;
         }
-        self.historical_roots.push(self.merkle_root);
         self.merkle_root = new_root;
     }
 

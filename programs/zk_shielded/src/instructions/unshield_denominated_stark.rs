@@ -3,6 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
+use crate::fee::{self, PROTOCOL_FEE_WALLET};
 use crate::state::{DenominatedPool, MerkleTreeState, NullifierRecord};
 
 /// STARK Proof Buffer account layout (from p01_stark_verifier).
@@ -18,9 +19,9 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 ]);
 
 /// Parse a verified STARK proof buffer.
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool)> {
-    require!(data.len() >= 50, ZkShieldedError::InvalidProof);
+/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+    require!(data.len() >= 82, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
@@ -28,7 +29,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool)> {
     let authority = Pubkey::try_from(&data[8..40]).unwrap();
     let circuit_id = data[40];
     let verified = data[49] == 1;
-    Ok((authority, circuit_id, verified))
+    let mut public_inputs_hash = [0u8; 32];
+    public_inputs_hash.copy_from_slice(&data[50..82]);
+    Ok((authority, circuit_id, verified, public_inputs_hash))
 }
 
 /// Unshield from denominated pool using STARK proof verification.
@@ -94,12 +97,15 @@ pub struct UnshieldDenominatedStark<'info> {
 
     /// STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment).
     /// Must be verified (verified == true) and owned by the payer.
+    /// Marked mut because we invalidate (set verified=false) after use.
     /// CHECK: Validated manually by reading account data and checking:
     /// - Owner is p01_stark_verifier program
     /// - Discriminator matches ProofBuffer
     /// - Authority matches payer
     /// - Circuit ID is 1 (pool_commitment)
     /// - Verified flag is true
+    /// - Public inputs hash matches expected value
+    #[account(mut)]
     pub stark_proof_buffer: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
@@ -110,6 +116,14 @@ pub struct UnshieldDenominatedStark<'info> {
 
     #[account(mut)]
     pub recipient_token_account: Option<Account<'info, TokenAccount>>,
+
+    /// Protocol fee wallet — receives unshield fee (0.5%)
+    /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant
+    #[account(
+        mut,
+        constraint = protocol_fee_wallet.key() == PROTOCOL_FEE_WALLET @ ZkShieldedError::InvalidFeeWallet
+    )]
+    pub protocol_fee_wallet: AccountInfo<'info>,
 }
 
 pub fn handler(
@@ -156,7 +170,7 @@ pub fn handler(
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified) = parse_stark_proof_buffer(&proof_data)?;
+    let (authority, circuit_id, verified, stored_inputs_hash) = parse_stark_proof_buffer(&proof_data)?;
 
     // Authority must be the payer (prevents using someone else's proof)
     require!(
@@ -170,11 +184,37 @@ pub fn handler(
     // Must be verified
     require!(verified, ZkShieldedError::InvalidProof);
 
+    // Verify the proof was generated for THIS nullifier by checking the public inputs hash.
+    // The STARK verifier stores SHA-256(public_inputs) when it verifies; we recompute
+    // and compare to ensure the proof is bound to the nullifier being spent.
+    {
+        use anchor_lang::solana_program::hash::hashv;
+        // For pool_commitment circuit (ID 1), the single public input is the commitment
+        // which is derived from the nullifier. We hash the nullifier bytes as they
+        // were passed as the public input to the STARK verifier.
+        let nullifier_u64 = u64::from_le_bytes(nullifier[..8].try_into().unwrap());
+        let expected_hash = hashv(&[&nullifier_u64.to_le_bytes()]).to_bytes();
+        require!(
+            stored_inputs_hash == expected_hash,
+            ZkShieldedError::InvalidProof
+        );
+    }
+
     drop(proof_data);
 
+    // Invalidate the proof buffer after use to prevent replay.
+    // Set verified = false by writing directly to the account data.
+    {
+        let mut proof_data_mut = proof_info.try_borrow_mut_data()?;
+        // verified is at offset 49
+        proof_data_mut[49] = 0;
+    }
+
     // -----------------------------------------------------------------------
-    // Transfer funds (identical to Groth16 version)
+    // Transfer funds with protocol fee (0.5%)
     // -----------------------------------------------------------------------
+    let (unshield_fee, recipient_amount) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+
     let token_mint = pool.token_mint;
     let denomination_bytes = pool.denomination.to_le_bytes();
     let bump = pool.bump;
@@ -194,8 +234,12 @@ pub fn handler(
             pool_lamports.saturating_sub(min_rent) >= amount,
             ZkShieldedError::InsufficientPoolBalance
         );
+        // Send net amount to recipient, fee to protocol wallet
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
-        **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
+        **ctx.accounts.recipient.try_borrow_mut_lamports()? += recipient_amount;
+        if unshield_fee > 0 {
+            **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
+        }
     } else {
         let token_program = ctx.accounts.token_program
             .as_ref()
@@ -209,6 +253,7 @@ pub fn handler(
         require!(pool_vault.mint == pool.token_mint, ZkShieldedError::InvalidTokenMint);
         require!(recipient_token_account.mint == pool.token_mint, ZkShieldedError::InvalidTokenMint);
 
+        // Transfer net amount to recipient
         let transfer_ctx = CpiContext::new_with_signer(
             token_program.to_account_info(),
             TokenTransfer {
@@ -218,7 +263,18 @@ pub fn handler(
             },
             signer_seeds,
         );
-        token::transfer(transfer_ctx, amount)?;
+        token::transfer(transfer_ctx, recipient_amount)?;
+
+        // SPL token fee: sent as SOL from pool PDA to fee wallet
+        if unshield_fee > 0 {
+            let pool_lamports = pool.to_account_info().lamports();
+            let rent = Rent::get()?;
+            let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
+            if pool_lamports.saturating_sub(min_rent) >= unshield_fee {
+                **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
+                **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
+            }
+        }
     }
 
     // Update pool state
@@ -233,6 +289,7 @@ pub fn handler(
         pool: pool.key(),
         recipient: ctx.accounts.recipient.key(),
         denomination: amount,
+        protocol_fee: unshield_fee,
         nullifier,
         min_epoch,
         current_epoch,
@@ -249,6 +306,7 @@ pub struct UnshieldDenominatedStarkEvent {
     pub pool: Pubkey,
     pub recipient: Pubkey,
     pub denomination: u64,
+    pub protocol_fee: u64,
     pub nullifier: [u8; 32],
     pub min_epoch: u64,
     pub current_epoch: u64,
