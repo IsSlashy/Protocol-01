@@ -212,10 +212,10 @@ async function deriveSpendingKey(seedPhrase: string): Promise<{
   const hashArray = new Uint8Array(hashBuffer);
 
   const spendingKey = leBytesToBigint(hashArray) % FIELD_ORDER;
-  // owner_pubkey = Poseidon(spending_key) - matches circuit SpendingKeyDerivation
-  const ownerPubkey = poseidonHash(spendingKey);
-  // spending_key_hash = Poseidon(spending_key) - same as owner_pubkey in this design
-  const spendingKeyHash = ownerPubkey;
+  // owner_pubkey = Poseidon(spending_key, 0) - matches circuit SpendingKeyDerivation (domain tag 0)
+  const ownerPubkey = poseidonHash(spendingKey, 0n);
+  // spending_key_hash = Poseidon(spending_key, 1) - matches circuit SpendingKeyHash (domain tag 1)
+  const spendingKeyHash = poseidonHash(spendingKey, 1n);
 
   return { spendingKey, spendingKeyHash, ownerPubkey };
 }

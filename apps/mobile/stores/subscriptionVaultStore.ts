@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { PublicKey } from '@solana/web3.js';
-import { poseidon1 } from 'poseidon-lite';
+import { poseidon2 } from 'poseidon-lite';
 import { getConnection } from '../services/solana/connection';
 import {
   type VaultInfo,
@@ -309,7 +309,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           // Add vault to store
-          const subscriberCommitment = poseidon1([subscriberSecret]);
+          const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
           const subscriberCommitmentBytes = new Uint8Array(32);
           let tmpCommitment = subscriberCommitment;
           for (let i = 0; i < 32; i++) {
@@ -388,7 +388,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           // Add vault to store
-          const subscriberCommitment = poseidon1([subscriberSecret]);
+          const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
           const subscriberCommitmentBytes = new Uint8Array(32);
           let tmpCommitment = subscriberCommitment;
           for (let i = 0; i < 32; i++) {

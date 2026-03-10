@@ -35,6 +35,7 @@ export {
   computeCommitment,
   computeNullifier,
   deriveOwnerPubkey,
+  computeSpendingKeyHash,
   FIELD_MODULUS,
 } from './circuits';
 

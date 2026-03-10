@@ -210,7 +210,7 @@ async function main() {
 
   // Generate a test spending key
   const testSpendingKey = BigInt('12345678901234567890123456789012345678901234567890') % FIELD_MODULUS;
-  const testOwnerPubkey = poseidon1([testSpendingKey]);
+  const testOwnerPubkey = poseidon2([testSpendingKey, 0n]); // domain tag 0
   const testRandomness = BigInt('98765432109876543210987654321098765432109876543210') % FIELD_MODULUS;
   const tokenMintField = BigInt(0); // Native SOL
 
@@ -274,7 +274,7 @@ async function main() {
   console.log('Test merkle root:', testMerkleRoot.toString());
 
   // Compute nullifiers
-  const spendingKeyHash = poseidon1([testSpendingKey]);
+  const spendingKeyHash = poseidon2([testSpendingKey, 1n]); // domain tag 1
   const nullifier1 = poseidon2([syntheticCommitment, spendingKeyHash]);
 
   // Dummy note 2 (amount=0)

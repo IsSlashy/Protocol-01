@@ -78,14 +78,16 @@ function poseidonHash(inputs: bigint[]): bigint {
   return F.toObject(hash);
 }
 
-/** Balance commitment = Poseidon(balance, salt, owner_pubkey, token_mint) */
+/** Balance commitment = Poseidon(balance, Poseidon(salt, nonce), owner_pubkey, token_mint) */
 function createBalanceCommitment(
   balance: bigint,
   salt: bigint,
+  nonce: bigint,
   ownerPubkey: bigint,
   tokenMint: bigint
 ): bigint {
-  return poseidonHash([balance, salt, ownerPubkey, tokenMint]);
+  const augmentedSalt = poseidonHash([salt, nonce]);
+  return poseidonHash([balance, augmentedSalt, ownerPubkey, tokenMint]);
 }
 
 /** Amount commitment = Poseidon(amount, amount_salt) */
@@ -93,9 +95,9 @@ function createAmountCommitment(amount: bigint, amountSalt: bigint): bigint {
   return poseidonHash([amount, amountSalt]);
 }
 
-/** Owner pubkey = Poseidon(spending_key) */
+/** Owner pubkey = Poseidon(spending_key, 0) — domain tag 0 */
 function deriveOwnerPubkey(spendingKey: bigint): bigint {
-  return poseidonHash([spendingKey]);
+  return poseidonHash([spendingKey, BigInt(0)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,12 +270,14 @@ describe("p01_zkspl", () => {
     aliceCommitment = createBalanceCommitment(
       aliceBalance,
       aliceSalt,
+      BigInt(aliceNonce),
       aliceOwnerPubkey,
       tokenMintField
     );
     bobCommitment = createBalanceCommitment(
       bobBalance,
       bobSalt,
+      BigInt(bobNonce),
       bobOwnerPubkey,
       tokenMintField
     );
@@ -575,6 +579,7 @@ describe("p01_zkspl", () => {
       const newCommitment = createBalanceCommitment(
         newBalance,
         newSalt,
+        BigInt(aliceNonce),
         aliceOwnerPubkey,
         tokenMintField
       );
@@ -676,6 +681,7 @@ describe("p01_zkspl", () => {
       const aliceNewCommitment = createBalanceCommitment(
         aliceNewBalance,
         aliceNewSalt,
+        BigInt(aliceNonce),
         aliceOwnerPubkey,
         tokenMintField
       );
@@ -745,6 +751,7 @@ describe("p01_zkspl", () => {
       const bobNewCommitment = createBalanceCommitment(
         bobNewBalance,
         bobNewSalt,
+        BigInt(bobNonce),
         bobOwnerPubkey,
         tokenMintField
       );
@@ -814,6 +821,7 @@ describe("p01_zkspl", () => {
       const aliceNewCommitment = createBalanceCommitment(
         aliceNewBalance,
         aliceNewSalt,
+        BigInt(aliceNonce),
         aliceOwnerPubkey,
         tokenMintField
       );
@@ -1178,12 +1186,14 @@ describe("p01_zkspl", () => {
       const comm1 = createBalanceCommitment(
         balance,
         salt1,
+        0n,
         aliceOwnerPubkey,
         tokenMintField
       );
       const comm2 = createBalanceCommitment(
         balance,
         salt2,
+        0n,
         aliceOwnerPubkey,
         tokenMintField
       );
@@ -1203,12 +1213,14 @@ describe("p01_zkspl", () => {
       const realComm = createBalanceCommitment(
         balance,
         salt,
+        0n,
         aliceOwnerPubkey,
         tokenMintField
       );
       const wrongComm = createBalanceCommitment(
         balance,
         salt,
+        0n,
         wrongPubkey,
         tokenMintField
       );
@@ -1258,6 +1270,7 @@ describe("p01_zkspl", () => {
       const newCommitment = createBalanceCommitment(
         newBalance,
         newSalt,
+        BigInt(aliceNonce),
         aliceOwnerPubkey,
         tokenMintField
       );
@@ -1298,6 +1311,7 @@ describe("p01_zkspl", () => {
       const bobNewCommitment = createBalanceCommitment(
         bobNewBalance,
         bobNewSalt,
+        BigInt(bobNonce),
         bobOwnerPubkey,
         tokenMintField
       );
@@ -1340,6 +1354,7 @@ describe("p01_zkspl", () => {
       const aliceNewCommitment = createBalanceCommitment(
         aliceNewBalance,
         aliceNewSalt,
+        BigInt(aliceNonce),
         aliceOwnerPubkey,
         tokenMintField
       );

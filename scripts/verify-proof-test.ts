@@ -99,8 +99,8 @@ async function main() {
 
     // Create test data
     const spendingKey = BigInt(12345);
-    const spendingKeyHash = poseidonHash(spendingKey);
-    const ownerPubkey = spendingKeyHash;
+    const ownerPubkey = poseidonHash(spendingKey, BigInt(0));    // domain tag 0
+    const spendingKeyHash = poseidonHash(spendingKey, BigInt(1)); // domain tag 1
     const tokenMint = BigInt(0); // SOL
 
     // Input note 1: amount=1000

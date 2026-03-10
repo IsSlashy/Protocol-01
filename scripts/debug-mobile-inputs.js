@@ -129,13 +129,13 @@ async function main() {
 
     // Simulate mobile app behavior
     const spendingKey = BigInt('12345678901234567890');
-    const ownerPubkey = poseidonHash(spendingKey);
-    const spendingKeyHash = poseidonHash(spendingKey);
+    const ownerPubkey = poseidonHash(spendingKey, BigInt(0));    // domain tag 0
+    const spendingKeyHash = poseidonHash(spendingKey, BigInt(1)); // domain tag 1
     const tokenMint = BigInt(0); // SOL
 
     console.log('1. Key derivation (using poseidon-lite):');
     console.log('   spendingKey:', spendingKey.toString());
-    console.log('   ownerPubkey = Poseidon(spendingKey):', ownerPubkey.toString());
+    console.log('   ownerPubkey = Poseidon(spendingKey, 0):', ownerPubkey.toString());
     console.log('');
 
     // Create and shield a note

@@ -35,21 +35,27 @@ export function computeNullifier(
 }
 
 /**
- * Create a balance commitment (account-model, 4 inputs).
- * commitment = Poseidon(balance, salt, ownerPubkey, tokenMint)
+ * Create a balance commitment (account-model, 4 inputs with nonce binding).
+ * commitment = Poseidon(balance, Poseidon(salt, nonce), ownerPubkey, tokenMint)
+ *
+ * The nonce is bound into the salt via an inner Poseidon hash to prevent replay attacks.
+ * Matches the BalanceCommitment template in confidential_balance.circom.
  */
 export function createBalanceCommitment(
   balance: FieldElement,
   salt: FieldElement,
+  nonce: FieldElement,
   ownerPubkey: FieldElement,
   tokenMint: FieldElement,
 ): FieldElement {
-  return poseidon4([balance, salt, ownerPubkey, tokenMint]);
+  const augmentedSalt = poseidon2([salt, nonce]);
+  return poseidon4([balance, augmentedSalt, ownerPubkey, tokenMint]);
 }
 
 /**
  * Derive an owner public key from a spending key.
- * ownerPubkey = Poseidon(spendingKey)
+ * ownerPubkey = Poseidon(spendingKey, 0) — domain tag 0
+ * Matches circuit SpendingKeyDerivation in poseidon.circom.
  */
 export function deriveOwnerPubkey(spendingKey: FieldElement): FieldElement {
   return poseidon2([spendingKey, 0n]);

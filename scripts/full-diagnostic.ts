@@ -121,7 +121,7 @@ async function deriveSpendingKey(seedPhrase: string): Promise<{
   const hash = crypto.createHash('sha256').update(seed.toString('hex')).digest('hex');
 
   const spendingKey = BigInt('0x' + hash) % FIELD_MODULUS;
-  const ownerPubkey = poseidon1([spendingKey]);
+  const ownerPubkey = poseidon2([spendingKey, 0n]); // domain tag 0
 
   return { spendingKey, ownerPubkey };
 }
