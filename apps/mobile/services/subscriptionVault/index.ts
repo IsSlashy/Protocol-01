@@ -22,7 +22,7 @@ import {
   getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { poseidon1 } from 'poseidon-lite';
+import { poseidon2 } from 'poseidon-lite';
 import { sha256 } from '@noble/hashes/sha256';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
@@ -519,7 +519,7 @@ export async function subscribePrivate(
   const connection = getConnection();
 
   onProgress?.('Computing subscriber commitment...');
-  const subscriberCommitment = poseidon1([subscriberSecret]);
+  const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
   const subscriberCommitmentBytes = bigintToLeBytes32(subscriberCommitment);
 
   onProgress?.('Deriving vault PDA...');
@@ -663,7 +663,7 @@ export async function pausePrivate(
   const connection = getConnection();
 
   onProgress?.('Computing commitment...');
-  const commitment = poseidon1([subscriberSecret]);
+  const commitment = poseidon2([subscriberSecret, 1234567890n]);
   const commitmentBytes = bigintToLeBytes32(commitment);
 
   onProgress?.('Generating proof...');
@@ -732,7 +732,7 @@ export async function resumePrivate(
   const connection = getConnection();
 
   onProgress?.('Computing commitment...');
-  const commitment = poseidon1([subscriberSecret]);
+  const commitment = poseidon2([subscriberSecret, 1234567890n]);
   const commitmentBytes = bigintToLeBytes32(commitment);
 
   onProgress?.('Generating proof...');
@@ -806,7 +806,7 @@ export async function cancelPrivate(
   const connection = getConnection();
 
   onProgress?.('Computing commitment...');
-  const commitment = poseidon1([subscriberSecret]);
+  const commitment = poseidon2([subscriberSecret, 1234567890n]);
   const commitmentBytes = bigintToLeBytes32(commitment);
 
   onProgress?.('Generating proof...');
@@ -884,7 +884,7 @@ export async function subscribePrivateStark(
   const connection = getConnection();
 
   onProgress?.('Computing subscriber commitment...');
-  const subscriberCommitment = poseidon1([subscriberSecret]);
+  const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
   const subscriberCommitmentBytes = bigintToLeBytes32(subscriberCommitment);
 
   onProgress?.('Deriving vault PDA...');

@@ -8,6 +8,7 @@ import nacl from 'tweetnacl';
 import {
   computeCommitment,
   deriveOwnerPubkey,
+  computeSpendingKeyHash,
   randomFieldElement,
   fieldToBytes,
   bytesToField,
@@ -293,8 +294,8 @@ function deserializeNoteData(data: Uint8Array): Note {
  */
 export async function generateSpendingKeyPair(seed: Uint8Array): Promise<SpendingKeyPair> {
   const spendingKey = bytesToField(sha256(seed));
-  const ownerPubkey = await deriveOwnerPubkey(spendingKey);
-  const spendingKeyHash = await deriveOwnerPubkey(spendingKey); // Same as pubkey derivation
+  const ownerPubkey = await deriveOwnerPubkey(spendingKey);          // Poseidon(key, 0) — domain tag 0
+  const spendingKeyHash = await computeSpendingKeyHash(spendingKey); // Poseidon(key, 1) — domain tag 1
 
   return {
     spendingKey,

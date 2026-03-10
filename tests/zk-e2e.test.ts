@@ -90,14 +90,16 @@ function createNote(amount: bigint, ownerPubkey: bigint, randomness: bigint, tok
   return { amount, ownerPubkey, randomness, tokenMint, commitment };
 }
 
-// Derive owner pubkey from spending key (matches circuit)
+// Derive owner pubkey from spending key (matches circuit SpendingKeyDerivation)
+// owner_pubkey = Poseidon(spending_key, 0) — domain tag 0
 function deriveOwnerPubkey(spendingKey: bigint): bigint {
-  return poseidonHash([spendingKey]);
+  return poseidonHash([spendingKey, BigInt(0)]);
 }
 
-// Compute spending key hash
+// Compute spending key hash (matches circuit SpendingKeyHash)
+// spending_key_hash = Poseidon(spending_key, 1) — domain tag 1
 function computeSpendingKeyHash(spendingKey: bigint): bigint {
-  return poseidonHash([spendingKey]);
+  return poseidonHash([spendingKey, BigInt(1)]);
 }
 
 // Compute nullifier (matches circuit)

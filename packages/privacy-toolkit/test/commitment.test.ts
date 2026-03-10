@@ -33,8 +33,14 @@ describe('Poseidon Commitments', () => {
   });
 
   it('creates balance commitments', () => {
-    const c = createBalanceCommitment(1000n, 42n, 100n, 200n);
+    const c = createBalanceCommitment(1000n, 42n, 0n, 100n, 200n);
     expect(typeof c).toBe('bigint');
     expect(c).toBeGreaterThan(0n);
+  });
+
+  it('different nonces produce different balance commitments', () => {
+    const c1 = createBalanceCommitment(1000n, 42n, 0n, 100n, 200n);
+    const c2 = createBalanceCommitment(1000n, 42n, 1n, 100n, 200n);
+    expect(c1).not.toBe(c2);
   });
 });

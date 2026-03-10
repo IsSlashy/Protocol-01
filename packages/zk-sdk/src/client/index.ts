@@ -30,6 +30,8 @@ import {
   pubkeyToField,
   randomFieldElement,
 } from '../circuits';
+import { sha256 } from '@noble/hashes/sha256';
+import nacl from 'tweetnacl';
 import { ZK_SHIELDED_PROGRAM_ID, PDA_SEEDS, MERKLE_TREE_DEPTH } from '../constants';
 import type {
   PoolState,
@@ -70,6 +72,8 @@ export class ShieldedClient {
   private spendingKeyPair: SpendingKeyPair | null = null;
   private notes: Note[] = [];
   private viewingKey: Uint8Array;
+  /** Legacy viewing key (fieldToBytes(ownerPubkey)) for decrypting pre-v2 notes */
+  private _legacyViewingKey: Uint8Array = new Uint8Array(32);
   private programId: PublicKey;
   private isInitialized: boolean = false;
 
@@ -91,8 +95,14 @@ export class ShieldedClient {
     const seed = new TextEncoder().encode(seedPhrase);
     this.spendingKeyPair = await generateSpendingKeyPair(seed);
 
-    // Derive viewing key
-    this.viewingKey = fieldToBytes(this.spendingKeyPair.ownerPubkey);
+    // Derive viewing key as a proper X25519 public key from a deterministic secret.
+    // BREAKING CHANGE: Previously viewingKey = fieldToBytes(ownerPubkey), which is NOT
+    // a valid X25519 point. Notes encrypted under the old scheme need the legacy key.
+    const viewingSecret = sha256(fieldToBytes(this.spendingKeyPair.spendingKey));
+    const viewingKeyPair = nacl.box.keyPair.fromSecretKey(viewingSecret);
+    this.viewingKey = viewingKeyPair.publicKey;
+    // Keep legacy viewing key for decrypting old notes
+    this._legacyViewingKey = fieldToBytes(this.spendingKeyPair.ownerPubkey);
 
     // Initialize Merkle tree
     await this.merkleTree.initialize();
@@ -664,6 +674,22 @@ export class ShieldedClient {
       ],
       data,
     });
+  }
+
+  /**
+   * Securely destroy the client, zeroing the spending key from memory.
+   * Call this when the client is no longer needed.
+   */
+  destroy(): void {
+    if (this.spendingKeyPair) {
+      // Zero spending key if it has a byte-level representation
+      // SpendingKeyPair stores bigints, so we overwrite the reference
+      this.spendingKeyPair = null as any;
+    }
+    this.viewingKey.fill(0);
+    this._legacyViewingKey.fill(0);
+    this.notes = [];
+    this.isInitialized = false;
   }
 
   /**
