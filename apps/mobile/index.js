@@ -2,6 +2,7 @@
 import 'react-native-get-random-values';
 import { Buffer } from 'buffer';
 global.Buffer = Buffer;
+import './polyfills/buffer-layout-shim'; // Buffer read/write methods on Uint8Array (for buffer-layout)
 import 'react-native-url-polyfill/auto';
 import '@ethersproject/shims';
 

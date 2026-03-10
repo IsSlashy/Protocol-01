@@ -5,12 +5,13 @@ import { useEffect, useState } from 'react';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
-import * as Crypto from 'expo-crypto';
 import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOut } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { scheduleLocalNotification } from '@/services/notifications';
+import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
 
 export default function LockScreen() {
   const router = useRouter();
@@ -24,7 +25,18 @@ export default function LockScreen() {
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockoutUntil, setLockoutUntil] = useState(0);
 
+  // Persist lockout state so restarting the app does not bypass brute-force protection (M13)
   useEffect(() => {
+    (async () => {
+      try {
+        const stored = await SecureStore.getItemAsync('p01_lockout_state');
+        if (stored) {
+          const { attempts, until } = JSON.parse(stored);
+          setFailedAttempts(attempts);
+          setLockoutUntil(until);
+        }
+      } catch { /* ignore parse errors */ }
+    })();
     checkSecurityMethod();
   }, []);
 
@@ -90,6 +102,16 @@ export default function LockScreen() {
     }
   };
 
+  /** Persist lockout state to SecureStore so app restarts cannot bypass it (M13) */
+  const updateLockout = async (attempts: number, until: number) => {
+    setFailedAttempts(attempts);
+    setLockoutUntil(until);
+    await SecureStore.setItemAsync(
+      'p01_lockout_state',
+      JSON.stringify({ attempts, until }),
+    );
+  };
+
   const verifyPin = async (enteredPin: string) => {
     // Enforce lockout
     if (lockoutUntil > Date.now()) {
@@ -101,29 +123,51 @@ export default function LockScreen() {
     }
 
     const storedPinHash = await SecureStore.getItemAsync('wallet_pin');
-    const enteredPinHash = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      'p01_pin_v1:' + enteredPin
-    );
+    const enteredPinHash = await hashPin(enteredPin);
 
-    if (enteredPinHash === storedPinHash) {
-      setFailedAttempts(0);
+    // Constant-time comparison to prevent timing side-channels (L9)
+    if (storedPinHash && constantTimeEqual(enteredPinHash, storedPinHash)) {
+      await updateLockout(0, 0);
+      await SecureStore.deleteItemAsync('p01_lockout_state');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/(main)/(wallet)');
     } else {
       const attempts = failedAttempts + 1;
-      setFailedAttempts(attempts);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setPinError(true);
       setPin('');
 
       // Progressive lockout: 5 fails → 30s, 8 fails → 60s, 10+ fails → 300s
+      let lockoutSeconds = 0;
+      let newLockoutUntil = 0;
       if (attempts >= 10) {
-        setLockoutUntil(Date.now() + 300_000);
+        lockoutSeconds = 300;
+        newLockoutUntil = Date.now() + 300_000;
       } else if (attempts >= 8) {
-        setLockoutUntil(Date.now() + 60_000);
+        lockoutSeconds = 60;
+        newLockoutUntil = Date.now() + 60_000;
       } else if (attempts >= 5) {
-        setLockoutUntil(Date.now() + 30_000);
+        lockoutSeconds = 30;
+        newLockoutUntil = Date.now() + 30_000;
+      }
+
+      await updateLockout(attempts, newLockoutUntil);
+
+      // Security alert notifications (fire-and-forget, don't block auth flow)
+      if (lockoutSeconds > 0) {
+        scheduleLocalNotification(
+          'Account Locked',
+          `Too many failed attempts. Locked for ${lockoutSeconds} seconds.`,
+          { category: 'security', action: 'lockout', failedAttempts: attempts },
+          { channelId: 'security' },
+        ).catch(() => {});
+      } else {
+        scheduleLocalNotification(
+          'Security Alert',
+          'Failed authentication attempt detected.',
+          { category: 'security', action: 'failed_pin' },
+          { channelId: 'security' },
+        ).catch(() => {});
       }
 
       setTimeout(() => setPinError(false), 1500);
@@ -149,6 +193,12 @@ export default function LockScreen() {
         router.replace('/(main)/(wallet)');
       } else {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        scheduleLocalNotification(
+          'Security Alert',
+          'Failed authentication attempt detected.',
+          { category: 'security', action: 'failed_biometric' },
+          { channelId: 'security' },
+        ).catch(() => {});
       }
     } catch (error) {
       console.error('[Lock] Authentication error:', error);

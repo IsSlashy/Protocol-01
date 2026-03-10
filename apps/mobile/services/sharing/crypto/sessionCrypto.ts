@@ -178,6 +178,40 @@ export function decryptNoteSymmetric(
   return payload;
 }
 
+/**
+ * Try decrypting with multiple time-window keys to handle minute-boundary
+ * race conditions. If the sender encrypted at 12:34:59 and receiver decrypts
+ * at 12:35:01, they derive different keys. This tries current, previous,
+ * and next minute windows.
+ */
+export function decryptNoteSymmetricWithRetry(
+  encrypted: SymmetricEncryptedPayload,
+  pin: string,
+): NotePayload {
+  const now = Date.now();
+  const currentMinute = Math.floor(now / 60_000);
+  const ciphertext = fromBase64(encrypted.ct);
+  const nonce = fromBase64(encrypted.n);
+
+  // Try current minute, then previous, then next (clock skew)
+  for (const offset of [0, -1, 1]) {
+    const minuteTs = (currentMinute + offset) * 60_000;
+    const key = deriveNfcKey(pin, minuteTs);
+    const plaintext = nacl.secretbox.open(ciphertext, nonce, key);
+    if (plaintext) {
+      const payload: NotePayload = JSON.parse(
+        new TextDecoder().decode(plaintext),
+      );
+      if (payload.version !== 1) {
+        throw new Error(`Unsupported payload version: ${payload.version}`);
+      }
+      return payload;
+    }
+  }
+
+  throw new Error('NFC decryption failed — wrong PIN or expired time window');
+}
+
 // ---------------------------------------------------------------------------
 // SHA-256 checksum (integrity)
 // ---------------------------------------------------------------------------

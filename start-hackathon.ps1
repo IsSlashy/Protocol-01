@@ -51,8 +51,8 @@ if ($tunnelUrl) {
 # ZK Relayer URL
 EXPO_PUBLIC_RELAYER_URL=$tunnelUrl
 
-# Privy Auth
-EXPO_PUBLIC_PRIVY_APP_ID=cmkunrdg605ouie0blb3kq1fm
+# Privy Auth — set PRIVY_APP_ID env var before running this script
+EXPO_PUBLIC_PRIVY_APP_ID=$($env:PRIVY_APP_ID)
 
 # Network
 EXPO_PUBLIC_SOLANA_NETWORK=devnet

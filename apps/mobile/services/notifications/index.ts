@@ -170,7 +170,8 @@ export async function registerForPushNotifications(): Promise<PushToken | null> 
 export async function scheduleLocalNotification(
   title: string,
   body: string,
-  data?: NotificationData
+  data?: NotificationData,
+  options?: { channelId?: string }
 ): Promise<string> {
   return scheduleNotification({
     content: {
@@ -179,7 +180,8 @@ export async function scheduleLocalNotification(
       data: data ?? {},
       sound: 'default',
       priority: 'high',
-    },
+      ...(options?.channelId ? { channelId: options.channelId } : {}),
+    } as any,
     trigger: null, // Immediate notification
   });
 }

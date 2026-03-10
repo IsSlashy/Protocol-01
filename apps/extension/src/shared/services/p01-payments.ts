@@ -258,8 +258,14 @@ function buildPaymentUrl(params: {
   walletAddress: string;
   paymentMethod: string;
 }): string {
+  // Validate MoonPay API key is configured (L8)
+  const moonpayApiKey = import.meta.env?.VITE_MOONPAY_API_KEY || '';
+  if (!moonpayApiKey) {
+    console.error('[P01Payments] MOONPAY_API_KEY is not configured');
+  }
+
   const moonpayParams = new URLSearchParams({
-    apiKey: 'pk_test_123',
+    apiKey: moonpayApiKey,
     currencyCode: params.cryptoCurrency.toLowerCase(),
     baseCurrencyCode: params.currency.toLowerCase(),
     baseCurrencyAmount: params.amount.toString(),

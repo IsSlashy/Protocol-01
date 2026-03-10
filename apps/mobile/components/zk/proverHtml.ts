@@ -176,8 +176,11 @@ async function prove(data) {
 // ------------------------------------------------------------------
 window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
 
+// SECURITY: Load snarkjs from APK-bundled asset (file:///android_asset/) instead of CDN.
+// The baseUrl in WebViewProver is set to 'file:///android_asset/' so relative paths resolve there.
+// Ensure snarkjs.min.js is placed in android/app/src/main/assets/ at build time.
 var script = document.createElement('script');
-script.src = 'https://cdn.jsdelivr.net/npm/snarkjs@0.7.5/build/snarkjs.min.js';
+script.src = 'snarkjs.min.js';
 script.onload = function() {
   snarkjsReady = true;
   window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'snarkjsLoaded' }));
@@ -185,7 +188,7 @@ script.onload = function() {
 script.onerror = function() {
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: 'error', id: 'snarkjs_load',
-    error: 'Failed to load snarkjs from CDN. Check internet connection.'
+    error: 'Failed to load snarkjs from local assets. Ensure snarkjs.min.js is bundled in android/app/src/main/assets/.'
   }));
 };
 document.head.appendChild(script);

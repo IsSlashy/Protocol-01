@@ -5,6 +5,8 @@
  * (polyfill issues, program not deployed, etc.), MPC is gracefully
  * marked unavailable and callers fall back to standard flows.
  *
+ * Supports both Privy embedded wallets and local Keypair wallets.
+ *
  * Uses @p01/arcium-sdk which depends on @arcium-hq/client for
  * Rescue-CTR encryption (required by the Arcium MXE).
  */
@@ -12,6 +14,7 @@
 import { Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
+import { useWalletStore, getPrivySigner } from '../../stores/walletStore';
 
 // Inline to avoid circular dependency with ./index
 const P01_ARCIUM_PROGRAM_ID = new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT');
@@ -22,19 +25,52 @@ let clientInstance: any = null;
 let initPromise: Promise<any> | null = null;
 let initError: string | null = null;
 
-/** Wallet adapter for Anchor (required by ArciumClient) */
-function createWalletAdapter(keypair: any) {
+/** Wallet adapter for Anchor — works with both Privy and local Keypair */
+function createWalletAdapter(pubkey: PublicKey, signer: (tx: Transaction) => Promise<Transaction>) {
   return {
-    publicKey: keypair.publicKey,
-    signTransaction: async (tx: Transaction) => {
-      tx.sign(keypair);
-      return tx;
-    },
+    publicKey: pubkey,
+    signTransaction: signer,
     signAllTransactions: async (txs: Transaction[]) => {
-      txs.forEach((tx) => tx.sign(keypair));
-      return txs;
+      const signed: Transaction[] = [];
+      for (const tx of txs) {
+        signed.push(await signer(tx));
+      }
+      return signed;
     },
   };
+}
+
+/**
+ * Get wallet public key + signer (Privy first, then local keypair fallback)
+ */
+async function getWalletInfo(): Promise<{ pubkey: PublicKey; signer: (tx: Transaction) => Promise<Transaction> } | null> {
+  // Try Privy wallet first
+  const { isPrivyWallet, publicKey } = useWalletStore.getState();
+  if (isPrivyWallet && publicKey) {
+    const privySigner = getPrivySigner();
+    if (privySigner) {
+      console.log('[MPC] Using Privy wallet:', publicKey.slice(0, 8) + '...');
+      return {
+        pubkey: new PublicKey(publicKey),
+        signer: privySigner,
+      };
+    }
+  }
+
+  // Fallback to local keypair
+  const keypair = await getKeypair();
+  if (keypair) {
+    console.log('[MPC] Using local keypair:', keypair.publicKey.toBase58().slice(0, 8) + '...');
+    return {
+      pubkey: keypair.publicKey,
+      signer: async (tx: Transaction) => {
+        tx.sign(keypair);
+        return tx;
+      },
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -51,31 +87,38 @@ export async function getMpcClient(): Promise<any | null> {
   initPromise = (async () => {
     try {
       // Dynamic import to isolate polyfill issues
+      console.log('[MPC] Step 1: importing @p01/arcium-sdk...');
       const sdk = await import('@p01/arcium-sdk');
       ArciumClientClass = sdk.ArciumClient;
+      console.log('[MPC] Step 2: SDK imported, ArciumClient:', !!ArciumClientClass);
 
-      const keypair = await getKeypair();
-      if (!keypair) {
-        initError = 'Wallet not available';
+      const walletInfo = await getWalletInfo();
+      if (!walletInfo) {
+        // Don't cache this as permanent error — wallet may become available later
+        console.warn('[MPC] Step 3: No wallet available yet (will retry on next call)');
         return null;
       }
+      console.log('[MPC] Step 3: wallet ready:', walletInfo.pubkey.toBase58().slice(0, 8) + '...');
 
       const connection = getConnection();
-      const wallet = createWalletAdapter(keypair);
+      const wallet = createWalletAdapter(walletInfo.pubkey, walletInfo.signer);
+      console.log('[MPC] Step 4: creating ArciumClient...');
 
       const client = new ArciumClientClass({
         connection,
         wallet,
         programId: P01_ARCIUM_PROGRAM_ID,
       });
+      console.log('[MPC] Step 5: calling client.initialize()...');
 
       await client.initialize();
       clientInstance = client;
-      console.log('[MPC] Arcium client initialized');
+      console.log('[MPC] Step 6: Arcium client initialized successfully!');
       return client;
     } catch (e: any) {
       initError = e.message || 'Unknown MPC init error';
       console.warn('[MPC] Failed to initialize:', initError);
+      console.warn('[MPC] Error stack:', e.stack?.slice(0, 500));
       return null;
     } finally {
       initPromise = null;

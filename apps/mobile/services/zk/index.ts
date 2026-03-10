@@ -1283,17 +1283,20 @@ export class ZkService {
     const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
 
     // Debug: log what we're passing on-chain vs what the circuit used
-    console.log('[ZK Debug] On-chain public inputs (decimal):');
-    console.log('[ZK Debug]   merkle_root:', merkleRoot.toString());
-    console.log('[ZK Debug]   nullifier_1:', nullifier1.toString());
-    console.log('[ZK Debug]   nullifier_2:', nullifier2.toString());
-    console.log('[ZK Debug]   output_commitment_1:', changeNote.commitment.toString());
-    console.log('[ZK Debug]   output_commitment_2:', dummyCommitment.toString());
+    // Gated behind __DEV__ to prevent leaking nullifiers/commitments in production (M16)
     const FIELD_MODULUS_DBG = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
     const publicAmountOnChain = FIELD_MODULUS_DBG - amount;
-    console.log('[ZK Debug]   public_amount (field):', publicAmountOnChain.toString());
-    console.log('[ZK Debug]   token_mint:', tokenMintField.toString());
-    console.log('[ZK Debug]   amount (raw u64):', amount.toString());
+    if (__DEV__) {
+      console.log('[ZK Debug] On-chain public inputs (decimal):');
+      console.log('[ZK Debug]   merkle_root:', merkleRoot.toString());
+      console.log('[ZK Debug]   nullifier_1:', nullifier1.toString());
+      console.log('[ZK Debug]   nullifier_2:', nullifier2.toString());
+      console.log('[ZK Debug]   output_commitment_1:', changeNote.commitment.toString());
+      console.log('[ZK Debug]   output_commitment_2:', dummyCommitment.toString());
+      console.log('[ZK Debug]   public_amount (field):', publicAmountOnChain.toString());
+      console.log('[ZK Debug]   token_mint:', tokenMintField.toString());
+      console.log('[ZK Debug]   amount (raw u64):', amount.toString());
+    }
 
     // IMPORTANT: Pass merkle_root (current root BEFORE insertion), not newRoot!
     // Public inputs in little-endian (matching stored roots) - verifier converts to BE
