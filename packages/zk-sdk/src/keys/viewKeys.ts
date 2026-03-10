@@ -143,9 +143,18 @@ export function tryDecryptWithIVK(
     // Derive decryption key
     const decryptionKey = poseidonHash([sharedSecret, ivk.dk]);
 
-    // Decrypt note fields
-    const amount = decryptField(encryptedNote.encAmount, decryptionKey, BigInt(0));
-    const randomness = decryptField(encryptedNote.encRandomness, decryptionKey, BigInt(1));
+    let amount: bigint;
+    let randomness: bigint;
+
+    // Use MAC-verified decryption when MACs are present (v2 notes)
+    if (encryptedNote.macAmount !== undefined && encryptedNote.macRandomness !== undefined) {
+      amount = decryptFieldWithMac(encryptedNote.encAmount, encryptedNote.macAmount, decryptionKey, BigInt(0));
+      randomness = decryptFieldWithMac(encryptedNote.encRandomness, encryptedNote.macRandomness, decryptionKey, BigInt(1));
+    } else {
+      // Legacy path: no MAC (pre-v2 notes)
+      amount = decryptField(encryptedNote.encAmount, decryptionKey, BigInt(0));
+      randomness = decryptField(encryptedNote.encRandomness, decryptionKey, BigInt(1));
+    }
 
     // Verify the commitment matches
     const expectedCommitment = poseidonHash([
@@ -301,6 +310,33 @@ function bytesToBigInt(bytes: Uint8Array): bigint {
   return result;
 }
 
+/**
+ * Encrypt a field element with additive masking + Poseidon MAC.
+ * Returns { encrypted, mac } where mac authenticates the ciphertext.
+ */
+function encryptFieldWithMac(plain: bigint, key: bigint, index: bigint): { encrypted: bigint; mac: bigint } {
+  const mask = poseidonHash([key, index]);
+  const encrypted = (plain + mask) % FIELD_MODULUS;
+  const mac = poseidonHash([key, index, encrypted]);
+  return { encrypted, mac };
+}
+
+/**
+ * Decrypt a field element and verify its MAC.
+ * Throws if the MAC does not match (tampered or wrong key).
+ */
+function decryptFieldWithMac(encrypted: bigint, mac: bigint, key: bigint, index: bigint): bigint {
+  const expectedMac = poseidonHash([key, index, encrypted]);
+  if (expectedMac !== mac) {
+    throw new Error('MAC verification failed — encrypted note may be tampered or key is wrong');
+  }
+  const mask = poseidonHash([key, index]);
+  return (encrypted - mask + FIELD_MODULUS) % FIELD_MODULUS;
+}
+
+/**
+ * Legacy decryptField without MAC (for notes encrypted before MAC support).
+ */
 function decryptField(encrypted: bigint, key: bigint, index: bigint): bigint {
   const mask = poseidonHash([key, index]);
   return (encrypted - mask + FIELD_MODULUS) % FIELD_MODULUS;
@@ -316,6 +352,10 @@ export interface EncryptedNote {
   encRandomness: bigint;
   ephemeralPubKey: bigint;
   tokenMint: bigint;
+  /** MAC for encAmount (present in v2 encrypted notes) */
+  macAmount?: bigint;
+  /** MAC for encRandomness (present in v2 encrypted notes) */
+  macRandomness?: bigint;
 }
 
 export interface DecryptedNote {
@@ -344,6 +384,20 @@ export interface OutgoingTransactionInfo {
   amount: bigint;
 }
 
+/**
+ * Encrypt note fields for storage using additive masking + Poseidon MAC (v2 format).
+ * Use this when creating encrypted notes for on-chain/off-chain storage.
+ */
+export function encryptNoteFields(
+  amount: bigint,
+  randomness: bigint,
+  decryptionKey: bigint
+): { encAmount: bigint; macAmount: bigint; encRandomness: bigint; macRandomness: bigint } {
+  const { encrypted: encAmount, mac: macAmount } = encryptFieldWithMac(amount, decryptionKey, BigInt(0));
+  const { encrypted: encRandomness, mac: macRandomness } = encryptFieldWithMac(randomness, decryptionKey, BigInt(1));
+  return { encAmount, macAmount, encRandomness, macRandomness };
+}
+
 export default {
   generateSpendingKey,
   deriveFullViewingKey,
@@ -356,4 +410,5 @@ export default {
   serializeViewingKey,
   deserializeViewingKey,
   generateViewingKeyURI,
+  encryptNoteFields,
 };

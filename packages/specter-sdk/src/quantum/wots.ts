@@ -7,7 +7,7 @@
  * Parameters:
  *   - w = 16 (Winternitz parameter: 4 bits per chain)
  *   - n = 32 (SHA-256 output size)
- *   - chains = 32 (one per nibble of the 128-bit message hash)
+ *   - chains = 35 (32 message nibbles + 3 checksum nibbles)
  *
  * Security:
  *   - 128-bit classical (SHA-256 preimage)
@@ -18,29 +18,31 @@ import { sha256 } from '@noble/hashes/sha256';
 
 // ── Constants ─────────────────────────────────────────────────────
 
-export const WOTS_CHAINS = 32;
+export const WOTS_MSG_CHAINS = 32; // chains for message nibbles
+export const WOTS_CHECKSUM_CHAINS = 3; // chains for checksum nibbles (ceil(log2(32*15)) / 4 = 3)
+export const WOTS_CHAINS = WOTS_MSG_CHAINS + WOTS_CHECKSUM_CHAINS; // 35 total
 export const WOTS_W = 16; // w=16: nibble-based
 export const WOTS_MAX_VAL = WOTS_W - 1; // 15
 export const HASH_SIZE = 32;
-export const WOTS_SIG_SIZE = WOTS_CHAINS * HASH_SIZE; // 1024 bytes
-export const WOTS_PUBKEY_SIZE = WOTS_CHAINS * HASH_SIZE; // 1024 bytes
+export const WOTS_SIG_SIZE = WOTS_CHAINS * HASH_SIZE; // 1120 bytes
+export const WOTS_PUBKEY_SIZE = WOTS_CHAINS * HASH_SIZE; // 1120 bytes
 
 // ── Types ─────────────────────────────────────────────────────────
 
 export interface WotsKeypair {
-  /** Secret key: 32 chain secrets (each 32 bytes) */
-  secretKey: Uint8Array; // 1024 bytes
-  /** Public key: 32 chain endpoints (each 32 bytes) */
-  publicKey: Uint8Array; // 1024 bytes
+  /** Secret key: 35 chain secrets (each 32 bytes) — 32 message + 3 checksum */
+  secretKey: Uint8Array; // 1120 bytes
+  /** Public key: 35 chain endpoints (each 32 bytes) — 32 message + 3 checksum */
+  publicKey: Uint8Array; // 1120 bytes
   /** SHA-256 hash of public key (stored on-chain) */
   publicKeyHash: Uint8Array; // 32 bytes
 }
 
 export interface WotsSignature {
-  /** 32 chain values (each 32 bytes) */
-  signature: Uint8Array; // 1024 bytes
+  /** 35 chain values (each 32 bytes) — 32 message + 3 checksum */
+  signature: Uint8Array; // 1120 bytes
   /** The full public key (needed for on-chain verification) */
-  publicKey: Uint8Array; // 1024 bytes
+  publicKey: Uint8Array; // 1120 bytes
 }
 
 // ── Key Generation ────────────────────────────────────────────────
@@ -100,11 +102,17 @@ export function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignatu
 
   const signature = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
 
+  // Extract message nibbles
+  const msgNibbles = extractNibbles(message);
+
+  // Compute checksum nibbles
+  const checksumNibbles = computeChecksum(msgNibbles);
+
+  // All nibbles: 32 message + 3 checksum = 35 total
+  const allNibbles = [...msgNibbles, ...checksumNibbles];
+
   for (let i = 0; i < WOTS_CHAINS; i++) {
-    // Extract nibble from message
-    const byteIdx = Math.floor(i / 2);
-    const byte = message[byteIdx]!;
-    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
+    const nibble = allNibbles[i];
 
     // Signature value = hash^(15 - nibble)(secret_i)
     const stepsToHash = WOTS_MAX_VAL - nibble;
@@ -144,11 +152,14 @@ export function wotsVerify(
   const computedHash = new Uint8Array(sha256(sig.publicKey));
   if (!constantTimeEqual(computedHash, publicKeyHash)) return false;
 
-  // Verify each chain
+  // Extract message nibbles and compute checksum
+  const msgNibbles = extractNibbles(message);
+  const checksumNibbles = computeChecksum(msgNibbles);
+  const allNibbles = [...msgNibbles, ...checksumNibbles];
+
+  // Verify all 35 chains (32 message + 3 checksum)
   for (let i = 0; i < WOTS_CHAINS; i++) {
-    const byteIdx = Math.floor(i / 2);
-    const byte = message[byteIdx]!;
-    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
+    const nibble = allNibbles[i];
 
     let current: Uint8Array = sig.signature.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
     for (let step = 0; step < nibble; step++) {
@@ -205,6 +216,39 @@ export function deriveWotsKeypair(masterSeed: Uint8Array, index: number): WotsKe
   ));
 
   return generateWotsKeypair(keySeed);
+}
+
+// ── Nibble / Checksum Helpers ─────────────────────────────────────
+
+/**
+ * Extract 32 nibbles (4-bit values) from a 32-byte message hash.
+ * Only the first 16 bytes (128 bits) are used, yielding 32 nibbles.
+ */
+function extractNibbles(message: Uint8Array): number[] {
+  const nibbles: number[] = [];
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    const byteIdx = Math.floor(i / 2);
+    const byte = message[byteIdx]!;
+    nibbles.push(i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f);
+  }
+  return nibbles;
+}
+
+/**
+ * Compute WOTS+ checksum over message nibbles.
+ * checksum = sum(15 - nibble_i) for all 32 message nibbles.
+ * Encoded in base-16 as 3 nibbles (ceil(log2(32*15)) / 4 = ceil(8.9) / 4 = 3).
+ */
+function computeChecksum(msgNibbles: number[]): number[] {
+  let checksum = 0;
+  for (let i = 0; i < msgNibbles.length; i++) {
+    checksum += WOTS_MAX_VAL - msgNibbles[i];
+  }
+  // Encode checksum as 3 base-16 nibbles (big-endian)
+  const c2 = checksum & 0x0f;
+  const c1 = (checksum >> 4) & 0x0f;
+  const c0 = (checksum >> 8) & 0x0f;
+  return [c0, c1, c2];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

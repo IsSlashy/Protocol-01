@@ -32,6 +32,7 @@ import {
 
 import { ed25519 } from '@noble/curves/ed25519';
 import { x25519 } from '@noble/curves/ed25519';
+import { sha512 } from '@noble/hashes/sha512';
 
 // ============ Constants ============
 
@@ -552,7 +553,7 @@ function ed25519ToX25519PublicKey(ed25519PublicKey: Uint8Array): Uint8Array {
 function ed25519ToX25519PrivateKey(ed25519PrivateKey: Uint8Array): Uint8Array {
   // Hash the Ed25519 seed with SHA-512 and take the first 32 bytes
   // Then clamp as per X25519 spec
-  const hash = sha512Simple(ed25519PrivateKey);
+  const hash = sha512(ed25519PrivateKey);
   const x25519Key = new Uint8Array(hash.slice(0, 32));
 
   // Clamp the key (as per RFC 7748)
@@ -563,21 +564,7 @@ function ed25519ToX25519PrivateKey(ed25519PrivateKey: Uint8Array): Uint8Array {
   return x25519Key;
 }
 
-/**
- * Simple SHA-512 using the SHA-256 from crypto module.
- * Produces 64 bytes by concatenating two SHA-256 hashes.
- */
-function sha512Simple(data: Uint8Array): Uint8Array {
-  const hash1 = hashSHA256(data);
-  const suffix = new Uint8Array(data.length + 1);
-  suffix.set(data, 0);
-  suffix[data.length] = 0x01;
-  const hash2 = hashSHA256(suffix);
-  const result = new Uint8Array(64);
-  result.set(hash1, 0);
-  result.set(hash2, 32);
-  return result;
-}
+// sha512Simple removed — replaced by real sha512 from @noble/hashes/sha512
 
 /**
  * Modular exponentiation: base^exp mod mod
