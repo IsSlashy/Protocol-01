@@ -454,6 +454,8 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
             javaScriptEnabled
             domStorageEnabled
             originWhitelist={['file://']}
+            // L12: allowFileAccess is required here — the WebView loads circuit files from
+            // file:///android_asset/ via baseUrl. Circuits are APK-bundled static assets.
             allowFileAccess
             onError={(e) => {
               console.error('[DenomProver] WebView error:', e.nativeEvent);

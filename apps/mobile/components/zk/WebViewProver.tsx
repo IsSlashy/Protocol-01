@@ -117,7 +117,9 @@ export const WebViewProver = forwardRef<WebViewProverHandle, WebViewProverProps>
           javaScriptEnabled
           domStorageEnabled
           originWhitelist={['file://']}
-          // Android: allow file:///android_asset/ access for APK-bundled circuits
+          // L12: allowFileAccess is required here — the WebView loads circuit files from
+          // file:///android_asset/ via baseUrl. Circuits are APK-bundled static assets,
+          // not user-supplied content.
           allowFileAccess
           // Disable user interaction — this is an invisible compute surface
           scrollEnabled={false}

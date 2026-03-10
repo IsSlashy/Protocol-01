@@ -374,8 +374,8 @@ export const WebViewProver = forwardRef<WebViewProverHandle, WebViewProverProps>
           javaScriptEnabled
           domStorageEnabled
           originWhitelist={['file://']}
-          // Android-specific: allow file access for potential asset loading
-          allowFileAccess={Platform.OS === 'android'}
+          // L12: allowFileAccess removed — circuit data is injected via postMessage (base64),
+          // not loaded from file://. No file:// access needed for this WebView.
           // Performance settings
           cacheEnabled={false}
           incognito

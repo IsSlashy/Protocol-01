@@ -15,7 +15,14 @@ const TX_CACHE_KEY = 'p01_tx_cache_';
 
 // P-01 Network Fee Configuration
 const P01_FEE_BPS = parseInt(process.env.EXPO_PUBLIC_PLATFORM_FEE_BPS || '25', 10); // 0.25% default
-const P01_FEE_WALLET = process.env.EXPO_PUBLIC_FEE_WALLET || '3EwUAV44kvjL23emA2yHCwZvAfJbfG4MrhL6YHUrqVLi';
+// L7: Hardcode the fee wallet for mainnet to prevent env-var override attacks.
+// On devnet, allow override for testing; on mainnet, always use the canonical address.
+const MAINNET_FEE_WALLET = '3EwUAV44kvjL23emA2yHCwZvAfJbfG4MrhL6YHUrqVLi';
+function getP01FeeWallet(): string {
+  return isMainnet()
+    ? MAINNET_FEE_WALLET // Never override on mainnet
+    : (process.env.EXPO_PUBLIC_FEE_WALLET || MAINNET_FEE_WALLET);
+}
 
 export interface TransactionResult {
   signature: string;
@@ -48,7 +55,7 @@ export function getTransferFeeBreakdown(amountInSol: number): FeeBreakdown {
     recipientAmount: recipientAmount / LAMPORTS_PER_SOL,
     feeAmount: feeAmount / LAMPORTS_PER_SOL,
     feePercentage: P01_FEE_BPS / 10000,
-    feeWallet: P01_FEE_WALLET,
+    feeWallet: getP01FeeWallet(),
     isMainnet: onMainnet,
   };
 }
@@ -125,8 +132,17 @@ export async function sendSolWithSigner(
   signTransaction: (tx: Transaction) => Promise<Transaction>
 ): Promise<TransactionResult> {
   try {
+    // M11: Validate inputs before building transaction
+    if (!amount || amount <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+    let toPubkey: PublicKey;
+    try {
+      toPubkey = new PublicKey(toAddress);
+    } catch {
+      throw new Error('Invalid recipient address');
+    }
     const connection = getConnection();
-    const toPubkey = new PublicKey(toAddress);
     const totalLamports = Math.floor(amount * LAMPORTS_PER_SOL);
 
     // Calculate P-01 fee (only on mainnet)
@@ -147,7 +163,7 @@ export async function sendSolWithSigner(
 
     // P-01 Network fee transfer (only if > 0)
     if (feeAmount > 0) {
-      const feeWallet = new PublicKey(P01_FEE_WALLET);
+      const feeWallet = new PublicKey(getP01FeeWallet());
       transaction.add(
         SystemProgram.transfer({
           fromPubkey,
@@ -195,13 +211,23 @@ export async function sendSol(
   amount: number
 ): Promise<TransactionResult> {
   try {
+    // M11: Validate inputs before building transaction
+    if (!amount || amount <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+    let toPubkey: PublicKey;
+    try {
+      toPubkey = new PublicKey(toAddress);
+    } catch {
+      throw new Error('Invalid recipient address');
+    }
+
     const keypair = await getKeypair();
     if (!keypair) {
       throw new Error('No wallet found');
     }
 
     const connection = getConnection();
-    const toPubkey = new PublicKey(toAddress);
     const totalLamports = Math.floor(amount * LAMPORTS_PER_SOL);
 
     // Calculate P-01 fee (only on mainnet)
@@ -222,7 +248,7 @@ export async function sendSol(
 
     // P-01 Network fee transfer (only if > 0)
     if (feeAmount > 0) {
-      const feeWallet = new PublicKey(P01_FEE_WALLET);
+      const feeWallet = new PublicKey(getP01FeeWallet());
       transaction.add(
         SystemProgram.transfer({
           fromPubkey: keypair.publicKey,
