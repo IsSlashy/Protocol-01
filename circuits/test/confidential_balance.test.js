@@ -24,9 +24,10 @@ function poseidonHash(inputs) {
     return poseidon.F.toObject(hash);
 }
 
-// Balance commitment = Poseidon(balance, salt, owner_pubkey, token_mint)
-function createBalanceCommitment(balance, salt, ownerPubkey, tokenMint) {
-    return poseidonHash([balance, salt, ownerPubkey, tokenMint]);
+// Balance commitment = Poseidon(balance, Poseidon(salt, nonce), owner_pubkey, token_mint)
+function createBalanceCommitment(balance, salt, nonce, ownerPubkey, tokenMint) {
+    const augmentedSalt = poseidonHash([salt, nonce]);
+    return poseidonHash([balance, augmentedSalt, ownerPubkey, tokenMint]);
 }
 
 // Amount commitment = Poseidon(amount, amount_salt)
@@ -34,9 +35,9 @@ function createAmountCommitment(amount, amountSalt) {
     return poseidonHash([amount, amountSalt]);
 }
 
-// Owner pubkey = Poseidon(spending_key)
+// Owner pubkey = Poseidon(spending_key, 0) — domain tag 0
 function deriveOwnerPubkey(spendingKey) {
-    return poseidonHash([spendingKey]);
+    return poseidonHash([spendingKey, BigInt(0)]);
 }
 
 // Generate witness using WASM
@@ -122,8 +123,8 @@ async function runTests() {
         const newSalt = BigInt('222222222222');
         const nonce = BigInt(1);
 
-        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, ownerPubkey, tokenMint);
-        const newCommitment = createBalanceCommitment(newBalance, newSalt, ownerPubkey, tokenMint);
+        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, nonce, ownerPubkey, tokenMint);
+        const newCommitment = createBalanceCommitment(newBalance, newSalt, nonce, ownerPubkey, tokenMint);
 
         // Verify commitments match
         assert(oldCommitment > 0n, 'Old commitment is non-zero hash');
@@ -189,8 +190,8 @@ async function runTests() {
         const amountSalt = BigInt('555555555555');
         const nonce = BigInt(2);
 
-        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, ownerPubkey, tokenMint);
-        const newCommitment = createBalanceCommitment(newBalance, newSalt, ownerPubkey, tokenMint);
+        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, nonce, ownerPubkey, tokenMint);
+        const newCommitment = createBalanceCommitment(newBalance, newSalt, nonce, ownerPubkey, tokenMint);
         const amountHash = createAmountCommitment(transferAmount, amountSalt);
 
         assert(
@@ -254,8 +255,8 @@ async function runTests() {
         const amountSalt = BigInt('555555555555');
         const nonce = BigInt(1);
 
-        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, recipientPubkey, tokenMint);
-        const newCommitment = createBalanceCommitment(newBalance, newSalt, recipientPubkey, tokenMint);
+        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, nonce, recipientPubkey, tokenMint);
+        const newCommitment = createBalanceCommitment(newBalance, newSalt, nonce, recipientPubkey, tokenMint);
         const amountHash = createAmountCommitment(receiveAmount, amountSalt);
 
         assert(
@@ -316,8 +317,8 @@ async function runTests() {
         const newSalt = BigInt('444444444444');
         const nonce = BigInt(3);
 
-        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, ownerPubkey, tokenMint);
-        const newCommitment = createBalanceCommitment(newBalance, newSalt, ownerPubkey, tokenMint);
+        const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, nonce, ownerPubkey, tokenMint);
+        const newCommitment = createBalanceCommitment(newBalance, newSalt, nonce, ownerPubkey, tokenMint);
 
         assert(
             oldBalance - withdrawAmount === newBalance,
@@ -391,10 +392,10 @@ async function runTests() {
         if (hasCircuit) {
             // Try to generate proof — SHOULD FAIL
             const newSalt = BigInt('999999999999');
-            const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, ownerPubkey, tokenMint);
+            const oldCommitment = createBalanceCommitment(oldBalance, oldSalt, nonce, ownerPubkey, tokenMint);
             // Using field subtraction to get "negative" balance
             const newBalance = (FIELD_MODULUS + oldBalance - transferAmount) % FIELD_MODULUS;
-            const newCommitment = createBalanceCommitment(newBalance, newSalt, ownerPubkey, tokenMint);
+            const newCommitment = createBalanceCommitment(newBalance, newSalt, nonce, ownerPubkey, tokenMint);
             const amountHash = createAmountCommitment(transferAmount, BigInt('101010101010'));
 
             const overflowInputs = {
@@ -447,8 +448,8 @@ async function runTests() {
 
         const balance = BigInt(100_000_000_000);
         const salt = BigInt('123456789');
-        const realCommitment = createBalanceCommitment(balance, salt, realPubkey, tokenMint);
-        const wrongCommitment = createBalanceCommitment(balance, salt, wrongPubkey, tokenMint);
+        const realCommitment = createBalanceCommitment(balance, salt, BigInt(1), realPubkey, tokenMint);
+        const wrongCommitment = createBalanceCommitment(balance, salt, BigInt(1), wrongPubkey, tokenMint);
 
         assert(
             realCommitment !== wrongCommitment,
@@ -521,11 +522,11 @@ async function runTests() {
         const newBalance = balance + depositAmount;
         const newSalt = BigInt('222222222222');
 
-        const oldComm = createBalanceCommitment(balance, salt, ownerPubkey, usdcMint);
-        const newComm = createBalanceCommitment(newBalance, newSalt, ownerPubkey, usdcMint);
+        const oldComm = createBalanceCommitment(balance, salt, BigInt(0), ownerPubkey, usdcMint);
+        const newComm = createBalanceCommitment(newBalance, newSalt, BigInt(0), ownerPubkey, usdcMint);
 
         // Same balance + salt but different token → different commitment
-        const solComm = createBalanceCommitment(balance, salt, ownerPubkey, tokenMint);
+        const solComm = createBalanceCommitment(balance, salt, BigInt(0), ownerPubkey, tokenMint);
         assert(oldComm !== solComm, 'Different token → different commitment');
         assert(newComm > 0n, 'USDC commitment is valid');
         assert(true, 'Multi-token support verified');
@@ -541,8 +542,8 @@ async function runTests() {
         const salt1 = BigInt('111111111111');
         const salt2 = BigInt('999999999999');
 
-        const comm1 = createBalanceCommitment(balance, salt1, ownerPubkey, tokenMint);
-        const comm2 = createBalanceCommitment(balance, salt2, ownerPubkey, tokenMint);
+        const comm1 = createBalanceCommitment(balance, salt1, BigInt(0), ownerPubkey, tokenMint);
+        const comm2 = createBalanceCommitment(balance, salt2, BigInt(0), ownerPubkey, tokenMint);
 
         assert(comm1 !== comm2, 'Same balance + different salt → different commitments');
         assert(true, 'Salt prevents balance guessing');

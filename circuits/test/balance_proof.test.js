@@ -19,12 +19,14 @@ function poseidonHash(inputs) {
     return poseidon.F.toObject(hash);
 }
 
-function createBalanceCommitment(balance, salt, ownerPubkey, tokenMint) {
-    return poseidonHash([balance, salt, ownerPubkey, tokenMint]);
+function createBalanceCommitment(balance, salt, nonce, ownerPubkey, tokenMint) {
+    const augmentedSalt = poseidonHash([salt, nonce]);
+    return poseidonHash([balance, augmentedSalt, ownerPubkey, tokenMint]);
 }
 
+// Owner pubkey = Poseidon(spending_key, 0) — domain tag 0
 function deriveOwnerPubkey(spendingKey) {
-    return poseidonHash([spendingKey]);
+    return poseidonHash([spendingKey, BigInt(0)]);
 }
 
 let passed = 0;
@@ -79,8 +81,9 @@ async function runTests() {
     {
         const balance = BigInt(100_000_000_000);
         const salt = BigInt('111111111111');
+        const nonce = BigInt(1);
         const threshold = BigInt(50_000_000_000);
-        const commitment = createBalanceCommitment(balance, salt, ownerPubkey, tokenMint);
+        const commitment = createBalanceCommitment(balance, salt, nonce, ownerPubkey, tokenMint);
 
         const difference = balance - threshold;
         assert(difference >= 0n, `Difference is non-negative: ${difference}`);
@@ -92,6 +95,7 @@ async function runTests() {
             token_mint: tokenMint.toString(),
             balance: balance.toString(),
             salt: salt.toString(),
+            nonce: nonce.toString(),
             spending_key: spendingKey.toString(),
         };
 
@@ -142,13 +146,15 @@ async function runTests() {
 
         if (hasCircuit) {
             const salt = BigInt('333333333333');
-            const commitment = createBalanceCommitment(balance, salt, ownerPubkey, tokenMint);
+            const nonce = BigInt(1);
+            const commitment = createBalanceCommitment(balance, salt, nonce, ownerPubkey, tokenMint);
             const inputs = {
                 balance_commitment: commitment.toString(),
                 threshold: threshold.toString(),
                 token_mint: tokenMint.toString(),
                 balance: balance.toString(),
                 salt: salt.toString(),
+                nonce: nonce.toString(),
                 spending_key: spendingKey.toString(),
             };
 
@@ -187,8 +193,9 @@ async function runTests() {
         const fakeBalance = BigInt(100_000_000_000);
         const salt = BigInt('444444444444');
 
-        const realCommitment = createBalanceCommitment(realBalance, salt, ownerPubkey, tokenMint);
-        const fakeCommitment = createBalanceCommitment(fakeBalance, salt, ownerPubkey, tokenMint);
+        const nonce = BigInt(1);
+        const realCommitment = createBalanceCommitment(realBalance, salt, nonce, ownerPubkey, tokenMint);
+        const fakeCommitment = createBalanceCommitment(fakeBalance, salt, nonce, ownerPubkey, tokenMint);
 
         assert(
             realCommitment !== fakeCommitment,
