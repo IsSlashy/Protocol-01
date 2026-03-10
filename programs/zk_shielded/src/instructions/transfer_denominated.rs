@@ -135,8 +135,9 @@ pub fn handler(
     // Insert new commitment into the Merkle tree
     let leaf_index = merkle_tree.insert_with_root(new_commitment, new_root)?;
 
-    // Update pool root
+    // Update pool root and leaf index
     pool.update_root(new_root);
+    pool.next_leaf_index = merkle_tree.leaf_count;
     pool.last_tx_at = clock.unix_timestamp;
 
     // Note count stays the same: one note consumed, one note created.

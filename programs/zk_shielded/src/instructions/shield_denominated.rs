@@ -128,6 +128,10 @@ pub fn handler(
             pool_vault.mint == pool.token_mint,
             ZkShieldedError::InvalidTokenMint
         );
+        require!(
+            pool_vault.owner == pool.key(),
+            ZkShieldedError::InvalidTokenOwner
+        );
 
         let transfer_ctx = CpiContext::new(
             token_program.to_account_info(),

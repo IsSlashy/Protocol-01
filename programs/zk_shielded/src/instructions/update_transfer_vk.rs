@@ -22,9 +22,19 @@ pub struct UpdateTransferVk<'info> {
 
 pub fn handler(ctx: Context<UpdateTransferVk>, new_vk_hash: [u8; 32]) -> Result<()> {
     let pool = &mut ctx.accounts.denominated_pool;
+    let clock = Clock::get()?;
+
+    // Enforce 24h cooldown between VK updates to prevent instant rug-pulls
+    if pool.vk_update_slot > 0 {
+        require!(
+            clock.unix_timestamp - pool.vk_update_slot > DenominatedPool::VK_UPDATE_COOLDOWN,
+            ZkShieldedError::VkUpdateCooldown
+        );
+    }
 
     msg!("Old transfer VK hash: {:?}", &pool.vk_hash_transfer[..8]);
     pool.vk_hash_transfer = new_vk_hash;
+    pool.vk_update_slot = clock.unix_timestamp;
     msg!("New transfer VK hash: {:?}", &new_vk_hash[..8]);
     msg!("Denominated pool transfer VK updated");
 
