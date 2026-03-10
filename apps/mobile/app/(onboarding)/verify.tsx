@@ -17,6 +17,10 @@ export default function VerifyScreen() {
 
   useEffect(() => {
     loadMnemonic();
+    return () => {
+      setCorrectOrder([]);
+      setSelectedWords([]);
+    };
   }, []);
 
   const loadMnemonic = async () => {

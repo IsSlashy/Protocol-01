@@ -381,8 +381,9 @@ export default function ConfidentialBalanceScreen() {
   const handleCopyAddress = () => {
     if (zkWalletAddress) {
       Clipboard.setStringAsync(zkWalletAddress);
+      setTimeout(() => Clipboard.setStringAsync(''), 60000);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      Alert.alert('Copied', 'ZK wallet address copied to clipboard');
+      Alert.alert('Copied', 'ZK wallet address copied to clipboard. Clipboard will be cleared in 60 seconds.');
     }
   };
 

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOut } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -68,6 +69,7 @@ export default function LockScreen() {
             fallbackLabel: 'Use Passcode',
           });
           if (result.success) {
+            await AsyncStorage.setItem('p01_session_unlocked', 'true');
             router.replace('/(main)/(wallet)');
           }
           // If auth fails, stay on lock screen — user can retry via biometric button
@@ -80,6 +82,7 @@ export default function LockScreen() {
             cancelLabel: 'Cancel',
           });
           if (deviceResult.success) {
+            await AsyncStorage.setItem('p01_session_unlocked', 'true');
             router.replace('/(main)/(wallet)');
           }
           // If fails, stay on lock screen
@@ -137,6 +140,7 @@ export default function LockScreen() {
       await updateLockout(0, 0);
       await SecureStore.deleteItemAsync('p01_lockout_state');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await AsyncStorage.setItem('p01_session_unlocked', 'true');
       router.replace('/(main)/(wallet)');
     } else {
       const attempts = failedAttempts + 1;
@@ -145,6 +149,8 @@ export default function LockScreen() {
       setPin('');
 
       // Progressive lockout: 5 fails → 30s, 8 fails → 60s, 10+ fails → 300s
+      // L10 accepted risk: lockout uses Date.now() which can be manipulated via device
+      // settings, but this requires physical device access which implies compromise.
       let lockoutSeconds = 0;
       let newLockoutUntil = 0;
       if (attempts >= 10) {
@@ -197,6 +203,7 @@ export default function LockScreen() {
 
       if (result.success) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await AsyncStorage.setItem('p01_session_unlocked', 'true');
         router.replace('/(main)/(wallet)');
       } else {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -388,7 +395,21 @@ export default function LockScreen() {
       {/* Switch/Add Wallet Option — safely above gesture bar */}
       <Animated.View entering={FadeInDown.delay(500)} style={styles.switchWalletContainer}>
         <TouchableOpacity
-          onPress={() => router.push('/(onboarding)')}
+          onPress={async () => {
+            // M2: Require authentication before allowing wallet switch
+            try {
+              const result = await LocalAuthentication.authenticateAsync({
+                promptMessage: 'Authenticate to switch wallets',
+                disableDeviceFallback: false,
+                cancelLabel: 'Cancel',
+              });
+              if (result.success) {
+                router.push('/(onboarding)');
+              }
+            } catch {
+              // Authentication error — stay on lock screen
+            }
+          }}
           style={styles.switchWalletButton}
           activeOpacity={0.7}
           accessibilityRole="button"

@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import * as SecureStore from 'expo-secure-store';
+import * as ScreenCapture from 'expo-screen-capture';
 import { SeedPhraseGrid } from '../../components/onboarding';
 
 export default function BackupScreen() {
@@ -16,8 +17,19 @@ export default function BackupScreen() {
   const [seedPhrase, setSeedPhrase] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // H3: Block screenshots while seed phrase is visible
+  useEffect(() => {
+    ScreenCapture.preventScreenCaptureAsync();
+    return () => {
+      ScreenCapture.allowScreenCaptureAsync();
+    };
+  }, []);
+
   useEffect(() => {
     loadMnemonic();
+    return () => {
+      setSeedPhrase([]);
+    };
   }, []);
 
   const loadMnemonic = async () => {

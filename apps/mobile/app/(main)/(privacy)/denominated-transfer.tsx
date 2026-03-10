@@ -98,8 +98,9 @@ function TransferScreenContent() {
   const handleCopyNote = useCallback(async () => {
     if (!result) return;
     await Clipboard.setStringAsync(result.shareableNote);
+    setTimeout(() => Clipboard.setStringAsync(''), 60000);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Copied', 'Shareable note data copied to clipboard. Share it securely with the recipient.');
+    Alert.alert('Copied', 'Shareable note data copied to clipboard. Share it securely with the recipient. Clipboard will be cleared in 60 seconds.');
   }, [result]);
 
   const handleShareNote = useCallback(async () => {
