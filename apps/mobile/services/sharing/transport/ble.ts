@@ -10,7 +10,7 @@
  */
 
 import { BleManager, Device, State } from 'react-native-ble-plx';
-import { Platform, PermissionsAndroid, NativeModules, NativeEventEmitter } from 'react-native';
+import { Platform, PermissionsAndroid, NativeModules, NativeEventEmitter, Linking } from 'react-native';
 import { Buffer } from 'buffer';
 import {
   BLE_SERVICE_UUID,
@@ -146,6 +146,27 @@ export class BleTransport {
 
     const hasPerms = await this.requestPermissions();
     if (!hasPerms) throw new Error('BLE permissions denied');
+
+    // On Android <12, BLE scanning requires Location Services to be ON
+    // (not just the permission — the actual GPS/Location toggle in quick settings)
+    if (Platform.OS === 'android' && Platform.Version < 31) {
+      try {
+        const { LocationServicesModule } = NativeModules;
+        if (LocationServicesModule) {
+          const enabled = await LocationServicesModule.isEnabled();
+          if (!enabled) {
+            throw new Error(
+              'Location Services must be enabled for Bluetooth scanning. ' +
+              'Please turn on Location in your phone settings.',
+            );
+          }
+        }
+      } catch (e: any) {
+        // If the native module doesn't exist, just warn in console
+        if (e.message?.includes('Location Services')) throw e;
+        console.log('[BLE-DBG] Location check skipped (no native module)');
+      }
+    }
 
     await this.waitForPoweredOn();
     this.isScanning = true;

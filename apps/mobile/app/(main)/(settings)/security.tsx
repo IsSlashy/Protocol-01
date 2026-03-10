@@ -16,7 +16,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-import * as Crypto from 'expo-crypto';
 import * as ScreenCapture from 'expo-screen-capture';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
@@ -24,6 +23,7 @@ import Animated, { FadeInDown, SlideInDown, SlideOutDown } from 'react-native-re
 import { SettingsRow, ToggleRow } from '../../../components/settings';
 import { PinInput } from '../../../components/onboarding';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
 
 const STORAGE_KEYS = {
   BIOMETRICS: 'settings_biometrics',
@@ -40,13 +40,6 @@ const LOCK_TIMEOUTS = [
   { label: '15 minutes', value: 900 },
   { label: 'Never', value: -1 },
 ];
-
-async function hashPin(pin: string): Promise<string> {
-  return await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    'p01_pin_v1:' + pin
-  );
-}
 
 /* ──────────────────────── Glass Card ──────────────────────── */
 
@@ -178,7 +171,7 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
     if (step === 'verify') {
       const storedHash = await SecureStore.getItemAsync('wallet_pin');
       const enteredHash = await hashPin(enteredPin);
-      if (enteredHash === storedHash) {
+      if (storedHash && constantTimeEqual(enteredHash, storedHash)) {
         setVerified(true);
         setPin('');
         setStep('new');

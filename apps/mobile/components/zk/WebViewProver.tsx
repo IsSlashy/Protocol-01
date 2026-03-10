@@ -11,7 +11,7 @@
  * lives in the webviewProver service.
  *
  * SECURITY: No private inputs ever leave the device. The WebView runs
- * locally with no network access beyond the initial snarkjs CDN fetch.
+ * locally. snarkjs is loaded from APK-bundled assets (no CDN fetch).
  */
 
 import React, { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react';
@@ -116,11 +116,9 @@ export const WebViewProver = forwardRef<WebViewProverHandle, WebViewProverProps>
           onError={handleError}
           javaScriptEnabled
           domStorageEnabled
-          originWhitelist={['*']}
+          originWhitelist={['file://']}
           // Android: allow file:///android_asset/ access for APK-bundled circuits
           allowFileAccess
-          allowFileAccessFromFileURLs
-          allowUniversalAccessFromFileURLs
           // Disable user interaction — this is an invisible compute surface
           scrollEnabled={false}
           bounces={false}

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -34,6 +34,7 @@ const P01 = {
 
 export default function SendScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ address?: string }>();
   const {
     balance,
     sendTransaction,
@@ -47,6 +48,7 @@ export default function SendScreen() {
   // Form state
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
+
   const [sending, setSending] = useState(false);
 
   // Get current network for display
@@ -76,6 +78,14 @@ export default function SendScreen() {
     setRecipientError('');
     return true;
   }, []);
+
+  // Auto-populate recipient from QR scan
+  useEffect(() => {
+    if (params?.address) {
+      setRecipient(params.address);
+      validateRecipient(params.address);
+    }
+  }, [params?.address]);
 
   const validateAmount = useCallback((value: string) => {
     if (!value) {
