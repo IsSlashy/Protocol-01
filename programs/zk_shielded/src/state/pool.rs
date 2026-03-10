@@ -237,6 +237,14 @@ pub struct DenominatedPool {
     /// Separate from vk_hash because unshield and transfer are different circuits
     /// with different public inputs.
     pub vk_hash_transfer: [u8; 32],
+
+    /// Timestamp of the last VK update (for 24h cooldown enforcement)
+    pub vk_update_slot: i64,
+
+    /// Write index for the historical_roots circular buffer.
+    /// Decoupled from next_leaf_index so root history is not corrupted
+    /// when next_leaf_index diverges (e.g., transfer_denominated).
+    pub root_write_index: u64,
 }
 
 impl DenominatedPool {
@@ -265,7 +273,9 @@ impl DenominatedPool {
         + 8   // last_maturity_update_epoch
         + (8 * 32) // epoch_note_counts ([u64; 32])
         + 8   // epoch_note_start
-        + 32; // vk_hash_transfer
+        + 32  // vk_hash_transfer
+        + 8   // vk_update_slot
+        + 8;  // root_write_index
 
     /// Seeds for PDA derivation: [b"denominated_pool", token_mint, denomination]
     pub const SEED_PREFIX: &'static [u8] = b"denominated_pool";
@@ -278,6 +288,9 @@ impl DenominatedPool {
     /// Maximum historical roots to store
     pub const MAX_HISTORICAL_ROOTS: u8 = 100;
 
+    /// VK update cooldown period in seconds (24 hours)
+    pub const VK_UPDATE_COOLDOWN: i64 = 86400;
+
     /// Check if a root is valid (current or historical)
     pub fn is_valid_root(&self, root: &[u8; 32]) -> bool {
         if self.merkle_root == *root {
@@ -289,14 +302,17 @@ impl DenominatedPool {
     /// Update the Merkle root and store old root in history.
     /// Uses a circular buffer pattern: once the vec reaches max size,
     /// we overwrite the oldest entry in-place instead of shifting with remove(0).
+    /// Uses `root_write_index` (not `next_leaf_index`) for the circular buffer
+    /// position to avoid corruption when leaf index diverges from root updates.
     pub fn update_root(&mut self, new_root: [u8; 32]) {
         let max = self.max_historical_roots as usize;
         if self.historical_roots.len() < max {
             self.historical_roots.push(self.merkle_root);
         } else if max > 0 {
-            let idx = (self.next_leaf_index as usize) % max;
+            let idx = (self.root_write_index as usize) % max;
             self.historical_roots[idx] = self.merkle_root;
         }
+        self.root_write_index += 1;
         self.merkle_root = new_root;
     }
 

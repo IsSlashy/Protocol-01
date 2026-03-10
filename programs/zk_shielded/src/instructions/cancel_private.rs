@@ -216,6 +216,11 @@ pub fn handler(
                 .as_ref()
                 .ok_or(ZkShieldedError::MissingPoolVault)?;
 
+            require!(
+                pool_vault_acct.owner == ctx.accounts.denominated_pool.key(),
+                ZkShieldedError::InvalidTokenOwner
+            );
+
             let transfer_ctx = CpiContext::new_with_signer(
                 token_program.to_account_info(),
                 TokenTransfer {
