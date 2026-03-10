@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   StyleSheet,
   Share,
 } from 'react-native';
@@ -21,6 +20,7 @@ import {
   useDenominatedPoolProver,
 } from '@/components/privacy/DenominatedPoolProver';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 export default function DenominatedTransferScreen() {
   return (
@@ -91,7 +91,7 @@ function TransferScreenContent() {
     } catch (err) {
       const msg = (err as Error).message || 'Unknown error';
       console.error('[Transfer] FAILED:', msg, err);
-      Alert.alert('Transfer Failed', msg);
+      p01Alert('Transfer Failed', msg);
     }
   }, [selectedNoteId, generateProof, transferNote]);
 
@@ -100,7 +100,7 @@ function TransferScreenContent() {
     await Clipboard.setStringAsync(result.shareableNote);
     setTimeout(() => Clipboard.setStringAsync(''), 60000);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Copied', 'Shareable note data copied to clipboard. Share it securely with the recipient. Clipboard will be cleared in 60 seconds.');
+    p01Alert('Copied', 'Shareable note data copied to clipboard. Share it securely with the recipient. Clipboard will be cleared in 60 seconds.');
   }, [result]);
 
   const handleShareNote = useCallback(async () => {

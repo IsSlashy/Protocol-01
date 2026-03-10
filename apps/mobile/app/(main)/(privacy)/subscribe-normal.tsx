@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -15,6 +14,7 @@ import { PublicKey, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 export default function SubscribeNormalScreen() {
   const router = useRouter();
@@ -27,15 +27,15 @@ export default function SubscribeNormalScreen() {
 
   const handleSubmit = async () => {
     if (!retailer.trim()) {
-      Alert.alert('Missing Retailer', 'Please enter a retailer address.');
+      p01Alert('Missing Retailer', 'Please enter a retailer address.');
       return;
     }
     if (!amount.trim() || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      p01Alert('Invalid Amount', 'Please enter a valid amount.');
       return;
     }
     if (!rate.trim() || isNaN(parseFloat(rate)) || parseFloat(rate) <= 0) {
-      Alert.alert('Invalid Rate', 'Please enter a valid rate per period.');
+      p01Alert('Invalid Rate', 'Please enter a valid rate per period.');
       return;
     }
     try {
@@ -58,10 +58,10 @@ export default function SubscribeNormalScreen() {
         vkHashSubscriber,
       );
 
-      Alert.alert('Success', `Subscription created! Tx: ${sig.slice(0, 16)}...`);
+      p01Alert('Success', `Subscription created! Tx: ${sig.slice(0, 16)}...`);
       router.back();
     } catch (err) {
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     }
   };
 

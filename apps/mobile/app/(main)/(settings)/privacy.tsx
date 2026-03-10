@@ -4,10 +4,10 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -133,7 +133,7 @@ export default function PrivacySettingsScreen() {
   };
 
   const handleAutoScanSelect = () => {
-    Alert.alert(
+    p01Alert(
       'Auto-Scan Interval',
       'How often should we scan for incoming stealth payments?',
       AUTO_SCAN_OPTIONS.map((option) => ({
@@ -164,7 +164,7 @@ export default function PrivacySettingsScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (value) {
-      Alert.alert(
+      p01Alert(
         'Ephemeral Wallets',
         'When enabled, the AI agent will use temporary wallets for operations, providing enhanced privacy but requiring more transactions.',
         [{ text: 'OK' }]

@@ -8,7 +8,11 @@ import '@ethersproject/shims';
 
 // Suppress noisy WebSocket errors from Solana RPC (intermittent on devnet)
 import { LogBox } from 'react-native';
-LogBox.ignoreLogs(['ws error: undefined']);
+LogBox.ignoreLogs([
+  'ws error: undefined',
+  'unable to activate keep awake',
+  'Unable to activate keep awake',
+]);
 
 // Now import expo-router
 import 'expo-router/entry';

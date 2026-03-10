@@ -8,6 +8,7 @@ import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../../constants/theme';
+import { lockVault } from '../../utils/crypto/noteVault';
 import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
 import { useRealtimeSync } from '../../hooks/sync';
@@ -53,6 +54,7 @@ export default function MainLayout() {
             const elapsed = Date.now() - lastBackground;
             if (elapsed > timeout * 1000) {
               await AsyncStorage.removeItem('p01_session_unlocked');
+              lockVault(); // Wipe note vault key from memory
               router.replace('/(auth)/lock');
             }
           }

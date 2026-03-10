@@ -8,4 +8,4 @@ export { Toast } from './Toast';
 export { Loader } from './Loader';
 export { GlitchButton } from './GlitchButton';
 export { AlertModal } from './AlertModal';
-export type { AlertButton, AlertModalProps } from './AlertModal';
+

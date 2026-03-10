@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +16,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useDenominatedPoolStore, type NoteSource } from '@/stores/denominatedPoolStore';
 import { decodeShareableNote, ALL_POOLS } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 type ImportSource = 'received' | 'imported_backup';
 
@@ -82,7 +82,7 @@ export default function DenominatedImportScreen() {
 
   const handleImport = useCallback(() => {
     if (!noteData.trim()) {
-      Alert.alert('Empty', 'Please paste note data first.');
+      p01Alert('Empty', 'Please paste note data first.');
       return;
     }
 
@@ -92,7 +92,7 @@ export default function DenominatedImportScreen() {
       setImported(true);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Import Failed', (err as Error).message);
+      p01Alert('Import Failed', (err as Error).message);
     }
   }, [noteData, importNote, source]);
 

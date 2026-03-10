@@ -10,7 +10,6 @@ import {
   Dimensions,
   ActivityIndicator,
   RefreshControl,
-  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +23,7 @@ import { VoiceButton } from '@/components/agent/VoiceButton';
 import { useAIStore, DisplayMessage } from '@/stores/aiStore';
 import { useWalletStore } from '@/stores/walletStore';
 import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 import * as VoiceService from '@/services/ai/voiceService';
 
 const QUICK_ACTIONS = [
@@ -162,7 +162,7 @@ export default function AgentDashboard() {
 
     const groqKey = config.groqApiKey || process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
     if (!groqKey) {
-      Alert.alert('Voice Setup', 'Add a Groq API key in Agent Settings to enable voice transcription.');
+      p01Alert('Voice Setup', 'Add a Groq API key in Agent Settings to enable voice transcription.');
       return;
     }
 
@@ -185,7 +185,7 @@ export default function AgentDashboard() {
       }
     } catch (err: any) {
       console.error('[Voice] Transcription failed:', err);
-      Alert.alert('Transcription Failed', err?.message || 'Could not transcribe audio');
+      p01Alert('Transcription Failed', err?.message || 'Could not transcribe audio');
     } finally {
       setTranscribing(false);
     }

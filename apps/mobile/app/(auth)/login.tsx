@@ -6,8 +6,8 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
+import { p01Alert } from '@/stores/alertStore';
 import { AuthScreen } from '@/components/auth';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { useWalletStore } from '@/stores/walletStore';
@@ -84,7 +84,7 @@ export default function LoginScreen() {
       }
     } catch (error: any) {
       console.error(`[Login] Error with ${method}:`, error);
-      Alert.alert(
+      p01Alert(
         'Authentication Failed',
         error.message || 'Please try again.',
         [{ text: 'OK' }]

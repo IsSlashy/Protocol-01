@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +24,7 @@ import type { ProofGenerator } from '@/services/denominatedPool';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useZkProver } from '@/providers/ZkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { p01Alert } from '@/stores/alertStore';
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: any }) {
   return (
@@ -65,11 +65,11 @@ export default function SubscribePrivateScreen() {
 
   const handleSubmit = async () => {
     if (!selectedNoteId) {
-      Alert.alert('Select Note', 'Please select a mature note to use for the private subscription.');
+      p01Alert('Select Note', 'Please select a mature note to use for the private subscription.');
       return;
     }
     if (!retailer.trim()) {
-      Alert.alert('Missing Retailer', 'Please enter a retailer address.');
+      p01Alert('Missing Retailer', 'Please enter a retailer address.');
       return;
     }
     try {
@@ -152,11 +152,11 @@ export default function SubscribePrivateScreen() {
       }
 
       setStarkStatus(null);
-      Alert.alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
+      p01Alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
       router.back();
     } catch (err) {
       setStarkStatus(null);
-      Alert.alert('Error', (err as Error).message);
+      p01Alert('Error', (err as Error).message);
     }
   };
 

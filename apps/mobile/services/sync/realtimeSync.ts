@@ -384,15 +384,15 @@ export class RealtimeSyncService {
   private formatFrequency(frequency: string, customDays?: number): string {
     switch (frequency) {
       case 'daily':
-        return 'jour';
+        return 'day';
       case 'weekly':
-        return 'semaine';
+        return 'week';
       case 'biweekly':
-        return '2 semaines';
+        return '2 weeks';
       case 'monthly':
-        return 'mois';
+        return 'month';
       case 'custom':
-        return `${customDays || 1} jours`;
+        return `${customDays || 1} days`;
       default:
         return frequency;
     }
