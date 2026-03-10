@@ -4,6 +4,7 @@
  */
 
 import { sha256 } from '@noble/hashes/sha256';
+import nacl from 'tweetnacl';
 import {
   computeCommitment,
   deriveOwnerPubkey,
@@ -167,40 +168,29 @@ export async function createNoteForRecipient(
 
 /**
  * Encrypt a note for storage
- * Uses a simple XOR-based encryption with HKDF-derived key
- * In production, use proper AEAD (XChaCha20-Poly1305)
+ * Uses NaCl secretbox (XSalsa20-Poly1305) for authenticated encryption
  */
 export function encryptNote(note: Note, viewingKey: Uint8Array): EncryptedNote {
-  // Generate ephemeral keypair
-  const ephemeralPrivate = new Uint8Array(32);
-  crypto.getRandomValues(ephemeralPrivate);
-  // For simplicity, use the private key as the "public" key
-  // In production, derive proper EC public key
-  const ephemeralPubkey = sha256(ephemeralPrivate);
+  // Generate ephemeral X25519 keypair for ECDH
+  const ephemeralKeyPair = nacl.box.keyPair();
 
-  // Derive shared secret
-  const sharedInput = new Uint8Array(64);
-  sharedInput.set(ephemeralPrivate, 0);
-  sharedInput.set(viewingKey, 32);
-  const sharedSecret = sha256(sharedInput);
+  // Derive shared secret via X25519 ECDH, then hash to 32-byte key
+  // viewingKey is used as the recipient's X25519 public key
+  const rawShared = nacl.scalarMult(ephemeralKeyPair.secretKey, viewingKey);
+  const sharedSecret = new Uint8Array(sha256(rawShared));
 
   // Serialize note data
   const noteData = serializeNoteData(note);
 
-  // Generate nonce
-  const nonce = new Uint8Array(ENCRYPTION.NONCE_SIZE);
-  crypto.getRandomValues(nonce);
+  // Generate nonce for NaCl secretbox (24 bytes matches ENCRYPTION.NONCE_SIZE)
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
 
-  // Simple XOR encryption (replace with XChaCha20-Poly1305 in production)
-  const keyStream = expandKey(sharedSecret, nonce, noteData.length);
-  const ciphertext = new Uint8Array(noteData.length);
-  for (let i = 0; i < noteData.length; i++) {
-    ciphertext[i] = noteData[i] ^ keyStream[i];
-  }
+  // Authenticated encryption with XSalsa20-Poly1305
+  const ciphertext = nacl.secretbox(noteData, nonce, sharedSecret);
 
   return new EncryptedNote({
     ciphertext,
-    ephemeralPubkey,
+    ephemeralPubkey: ephemeralKeyPair.publicKey,
     commitment: fieldToBytes(note.commitment),
     nonce,
   });
@@ -208,23 +198,21 @@ export function encryptNote(note: Note, viewingKey: Uint8Array): EncryptedNote {
 
 /**
  * Decrypt a note
+ * viewingKey here is the recipient's X25519 private key (secret scalar)
  */
 export function decryptNote(
   encrypted: EncryptedNote,
   viewingKey: Uint8Array
 ): Note | null {
   try {
-    // Derive shared secret
-    const sharedInput = new Uint8Array(64);
-    sharedInput.set(encrypted.ephemeralPubkey, 0);
-    sharedInput.set(viewingKey, 32);
-    const sharedSecret = sha256(sharedInput);
+    // Derive shared secret via X25519 ECDH, then hash to 32-byte key
+    const rawShared = nacl.scalarMult(viewingKey, encrypted.ephemeralPubkey);
+    const sharedSecret = new Uint8Array(sha256(rawShared));
 
-    // Decrypt
-    const keyStream = expandKey(sharedSecret, encrypted.nonce, encrypted.ciphertext.length);
-    const noteData = new Uint8Array(encrypted.ciphertext.length);
-    for (let i = 0; i < encrypted.ciphertext.length; i++) {
-      noteData[i] = encrypted.ciphertext[i] ^ keyStream[i];
+    // Authenticated decryption with XSalsa20-Poly1305
+    const noteData = nacl.secretbox.open(encrypted.ciphertext, encrypted.nonce, sharedSecret);
+    if (!noteData) {
+      return null; // Decryption failed — wrong key or corrupted note
     }
 
     // Deserialize
@@ -298,29 +286,6 @@ function deserializeNoteData(data: Uint8Array): Note {
     tokenMint,
     commitment,
   });
-}
-
-/**
- * Expand key using SHA256 (simplified KDF)
- */
-function expandKey(key: Uint8Array, nonce: Uint8Array, length: number): Uint8Array {
-  const result = new Uint8Array(length);
-  let offset = 0;
-  let counter = 0;
-
-  while (offset < length) {
-    const input = new Uint8Array(key.length + nonce.length + 4);
-    input.set(key, 0);
-    input.set(nonce, key.length);
-    new DataView(input.buffer).setUint32(key.length + nonce.length, counter++, true);
-
-    const block = sha256(input);
-    const toCopy = Math.min(block.length, length - offset);
-    result.set(block.slice(0, toCopy), offset);
-    offset += toCopy;
-  }
-
-  return result;
 }
 
 /**

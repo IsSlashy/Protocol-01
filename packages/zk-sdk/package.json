@@ -76,7 +76,8 @@
     "circomlibjs": "^0.1.7",
     "ffjavascript": "^0.3.1",
     "poseidon-lite": "^0.3.0",
-    "snarkjs": "^0.7.5"
+    "snarkjs": "^0.7.5",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.6",

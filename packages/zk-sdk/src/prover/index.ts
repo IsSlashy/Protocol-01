@@ -215,22 +215,18 @@ export class ZkProver {
   }
 
   /**
-   * Convert G2 point to compressed bytes
+   * Convert G2 point to bytes in EIP-197 (alt_bn128) ordering.
+   *
+   * snarkjs JSON format: [[x_real, x_imag], [y_real, y_imag]]
+   * EIP-197 expects:     [x_imag, x_real, y_imag, y_real]
    */
   private g2ToBytes(point: string[][]): Uint8Array {
     const bytes = new Uint8Array(128);
 
-    // x coordinates (2 Fq elements = 64 bytes)
-    const x0 = BigInt(point[0][0]);
-    const x1 = BigInt(point[0][1]);
-    bytes.set(fieldToBytes(x0), 0);
-    bytes.set(fieldToBytes(x1), 32);
-
-    // y coordinates (2 Fq elements = 64 bytes)
-    const y0 = BigInt(point[1][0]);
-    const y1 = BigInt(point[1][1]);
-    bytes.set(fieldToBytes(y0), 64);
-    bytes.set(fieldToBytes(y1), 96);
+    bytes.set(fieldToBytes(BigInt(point[0][1])), 0);   // x_imag
+    bytes.set(fieldToBytes(BigInt(point[0][0])), 32);  // x_real
+    bytes.set(fieldToBytes(BigInt(point[1][1])), 64);  // y_imag
+    bytes.set(fieldToBytes(BigInt(point[1][0])), 96);  // y_real
 
     return bytes;
   }
