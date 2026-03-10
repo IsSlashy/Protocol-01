@@ -41,17 +41,20 @@ export function poseidonHash(inputs: (bigint | number)[]): bigint {
 // ---------------------------------------------------------------------------
 
 /**
- * Balance commitment = Poseidon(balance, salt, owner_pubkey, token_mint)
+ * Balance commitment = Poseidon(balance, Poseidon(salt, nonce), owner_pubkey, token_mint)
  *
  * This is the core on-chain representation of a hidden balance.
+ * The nonce is bound into the salt via an inner hash to prevent replay attacks.
  */
 export function createBalanceCommitment(
   balance: bigint,
   salt: FieldElement,
+  nonce: bigint,
   ownerPubkey: FieldElement,
   tokenMint: FieldElement
 ): FieldElement {
-  return poseidonHash([balance, salt, ownerPubkey, tokenMint]);
+  const augmentedSalt = poseidon2([salt, nonce]);
+  return poseidon4([balance, augmentedSalt, ownerPubkey, tokenMint]);
 }
 
 /**
@@ -70,10 +73,11 @@ export function createAmountCommitment(
 /**
  * Derive owner public key from spending key.
  *
- * owner_pubkey = Poseidon(spending_key)
+ * owner_pubkey = Poseidon(spending_key, 0) — domain tag 0
+ * Matches circuit SpendingKeyDerivation in poseidon.circom.
  */
 export function deriveOwnerPubkey(spendingKey: FieldElement): FieldElement {
-  return poseidonHash([spendingKey]);
+  return poseidon2([spendingKey, 0n]);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,11 +87,17 @@ export function deriveOwnerPubkey(spendingKey: FieldElement): FieldElement {
 /**
  * Generate a cryptographically random field element suitable for use
  * as a salt, spending key, or amount salt.
+ * Uses rejection sampling to avoid modular bias.
  */
 export function randomSalt(): FieldElement {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return bytesToField(bytes);
+  while (true) {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    // Read as big-endian to get the full 256-bit value before reduction
+    let value = 0n;
+    for (let i = 0; i < 32; i++) value = (value << 8n) | BigInt(bytes[i]);
+    if (value < FIELD_MODULUS) return value;
+  }
 }
 
 /**

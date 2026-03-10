@@ -291,8 +291,8 @@ export class ZkSplClient {
     const salt = initialSalt ?? deriveDeterministicSalt(spendingKey, 0n);
     const tokenMintField = pubkeyToField(tokenMint.toBytes());
 
-    // initial commitment = Poseidon(0, salt, owner_pubkey, token_mint)
-    const commitment = createBalanceCommitment(0n, salt, ownerPubkey, tokenMintField);
+    // initial commitment = Poseidon(0, Poseidon(salt, nonce), owner_pubkey, token_mint)
+    const commitment = createBalanceCommitment(0n, salt, 0n, ownerPubkey, tokenMintField);
     const commitmentBytes = fieldToBytes(commitment);
 
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
@@ -361,12 +361,12 @@ export class ZkSplClient {
     // Deterministic salt: recoverable from (spendingKey, nonce+1) if local state is lost
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
-    // Compute commitments
+    // Compute commitments (nonce is the same for both old and new per circuit)
     const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, ownerPubkey, tokenMintField
+      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
     );
     const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, ownerPubkey, tokenMintField
+      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
     );
 
     // For deposit: public_credit = amount, amount_hash = Poseidon(0, 0), is_debit = 0
@@ -481,10 +481,10 @@ export class ZkSplClient {
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
     const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, ownerPubkey, tokenMintField
+      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
     );
     const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, ownerPubkey, tokenMintField
+      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
     );
 
     // For withdraw: public_debit = amount, amount_hash = Poseidon(0,0), is_debit = 0
@@ -601,10 +601,10 @@ export class ZkSplClient {
     const aSalt = amountSalt ?? randomSalt(); // amount salt stays random (not stored long-term)
 
     const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, ownerPubkey, tokenMintField
+      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
     );
     const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, ownerPubkey, tokenMintField
+      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
     );
     const amountHash = createAmountCommitment(amount, aSalt);
 
@@ -713,10 +713,10 @@ export class ZkSplClient {
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
     const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, ownerPubkey, tokenMintField
+      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
     );
     const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, ownerPubkey, tokenMintField
+      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
     );
     const amountHash = createAmountCommitment(amount, amountSalt);
 
@@ -817,6 +817,7 @@ export class ZkSplClient {
     const balanceCommitment = createBalanceCommitment(
       state.balance,
       state.salt,
+      state.nonce,
       ownerPubkey,
       tokenMintField
     );
@@ -1009,7 +1010,7 @@ export class ZkSplClient {
     const ownerPubkey = deriveOwnerPubkey(localState.spendingKey);
     const tokenMintField = pubkeyToField(tokenMint.toBytes());
     const expectedCommitment = createBalanceCommitment(
-      localState.balance, localState.salt, ownerPubkey, tokenMintField
+      localState.balance, localState.salt, localState.nonce, ownerPubkey, tokenMintField
     );
     const expectedBytes = fieldToBytes(expectedCommitment);
 

@@ -68,17 +68,20 @@ export async function computeNullifier(
 
 /**
  * Derive owner public key from spending key
- * owner_pubkey = Poseidon(spending_key)
+ * owner_pubkey = Poseidon(spending_key, 0) — domain tag 0
+ * Matches circuit SpendingKeyDerivation in poseidon.circom.
  */
 export async function deriveOwnerPubkey(spendingKey: bigint): Promise<bigint> {
-  return poseidonHash([spendingKey]);
+  return poseidonHash([spendingKey, BigInt(0)]);
 }
 
 /**
  * Compute spending key hash for nullifier
+ * spending_key_hash = Poseidon(spending_key, 1) — domain tag 1
+ * Matches circuit SpendingKeyHash in poseidon.circom.
  */
 export async function computeSpendingKeyHash(spendingKey: bigint): Promise<bigint> {
-  return poseidonHash([spendingKey]);
+  return poseidonHash([spendingKey, BigInt(1)]);
 }
 
 /**
@@ -106,12 +109,23 @@ export function fieldToBytes(field: bigint): Uint8Array {
 }
 
 /**
- * Generate random field element
+ * Generate random field element using rejection sampling to avoid modular bias.
+ *
+ * NOTE: This file uses circomlibjs for Poseidon hashing; poseidon-lite is used
+ * elsewhere (zkspl-sdk, privacy-toolkit). Both produce identical outputs for
+ * the same inputs — they implement the same Poseidon specification.
  */
 export function randomFieldElement(): bigint {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return bytesToField(bytes);
+  while (true) {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    // Read as big-endian to get the full 256-bit value before reduction
+    let value = BigInt(0);
+    for (let i = 0; i < 32; i++) {
+      value = (value << BigInt(8)) | BigInt(bytes[i]);
+    }
+    if (value < FIELD_MODULUS) return value;
+  }
 }
 
 /**

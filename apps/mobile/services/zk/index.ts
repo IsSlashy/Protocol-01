@@ -189,10 +189,10 @@ async function deriveSpendingKey(seedPhrase: string): Promise<{
 
   const fieldOrder = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
   const spendingKey = BigInt('0x' + hashResult) % fieldOrder;
-  // owner_pubkey = Poseidon(spending_key) - matches circuit SpendingKeyDerivation
-  const ownerPubkey = poseidonHash(spendingKey);
-  // spending_key_hash = Poseidon(spending_key) - same as owner_pubkey in this design
-  const spendingKeyHash = ownerPubkey;
+  // owner_pubkey = Poseidon(spending_key, 0) - matches circuit SpendingKeyDerivation (domain tag 0)
+  const ownerPubkey = poseidonHash(spendingKey, 0n);
+  // spending_key_hash = Poseidon(spending_key, 1) - matches circuit SpendingKeyHash (domain tag 1)
+  const spendingKeyHash = poseidonHash(spendingKey, 1n);
 
   return { spendingKey, spendingKeyHash, ownerPubkey };
 }
