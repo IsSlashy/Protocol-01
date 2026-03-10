@@ -15,6 +15,8 @@ pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
 pub const CIRCUIT_BALANCE_PROOF: u8 = 2;
 pub const CIRCUIT_MERKLE_PATH: u8 = 3;
+pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
+pub const CIRCUIT_TRANSFER: u8 = 5;
 
 #[program]
 pub mod p01_stark_verifier {
@@ -27,7 +29,7 @@ pub mod p01_stark_verifier {
         circuit_id: u8,
     ) -> Result<()> {
         require!(
-            circuit_id <= CIRCUIT_MERKLE_PATH,
+            get_circuit_config(circuit_id).is_some(),
             StarkVerifierError::UnsupportedCircuit
         );
 
@@ -123,10 +125,9 @@ pub mod p01_stark_verifier {
                 .map_err(|_| StarkVerifierError::InvalidProof)?;
         }
 
-        // Compute SHA-256 hash of public inputs to bind them to the proof buffer
+        // Compute hash of public inputs to bind them to the proof buffer
         let public_inputs_hash = {
-            use anchor_lang::solana_program::hash::hash;
-            hash(&commitment.to_le_bytes()).to_bytes()
+            *blake3::hash(&commitment.to_le_bytes()).as_bytes()
         };
 
         // Mark verified and store public inputs hash
@@ -174,12 +175,13 @@ pub mod p01_stark_verifier {
         verify::verify_generic(&proof, circuit_id, &public_inputs, config)
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
-        // Compute SHA-256 hash of all public inputs to bind them to the proof buffer
+        // Compute hash of all public inputs to bind them to the proof buffer
         let public_inputs_hash = {
-            use anchor_lang::solana_program::hash::hashv;
-            let input_bytes: Vec<Vec<u8>> = public_inputs.iter().map(|v| v.to_le_bytes().to_vec()).collect();
-            let slices: Vec<&[u8]> = input_bytes.iter().map(|v| v.as_slice()).collect();
-            hashv(&slices).to_bytes()
+            let mut hasher = blake3::Hasher::new();
+            for v in &public_inputs {
+                hasher.update(&v.to_le_bytes());
+            }
+            *hasher.finalize().as_bytes()
         };
 
         // Mark verified and store public inputs hash
