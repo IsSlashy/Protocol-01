@@ -13,7 +13,6 @@ template MerkleTreeChecker(depth) {
     signal input pathIndices[depth];  // 0 = left, 1 = right
     signal input pathElements[depth];
 
-    signal output valid;
     signal output computedRoot;
 
     component hashers[depth];
@@ -42,10 +41,8 @@ template MerkleTreeChecker(depth) {
         computedPath[i + 1] <== hashers[i].out;
     }
 
-    // Output computed root for conditional checking
+    // Output computed root for conditional checking by caller
     computedRoot <== computedPath[depth];
-    valid <== 1;
-    // Note: Caller should check (computedRoot === root) conditionally
 }
 
 // Compute Merkle root from path (without verification)

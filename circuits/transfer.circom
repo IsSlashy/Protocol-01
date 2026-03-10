@@ -132,12 +132,35 @@ template Transfer(merkleDepth) {
     component nullifierComp1 = NullifierComputation();
     nullifierComp1.commitment <== inCommitment1.commitment;
     nullifierComp1.spending_key_hash <== spendingKeyHash.spending_key_hash;
-    nullifierComp1.nullifier === nullifier_1;
+
+    // C3 fix: Gate nullifier check on note being non-dummy
+    // For note 1: if amount > 0, nullifier must match; if amount = 0 (dummy), skip
+    (1 - isZeroAmount1.out) * (nullifierComp1.nullifier - nullifier_1) === 0;
 
     component nullifierComp2 = NullifierComputation();
     nullifierComp2.commitment <== inCommitment2.commitment;
     nullifierComp2.spending_key_hash <== spendingKeyHash.spending_key_hash;
-    nullifierComp2.nullifier === nullifier_2;
+
+    // C3 fix: Gate nullifier check on note being non-dummy
+    // For note 2: if amount > 0, nullifier must match; if amount = 0 (dummy), skip
+    (1 - isZeroAmount2.out) * (nullifierComp2.nullifier - nullifier_2) === 0;
+
+    // ========================================
+    // STEP 4b: Nullifier uniqueness (H2)
+    // ========================================
+    // Prevent double-spend of the same note in both input slots
+    signal nullifier_diff;
+    nullifier_diff <== nullifier_1 - nullifier_2;
+
+    component nullEq = IsZero();
+    nullEq.in <== nullifier_diff;
+
+    // Only enforce uniqueness when both notes are real (non-dummy)
+    // isZeroAmount1.out + isZeroAmount2.out == 0 means both are real
+    component bothReal = IsZero();
+    bothReal.in <== isZeroAmount1.out + isZeroAmount2.out;
+    // If both real (bothReal.out=1) AND nullifiers equal (nullEq.out=1), fail
+    bothReal.out * nullEq.out === 0;
 
     // ========================================
     // STEP 5: Compute output commitments
@@ -182,6 +205,15 @@ template Transfer(merkleDepth) {
 
     component rangeCheck4 = Num2Bits(64);
     rangeCheck4.in <== in_amount_2;
+
+    // ========================================
+    // STEP 8: Range check public_amount (C2)
+    // ========================================
+    // public_amount can be positive (shield) or negative (unshield).
+    // Constrain it to [-2^64, 2^64) by checking that
+    // (public_amount + 2^64) fits in 65 bits.
+    component publicAmountRangeCheck = Num2Bits(65);
+    publicAmountRangeCheck.in <== public_amount + (1 << 64);
 }
 
 // Main component with tree depth of 20 (~1M notes)
