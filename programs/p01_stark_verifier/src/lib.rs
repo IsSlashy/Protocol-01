@@ -37,6 +37,7 @@ pub mod p01_stark_verifier {
         buffer.proof_size = proof_size;
         buffer.bytes_written = 0;
         buffer.verified = false;
+        buffer.public_inputs_hash = [0u8; 32];
         Ok(())
     }
 
@@ -122,10 +123,17 @@ pub mod p01_stark_verifier {
                 .map_err(|_| StarkVerifierError::InvalidProof)?;
         }
 
-        // Mark verified
+        // Compute SHA-256 hash of public inputs to bind them to the proof buffer
+        let public_inputs_hash = {
+            use anchor_lang::solana_program::hash::hash;
+            hash(&commitment.to_le_bytes()).to_bytes()
+        };
+
+        // Mark verified and store public inputs hash
         drop(account_data);
         let buffer = &mut ctx.accounts.proof_buffer;
         buffer.verified = true;
+        buffer.public_inputs_hash = public_inputs_hash;
 
         msg!("STARK proof verified for circuit {}", circuit_id);
         Ok(())
@@ -166,10 +174,19 @@ pub mod p01_stark_verifier {
         verify::verify_generic(&proof, circuit_id, &public_inputs, config)
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
-        // Mark verified
+        // Compute SHA-256 hash of all public inputs to bind them to the proof buffer
+        let public_inputs_hash = {
+            use anchor_lang::solana_program::hash::hashv;
+            let input_bytes: Vec<Vec<u8>> = public_inputs.iter().map(|v| v.to_le_bytes().to_vec()).collect();
+            let slices: Vec<&[u8]> = input_bytes.iter().map(|v| v.as_slice()).collect();
+            hashv(&slices).to_bytes()
+        };
+
+        // Mark verified and store public inputs hash
         drop(account_data);
         let buffer = &mut ctx.accounts.proof_buffer;
         buffer.verified = true;
+        buffer.public_inputs_hash = public_inputs_hash;
 
         msg!("STARK proof verified for circuit {}", circuit_id);
         Ok(())
@@ -271,10 +288,14 @@ pub struct ProofBuffer {
     pub proof_size: u32,
     pub bytes_written: u32,
     pub verified: bool,
+    /// SHA-256 hash of the verified public inputs.
+    /// Set after successful verification so consumers can confirm
+    /// which inputs were actually proven.
+    pub public_inputs_hash: [u8; 32],
 }
 
 impl ProofBuffer {
-    pub const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1; // 50
+    pub const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1 + 32; // 82
     pub const MAX_INIT_SIZE: usize = 10_240; // 10KB Solana create_account limit
 
     pub fn space(proof_size: usize) -> usize {

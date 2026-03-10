@@ -26,6 +26,9 @@ pub enum VerifyError {
 // Unified verification entry point
 // ============================================================================
 
+/// Goldilocks prime: p = 2^64 - 2^32 + 1
+const GOLDILOCKS_PRIME: u64 = 0xFFFFFFFF00000001;
+
 /// Verify a generic compact proof for any supported circuit.
 pub fn verify_generic(
     proof: &GenericCompactProof,
@@ -36,9 +39,20 @@ pub fn verify_generic(
     // Step 1: Field range check on OOD values
     verify_ood_range(proof)?;
 
-    // Step 2: Derive + verify Fiat-Shamir query positions
+    // Step 1b: [H10] Verify OOD point was correctly derived from transcript
     let pub_bytes = public_inputs_to_bytes(public_inputs);
-    let expected = derive_query_positions_generic(&proof.trace_root, &pub_bytes, config.lde_size, NUM_QUERIES);
+    let expected_ood_z = derive_ood_point(&proof.trace_root, &pub_bytes);
+    if proof.ood_z.as_u64() != expected_ood_z {
+        return Err(VerifyError::OodConstraintFailed);
+    }
+
+    // Step 2: [H9] Derive + verify Fiat-Shamir query positions (with OOD in transcript)
+    let ood_current_u64: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
+    let ood_next_u64: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
+    let expected = derive_query_positions_generic(
+        &proof.trace_root, &pub_bytes, &ood_current_u64, &ood_next_u64,
+        config.lde_size, NUM_QUERIES,
+    );
     verify_query_positions_generic(proof, &expected)?;
 
     // Step 3: Verify Merkle proofs
@@ -72,8 +86,19 @@ pub fn verify_subscriber_ownership(
         }
     }
 
-    // Fiat-Shamir
-    let expected = derive_query_positions_legacy(&proof.trace_root, commitment);
+    // [H10] Verify OOD point was correctly derived
+    let commitment_bytes = commitment.to_le_bytes();
+    let expected_ood_z = derive_ood_point(&proof.trace_root, &commitment_bytes);
+    if proof.ood_z.as_u64() != expected_ood_z {
+        return Err(VerifyError::OodConstraintFailed);
+    }
+
+    // [H9] Fiat-Shamir with OOD in transcript
+    let ood_current_u64: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
+    let ood_next_u64: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
+    let expected = derive_query_positions_legacy(
+        &proof.trace_root, commitment, &ood_current_u64, &ood_next_u64,
+    );
     verify_query_positions_legacy(proof, &expected)?;
 
     // Merkle proofs
@@ -104,22 +129,44 @@ fn public_inputs_to_bytes(inputs: &[u64]) -> Vec<u8> {
     bytes
 }
 
+/// [H10] Derive OOD evaluation point from Fiat-Shamir transcript.
+fn derive_ood_point(trace_root: &[u8; 32], pub_bytes: &[u8]) -> u64 {
+    let mut data = Vec::with_capacity(32 + pub_bytes.len());
+    data.extend_from_slice(trace_root);
+    data.extend_from_slice(pub_bytes);
+    let hash = blake3::hash(&data);
+    let mut ood_z = u64::from_le_bytes(hash.as_bytes()[0..8].try_into().unwrap()) % GOLDILOCKS_PRIME;
+    if ood_z == 0 { ood_z = 1; }
+    ood_z
+}
+
+/// [H9] Derive query positions with OOD evaluations in the Fiat-Shamir transcript.
 fn derive_query_positions_generic(
     trace_root: &[u8; 32],
     pub_bytes: &[u8],
+    ood_current: &[u64],
+    ood_next: &[u64],
     lde_size: usize,
     num_queries: usize,
 ) -> Vec<u32> {
-    let mut seed = Vec::with_capacity(32 + pub_bytes.len());
-    seed.extend_from_slice(trace_root);
-    seed.extend_from_slice(pub_bytes);
+    // Build full transcript: trace_root || pub_inputs || ood_current || ood_next
+    let mut transcript = Vec::new();
+    transcript.extend_from_slice(trace_root);
+    transcript.extend_from_slice(pub_bytes);
+    for val in ood_current {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    for val in ood_next {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    let query_seed = blake3::hash(&transcript);
 
     let mut positions = Vec::with_capacity(num_queries);
     let mut counter = 0u32;
 
     while positions.len() < num_queries {
-        let mut input = Vec::with_capacity(seed.len() + 4);
-        input.extend_from_slice(&seed);
+        let mut input = Vec::with_capacity(32 + 4);
+        input.extend_from_slice(query_seed.as_bytes());
         input.extend_from_slice(&counter.to_le_bytes());
 
         let hash = blake3::hash(&input);
@@ -485,18 +532,32 @@ fn verify_transition_transfer(
 // Legacy helpers (backward compat for circuit 0)
 // ============================================================================
 
-fn derive_query_positions_legacy(trace_root: &[u8; 32], commitment: Felt) -> Vec<u32> {
-    let mut seed = [0u8; 40];
-    seed[..32].copy_from_slice(trace_root);
-    seed[32..40].copy_from_slice(&commitment.to_le_bytes());
+/// [H9] Legacy Fiat-Shamir with OOD evaluations in transcript.
+fn derive_query_positions_legacy(
+    trace_root: &[u8; 32],
+    commitment: Felt,
+    ood_current: &[u64],
+    ood_next: &[u64],
+) -> Vec<u32> {
+    // Build full transcript: trace_root || commitment || ood_current || ood_next
+    let mut transcript = Vec::new();
+    transcript.extend_from_slice(trace_root);
+    transcript.extend_from_slice(&commitment.to_le_bytes());
+    for val in ood_current {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    for val in ood_next {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
+    let query_seed = blake3::hash(&transcript);
 
     let mut positions = Vec::with_capacity(NUM_QUERIES);
     let mut counter = 0u32;
 
     while positions.len() < NUM_QUERIES {
-        let mut input = [0u8; 44];
-        input[..40].copy_from_slice(&seed);
-        input[40..44].copy_from_slice(&counter.to_le_bytes());
+        let mut input = Vec::with_capacity(32 + 4);
+        input.extend_from_slice(query_seed.as_bytes());
+        input.extend_from_slice(&counter.to_le_bytes());
 
         let hash = blake3::hash(&input);
         let bytes = hash.as_bytes();
