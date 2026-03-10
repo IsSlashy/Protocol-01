@@ -536,7 +536,8 @@ export const StarkProver = forwardRef<StarkProverHandle, StarkProverProps>(
           javaScriptEnabled
           domStorageEnabled
           originWhitelist={['file://']}
-          allowFileAccess={Platform.OS === 'android'}
+          // L12: allowFileAccess removed — WASM data is injected via postMessage (base64),
+          // not loaded from file://. No file:// access needed for this WebView.
           cacheEnabled={false}
           incognito
           scrollEnabled={false}
