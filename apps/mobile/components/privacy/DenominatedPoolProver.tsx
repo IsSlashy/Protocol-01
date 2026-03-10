@@ -62,6 +62,7 @@ const PROVER_HTML = `
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net file:; style-src 'unsafe-inline'; connect-src file:;">
 </head>
 <body>
 <script>
@@ -452,10 +453,8 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
             onMessage={onMessage}
             javaScriptEnabled
             domStorageEnabled
-            originWhitelist={['*']}
+            originWhitelist={['file://']}
             allowFileAccess
-            allowFileAccessFromFileURLs
-            allowUniversalAccessFromFileURLs
             onError={(e) => {
               console.error('[DenomProver] WebView error:', e.nativeEvent);
               setError('WebView error: ' + e.nativeEvent.description);

@@ -68,6 +68,7 @@ const STARK_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; connect-src 'none';">
   <style>body{margin:0;padding:0;background:transparent;}</style>
 </head>
 <body>
@@ -534,7 +535,7 @@ export const StarkProver = forwardRef<StarkProverHandle, StarkProverProps>(
           onError={handleError}
           javaScriptEnabled
           domStorageEnabled
-          originWhitelist={['*']}
+          originWhitelist={['file://']}
           allowFileAccess={Platform.OS === 'android'}
           cacheEnabled={false}
           incognito

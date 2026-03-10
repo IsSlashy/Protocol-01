@@ -13,6 +13,7 @@ import React, {
   useCallback,
   useMemo,
 } from 'react';
+import Constants from 'expo-constants';
 import { PRIVY_APP_ID, PRIVY_ENABLED, privyConfig } from '../config/privy';
 import { useWalletStore, setPrivySigner } from '../stores/walletStore';
 
@@ -25,6 +26,8 @@ import {
   useEmbeddedSolanaWallet,
   useLoginWithOAuth,
 } from '@privy-io/expo';
+
+const PRIVY_CLIENT_ID = Constants.expoConfig?.extra?.privyClientId || process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID || '';
 
 const PRIVY_SDK_AVAILABLE = true;
 
@@ -100,7 +103,7 @@ export function P01PrivyProvider({ children }: PrivyProviderProps) {
     return (
       <PrivySDKProvider
         appId={PRIVY_APP_ID}
-        clientId="client-WY6VAkfDmcFDEpJKtgxwSkJ7CBe8pFbTJhCi4hXBPFN1X"
+        clientId={PRIVY_CLIENT_ID}
       >
         <PrivyBridge>{children}</PrivyBridge>
       </PrivySDKProvider>

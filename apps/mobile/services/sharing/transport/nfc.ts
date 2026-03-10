@@ -20,6 +20,7 @@
 import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 import { NativeModules } from 'react-native';
 import { Buffer } from 'buffer';
+import * as Crypto from 'expo-crypto';
 import type { NotePayload, SymmetricEncryptedPayload } from '../types';
 import {
   encryptNoteSymmetric,
@@ -85,7 +86,8 @@ export class NfcTransport {
   // -----------------------------------------------------------------------
 
   generatePin(): string {
-    const n = Math.floor(Math.random() * 1_000_000);
+    const bytes = Crypto.getRandomBytes(4);
+    const n = new DataView(bytes.buffer).getUint32(0) % 1_000_000;
     return n.toString().padStart(6, '0');
   }
 

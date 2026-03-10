@@ -116,15 +116,26 @@ export function decryptNote(
  * Derive a 32-byte symmetric key from a 6-digit PIN + rounded timestamp.
  *
  * Both sender and receiver call this with the same PIN and agree on
- * the same minute-rounded timestamp.
+ * the same minute-rounded timestamp. Iterated 10,000 times with salt
+ * re-incorporation for proper key stretching (L8).
  */
 export function deriveNfcKey(pin: string, timestampMs?: number): Uint8Array {
   const ts = timestampMs ?? Date.now();
   // Round to current minute for a 60-second agreement window
   const roundedMinute = Math.floor(ts / 60_000);
+  const salt = new TextEncoder().encode(`P01_NFC_SALT_${roundedMinute}`);
   const domain = `P01_NFC_${pin}_${roundedMinute}`;
-  const hash = nacl.hash(new TextEncoder().encode(domain));
-  return hash.slice(0, 32);
+  let key = nacl.hash(new TextEncoder().encode(domain));
+
+  // 10,000 iterations of SHA-512 with salt re-incorporation
+  for (let i = 0; i < 10_000; i++) {
+    const combined = new Uint8Array(key.length + salt.length);
+    combined.set(key, 0);
+    combined.set(salt, key.length);
+    key = nacl.hash(combined);
+  }
+
+  return key.slice(0, 32);
 }
 
 /**

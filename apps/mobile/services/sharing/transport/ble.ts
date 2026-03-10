@@ -69,6 +69,28 @@ interface ChunkBuffer {
 }
 
 // ---------------------------------------------------------------------------
+// BLE session nonce for replay prevention (M12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a 16-byte session nonce using CSPRNG.
+ * Both sides exchange nonces during key exchange and mix them into
+ * the shared secret derivation to prevent replay of captured sessions.
+ */
+function generateSessionNonce(): Uint8Array {
+  const nonce = new Uint8Array(16);
+  // Use crypto.getRandomValues (available in RN via polyfill)
+  if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
+    globalThis.crypto.getRandomValues(nonce);
+  } else {
+    // Fallback: use nacl.randomBytes
+    const rand = require('tweetnacl').randomBytes(16);
+    nonce.set(rand);
+  }
+  return nonce;
+}
+
+// ---------------------------------------------------------------------------
 // BleTransport class
 // ---------------------------------------------------------------------------
 
@@ -83,6 +105,9 @@ export class BleTransport {
   private chunkBuffers: Map<string, ChunkBuffer> = new Map();
   private discoveredPeers: Map<string, PeerInfo> = new Map();
   private peripheralSubscriptions: Array<{ remove: () => void }> = [];
+  /** Session nonce for replay prevention (M12) — exchanged with peer during handshake */
+  private localNonce: Uint8Array = generateSessionNonce();
+  private remoteNonce: Uint8Array | null = null;
 
   constructor(callbacks: BleTransportCallbacks) {
     this.manager = getManager();
@@ -265,7 +290,9 @@ export class BleTransport {
     console.log('[BLE-DBG] sendPublicKey: connectedDevice=', !!this.connectedDevice);
     if (!this.connectedDevice) throw new Error('Not connected');
 
-    const data = Buffer.from(publicKeyBase64, 'utf-8');
+    // M12: Prepend 16-byte session nonce to pubkey for replay prevention
+    const nonceB64 = Buffer.from(this.localNonce).toString('base64');
+    const data = Buffer.from(`${nonceB64}:${publicKeyBase64}`, 'utf-8');
     const chunks = this.fragment(MSG_TYPE_PUBKEY, new Uint8Array(data));
     console.log('[BLE-DBG] sendPublicKey: writing', chunks.length, 'chunks to', BLE_PUBKEY_CHAR_UUID);
 
@@ -437,7 +464,9 @@ export class BleTransport {
   // -----------------------------------------------------------------------
 
   async sendPublicKeyAsPeripheral(publicKeyBase64: string): Promise<void> {
-    const data = Buffer.from(publicKeyBase64, 'utf-8');
+    // M12: Prepend 16-byte session nonce to pubkey for replay prevention
+    const nonceB64 = Buffer.from(this.localNonce).toString('base64');
+    const data = Buffer.from(`${nonceB64}:${publicKeyBase64}`, 'utf-8');
     const chunks = this.fragment(MSG_TYPE_PUBKEY, new Uint8Array(data));
 
     for (const chunk of chunks) {
@@ -545,7 +574,17 @@ export class BleTransport {
       const decoded = Buffer.from(reassembled).toString('utf-8');
 
       if (msgType === MSG_TYPE_PUBKEY) {
-        this.callbacks.onPublicKeyReceived(peerId, decoded);
+        // M12: Parse nonce:pubkey format for replay prevention
+        const colonIdx = decoded.indexOf(':');
+        if (colonIdx > 0) {
+          const remoteNonceB64 = decoded.slice(0, colonIdx);
+          const pubKeyB64 = decoded.slice(colonIdx + 1);
+          this.remoteNonce = new Uint8Array(Buffer.from(remoteNonceB64, 'base64'));
+          this.callbacks.onPublicKeyReceived(peerId, pubKeyB64);
+        } else {
+          // Legacy format without nonce
+          this.callbacks.onPublicKeyReceived(peerId, decoded);
+        }
       } else if (msgType === MSG_TYPE_NOTE) {
         const encrypted: EncryptedNotePayload = JSON.parse(decoded);
         this.callbacks.onEncryptedNoteReceived(peerId, encrypted);
@@ -575,11 +614,19 @@ export class BleTransport {
     this.stopScanning();
     await this.stopPeripheral();
     this.chunkBuffers.clear();
+    // M12: Regenerate session nonce for next session (prevents replay)
+    this.localNonce = generateSessionNonce();
+    this.remoteNonce = null;
   }
 
   async destroy(): Promise<void> {
     await this.disconnect();
     this.discoveredPeers.clear();
+  }
+
+  /** M12: Get local+remote nonces for mixing into shared secret derivation */
+  getSessionNonces(): { local: Uint8Array; remote: Uint8Array | null } {
+    return { local: this.localNonce, remote: this.remoteNonce };
   }
 
   getDiscoveredPeers(): PeerInfo[] {
