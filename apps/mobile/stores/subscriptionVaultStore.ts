@@ -28,6 +28,7 @@ import {
 } from '../services/subscriptionVault';
 import type { ShieldReceipt, PoolConfig, ProofGenerator } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner } from './walletStore';
+import { scheduleLocalNotification } from '../services/notifications';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -141,6 +142,22 @@ async function deleteSecretSecurely(vaultAddress: string): Promise<void> {
   await SecureStore.deleteItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`);
 }
 
+/** Format lamports as SOL for notification display */
+function formatRateSOL(rateLamports: string | bigint): string {
+  const lamports = typeof rateLamports === 'string' ? Number(rateLamports) : Number(rateLamports);
+  if (!Number.isFinite(lamports) || lamports <= 0) return '0 SOL';
+  return `${(lamports / 1_000_000_000).toFixed(4)} SOL`;
+}
+
+/** Fire a subscription lifecycle notification (fire-and-forget, never throws) */
+function notifySubscriptionEvent(title: string, body: string, extra?: Record<string, unknown>): void {
+  scheduleLocalNotification(title, body, {
+    category: 'transaction',
+    channelId: 'payments',
+    ...extra,
+  }).catch(() => {});
+}
+
 /** Build a WalletSigner for Privy wallets, or undefined for local keypair wallets. */
 function getWalletSignerIfPrivy(): WalletSigner | undefined {
   const { isPrivyWallet, publicKey } = useWalletStore.getState();
@@ -248,6 +265,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             vaults: [storedVault, ...state.vaults],
           }));
 
+          notifySubscriptionEvent(
+            'Subscription Active',
+            `Subscribed at ${formatRateSOL(config.rate)} per period`,
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] subscribeNormal error:', err);
@@ -320,6 +343,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             progress: null,
             vaults: [storedVault, ...state.vaults],
           }));
+
+          notifySubscriptionEvent(
+            'Subscription Active',
+            `Subscribed at ${formatRateSOL(vaultConfig.rate)} per period`,
+            { transactionId: sig },
+          );
 
           return sig;
         } catch (err) {
@@ -394,6 +423,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             vaults: [storedVault, ...state.vaults],
           }));
 
+          notifySubscriptionEvent(
+            'Subscription Active',
+            `Subscribed at ${formatRateSOL(vaultConfig.rate)} per period`,
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
@@ -421,6 +456,15 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          const storedVault = get().vaults.find(v => v.vaultAddress === vaultAddress);
+          const rateLabel = storedVault ? formatRateSOL(storedVault.rate) : 'SOL';
+          notifySubscriptionEvent(
+            'Payment Claimed',
+            `${rateLabel} claimed from subscription`,
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] claimPeriod error:', err);
@@ -448,6 +492,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          notifySubscriptionEvent(
+            'Subscription Paused',
+            'Your subscription has been paused',
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] pauseNormal error:', err);
@@ -477,6 +528,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          notifySubscriptionEvent(
+            'Subscription Paused',
+            'Your subscription has been paused',
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] pausePrivate error:', err);
@@ -505,6 +563,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          notifySubscriptionEvent(
+            'Subscription Paused',
+            'Your subscription has been paused',
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] pausePrivateStark error:', err);
@@ -532,6 +597,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          notifySubscriptionEvent(
+            'Subscription Resumed',
+            'Your subscription has been resumed',
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] resumeNormal error:', err);
@@ -561,6 +633,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          notifySubscriptionEvent(
+            'Subscription Resumed',
+            'Your subscription has been resumed',
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] resumePrivate error:', err);
@@ -589,6 +668,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           );
 
           set({ isLoading: false, progress: null });
+
+          notifySubscriptionEvent(
+            'Subscription Resumed',
+            'Your subscription has been resumed',
+            { transactionId: sig },
+          );
+
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] resumePrivateStark error:', err);
@@ -623,6 +709,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             progress: null,
             vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
           }));
+
+          notifySubscriptionEvent(
+            'Subscription Cancelled',
+            'Your subscription has been cancelled',
+            { transactionId: sig },
+          );
 
           return sig;
         } catch (err) {
@@ -672,6 +764,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             progress: null,
             vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
           }));
+
+          notifySubscriptionEvent(
+            'Subscription Cancelled',
+            'Your subscription has been cancelled',
+            { transactionId: sig },
+          );
 
           return sig;
         } catch (err) {

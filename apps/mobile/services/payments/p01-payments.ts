@@ -9,11 +9,10 @@
  * - Webhook handling for payment confirmation
  */
 
-import { Buffer } from 'buffer';
-
 // Configuration
 const HELIO_API_KEY = process.env.EXPO_PUBLIC_HELIO_API_KEY || '';
-const HELIO_SECRET_KEY = process.env.HELIO_SECRET_KEY || '';
+// SECURITY (M18): HELIO_SECRET_KEY removed from client-side code.
+// Webhook HMAC verification MUST be done server-side via a backend proxy.
 const HELIO_API_URL = 'https://api.hel.io/v1';
 
 // P-01 Network Fee (your commission)
@@ -322,10 +321,16 @@ function buildPaymentUrl(params: {
   walletAddress: string;
   paymentMethod: string;
 }): string {
+  // Validate MoonPay API key is configured (L8)
+  const moonpayApiKey = process.env.EXPO_PUBLIC_MOONPAY_API_KEY || '';
+  if (!moonpayApiKey) {
+    console.error('[P01Payments] EXPO_PUBLIC_MOONPAY_API_KEY is not configured');
+  }
+
   // Use MoonPay widget for card payments (most reliable)
   // MoonPay widget URL with pre-filled parameters
   const moonpayParams = new URLSearchParams({
-    apiKey: process.env.EXPO_PUBLIC_MOONPAY_API_KEY || 'pk_test_123', // Test key for demo
+    apiKey: moonpayApiKey,
     currencyCode: params.cryptoCurrency.toLowerCase(),
     baseCurrencyCode: params.currency.toLowerCase(),
     baseCurrencyAmount: params.amount.toString(),
@@ -359,30 +364,24 @@ function buildPaymentUrl(params: {
 }
 
 /**
- * Verify payment webhook signature (server-side only)
+ * Verify payment webhook signature.
+ *
+ * SECURITY (M18): HMAC verification requires the Helio secret key which must
+ * NEVER be embedded in client-side code. This function is a no-op stub on
+ * the client. Webhook signature verification must be performed server-side
+ * via a backend proxy that holds HELIO_SECRET_KEY.
+ *
+ * TODO: Implement a backend endpoint (e.g. POST /api/webhooks/helio) that
+ * performs HMAC-SHA256 verification and forwards confirmed events to the client.
  */
 export function verifyWebhookSignature(
-  payload: string,
-  signature: string
+  _payload: string,
+  _signature: string
 ): boolean {
-  if (!HELIO_SECRET_KEY) {
-    console.warn('[P01Payments] No secret key configured');
-    return false;
-  }
-
-  try {
-    // HMAC-SHA256 verification
-    const crypto = require('crypto');
-    const expectedSignature = crypto
-      .createHmac('sha256', HELIO_SECRET_KEY)
-      .update(payload)
-      .digest('hex');
-
-    return signature === expectedSignature;
-  } catch (error) {
-    console.error('[P01Payments] Webhook verification error:', error);
-    return false;
-  }
+  console.warn(
+    '[P01Payments] verifyWebhookSignature called on client — this must be done server-side.',
+  );
+  return false;
 }
 
 /**

@@ -48,7 +48,7 @@ export function ArciumProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Initialize MPC client when enabled
+  // Initialize MPC client when enabled — retries if wallet not yet available
   useEffect(() => {
     if (!mpcEnabled) {
       setStatus('disabled');
@@ -56,36 +56,50 @@ export function ArciumProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    console.log('[MPC] Toggle ON — attempting client init');
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    if (!clientInitAttempted.current) {
-      clientInitAttempted.current = true;
+    const tryInit = (attempt: number) => {
+      console.log(`[MPC] Attempting client init (attempt ${attempt})...`);
       setStatus('initializing');
 
       import('../services/arcium/mpcClient')
         .then(({ getMpcClient }) => {
-          console.log('[MPC] mpcClient module loaded, calling getMpcClient()...');
           return getMpcClient();
         })
         .then((client) => {
           if (client) {
-            console.log('[MPC] Client initialized successfully');
+            console.log('[MPC] Client initialized successfully!');
             if (!programAvailable) setProgramAvailable(true);
             setStatus('ready');
+          } else if (attempt < 5) {
+            // Wallet may not be ready yet — retry after delay
+            const delay = attempt * 2000; // 2s, 4s, 6s, 8s
+            console.log(`[MPC] Client null (wallet not ready?) — retrying in ${delay}ms`);
+            setStatus('ready'); // mark ready so UI is usable, ops have own fallback
+            retryTimer = setTimeout(() => tryInit(attempt + 1), delay);
           } else {
-            console.warn('[MPC] Client returned null — marking ready anyway (ops use own fallback)');
+            console.warn('[MPC] Client null after 5 attempts — giving up, ops use fallback');
             if (!programAvailable) setProgramAvailable(true);
             setStatus('ready');
           }
         })
         .catch((e) => {
-          console.warn('[MPC] Client init error:', e.message, '— marking ready (ops use own fallback)');
+          console.warn('[MPC] Client init error:', e.message);
           if (!programAvailable) setProgramAvailable(true);
           setStatus('ready');
         });
+    };
+
+    if (!clientInitAttempted.current) {
+      clientInitAttempted.current = true;
+      tryInit(1);
     } else {
       setStatus('ready');
     }
+
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [mpcEnabled]);
 
   const isMpcActive = mpcEnabled && status === 'ready';

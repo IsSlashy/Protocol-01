@@ -23,7 +23,7 @@ import { Buffer } from 'buffer';
 import type { NotePayload, SymmetricEncryptedPayload } from '../types';
 import {
   encryptNoteSymmetric,
-  decryptNoteSymmetric,
+  decryptNoteSymmetricWithRetry,
   deriveNfcKey,
 } from '../crypto/sessionCrypto';
 
@@ -136,8 +136,6 @@ export class NfcTransport {
       await this.checkAvailable();
     }
 
-    const key = deriveNfcKey(pin);
-
     try {
       // Request IsoDep technology — waits for NFC tap
       await NfcManager.requestTechnology(NfcTech.IsoDep);
@@ -181,10 +179,12 @@ export class NfcTransport {
         offset += chunkData.length;
       }
 
-      // Parse and decrypt
+      // Parse and decrypt — try current, previous, and next minute windows
+      // to handle the race condition where sender encrypts at xx:59 and
+      // receiver decrypts at xx+1:01 (different minute-rounded timestamps)
       const payloadStr = Buffer.from(allBytes).toString('utf-8');
       const encrypted: SymmetricEncryptedPayload = JSON.parse(payloadStr);
-      const notePayload = decryptNoteSymmetric(encrypted, key);
+      const notePayload = decryptNoteSymmetricWithRetry(encrypted, pin);
 
       this.callbacks.onNoteReceived(notePayload);
     } catch (error) {

@@ -26,7 +26,9 @@ import {
   TransactionResult,
 } from '../services/solana/transactions';
 import { PublicKey, Transaction } from '@solana/web3.js';
+import { getSolanaWebSocket } from '../services/solana/websocket';
 import { resetAllPrivacyStores } from './resetStores';
+import { scheduleLocalNotification } from '../services/notifications';
 
 // Store Privy signer for transactions
 let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
@@ -147,6 +149,47 @@ export const useWalletStore = create<WalletState>((set, get) => ({
             // Failed to fetch fresh transactions — will retry on next refresh
           }
         }, 3000);
+
+        // REAL-TIME: Subscribe to account changes via WebSocket
+        // Auto-refresh balance when SOL is received/sent (any page, no pull needed)
+        try {
+          const ws = getSolanaWebSocket();
+          await ws.connect();
+          await ws.subscribe(publicKey);
+          let lastRefresh = 0;
+          ws.on('account_change', async () => {
+            // Debounce: skip if refreshed within last 2s
+            const now = Date.now();
+            if (now - lastRefresh < 2000) return;
+            lastRefresh = now;
+
+            // Capture previous SOL balance before refresh
+            const prevSol = get().balance?.sol ?? 0;
+
+            await get().refreshBalance();
+
+            // Compare new balance to previous — notify on increase
+            const newSol = get().balance?.sol ?? 0;
+            const received = newSol - prevSol;
+            if (received > 0) {
+              const formattedAmount = formatBalance(received);
+              scheduleLocalNotification(
+                'SOL Received',
+                `You received ${formattedAmount} SOL`,
+                {
+                  category: 'transaction',
+                  amount: formattedAmount,
+                  token: 'SOL',
+                  action: 'received',
+                  channelId: 'transactions',
+                  newTotal: formatBalance(newSol),
+                },
+              ).catch(() => {});
+            }
+          });
+        } catch (err: any) {
+          console.warn('[Wallet] WebSocket subscription failed:', err.message);
+        }
       }
 
       set({ initialized: true, loading: false });
@@ -293,6 +336,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   logout: async () => {
     try {
       set({ loading: true, error: null });
+      // Disconnect WebSocket before deleting wallet
+      try {
+        const ws = getSolanaWebSocket();
+        await ws.disconnect();
+      } catch {}
       await deleteWallet();
       // Reset all privacy-related stores so no data leaks to the next wallet
       await resetAllPrivacyStores();
@@ -349,6 +397,11 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   sendTransaction: async (to: string, amount: number) => {
     set({ loading: true, error: null });
 
+    const shortRecipient = to.length > 8
+      ? `${to.slice(0, 4)}...${to.slice(-4)}`
+      : to;
+    const formattedAmount = formatBalance(amount);
+
     try {
       let result: TransactionResult;
 
@@ -367,13 +420,42 @@ export const useWalletStore = create<WalletState>((set, get) => ({
           get().refreshBalance();
           get().refreshTransactions();
         }, 2000);
+
+        // Notify user of successful transfer
+        scheduleLocalNotification(
+          'Transfer Sent',
+          `${formattedAmount} SOL sent to ${shortRecipient}`,
+          {
+            category: 'transaction',
+            amount: formattedAmount,
+            token: 'SOL',
+            action: 'sent',
+            transactionId: result.signature ?? undefined,
+          },
+          { channelId: 'transactions' },
+        ).catch(() => {});
       }
 
       set({ loading: false });
       return result;
     } catch (error: any) {
+      const errorMsg = error.message || 'Transaction failed';
+
+      // Notify user of failed transfer
+      scheduleLocalNotification(
+        'Transfer Failed',
+        `Failed to send ${formattedAmount} SOL: ${errorMsg}`,
+        {
+          category: 'transaction',
+          amount: formattedAmount,
+          token: 'SOL',
+          action: 'send_failed',
+        },
+        { channelId: 'transactions' },
+      ).catch(() => {});
+
       set({
-        error: error.message || 'Transaction failed',
+        error: errorMsg,
         loading: false,
       });
       throw error;

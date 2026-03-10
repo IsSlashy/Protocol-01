@@ -7,16 +7,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-import * as Crypto from 'expo-crypto';
 import { PinInput } from '../../components/onboarding';
 import { useWalletStore } from '../../stores/walletStore';
-
-async function hashPin(pin: string): Promise<string> {
-  return await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    'p01_pin_v1:' + pin
-  );
-}
+import { hashPin } from '../../utils/crypto/pinHash';
 
 type SecurityMethod = 'none' | 'pin' | 'biometrics';
 

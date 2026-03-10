@@ -32,6 +32,7 @@ import {
   deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner } from './walletStore';
+import { scheduleLocalNotification } from '../services/notifications';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -365,10 +366,24 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             notes: [storedNote, ...state.notes],
           }));
 
+          // Notify user of successful shield
+          scheduleLocalNotification(
+            'Shield Confirmed',
+            `${pool.denomination} ${pool.token} shielded to privacy pool`,
+            { category: 'transaction', token: pool.token, amount: String(pool.denomination), channelId: 'transactions' },
+          ).catch(() => {}); // fire-and-forget, never block on notification failure
+
           return storedNote.id;
         } catch (err) {
           console.error('[DenomStore] Shield error:', err);
           set({ isLoading: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Shield Failed',
+            `Failed to shield ${pool.denomination} ${pool.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: pool.token, amount: String(pool.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           throw err;
         }
       },
@@ -415,10 +430,23 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             ),
           }));
 
+          scheduleLocalNotification(
+            'Unshield Confirmed',
+            `${note.denomination} ${note.token} withdrawn from privacy pool`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           return sig;
         } catch (err) {
           console.error('[DenomPool] Unshield error:', err);
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Unshield Failed',
+            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           throw err;
         }
       },
@@ -465,10 +493,23 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             ),
           }));
 
+          scheduleLocalNotification(
+            'Unshield Confirmed',
+            `${note.denomination} ${note.token} withdrawn from privacy pool`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           return sig;
         } catch (err) {
           console.error('[DenomPool] STARK unshield error:', err);
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Unshield Failed',
+            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           throw err;
         }
       },
@@ -514,10 +555,23 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             ),
           }));
 
+          scheduleLocalNotification(
+            'Unshield Confirmed',
+            `${note.denomination} ${note.token} withdrawn from privacy pool`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           return sig;
         } catch (err) {
           console.error('[DenomPool] Emergency unshield error:', err);
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Unshield Failed',
+            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
           throw err;
         }
       },

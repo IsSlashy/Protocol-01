@@ -16,6 +16,26 @@ import { getKeypair, getPublicKey } from '../solana/wallet';
 const PROTOCOL_VERSION = 1;
 const PROTOCOL_ID = 'p01-auth';
 
+/** Allowed callback domains for auth deep links (H14) */
+const ALLOWED_CALLBACK_DOMAINS = [
+  'protocol01.com',
+  'p01.app',
+  'p01.network',
+  'localhost',
+  '127.0.0.1',
+];
+
+function isAllowedCallback(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return ALLOWED_CALLBACK_DOMAINS.some(
+      (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Decoded auth QR payload
  */
@@ -274,6 +294,11 @@ export async function sendAuthCallback(
         : undefined,
     };
 
+
+    // Validate callback domain before sending credentials (H14)
+    if (!isAllowedCallback(payload.callback)) {
+      return { success: false, error: 'Unauthorized callback domain' };
+    }
 
     const response = await fetch(payload.callback, {
       method: 'POST',

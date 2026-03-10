@@ -46,6 +46,11 @@ export const USDC_DEVNET_MINT = new PublicKey(
   '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
 );
 
+/// Protocol fee wallet — hardcoded, must match on-chain constant
+const PROTOCOL_FEE_WALLET = new PublicKey(
+  'BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN'
+);
+
 const MERKLE_DEPTH = 15;
 const SLOTS_PER_EPOCH = 7200;
 
@@ -499,6 +504,8 @@ function buildShieldDenominatedIx(
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: userTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!userTokenAccount },
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+    // Protocol fee wallet (0.3% shield fee)
+    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -571,7 +578,8 @@ function buildUnshieldDenominatedIx(
 
   // Account ordering must match on-chain UnshieldDenominated struct:
   // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
-  // verification_key_data, system_program, token_program?, pool_vault?, recipient_token_account?
+  // verification_key_data, system_program, token_program?, pool_vault?,
+  // recipient_token_account?, protocol_fee_wallet
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
     { pubkey: recipient, isSigner: false, isWritable: true },
@@ -584,6 +592,8 @@ function buildUnshieldDenominatedIx(
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    // Protocol fee wallet (0.5% unshield fee)
+    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -1023,7 +1033,8 @@ function buildUnshieldDenominatedStarkIx(
 
   // Account ordering must match on-chain UnshieldDenominatedStark struct:
   // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
-  // stark_proof_buffer, system_program, token_program?, pool_vault?, recipient_token_account?
+  // stark_proof_buffer, system_program, token_program?, pool_vault?,
+  // recipient_token_account?, protocol_fee_wallet
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
     { pubkey: recipient, isSigner: false, isWritable: true },
@@ -1036,6 +1047,8 @@ function buildUnshieldDenominatedStarkIx(
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    // Protocol fee wallet (0.5% unshield fee)
+    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -1243,7 +1256,8 @@ export async function emergencyUnshield(
 
   // Account ordering matches on-chain EmergencyUnshieldDenominated struct:
   // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
-  // verification_key_data, system_program, token_program?, pool_vault?, recipient_token_account?
+  // verification_key_data, system_program, token_program?, pool_vault?,
+  // recipient_token_account?, protocol_fee_wallet
   const keys = [
     { pubkey: walletPubkey, isSigner: true, isWritable: true },
     { pubkey: recipient, isSigner: false, isWritable: true },
@@ -1256,6 +1270,8 @@ export async function emergencyUnshield(
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    // Protocol fee wallet (0.5% unshield fee)
+    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
   ];
 
   const ix = new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
