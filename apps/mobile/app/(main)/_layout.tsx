@@ -1,9 +1,12 @@
-import React, { useEffect, useRef } from 'react';
-import { View } from 'react-native';
-import { Tabs } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, AppState, AppStateStatus, StyleSheet } from 'react-native';
+import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../../constants/theme';
 import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
@@ -13,6 +16,51 @@ import { LiquidGlassTabBar } from '../../components/navigation/LiquidGlassTabBar
 export default function MainLayout() {
   const { initialize, initialized } = useWalletStore();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+
+  // H4: Auth gate — verify user passed lock screen before rendering main content
+  const [isUnlocked, setIsUnlocked] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem('p01_session_unlocked').then(val => {
+      if (val !== 'true') {
+        router.replace('/(auth)/lock');
+      } else {
+        setIsUnlocked(true);
+      }
+    });
+  }, []);
+
+  // M6 + M7: App backgrounding protection — lock on background, blur on app switcher
+  const [appInBackground, setAppInBackground] = useState(false);
+
+  useEffect(() => {
+    let lastBackground = 0;
+    const subscription = AppState.addEventListener('change', async (state: AppStateStatus) => {
+      if (state === 'background') {
+        lastBackground = Date.now();
+        setAppInBackground(true);
+      } else if (state === 'inactive') {
+        setAppInBackground(true);
+      } else if (state === 'active') {
+        setAppInBackground(false);
+        if (lastBackground > 0) {
+          // Get lock timeout setting from SecureStore (default 0 = immediate)
+          const timeoutStr = await SecureStore.getItemAsync('settings_lock_timeout');
+          const timeout = timeoutStr ? parseInt(timeoutStr, 10) : 0;
+          // timeout -1 means 'never'
+          if (timeout >= 0) {
+            const elapsed = Date.now() - lastBackground;
+            if (elapsed > timeout * 1000) {
+              await AsyncStorage.removeItem('p01_session_unlocked');
+              router.replace('/(auth)/lock');
+            }
+          }
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   // Initialize security settings (applies screenshot blocking)
   useSecuritySettings();
@@ -37,8 +85,17 @@ export default function MainLayout() {
     }
   }, [initialized]);
 
+  // H4: Don't render main content until verified unlocked
+  if (!isUnlocked) return null;
+
   return (
     <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      {/* M7: Blur overlay when app is in background / app switcher */}
+      {appInBackground && (
+        <View style={StyleSheet.compose(StyleSheet.absoluteFillObject, { zIndex: 9999 })}>
+          <BlurView intensity={100} tint="dark" style={StyleSheet.absoluteFillObject} />
+        </View>
+      )}
       {/* Ambient glow — visible on every tab */}
       <LinearGradient
         colors={['rgba(57, 197, 187, 0.045)', 'rgba(255, 119, 168, 0.025)', 'transparent']}

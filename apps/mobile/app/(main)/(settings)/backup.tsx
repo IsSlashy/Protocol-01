@@ -21,6 +21,7 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import * as ScreenCapture from 'expo-screen-capture';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useWalletStore } from '@/stores/walletStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
@@ -107,6 +108,15 @@ export default function BackupRecoveryScreen() {
     .filter(n => n.token === 'SOL')
     .reduce((sum, n) => sum + n.denomination, 0);
 
+  // H3: Block screenshots when seed phrase modal is visible
+  useEffect(() => {
+    if (showSeedModal) {
+      ScreenCapture.preventScreenCaptureAsync();
+    } else {
+      ScreenCapture.allowScreenCaptureAsync();
+    }
+  }, [showSeedModal]);
+
   // Load persisted backup status
   useEffect(() => {
     getBackupStatus().then(({ backedUp, lastBackupAt: ts }) => {
@@ -119,16 +129,13 @@ export default function BackupRecoveryScreen() {
 
   const handleShowSeedPhrase = async () => {
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-
-      if (hasHardware && isEnrolled) {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Authenticate to view seed phrase',
-          fallbackLabel: 'Use PIN',
-        });
-        if (!result.success) return;
-      }
+      // M8: Always require authentication — fall back to device PIN when biometrics unavailable
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Authenticate to view seed phrase',
+        disableDeviceFallback: false, // falls back to device PIN/pattern/password
+        cancelLabel: 'Cancel',
+      });
+      if (!result.success) return;
 
       const mnemonic = await getBackupMnemonic();
       if (mnemonic) {
@@ -166,17 +173,14 @@ export default function BackupRecoveryScreen() {
   // ── Encrypted Export ──
 
   const handleExportBackup = async () => {
-    // Require auth first
+    // Require auth first — always authenticate, fall back to device PIN
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (hasHardware && isEnrolled) {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Authenticate to export backup',
-          fallbackLabel: 'Use PIN',
-        });
-        if (!result.success) return;
-      }
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Authenticate to export backup',
+        disableDeviceFallback: false,
+        cancelLabel: 'Cancel',
+      });
+      if (!result.success) return;
     } catch {
       Alert.alert('Authentication Failed', 'Please try again.');
       return;
@@ -189,8 +193,8 @@ export default function BackupRecoveryScreen() {
   };
 
   const handleCreateBackup = async () => {
-    if (exportPassword.length < 6) {
-      Alert.alert('Weak Password', 'Password must be at least 6 characters.');
+    if (exportPassword.length < 8) {
+      Alert.alert('Weak Password', 'Password must be at least 8 characters.');
       return;
     }
     if (exportPassword !== exportConfirmPassword) {
@@ -685,7 +689,7 @@ export default function BackupRecoveryScreen() {
                   style={[styles.input, { flex: 1 }]}
                   value={exportPassword}
                   onChangeText={setExportPassword}
-                  placeholder="Min. 6 characters"
+                  placeholder="Min. 8 characters"
                   placeholderTextColor={Colors.textTertiary}
                   secureTextEntry={!showExportPassword}
                   autoCapitalize="none"

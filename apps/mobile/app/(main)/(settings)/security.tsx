@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as ScreenCapture from 'expo-screen-capture';
@@ -309,14 +308,15 @@ export default function SecuritySettingsScreen() {
     setBiometricsAvailable(hasHardware && isEnrolled);
   };
 
+  // L9: Load security settings from SecureStore (migrated from AsyncStorage)
   const loadSettings = async () => {
     try {
       const [bio, auth, hide, block, timeout] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.BIOMETRICS),
-        AsyncStorage.getItem(STORAGE_KEYS.AUTH_FOR_SENDS),
-        AsyncStorage.getItem(STORAGE_KEYS.HIDE_BALANCE),
-        AsyncStorage.getItem(STORAGE_KEYS.BLOCK_SCREENSHOTS),
-        AsyncStorage.getItem(STORAGE_KEYS.LOCK_TIMEOUT),
+        SecureStore.getItemAsync(STORAGE_KEYS.BIOMETRICS),
+        SecureStore.getItemAsync(STORAGE_KEYS.AUTH_FOR_SENDS),
+        SecureStore.getItemAsync(STORAGE_KEYS.HIDE_BALANCE),
+        SecureStore.getItemAsync(STORAGE_KEYS.BLOCK_SCREENSHOTS),
+        SecureStore.getItemAsync(STORAGE_KEYS.LOCK_TIMEOUT),
       ]);
 
       if (bio !== null) setBiometricsEnabled(bio === 'true');
@@ -338,30 +338,30 @@ export default function SecuritySettingsScreen() {
 
       if (result.success) {
         setBiometricsEnabled(true);
-        await AsyncStorage.setItem(STORAGE_KEYS.BIOMETRICS, 'true');
+        await SecureStore.setItemAsync(STORAGE_KEYS.BIOMETRICS, 'true');
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } else {
       setBiometricsEnabled(false);
-      await AsyncStorage.setItem(STORAGE_KEYS.BIOMETRICS, 'false');
+      await SecureStore.setItemAsync(STORAGE_KEYS.BIOMETRICS, 'false');
     }
   };
 
   const handleAuthForSendsToggle = async (value: boolean) => {
     setRequireAuthForSends(value);
-    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_FOR_SENDS, value.toString());
+    await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_FOR_SENDS, value.toString());
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleHideBalanceToggle = async (value: boolean) => {
     setHideBalance(value);
-    await AsyncStorage.setItem(STORAGE_KEYS.HIDE_BALANCE, value.toString());
+    await SecureStore.setItemAsync(STORAGE_KEYS.HIDE_BALANCE, value.toString());
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleBlockScreenshotsToggle = async (value: boolean) => {
     setBlockScreenshots(value);
-    await AsyncStorage.setItem(STORAGE_KEYS.BLOCK_SCREENSHOTS, value.toString());
+    await SecureStore.setItemAsync(STORAGE_KEYS.BLOCK_SCREENSHOTS, value.toString());
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // Apply immediately using expo-screen-capture
@@ -384,7 +384,7 @@ export default function SecuritySettingsScreen() {
         text: option.label,
         onPress: async () => {
           setLockTimeout(option.value);
-          await AsyncStorage.setItem(STORAGE_KEYS.LOCK_TIMEOUT, option.value.toString());
+          await SecureStore.setItemAsync(STORAGE_KEYS.LOCK_TIMEOUT, option.value.toString());
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         },
       }))
