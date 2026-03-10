@@ -1,3 +1,6 @@
+// TODO: Add certificate pinning for Helius RPC endpoint before mainnet
+// Use react-native-ssl-pinning or custom fetch wrapper
+
 import { Connection, clusterApiUrl, Commitment } from '@solana/web3.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 

@@ -14,6 +14,9 @@ import type { PrivyClientConfig } from '@privy-io/react-auth';
 // In production, set VITE_PRIVY_APP_ID in your .env file
 export const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID || 'YOUR_PRIVY_APP_ID';
 
+// Guard: only enable Privy if a real App ID is configured
+export const PRIVY_ENABLED = PRIVY_APP_ID !== 'YOUR_PRIVY_APP_ID' && PRIVY_APP_ID.length > 0;
+
 // Privy configuration
 export const privyConfig: PrivyClientConfig = {
   // Appearance

@@ -102,22 +102,67 @@ export async function decrypt(encryptedData: EncryptedData, password: string): P
   return decoder.decode(decrypted);
 }
 
+// ---------------------------------------------------------------------------
+// Constant-time comparison (prevents timing side-channels)
+// ---------------------------------------------------------------------------
+
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) result |= a[i] ^ b[i];
+  return result === 0;
+}
+
+// ---------------------------------------------------------------------------
+// Password hashing — PBKDF2 with random salt
+// ---------------------------------------------------------------------------
+
+const encoder = new TextEncoder();
+
 /**
- * Hash a password for comparison (not for storage)
+ * Legacy unsalted hash (SHA-256 only) — kept for migration of existing hashes.
+ * @deprecated Use hashPassword() which uses PBKDF2 + salt.
  */
-export async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
+async function legacyHashPassword(password: string): Promise<string> {
   const data = encoder.encode(password);
   const hash = await crypto.subtle.digest('SHA-256', data);
   return arrayBufferToBase64(hash);
 }
 
 /**
- * Verify password matches hash
+ * Hash a password with PBKDF2 + random salt.
+ * Returns "salt:hash" as base64-encoded strings.
  */
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const newHash = await hashPassword(password);
-  return newHash === hash;
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const derived = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    key, 256
+  );
+  // Store salt:hash as base64
+  return arrayBufferToBase64(salt.buffer as ArrayBuffer) + ':' + arrayBufferToBase64(derived);
+}
+
+/**
+ * Verify a password against a stored hash.
+ * Supports both new (salt:hash) and legacy (unsalted SHA-256) formats.
+ */
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const [saltB64, hashB64] = storedHash.split(':');
+  if (!saltB64 || !hashB64) {
+    // Legacy unsalted format — verify old way then caller should re-hash to migrate
+    const legacyHash = await legacyHashPassword(password);
+    return constantTimeEqual(encoder.encode(legacyHash), encoder.encode(storedHash));
+  }
+  const salt = base64ToArrayBuffer(saltB64);
+  const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const derived = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: 100000, hash: 'SHA-256' },
+    key, 256
+  );
+  const expected = base64ToArrayBuffer(hashB64);
+  return constantTimeEqual(new Uint8Array(derived), new Uint8Array(expected));
 }
 
 // --- Brute-force protection ---

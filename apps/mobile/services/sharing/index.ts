@@ -7,6 +7,7 @@
 
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
+import * as Crypto from 'expo-crypto';
 import { BleTransport, type BleTransportCallbacks } from './transport/ble';
 import { NfcTransport, type NfcTransportCallbacks } from './transport/nfc';
 import {
@@ -25,6 +26,16 @@ import type {
   ShareSession,
   ShareRecord,
 } from './types';
+
+// ---------------------------------------------------------------------------
+// Secure PIN generation (CSPRNG)
+// ---------------------------------------------------------------------------
+
+function generateSecurePin(): string {
+  const bytes = Crypto.getRandomBytes(4);
+  const n = new DataView(bytes.buffer).getUint32(0) % 1_000_000;
+  return n.toString().padStart(6, '0');
+}
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -339,9 +350,8 @@ export class ShareService {
 
   generateNfcPin(): string {
     if (!this.nfcTransport) {
-      // Quick init just for PIN generation
-      const n = Math.floor(Math.random() * 1_000_000);
-      return n.toString().padStart(6, '0');
+      // Quick init just for PIN generation — use CSPRNG
+      return generateSecurePin();
     }
     return this.nfcTransport.generatePin();
   }

@@ -715,6 +715,10 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       name: 'p01-denominated-pool',
       version: 1,
       storage: createJSONStorage(() => AsyncStorage),
+      // TODO (M8): receiptJSON contains note secrets (commitment, secret, nullifier preimage).
+      // These should be encrypted with the session key before persisting to AsyncStorage,
+      // or migrated to SecureStore. Use apps/mobile/utils/crypto/encryption.ts or
+      // expo-secure-store to encrypt each note's receiptJSON field.
       partialize: (state) => ({
         notes: state.notes,
         selectedToken: state.selectedToken,

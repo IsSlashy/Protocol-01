@@ -97,6 +97,7 @@ const PROVER_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none';">
   <style>body{margin:0;padding:0;background:transparent;}</style>
 </head>
 <body>
@@ -372,11 +373,9 @@ export const WebViewProver = forwardRef<WebViewProverHandle, WebViewProverProps>
           onError={handleError}
           javaScriptEnabled
           domStorageEnabled
-          originWhitelist={['*']}
+          originWhitelist={['file://']}
           // Android-specific: allow file access for potential asset loading
           allowFileAccess={Platform.OS === 'android'}
-          allowFileAccessFromFileURLs={Platform.OS === 'android'}
-          allowUniversalAccessFromFileURLs={Platform.OS === 'android'}
           // Performance settings
           cacheEnabled={false}
           incognito

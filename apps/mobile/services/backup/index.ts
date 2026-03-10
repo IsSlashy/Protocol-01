@@ -39,8 +39,7 @@ export interface BackupEnvelope {
   salt: string;     // salt base64
   hint: string;     // password hint
   createdAt: number;
-  publicKey: string;
-  noteCount: number;
+  // publicKey and noteCount are inside the encrypted payload only (L7: no metadata leakage)
 }
 
 export interface BackupPayload {
@@ -57,8 +56,6 @@ export interface BackupPayload {
 }
 
 export interface BackupMetadata {
-  publicKey: string;
-  noteCount: number;
   createdAt: number;
   hint: string;
 }
@@ -81,24 +78,22 @@ function fromBase64(b64: string): Uint8Array {
 
 /**
  * Derive a 32-byte symmetric key from password + salt.
- * Uses nacl.hash (SHA-512) with domain separation, iterated twice
- * for basic key stretching. Not as strong as PBKDF2/scrypt but
- * available without extra dependencies.
+ * Uses nacl.hash (SHA-512) with domain separation, iterated 100,000 times
+ * for proper key stretching. Salt is re-incorporated each iteration.
  */
 function deriveKey(password: string, salt: Uint8Array): Uint8Array {
-  const domain = `P01_BACKUP_V1`;
-  // Round 1: H(domain || salt || password)
-  const input1 = new TextEncoder().encode(`${domain}:${toBase64(salt)}:${password}`);
-  const hash1 = nacl.hash(input1); // 64 bytes
+  const domain = 'P01_BACKUP_V1';
+  let key = nacl.hash(new TextEncoder().encode(`${domain}:${toBase64(salt)}:${password}`));
 
-  // Round 2: H(hash1 || salt || password) for basic stretching
-  const combined = new Uint8Array(hash1.length + salt.length + input1.length);
-  combined.set(hash1, 0);
-  combined.set(salt, hash1.length);
-  combined.set(input1, hash1.length + salt.length);
-  const hash2 = nacl.hash(combined);
+  // 100,000 iterations of SHA-512 with salt re-incorporation
+  for (let i = 0; i < 100_000; i++) {
+    const combined = new Uint8Array(key.length + salt.length);
+    combined.set(key, 0);
+    combined.set(salt, key.length);
+    key = nacl.hash(combined);
+  }
 
-  return hash2.slice(0, 32); // 32 bytes for nacl.secretbox
+  return key.slice(0, 32); // 32 bytes for nacl.secretbox
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +134,8 @@ export async function createEncryptedBackup(
   password: string,
   hint: string = '',
 ): Promise<string> {
-  if (!password || password.length < 6) {
-    throw new Error('Password must be at least 6 characters');
+  if (!password || password.length < 8) {
+    throw new Error('Password must be at least 8 characters');
   }
 
   // Gather data
@@ -192,8 +187,7 @@ export async function createEncryptedBackup(
     salt: toBase64(salt),
     hint,
     createdAt: Date.now(),
-    publicKey,
-    noteCount: notes.length,
+    // publicKey and noteCount omitted — inside encrypted payload only (L7)
   };
 
   // Mark as backed up
@@ -217,10 +211,9 @@ export function parseBackupMetadata(encoded: string): BackupMetadata | null {
     if (envelope.v !== 1) return null;
 
     return {
-      publicKey: envelope.publicKey,
-      noteCount: envelope.noteCount,
       createdAt: envelope.createdAt,
       hint: envelope.hint,
+      // publicKey and noteCount are inside the encrypted payload (L7)
     };
   } catch {
     return null;
