@@ -27,6 +27,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useConfidentialStore } from '@/stores/confidentialStore';
+import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 import { useAuth } from '@/providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -81,6 +82,10 @@ export default function WalletHomeScreen() {
   const { shieldedBalance } = useShieldedStore();
   const { balances: confidentialBalances } = useConfidentialStore();
   const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
+  const { getActiveNotes } = useDenominatedPoolStore();
+  const denominatedSolBalance = getActiveNotes()
+    .filter(n => n.token === 'SOL')
+    .reduce((sum, n) => sum + n.denomination, 0);
 
   useEffect(() => { initSettings(); }, []);
 
@@ -265,6 +270,7 @@ export default function WalletHomeScreen() {
         <PrivacySummaryPill
           shieldedBalance={shieldedBalance}
           confidentialBalance={confidentialSolBalance}
+          denominatedBalance={denominatedSolBalance}
           onPress={() => router.push('/(main)/(privacy)')}
         />
 
