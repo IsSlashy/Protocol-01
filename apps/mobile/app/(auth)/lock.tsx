@@ -73,12 +73,19 @@ export default function LockScreen() {
           // If auth fails, stay on lock screen — user can retry via biometric button
           setIsBiometricSupported(true);
         } else {
-          // No biometrics enrolled or no hardware — allow through
-          // (User never configured app-level security either)
-          router.replace('/(main)/(wallet)');
+          // No biometrics enrolled or no hardware — use device screen lock (PIN/pattern/password)
+          const deviceResult = await LocalAuthentication.authenticateAsync({
+            promptMessage: 'Authenticate to access wallet',
+            disableDeviceFallback: false,
+            cancelLabel: 'Cancel',
+          });
+          if (deviceResult.success) {
+            router.replace('/(main)/(wallet)');
+          }
+          // If fails, stay on lock screen
         }
       } catch {
-        router.replace('/(main)/(wallet)');
+        // Authentication error — stay on lock screen for safety
       }
     }
   };

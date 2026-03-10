@@ -127,8 +127,7 @@ export default function ViewKeysScreen() {
     if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
       globalThis.crypto.getRandomValues(bytes);
     } else {
-      // Fallback for environments without Web Crypto
-      for (let i = 0; i < 32; i++) bytes[i] = Math.floor(Math.random() * 256);
+      throw new Error('CSPRNG not available — cannot generate secure random bytes');
     }
     const randomPart = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
     return `${prefix}_${randomPart}`;

@@ -786,12 +786,6 @@ export default function BackupRecoveryScreen() {
                       <Text style={[styles.rowLabel, { marginLeft: 8, fontSize: 14 }]}>Valid Backup Detected</Text>
                     </View>
                     <Text style={styles.previewLine}>
-                      Wallet: {importPreview.publicKey.slice(0, 6)}...{importPreview.publicKey.slice(-4)}
-                    </Text>
-                    <Text style={styles.previewLine}>
-                      Notes: {importPreview.noteCount}
-                    </Text>
-                    <Text style={styles.previewLine}>
                       Created: {new Date(importPreview.createdAt).toLocaleDateString()}
                     </Text>
                     {importPreview.hint ? (
