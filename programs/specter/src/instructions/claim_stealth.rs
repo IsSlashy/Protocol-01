@@ -24,12 +24,14 @@ pub struct ClaimStealth<'info> {
     )]
     pub claimer_wallet: Account<'info, P01Wallet>,
 
-    /// The stealth account being claimed
+    /// The stealth account being claimed.
+    /// Closed after claim — rent returned to claimer.
     #[account(
         mut,
         seeds = [StealthAccount::SEED_PREFIX, &stealth_account.recipient_key],
         bump = stealth_account.bump,
-        constraint = !stealth_account.claimed @ P01Error::StealthAlreadyClaimed
+        constraint = !stealth_account.claimed @ P01Error::StealthAlreadyClaimed,
+        close = claimer
     )]
     pub stealth_account: Account<'info, StealthAccount>,
 

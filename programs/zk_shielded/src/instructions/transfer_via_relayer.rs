@@ -1,13 +1,15 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
-use crate::state::{MerkleTreeState, NullifierSet, ShieldedPool};
+use crate::state::{MerkleTreeState, NullifierRecord, ShieldedPool};
 use crate::verifier::Groth16Verifier;
 use crate::Groth16Proof;
 
 /// Transfer shielded tokens via relayer
 /// Similar to regular transfer but includes a fee output for the relayer
 /// This enables gasless transactions where the relayer pays for gas
+///
+/// Uses PDA-per-nullifier for double-spend detection (replaces Bloom filter).
 #[derive(Accounts)]
 #[instruction(
     proof: Groth16Proof,
@@ -48,20 +50,40 @@ pub struct TransferViaRelayer<'info> {
     )]
     pub merkle_tree: Account<'info, MerkleTreeState>,
 
-    /// Nullifier set (zero-copy for large bloom filter)
+    /// Nullifier 1 PDA — created on first use.
     #[account(
-        mut,
+        init,
+        payer = relayer,
+        space = NullifierRecord::LEN,
         seeds = [
-            NullifierSet::SEED_PREFIX,
-            shielded_pool.key().as_ref()
+            NullifierRecord::SEED_PREFIX,
+            shielded_pool.key().as_ref(),
+            nullifier_1.as_ref()
         ],
         bump
     )]
-    pub nullifier_set: AccountLoader<'info, NullifierSet>,
+    pub nullifier_record_1: Account<'info, NullifierRecord>,
+
+    /// Nullifier 2 PDA — created on first use.
+    #[account(
+        init,
+        payer = relayer,
+        space = NullifierRecord::LEN,
+        seeds = [
+            NullifierRecord::SEED_PREFIX,
+            shielded_pool.key().as_ref(),
+            nullifier_2.as_ref()
+        ],
+        bump
+    )]
+    pub nullifier_record_2: Account<'info, NullifierRecord>,
 
     /// Verification key data account
     /// CHECK: Validated by hash comparison
     pub verification_key_data: AccountInfo<'info>,
+
+    /// System program (required for PDA creation)
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(
@@ -78,18 +100,14 @@ pub fn handler(
     let pool = &mut ctx.accounts.shielded_pool;
     let merkle_tree = &mut ctx.accounts.merkle_tree;
 
-    // Load nullifier set (zero-copy)
-    let mut nullifier_set = ctx.accounts.nullifier_set.load_mut()?;
+    // Double-spend protection via PDA-per-nullifier.
+    let nullifier_record_1 = &mut ctx.accounts.nullifier_record_1;
+    nullifier_record_1.pool = pool.key();
+    nullifier_record_1.bump = ctx.bumps.nullifier_record_1;
 
-    // Check nullifiers haven't been spent
-    require!(
-        !nullifier_set.might_contain(&nullifier_1),
-        ZkShieldedError::NullifierAlreadySpent
-    );
-    require!(
-        !nullifier_set.might_contain(&nullifier_2),
-        ZkShieldedError::NullifierAlreadySpent
-    );
+    let nullifier_record_2 = &mut ctx.accounts.nullifier_record_2;
+    nullifier_record_2.pool = pool.key();
+    nullifier_record_2.bump = ctx.bumps.nullifier_record_2;
 
     // Load verification key data
     let vk_data = ctx.accounts.verification_key_data.try_borrow_data()?;
@@ -120,9 +138,7 @@ pub fn handler(
 
     require!(is_valid, ZkShieldedError::InvalidProof);
 
-    // Mark nullifiers as spent
-    nullifier_set.add(&nullifier_1);
-    nullifier_set.add(&nullifier_2);
+    // Nullifiers already marked as spent via PDA creation above.
 
     // Insert all output commitments into Merkle tree
     let leaf_index_1 = merkle_tree.insert(output_commitment_1)?;

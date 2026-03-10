@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-p01_arcium = "9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ"
+p01_arcium = "FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT"
 
 [registry]
 url = "https://api.apr.dev"

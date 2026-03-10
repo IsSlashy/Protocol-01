@@ -1,13 +1,14 @@
 use anchor_lang::prelude::*;
 
 pub mod errors;
+pub mod fee;
 pub mod instructions;
 pub mod state;
 pub mod verifier;
 
 use instructions::*;
 
-declare_id!("2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms");
+declare_id!("GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c");
 
 #[program]
 pub mod zk_shielded {
@@ -311,6 +312,19 @@ pub mod zk_shielded {
     /// Resume a private subscription vault using STARK proof (quantum-resistant)
     pub fn resume_private_stark(ctx: Context<ResumePrivateStark>) -> Result<()> {
         instructions::resume_private_stark::handler(ctx)
+    }
+
+    /// Propose a two-step authority transfer (current authority only)
+    pub fn propose_authority_transfer(
+        ctx: Context<ProposeAuthorityTransfer>,
+        new_authority: Pubkey,
+    ) -> Result<()> {
+        instructions::propose_authority_transfer::handler(ctx, new_authority)
+    }
+
+    /// Accept a pending authority transfer (proposed authority only)
+    pub fn accept_authority_transfer(ctx: Context<AcceptAuthorityTransfer>) -> Result<()> {
+        instructions::accept_authority_transfer::handler(ctx)
     }
 
     /// Claim accrued periods from a subscription vault (retailer only)

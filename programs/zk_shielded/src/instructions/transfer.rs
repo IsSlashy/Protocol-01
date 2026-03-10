@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
-use crate::state::{MerkleTreeState, NullifierSet, ShieldedPool};
+use crate::state::{MerkleTreeState, NullifierRecord, ShieldedPool};
 use crate::verifier::Groth16Verifier;
 use crate::Groth16Proof;
 
@@ -13,6 +13,9 @@ use crate::Groth16Proof;
 /// 3. Nullifiers are correctly computed
 /// 4. Output commitments are correctly computed
 /// 5. Value is conserved (inputs = outputs for private transfer)
+///
+/// Uses PDA-per-nullifier for double-spend detection (replaces Bloom filter).
+/// If a nullifier PDA already exists, `init` fails atomically — zero false positives.
 #[derive(Accounts)]
 #[instruction(
     proof: Groth16Proof,
@@ -52,20 +55,42 @@ pub struct Transfer<'info> {
     )]
     pub merkle_tree: Account<'info, MerkleTreeState>,
 
-    /// Nullifier set (zero-copy for large bloom filter)
+    /// Nullifier 1 PDA — created on first use.
+    /// If this PDA already exists, `init` fails → atomic double-spend rejection.
     #[account(
-        mut,
+        init,
+        payer = payer,
+        space = NullifierRecord::LEN,
         seeds = [
-            NullifierSet::SEED_PREFIX,
-            shielded_pool.key().as_ref()
+            NullifierRecord::SEED_PREFIX,
+            shielded_pool.key().as_ref(),
+            nullifier_1.as_ref()
         ],
         bump
     )]
-    pub nullifier_set: AccountLoader<'info, NullifierSet>,
+    pub nullifier_record_1: Account<'info, NullifierRecord>,
+
+    /// Nullifier 2 PDA — created on first use.
+    /// If this PDA already exists, `init` fails → atomic double-spend rejection.
+    #[account(
+        init,
+        payer = payer,
+        space = NullifierRecord::LEN,
+        seeds = [
+            NullifierRecord::SEED_PREFIX,
+            shielded_pool.key().as_ref(),
+            nullifier_2.as_ref()
+        ],
+        bump
+    )]
+    pub nullifier_record_2: Account<'info, NullifierRecord>,
 
     /// Verification key data account (stores the VK bytes)
     /// CHECK: This account stores the verification key and is validated by hash
     pub verification_key_data: AccountInfo<'info>,
+
+    /// System program (required for PDA creation)
+    pub system_program: Program<'info, System>,
 }
 
 pub fn handler(
@@ -82,18 +107,16 @@ pub fn handler(
     let pool = &mut ctx.accounts.shielded_pool;
     let merkle_tree = &mut ctx.accounts.merkle_tree;
 
-    // Load nullifier set (zero-copy)
-    let mut nullifier_set = ctx.accounts.nullifier_set.load_mut()?;
+    // Double-spend protection via PDA-per-nullifier.
+    // The `init` constraints on nullifier_record_1 and nullifier_record_2 ensure
+    // that if either nullifier was already spent, the transaction fails atomically.
+    let nullifier_record_1 = &mut ctx.accounts.nullifier_record_1;
+    nullifier_record_1.pool = pool.key();
+    nullifier_record_1.bump = ctx.bumps.nullifier_record_1;
 
-    // Check nullifiers haven't been spent (Bloom filter check)
-    require!(
-        !nullifier_set.might_contain(&nullifier_1),
-        ZkShieldedError::NullifierAlreadySpent
-    );
-    require!(
-        !nullifier_set.might_contain(&nullifier_2),
-        ZkShieldedError::NullifierAlreadySpent
-    );
+    let nullifier_record_2 = &mut ctx.accounts.nullifier_record_2;
+    nullifier_record_2.pool = pool.key();
+    nullifier_record_2.bump = ctx.bumps.nullifier_record_2;
 
     // Load verification key data
     let vk_data = ctx.accounts.verification_key_data.try_borrow_data()?;
@@ -121,14 +144,12 @@ pub fn handler(
 
     require!(is_valid, ZkShieldedError::InvalidProof);
 
-    // Mark nullifiers as spent
-    nullifier_set.add(&nullifier_1);
-    nullifier_set.add(&nullifier_2);
+    // Nullifiers already marked as spent via PDA creation above.
 
     // Insert new commitments into Merkle tree
     // NOTE: Using insert_with_root because Poseidon syscall is not yet enabled on devnet
-    // First insertion uses a placeholder root (will be overwritten by second insertion)
-    let leaf_index_1 = merkle_tree.insert_with_root(output_commitment_1, [0u8; 32])?;
+    // First leaf uses insert_leaf_only (root is set by the second insertion)
+    let leaf_index_1 = merkle_tree.insert_leaf_only(output_commitment_1)?;
     // Second insertion sets the actual new root computed by client
     let leaf_index_2 = merkle_tree.insert_with_root(output_commitment_2, new_root)?;
 

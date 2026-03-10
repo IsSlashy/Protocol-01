@@ -4,6 +4,11 @@ use anchor_lang::system_program;
 use crate::errors::RelayerError;
 use crate::state::{RelayerConfig, RelayerNode, RelayJob};
 
+/// Minimum reputation score (out of 10,000) required for job assignment.
+/// Relayers below this threshold cannot receive new jobs until their
+/// reputation recovers through successful completions.
+pub const MIN_REPUTATION: u32 = 50;
+
 /// Submit an encrypted relay job.
 ///
 /// A privacy-seeking user posts an encrypted transaction and deposits a fee.
@@ -25,11 +30,12 @@ pub struct SubmitJob<'info> {
     )]
     pub config: Account<'info, RelayerConfig>,
 
-    /// Assigned relayer (must be active)
+    /// Assigned relayer (must be active and meet minimum reputation)
     #[account(
         seeds = [RelayerNode::SEED_PREFIX, assigned_relayer.operator.as_ref()],
         bump = assigned_relayer.bump,
-        constraint = assigned_relayer.is_active @ RelayerError::RelayerNotActive
+        constraint = assigned_relayer.is_active @ RelayerError::RelayerNotActive,
+        constraint = assigned_relayer.reputation_score >= MIN_REPUTATION @ RelayerError::InsufficientReputation
     )]
     pub assigned_relayer: Account<'info, RelayerNode>,
 

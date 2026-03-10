@@ -3,6 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
+use crate::fee::{self, PROTOCOL_FEE_WALLET};
 use crate::state::{DenominatedPool, MerkleTreeState, NullifierRecord};
 use crate::verifier::Groth16Verifier;
 use crate::Groth16Proof;
@@ -93,6 +94,14 @@ pub struct UnshieldDenominated<'info> {
     /// Recipient's token account (optional, only for SPL tokens)
     #[account(mut)]
     pub recipient_token_account: Option<Account<'info, TokenAccount>>,
+
+    /// Protocol fee wallet — receives unshield fee (0.5%)
+    /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant
+    #[account(
+        mut,
+        constraint = protocol_fee_wallet.key() == PROTOCOL_FEE_WALLET @ ZkShieldedError::InvalidFeeWallet
+    )]
+    pub protocol_fee_wallet: AccountInfo<'info>,
 }
 
 pub fn handler(
@@ -163,6 +172,9 @@ pub fn handler(
 
     require!(is_valid, ZkShieldedError::InvalidProof);
 
+    // Calculate protocol fee (0.5% of denomination)
+    let (unshield_fee, recipient_amount) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+
     // Prepare pool signer seeds for CPI
     let token_mint = pool.token_mint;
     let denomination_bytes = pool.denomination.to_le_bytes();
@@ -176,7 +188,6 @@ pub fn handler(
     let signer_seeds = &[&seeds[..]];
 
     if is_native_sol {
-        // Native SOL: transfer exactly denomination lamports from pool PDA to recipient
         let pool_lamports = pool.to_account_info().lamports();
         let rent = Rent::get()?;
         let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
@@ -186,11 +197,13 @@ pub fn handler(
             ZkShieldedError::InsufficientPoolBalance
         );
 
-        // Transfer lamports from pool PDA to recipient
+        // Send net amount to recipient, fee to protocol wallet
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
-        **ctx.accounts.recipient.try_borrow_mut_lamports()? += amount;
+        **ctx.accounts.recipient.try_borrow_mut_lamports()? += recipient_amount;
+        if unshield_fee > 0 {
+            **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
+        }
     } else {
-        // SPL Token: transfer from pool vault to recipient token account
         let token_program = ctx.accounts.token_program
             .as_ref()
             .ok_or(ZkShieldedError::MissingTokenProgram)?;
@@ -210,6 +223,7 @@ pub fn handler(
             ZkShieldedError::InvalidTokenMint
         );
 
+        // Transfer net amount to recipient
         let transfer_ctx = CpiContext::new_with_signer(
             token_program.to_account_info(),
             TokenTransfer {
@@ -219,7 +233,18 @@ pub fn handler(
             },
             signer_seeds,
         );
-        token::transfer(transfer_ctx, amount)?;
+        token::transfer(transfer_ctx, recipient_amount)?;
+
+        // SPL token fee: sent as SOL from pool PDA to fee wallet
+        if unshield_fee > 0 {
+            let pool_lamports = pool.to_account_info().lamports();
+            let rent = Rent::get()?;
+            let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
+            if pool_lamports.saturating_sub(min_rent) >= unshield_fee {
+                **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
+                **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
+            }
+        }
     }
 
     // Update pool state — no change notes, no Merkle tree update
@@ -241,6 +266,7 @@ pub fn handler(
         pool: pool.key(),
         recipient: ctx.accounts.recipient.key(),
         denomination: amount,
+        protocol_fee: unshield_fee,
         nullifier,
         min_epoch,
         current_epoch,
@@ -257,6 +283,7 @@ pub struct UnshieldDenominatedEvent {
     pub pool: Pubkey,
     pub recipient: Pubkey,
     pub denomination: u64,
+    pub protocol_fee: u64,
     pub nullifier: [u8; 32],
     pub min_epoch: u64,
     pub current_epoch: u64,

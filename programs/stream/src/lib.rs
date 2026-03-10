@@ -141,36 +141,77 @@ pub mod p01_stream {
         Ok(())
     }
 
-    /// Cancel stream and return remaining funds to sender
+    /// Cancel stream: first pay accrued intervals to recipient, then refund remainder to sender
     pub fn cancel_stream(ctx: Context<CancelStream>) -> Result<()> {
         let stream = &mut ctx.accounts.stream;
+        let clock = Clock::get()?;
 
         require!(
             stream.status == StreamStatus::Active,
             StreamError::StreamNotActive
         );
 
-        // Calculate remaining funds
+        let seeds = &[
+            b"stream",
+            stream.sender.as_ref(),
+            stream.recipient.as_ref(),
+            stream.mint.as_ref(),
+            &[stream.bump],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        // Calculate accrued but unclaimed intervals for the recipient
+        let time_elapsed = clock
+            .unix_timestamp
+            .checked_sub(stream.last_withdrawal_at)
+            .ok_or(StreamError::Overflow)?;
+
+        let intervals_elapsed = (time_elapsed / stream.interval_seconds) as u64;
         let intervals_remaining = stream
+            .total_intervals
+            .checked_sub(stream.intervals_paid)
+            .ok_or(StreamError::Overflow)?;
+
+        let accrued_intervals = intervals_elapsed.min(intervals_remaining);
+        let accrued_amount = stream
+            .amount_per_interval
+            .checked_mul(accrued_intervals)
+            .ok_or(StreamError::Overflow)?;
+
+        // Transfer accrued amount to recipient first
+        if accrued_amount > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.escrow_token_account.to_account_info(),
+                        to: ctx.accounts.recipient_token_account.to_account_info(),
+                        authority: stream.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                accrued_amount,
+            )?;
+        }
+
+        // Update intervals_paid to include accrued
+        stream.intervals_paid = stream
+            .intervals_paid
+            .checked_add(accrued_intervals)
+            .ok_or(StreamError::Overflow)?;
+
+        // Calculate remaining funds to refund to sender
+        let unearned_intervals = stream
             .total_intervals
             .checked_sub(stream.intervals_paid)
             .ok_or(StreamError::Overflow)?;
 
         let refund_amount = stream
             .amount_per_interval
-            .checked_mul(intervals_remaining)
+            .checked_mul(unearned_intervals)
             .ok_or(StreamError::Overflow)?;
 
         if refund_amount > 0 {
-            let seeds = &[
-                b"stream",
-                stream.sender.as_ref(),
-                stream.recipient.as_ref(),
-                stream.mint.as_ref(),
-                &[stream.bump],
-            ];
-            let signer_seeds = &[&seeds[..]];
-
             token::transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.token_program.to_account_info(),
@@ -191,6 +232,7 @@ pub mod p01_stream {
             stream: stream.key(),
             sender: stream.sender,
             refund_amount,
+            accrued_amount,
         });
 
         Ok(())
@@ -227,7 +269,8 @@ pub struct CreateStream<'info> {
 
     #[account(
         mut,
-        constraint = escrow_token_account.mint == mint.key()
+        constraint = escrow_token_account.mint == mint.key(),
+        constraint = escrow_token_account.owner == stream.key() @ StreamError::InvalidEscrowOwner
     )]
     pub escrow_token_account: Account<'info, TokenAccount>,
 
@@ -290,6 +333,14 @@ pub struct CancelStream<'info> {
     )]
     pub sender_token_account: Account<'info, TokenAccount>,
 
+    /// Recipient's token account — receives accrued but unclaimed intervals on cancel
+    #[account(
+        mut,
+        constraint = recipient_token_account.owner == stream.recipient @ StreamError::InvalidEscrowOwner,
+        constraint = recipient_token_account.mint == stream.mint
+    )]
+    pub recipient_token_account: Account<'info, TokenAccount>,
+
     pub token_program: Program<'info, Token>,
 }
 
@@ -335,6 +386,8 @@ pub enum StreamError {
     StreamNotActive,
     #[msg("Nothing to withdraw yet")]
     NothingToWithdraw,
+    #[msg("Escrow token account owner must be the stream PDA")]
+    InvalidEscrowOwner,
 }
 
 #[event]
@@ -361,4 +414,5 @@ pub struct StreamCancelled {
     pub stream: Pubkey,
     pub sender: Pubkey,
     pub refund_amount: u64,
+    pub accrued_amount: u64,
 }

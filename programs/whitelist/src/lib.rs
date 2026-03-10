@@ -88,7 +88,7 @@ pub mod p01_whitelist {
         entry.reviewed_at = Clock::get()?.unix_timestamp;
 
         let whitelist = &mut ctx.accounts.whitelist;
-        whitelist.total_approved -= 1;
+        whitelist.total_approved = whitelist.total_approved.saturating_sub(1);
 
         msg!("Access revoked for: {}", entry.wallet);
         Ok(())

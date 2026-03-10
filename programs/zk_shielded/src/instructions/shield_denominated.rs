@@ -3,6 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
+use crate::fee::{self, PROTOCOL_FEE_WALLET};
 use crate::state::{DenominatedPool, MerkleTreeState};
 
 /// Shield tokens into a denominated pool.
@@ -56,6 +57,14 @@ pub struct ShieldDenominated<'info> {
     /// Pool's token vault (optional, only for SPL tokens)
     #[account(mut)]
     pub pool_vault: Option<Account<'info, TokenAccount>>,
+
+    /// Protocol fee wallet — receives shield fee (0.3%)
+    /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant
+    #[account(
+        mut,
+        constraint = protocol_fee_wallet.key() == PROTOCOL_FEE_WALLET @ ZkShieldedError::InvalidFeeWallet
+    )]
+    pub protocol_fee_wallet: AccountInfo<'info>,
 }
 
 pub fn handler(
@@ -68,10 +77,13 @@ pub fn handler(
     let merkle_tree = &mut ctx.accounts.merkle_tree;
     let amount = pool.denomination;
 
+    // Calculate protocol fee (0.3% of denomination)
+    let (shield_fee, _) = fee::calculate_fee(amount, fee::SHIELD_FEE_BPS);
+
     let is_native_sol = pool.token_mint == system_program::ID;
 
     if is_native_sol {
-        // Native SOL: transfer exactly denomination lamports to pool PDA
+        // Native SOL: transfer denomination to pool PDA
         let cpi_context = CpiContext::new(
             ctx.accounts.system_program.to_account_info(),
             system_program::Transfer {
@@ -80,6 +92,18 @@ pub fn handler(
             },
         );
         system_program::transfer(cpi_context, amount)?;
+
+        // Transfer protocol fee to fee wallet
+        if shield_fee > 0 {
+            let fee_context = CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.depositor.to_account_info(),
+                    to: ctx.accounts.protocol_fee_wallet.to_account_info(),
+                },
+            );
+            system_program::transfer(fee_context, shield_fee)?;
+        }
     } else {
         // SPL Token transfer
         let token_program = ctx.accounts.token_program
@@ -114,6 +138,19 @@ pub fn handler(
             },
         );
         token::transfer(transfer_ctx, amount)?;
+
+        // Note: SPL token fee requires fee_wallet to have a token account.
+        // For now, protocol fee on SPL tokens is collected as SOL from the depositor.
+        if shield_fee > 0 {
+            let fee_context = CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.depositor.to_account_info(),
+                    to: ctx.accounts.protocol_fee_wallet.to_account_info(),
+                },
+            );
+            system_program::transfer(fee_context, shield_fee)?;
+        }
     }
 
     // Insert commitment into Merkle tree
@@ -143,6 +180,7 @@ pub fn handler(
         pool: pool.key(),
         depositor: ctx.accounts.depositor.key(),
         denomination: amount,
+        protocol_fee: shield_fee,
         commitment,
         leaf_index,
         new_root: merkle_tree.root,
@@ -160,6 +198,7 @@ pub struct ShieldDenominatedEvent {
     pub pool: Pubkey,
     pub depositor: Pubkey,
     pub denomination: u64,
+    pub protocol_fee: u64,
     pub commitment: [u8; 32],
     pub leaf_index: u64,
     pub new_root: [u8; 32],
