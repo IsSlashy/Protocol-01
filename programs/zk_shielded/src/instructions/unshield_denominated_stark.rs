@@ -251,6 +251,7 @@ pub fn handler(
             .as_ref()
             .ok_or(ZkShieldedError::MissingTokenAccount)?;
         require!(pool_vault.mint == pool.token_mint, ZkShieldedError::InvalidTokenMint);
+        require!(pool_vault.owner == pool.key(), ZkShieldedError::InvalidTokenOwner);
         require!(recipient_token_account.mint == pool.token_mint, ZkShieldedError::InvalidTokenMint);
 
         // Transfer net amount to recipient

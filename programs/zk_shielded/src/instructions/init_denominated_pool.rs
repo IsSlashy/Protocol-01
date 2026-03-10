@@ -89,6 +89,8 @@ pub fn handler(
     pool.last_maturity_update_epoch = current_epoch;
     pool.epoch_note_counts = [0u64; 32];
     pool.epoch_note_start = current_epoch;
+    pool.vk_update_slot = 0;
+    pool.root_write_index = 0;
 
     // Initialize Merkle tree
     let merkle_tree = &mut ctx.accounts.merkle_tree;

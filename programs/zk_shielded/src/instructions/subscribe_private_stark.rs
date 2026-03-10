@@ -18,9 +18,9 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 ]);
 
 /// Parse a verified STARK proof buffer.
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool)> {
-    require!(data.len() >= 50, ZkShieldedError::InvalidProof);
+/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+    require!(data.len() >= 82, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
@@ -28,7 +28,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool)> {
     let authority = Pubkey::try_from(&data[8..40]).unwrap();
     let circuit_id = data[40];
     let verified = data[49] == 1;
-    Ok((authority, circuit_id, verified))
+    let mut public_inputs_hash = [0u8; 32];
+    public_inputs_hash.copy_from_slice(&data[50..82]);
+    Ok((authority, circuit_id, verified, public_inputs_hash))
 }
 
 /// Create a private (ZK-based) subscription vault by unshielding a denomination
@@ -124,6 +126,9 @@ pub struct SubscribePrivateStark<'info> {
     /// - Authority matches payer
     /// - Circuit ID is 1 (pool_commitment)
     /// - Verified flag is true
+    /// - Public inputs hash matches expected value
+    /// Marked mut because we invalidate (set verified=false) after use.
+    #[account(mut)]
     pub stark_proof_buffer: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
@@ -194,7 +199,7 @@ pub fn handler(
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified) = parse_stark_proof_buffer(&proof_data)?;
+    let (authority, circuit_id, verified, stored_inputs_hash) = parse_stark_proof_buffer(&proof_data)?;
 
     // Authority must be the payer (prevents using someone else's proof)
     require!(
@@ -208,7 +213,28 @@ pub fn handler(
     // Must be verified
     require!(verified, ZkShieldedError::InvalidProof);
 
+    // Verify the proof was generated for THIS subscriber commitment by checking
+    // the public inputs hash. The STARK verifier stores SHA-256(public_inputs)
+    // when it verifies; we recompute and compare.
+    {
+        use anchor_lang::solana_program::hash::hashv;
+        let commitment_u64 = u64::from_le_bytes(subscriber_commitment[..8].try_into().unwrap());
+        let expected_hash = hashv(&[&commitment_u64.to_le_bytes()]).to_bytes();
+        require!(
+            stored_inputs_hash == expected_hash,
+            ZkShieldedError::InvalidProof
+        );
+    }
+
     drop(proof_data);
+
+    // Invalidate the proof buffer after use to prevent replay.
+    // Set verified = false by writing directly to the account data.
+    {
+        let mut proof_data_mut = proof_info.try_borrow_mut_data()?;
+        // verified is at offset 49
+        proof_data_mut[49] = 0;
+    }
 
     // -----------------------------------------------------------------------
     // Transfer funds from pool to vault (identical to Groth16 version)
@@ -247,6 +273,7 @@ pub fn handler(
             .ok_or(ZkShieldedError::MissingTokenAccount)?;
 
         require!(pool_vault.mint == pool.token_mint, ZkShieldedError::InvalidTokenMint);
+        require!(pool_vault.owner == pool.key(), ZkShieldedError::InvalidTokenOwner);
         require!(vault_token.mint == pool.token_mint, ZkShieldedError::InvalidTokenMint);
 
         let transfer_ctx = CpiContext::new_with_signer(

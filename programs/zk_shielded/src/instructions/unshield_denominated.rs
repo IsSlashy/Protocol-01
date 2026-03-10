@@ -219,6 +219,10 @@ pub fn handler(
             ZkShieldedError::InvalidTokenMint
         );
         require!(
+            pool_vault.owner == pool.key(),
+            ZkShieldedError::InvalidTokenOwner
+        );
+        require!(
             recipient_token_account.mint == pool.token_mint,
             ZkShieldedError::InvalidTokenMint
         );

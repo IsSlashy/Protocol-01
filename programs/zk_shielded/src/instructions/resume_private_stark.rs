@@ -16,9 +16,9 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 ]);
 
 /// Parse a verified STARK proof buffer.
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool)> {
-    require!(data.len() >= 50, ZkShieldedError::InvalidProof);
+/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+    require!(data.len() >= 82, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
@@ -26,7 +26,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool)> {
     let authority = Pubkey::try_from(&data[8..40]).unwrap();
     let circuit_id = data[40];
     let verified = data[49] == 1;
-    Ok((authority, circuit_id, verified))
+    let mut public_inputs_hash = [0u8; 32];
+    public_inputs_hash.copy_from_slice(&data[50..82]);
+    Ok((authority, circuit_id, verified, public_inputs_hash))
 }
 
 /// Resume a private (ZK-based) subscription vault using STARK proof (quantum-resistant).
@@ -58,6 +60,9 @@ pub struct ResumePrivateStark<'info> {
     /// - Authority matches payer
     /// - Circuit ID is 0 (subscriber_ownership)
     /// - Verified flag is true
+    /// - Public inputs hash matches vault commitment
+    /// Marked mut because we invalidate (set verified=false) after use.
+    #[account(mut)]
     pub stark_proof_buffer: AccountInfo<'info>,
 }
 
@@ -79,7 +84,7 @@ pub fn handler(ctx: Context<ResumePrivateStark>) -> Result<()> {
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified) = parse_stark_proof_buffer(&proof_data)?;
+    let (authority, circuit_id, verified, stored_inputs_hash) = parse_stark_proof_buffer(&proof_data)?;
 
     // Authority must be the payer (prevents using someone else's proof)
     require!(
@@ -93,7 +98,26 @@ pub fn handler(ctx: Context<ResumePrivateStark>) -> Result<()> {
     // Must be verified
     require!(verified, ZkShieldedError::InvalidProof);
 
+    // Verify the proof was generated for THIS vault's commitment by checking
+    // the public inputs hash against the vault commitment.
+    {
+        use anchor_lang::solana_program::hash::hashv;
+        let commitment_u64 = u64::from_le_bytes(_commitment[..8].try_into().unwrap());
+        let expected_hash = hashv(&[&commitment_u64.to_le_bytes()]).to_bytes();
+        require!(
+            stored_inputs_hash == expected_hash,
+            ZkShieldedError::InvalidProof
+        );
+    }
+
     drop(proof_data);
+
+    // Invalidate the proof buffer after use to prevent replay.
+    // Set verified = false by writing directly to the account data.
+    {
+        let mut proof_data_mut = proof_info.try_borrow_mut_data()?;
+        proof_data_mut[49] = 0;
+    }
 
     // -----------------------------------------------------------------------
     // Resume vault (identical to Groth16 version)
