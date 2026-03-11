@@ -105,6 +105,8 @@ export class BleTransport {
   private chunkBuffers: Map<string, ChunkBuffer> = new Map();
   private discoveredPeers: Map<string, PeerInfo> = new Map();
   private peripheralSubscriptions: Array<{ remove: () => void }> = [];
+  /** Active characteristic monitor subscriptions (must cancel before disconnect) */
+  private monitorSubscriptions: Array<{ remove: () => void }> = [];
   /** Session nonce for replay prevention (M12) — exchanged with peer during handshake */
   private localNonce: Uint8Array = generateSessionNonce();
   private remoteNonce: Uint8Array | null = null;
@@ -347,11 +349,19 @@ export class BleTransport {
     charUUID: string,
     peerId: string,
   ): void {
-    device.monitorCharacteristicForService(
+    const subscription = device.monitorCharacteristicForService(
       BLE_SERVICE_UUID,
       charUUID,
       (error, characteristic) => {
         if (error) {
+          // Ignore disconnect errors — these fire when the peer disconnects
+          // normally after transfer. ble-plx has a bug where it passes null
+          // error code to Promise.reject, causing a native NPE crash.
+          const msg = (error as Error).message || '';
+          if (msg.includes('Disconnected') || msg.includes('disconnected')) {
+            console.log('[BLE-DBG] Monitor disconnect (expected):', charUUID.slice(-4));
+            return;
+          }
           this.callbacks.onError(error as Error);
           return;
         }
@@ -361,6 +371,7 @@ export class BleTransport {
         this.processIncomingChunk(peerId, raw);
       },
     );
+    this.monitorSubscriptions.push(subscription);
   }
 
   // =======================================================================
@@ -526,6 +537,9 @@ export class BleTransport {
       totalChunks: chunk[2],
     };
 
+    // Ignore chunks with invalid sequence numbers
+    if (header.seq >= header.totalChunks) return null;
+
     const bufferKey = `${peerId}:${header.type}`;
     let buffer = this.chunkBuffers.get(bufferKey);
 
@@ -541,6 +555,15 @@ export class BleTransport {
     buffer.received.set(header.seq, chunk.slice(FRAGMENT_HEADER_SIZE));
 
     if (buffer.received.size >= buffer.totalChunks) {
+      // Validate ALL expected chunks are present before reassembly
+      for (let i = 0; i < buffer.totalChunks; i++) {
+        if (!buffer.received.has(i)) {
+          // Missing chunk — can't reassemble yet, wait for retransmission
+          console.warn(`[BLE] Missing chunk ${i}/${buffer.totalChunks} for ${bufferKey}`);
+          return null;
+        }
+      }
+
       let totalLen = 0;
       for (const [, part] of buffer.received) totalLen += part.length;
 
@@ -567,10 +590,11 @@ export class BleTransport {
     if (raw.length < FRAGMENT_HEADER_SIZE) return;
 
     const msgType = raw[0];
-    const reassembled = this.reassemble(peerId, raw);
-    if (!reassembled) return; // Still waiting for more chunks
 
     try {
+      const reassembled = this.reassemble(peerId, raw);
+      if (!reassembled) return; // Still waiting for more chunks
+
       const decoded = Buffer.from(reassembled).toString('utf-8');
 
       if (msgType === MSG_TYPE_PUBKEY) {
@@ -603,6 +627,14 @@ export class BleTransport {
   // =======================================================================
 
   async disconnect(): Promise<void> {
+    // Cancel characteristic monitors BEFORE disconnecting — ble-plx crashes
+    // (NPE in SafePromise.reject) if a BleDisconnectedException fires while
+    // monitors are still active.
+    for (const sub of this.monitorSubscriptions) {
+      try { sub.remove(); } catch { /* already removed */ }
+    }
+    this.monitorSubscriptions = [];
+
     if (this.connectedDevice) {
       try {
         await this.manager.cancelDeviceConnection(this.connectedDevice.id);
