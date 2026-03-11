@@ -91,8 +91,8 @@ android {
         applicationId 'com.protocol01.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "0.8.0"
+        versionCode 9
+        versionName "0.8.1"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
 
@@ -171,6 +171,10 @@ afterEvaluate {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // RxJava2 — needed for RxJavaPlugins.setErrorHandler in MainApplication
+    // to prevent react-native-ble-plx crash on BLE disconnect (NPE in SafePromise.reject)
+    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

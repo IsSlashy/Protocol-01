@@ -56,7 +56,10 @@ export default function ShareNoteScreen() {
   const [nfcPinInput, setNfcPinInput] = useState('');
   const [showNfcOverlay, setShowNfcOverlay] = useState(false);
 
-  useEffect(() => { checkAvailability(); }, []);
+  useEffect(() => {
+    cancelSession();   // Clear stale session from previous receive/send
+    checkAvailability();
+  }, []);
 
   const sessionState = activeSession?.state || 'idle';
   const showFingerprint = sessionState === 'verifying-fingerprint' && activeSession?.fingerprint;
@@ -75,9 +78,10 @@ export default function ShareNoteScreen() {
     }
   }, [params.noteId]);
 
-  useEffect(() => {
-    if (isSuccess) markNoteTransferred();
-  }, [isSuccess, markNoteTransferred]);
+  // NOTE: Do NOT add a useEffect watching isSuccess here.
+  // Both send paths (BLE: handleFingerprintConfirm, NFC: handleStartNfc)
+  // already call markNoteTransferred() explicitly after confirmed delivery.
+  // A useEffect would fire on stale 'success' state from previous sessions.
 
   // No note = can't do anything
   if (!noteData) {
@@ -293,22 +297,20 @@ export default function ShareNoteScreen() {
                 selectedTransport === 'nfc' && styles.transportCardOuterActive,
                 !isNfcAvailable && styles.transportCardDisabled,
               ]}
-              onPress={handleStartNfc}
-              disabled={!isNfcAvailable}
+              onPress={() => p01Alert('Coming Soon', 'NFC sharing is experimental and not yet available. Use Bluetooth instead.')}
+              disabled={false}
             >
               <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
                 <LinearGradient
-                  colors={selectedTransport === 'nfc'
-                    ? ['rgba(255, 119, 168, 0.10)', 'rgba(57, 197, 187, 0.03)', 'transparent']
-                    : ['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
+                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={StyleSheet.absoluteFill}
                 />
-                <Ionicons name="phone-portrait" size={28} color={isNfcAvailable ? P01Colors.pink : Colors.textTertiary} />
+                <Ionicons name="phone-portrait" size={28} color={Colors.textTertiary} />
                 <Text style={styles.transportTitle}>NFC Tap</Text>
-                <Text style={styles.transportDesc}>
-                  {isNfcAvailable ? 'Tap phones' : 'Unavailable'}
+                <Text style={[styles.transportDesc, { color: P01Colors.pink }]}>
+                  Experimental — coming soon
                 </Text>
               </BlurView>
             </TouchableOpacity>

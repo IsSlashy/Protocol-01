@@ -2,6 +2,7 @@ package com.protocol01.app
 
 import android.app.Application
 import android.content.res.Configuration
+import android.util.Log
 
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
@@ -15,6 +16,8 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
+
+import io.reactivex.plugins.RxJavaPlugins
 
 class MainApplication : Application(), ReactApplication {
 
@@ -39,6 +42,16 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+
+    // Prevent react-native-ble-plx crash: when a BLE peer disconnects while
+    // monitorCharacteristicForService is active, RxAndroidBle fires a
+    // BleDisconnectedException. ble-plx tries to reject the Promise with a
+    // null error code, causing NPE → CompositeException → FATAL EXCEPTION.
+    // This handler swallows those undeliverable RxJava errors instead of crashing.
+    RxJavaPlugins.setErrorHandler { throwable ->
+      Log.w("RxJavaError", "Undeliverable RxJava exception (swallowed): ${throwable?.message}")
+    }
+
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {

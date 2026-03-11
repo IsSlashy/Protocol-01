@@ -78,6 +78,29 @@ export default function DenominatedNotesScreen() {
     recoverTransferredNotes,
   } = useDenominatedPoolStore();
 
+
+  // On mount: deduplicate notes (same id = same commitment) and refresh on-chain status.
+  // Notes recovered from the stale-session bug may be duplicates or already spent.
+  useEffect(() => {
+    const store = useDenominatedPoolStore.getState();
+    const seen = new Map<string, typeof store.notes[0]>();
+    for (const n of store.notes) {
+      const existing = seen.get(n.id);
+      if (!existing) { seen.set(n.id, n); continue; }
+      // Keep the one with the most "terminal" status, or the newest
+      if (n.status === 'spent' || (n.shieldedAt > existing.shieldedAt)) {
+        seen.set(n.id, n);
+      }
+    }
+    const deduped = [...seen.values()];
+    if (deduped.length < store.notes.length) {
+      console.log(`[DenomNotes] Deduped: ${store.notes.length} → ${deduped.length} notes`);
+      useDenominatedPoolStore.setState({ notes: deduped });
+    }
+    // Refresh on-chain nullifier status to mark spent notes correctly
+    refreshNoteStatuses().catch(() => {});
+  }, []);
+
   const cluster = getCluster();
   const clusterNotes = notes.filter(n => (n.cluster ?? 'devnet') === cluster);
   const activeNotes = clusterNotes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
