@@ -345,7 +345,12 @@ export class ShareService {
       isSender: false,
       createdAt: Date.now(),
     });
-    await this.nfcTransport!.startReceiving(pin);
+    try {
+      await this.nfcTransport!.startReceiving(pin);
+    } catch {
+      // Error already handled by NfcTransport callbacks (onError) — swallow
+      // the re-thrown error to prevent unhandled promise rejection in the store
+    }
   }
 
   generateNfcPin(): string {

@@ -190,9 +190,10 @@ export class NfcTransport {
 
       this.callbacks.onNoteReceived(notePayload);
     } catch (error) {
-      this.callbacks.onError(
-        new Error(`NFC receive failed: ${(error as Error).message}`),
-      );
+      const wrapped = new Error(`NFC receive failed: ${(error as Error).message}`);
+      this.callbacks.onError(wrapped);
+      // Re-throw so the caller (ShareService → sharingStore → UI) can also handle it
+      throw wrapped;
     } finally {
       await this.cancelTechnology();
     }

@@ -67,21 +67,6 @@ export default function ReceiveNoteScreen() {
   const [imported, setImported] = useState(false);
   const [importedNote, setImportedNote] = useState<NotePayload | null>(null);
 
-  // Check availability on mount
-  useEffect(() => {
-    checkAvailability();
-  }, []);
-
-  // Auto-import when note is received
-  useEffect(() => {
-    if (pendingNote && !imported) {
-      handleImportNote(pendingNote);
-    }
-  }, [pendingNote]);
-
-  const sessionState = activeSession?.state || 'idle';
-  const showFingerprint = sessionState === 'verifying-fingerprint' && activeSession?.fingerprint;
-
   // -----------------------------------------------------------------------
   // Import received note
   // -----------------------------------------------------------------------
@@ -105,6 +90,21 @@ export default function ReceiveNoteScreen() {
       p01Alert('Import Failed', (err as Error).message);
     }
   }, [importShieldedNote, importDenominatedNote, clearPendingNote]);
+
+  // Check availability on mount
+  useEffect(() => {
+    checkAvailability();
+  }, []);
+
+  // Auto-import when note is received
+  useEffect(() => {
+    if (pendingNote && !imported) {
+      handleImportNote(pendingNote);
+    }
+  }, [pendingNote, imported, handleImportNote]);
+
+  const sessionState = activeSession?.state || 'idle';
+  const showFingerprint = sessionState === 'verifying-fingerprint' && activeSession?.fingerprint;
 
   // -----------------------------------------------------------------------
   // BLE flow
@@ -158,13 +158,27 @@ export default function ReceiveNoteScreen() {
     try {
       await startNfcReceiver(nfcPinInput);
       console.log('[ReceiveNote:NFC] NFC receive completed');
+
+      // Direct import: don't rely solely on useEffect — check pendingNote
+      // immediately after the NFC promise resolves (the callback sets it
+      // synchronously during startReceiving)
+      const note = useSharingStore.getState().pendingNote;
+      if (note && !imported) {
+        console.log('[ReceiveNote:NFC] Direct import after NFC complete');
+        handleImportNote(note);
+      }
     } catch (err) {
       console.error('[ReceiveNote:NFC] NFC receive failed:', (err as Error).message);
       p01Alert('NFC Error', (err as Error).message);
     } finally {
       setShowNfcOverlay(false);
+      // Show alert if NFC completed but no note was received (decryption/validation failed)
+      const storeError = useSharingStore.getState().error;
+      if (storeError && !useSharingStore.getState().pendingNote) {
+        p01Alert('Transfer Failed', storeError);
+      }
     }
-  }, [nfcPinInput, startNfcReceiver]);
+  }, [nfcPinInput, startNfcReceiver, imported, handleImportNote]);
 
   // -----------------------------------------------------------------------
   // Success result modal
@@ -375,8 +389,7 @@ export default function ReceiveNoteScreen() {
         <View style={styles.explainer}>
           <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
           <Text style={styles.explainerText}>
-            Receive a shielded note from another P01 user nearby.
-            Choose Bluetooth for medium range or NFC for tap-to-receive.
+            Receive a shielded note from another P01 user nearby via Bluetooth.
           </Text>
         </View>
 
@@ -414,25 +427,21 @@ export default function ReceiveNoteScreen() {
           <TouchableOpacity
             style={[
               styles.transportCard,
-              selectedTransport === 'nfc' && styles.transportCardActive,
-              !isNfcAvailable && styles.transportCardDisabled,
+              styles.transportCardDisabled,
             ]}
-            onPress={handleStartNfc}
-            disabled={!isNfcAvailable}
+            onPress={() => p01Alert('Coming Soon', 'NFC sharing is experimental and not yet available. Use Bluetooth instead.')}
             activeOpacity={0.7}
           >
             <LinearGradient
-              colors={selectedTransport === 'nfc'
-                ? ['rgba(255, 119, 168, 0.12)', 'rgba(255, 119, 168, 0.03)']
-                : ['rgba(255, 119, 168, 0.06)', 'rgba(255, 119, 168, 0.01)']}
+              colors={['rgba(255, 119, 168, 0.06)', 'rgba(255, 119, 168, 0.01)']}
               style={styles.transportCardGradient}
             >
               <View style={[styles.transportIconWrap, { backgroundColor: `${P01Colors.pink}15` }]}>
-                <Ionicons name="phone-portrait" size={24} color={isNfcAvailable ? P01Colors.pink : Colors.textTertiary} />
+                <Ionicons name="phone-portrait" size={24} color={Colors.textTertiary} />
               </View>
               <Text style={styles.transportTitle}>NFC Tap</Text>
-              <Text style={styles.transportDesc}>
-                {isNfcAvailable ? 'Tap phones together' : 'Unavailable'}
+              <Text style={[styles.transportDesc, { color: P01Colors.pink }]}>
+                Experimental — coming soon
               </Text>
             </LinearGradient>
           </TouchableOpacity>
