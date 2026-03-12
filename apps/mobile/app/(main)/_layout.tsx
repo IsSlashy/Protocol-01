@@ -12,6 +12,7 @@ import { useWalletStore } from '../../stores/walletStore';
 import { useSecuritySettings } from '../../hooks/useSecuritySettings';
 import { useRealtimeSync } from '../../hooks/sync';
 import { LiquidGlassTabBar } from '../../components/navigation/LiquidGlassTabBar';
+import { checkForUpdate } from '../../services/updates/versionCheck';
 
 export default function MainLayout() {
   const { initialize, initialized } = useWalletStore();
@@ -86,6 +87,11 @@ export default function MainLayout() {
       initialize();
     }
   }, [initialized]);
+
+  // Check for app updates on launch (throttled to once per 24h)
+  useEffect(() => {
+    checkForUpdate();
+  }, []);
 
   // H4: Don't render main content until verified unlocked
   if (!isUnlocked) return null;
