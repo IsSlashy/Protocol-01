@@ -19,6 +19,8 @@ import {
   ExternalLink,
   CheckCircle,
   Network,
+  Download,
+  FileText,
 } from "lucide-react";
 
 // ============ P-01 Theme Constants ============
@@ -57,12 +59,20 @@ const technologies: TechSection[] = [
       "Shared secret computed using ECDH between sender ephemeral key and recipient's public key",
       "One-time address derived: P = H(shared_secret) * G + recipient_pubkey",
       "Only the recipient can detect and spend funds using their private key",
-      "Implemented using Curve25519 for efficiency on Solana",
+      "v1: X25519 (Curve25519) for efficiency on Solana",
+      "v2: X25519 + ML-KEM-768 (FIPS 203) hybrid ECDH — quantum-resistant",
+      "View tags: 1-byte filter enables O(1) scanning without full decryption",
+      "On-chain registry (EIP-5564 for Solana) via p01_registry program",
     ],
-    codeExample: `// Generate stealth address
+    codeExample: `// v1: Generate stealth address (X25519 ECDH)
 const ephemeral = Keypair.generate();
 const sharedSecret = x25519(ephemeral.secretKey, recipientPubkey);
-const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);`,
+const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);
+
+// v2: Hybrid quantum-resistant (X25519 + ML-KEM-768)
+const { ciphertext, sharedSecret: hybridSecret } =
+  mlKem768.encapsulate(recipientMlKemPubkey);
+const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
   },
   {
     id: "zk-proofs",
@@ -71,13 +81,15 @@ const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);`,
     description:
       "Dual proof system: Groth16 ZK-SNARKs for compact on-chain verification via BN254 pairing, and STARKs (Winterfell) for quantum-resistant proofs over the Goldilocks field. STARKs are hash-based — immune to Shor's algorithm — and are now the default for denominated pool unshielding.",
     details: [
-      "Groth16: Circom circuits (~12,000 constraints), BN254 pairing precompiles, ~200K CU",
-      "STARK: Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR",
-      "4 STARK circuits deployed: subscriber_ownership, pool_commitment, balance_proof, merkle_path",
-      "Compact STARK proofs (~9KB) with Blake3 Merkle trees, 16 FRI queries",
+      "6 Groth16 circuits: transfer (12,222c), denominated_pool (4,273c), denominated_transfer (5,628c), confidential_balance (1,382c), balance_proof (644c), subscriber_ownership (~500c)",
+      "6 STARK AIRs: subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer",
+      "STARK: Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR (x^7, 30 rounds)",
+      "Compact STARK proofs (9-15KB) with Blake3 Merkle trees, 16 FRI queries, 128-bit security",
       "On-chain STARK verifier: custom FRI implementation, ~889K CU per verification",
-      "Mobile WASM STARK prover via WebView (82KB module, all 5 proof functions)",
-      "Quantum-safe: STARKs resist both Shor's and Grover's algorithms",
+      "On-chain Groth16: BN254 alt_bn128 pairing precompiles, ~200K CU verification",
+      "Mobile WASM STARK prover via WebView (82KB module, all 6 circuits)",
+      "Trusted setup: Groth16 with pot20_final.ptau + beacon finalization (ceremony pending 3+ contributors)",
+      "Quantum-safe: STARKs are hash-based — immune to both Shor's and Grover's algorithms",
     ],
     codeExample: `// Groth16 proof (BN254, compact, fast verification)
 const { proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -192,9 +204,10 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     details: [
       "alt_bn128 syscalls for BN254 Groth16 verification (~200K CU)",
       "Custom FRI verifier for STARK proofs — Goldilocks field (~889K CU)",
-      "12 Anchor programs: zk_shielded, zkSPL, specter, subscriptions, streams, quantum vault, STARK verifier, registry, relayer, trustless, fee-splitter, whitelist",
+      "13 Anchor programs: zk_shielded, zkSPL, specter, subscriptions, streams, quantum_vault, STARK_verifier, registry, relayer, trustless, fee_splitter, whitelist, arcium",
       "Quantum vault: WOTS+ signatures, hash-timelock, commit-then-reveal (SHA-256 based)",
       "Cross-program invocations for token transfers and proof verification",
+      "370+ automated tests: stress tests, E2E flows, SDK unit tests, Rust STARK tests",
     ],
     codeExample: `// On-chain Groth16 verification (BN254)
 let pairing_result = sol_alt_bn128_pairing(&[...]);
@@ -420,46 +433,49 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
     title: "Client SDK Architecture",
     icon: <Code className="w-6 h-6" />,
     description:
-      "Four SDKs for different use cases. P01Client for stealth wallets & transfers, ShieldedClient for ZK proofs, ZkSplClient for confidential balances, and Protocol01 for merchant integration. All run client-side for maximum privacy.",
+      "Eight TypeScript SDKs covering every use case: stealth wallets, ZK proofs, confidential tokens, MPC compute, merchant integration, Merkle trees, authentication, and RPC infrastructure. All run client-side for maximum privacy.",
     details: [
-      "TypeScript SDKs with full type definitions",
-      "Stealth address generation & scanning (ECDH)",
-      "Groth16 + STARK proof generation for shielded transfers",
-      "Confidential balance management with ZkSplProver",
-      "Payment streams & recurring subscriptions",
-      "React hooks for wallet, streams and subscriptions",
+      "@p01/specter-sdk — Core privacy: stealth wallets, transfers, quantum vault, registry, indexer",
+      "@p01/zk-sdk — ZK primitives: ShieldedClient, Note, MerkleTree, ZkProver, viewing keys",
+      "@p01/zkspl-sdk — Confidential tokens: deposit, withdraw, transfer, balance proof",
+      "@p01/arcium-sdk — MPC compute: ArciumClient, 6 use-case modules, Rescue cipher",
+      "@p01/p01-js — Merchant SDK: Protocol01 client, subscriptions, payments, React components",
+      "@p01/privacy-toolkit — Incremental Merkle tree, Poseidon, amount hash, proof format",
+      "@p01/auth-sdk — Auth integration: P01AuthClient, P01AuthServer, session management",
+      "@p01/rpc-config — RPC infrastructure: connection manager, priority fallback chain, URL sanitization",
     ],
-    codeExample: `// === @p01/specter-sdk — Stealth Wallets & Transfers ===
+    codeExample: `// === @p01/specter-sdk — Core Privacy SDK ===
 import { P01Client, createWallet, sendPrivate } from '@p01/specter-sdk';
-
 const client = new P01Client({ cluster: 'devnet' });
-const wallet = await createWallet();
-await client.connect(wallet);
-
-// Send to stealth address (recipient unlinkable on-chain)
 await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 
 // === @p01/zk-sdk — ZK Shielded Pool ===
 import { ShieldedClient } from '@p01/zk-sdk';
-
 const zkClient = new ShieldedClient({ rpcUrl, programId });
 await zkClient.shield(1_000_000_000n, notes);
-await zkClient.transfer(proofInputs);
-await zkClient.unshield(outputNotes, 500_000_000n);
 
 // === @p01/zkspl-sdk — Confidential Balances ===
-import { ZkSplClient, ZkSplProver } from '@p01/zkspl-sdk';
+import { ZkSplClient } from '@p01/zkspl-sdk';
+await zkspl.deposit(amount, proof);   // Public → confidential
+await zkspl.send(amount, recipient);  // Confidential transfer
 
-const zkspl = new ZkSplClient({ rpcUrl, programId });
-await zkspl.deposit(amount, proof);    // Public → confidential
-await zkspl.send(amount, recipient);   // Confidential transfer
-await zkspl.withdraw(amount, proof);   // Confidential → public
+// === @p01/arcium-sdk — MPC Compute ===
+import { ArciumClient } from '@p01/arcium-sdk';
+await mpc.commitNullifier(preimage);  // SHA3 via MPC nodes
 
-// === @p01/sdk — Merchant Integration ===
-import { Protocol01 } from '@p01/sdk';
+// === @p01/p01-js — Merchant Integration ===
+import { Protocol01 } from '@p01/p01-js';
+await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 
-const p01 = new Protocol01({ merchantId: 'my-saas', merchantName: 'My App' });
-await p01.createSubscription({ amount: 9.99, interval: 'monthly' });`,
+// === @p01/privacy-toolkit — Merkle + Poseidon ===
+import { IncrementalMerkleTree, poseidon2 } from '@p01/privacy-toolkit';
+
+// === @p01/auth-sdk — Auth Integration ===
+import { P01AuthClient } from '@p01/auth-sdk';
+
+// === @p01/rpc-config — RPC Infrastructure ===
+import { RpcConnectionManager } from '@p01/rpc-config';
+const conn = RpcConnectionManager.getConnection(); // Auto-fallback chain`,
   },
 ];
 
@@ -477,11 +493,14 @@ const docsArchLayers = [
     name: "SDK Layer",
     hex: "#ff77a8",
     nodes: [
-      { label: "@p01/sdk", sub: "Merchant Integration" },
       { label: "@p01/specter-sdk", sub: "Stealth & Wallets" },
       { label: "@p01/zk-sdk", sub: "Groth16 + STARK Prover" },
       { label: "@p01/zkspl-sdk", sub: "Confidential Balances" },
-      { label: "@p01/arcium-sdk", sub: "MPC Confidential Compute" },
+      { label: "@p01/arcium-sdk", sub: "MPC Compute" },
+      { label: "@p01/p01-js", sub: "Merchant SDK" },
+      { label: "@p01/privacy-toolkit", sub: "Merkle + Poseidon" },
+      { label: "@p01/auth-sdk", sub: "Auth Integration" },
+      { label: "@p01/rpc-config", sub: "RPC Fallback Chain" },
     ],
   },
   {
@@ -511,7 +530,7 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "13 PROGRAMS", sub: "Anchor / Rust" },
+      { label: "13 PROGRAMS", sub: "Anchor 0.32.1 / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
       { label: "alt_bn128 + FRI", sub: "ZK Verification" },
     ],
@@ -873,6 +892,55 @@ export default function DocsPage() {
               </ul>
             </div>
           </div>
+
+          {/* Security Hardening */}
+          <div className="mt-6 bg-[#151518] border border-[#2a2a30] p-6 rounded-lg">
+            <h3 className="text-lg font-bold text-white mb-4">Security Hardening (Mobile)</h3>
+            <div className="grid md:grid-cols-3 gap-4 text-sm text-[#888892]">
+              <ul className="space-y-2">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Spending key never leaves device — no remote prover fallback</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>PIN: SHA-256 hashed with per-device salt, constant-time compare</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Progressive lockout: 5→30s, 8→60s, 10→300s</span>
+                </li>
+              </ul>
+              <ul className="space-y-2">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>All secrets in hardware-backed SecureStore (not AsyncStorage)</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Clipboard auto-clear after 60s on all sensitive copies</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>App switcher blur prevents screenshot leaks</span>
+                </li>
+              </ul>
+              <ul className="space-y-2">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>android:allowBackup=&quot;false&quot; (prevents adb backup)</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Biometric auth: device fallback when hardware unavailable</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>Lock screen enforced even when security_method=&quot;none&quot;</span>
+                </li>
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1023,11 +1091,46 @@ export default function DocsPage() {
         </div>
       </section>
 
+      {/* Design Document Download */}
+      <section className="py-8 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
+        <div className="max-w-7xl mx-auto flex items-center justify-center">
+          <a
+            href="/protocol-01-design-document.pdf"
+            download
+            className="group flex items-center gap-3 px-5 py-3 border border-[#2a2a30] hover:border-[#39c5bb]/40 rounded-lg transition-all duration-300 hover:bg-[#151518]"
+          >
+            <FileText className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
+            <div>
+              <span className="text-sm text-[#888892] group-hover:text-white transition-colors">
+                Design & Architecture Document
+              </span>
+              <span className="text-xs text-[#555560] ml-2 font-mono">PDF · 17 pages</span>
+            </div>
+            <Download className="w-3.5 h-3.5 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
+          </a>
+        </div>
+        <p className="text-center text-[10px] text-[#555560] font-mono mt-3 tracking-wider">
+          PROGRESSIVELY UPDATED · LAST REVISION MARCH 2026
+        </p>
+      </section>
+
       {/* Footer */}
       <footer className="border-t border-[#2a2a30] py-8 px-4">
-        <div className="max-w-7xl mx-auto text-center">
+        <div className="max-w-7xl mx-auto text-center space-y-3">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-[#39c5bb]/30 text-[#39c5bb] rounded">
+              Beta
+            </span>
+            <span className="text-[#2a2a30]">·</span>
+            <span className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
+              Devnet Only
+            </span>
+          </div>
           <p className="text-[#555560] text-sm font-mono">
             &copy; {new Date().getFullYear()} PROTOCOL 01 | Built from scratch for privacy
+          </p>
+          <p className="text-[10px] text-[#555560]/50 font-mono">
+            This software is in active development. Not audited. Use at your own risk.
           </p>
         </div>
       </footer>
