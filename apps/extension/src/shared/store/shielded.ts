@@ -485,14 +485,15 @@ async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Store encrypted if we have a password, otherwise store plaintext
+    // Store encrypted — require session password to protect ZK seed at rest
     if (password) {
       const encryptedBlob = await encryptForSession(seedHex, password);
       await chrome.storage.local.set({ [storageKey]: encryptedBlob });
     } else {
-      // Privy wallets may not have a password; store as-is
-      // (this is still better than before since most paths now encrypt)
-      await chrome.storage.local.set({ [storageKey]: seedHex });
+      // No session password — store in session-only storage (cleared on restart)
+      // NEVER store ZK seed plaintext in persistent chrome.storage.local
+      console.warn('[Shielded] No session password — ZK seed stored in memory only (will not persist)');
+      // Seed lives only in the returned value; callers should cache in-memory
     }
 
     return seedHex;

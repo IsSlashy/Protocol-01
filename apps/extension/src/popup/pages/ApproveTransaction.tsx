@@ -19,14 +19,11 @@ import { approveRequest, rejectRequest } from '@/shared/messaging';
 import type { ApprovalRequest } from '@/shared/types';
 import nacl from 'tweetnacl';
 import {
-  Connection,
   Transaction,
   VersionedTransaction,
   Keypair,
 } from '@solana/web3.js';
-
-// Devnet RPC endpoint
-const DEVNET_RPC = 'https://api.devnet.solana.com';
+import { RpcConnectionManager } from '@p01/rpc-config';
 
 interface TransactionPayload {
   transaction?: string;
@@ -147,7 +144,15 @@ export default function ApproveTransaction() {
 
         // If sendAfterSign, send the transaction to the network
         if (payload.sendAfterSign) {
-          const connection = new Connection(DEVNET_RPC, 'confirmed');
+          const heliusApiKey = typeof import.meta !== 'undefined'
+            ? (import.meta as any).env?.VITE_HELIUS_API_KEY
+            : undefined;
+          const rpcManager = new RpcConnectionManager({
+            cluster: 'devnet',
+            commitment: 'confirmed',
+            heliusApiKey,
+          });
+          const connection = rpcManager.getConnection();
 
           const serializedTx = transaction.serialize();
           const signature = await connection.sendRawTransaction(serializedTx, {
