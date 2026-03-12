@@ -96,6 +96,9 @@ importers:
       '@noble/post-quantum':
         specifier: ^0.2.1
         version: 0.2.1
+      '@p01/rpc-config':
+        specifier: workspace:*
+        version: link:../../packages/rpc-config
       '@p01/specter-sdk':
         specifier: workspace:*
         version: link:../../packages/specter-sdk
@@ -587,6 +590,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@p01/rpc-config':
+        specifier: workspace:*
+        version: link:../../packages/rpc-config
       '@solana/wallet-adapter-base':
         specifier: ^0.9.27
         version: 0.9.27(@solana/web3.js@1.98.4)
@@ -833,6 +839,19 @@ importers:
       react-native-webview:
         specifier: ^13.0.0
         version: 13.15.0(react-native@0.81.5)(react@19.2.4)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/rpc-config:
+    dependencies:
+      '@solana/web3.js':
+        specifier: ^1.98.4
+        version: 1.98.4(encoding@0.1.13)(typescript@5.9.3)
+    devDependencies:
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(typescript@5.9.3)
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -2128,7 +2147,7 @@ packages:
       idb-keyval: 6.2.1
       ox: 0.6.9(typescript@5.9.3)
       preact: 10.24.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.3(@types/react@18.3.27)(react@18.3.1)
     transitivePeerDependencies:
       - '@types/react'
@@ -2150,7 +2169,7 @@ packages:
       idb-keyval: 6.2.1
       ox: 0.6.9(typescript@5.9.3)
       preact: 10.24.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.3(@types/react@19.1.17)(react@19.1.0)
     transitivePeerDependencies:
       - '@types/react'
@@ -2174,7 +2193,7 @@ packages:
       idb-keyval: 6.2.1
       ox: 0.6.9(typescript@5.9.3)
       preact: 10.24.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.3(@types/react@18.3.27)(react@18.3.1)
     transitivePeerDependencies:
       - '@types/react'
@@ -2202,7 +2221,7 @@ packages:
       idb-keyval: 6.2.1
       ox: 0.6.9(typescript@5.9.3)
       preact: 10.24.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.3(@types/react@19.1.17)(react@19.1.0)
     transitivePeerDependencies:
       - '@types/react'
@@ -3501,7 +3520,7 @@ packages:
       connect: 3.7.0
       debug: 4.4.3(supports-color@8.1.1)
       env-editor: 0.4.2
-      expo: 54.0.32(@babel/core@7.28.6)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.2.4)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       expo-server: 1.0.5
       freeport-async: 2.0.0
       getenv: 2.0.0
@@ -3517,7 +3536,7 @@ packages:
       progress: 2.0.3
       prompts: 2.4.2
       qrcode-terminal: 0.11.0
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.4)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
       require-from-string: 2.0.2
       requireg: 0.2.2
       resolve: 1.22.11
@@ -3539,7 +3558,6 @@ packages:
       - graphql
       - supports-color
       - utf-8-validate
-    dev: false
 
   /@expo/code-signing-certificates@0.0.5:
     resolution: {integrity: sha512-BNhXkY1bblxKZpltzAx98G2Egj9g1Q+JRcvR7E99DOj862FTCX+ZPsAUtPTr7aHxwtrL7+fL3r0JSmM9kBm+Bw==}
@@ -3661,7 +3679,7 @@ packages:
     dependencies:
       chalk: 4.1.2
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
 
   /@expo/devtools@0.1.8(react-native@0.81.5)(react@19.2.4):
     resolution: {integrity: sha512-SVLxbuanDjJPgc0sy3EfXUMLb/tXzp6XIHkhtPVmTWJAp+FOr6+5SeiCfJrCzZFet0Ifyke2vX3sFcKwEvCXwQ==}
@@ -3678,6 +3696,7 @@ packages:
       react: 19.2.4
       react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.4)
     dev: false
+    optional: true
 
   /@expo/eas-build-job@1.0.231:
     resolution: {integrity: sha512-jktsZ7IJYcC9lbgUWftbFCpfrhcGwJX4q0qSubUrqvFTMuUyLjCzJqyIZ4znbXLXfJSUPDJNAd4H0wBqKJA9kA==}
@@ -3841,7 +3860,7 @@ packages:
       debug: 4.4.3(supports-color@8.1.1)
       dotenv: 16.4.7
       dotenv-expand: 11.0.7
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       getenv: 2.0.0
       glob: 13.0.0
       hermes-parser: 0.29.1
@@ -4010,7 +4029,7 @@ packages:
       '@expo/json-file': 10.0.8
       '@react-native/normalize-colors': 0.81.5
       debug: 4.4.3(supports-color@8.1.1)
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       resolve-from: 5.0.0
       semver: 7.7.3
       xml2js: 0.6.0
@@ -4114,6 +4133,7 @@ packages:
       react: 19.2.4
       react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.4)
     dev: false
+    optional: true
 
   /@expo/ws-tunnel@1.0.6:
     resolution: {integrity: sha512-nDRbLmSrJar7abvUjp3smDwH8HcbZcoOEa5jVPUv9/9CajgmWw20JNRwTuBRzWIWIkEJDkz20GoNA+tSwUqk0Q==}
@@ -5506,7 +5526,7 @@ packages:
     peerDependencies:
       viem: ^2.21.36
     dependencies:
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     dev: false
 
   /@privy-io/ethereum@0.0.7(viem@2.45.0):
@@ -5514,7 +5534,7 @@ packages:
     peerDependencies:
       viem: ^2.44.2
     dependencies:
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     dev: false
 
   /@privy-io/expo-native-extensions@0.0.7(expo@54.0.32)(react-native@0.81.5)(react@19.1.0):
@@ -5590,7 +5610,7 @@ packages:
       react-native-svg: 15.12.1(react-native@0.81.5)(react@19.1.0)
       react-native-webview: 13.15.0(react-native@0.81.5)(react@19.1.0)
       tweetnacl: 1.0.3
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.10(@types/react@19.1.17)(react@19.1.0)
     transitivePeerDependencies:
       - '@types/react'
@@ -5626,7 +5646,7 @@ packages:
       libphonenumber-js: 1.12.35
       set-cookie-parser: 2.7.2
       uuid: 9.0.1
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - bufferutil
       - typescript
@@ -5657,7 +5677,7 @@ packages:
       libphonenumber-js: 1.12.35
       set-cookie-parser: 2.7.2
       uuid: 8.3.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     dev: false
 
   /@privy-io/public-api@2.45.0(typescript@5.9.3):
@@ -5748,7 +5768,7 @@ packages:
       stylis: 4.3.6
       tinycolor2: 1.6.0
       uuid: 8.3.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.10(@types/react@19.1.17)(react@19.1.0)
     transitivePeerDependencies:
       - '@azure/app-configuration'
@@ -5857,7 +5877,7 @@ packages:
       stylis: 4.3.6
       tinycolor2: 1.6.0
       uuid: 8.3.2
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
       zustand: 5.0.10(@types/react@18.3.27)(react@18.3.1)
     transitivePeerDependencies:
       - '@azure/app-configuration'
@@ -6712,7 +6732,6 @@ packages:
       nullthrows: 1.1.1
       react: 19.1.0
       react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
-    dev: false
 
   /@react-native/virtualized-lists@0.83.1(@types/react@19.1.17)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-MdmoAbQUTOdicCocm5XAFDJWsswxk7hxa6ALnm6Y88p01HFML0W593hAn6qOt9q6IM1KbAcebtH6oOd4gcQy8w==}
@@ -6903,7 +6922,7 @@ packages:
     dependencies:
       big.js: 6.2.2
       dayjs: 1.11.13
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - bufferutil
       - typescript
@@ -6929,7 +6948,7 @@ packages:
     dependencies:
       big.js: 6.2.2
       dayjs: 1.11.13
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - bufferutil
       - typescript
@@ -6994,7 +7013,7 @@ packages:
       '@reown/appkit-wallet': 1.7.8(typescript@5.9.3)
       '@walletconnect/universal-provider': 2.21.0(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 1.13.2(@types/react@19.1.17)(react@19.1.0)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -7031,7 +7050,7 @@ packages:
       '@reown/appkit-wallet': 1.7.8(typescript@5.9.3)
       '@walletconnect/universal-provider': 2.21.0(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 1.13.2(@types/react@18.3.27)(react@18.3.1)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -7068,7 +7087,7 @@ packages:
       '@reown/appkit-wallet': 1.8.17(typescript@5.9.3)
       '@walletconnect/universal-provider': 2.23.2(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 2.1.7(@types/react@19.1.17)(react@19.1.0)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -7105,7 +7124,7 @@ packages:
       '@reown/appkit-wallet': 1.8.17(typescript@5.9.3)
       '@walletconnect/universal-provider': 2.23.2(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 2.1.7(@types/react@18.3.27)(react@18.3.1)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -7759,7 +7778,7 @@ packages:
       '@walletconnect/logger': 2.1.2
       '@walletconnect/universal-provider': 2.21.0(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 1.13.2(@types/react@19.1.17)(react@19.1.0)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -7801,7 +7820,7 @@ packages:
       '@walletconnect/logger': 2.1.2
       '@walletconnect/universal-provider': 2.21.0(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 1.13.2(@types/react@18.3.27)(react@18.3.1)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -7844,7 +7863,7 @@ packages:
       '@walletconnect/logger': 3.0.2
       '@walletconnect/universal-provider': 2.23.2(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 2.1.7(@types/react@19.1.17)(react@19.1.0)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
       '@base-org/account': 2.4.0(@types/react@19.1.17)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(react@19.1.0)(typescript@5.9.3)
       '@safe-global/safe-apps-provider': 0.18.6(typescript@5.9.3)
@@ -7895,7 +7914,7 @@ packages:
       '@walletconnect/logger': 3.0.2
       '@walletconnect/universal-provider': 2.23.2(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       valtio: 2.1.7(@types/react@18.3.27)(react@18.3.1)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
       '@base-org/account': 2.4.0(@types/react@18.3.27)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(react@18.3.1)(typescript@5.9.3)
       '@safe-global/safe-apps-provider': 0.18.6(typescript@5.9.3)
@@ -8031,7 +8050,7 @@ packages:
       '@walletconnect/universal-provider': 2.21.0(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       bs58: 6.0.0
       valtio: 1.13.2(@types/react@19.1.17)(react@19.1.0)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -8076,7 +8095,7 @@ packages:
       '@walletconnect/universal-provider': 2.21.0(@react-native-async-storage/async-storage@2.2.0)(encoding@0.1.13)(typescript@5.9.3)
       bs58: 6.0.0
       valtio: 1.13.2(@types/react@18.3.27)(react@18.3.1)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - '@azure/app-configuration'
       - '@azure/cosmos'
@@ -8122,7 +8141,7 @@ packages:
       bs58: 6.0.0
       semver: 7.7.2
       valtio: 2.1.7(@types/react@19.1.17)(react@19.1.0)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
       '@lit/react': 1.0.8(@types/react@19.1.17)
     transitivePeerDependencies:
@@ -8174,7 +8193,7 @@ packages:
       bs58: 6.0.0
       semver: 7.7.2
       valtio: 2.1.7(@types/react@18.3.27)(react@18.3.1)
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     optionalDependencies:
       '@lit/react': 1.0.8(@types/react@18.3.27)
     transitivePeerDependencies:
@@ -8459,7 +8478,7 @@ packages:
     requiresBuild: true
     dependencies:
       '@safe-global/safe-gateway-typescript-sdk': 3.23.1
-      viem: 2.45.0(typescript@5.9.3)(zod@4.3.6)
+      viem: 2.45.0(typescript@5.9.3)(zod@3.25.76)
     transitivePeerDependencies:
       - bufferutil
       - typescript
@@ -14870,7 +14889,7 @@ packages:
       babel-plugin-syntax-hermes-parser: 0.29.1
       babel-plugin-transform-flow-enums: 0.0.2(@babel/core@7.28.6)
       debug: 4.4.3(supports-color@8.1.1)
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       react-refresh: 0.14.2
       resolve-from: 5.0.0
     transitivePeerDependencies:
@@ -17653,10 +17672,10 @@ packages:
       react-native: '*'
     dependencies:
       '@expo/image-utils': 0.8.8
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       expo-constants: 18.0.13(expo@54.0.32)(react-native@0.81.5)
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -17675,6 +17694,7 @@ packages:
     transitivePeerDependencies:
       - supports-color
     dev: false
+    optional: true
 
   /expo-audio@1.1.1(expo-asset@12.0.12)(expo@54.0.32)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-CPCpJ+0AEHdzWROc0f00Zh6e+irLSl2ALos/LPvxEeIcJw1APfBa4DuHPkL4CQCWsVe7EnUjFpdwpqsEUWcP0g==}
@@ -17750,8 +17770,8 @@ packages:
     dependencies:
       '@expo/config': 12.0.13
       '@expo/env': 2.0.8
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -17824,8 +17844,8 @@ packages:
       expo: '*'
       react-native: '*'
     dependencies:
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
 
   /expo-font@14.0.11(expo@54.0.32)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-ga0q61ny4s/kr4k8JX9hVH69exVSIfcIc19+qZ7gt71Mqtm7xy2c6kwsPTCyhBW2Ro5yXTT8EaZOpuRi35rHbg==}
@@ -17834,10 +17854,10 @@ packages:
       react: '*'
       react-native: '*'
     dependencies:
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       fontfaceobserver: 2.3.0
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
 
   /expo-font@14.0.11(expo@54.0.32)(react-native@0.81.5)(react@19.2.4):
     resolution: {integrity: sha512-ga0q61ny4s/kr4k8JX9hVH69exVSIfcIc19+qZ7gt71Mqtm7xy2c6kwsPTCyhBW2Ro5yXTT8EaZOpuRi35rHbg==}
@@ -17851,6 +17871,7 @@ packages:
       react: 19.2.4
       react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.4)
     dev: false
+    optional: true
 
   /expo-glass-effect@0.1.9(expo@54.0.32)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-mDnoQKrvdkKEk1kUDgCKRdw1fHsouG25BclBico9lZSrLb7HpfGla3jnlz9rYGqXIiO8i9BTxpsmFhDnc1/4hg==}
@@ -17898,7 +17919,7 @@ packages:
       expo: '*'
       react: '*'
     dependencies:
-      expo: 54.0.32(@babel/core@7.28.6)(@expo/metro-runtime@6.1.2)(expo-router@6.0.22)(graphql@16.8.1)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0)
       react: 19.1.0
 
   /expo-keep-awake@15.0.8(expo@54.0.32)(react@19.2.4):
@@ -17910,6 +17931,7 @@ packages:
       expo: 54.0.32(@babel/core@7.28.6)(react-native-webview@13.15.0)(react-native@0.81.5)(react@19.2.4)
       react: 19.2.4
     dev: false
+    optional: true
 
   /expo-linear-gradient@15.0.8(expo@54.0.32)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-V2d8Wjn0VzhPHO+rrSBtcl+Fo+jUUccdlmQ6OoL9/XQB7Qk3d9lYrqKDJyccwDxmQT10JdST3Tmf2K52NLc3kw==}
@@ -17976,7 +17998,7 @@ packages:
     dependencies:
       invariant: 2.2.4
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.1.17)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.28.6)(react@19.1.0)
 
   /expo-modules-core@3.0.29(react-native@0.81.5)(react@19.2.4):
     resolution: {integrity: sha512-LzipcjGqk8gvkrOUf7O2mejNWugPkf3lmd9GkqL9WuNyeN2fRwU0Dn77e3ZUKI3k6sI+DNwjkq4Nu9fNN9WS7Q==}
@@ -17988,6 +18010,7 @@ packages:
       react: 19.2.4
       react-native: 0.81.5(@babel/core@7.28.6)(@types/react@19.2.9)(react@19.2.4)
     dev: false
+    optional: true
 
   /expo-notifications@0.32.16(expo@54.0.32)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-QQD/UA6v7LgvwIJ+tS7tSvqJZkdp0nCSj9MxsDk/jU1GttYdK49/5L2LvE/4U0H7sNBz1NZAyhDZozg8xgBLXw==}
@@ -18281,6 +18304,7 @@ packages:
       - supports-color
       - utf-8-validate
     dev: false
+    optional: true
 
   /expo@54.0.32(@babel/core@7.28.6)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-yL9eTxiQ/QKKggVDAWO5CLjUl6IS0lPYgEvC3QM4q4fxd6rs7ks3DnbXSGVU3KNFoY/7cRNYihvd0LKYP+MCXA==}
@@ -18329,7 +18353,6 @@ packages:
       - graphql
       - supports-color
       - utf-8-validate
-    dev: false
 
   /exponential-backoff@3.1.3:
     resolution: {integrity: sha512-ZgEeZXj30q+I0EN+CbSSpIyPaJ5HVQD18Z1m+u1FXbAeT94mr1zw50q4q6jiiC447Nl/YTcIYSAftiGqetwXCA==}
@@ -22347,7 +22370,7 @@ packages:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)(zod@4.3.6)
+      abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
       eventemitter3: 5.0.1
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -22389,7 +22412,7 @@ packages:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@5.9.3)(zod@4.3.6)
+      abitype: 1.2.3(typescript@5.9.3)(zod@3.25.76)
       eventemitter3: 5.0.1
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -23692,7 +23715,6 @@ packages:
       - bufferutil
       - supports-color
       - utf-8-validate
-    dev: false
 
   /react-qr-code@2.0.18(react@19.2.4):
     resolution: {integrity: sha512-v1Jqz7urLMhkO6jkgJuBYhnqvXagzceg3qJUWayuCK/c6LTIonpWbwxR1f1APGd4xrW/QcQEovNrAojbUz65Tg==}

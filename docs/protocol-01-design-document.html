@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol 01 — Design & Architecture Document</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --dark: #0f0f12;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --cyan-dim: rgba(57, 197, 187, 0.15);
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 10pt;
+    line-height: 1.6;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Page system */
+  .page {
+    width: 210mm;
+    height: 297mm;
+    max-height: 297mm;
+    padding: 18mm 20mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  /* Page background grid */
+  .page::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(to right, rgba(57,197,187,0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(57,197,187,0.03) 1px, transparent 1px);
+    background-size: 30px 30px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .page > * { position: relative; z-index: 1; }
+
+  /* Page footer */
+  .page-footer {
+    position: absolute;
+    bottom: 10mm;
+    left: 20mm;
+    right: 20mm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  /* Typography */
+  h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 28pt;
+    letter-spacing: 0.05em;
+    line-height: 1.1;
+    margin-bottom: 12px;
+  }
+  h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 16pt;
+    letter-spacing: 0.03em;
+    color: var(--cyan);
+    margin-bottom: 10px;
+    margin-top: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 11pt;
+    letter-spacing: 0.02em;
+    color: var(--pink);
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+  h4 {
+    font-weight: 700;
+    font-size: 10pt;
+    color: var(--cyan);
+    margin-bottom: 4px;
+    margin-top: 10px;
+  }
+
+  p { margin-bottom: 8px; }
+  .lead { font-size: 12pt; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .small { font-size: 8pt; }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .bold { font-weight: 700; }
+  .center { text-align: center; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .card-cyan { border-color: rgba(57,197,187,0.3); background: linear-gradient(135deg, rgba(57,197,187,0.05), transparent); }
+  .card-pink { border-color: rgba(255,119,168,0.3); background: linear-gradient(135deg, rgba(255,119,168,0.05), transparent); }
+  .card-yellow { border-color: rgba(255,204,0,0.3); background: linear-gradient(135deg, rgba(255,204,0,0.05), transparent); }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+  .flex { display: flex; gap: 10px; }
+  .flex-between { display: flex; justify-content: space-between; align-items: center; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+    font-size: 9pt;
+  }
+  th {
+    background: var(--surface);
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td {
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(42,42,48,0.5);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  /* Code blocks */
+  .code-block {
+    background: var(--dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* Tags/Badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge-cyan { background: rgba(57,197,187,0.15); color: var(--cyan); border: 1px solid rgba(57,197,187,0.3); }
+  .badge-pink { background: rgba(255,119,168,0.15); color: var(--pink); border: 1px solid rgba(255,119,168,0.3); }
+  .badge-yellow { background: rgba(255,204,0,0.15); color: var(--yellow); border: 1px solid rgba(255,204,0,0.3); }
+
+  /* Color swatch */
+  .swatch {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.1);
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  /* Separator */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+  }
+
+  /* Lists */
+  ul, ol { padding-left: 18px; margin-bottom: 8px; }
+  li { margin-bottom: 3px; }
+
+  /* Cover specific */
+  .cover-logo {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 120pt;
+    letter-spacing: 0.08em;
+    background: linear-gradient(135deg, var(--cyan), var(--pink), var(--cyan-bright));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+  }
+  .cover-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10pt;
+    color: var(--text-muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* Stat box */
+  .stat-box {
+    text-align: center;
+    padding: 12px;
+  }
+  .stat-number {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 24pt;
+    color: var(--cyan);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 8pt;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Flow diagram */
+  .flow-step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+    position: relative;
+  }
+  .flow-step .step-num {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 18pt;
+    color: var(--cyan);
+  }
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cyan);
+    font-size: 16pt;
+  }
+
+  /* Architecture diagram boxes */
+  .arch-box {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 8pt;
+    text-align: center;
+  }
+  .arch-box.program { border-color: rgba(57,197,187,0.4); background: rgba(57,197,187,0.08); }
+  .arch-box.sdk { border-color: rgba(255,119,168,0.4); background: rgba(255,119,168,0.08); }
+  .arch-box.app { border-color: rgba(255,204,0,0.4); background: rgba(255,204,0,0.08); }
+  .arch-box.crypto { border-color: rgba(0,255,229,0.4); background: rgba(0,255,229,0.08); }
+
+  /* Prevent page breaks inside elements */
+  .no-break { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<!-- ==================== PAGE 1: COVER ==================== -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+  <div style="margin-bottom: 30px;">
+    <div class="cover-logo">01</div>
+    <div style="font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 24pt; letter-spacing: 0.12em; margin-top: -10px;">PROTOCOL</div>
+  </div>
+
+  <div style="width: 60px; height: 2px; background: linear-gradient(90deg, var(--cyan), var(--pink)); margin: 20px auto;"></div>
+
+  <div class="cover-subtitle" style="margin-bottom: 8px;">The Privacy Layer for Solana</div>
+  <p class="muted" style="max-width: 380px; font-size: 9pt; line-height: 1.6;">
+    Zero-knowledge proofs &middot; Multi-party computation &middot; Confidential balances &middot; Stealth addresses &middot; Quantum-resistant cryptography
+  </p>
+
+  <div style="margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px;">
+    <div class="stat-box">
+      <div class="stat-number">12</div>
+      <div class="stat-label">Solana Programs</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color: var(--pink);">6</div>
+      <div class="stat-label">ZK Circuits</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color: var(--cyan-bright);">6</div>
+      <div class="stat-label">STARK AIRs</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 60px;">
+    <div class="mono small dim">DESIGN & ARCHITECTURE DOCUMENT</div>
+    <div class="mono small dim" style="margin-top: 4px;">v0.8.1 &middot; March 2026</div>
+    <div class="mono small dim" style="margin-top: 4px;">Volta Team &middot; Developed by Slashy Fx</div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>1 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 2: THE PROBLEM ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">THE PROBLEM</h2>
+  <p class="lead">Your blockchain activity is completely exposed. Traditional blockchains offer pseudonymity, not privacy. Every transaction creates a permanent trail that can be traced back to you.</p>
+
+  <div class="grid-2" style="margin-top: 16px;">
+    <div class="card" style="border-color: var(--red);">
+      <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt; color: var(--red);">100%</div>
+      <div class="bold" style="margin-top: 4px;">Transactions are public</div>
+      <p class="muted small">Every transfer you make is permanently recorded on the blockchain and visible to anyone with an explorer.</p>
+    </div>
+    <div class="card" style="border-color: var(--red);">
+      <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt; color: var(--red);">73%</div>
+      <div class="bold" style="margin-top: 4px;">Users deanonymized</div>
+      <p class="muted small">Blockchain analytics firms can link your wallet to your real identity through transaction patterns and exchange KYC data.</p>
+    </div>
+    <div class="card" style="border-color: var(--red);">
+      <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt; color: var(--red);">24/7</div>
+      <div class="bold" style="margin-top: 4px;">Surveillance</div>
+      <p class="muted small">Governments and corporations continuously monitor and analyze financial activity on public blockchains.</p>
+    </div>
+    <div class="card" style="border-color: var(--red);">
+      <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt; color: var(--red);">$4.3B</div>
+      <div class="bold" style="margin-top: 4px;">Stolen via wallet tracking</div>
+      <p class="muted small">Bad actors use public transaction data to identify and target high-value wallets for theft and social engineering.</p>
+    </div>
+  </div>
+
+  <h2>THE SOLUTION</h2>
+  <p class="lead">Protocol 01 is a comprehensive privacy layer for Solana that makes every transaction untraceable, every balance invisible, and every identity anonymous &mdash; using cutting-edge cryptography.</p>
+
+  <div class="grid-4" style="margin-top: 12px;">
+    <div class="card card-cyan center">
+      <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 14pt; color: var(--cyan);">&infin;</div>
+      <div class="small bold" style="margin-top: 4px;">Recurring</div>
+      <div class="small muted">Private subscriptions</div>
+    </div>
+    <div class="card card-cyan center">
+      <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 14pt; color: var(--cyan);">100%</div>
+      <div class="small bold" style="margin-top: 4px;">Private</div>
+      <div class="small muted">Zero knowledge</div>
+    </div>
+    <div class="card card-cyan center">
+      <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 14pt; color: var(--cyan);">0</div>
+      <div class="small bold" style="margin-top: 4px;">Traces</div>
+      <div class="small muted">Unlinkable TXs</div>
+    </div>
+    <div class="card card-cyan center">
+      <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 14pt; color: var(--cyan);">~3s</div>
+      <div class="small bold" style="margin-top: 4px;">Speed</div>
+      <div class="small muted">Shield + unshield</div>
+    </div>
+  </div>
+
+  <h3>How It Works</h3>
+  <div style="display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; gap: 8px; align-items: center; margin-top: 10px;">
+    <div class="flow-step">
+      <div class="step-num">01</div>
+      <div class="small bold" style="margin-top: 4px;">CONNECT</div>
+      <div class="small muted">Create or import wallet</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="step-num">02</div>
+      <div class="small bold" style="margin-top: 4px;">SHIELD</div>
+      <div class="small muted">Deposit to ZK pool</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="step-num">03</div>
+      <div class="small bold" style="margin-top: 4px;">TRANSACT</div>
+      <div class="small muted">Send via ZK proofs</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="step-num">04</div>
+      <div class="small bold" style="margin-top: 4px;">RECEIVE</div>
+      <div class="small muted">Withdraw &mdash; zero trace</div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>2 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 3: PRIVACY STACK ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">PRIVACY STACK</h2>
+  <p class="lead">Seven cryptographic layers working together to achieve total financial privacy on Solana.</p>
+
+  <div class="card card-cyan no-break">
+    <h4>1. Zero-Knowledge Proofs (Groth16 + STARK)</h4>
+    <div class="grid-2">
+      <div>
+        <p class="small"><span class="cyan bold">Groth16 (BN254)</span> &mdash; 6 Circom circuits for shielded transfers, confidential balances, denominated pools, and subscriber ownership. Proven with snarkjs, verified on-chain via Solana's native <span class="mono">alt_bn128</span> syscalls. ~200K compute units per verification.</p>
+      </div>
+      <div>
+        <p class="small"><span class="cyan bold">STARK (Goldilocks)</span> &mdash; 6 custom AIRs for quantum-resistant proof of ownership. Hash-based (no elliptic curves), immune to Shor's algorithm. Compact ~9KB proofs. Verified on-chain with custom FRI verifier. ~889K compute units.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-pink no-break">
+    <h4 style="color: var(--pink);">2. Stealth Addresses (ECDH + ML-KEM-768)</h4>
+    <p class="small">Adapted from Ethereum's EIP-5564 for Solana. Each payment creates a unique one-time address using Elliptic Curve Diffie-Hellman key exchange. <strong>v2 adds post-quantum protection</strong> via ML-KEM-768 (FIPS 203) hybrid encapsulation &mdash; safe against both classical and quantum adversaries.</p>
+    <div class="code-block">Stealth Meta-Address v1: st:01&lt;base58(spending_pub(32) + viewing_pub(32))&gt;
+Stealth Meta-Address v2: st:02&lt;base58(spending_pub(32) + viewing_pub(32) + kem_pub(1184))&gt;
+Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v2")</div>
+  </div>
+
+  <div class="card no-break" style="border-color: rgba(0,255,229,0.3); background: linear-gradient(135deg, rgba(0,255,229,0.05), transparent);">
+    <h4 style="color: var(--cyan-bright);">3. Denominated Privacy Pools</h4>
+    <p class="small">Fixed-denomination pools (0.1/1/10/100 SOL, 1/10/100/1000 USDC) break the link between deposits and withdrawals. All notes in a pool share the same value, making them indistinguishable. Epoch-based maturity prevents timing analysis. P2P note sharing via BLE and NFC.</p>
+  </div>
+
+  <div class="grid-2">
+    <div class="card no-break">
+      <h4>4. Confidential Balances (zkSPL)</h4>
+      <p class="small">Account-model privacy using Poseidon hash commitments (quantum-resistant). Balances hidden behind ZK proofs. Deposit, withdraw, and transfer without revealing amounts on-chain. Unlike Pedersen commitments (ECC-based, broken by Shor), Poseidon is hash-based and quantum-safe.</p>
+    </div>
+    <div class="card no-break">
+      <h4>5. Trustless On-Chain Relay</h4>
+      <p class="small">Decentralized relay network as a Solana program. Relayers stake SOL, accept encrypted jobs, and execute transactions on behalf of users. Slashing for misbehavior. No backend server, no trust assumptions. Breaks the on-chain link between sender and recipient.</p>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card card-yellow no-break">
+      <h4 style="color: var(--yellow);">6. Multi-Party Computation (Arcium)</h4>
+      <p class="small">Decentralized MPC via Arcium's Cerberus protocol. 9 encrypted circuits for: confidential relay, anonymous registry lookup, hidden nullifier, balance audit, threshold stealth scan, and private voting. Security holds as long as 1 honest node exists in the cluster.</p>
+    </div>
+    <div class="card no-break" style="border-color: rgba(255,51,102,0.3); background: linear-gradient(135deg, rgba(255,51,102,0.05), transparent);">
+      <h4 style="color: var(--red);">7. Quantum-Safe Vault</h4>
+      <p class="small">Three defense layers against quantum attacks on Ed25519: <strong>WOTS+</strong> (one-time hash signatures, key rotates per TX), <strong>Hash-Timelock</strong> (SHA-256 preimage lock for cold storage), <strong>Commit-Reveal</strong> (2-phase TX auth prevents quantum front-running).</p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>3 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 4: ARCHITECTURE ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">SYSTEM ARCHITECTURE</h2>
+  <p class="lead">Monorepo with 12 Solana programs, 8+ SDKs, 3 client apps, 6 Circom circuits, 6 STARK AIRs, and 1 Rust prover service.</p>
+
+  <!-- Architecture layers -->
+  <div style="margin-top: 12px;">
+    <div class="small mono muted" style="margin-bottom: 4px;">CLIENT LAYER</div>
+    <div class="grid-3" style="margin-bottom: 12px;">
+      <div class="arch-box app">
+        <div class="bold small" style="color: var(--yellow);">Mobile App</div>
+        <div class="small muted">Expo 54 / RN 0.81<br>Android + iOS</div>
+      </div>
+      <div class="arch-box app">
+        <div class="bold small" style="color: var(--yellow);">Extension</div>
+        <div class="small muted">Chrome MV3<br>Vite + React 19</div>
+      </div>
+      <div class="arch-box app">
+        <div class="bold small" style="color: var(--yellow);">Web App</div>
+        <div class="small muted">Next.js 16<br>React 19 + Tailwind v4</div>
+      </div>
+    </div>
+
+    <div class="small mono muted" style="margin-bottom: 4px;">SDK LAYER</div>
+    <div class="grid-4" style="margin-bottom: 12px;">
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">specter-sdk</div><div class="small muted">Stealth + wallet</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">zk-sdk</div><div class="small muted">Shielded pool</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">zkspl-sdk</div><div class="small muted">Confidential balance</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">arcium-sdk</div><div class="small muted">MPC compute</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">p01-js</div><div class="small muted">Merchant SDK</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">privacy-toolkit</div><div class="small muted">Merkle + commit</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">auth-sdk</div><div class="small muted">Login with P01</div></div>
+      <div class="arch-box sdk"><div class="bold small" style="color: var(--pink);">rpc-config</div><div class="small muted">RPC fallback</div></div>
+    </div>
+
+    <div class="small mono muted" style="margin-bottom: 4px;">PROVING LAYER</div>
+    <div class="grid-3" style="margin-bottom: 12px;">
+      <div class="arch-box crypto">
+        <div class="bold small" style="color: var(--cyan-bright);">Groth16 Prover</div>
+        <div class="small muted">snarkjs (WebView)<br>6 Circom circuits</div>
+      </div>
+      <div class="arch-box crypto">
+        <div class="bold small" style="color: var(--cyan-bright);">STARK Prover</div>
+        <div class="small muted">Winterfell (WASM)<br>6 custom AIRs</div>
+      </div>
+      <div class="arch-box crypto">
+        <div class="bold small" style="color: var(--cyan-bright);">Rust Prover Service</div>
+        <div class="small muted">ark-circom<br>Server-side proving</div>
+      </div>
+    </div>
+
+    <div class="small mono muted" style="margin-bottom: 4px;">ON-CHAIN LAYER (SOLANA)</div>
+    <div class="grid-4" style="margin-bottom: 4px;">
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">zk_shielded</div><div class="small muted">Shielded pool + denom + subs</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_zkspl</div><div class="small muted">Confidential balances</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">specter</div><div class="small muted">Stealth + streams</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_trustless</div><div class="small muted">Trustless pool</div></div>
+    </div>
+    <div class="grid-4" style="margin-bottom: 4px;">
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_relayer</div><div class="small muted">Decentralized relay</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_quantum_vault</div><div class="small muted">WOTS+ / HTL / CR</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_registry</div><div class="small muted">Meta-address dir</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_stark_verifier</div><div class="small muted">6-circuit STARK</div></div>
+    </div>
+    <div class="grid-4">
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_arcium</div><div class="small muted">9 MPC circuits</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_fee_splitter</div><div class="small muted">Protocol fees</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_stream</div><div class="small muted">Payment streams</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_subscription</div><div class="small muted">Recurring payments</div></div>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 16px;">Tech Stack</h3>
+  <div class="grid-2">
+    <div class="small">
+      <table>
+        <tr><td class="mono cyan">Anchor</td><td>0.32.1</td></tr>
+        <tr><td class="mono cyan">Solana CLI</td><td>2.2.14 (Agave)</td></tr>
+        <tr><td class="mono cyan">Rust</td><td>1.94.0</td></tr>
+        <tr><td class="mono cyan">TypeScript</td><td>5.9.0 (strict)</td></tr>
+        <tr><td class="mono cyan">snarkjs</td><td>0.7.5</td></tr>
+        <tr><td class="mono cyan">circom2</td><td>2.2.2</td></tr>
+      </table>
+    </div>
+    <div class="small">
+      <table>
+        <tr><td class="mono cyan">React</td><td>19.1</td></tr>
+        <tr><td class="mono cyan">Expo</td><td>54 / RN 0.81</td></tr>
+        <tr><td class="mono cyan">Next.js</td><td>16</td></tr>
+        <tr><td class="mono cyan">Winterfell</td><td>0.10 (STARK)</td></tr>
+        <tr><td class="mono cyan">noble/post-quantum</td><td>0.2.1 (ML-KEM)</td></tr>
+        <tr><td class="mono cyan">poseidon-lite</td><td>0.3.0</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>4 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 5: ON-CHAIN PROGRAMS ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">ON-CHAIN PROGRAMS</h2>
+  <p class="lead">12 Anchor programs deployed on Solana devnet. 118+ instructions covering shielded transfers, confidential balances, stealth payments, streams, subscriptions, quantum-safe vaults, MPC, and more.</p>
+
+  <table>
+    <thead>
+      <tr><th>Program</th><th>Program ID</th><th>Instructions</th><th>Size</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">zk_shielded</td><td class="mono small">GbVM5yve...j27c</td><td>Shield, unshield, transfer, denominated pool, subscription vault, STARK variants</td><td>1.1 MB</td></tr>
+      <tr><td class="bold">p01_zkspl</td><td class="mono small">Eqppog...Ppah</td><td>Confidential deposit, withdraw, transfer, balance proof, viewer management</td><td>480 KB</td></tr>
+      <tr><td class="bold">specter</td><td class="mono small">2tuztg...fbSp</td><td>Stealth send v1/v2, claim, wallet init, streams (create, withdraw, cancel)</td><td>320 KB</td></tr>
+      <tr><td class="bold">p01_trustless</td><td class="mono small">FnTmMx...i43Q</td><td>Trustless shield/unshield (proof = permission), zkSPL trustless</td><td>544 KB</td></tr>
+      <tr><td class="bold">p01_relayer</td><td class="mono small">2okhzL...5BM</td><td>Register relayer, submit/complete/expire job, stake, slash, key rotation</td><td>380 KB</td></tr>
+      <tr><td class="bold">p01_quantum_vault</td><td class="mono small">HazoS6...Th7o</td><td>WOTS+ vault, hash-timelock vault, commit-then-reveal</td><td>290 KB</td></tr>
+      <tr><td class="bold">p01_registry</td><td class="mono small">QaQwpv...hQB</td><td>Register v1/v2, update keys, update name, deregister</td><td>210 KB</td></tr>
+      <tr><td class="bold">p01_stark_verifier</td><td class="mono small">DGY37k...QvGs</td><td>Init/upload/verify/close proof buffer, 6 circuits, resize</td><td>479 KB</td></tr>
+      <tr><td class="bold">p01_arcium</td><td class="mono small">FH1JiQ...TLPT</td><td>9 MPC computation definitions (Arcium encrypted-ixs)</td><td>1.0 MB</td></tr>
+      <tr><td class="bold">p01_fee_splitter</td><td class="mono small">UdxXEv...5BM</td><td>Split SOL/token with hardcoded 0.5% protocol fee</td><td>369 KB</td></tr>
+      <tr><td class="bold">p01_stream</td><td class="mono small">C92xDD...31f4c</td><td>Create stream, withdraw intervals, cancel/refund</td><td>250 KB</td></tr>
+      <tr><td class="bold">p01_subscription</td><td class="mono small">3eDvPJ...BTHW</td><td>Create subscription, process payment, pause/resume, privacy settings</td><td>310 KB</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>5 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 6: ZK CIRCUITS & STARKs ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">ZK CIRCUITS & STARK AIRs</h2>
+  <p class="lead">6 Groth16 circuits for classical privacy (BN254 curve), 6 STARK AIRs for quantum-resistant proofs (Poseidon over Goldilocks field).</p>
+
+  <h3>ZK Circuits (Groth16)</h3>
+  <table style="font-size: 10pt;">
+    <thead>
+      <tr><th>Circuit</th><th>Constraints</th><th>Public Inputs</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">transfer</td><td>12,222</td><td>merkle_root, nullifiers, output_commitments, public_amount</td><td>2-in-2-out UTXO transfer</td></tr>
+      <tr><td class="bold">denominated_pool</td><td>4,273</td><td>nullifier, merkle_root, min_epoch, denomination</td><td>Fixed-amount pool unshield</td></tr>
+      <tr><td class="bold">denominated_transfer</td><td>5,628</td><td>nullifier, merkle_root, new_commitment</td><td>Pool note ownership transfer</td></tr>
+      <tr><td class="bold">confidential_balance</td><td>1,382</td><td>old_commitment, new_commitment, delta_hash</td><td>Balance update with hidden amount</td></tr>
+      <tr><td class="bold">balance_proof</td><td>644</td><td>commitment, threshold</td><td>Prove balance &ge; threshold</td></tr>
+      <tr><td class="bold">subscriber_ownership</td><td>~500</td><td>commitment</td><td>Prove subscriber identity for ZK subscriptions</td></tr>
+    </tbody>
+  </table>
+
+  <h3>STARK AIRs (Quantum-Resistant)</h3>
+  <table style="font-size: 10pt;">
+    <thead>
+      <tr><th>Circuit ID</th><th>AIR</th><th>Width</th><th>Length</th><th>LDE Blowup</th><th>Proof Size</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>0</td><td class="bold">subscriber_ownership</td><td>3 cols</td><td>32 rows</td><td>8x</td><td>~9 KB</td></tr>
+      <tr><td>1</td><td class="bold">pool_commitment</td><td>3 cols</td><td>32 rows</td><td>8x</td><td>~9 KB</td></tr>
+      <tr><td>2</td><td class="bold">balance_proof</td><td>4 cols</td><td>256 rows</td><td>8x</td><td>~12 KB</td></tr>
+      <tr><td>3</td><td class="bold">merkle_path</td><td>3 cols</td><td>32 rows</td><td>8x</td><td>~9 KB</td></tr>
+      <tr><td>4</td><td class="bold">confidential_balance</td><td>4 cols</td><td>256 rows</td><td>8x</td><td>~12 KB</td></tr>
+      <tr><td>5</td><td class="bold">transfer</td><td>6 cols</td><td>512 rows</td><td>8x</td><td>~15 KB</td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top: 20px;">Proof Pipeline</h3>
+  <div class="grid-2">
+    <div class="card card-cyan no-break">
+      <h4>Groth16 (Classical)</h4>
+      <div class="code-block"><span class="cyan">circom</span> circuit.circom --r1cs --wasm --sym
+<span class="cyan">snarkjs</span> groth16 setup circuit.r1cs pot20_final.ptau
+<span class="cyan">snarkjs</span> zkey contribute → beacon finalize
+<span class="cyan">snarkjs</span> groth16 prove → <span class="pink">256 bytes</span> proof</div>
+    </div>
+    <div class="card card-pink no-break">
+      <h4 style="color: var(--pink);">STARK (Quantum-Safe)</h4>
+      <div class="code-block"><span class="cyan">p01-stark</span> build AIR trace (Winterfell v0.10)
+<span class="cyan">compact</span> NTT → LDE → Merkle (Blake3)
+<span class="cyan">Fiat-Shamir</span> Blake3(trace_root || commitment)
+<span class="cyan">FRI</span> 16 queries → <span class="pink">9-15 KB</span> proof</div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>6 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 6: SECURITY MODEL ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">SECURITY MODEL</h2>
+  <p class="lead">Defense-in-depth: every layer of the stack is hardened against classical and quantum adversaries.</p>
+
+  <table>
+    <thead>
+      <tr><th>Layer</th><th>Mechanism</th><th>Quantum Safe</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Seed phrase</td><td>AES-256-GCM, PBKDF2 (100K iterations)</td><td class="cyan">Yes (symmetric)</td></tr>
+      <tr><td>Note storage</td><td>NaCl secretbox (XSalsa20-Poly1305)</td><td class="cyan">Yes (symmetric)</td></tr>
+      <tr><td>PIN storage</td><td>SHA-256 with per-device salt, constant-time compare</td><td class="cyan">Yes (hash-based)</td></tr>
+      <tr><td>Session keys</td><td>Hardware-backed SecureStore (not AsyncStorage)</td><td>Platform-dependent</td></tr>
+      <tr><td>Key management</td><td>Spending key NEVER leaves device. No remote prover fallback.</td><td>N/A</td></tr>
+      <tr><td>ZK soundness</td><td>Groth16: invalid proofs cannot pass verification</td><td>No (BN254)</td></tr>
+      <tr><td>ZK completeness</td><td>Valid spends always produce valid proofs</td><td>N/A</td></tr>
+      <tr><td>STARK proofs</td><td>Hash-based (Poseidon over Goldilocks), 128-bit security</td><td class="cyan">Yes</td></tr>
+      <tr><td>Stealth v2</td><td>X25519 + ML-KEM-768 (FIPS 203) hybrid ECDH</td><td class="cyan">Yes (lattice-based)</td></tr>
+      <tr><td>Quantum vault</td><td>WOTS+ (SHA-256 hash chains), hash-timelock, commit-reveal</td><td class="cyan">Yes (hash-based)</td></tr>
+      <tr><td>Commitments</td><td>Poseidon (algebraic hash, not ECC-based)</td><td class="cyan">Yes</td></tr>
+      <tr><td>Double-spend</td><td>Nullifier PDAs on-chain (unique per note)</td><td>N/A</td></tr>
+      <tr><td>MPC threshold</td><td>Arcium Cerberus: 1-of-N honest node guarantees correctness</td><td>Protocol-level</td></tr>
+      <tr><td>Relay privacy</td><td>Encrypted job submission + threshold decryption</td><td class="cyan">Yes (symmetric)</td></tr>
+      <tr><td>Clipboard</td><td>Auto-clear after 60s on all sensitive copies</td><td>N/A</td></tr>
+      <tr><td>Biometric</td><td>Device fallback when hardware unavailable, no bypass</td><td>N/A</td></tr>
+      <tr><td>PIN brute-force</td><td>Progressive lockout: 5&rarr;30s, 8&rarr;60s, 10&rarr;300s</td><td>N/A</td></tr>
+      <tr><td>Backup</td><td>android:allowBackup="false" (prevents adb backup)</td><td>N/A</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>7 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 8: THREAT MODEL & CRYPTOGRAPHY ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">THREAT MODEL & CRYPTOGRAPHY</h2>
+
+  <h3>Adversary Analysis</h3>
+  <div class="grid-3" style="margin-bottom: 16px;">
+    <div class="card card-cyan no-break">
+      <h4>Blockchain Observer</h4>
+      <p class="small">Cannot link senders to recipients. Cannot determine amounts. Cannot analyze spending patterns. Stealth addresses create unlinkable one-time endpoints.</p>
+    </div>
+    <div class="card card-cyan no-break">
+      <h4>Quantum Adversary</h4>
+      <p class="small">STARK proofs are hash-based (immune to Shor). ML-KEM-768 stealth is lattice-based. WOTS+ vault signatures rotate per TX. Poseidon commitments are algebraic hash (not ECC).</p>
+    </div>
+    <div class="card card-cyan no-break">
+      <h4>Compromised Node</h4>
+      <p class="small">MPC Cerberus protocol ensures correctness as long as 1 honest node exists in the cluster. Relay jobs are encrypted end-to-end. Threshold decryption prevents single-node compromise.</p>
+    </div>
+  </div>
+
+  <h3>Cryptographic Primitives</h3>
+  <div class="grid-2">
+    <div>
+      <table style="font-size: 10pt;">
+        <tr><th colspan="2">Symmetric</th></tr>
+        <tr><td>XSalsa20-Poly1305</td><td class="muted">Note vault encryption</td></tr>
+        <tr><td>AES-256-GCM</td><td class="muted">Seed encryption (ext)</td></tr>
+        <tr><td>Rescue-CTR</td><td class="muted">Arcium MPC inputs</td></tr>
+        <tr><th colspan="2" style="padding-top:10px;">Asymmetric</th></tr>
+        <tr><td>Ed25519</td><td class="muted">Solana signatures</td></tr>
+        <tr><td>X25519</td><td class="muted">Stealth ECDH</td></tr>
+        <tr><td>ML-KEM-768</td><td class="muted">Post-quantum hybrid (FIPS 203)</td></tr>
+      </table>
+    </div>
+    <div>
+      <table style="font-size: 10pt;">
+        <tr><th colspan="2">Hashing</th></tr>
+        <tr><td>Poseidon (BN254)</td><td class="muted">Commitments, nullifiers</td></tr>
+        <tr><td>Poseidon (Goldilocks)</td><td class="muted">STARK AIR constraints</td></tr>
+        <tr><td>SHA-256</td><td class="muted">WOTS+, PIN, view tags</td></tr>
+        <tr><td>Blake3</td><td class="muted">STARK Merkle trees</td></tr>
+        <tr><th colspan="2" style="padding-top:10px;">Signatures & Key Derivation</th></tr>
+        <tr><td>WOTS+ (SHA-256)</td><td class="muted">Quantum-safe OTS</td></tr>
+        <tr><td>HKDF-SHA256</td><td class="muted">Key derivation</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 16px;">Trust Model</h3>
+  <div class="grid-2">
+    <div class="card no-break">
+      <h4>Client Side (Zero Trust)</h4>
+      <ul class="small">
+        <li>Spending key <strong>NEVER</strong> leaves device</li>
+        <li>Proofs generated locally (snarkjs / WebView)</li>
+        <li>No remote prover fallback (hard-fail)</li>
+        <li>Stealth scanning via on-chain RPC (no relayer)</li>
+      </ul>
+    </div>
+    <div class="card no-break">
+      <h4>On-Chain (Trustless)</h4>
+      <ul class="small">
+        <li>Nullifier PDAs prevent double-spend</li>
+        <li>Groth16/STARK verification on-chain</li>
+        <li>proof = permission (no admin keys)</li>
+        <li>MPC: 1-of-N honesty for correctness</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>8 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 9: FEATURES ==================== -->
+<div class="page" style="padding: 16mm 22mm;">
+  <h2 style="margin-top:0; margin-bottom: 6px;">FEATURE SET</h2>
+
+  <div class="grid-2" style="gap: 8px;">
+    <div class="card card-cyan no-break" style="padding: 10px; margin-bottom: 8px;">
+      <h3 style="color: var(--cyan); margin-top: 0; margin-bottom: 4px; font-size: 10pt;">Denominated Privacy Pools</h3>
+      <p class="small" style="margin-bottom: 4px;">Fixed-denomination anonymous pools. STARK-proven unshield (quantum-resistant). Epoch-based maturity protection.</p>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>SOL: 0.1 / 1 / 10 / 100 &nbsp;|&nbsp; USDC: 1 / 10 / 100 / 1,000</li>
+        <li>P2P note sharing via BLE + NFC, encrypted backups</li>
+      </ul>
+    </div>
+    <div class="card card-pink no-break" style="padding: 10px; margin-bottom: 8px;">
+      <h3 style="color: var(--pink); margin-top: 0; margin-bottom: 4px; font-size: 10pt;">Stealth Transfers</h3>
+      <p class="small" style="margin-bottom: 4px;">Unique one-time addresses via ECDH. View tags for O(1) scanning. v2 adds ML-KEM-768 (quantum-resistant).</p>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>Unlinkable stealth addresses + 1-byte view tag filter</li>
+        <li>On-chain registry (EIP-5564) + hybrid X25519 + ML-KEM</li>
+      </ul>
+    </div>
+    <div class="card no-break" style="border-color: rgba(0,255,229,0.3); padding: 10px; margin-bottom: 8px;">
+      <h3 style="color: var(--cyan-bright); margin-top: 0; margin-bottom: 4px; font-size: 10pt;">Confidential Balances (zkSPL)</h3>
+      <p class="small" style="margin-bottom: 4px;">Balances hidden behind Poseidon commitments. Deposit, withdraw, transfer without revealing amounts.</p>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>4 operations + balance proof (solvency without exposure)</li>
+        <li>Viewer key management for authorized audits</li>
+      </ul>
+    </div>
+    <div class="card card-yellow no-break" style="padding: 10px; margin-bottom: 8px;">
+      <h3 style="color: var(--yellow); margin-top: 0; margin-bottom: 4px; font-size: 10pt;">AI Agent</h3>
+      <p class="small" style="margin-bottom: 4px;">On-device AI for managing private finances. Voice input via Groq Whisper. No data leaves the device.</p>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>Multi-provider: Groq / Gemini / Llama (local)</li>
+        <li>Live SOL price + Fear & Greed + conversation history</li>
+      </ul>
+    </div>
+    <div class="card no-break" style="border-color: rgba(255,119,168,0.3); padding: 10px; margin-bottom: 8px;">
+      <h3 style="color: var(--pink); margin-top: 0; margin-bottom: 4px; font-size: 10pt;">Payment Streams</h3>
+      <p class="small" style="margin-bottom: 4px;">Interval-based recurring payments. Amount noise (&plusmn;20%), timing noise, stealth per payment.</p>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>Personal streams + services (Netflix, Spotify, etc.)</li>
+        <li>Privacy score + ZK subscriber vaults</li>
+      </ul>
+    </div>
+    <div class="card no-break" style="border-color: rgba(255,51,102,0.3); padding: 10px; margin-bottom: 8px;">
+      <h3 style="color: var(--red); margin-top: 0; margin-bottom: 4px; font-size: 10pt;">Quantum-Safe Vault</h3>
+      <p class="small" style="margin-bottom: 4px;">Three defense layers against quantum attacks on Ed25519. SHA-256 preimage is the security boundary.</p>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>WOTS+ (32 hash chains, key rotates per TX)</li>
+        <li>Hash-Timelock + Commit-Reveal (2-phase TX auth)</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 10px; margin-bottom: 6px;">Arcium MPC — 9 Encrypted Circuits</h3>
+  <div class="grid-3" style="gap: 6px;">
+    <div class="card card-yellow no-break" style="padding: 6px 8px; margin-bottom: 0;">
+      <div class="small bold yellow">Confidential Relay</div>
+      <div class="small muted">Threshold TX decryption across MPC cluster</div>
+    </div>
+    <div class="card card-yellow no-break" style="padding: 6px 8px; margin-bottom: 0;">
+      <div class="small bold yellow">Anonymous Lookup</div>
+      <div class="small muted">Private stealth meta-address query</div>
+    </div>
+    <div class="card card-yellow no-break" style="padding: 6px 8px; margin-bottom: 0;">
+      <div class="small bold yellow">Hidden Nullifier</div>
+      <div class="small muted">SHA3 commitment via MPC</div>
+    </div>
+    <div class="card card-yellow no-break" style="padding: 6px 8px; margin-bottom: 0;">
+      <div class="small bold yellow">Balance Audit</div>
+      <div class="small muted">Solvency proof without exposure</div>
+    </div>
+    <div class="card card-yellow no-break" style="padding: 6px 8px; margin-bottom: 0;">
+      <div class="small bold yellow">Stealth Scan</div>
+      <div class="small muted">Viewing key sharded across nodes</div>
+    </div>
+    <div class="card card-yellow no-break" style="padding: 6px 8px; margin-bottom: 0;">
+      <div class="small bold yellow">Private Vote</div>
+      <div class="small muted">Encrypted ballots + threshold tally</div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>9 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 10: MOBILE APP ==================== -->
+<div class="page" style="padding: 16mm 20mm;">
+  <h2 style="margin-top:0; margin-bottom: 6px;">MOBILE APPLICATION</h2>
+  <p class="small muted" style="margin-bottom: 8px;">Native privacy wallet for Android & iOS. Expo 54 / React Native 0.81. On-device ZK proving, biometric security, Privy authentication.</p>
+
+  <h3 style="margin-top: 6px; margin-bottom: 4px;">Tab Navigation</h3>
+  <div class="grid-4" style="margin-top: 4px; gap: 6px;">
+    <div class="card card-cyan center no-break" style="padding: 8px;">
+      <div style="font-size: 16pt;">&#128179;</div>
+      <div class="small bold cyan">Wallet</div>
+      <div class="small muted">Balance, send, receive, swap</div>
+    </div>
+    <div class="card card-cyan center no-break" style="padding: 8px;">
+      <div style="font-size: 16pt;">&#128737;</div>
+      <div class="small bold cyan">Privacy</div>
+      <div class="small muted">Pools, shielded, confidential</div>
+    </div>
+    <div class="card card-pink center no-break" style="padding: 8px;">
+      <div style="font-size: 16pt;">&#128167;</div>
+      <div class="small bold pink">Streams</div>
+      <div class="small muted">Recurring, subscriptions</div>
+    </div>
+    <div class="card card-yellow center no-break" style="padding: 8px;">
+      <div style="font-size: 16pt;">&#128302;</div>
+      <div class="small bold yellow">Agent</div>
+      <div class="small muted">AI, voice, market data</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 8px; margin-bottom: 4px;">Key Screens</h3>
+  <div class="grid-2" style="gap: 8px;">
+    <div>
+      <h4 style="margin-top: 4px;">Wallet Dashboard</h4>
+      <ul class="small" style="margin-bottom: 4px;">
+        <li>Balance card with visibility toggle + quick actions</li>
+        <li>Privacy summary pill, token list, recent activity</li>
+      </ul>
+      <h4 style="margin-top: 6px;">Privacy Dashboard</h4>
+      <ul class="small" style="margin-bottom: 4px;">
+        <li>Privacy Pool hero (STARK proofs) + quick actions</li>
+        <li>Arcium MPC status + legacy shielded migration</li>
+      </ul>
+    </div>
+    <div>
+      <h4 style="margin-top: 4px;">Denominated Pool Screens</h4>
+      <ul class="small" style="margin-bottom: 4px;">
+        <li>Notes list, shield/unshield, STARK proof generation</li>
+        <li>P2P transfer (BLE/NFC), import/export encrypted</li>
+      </ul>
+      <h4 style="margin-top: 6px;">Streams Dashboard</h4>
+      <ul class="small" style="margin-bottom: 4px;">
+        <li>Monthly outflow + privacy score + noise badges</li>
+        <li>Service subs + auto-payment processing</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>On-Device Proving</h3>
+  <div class="grid-2">
+    <div class="card no-break">
+      <h4>Groth16 Prover (WebView)</h4>
+      <p class="small">snarkjs running in a hidden WebView. Queue-based (1 proof at a time). 120s timeout for large circuits. Base64-bundled circuit files (19MB transfer circuit). No remote fallback &mdash; hard fail.</p>
+    </div>
+    <div class="card no-break">
+      <h4>STARK Prover (WASM)</h4>
+      <p class="small">Winterfell compiled to 82KB WASM module. Hidden WebView execution. All 6 circuits supported. Message-passing for Merkle path strings. Mounted in app root via StarkProverProvider.</p>
+    </div>
+  </div>
+
+  <h3>Security Features</h3>
+  <div class="grid-3">
+    <div class="small">
+      <ul>
+        <li>Privy authentication (email, SMS, social, wallet)</li>
+        <li>PIN with SHA-256 + per-device salt</li>
+        <li>Biometric auth (Face ID / fingerprint)</li>
+      </ul>
+    </div>
+    <div class="small">
+      <ul>
+        <li>Progressive lockout (5&rarr;30s, 8&rarr;60s, 10&rarr;300s)</li>
+        <li>SecureStore for all secrets (hardware-backed)</li>
+        <li>Clipboard auto-clear (60 seconds)</li>
+      </ul>
+    </div>
+    <div class="small">
+      <ul>
+        <li>App switcher blur (prevents screenshots)</li>
+        <li>android:allowBackup="false"</li>
+        <li>Lock screen enforced even if "none" selected</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>10 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 9: DESIGN SYSTEM ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">DESIGN & ARTISTIC DIRECTION</h2>
+  <p class="lead">Cyberpunk aesthetic inspired by Hatsune Miku, NEEDY STREAMER OVERLOAD, and ULTRAKILL. Dark-only, high-contrast, industrial monospace with neon cyan and pink accents.</p>
+
+  <h3>Color System</h3>
+  <div class="grid-2">
+    <div>
+      <h4>Backgrounds</h4>
+      <table>
+        <tr><td><span class="swatch" style="background:#0a0a0c;"></span><span class="mono small">void</span></td><td class="mono small">#0a0a0c</td><td class="small muted">Primary BG</td></tr>
+        <tr><td><span class="swatch" style="background:#0f0f12;"></span><span class="mono small">dark</span></td><td class="mono small">#0f0f12</td><td class="small muted">Secondary</td></tr>
+        <tr><td><span class="swatch" style="background:#151518;"></span><span class="mono small">surface</span></td><td class="mono small">#151518</td><td class="small muted">Cards</td></tr>
+        <tr><td><span class="swatch" style="background:#1a1a1e;"></span><span class="mono small">surface-2</span></td><td class="mono small">#1a1a1e</td><td class="small muted">Elevated</td></tr>
+      </table>
+      <h4>Borders</h4>
+      <table>
+        <tr><td><span class="swatch" style="background:#2a2a30;"></span><span class="mono small">border</span></td><td class="mono small">#2a2a30</td></tr>
+        <tr><td><span class="swatch" style="background:#3a3a42;"></span><span class="mono small">border-hover</span></td><td class="mono small">#3a3a42</td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Accents</h4>
+      <table>
+        <tr><td><span class="swatch" style="background:#39c5bb;"></span><span class="mono small">cyan</span></td><td class="mono small">#39c5bb</td><td class="small muted">Primary accent</td></tr>
+        <tr><td><span class="swatch" style="background:#00ffe5;"></span><span class="mono small">cyan-bright</span></td><td class="mono small">#00ffe5</td><td class="small muted">Neon highlight</td></tr>
+        <tr><td><span class="swatch" style="background:#ff77a8;"></span><span class="mono small">pink</span></td><td class="mono small">#ff77a8</td><td class="small muted">Secondary accent</td></tr>
+        <tr><td><span class="swatch" style="background:#ff2d7a;"></span><span class="mono small">pink-hot</span></td><td class="mono small">#ff2d7a</td><td class="small muted">Glitch layers</td></tr>
+        <tr><td><span class="swatch" style="background:#ffcc00;"></span><span class="mono small">yellow</span></td><td class="mono small">#ffcc00</td><td class="small muted">Agent / warnings</td></tr>
+        <tr><td><span class="swatch" style="background:#ff3366;"></span><span class="mono small">red</span></td><td class="mono small">#ff3366</td><td class="small muted">Error / destructive</td></tr>
+      </table>
+      <h4>Text</h4>
+      <table>
+        <tr><td><span class="swatch" style="background:#ffffff;"></span><span class="mono small">text</span></td><td class="mono small">#ffffff</td></tr>
+        <tr><td><span class="swatch" style="background:#888892;"></span><span class="mono small">muted</span></td><td class="mono small">#888892</td></tr>
+        <tr><td><span class="swatch" style="background:#555560;"></span><span class="mono small">dim</span></td><td class="mono small">#555560</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h3>Typography</h3>
+  <div class="grid-3">
+    <div class="card no-break center" style="padding: 10px;">
+      <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 16pt; color: var(--cyan);">Orbitron</div>
+      <div class="small muted">Display / Headlines<br>Weight 400&ndash;900</div>
+    </div>
+    <div class="card no-break center" style="padding: 10px;">
+      <div style="font-family: 'Inter'; font-weight: 400; font-size: 16pt;">Inter</div>
+      <div class="small muted">Body Text<br>Weight 300&ndash;900</div>
+    </div>
+    <div class="card no-break center" style="padding: 10px;">
+      <div style="font-family: 'JetBrains Mono'; font-weight: 400; font-size: 14pt; color: var(--cyan-bright);">JetBrains Mono</div>
+      <div class="small muted">Code / Technical<br>Weight 400&ndash;700</div>
+    </div>
+  </div>
+
+  <h3>Visual Effects</h3>
+  <div class="grid-2">
+    <div>
+      <h4>Glitch Effects (ULTRAKILL-inspired)</h4>
+      <ul class="small">
+        <li>Chromatic aberration: cyan + pink offset layers</li>
+        <li>Screen tearing: horizontal clip-path slices</li>
+        <li>Flicker: frame-based opacity jitter</li>
+        <li>Shake/skew: &plusmn;5&deg; transform during bursts</li>
+        <li>Noise bars: horizontal colored bands</li>
+        <li>SVG turbulence overlay at 0.02 opacity</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Glow & Glass Effects</h4>
+      <ul class="small">
+        <li>Multi-layer box-shadow (20/40/60px blur)</li>
+        <li>Text-shadow for neon glow on headings</li>
+        <li>LiquidGlassTabBar: BlurView + gradient + specularity</li>
+        <li>Scanline animation: 8s vertical sweep</li>
+        <li>Shimmer: gradient sweep at 135&deg;</li>
+        <li>8-layer depth background system (web)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>11 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 12: DESIGN PRINCIPLES ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">DESIGN PRINCIPLES</h2>
+  <p class="lead">10 core principles that guide every design decision across all Protocol 01 interfaces.</p>
+
+  <div class="grid-2" style="margin-top: 16px;">
+    <div>
+      <div class="card card-cyan no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="cyan">01.</strong> <strong>Dark-Only</strong></div>
+        <p class="small muted" style="margin-top:4px;">No light theme. Ever. Optimized for OLED displays. Deep void backgrounds with high-contrast neon accents.</p>
+      </div>
+      <div class="card card-cyan no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="cyan">02.</strong> <strong>Cyberpunk Aesthetic</strong></div>
+        <p class="small muted" style="margin-top:4px;">Neon on void, industrial edges. Inspired by Hatsune Miku, NEEDY STREAMER OVERLOAD, ULTRAKILL.</p>
+      </div>
+      <div class="card card-cyan no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="cyan">03.</strong> <strong>No Black Text</strong></div>
+        <p class="small muted" style="margin-top:4px;">All text is white, gray, or colored. Black text is forbidden to maintain contrast hierarchy.</p>
+      </div>
+      <div class="card card-cyan no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="cyan">04.</strong> <strong>Modular Colors</strong></div>
+        <p class="small muted" style="margin-top:4px;">Each tab has its own accent color. Wallet = cyan, Privacy = pink, Streams = bright-cyan, Agent = yellow.</p>
+      </div>
+      <div class="card card-cyan no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="cyan">05.</strong> <strong>Haptic Everything</strong></div>
+        <p class="small muted" style="margin-top:4px;">Tactile feedback on all interactions. Light for navigation, medium for actions, heavy for confirmations.</p>
+      </div>
+    </div>
+    <div>
+      <div class="card card-pink no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="pink">06.</strong> <strong>Spring Physics</strong></div>
+        <p class="small muted" style="margin-top:4px;">Bouncy, organic animations using react-native-reanimated spring configs. No linear easing.</p>
+      </div>
+      <div class="card card-pink no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="pink">07.</strong> <strong>Glass Morphism</strong></div>
+        <p class="small muted" style="margin-top:4px;">Blur + transparency layers. LiquidGlassTabBar with BlurView, gradient overlay, and specularity.</p>
+      </div>
+      <div class="card card-pink no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="pink">08.</strong> <strong>System Metaphor</strong></div>
+        <p class="small muted" style="margin-top:4px;">Terminal-style status indicators: PROTOCOL::01 / STATUS::ACTIVE. Monospace for all technical data.</p>
+      </div>
+      <div class="card card-pink no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="pink">09.</strong> <strong>Asymmetric Glitch</strong></div>
+        <p class="small muted" style="margin-top:4px;">Chaotic branding animations. Chromatic aberration, screen tearing, flicker, shake/skew during bursts.</p>
+      </div>
+      <div class="card card-pink no-break" style="margin-bottom: 12px;">
+        <div style="font-size: 11pt;"><strong class="pink">10.</strong> <strong>Security First</strong></div>
+        <p class="small muted" style="margin-top:4px;">App switcher blur, clipboard auto-clear, no data leaks. Privacy is a design constraint, not an afterthought.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>12 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 10: WEB & EXTENSION ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">WEB APP & BROWSER EXTENSION</h2>
+
+  <h3>Web Application (Next.js 16)</h3>
+  <p class="small">Marketing site, SDK demo, and documentation portal. Built with React 19, Tailwind v4, and Framer Motion for cinematic interactions.</p>
+
+  <div class="grid-2">
+    <div>
+      <h4>Landing Page</h4>
+      <ul class="small">
+        <li>Hero: Animated "01" with ULTRAKILL glitch effect</li>
+        <li>System status display: PROTOCOL::01 / STATUS::ACTIVE</li>
+        <li>8-layer depth background (grid, mesh, particles, scanlines, vignette, shimmer, noise)</li>
+        <li>Semi-transparent Miku mascot (15% opacity, grayscale)</li>
+        <li>Feature sections with alternating code previews</li>
+        <li>Problem/solution statistics with visual contrast</li>
+        <li>Download section: APK + Extension + Source</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Pages</h4>
+      <ul class="small">
+        <li><strong>/</strong> &mdash; Landing page with hero, features, how it works</li>
+        <li><strong>/docs</strong> &mdash; Technical documentation (all 12 programs, SDKs, circuits)</li>
+        <li><strong>/sdk-demo</strong> &mdash; Interactive SDK playground</li>
+        <li><strong>/download</strong> &mdash; APK + extension download</li>
+      </ul>
+      <h4>Web Design Highlights</h4>
+      <ul class="small">
+        <li>Grid pattern overlay (40px, cyan @ 5% opacity)</li>
+        <li>Terminal-style code previews (3-dot header)</li>
+        <li>Gradient text: cyan &rarr; pink &rarr; bright-cyan</li>
+        <li>Custom scrollbar (0.5rem, cyan thumb on hover)</li>
+        <li>Badge system: cyan, pink, yellow, bright-cyan</li>
+      </ul>
+    </div>
+  </div>
+
+  <hr>
+
+  <h3>Browser Extension (Chrome MV3)</h3>
+  <p class="small">Full Solana wallet as a Chrome/Brave extension. Private by default with integrated stealth addresses and shielded transfers.</p>
+
+  <div class="grid-2">
+    <div>
+      <h4>Features</h4>
+      <ul class="small">
+        <li>Wallet creation & import (BIP39 mnemonic)</li>
+        <li>SOL & SPL token management with live prices</li>
+        <li>Privacy Zone: stealth addresses + shielded transfers</li>
+        <li>Confidential balances (zkSPL)</li>
+        <li>Payment streams dashboard</li>
+        <li>dApp connection (Wallet Standard)</li>
+        <li>AES-256-GCM seed encryption</li>
+        <li>Rate limiting on sensitive endpoints</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Architecture</h4>
+      <ul class="small">
+        <li>Manifest V3 (Chrome + Brave compatible)</li>
+        <li>Vite build system + React 19</li>
+        <li>Background service worker for wallet state</li>
+        <li>Popup UI for quick actions</li>
+        <li>Content script for dApp injection</li>
+        <li>RPC fallback via @p01/rpc-config</li>
+        <li>Seed-based key derivation (BIP44)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>13 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 14: SDK ECOSYSTEM ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">SDK ECOSYSTEM</h2>
+  <p class="lead">8 TypeScript packages for developers to integrate Protocol 01 privacy into their applications.</p>
+
+  <table style="font-size: 11pt;">
+    <thead>
+      <tr><th style="font-size: 9pt;">Package</th><th style="font-size: 9pt;">Purpose</th><th style="font-size: 9pt;">Key Exports</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="bold pink">@p01/specter-sdk</td>
+        <td>Core privacy SDK</td>
+        <td>Stealth, wallet, transfer, relay, quantum, registry, indexer, prover</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/zk-sdk</td>
+        <td>ZK primitives</td>
+        <td>ShieldedClient, Note, MerkleTree, ZkProver, viewing keys</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/zkspl-sdk</td>
+        <td>Confidential tokens</td>
+        <td>Confidential deposit, withdraw, transfer, balance proof</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/arcium-sdk</td>
+        <td>MPC compute</td>
+        <td>ArciumClient, 6 use-case modules, Rescue cipher</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/p01-js</td>
+        <td>Merchant SDK</td>
+        <td>Protocol01 client, subscriptions, payments, React components</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/privacy-toolkit</td>
+        <td>Merkle + commit</td>
+        <td>Incremental tree, Poseidon, amount hash, proof format</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/auth-sdk</td>
+        <td>Auth integration</td>
+        <td>P01AuthClient, P01AuthServer, session management</td>
+      </tr>
+      <tr>
+        <td class="bold pink">@p01/rpc-config</td>
+        <td>RPC infrastructure</td>
+        <td>RpcConnectionManager, fallback chain, URL sanitization</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top: 20px;">Integration Example</h3>
+  <div class="code-block" style="font-size: 9pt;"><span class="pink">import</span> { StealthWallet } <span class="pink">from</span> <span class="cyan">'@p01/specter-sdk'</span>;
+<span class="pink">import</span> { ShieldedClient } <span class="pink">from</span> <span class="cyan">'@p01/zk-sdk'</span>;
+
+<span class="dim">// Create stealth address for recipient</span>
+<span class="pink">const</span> stealth = <span class="pink">await</span> StealthWallet.generateStealthAddress(recipientMeta);
+
+<span class="dim">// Shield tokens into the privacy pool</span>
+<span class="pink">const</span> client = <span class="pink">new</span> ShieldedClient(connection, wallet);
+<span class="pink">const</span> note = <span class="pink">await</span> client.shield({ amount: 1_000_000n, mint: SOL_MINT });
+
+<span class="dim">// Transfer privately (2-in-2-out UTXO)</span>
+<span class="pink">await</span> client.transfer({ inputs: [note], outputs: [recipientNote, changeNote] });</div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>14 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 11: TESTING & QUALITY ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">TESTING & QUALITY ASSURANCE</h2>
+  <p class="lead">Comprehensive test suite with 370+ stress tests, 25+ program tests, 30+ SDK unit tests, and automated E2E flows covering every instruction and cryptographic primitive.</p>
+
+  <h3>Test Suite Overview</h3>
+  <table>
+    <thead>
+      <tr><th>Category</th><th>Files</th><th>Tests</th><th>Coverage</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">Program Tests (ts-mocha)</td><td>25</td><td>~200</td><td class="small">All 12 programs, real devnet transactions</td></tr>
+      <tr><td class="bold">SDK Unit Tests (vitest)</td><td>30+</td><td>~150</td><td class="small">specter-sdk, zk-sdk, privacy-toolkit, auth-sdk</td></tr>
+      <tr><td class="bold">E2E Tests</td><td>8</td><td>~80</td><td class="small">Cross-program flows, STARK lifecycle, shield/unshield</td></tr>
+      <tr><td class="bold">Stress: Programs</td><td>1</td><td>106</td><td class="small">All 12 programs, every instruction, concurrent ops</td></tr>
+      <tr><td class="bold">Stress: Crypto</td><td>1</td><td>124</td><td class="small">Poseidon, stealth, WOTS+, Merkle, NaCl, HKDF, ML-KEM</td></tr>
+      <tr><td class="bold">Stress: Mobile</td><td>1</td><td>140</td><td class="small">Vault encryption, PIN, noise, STARK builders, BLE/NFC</td></tr>
+      <tr><td class="bold">Rust Tests (STARK)</td><td>6</td><td>69</td><td class="small">All 6 AIR implementations, compact proofs</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Performance Benchmarks</h3>
+  <div class="grid-2">
+    <div>
+      <table style="font-size: 11pt;">
+        <tr><th style="font-size: 9pt;">Operation</th><th style="font-size: 9pt;">Performance</th></tr>
+        <tr><td>Poseidon 2-input hash (1000x)</td><td class="cyan bold">&lt; 5s</td></tr>
+        <tr><td>Stealth address gen (100x)</td><td class="cyan bold">&lt; 3s</td></tr>
+        <tr><td>WOTS+ keygen (50x)</td><td class="cyan bold">&lt; 5s</td></tr>
+        <tr><td>WOTS+ sign+verify (50x)</td><td class="cyan bold">&lt; 10s</td></tr>
+      </table>
+    </div>
+    <div>
+      <table style="font-size: 11pt;">
+        <tr><th style="font-size: 9pt;">Operation</th><th style="font-size: 9pt;">Performance</th></tr>
+        <tr><td>Merkle insert+proof (100x)</td><td class="cyan bold">&lt; 10s</td></tr>
+        <tr><td>Note encrypt/decrypt (1000x)</td><td class="cyan bold">&lt; 5s</td></tr>
+        <tr><td>Vault encrypt/decrypt (1000x)</td><td class="cyan bold">&lt; 5s</td></tr>
+        <tr><td>PIN hash (1000x)</td><td class="cyan bold">&lt; 2s</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>15 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 16: ROADMAP ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">ROADMAP</h2>
+  <p class="lead">Protocol 01 is approximately 90% code-complete. The remaining work focuses on production readiness: external audits, trusted setup ceremony, and mainnet deployment.</p>
+
+  <div class="grid-2" style="margin-top: 16px;">
+    <div class="card card-cyan no-break">
+      <h4>Completed (~90%)</h4>
+      <ul style="font-size: 10pt;">
+        <li>12 Solana programs deployed on devnet</li>
+        <li>6 Groth16 circuits compiled + trusted setup</li>
+        <li>6 STARK AIRs + on-chain verifier</li>
+        <li>Mobile app (Android) fully functional</li>
+        <li>Chrome extension wallet</li>
+        <li>Web app (Next.js 16)</li>
+        <li>8 SDK packages</li>
+        <li>Arcium MPC integration (9 circuits)</li>
+        <li>Quantum vault (WOTS+, HTL, CR)</li>
+        <li>On-chain registry + trustless relayer</li>
+        <li>Security audit fixes + hardening</li>
+        <li>RPC fallback infrastructure</li>
+        <li>370+ stress tests</li>
+      </ul>
+    </div>
+    <div class="card card-pink no-break">
+      <h4 style="color: var(--pink);">Remaining for Mainnet</h4>
+      <ul style="font-size: 10pt;">
+        <li><strong>External Security Audit</strong><br>
+          <span class="muted">OtterSec / Neodyme / Trail of Bits</span></li>
+        <li><strong>Trusted Setup Ceremony</strong><br>
+          <span class="muted">3+ contributors (currently 1)</span></li>
+        <li><strong>iOS Build & Testing</strong><br>
+          <span class="muted">Only Android verified so far</span></li>
+        <li><strong>Mainnet RPC Contract</strong><br>
+          <span class="muted">Dedicated provider (QuickNode/Helius paid)</span></li>
+        <li><strong>DeFi Composability</strong><br>
+          <span class="muted">Integration with Jupiter, Raydium, etc.</span></li>
+        <li><strong>Certificate Pinning</strong><br>
+          <span class="muted">TrustKit for mobile RPC endpoints</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>16 / 17</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 12: CLOSING ==================== -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+
+  <div style="margin-bottom: 40px;">
+    <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 80pt; background: linear-gradient(135deg, var(--cyan), var(--pink)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; line-height: 1;">01</div>
+    <div style="font-family: 'JetBrains Mono'; font-size: 9pt; color: var(--text-dim); letter-spacing: 0.3em; margin-top: 8px;">&gt; THE SYSTEM CANNOT SEE YOU.</div>
+  </div>
+
+  <div style="width: 60px; height: 2px; background: linear-gradient(90deg, var(--cyan), var(--pink)); margin: 20px auto;"></div>
+
+  <div style="max-width: 360px; margin-top: 20px;">
+    <p class="muted" style="font-size: 10pt; line-height: 1.7;">
+      One app. Total invisibility.<br>
+      Denominated pools. Confidential balances.<br>
+      Anonymous subscriptions. Stealth transfers.<br>
+      Quantum-resistant privacy on Solana.
+    </p>
+  </div>
+
+  <div style="margin-top: 50px;">
+    <div class="grid-3" style="gap: 30px;">
+      <div>
+        <div class="mono small cyan" style="margin-bottom: 4px;">PROGRAMS</div>
+        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">12</div>
+      </div>
+      <div>
+        <div class="mono small pink" style="margin-bottom: 4px;">ZK CIRCUITS</div>
+        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">12</div>
+      </div>
+      <div>
+        <div class="mono small yellow" style="margin-bottom: 4px;">MPC CIRCUITS</div>
+        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">9</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 60px;">
+    <div class="mono small dim">PROPRIETARY SOFTWARE &mdash; ALL RIGHTS RESERVED</div>
+    <div class="mono small dim" style="margin-top: 4px;">&copy; 2026 Volta Team | Developed by Slashy Fx</div>
+    <div style="margin-top: 12px;">
+      <span class="badge badge-cyan" style="margin-right: 6px;">protocol-01.vercel.app</span>
+      <span class="badge badge-pink" style="margin-right: 6px;">@Protocol01_</span>
+      <span class="badge badge-yellow">IsSlashy/Protocol-01</span>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>17 / 17</span>
+  </div>
+</div>
+
+</body>
+</html>
