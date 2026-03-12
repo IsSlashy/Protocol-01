@@ -86,7 +86,10 @@ pub struct Transfer<'info> {
     pub nullifier_record_2: Account<'info, NullifierRecord>,
 
     /// Verification key data account (stores the VK bytes)
-    /// CHECK: This account stores the verification key and is validated by hash
+    /// CHECK: Validated by hash comparison + owner check
+    #[account(
+        constraint = verification_key_data.owner == &crate::ID @ ZkShieldedError::InvalidVerificationKey
+    )]
     pub verification_key_data: AccountInfo<'info>,
 
     /// System program (required for PDA creation)

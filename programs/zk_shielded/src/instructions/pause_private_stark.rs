@@ -15,19 +15,25 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0xb3, 0x7a, 0x18, 0x7d, 0xe6, 0x39, 0xce, 0xd8,
 ]);
 
+/// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
+const PROOF_BUF_AUTHORITY: usize = 8;
+const PROOF_BUF_CIRCUIT_ID: usize = 40;
+const PROOF_BUF_VERIFIED: usize = 49;
+const PROOF_BUF_INPUTS_HASH: usize = 50;
+const PROOF_BUF_MIN_LEN: usize = 82;
+
 /// Parse a verified STARK proof buffer.
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
 fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
-    require!(data.len() >= 82, ZkShieldedError::InvalidProof);
+    require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
     );
-    let authority = Pubkey::try_from(&data[8..40]).unwrap();
-    let circuit_id = data[40];
-    let verified = data[49] == 1;
+    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID]).unwrap();
+    let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
+    let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[50..82]);
+    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
     Ok((authority, circuit_id, verified, public_inputs_hash))
 }
 
@@ -100,11 +106,11 @@ pub fn handler(ctx: Context<PausePrivateStark>) -> Result<()> {
     require!(verified, ZkShieldedError::InvalidProof);
 
     // Verify the proof was generated for THIS vault's commitment by checking
-    // the public inputs hash against the vault commitment.
+    // the public inputs hash. The STARK verifier v1 stores blake3(commitment_u64_le).
+    // The vault's subscriber_commitment [u8; 32] stores the Goldilocks u64 in bytes 0..8.
     {
-        use anchor_lang::solana_program::hash::hashv;
         let commitment_u64 = u64::from_le_bytes(_commitment[..8].try_into().unwrap());
-        let expected_hash = hashv(&[&commitment_u64.to_le_bytes()]).to_bytes();
+        let expected_hash = *blake3::hash(&commitment_u64.to_le_bytes()).as_bytes();
         require!(
             stored_inputs_hash == expected_hash,
             ZkShieldedError::InvalidProof

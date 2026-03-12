@@ -28,13 +28,25 @@ pub struct UpdateVkHash<'info> {
     pub pool: Account<'info, PoolState>,
 }
 
+/// 24-hour cooldown between VK hash updates (in seconds)
+const VK_UPDATE_COOLDOWN: i64 = 86400;
+
 pub fn handler(
     ctx: Context<UpdateVkHash>,
     new_vk_hash: [u8; 32],
 ) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
+
+    // Enforce 24h cooldown between VK updates to prevent instant malicious swaps
+    let clock = Clock::get()?;
+    require!(
+        clock.unix_timestamp - pool.vk_update_timestamp >= VK_UPDATE_COOLDOWN,
+        TrustlessError::VkUpdateCooldown
+    );
+
     let old_hash = pool.verification_key_hash;
     pool.verification_key_hash = new_vk_hash;
+    pool.vk_update_timestamp = clock.unix_timestamp;
 
     msg!(
         "VK hash updated: {:?} -> {:?}",

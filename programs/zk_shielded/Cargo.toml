@@ -26,6 +26,9 @@ solana-bn254 = "2"
 # Hash function for verification key hashing
 sha3 = "0.10"
 
+# Blake3 for STARK public input hash binding (must match p01_stark_verifier)
+blake3 = "=1.8.2"
+
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }
 

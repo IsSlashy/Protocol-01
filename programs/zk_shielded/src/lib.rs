@@ -114,29 +114,8 @@ pub mod zk_shielded {
         instructions::store_vk_data::handler_write(ctx, offset, data)
     }
 
-    /// Transfer via relayer (gasless transactions)
-    /// The relayer pays for gas and receives a fee from the shielded transfer
-    pub fn transfer_via_relayer(
-        ctx: Context<TransferViaRelayer>,
-        proof: Groth16Proof,
-        nullifier_1: [u8; 32],
-        nullifier_2: [u8; 32],
-        output_commitment_1: [u8; 32],
-        output_commitment_2: [u8; 32],
-        output_commitment_relayer_fee: [u8; 32],
-        merkle_root: [u8; 32],
-    ) -> Result<()> {
-        instructions::transfer_via_relayer::handler(
-            ctx,
-            proof,
-            nullifier_1,
-            nullifier_2,
-            output_commitment_1,
-            output_commitment_2,
-            output_commitment_relayer_fee,
-            merkle_root,
-        )
-    }
+    // transfer_via_relayer: REMOVED — unproven relayer fee commitment + panic in insert().
+    // Relaying is handled by the on-chain p01_relayer program.
 
     // -----------------------------------------------------------------------
     // Denominated Pool instructions (Tornado Cash model — fixed denominations)
@@ -186,8 +165,9 @@ pub mod zk_shielded {
         nullifier: [u8; 32],
         merkle_root: [u8; 32],
         min_epoch: u64,
+        stark_commitment: u64,
     ) -> Result<()> {
-        instructions::unshield_denominated_stark::handler(ctx, nullifier, merkle_root, min_epoch)
+        instructions::unshield_denominated_stark::handler(ctx, nullifier, merkle_root, min_epoch, stark_commitment)
     }
 
     /// Emergency unshield from a denominated pool (bypass maturity check)
@@ -300,8 +280,9 @@ pub mod zk_shielded {
         rate: u64,
         interval_slots: u64,
         vk_hash_subscriber: [u8; 32],
+        stark_commitment: u64,
     ) -> Result<()> {
-        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber)
+        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment)
     }
 
     /// Pause a private subscription vault using STARK proof (quantum-resistant)

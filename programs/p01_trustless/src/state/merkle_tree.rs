@@ -70,6 +70,18 @@ impl MerkleTreeState {
             crate::errors::TrustlessError::MerkleTreeFull
         );
 
+        // Sanity guard: reject all-zeros root (uninitialized/malicious input)
+        require!(
+            new_root != [0u8; 32],
+            crate::errors::TrustlessError::InvalidMerkleRoot
+        );
+
+        // Sanity guard: inserting a leaf must change the root
+        require!(
+            new_root != self.root,
+            crate::errors::TrustlessError::InvalidMerkleRoot
+        );
+
         self.filled_subtrees[0] = leaf;
         self.root = new_root;
         self.leaf_count += 1;

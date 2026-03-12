@@ -29,7 +29,10 @@ pub struct PausePrivate<'info> {
     pub vault: Account<'info, SubscriptionVault>,
 
     /// Subscriber ownership VK data
-    /// CHECK: Validated by hash comparison
+    /// CHECK: Validated by hash comparison + owner check
+    #[account(
+        constraint = subscriber_vk_data.owner == &crate::ID @ ZkShieldedError::InvalidVerificationKey
+    )]
     pub subscriber_vk_data: AccountInfo<'info>,
 }
 

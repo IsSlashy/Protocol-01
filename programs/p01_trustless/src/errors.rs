@@ -70,4 +70,7 @@ pub enum TrustlessError {
 
     #[msg("Insufficient vault balance for withdrawal")]
     InsufficientVaultBalance,
+
+    #[msg("VK update cooldown not elapsed -- must wait 24 hours between updates")]
+    VkUpdateCooldown,
 }

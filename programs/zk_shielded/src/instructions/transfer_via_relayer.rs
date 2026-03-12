@@ -79,7 +79,10 @@ pub struct TransferViaRelayer<'info> {
     pub nullifier_record_2: Account<'info, NullifierRecord>,
 
     /// Verification key data account
-    /// CHECK: Validated by hash comparison
+    /// CHECK: Validated by hash comparison + owner check
+    #[account(
+        constraint = verification_key_data.owner == &crate::ID @ ZkShieldedError::InvalidVerificationKey
+    )]
     pub verification_key_data: AccountInfo<'info>,
 
     /// System program (required for PDA creation)

@@ -9,7 +9,7 @@ mod verify;
 use compact_proof::{CompactStarkProof, GenericCompactProof, get_circuit_config};
 use goldilocks::Felt;
 
-declare_id!("EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z");
+declare_id!("DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs");
 
 pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
@@ -290,7 +290,7 @@ pub struct ProofBuffer {
     pub proof_size: u32,
     pub bytes_written: u32,
     pub verified: bool,
-    /// SHA-256 hash of the verified public inputs.
+    /// Blake3 hash of the verified public inputs.
     /// Set after successful verification so consumers can confirm
     /// which inputs were actually proven.
     pub public_inputs_hash: [u8; 32],

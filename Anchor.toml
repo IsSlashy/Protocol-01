@@ -8,7 +8,7 @@ skip-lint = false
 
 [programs.devnet]
 p01_arcium = "FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT"
-p01_fee_splitter = "AwHRR8mbZz7u98NCRcYCSPc6R4FtjbLhaV1ekMi5jTMQ"
+p01_fee_splitter = "UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM"
 p01_quantum_vault = "9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv"
 p01_registry = "ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr"
 p01_relayer = "Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw"
