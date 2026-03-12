@@ -92,12 +92,6 @@ Send crypto without anyone knowing who sent it or who received it.
 | 5 | Confirm → ZK proof is generated |
 | 6 | Transaction is completely private! |
 
-<p align="center">
-  <img src="docs/assets/screenshots/demo-shield.png" alt="Shield" width="200"/>
-  <img src="docs/assets/screenshots/demo-private-send.png" alt="Private Send" width="200"/>
-  <img src="docs/assets/screenshots/demo-success.png" alt="Success" width="200"/>
-</p>
-
 #### 2. Confidential Balances (zkSPL)
 
 Hide your token balance on-chain using quantum-resistant Poseidon commitments.
@@ -692,5 +686,6 @@ These libraries are used in production by Protocol 01 and are free to use under 
   <strong>Built on Solana</strong><br/>
   <sub>&copy; 2026 Volta Team &mdash; All rights reserved</sub>
 </p>
+
 
 
