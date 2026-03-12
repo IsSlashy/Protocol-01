@@ -5,7 +5,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../../constants/theme';
 import { lockVault } from '../../utils/crypto/noteVault';
@@ -20,10 +19,11 @@ export default function MainLayout() {
   const router = useRouter();
 
   // H4: Auth gate — verify user passed lock screen before rendering main content
+  // H4: Auth gate — verify user passed lock screen before rendering main content
   const [isUnlocked, setIsUnlocked] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem('p01_session_unlocked').then(val => {
+    SecureStore.getItemAsync('p01_session_unlocked').then(val => {
       if (val !== 'true') {
         router.replace('/(auth)/lock');
       } else {
@@ -53,7 +53,7 @@ export default function MainLayout() {
           if (timeout >= 0) {
             const elapsed = Date.now() - lastBackground;
             if (elapsed > timeout * 1000) {
-              await AsyncStorage.removeItem('p01_session_unlocked');
+              await SecureStore.deleteItemAsync('p01_session_unlocked');
               lockVault(); // Wipe note vault key from memory
               router.replace('/(auth)/lock');
             }

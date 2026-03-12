@@ -1016,20 +1016,21 @@ function buildUnshieldDenominatedStarkIx(
   nullifierBytes: number[],
   merkleRootBytes: number[],
   minEpoch: bigint,
+  starkCommitment: bigint,
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
   recipientTokenAccount?: PublicKey
 ): TransactionInstruction {
   const disc = getDiscriminator('unshield_denominated_stark');
 
-  // On-chain args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64
-  // (No Groth16 proof — proof is in the STARK buffer account)
-  const data = Buffer.alloc(8 + 32 + 32 + 8);
+  // On-chain args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64, stark_commitment: u64
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset);
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  data.writeBigUInt64LE(starkCommitment, offset);
 
   // Account ordering must match on-chain UnshieldDenominatedStark struct:
   // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
@@ -1160,6 +1161,9 @@ export async function unshieldStark(
     poolVault = poolConfig.vaultATA;
   }
 
+  // Extract STARK commitment (second public input from the proof)
+  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
+
   const ix = buildUnshieldDenominatedStarkIx(
     walletPubkey,
     recipient,
@@ -1170,6 +1174,7 @@ export async function unshieldStark(
     Array.from(nullifierBytes),
     merkleRootBytes,
     minEpoch,
+    starkCommitment,
     tokenProgram,
     poolVault,
     recipientTokenAccount

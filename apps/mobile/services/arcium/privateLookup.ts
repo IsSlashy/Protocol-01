@@ -5,7 +5,8 @@
  * Standard flow: getAccountInfo(registryPDA) → RPC sees target wallet
  * MPC flow: encrypt(wallet) → MPC queries registry → decrypt result
  *
- * Falls back to standard (public) lookup when MPC is unavailable.
+ * Throws when MPC is enabled but fails (no silent fallback to public).
+ * Uses standard (public) lookup only when MPC is explicitly disabled.
  */
 
 import { PublicKey } from '@solana/web3.js';
@@ -50,16 +51,15 @@ export async function lookupMetaAddress(
 ): Promise<StealthMetaAddress> {
   const { mpcEnabled } = useArciumStore.getState();
 
-  // Try MPC path if enabled
-  if ((mpcEnabled || forceMpc) && isMpcClientReady()) {
-    try {
-      return await mpcLookup(targetWallet);
-    } catch (e: any) {
-      console.warn('[MPC] Private lookup failed, falling back to public:', e.message);
+  // MPC path: required when enabled — no silent fallback to public
+  if (mpcEnabled || forceMpc) {
+    if (!isMpcClientReady()) {
+      throw new Error('MPC client is not ready. Cannot perform private lookup.');
     }
+    return await mpcLookup(targetWallet);
   }
 
-  // Standard (public) lookup fallback
+  // Standard (public) lookup — only when MPC is explicitly disabled
   return publicLookup(targetWallet);
 }
 

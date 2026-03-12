@@ -927,6 +927,8 @@ export async function subscribePrivateStark(
   onProgress?.('Building subscription transaction...');
   const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
 
+  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
+
   const ix = buildSubscribePrivateStarkIx(
     walletPubkey,
     vaultConfig.retailer,
@@ -942,6 +944,7 @@ export async function subscribePrivateStark(
     vaultConfig.rate,
     vaultConfig.intervalSlots,
     vkHashSubscriber,
+    starkCommitment,
   );
 
   onProgress?.('Sending subscription transaction...');
@@ -1098,12 +1101,14 @@ function buildSubscribePrivateStarkIx(
   rate: bigint,
   intervalSlots: bigint,
   vkHashSubscriber: Uint8Array,
+  starkCommitment: bigint,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
 
   // Args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64,
-  //       subscriber_commitment: [u8;32], rate: u64, interval_slots: u64, vk_hash_subscriber: [u8;32]
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32);
+  //       subscriber_commitment: [u8;32], rate: u64, interval_slots: u64,
+  //       vk_hash_subscriber: [u8;32], stark_commitment: u64
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -1112,7 +1117,8 @@ function buildSubscribePrivateStarkIx(
   Buffer.from(subscriberCommitmentBytes).copy(data, offset); offset += 32;
   data.writeBigUInt64LE(rate, offset); offset += 8;
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
-  Buffer.from(vkHashSubscriber).copy(data, offset);
+  Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(starkCommitment, offset);
 
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },

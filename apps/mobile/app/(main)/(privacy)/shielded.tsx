@@ -126,8 +126,9 @@ export default function ShieldedWalletScreen() {
   const copyAddress = async () => {
     if (zkAddress) {
       await Clipboard.setStringAsync(zkAddress);
+      setTimeout(() => Clipboard.setStringAsync(''), 60000);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      p01Alert('Copied', 'ZK address copied to clipboard');
+      p01Alert('Copied', 'ZK address copied to clipboard. Clipboard will be cleared in 60 seconds.');
     }
   };
 

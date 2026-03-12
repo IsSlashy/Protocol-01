@@ -1,7 +1,7 @@
 import { Redirect, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View, ActivityIndicator, Text } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { walletExists } from '../services/solana/wallet';
 
 export default function Index() {
@@ -16,7 +16,7 @@ export default function Index() {
   const checkAppState = async () => {
     try {
       // H4: Clear session unlock flag on every app launch — forces lock screen
-      await AsyncStorage.removeItem('p01_session_unlocked');
+      await SecureStore.deleteItemAsync('p01_session_unlocked');
 
       // Check if user has a wallet
       const hasExistingWallet = await walletExists();
