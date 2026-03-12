@@ -23,7 +23,9 @@ import {
   CreditCard,
   RefreshCw,
   FileText,
-  Eye
+  Eye,
+  Shield,
+  Download
 } from "lucide-react";
 
 // ============ P-01 Theme Constants ============
@@ -314,7 +316,7 @@ export default function SDKDemoPage() {
 }
 
 function SDKDemoContent() {
-  const [activeTab, setActiveTab] = useState<"devnet" | "streams" | "widgets" | "buttons" | "cards">("devnet");
+  const [activeTab, setActiveTab] = useState<"devnet" | "privacy" | "streams" | "widgets" | "buttons" | "cards">("devnet");
 
   return (
     <div className="min-h-screen bg-p01-void">
@@ -345,6 +347,7 @@ function SDKDemoContent() {
         <div className="flex gap-2 mb-8 flex-wrap">
           {[
             { id: "devnet" as const, label: "Devnet", icon: Cpu, color: "yellow" },
+            { id: "privacy" as const, label: "Privacy SDKs", icon: Shield, color: "cyan" },
             { id: "streams" as const, label: "Stream SDK", icon: RefreshCw, color: "pink" },
             { id: "widgets" as const, label: "Widgets", icon: CreditCard, color: "cyan" },
             { id: "buttons" as const, label: "Buttons", icon: Zap, color: "cyan" },
@@ -377,11 +380,249 @@ function SDKDemoContent() {
           transition={{ duration: 0.2 }}
         >
           {activeTab === "devnet" && <DevnetSection />}
+          {activeTab === "privacy" && <PrivacySDKSection />}
           {activeTab === "streams" && <StreamSDKSection />}
           {activeTab === "widgets" && <WidgetsSection />}
           {activeTab === "buttons" && <ButtonsSection />}
           {activeTab === "cards" && <CardsSection />}
         </motion.div>
+      </div>
+
+      {/* Beta Footer */}
+      <footer className="border-t border-p01-border mt-16">
+        <div className="max-w-7xl mx-auto px-6 py-6">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 text-sm text-p01-text-dim font-mono">
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan">Beta</span>
+              <span>&copy; {new Date().getFullYear()} PROTOCOL 01. Devnet only &mdash; not audited.</span>
+            </div>
+            <div className="flex items-center gap-6">
+              <a href="https://x.com/Protocol01_" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Twitter / X</a>
+              <a href="https://github.com/IsSlashy/Protocol-01" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">GitHub</a>
+              <a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Discord</a>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ============ Privacy SDKs Section ============
+function PrivacySDKSection() {
+  return (
+    <div className="space-y-8">
+      {/* Section Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
+          <Shield size={20} className="text-p01-cyan" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold text-white font-display">Privacy SDKs</h2>
+          <p className="text-p01-text-muted text-sm">
+            8 TypeScript packages for stealth addresses, ZK proofs, confidential balances, and more.
+          </p>
+        </div>
+      </div>
+
+      {/* SDK Overview Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { name: "@p01/specter-sdk", desc: "ECDH + ML-KEM-768 stealth addresses", color: "cyan" },
+          { name: "@p01/zk-sdk", desc: "Groth16 proofs (snarkjs)", color: "cyan" },
+          { name: "@p01/zkspl-sdk", desc: "Confidential SPL transfers", color: "pink" },
+          { name: "@p01/arcium-sdk", desc: "MPC computation (9 circuits)", color: "pink" },
+          { name: "@p01/privacy-toolkit", desc: "Poseidon, Merkle, WOTS+", color: "cyan" },
+          { name: "@p01/auth-sdk", desc: "Encrypted key management", color: "cyan" },
+          { name: "@p01/p01-js", desc: "Core SDK + wallet provider", color: "pink" },
+          { name: "@p01/rpc-config", desc: "Multi-RPC with fallback", color: "cyan" },
+        ].map((sdk) => (
+          <div key={sdk.name} className="bg-p01-surface p-4 border border-p01-border hover:border-p01-cyan/50 transition-all group">
+            <p className={`text-sm font-mono font-bold mb-1 ${sdk.color === "cyan" ? "text-p01-cyan" : "text-p01-pink"}`}>{sdk.name}</p>
+            <p className="text-p01-text-dim text-xs">{sdk.desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Stealth Addresses */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">Stealth Addresses (specter-sdk)</h3>
+        <p className="text-p01-text-muted text-sm mb-4">
+          Generate unlinkable one-time addresses using ECDH + optional ML-KEM-768 post-quantum layer. Receive funds without revealing your identity.
+        </p>
+        <CodeBlock
+          title="Stealth Address Generation"
+          code={`import { generateStealthAddress, scanForPayments } from '@p01/specter-sdk';
+
+// Sender generates a one-time stealth address for the recipient
+const { stealthAddress, ephemeralPubKey } = generateStealthAddress({
+  spendingPubKey: recipientMeta.spendingPubKey,
+  viewingPubKey: recipientMeta.viewingPubKey,
+  useQuantumSafe: true,  // ML-KEM-768 hybrid mode
+});
+
+// Send funds to the stealth address — unlinkable to recipient
+await transfer(connection, payer, stealthAddress, amount);
+
+// Recipient scans chain for payments addressed to them
+const payments = await scanForPayments({
+  viewingKey: myViewingKey,
+  fromSlot: lastScannedSlot,
+});`}
+        />
+      </div>
+
+      {/* ZK Proofs */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">ZK Proofs (zk-sdk)</h3>
+        <p className="text-p01-text-muted text-sm mb-4">
+          Generate Groth16 proofs locally for shielded transfers and balance verification. 6 circuits up to 12,222 constraints.
+        </p>
+        <CodeBlock
+          title="Shield & Transfer with ZK Proofs"
+          code={`import { proveTransfer, verifyProof } from '@p01/zk-sdk';
+
+// Generate a Groth16 proof for a confidential transfer
+const { proof, publicSignals } = await proveTransfer({
+  senderNote: myShieldedNote,
+  recipientPubKey: recipientStealthAddress,
+  amount: 100_000_000, // 0.1 SOL in lamports
+  merkleProof: treePath,
+});
+
+// Submit proof to on-chain verifier (zk_shielded program)
+const tx = await submitShieldedTransfer(connection, wallet, {
+  proof,
+  publicSignals,
+  nullifier: publicSignals.nullifier,
+});`}
+        />
+      </div>
+
+      {/* Confidential SPL */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">Confidential SPL (zkspl-sdk)</h3>
+        <p className="text-p01-text-muted text-sm mb-4">
+          Shield SPL tokens (USDC, etc.) into denominated privacy pools with ZK proof verification.
+        </p>
+        <CodeBlock
+          title="Shield USDC into Privacy Pool"
+          code={`import { shieldTokens, unshieldTokens } from '@p01/zkspl-sdk';
+
+// Shield 100 USDC into a denominated pool
+const shieldResult = await shieldTokens({
+  connection, wallet,
+  mint: USDC_MINT,
+  amount: 100_000_000, // 100 USDC (6 decimals)
+  pool: 'pool_100',    // 100 USDC denomination
+});
+
+// Later: unshield with ZK proof (no link to deposit)
+const unshieldResult = await unshieldTokens({
+  connection, wallet,
+  note: shieldResult.note,
+  recipient: myStealthAddress,
+  proof: await generateUnshieldProof(shieldResult.note),
+});`}
+        />
+      </div>
+
+      {/* Privacy Toolkit */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">Privacy Toolkit</h3>
+        <p className="text-p01-text-muted text-sm mb-4">
+          Low-level cryptographic primitives: Poseidon hashing, Merkle trees, WOTS+ signatures, encrypted note storage.
+        </p>
+        <CodeBlock
+          title="Poseidon Hash & Merkle Tree"
+          code={`import { poseidonHash, MerkleTree, WOTSKeypair } from '@p01/privacy-toolkit';
+
+// Poseidon hash for ZK-friendly commitments
+const commitment = poseidonHash([amount, owner, randomness, tokenId]);
+
+// Build Merkle tree of note commitments
+const tree = new MerkleTree(20); // depth 20
+tree.insert(commitment);
+const proof = tree.getProof(0); // path for leaf 0
+
+// WOTS+ one-time signature (quantum-resistant)
+const wots = WOTSKeypair.generate(secret, chainIndex);
+const signature = wots.sign(messageHash);
+const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
+        />
+      </div>
+
+      {/* Arcium MPC */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">Arcium MPC (arcium-sdk)</h3>
+        <p className="text-p01-text-muted text-sm mb-4">
+          Multi-party computation for operations that cannot be done client-side alone: confidential relaying, anonymous registry lookups, hidden nullifier checks.
+        </p>
+        <CodeBlock
+          title="Confidential Relay via MPC"
+          code={`import { ArciumClient, COMP_DEFS } from '@p01/arcium-sdk';
+
+const arcium = new ArciumClient({
+  connection,
+  wallet,
+  mxeAccount: MXE_ACCOUNT,
+  cluster: 456,
+});
+
+// Submit encrypted transfer for MPC processing
+// The MPC nodes process without seeing plaintext
+const result = await arcium.execute({
+  compDef: COMP_DEFS.CONFIDENTIAL_RELAY,
+  inputs: encryptedTransferData,
+});`}
+        />
+      </div>
+
+      {/* Architecture callout */}
+      <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
+        <h4 className="text-white font-semibold mb-4 font-display text-center">Privacy Stack Architecture</h4>
+        <div className="flex items-center justify-center gap-4 text-center py-4 flex-wrap">
+          {[
+            { label: "Client SDKs", sub: "specter · zk · zkspl", icon: Wallet },
+            { label: "Proof Layer", sub: "Groth16 · STARK · MPC", icon: Shield },
+            { label: "On-Chain", sub: "13 Anchor Programs", icon: Boxes },
+          ].map((item, i) => (
+            <React.Fragment key={item.label}>
+              {i > 0 && (
+                <div className="flex items-center gap-1">
+                  <div className="w-6 h-[2px] bg-gradient-to-r from-p01-cyan to-p01-cyan/50" />
+                  <div className="w-2 h-2 bg-p01-cyan rotate-45" />
+                </div>
+              )}
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-14 h-14 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
+                  <item.icon size={24} className="text-p01-cyan" />
+                </div>
+                <span className="text-white text-xs font-display uppercase tracking-wider">{item.label}</span>
+                <span className="text-p01-text-dim text-[10px] font-mono">{item.sub}</span>
+              </div>
+            </React.Fragment>
+          ))}
+        </div>
+        <p className="text-p01-text-dim text-xs text-center mt-4 font-mono">
+          All proving runs client-side. No secrets leave the device. 6 Groth16 circuits + 6 STARK AIRs + 9 MPC circuits.
+        </p>
+      </div>
+
+      {/* Install */}
+      <div className="bg-p01-surface p-6 border border-p01-border">
+        <h3 className="text-lg font-semibold text-white mb-4 font-display">Install</h3>
+        <CodeBlock
+          title="pnpm (recommended)"
+          code={`# Core SDK
+pnpm add @p01/p01-js @p01/rpc-config
+
+# Privacy layer
+pnpm add @p01/specter-sdk @p01/zk-sdk @p01/zkspl-sdk @p01/privacy-toolkit
+
+# Optional: MPC + Auth
+pnpm add @p01/arcium-sdk @p01/auth-sdk`}
+        />
       </div>
     </div>
   );
@@ -1065,7 +1306,7 @@ function StreamSDKSection() {
 
         <CodeBlock
           title="Initialize SDK (Serverless)"
-          code={`import { P01SDK, STREAM_PROGRAM_ID } from '@protocol01/sdk';
+          code={`import { P01SDK, STREAM_PROGRAM_ID } from '@p01/p01-js';
 
 // Connect with your P01 wallet - no API keys!
 const p01 = new P01SDK({
@@ -1293,7 +1534,7 @@ function WidgetsSection() {
       {/* Code Example */}
       <CodeBlock
         title="Usage (Serverless - No API Keys)"
-        code={`import { P01Provider, SubscriptionWidget } from '@protocol01/react';
+        code={`import { P01Provider, SubscriptionWidget } from '@p01/p01-js/react';
 
 function PricingPage() {
   return (
@@ -1357,7 +1598,7 @@ function ButtonsSection() {
 
         <CodeBlock
           title="Usage"
-          code={`import { WalletButton } from '@protocol01/react';
+          code={`import { WalletButton } from '@p01/p01-js/react';
 
 // P01 wallet only - closed ecosystem
 <WalletButton
@@ -1384,7 +1625,7 @@ function ButtonsSection() {
 
         <CodeBlock
           title="Usage (On-Chain)"
-          code={`import { PaymentButton } from '@protocol01/react';
+          code={`import { PaymentButton } from '@p01/p01-js/react';
 
 // Direct on-chain payment - no server
 <PaymentButton
@@ -1412,7 +1653,7 @@ function ButtonsSection() {
 
         <CodeBlock
           title="Usage (Smart Contract)"
-          code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@protocol01/react';
+          code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@p01/p01-js/react';
 
 // On-chain subscription via smart contract
 <SubscriptionButton
@@ -1486,7 +1727,7 @@ function CardsSection() {
 
         <CodeBlock
           title="Usage (On-Chain Data)"
-          code={`import { SubscriptionCard, useStreams } from '@protocol01/react';
+          code={`import { SubscriptionCard, useStreams } from '@p01/p01-js/react';
 
 // Fetch streams directly from blockchain
 const { streams } = useStreams({ wallet: publicKey });

@@ -20,6 +20,11 @@ import {
   Lock,
   Radio,
   CreditCard,
+  Network,
+  FileText,
+  TestTube,
+  Server,
+  Download,
 } from "lucide-react";
 
 // ============ P-01 Theme Constants ============
@@ -96,7 +101,7 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "ZK Shielded Pool (Groth16 + STARK)",
         description:
-          "Dual proof system: Groth16 ZK-SNARKs (BN254) for compact verification + STARKs (Winterfell/Goldilocks) for quantum-resistant proofs. 4 STARK circuits deployed on-chain.",
+          "Dual proof system: 6 Groth16 circuits (BN254, up to 12,222 constraints) + 6 STARK AIRs (Winterfell/Goldilocks, quantum-resistant). All circuits compiled with trusted setup.",
         icon: <Shield className="w-5 h-5" />,
       },
       {
@@ -138,7 +143,7 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "On-Chain Smart Contracts",
         description:
-          "12 on-chain Solana programs deployed to devnet. Trustless, permissionless privacy — no server required for core operations.",
+          "13 Anchor programs deployed to devnet (118+ instructions). Trustless, permissionless privacy — no server required for core operations.",
         icon: <Code className="w-5 h-5" />,
       },
       {
@@ -171,6 +176,42 @@ const roadmap: RoadmapPhase[] = [
           "Share denominated pool notes between devices using BLE (ECDH encrypted) or NFC (HCE with PIN-derived encryption). Anti-MITM fingerprint verification.",
         icon: <Wallet className="w-5 h-5" />,
       },
+      {
+        title: "STARK Migration (On-Chain Verifier)",
+        description:
+          "Custom FRI verifier on-chain (no Winterfell dependency). 6 STARK AIRs with compact proofs (9-15KB). Mobile WASM prover (82KB). ~889K CU verification. Quantum-resistant by default.",
+        icon: <Cpu className="w-5 h-5" />,
+      },
+      {
+        title: "Arcium MPC Integration (9 Circuits)",
+        description:
+          "Multi-party computation via Arcium Cerberus protocol. 6 use cases: confidential relay, anonymous registry, hidden nullifier, balance audit, stealth scan, private vote. 1-of-N honest node.",
+        icon: <Network className="w-5 h-5" />,
+      },
+      {
+        title: "On-Chain Registry (EIP-5564)",
+        description:
+          "Stealth meta-address directory on Solana. Register/update spending + viewing public keys, optional ML-KEM-768 pubkey for quantum-resistant stealth v2.",
+        icon: <FileText className="w-5 h-5" />,
+      },
+      {
+        title: "Security Hardening",
+        description:
+          "Spending key never leaves device. PIN with SHA-256 + progressive lockout. SecureStore for all secrets. Clipboard auto-clear (60s). App switcher blur. android:allowBackup=false.",
+        icon: <Lock className="w-5 h-5" />,
+      },
+      {
+        title: "RPC Fallback Infrastructure",
+        description:
+          "@p01/rpc-config package with priority-based connection manager. QuickNode \u2192 Helius \u2192 public fallback chain. Auto-switch on 429/502/503 errors. URL sanitization.",
+        icon: <Server className="w-5 h-5" />,
+      },
+      {
+        title: "370+ Automated Tests",
+        description:
+          "Comprehensive test suite: 106 program stress tests, 124 crypto SDK tests, 140 mobile service tests, E2E flows, 69 Rust STARK tests. All passing.",
+        icon: <TestTube className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -192,10 +233,22 @@ const roadmap: RoadmapPhase[] = [
         icon: <CreditCard className="w-5 h-5" />,
       },
       {
-        title: "Mainnet Audit",
+        title: "External Security Audit",
         description:
-          "Comprehensive security audit of all 12 on-chain programs, ZK circuits, STARK AIRs, and client SDKs before mainnet deployment.",
+          "Comprehensive audit of all 13 programs, 6 Groth16 circuits, 6 STARK AIRs, and 8 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.",
         icon: <Shield className="w-5 h-5" />,
+      },
+      {
+        title: "Trusted Setup Ceremony",
+        description:
+          "Multi-party Groth16 trusted setup with 3+ contributors (currently 1). Powers of Tau + beacon finalization for all 6 circuits.",
+        icon: <Lock className="w-5 h-5" />,
+      },
+      {
+        title: "iOS Build & Testing",
+        description:
+          "iOS build and testing — currently only Android is verified. Requires CocoaPods setup, code signing, and TestFlight deployment.",
+        icon: <Wallet className="w-5 h-5" />,
       },
       {
         title: "DeFi Composability",
@@ -438,6 +491,48 @@ export default function RoadmapPage() {
           </div>
         </div>
       </section>
+
+      {/* Design Document */}
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex justify-center">
+        <a
+          href="/protocol-01-design-document.pdf"
+          download
+          className="group flex items-center gap-3 px-5 py-2.5 border rounded-lg transition-all duration-300 hover:bg-[#151518]"
+          style={{ borderColor: THEME.borderColor }}
+        >
+          <FileText className="w-4 h-4 transition-colors" style={{ color: THEME.dimColor }} />
+          <span className="text-sm" style={{ color: THEME.mutedColor }}>
+            Design & Architecture Document
+          </span>
+          <span className="text-xs font-mono" style={{ color: THEME.dimColor }}>PDF</span>
+          <Download className="w-3.5 h-3.5 transition-colors" style={{ color: THEME.dimColor }} />
+        </a>
+      </div>
+      <p className="text-center text-[10px] font-mono tracking-wider pb-4" style={{ color: THEME.dimColor }}>
+        PROGRESSIVELY UPDATED · LAST REVISION MARCH 2026
+      </p>
+
+      {/* Footer */}
+      <footer className="border-t py-8 px-4" style={{ borderColor: THEME.borderColor }}>
+        <div className="max-w-5xl mx-auto text-center space-y-3">
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border rounded"
+              style={{ borderColor: THEME.primaryColor + "50", color: THEME.primaryColor }}>
+              Beta
+            </span>
+            <span style={{ color: THEME.borderColor }}>·</span>
+            <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: THEME.dimColor }}>
+              Devnet Only
+            </span>
+          </div>
+          <p className="text-sm font-mono" style={{ color: THEME.dimColor }}>
+            &copy; {new Date().getFullYear()} PROTOCOL 01 | Built from scratch for privacy
+          </p>
+          <p className="text-[10px] font-mono" style={{ color: THEME.dimColor + "80" }}>
+            This software is in active development. Not audited. Use at your own risk.
+          </p>
+        </div>
+      </footer>
 
       {/* Bottom glow line */}
       <div
