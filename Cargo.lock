@@ -2556,6 +2556,7 @@ dependencies = [
  "arcium-anchor",
  "arcium-client",
  "arcium-macros",
+ "blake3",
 ]
 
 [[package]]
@@ -5816,6 +5817,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
+ "blake3",
  "bytemuck",
  "sha3",
  "solana-bn254",

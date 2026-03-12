@@ -39,13 +39,13 @@ pub struct StarkProofBytes {
 /// Default proof options for Protocol 01 circuits.
 ///
 /// Tuned for:
-/// - 128-bit security
-/// - Reasonable proof size (~40-80KB)
+/// - 128-bit security: 32 queries × log2(16) = 32 × 4 = 128 bits
+/// - Reasonable proof size (~60-120KB)
 /// - Fast client-side proving
 fn default_proof_options() -> ProofOptions {
     ProofOptions::new(
         32, // number of queries (security parameter)
-        8,  // blowup factor (trace domain / constraint domain)
+        16, // blowup factor — 16 = 2^4, gives 32×4 = 128-bit security
         0,  // grinding factor (0 = no proof-of-work, faster proving)
         FieldExtension::None, // base field only
         8,  // FRI folding factor

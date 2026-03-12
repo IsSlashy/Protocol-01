@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("AwHRR8mbZz7u98NCRcYCSPc6R4FtjbLhaV1ekMi5jTMQ");
+declare_id!("UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM");
 
 /// P-01 Network Fee Splitter
 /// Automatically takes a fee on incoming transfers and forwards the rest to the recipient.
@@ -18,6 +18,15 @@ pub const MAX_FEE_BPS: u16 = 500;
 
 /// Minimum transfer amount (to avoid dust attacks)
 pub const MIN_TRANSFER_LAMPORTS: u64 = 10_000; // 0.00001 SOL
+
+/// Hardcoded protocol fee wallet — must match across all P-01 programs
+/// BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN
+pub const PROTOCOL_FEE_WALLET: Pubkey = Pubkey::new_from_array([
+    0x9a, 0xef, 0xbc, 0xf9, 0x06, 0x95, 0x58, 0x0f,
+    0x6f, 0x96, 0x19, 0xeb, 0x7b, 0x6c, 0xd6, 0x3a,
+    0xcd, 0xc6, 0x66, 0x1b, 0xd3, 0xed, 0xfb, 0x93,
+    0xb7, 0x75, 0x23, 0x24, 0x5e, 0xb4, 0xa0, 0xcf,
+]);
 
 #[program]
 pub mod p01_fee_splitter {
@@ -398,8 +407,11 @@ pub struct SplitSolDirect<'info> {
     #[account(mut)]
     pub recipient: AccountInfo<'info>,
 
-    /// CHECK: Fee wallet specified by caller
-    #[account(mut)]
+    /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant
+    #[account(
+        mut,
+        constraint = fee_wallet.key() == PROTOCOL_FEE_WALLET @ ErrorCode::InvalidFeeWallet
+    )]
     pub fee_wallet: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
