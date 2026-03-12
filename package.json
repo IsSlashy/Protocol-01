@@ -60,6 +60,9 @@
     "react-native": "0.81.5"
   },
   "pnpm": {
+    "overrides": {
+      "zod": "3.25.76"
+    },
     "patchedDependencies": {
       "llama.rn@0.11.2": "patches/llama.rn@0.11.2.patch"
     },
