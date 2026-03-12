@@ -29,7 +29,7 @@
 
 ---
 
-## 📱 Installation & Demo (For Jury)
+## 📱 Installation & Demo
 
 ### Mobile App (Android)
 
@@ -47,11 +47,6 @@
 3. Set up biometric authentication (optional)
 4. You're ready to use P-01!
 
-<p align="center">
-  <img src="docs/assets/screenshots/mobile-onboarding.png" alt="Onboarding" width="200"/>
-  <img src="docs/assets/screenshots/mobile-home.png" alt="Home" width="200"/>
-  <img src="docs/assets/screenshots/mobile-send.png" alt="Send" width="200"/>
-</p>
 
 ---
 
@@ -697,4 +692,5 @@ These libraries are used in production by Protocol 01 and are free to use under 
   <strong>Built on Solana</strong><br/>
   <sub>&copy; 2026 Volta Team &mdash; All rights reserved</sub>
 </p>
+
 
