@@ -6,10 +6,12 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import Constants from 'expo-constants';
 import { Colors, FontFamily, P01Colors } from '@/constants/theme';
+import { checkForUpdate } from '@/services/updates/versionCheck';
 
-const APP_VERSION = '1.0.0';
-const BUILD_NUMBER = '1';
+const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
+const BUILD_NUMBER = String(Constants.expoConfig?.android?.versionCode ?? Constants.expoConfig?.ios?.buildNumber ?? '1');
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: any }) {
   return (
@@ -162,6 +164,23 @@ export default function AboutScreen() {
                 Protocol 01 is a privacy-focused Solana wallet that uses advanced cryptographic techniques including stealth addresses, ring signatures, and decoy transactions to protect your financial privacy.
               </Text>
             </View>
+          </GlassCard>
+        </Animated.View>
+
+        {/* Check for Updates */}
+        <Animated.View entering={FadeInDown.delay(350).duration(400)} style={{ marginHorizontal: 16, marginBottom: 24 }}>
+          <GlassCard>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 }}
+              onPress={() => checkForUpdate(true)}
+              activeOpacity={0.7}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Ionicons name="cloud-download-outline" size={20} color={P01Colors.cyan} />
+                <Text style={{ color: '#ffffff', fontSize: 16, marginLeft: 12 }}>Check for Updates</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
           </GlassCard>
         </Animated.View>
 
