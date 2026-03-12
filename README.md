@@ -20,12 +20,15 @@
 
 > **PROPRIETARY SOFTWARE &mdash; ALL RIGHTS RESERVED**
 >
-> &copy; 2026 Volta Team | Developed by Slashy Fx
+> &copy; 2025-2026 Volta Team | Developed by Slashy Fx
 >
-> This repository is visible for **hackathon evaluation purposes only**.
-> No license is granted to use, copy, modify, fork, or distribute this code.
+> This repository is publicly visible for **demonstration and evaluation purposes only**.
+> Public visibility does **not** constitute a grant of any license.
+> No permission is granted to use, copy, modify, fork, or distribute this code.
 >
-> See [LICENSE](./LICENSE) for details.
+> For licensing, investment, or partnership inquiries &mdash; [reach out](https://x.com/Protocol01_).
+>
+> See [LICENSE](./LICENSE) for full terms.
 
 ---
 
@@ -606,7 +609,7 @@ Automated via GitHub Actions on every push/PR:
 - **Input validation** -- All API endpoints and SDK methods validate inputs
 - **ZK proof verification** -- Server-side Groth16 proof verification with nullifier tracking to prevent double-spends
 - **Stealth address privacy** -- ECDH key exchange ensures only the recipient can detect and claim payments
-- **Proprietary license** -- Code visible for hackathon evaluation only
+- **Proprietary license** -- All rights reserved, code visible for evaluation only
 
 ---
 
@@ -622,7 +625,7 @@ P01 contributes reusable ZK tooling to the Solana ecosystem:
 | [@p01/zk-pipeline](packages/zk-pipeline/) | Complete guide: circuit → mobile → Solana | [Read the guide](packages/zk-pipeline/) |
 | [@p01/arcium-sdk](packages/arcium-sdk/) | MPC confidential compute via Arcium (6 use cases) | `npm i @p01/arcium-sdk` |
 
-These libraries are used in production by Protocol 01 and are free to use under the MIT license.
+These libraries are used in production by Protocol 01. Separate permissive licenses may be granted at Volta Team's discretion — see each package for details.
 
 ---
 
