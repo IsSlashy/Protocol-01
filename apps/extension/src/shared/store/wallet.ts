@@ -29,12 +29,11 @@ import { getRecentTransactions } from '../services/transactions';
 import {
   Keypair,
   Transaction,
-  Connection,
   PublicKey,
   SystemProgram,
   LAMPORTS_PER_SOL,
-  clusterApiUrl,
 } from '@solana/web3.js';
+import { RpcConnectionManager } from '@p01/rpc-config';
 import type { TransactionRecord } from '../types';
 
 // Session timeout in milliseconds (10 minutes)
@@ -545,10 +544,15 @@ export const useWalletStore = create<WalletState>()(
               throw new Error('Privy wallet not ready');
             }
 
-            const rpcUrl = network === 'devnet'
-              ? clusterApiUrl('devnet')
-              : 'https://api.mainnet-beta.solana.com';
-            const connection = new Connection(rpcUrl);
+            const heliusApiKey = typeof import.meta !== 'undefined'
+              ? (import.meta as any).env?.VITE_HELIUS_API_KEY
+              : undefined;
+            const rpcManager = new RpcConnectionManager({
+              cluster: network,
+              commitment: 'confirmed',
+              heliusApiKey,
+            });
+            const connection = rpcManager.getConnection();
 
             const transaction = new Transaction().add(
               SystemProgram.transfer({
