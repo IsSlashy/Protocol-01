@@ -33,7 +33,7 @@
 
 ### Mobile App (Android)
 
-**Download APK:** [Protocol-01 v0.8.0](https://github.com/IsSlashy/Protocol-01/releases/download/v0.8.0/protocol-01-v0.8.0.apk)
+**Download APK:** [Protocol-01 v0.8.2](https://github.com/IsSlashy/Protocol-01/releases/download/v0.8.2/protocol-01-v0.8.2.apk) (216 MB)
 
 #### Installation Steps:
 1. Download the APK on your Android device
@@ -61,7 +61,7 @@
 
 **Option 2 - Manual Install (Developer Mode):**
 
-1. Download the extension: [P01-Extension-v0.3.0.zip](https://github.com/IsSlashy/Protocol-01/releases/download/v0.4.0/P01-Extension-v0.3.0.zip)
+1. Download the extension: [P01-Extension-v0.3.0.zip](https://github.com/IsSlashy/Protocol-01/releases/download/v0.8.0/P01-Extension-v0.3.0.zip)
 2. Extract the ZIP file
 3. Open Chrome → `chrome://extensions/`
 4. Enable **"Developer mode"** (top right toggle)
@@ -209,6 +209,7 @@ protocol-01/
 │   ├── auth-sdk/           # @p01/auth-sdk — "Login with P-01" authentication
 │   ├── whitelist-sdk/      # @p01/whitelist-sdk — On-chain developer whitelist
 │   ├── specter-js/         # @p01/js — Pay button & browser SDK
+│   ├── rpc-config/          # @p01/rpc-config — Shared RPC connection manager
 │   ├── ui/                 # @p01/ui — Shared design system & components
 │   └── sdk/                # @p01/stream — Payment stream utilities
 ├── circuits/
@@ -216,6 +217,8 @@ protocol-01/
 │   ├── confidential_balance.circom  # zkSPL balance commitment circuit (1,382 constraints)
 │   ├── balance_proof.circom         # zkSPL balance sufficiency proof (644 constraints)
 │   ├── denominated_pool.circom      # Fixed-denomination privacy pool (4,273 constraints)
+│   ├── denominated_transfer.circom  # Denominated pool transfer circuit
+│   ├── subscriber_ownership.circom  # Subscription ownership proof
 │   ├── merkle.circom                # Merkle tree membership proof
 │   └── poseidon.circom              # ZK-friendly hash function
 ├── programs/
@@ -313,6 +316,21 @@ Balance on-chain = Poseidon(balance, salt, owner_pubkey, token_mint)
 Pedersen commitments (`C = v·G + r·H`) rely on elliptic curves — broken by Shor's algorithm.
 Poseidon commitments (`C = Hash(v, r, ...)`) rely on algebraic hashes — immune to quantum attacks.
 The Groth16 proof system is ephemeral and can be migrated to STARKs later.
+
+### STARK Proofs (Quantum-Resistant)
+
+On-chain STARK/FRI verifier for post-quantum privacy. Built with Winterfell, Goldilocks field (`2^64 - 2^32 + 1`), and Poseidon AIR constraints.
+
+| Parameter | Value |
+|-----------|-------|
+| Proving system | STARK (FRI-based, no trusted setup) |
+| Field | Goldilocks (`p = 2^64 - 2^32 + 1`) |
+| Hash function | Poseidon (full S-box x^7, 30 rounds) |
+| Proof size | ~9 KB (Blake3 Merkle, 16 queries) |
+| On-chain verification | ~889K compute units |
+| Circuits | 6 (subscriber, pool, balance, merkle, confidential_balance, transfer) |
+
+STARKs complement Groth16 as a quantum-resistant alternative. Hash-based proofs (no elliptic curves) are immune to Shor's algorithm. The on-chain FRI verifier runs natively on Solana with no external dependencies.
 
 ### Private Relay (On-Chain Trustless)
 
@@ -468,7 +486,8 @@ await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 | ZK completeness | Valid spends always produce valid proofs |
 | Zero-knowledge | Proofs reveal nothing beyond validity |
 | Double-spend | Nullifiers are unique per note, stored on-chain |
-| Quantum resistance | Poseidon commitments immune to Shor's algorithm |
+| Quantum resistance | Poseidon commitments + STARK proofs immune to Shor's algorithm |
+| STARK fallback | Hash-based proofs (no ECC) for post-quantum migration path |
 | Balance hiding | Commitments reveal nothing about the underlying balance |
 | MPC threshold | Arcium Cerberus: 1-of-N honest node guarantees correctness |
 
@@ -483,7 +502,7 @@ Spending patterns cannot be analyzed.
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22+
 - pnpm 8+
 - Rust + Anchor CLI (for on-chain programs)
 - Circom 2.x (for circuit compilation)
@@ -550,8 +569,9 @@ Protocol 01 maintains comprehensive test coverage across all layers of the stack
 | **whitelist-sdk** | On-chain whitelist operations | 40 | Passing |
 | **ui** | Design tokens + theme | 85 | Passing |
 | **relayer** | Private send + stealth + ZK verify | 20 | Passing |
+| **STARK verifier** | On-chain FRI + compact proofs (6 circuits) | 69 | Passing |
 | **E2E Integration** | Full protocol flows (4 scenarios) | 81 | Devnet |
-| **TOTAL** | **62+ test files** | **~2255+** | |
+| **TOTAL** | **70+ test files** | **~2400+** | |
 
 ### What's Tested
 
@@ -559,6 +579,8 @@ Protocol 01 maintains comprehensive test coverage across all layers of the stack
 - **Privacy flows**: Stealth address generation/scanning/claiming, ZK shield/transfer/unshield, payment splitting, relayer routing
 - **zkSPL**: Confidential balance circuits (Poseidon commitments, conservation law, range proofs), deposit/withdraw/transfer/apply-pending, balance sufficiency proofs
 - **Auth protocol**: Session lifecycle, QR generation, Ed25519 signature verification, subscription proofs, replay prevention
+- **STARK proofs**: Poseidon AIR constraints, compact proof generation, on-chain FRI verification, multi-circuit dispatch
+- **Quantum vault**: WOTS+ keygen/sign/verify, hash-timelock, commit-reveal, key rotation
 - **Frontend**: All major components, user interactions, wallet connection, payment flows, settings
 - **SDK**: Full API coverage with mocked Solana RPC, error handling, edge cases
 
@@ -662,7 +684,8 @@ These libraries are used in production by Protocol 01 and are free to use under 
 | | |
 |---|---|
 | Website | [protocol-01.vercel.app](https://protocol-01.vercel.app) |
-| Documentation | [protocol-01.vercel.app/docs](https://protocol-01.vercel.app/docs) |
+| Design Document | [protocol-01.vercel.app/docs](https://protocol-01.vercel.app/docs) |
+| SDK Demo | [protocol-01.vercel.app/sdk-demo](https://protocol-01.vercel.app/sdk-demo) |
 | Roadmap | [protocol-01.vercel.app/roadmap](https://protocol-01.vercel.app/roadmap) |
 | Twitter/X | [@Protocol01_](https://x.com/Protocol01_) |
 | Discord | [discord.gg/KfmhPFAHNH](https://discord.gg/KfmhPFAHNH) |
