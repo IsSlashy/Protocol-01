@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { receiptFromJSON, findPool } from '@/services/denominatedPool';
+import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import type { ProofGenerator } from '@/services/denominatedPool';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useZkProver } from '@/providers/ZkProverProvider';
@@ -79,7 +80,7 @@ export default function SubscribePrivateScreen() {
 
       const note = notes.find(n => n.id === selectedNoteId);
       if (!note) throw new Error('Selected note not found');
-      const receipt = receiptFromJSON(note.receiptJSON);
+      const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
       const poolConfig = findPool(note.token, note.denomination);
       if (!poolConfig) throw new Error(`Pool not found for ${note.token} ${note.denomination}`);
 

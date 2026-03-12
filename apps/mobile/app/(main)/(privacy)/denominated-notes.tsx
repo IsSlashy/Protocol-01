@@ -28,6 +28,7 @@ import {
   slotToEpoch,
 } from '@/services/denominatedPool';
 import { getCluster } from '@/services/solana/connection';
+import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 
@@ -120,6 +121,7 @@ export default function DenominatedNotesScreen() {
         const slot1 = await conn.getSlot('confirmed');
         const time1 = Date.now();
         if (cancelled) return;
+        console.log('[DenomNotes] Initial slot:', slot1);
         setCurrentSlot(slot1);
 
         // Second reading after 3s to measure real slot speed
@@ -132,11 +134,14 @@ export default function DenominatedNotesScreen() {
             const timeDiff = time2 - time1;
             if (slotDiff > 0) {
               const measured = timeDiff / slotDiff;
+              console.log('[DenomNotes] Measured slot duration:', measured.toFixed(0), 'ms');
               // Clamp to reasonable range (200-800ms)
               setSlotDurationMs(Math.max(200, Math.min(800, measured)));
             }
             if (!cancelled) setCurrentSlot(slot2);
-          } catch {}
+          } catch (e) {
+            console.warn('[DenomNotes] Second slot read failed:', e);
+          }
         }, 3000);
 
         // Ongoing polling every 30s
@@ -147,7 +152,9 @@ export default function DenominatedNotesScreen() {
             if (!cancelled) setCurrentSlot(s);
           } catch {}
         }, 30_000);
-      } catch {}
+      } catch (e) {
+        console.error('[DenomNotes] Slot init failed:', e);
+      }
     };
 
     refreshNoteStatuses();
@@ -160,17 +167,27 @@ export default function DenominatedNotesScreen() {
       return { isMature: true, remainingMs: 0 };
     }
     if (!currentSlot) {
+      console.log('[DenomNotes] getMaturityInfo: no currentSlot yet');
       return { isMature: false, remainingMs: -1 }; // no slot data yet
     }
 
     try {
-      const receipt = receiptFromJSON(note.receiptJSON);
+      const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
       const currentEpoch = slotToEpoch(currentSlot);
       const cached = poolCache[note.poolPDA];
       const epochDelay = cached?.info.epochDelay ?? 1n;
       const dynamicDelay = BigInt(cached?.info.dynamicDelay ?? 2);
       const totalDelay = epochDelay + dynamicDelay;
       const minEpoch = currentEpoch - totalDelay;
+
+      console.log('[DenomNotes] maturity check:', {
+        currentSlot,
+        currentEpoch: currentEpoch.toString(),
+        depositEpoch: receipt.depositEpoch.toString(),
+        totalDelay: totalDelay.toString(),
+        minEpoch: minEpoch.toString(),
+        isMature: receipt.depositEpoch <= minEpoch,
+      });
 
       if (receipt.depositEpoch <= minEpoch) {
         return { isMature: true, remainingMs: 0 };
@@ -180,8 +197,10 @@ export default function DenominatedNotesScreen() {
       const maturitySlot = Number(receipt.depositEpoch + totalDelay) * SLOTS_PER_EPOCH;
       const slotsLeft = Math.max(0, maturitySlot - currentSlot);
       const remainingMs = slotsLeft * slotDurationMs;
+      console.log('[DenomNotes] time remaining:', formatTimeRemaining(remainingMs), `(${slotsLeft} slots)`);
       return { isMature: false, remainingMs };
-    } catch {
+    } catch (e) {
+      console.error('[DenomNotes] getMaturityInfo error:', e);
       return { isMature: false, remainingMs: -1 };
     }
   }, [currentSlot, slotDurationMs, poolCache]);

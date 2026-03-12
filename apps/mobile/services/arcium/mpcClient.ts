@@ -49,7 +49,7 @@ async function getWalletInfo(): Promise<{ pubkey: PublicKey; signer: (tx: Transa
   if (isPrivyWallet && publicKey) {
     const privySigner = getPrivySigner();
     if (privySigner) {
-      console.log('[MPC] Using Privy wallet:', publicKey.slice(0, 8) + '...');
+      if (__DEV__) console.log('[MPC] Using Privy wallet:', publicKey.slice(0, 8) + '...');
       return {
         pubkey: new PublicKey(publicKey),
         signer: privySigner,
@@ -60,7 +60,7 @@ async function getWalletInfo(): Promise<{ pubkey: PublicKey; signer: (tx: Transa
   // Fallback to local keypair
   const keypair = await getKeypair();
   if (keypair) {
-    console.log('[MPC] Using local keypair:', keypair.publicKey.toBase58().slice(0, 8) + '...');
+    if (__DEV__) console.log('[MPC] Using local keypair:', keypair.publicKey.toBase58().slice(0, 8) + '...');
     return {
       pubkey: keypair.publicKey,
       signer: async (tx: Transaction) => {
@@ -87,10 +87,10 @@ export async function getMpcClient(): Promise<any | null> {
   initPromise = (async () => {
     try {
       // Dynamic import to isolate polyfill issues
-      console.log('[MPC] Step 1: importing @p01/arcium-sdk...');
+      if (__DEV__) console.log('[MPC] Step 1: importing @p01/arcium-sdk...');
       const sdk = await import('@p01/arcium-sdk');
       ArciumClientClass = sdk.ArciumClient;
-      console.log('[MPC] Step 2: SDK imported, ArciumClient:', !!ArciumClientClass);
+      if (__DEV__) console.log('[MPC] Step 2: SDK imported, ArciumClient:', !!ArciumClientClass);
 
       const walletInfo = await getWalletInfo();
       if (!walletInfo) {
@@ -98,22 +98,22 @@ export async function getMpcClient(): Promise<any | null> {
         console.warn('[MPC] Step 3: No wallet available yet (will retry on next call)');
         return null;
       }
-      console.log('[MPC] Step 3: wallet ready:', walletInfo.pubkey.toBase58().slice(0, 8) + '...');
+      if (__DEV__) console.log('[MPC] Step 3: wallet ready:', walletInfo.pubkey.toBase58().slice(0, 8) + '...');
 
       const connection = getConnection();
       const wallet = createWalletAdapter(walletInfo.pubkey, walletInfo.signer);
-      console.log('[MPC] Step 4: creating ArciumClient...');
+      if (__DEV__) console.log('[MPC] Step 4: creating ArciumClient...');
 
       const client = new ArciumClientClass({
         connection,
         wallet,
         programId: P01_ARCIUM_PROGRAM_ID,
       });
-      console.log('[MPC] Step 5: calling client.initialize()...');
+      if (__DEV__) console.log('[MPC] Step 5: calling client.initialize()...');
 
       await client.initialize();
       clientInstance = client;
-      console.log('[MPC] Step 6: Arcium client initialized successfully!');
+      if (__DEV__) console.log('[MPC] Step 6: Arcium client initialized successfully!');
       return client;
     } catch (e: any) {
       initError = e.message || 'Unknown MPC init error';
@@ -143,6 +143,64 @@ export function getMpcInitError(): string | null {
 /** Check if MPC client is ready without triggering init */
 export function isMpcClientReady(): boolean {
   return clientInstance !== null;
+}
+
+/**
+ * Get a pseudonymous proxy identifier for the current MPC session.
+ *
+ * Returns a 32-byte SHA-256 hash derived from the ephemeral x25519 session
+ * key — NOT from the user's wallet pubkey.  This identifier can be used in
+ * non-signing account fields, computation metadata, or off-chain indexing
+ * to decouple the user's on-chain identity from their MPC operations.
+ *
+ * The identifier rotates automatically when ephemeral keys rotate (every
+ * 10 encrypt operations or on session reset).
+ *
+ * IMPORTANT: This does NOT hide the fee payer.  Solana requires the actual
+ * payer to sign, so the wallet pubkey is still visible as `feePayer` in
+ * every submitted transaction.  Full payer obfuscation requires a relayer
+ * service that submits transactions on users' behalf.
+ *
+ * TODO: Implement relayer-based submission where:
+ *   1. Client builds the MPC instruction locally
+ *   2. Client sends instruction (NOT transaction) to a relayer service
+ *   3. Relayer wraps instruction in a transaction, pays fees, and submits
+ *   4. On-chain, the user appears only via the proxy PDA / identifier
+ *   This would complete the privacy story for Arcium MPC operations.
+ *
+ * @returns Uint8Array (32 bytes) or null if client not initialized
+ */
+export async function getProxyIdentifier(): Promise<Uint8Array | null> {
+  const client = await getMpcClient();
+  if (!client) return null;
+
+  try {
+    return client.getProxyIdentifier();
+  } catch (e: any) {
+    if (__DEV__) console.warn('[MPC] getProxyIdentifier failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Derive a proxy PDA from the ephemeral session key.
+ *
+ * This PDA is seeded from the x25519 ephemeral key (not the wallet) and
+ * can be used as an unlinkable account reference in computation account
+ * fields.  It cannot sign or pay fees.
+ *
+ * @returns [PublicKey, bump] or null if client not initialized
+ */
+export async function getProxyPDA(): Promise<[PublicKey, number] | null> {
+  const client = await getMpcClient();
+  if (!client) return null;
+
+  try {
+    return client.deriveProxyPDA();
+  } catch (e: any) {
+    if (__DEV__) console.warn('[MPC] getProxyPDA failed:', e.message);
+    return null;
+  }
 }
 
 /**

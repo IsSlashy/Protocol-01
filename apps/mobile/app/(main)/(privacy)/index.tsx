@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-  Switch,
   TouchableOpacity,
   RefreshControl,
   StyleSheet,
@@ -53,7 +52,7 @@ export default function PrivacyDashboard() {
   } = useSettingsStore();
 
   const { isMpcActive, programAvailable } = useArcium();
-  const { mpcEnabled, setMpcEnabled } = useArciumStore();
+  const { } = useArciumStore(); // MPC always on
 
   useEffect(() => { initSettings(); }, []);
 
@@ -223,12 +222,12 @@ export default function PrivacyDashboard() {
           </View>
         </Animated.View>
 
-        {/* ═══════ MPC ENHANCEMENT: Arcium toggle + status ═══════ */}
+        {/* ═══════ MPC ENHANCEMENT: Arcium — always on ═══════ */}
         <Animated.View entering={FadeInUp.delay(250)}>
           <View style={styles.mpcCard}>
             <View style={styles.mpcCardRow}>
               <View style={styles.mpcIconWrap}>
-                <Ionicons name="git-network" size={16} color="#f59e0b" />
+                <Ionicons name="shield-checkmark" size={16} color="#7C3AED" />
               </View>
               <View style={styles.mpcCardInfo}>
                 <Text style={styles.mpcCardTitle}>
@@ -237,18 +236,12 @@ export default function PrivacyDashboard() {
                 <Text style={styles.mpcCardDesc}>
                   {isMpcActive
                     ? 'Arcium MPC active — threshold computation enabled'
-                    : 'Distribute trust across MPC nodes via Arcium'}
+                    : 'Arcium MPC initializing...'}
                 </Text>
               </View>
-              <Switch
-                value={mpcEnabled}
-                onValueChange={async (v) => {
-                  await setMpcEnabled(v);
-                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
-                trackColor={{ false: '#2a2a30', true: '#f59e0b' }}
-                thumbColor={mpcEnabled ? '#fff' : '#888'}
-              />
+              <View style={{ backgroundColor: '#10b98120', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '600' }}>ON</Text>
+              </View>
             </View>
           </View>
         </Animated.View>
@@ -617,11 +610,11 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   mpcCard: {
-    backgroundColor: 'rgba(245, 158, 11, 0.04)',
+    backgroundColor: 'rgba(124, 58, 237, 0.04)',
     borderRadius: 14,
     padding: Spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.10)',
+    borderColor: 'rgba(124, 58, 237, 0.10)',
     marginBottom: Spacing.lg,
   },
   mpcCardRow: {
@@ -633,7 +626,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: 'rgba(245, 158, 11, 0.10)',
+    backgroundColor: 'rgba(124, 58, 237, 0.10)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -641,7 +634,7 @@ const styles = StyleSheet.create({
   mpcCardTitle: {
     fontSize: 12,
     fontFamily: FontFamily.bold,
-    color: '#f59e0b',
+    color: '#7C3AED',
     letterSpacing: 0.3,
     marginBottom: 2,
   },
@@ -660,7 +653,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#22c55e',
   },
   mpcDotIdle: {
-    backgroundColor: 'rgba(245, 158, 11, 0.4)',
+    backgroundColor: 'rgba(124, 58, 237, 0.4)',
   },
   enableHint: {
     flexDirection: 'row',

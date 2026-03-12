@@ -44,7 +44,7 @@ async function getVaultSalt(): Promise<string> {
 
 /**
  * Derive the vault key from PIN hash + device salt.
- * Uses SHA-512 iterated 10,000 times for stretching.
+ * Uses SHA-256 iterated 10,000 times for stretching.
  */
 async function deriveVaultKey(pinHash: string): Promise<Uint8Array> {
   const salt = await getVaultSalt();

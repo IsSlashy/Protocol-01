@@ -15,6 +15,7 @@ import { wordlist } from '@scure/bip39/wordlists/english';
 import { getConnection } from '../solana/connection';
 import { getKeypair, deriveKeypairFromMnemonic } from '../solana/wallet';
 import { getZkService } from '../zk';
+import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../../utils/crypto/noteVault';
 
 // SecureStore keys — must match wallet.ts and shieldedStore.ts
 const MNEMONIC_KEY = 'p01_mnemonic';
@@ -49,11 +50,16 @@ const ZKSPL_STATE_PREFIX = 'zkspl_state:';
 
 class AsyncStorageStateStore implements StateStore {
   async get(key: string): Promise<string | null> {
-    return AsyncStorage.getItem(`${ZKSPL_STATE_PREFIX}${key}`);
+    const raw = await AsyncStorage.getItem(`${ZKSPL_STATE_PREFIX}${key}`);
+    if (!raw) return null;
+    // Decrypt vault-encrypted state (contains spending key)
+    return vaultDecrypt(raw);
   }
 
   async set(key: string, value: string): Promise<void> {
-    await AsyncStorage.setItem(`${ZKSPL_STATE_PREFIX}${key}`, value);
+    // Encrypt state at rest — contains spending key and balance secrets
+    const encrypted = isVaultUnlocked() ? vaultEncrypt(value) : value;
+    await AsyncStorage.setItem(`${ZKSPL_STATE_PREFIX}${key}`, encrypted);
   }
 
   async delete(key: string): Promise<void> {
