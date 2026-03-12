@@ -11,9 +11,9 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
   sendAndConfirmTransaction,
-  clusterApiUrl,
   TransactionInstruction,
 } from '@solana/web3.js';
+import { RpcConnectionManager, type SolanaCluster } from '@p01/rpc-config';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import nacl from 'tweetnacl';
@@ -25,17 +25,23 @@ const SOLANA_DERIVATION_PATH = "m/44'/501'/0'/0'";
 // Helius API key from environment (optional but recommended for better performance)
 const HELIUS_API_KEY = import.meta.env.VITE_HELIUS_API_KEY;
 
-// RPC endpoints - Helius first (if configured), then official Solana fallback
-const RPC_ENDPOINTS = {
-  devnet: HELIUS_API_KEY
-    ? `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
-    : clusterApiUrl('devnet'),
-  'mainnet-beta': HELIUS_API_KEY
-    ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
-    : 'https://api.mainnet-beta.solana.com',
-};
-
 export type NetworkType = 'devnet' | 'mainnet-beta';
+
+// Shared RPC connection managers per network (lazy singleton)
+const managers = new Map<NetworkType, RpcConnectionManager>();
+
+function getRpcManager(network: NetworkType): RpcConnectionManager {
+  let mgr = managers.get(network);
+  if (!mgr) {
+    mgr = new RpcConnectionManager({
+      cluster: network as SolanaCluster,
+      commitment: 'confirmed',
+      heliusApiKey: HELIUS_API_KEY || undefined,
+    });
+    managers.set(network, mgr);
+  }
+  return mgr;
+}
 
 export interface TokenBalance {
   mint: string;
@@ -72,10 +78,11 @@ export async function deriveKeypairFromMnemonic(mnemonic: string): Promise<Keypa
 }
 
 /**
- * Get connection to Solana network
+ * Get connection to Solana network.
+ * Uses RpcConnectionManager with Helius priority fallback.
  */
 export function getConnection(network: NetworkType): Connection {
-  return new Connection(RPC_ENDPOINTS[network], 'confirmed');
+  return getRpcManager(network).getConnection();
 }
 
 /**

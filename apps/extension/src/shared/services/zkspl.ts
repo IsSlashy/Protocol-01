@@ -155,12 +155,13 @@ async function deriveSpendingKeyForPrivy(walletAddress: string): Promise<FieldEl
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Store encrypted if we have a password
+    // Store encrypted — require session password to protect ZK seed at rest
     if (password) {
       const encryptedBlob = await encryptForSession(seedHex, password);
       await chrome.storage.local.set({ [storageKey]: encryptedBlob });
     } else {
-      await chrome.storage.local.set({ [storageKey]: seedHex });
+      // No session password — do NOT persist plaintext seed to disk
+      console.warn('[ZkSPL] No session password — ZK seed stored in memory only');
     }
   }
 
