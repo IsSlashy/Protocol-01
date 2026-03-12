@@ -22,6 +22,7 @@ import {
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useArcium } from '@/providers/ArciumProvider';
 import { receiptFromJSON } from '@/services/denominatedPool';
+import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
 import { useWalletStore } from '@/stores/walletStore';
 import { PublicKey } from '@solana/web3.js';
@@ -136,7 +137,7 @@ function UnshieldScreenContent() {
       }
 
       // Parse receipt to get note secrets for STARK proof
-      const receipt = receiptFromJSON(selectedNote.receiptJSON);
+      const receipt = receiptFromJSON(vaultDecrypt(selectedNote.receiptJSON));
 
       // Generate pool_commitment STARK proof on-device
       const starkResult = await generatePoolCommitmentProof(

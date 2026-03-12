@@ -6,7 +6,6 @@ import { useEffect, useState } from 'react';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOut } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -72,7 +71,7 @@ export default function LockScreen() {
           });
           if (result.success) {
             if (await isVaultEnabled()) await unlockVaultBiometric();
-            await AsyncStorage.setItem('p01_session_unlocked', 'true');
+            await SecureStore.setItemAsync('p01_session_unlocked', 'true');
             router.replace('/(main)/(wallet)');
           }
           // If auth fails, stay on lock screen — user can retry via biometric button
@@ -86,7 +85,7 @@ export default function LockScreen() {
           });
           if (deviceResult.success) {
             if (await isVaultEnabled()) await unlockVaultBiometric();
-            await AsyncStorage.setItem('p01_session_unlocked', 'true');
+            await SecureStore.setItemAsync('p01_session_unlocked', 'true');
             router.replace('/(main)/(wallet)');
           }
           // If fails, stay on lock screen
@@ -148,7 +147,7 @@ export default function LockScreen() {
         await unlockVault(enteredPinHash);
       }
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await AsyncStorage.setItem('p01_session_unlocked', 'true');
+      await SecureStore.setItemAsync('p01_session_unlocked', 'true');
       router.replace('/(main)/(wallet)');
     } else {
       const attempts = failedAttempts + 1;
@@ -212,7 +211,7 @@ export default function LockScreen() {
       if (result.success) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (await isVaultEnabled()) await unlockVaultBiometric();
-        await AsyncStorage.setItem('p01_session_unlocked', 'true');
+        await SecureStore.setItemAsync('p01_session_unlocked', 'true');
         router.replace('/(main)/(wallet)');
       } else {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

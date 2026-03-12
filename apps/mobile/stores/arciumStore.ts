@@ -22,7 +22,7 @@ interface ArciumState {
 }
 
 export const useArciumStore = create<ArciumState>((set, get) => ({
-  mpcEnabled: false,
+  mpcEnabled: true,
   status: 'idle',
   lastError: null,
   programAvailable: false,
@@ -30,11 +30,12 @@ export const useArciumStore = create<ArciumState>((set, get) => ({
   initialize: async () => {
     try {
       const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      if (stored === 'true') {
-        set({ mpcEnabled: true });
+      // MPC is enabled by default — only disable if user explicitly opted out
+      if (stored === 'false') {
+        set({ mpcEnabled: false });
       }
     } catch {
-      // Silently continue — MPC is optional
+      // Silently continue — MPC stays enabled by default
     }
   },
 
