@@ -61,7 +61,6 @@ export type {
 
   // Config
   ProverConfig,
-  ZkSplOperationType,
 
   // Results
   ZkSplTxResult,

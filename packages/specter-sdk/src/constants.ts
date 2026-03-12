@@ -25,7 +25,10 @@ export const DEFAULT_PROGRAM_ID = PROGRAM_IDS['devnet'];
 // ============================================================================
 
 /**
- * Default RPC endpoints for different clusters
+ * Default RPC endpoints for different clusters.
+ *
+ * For richer endpoint resolution with Helius/QuickNode fallback, use
+ * `getEndpoints()` or `RpcConnectionManager` from `@p01/rpc-config`.
  */
 export const RPC_ENDPOINTS: Record<Cluster, string> = {
   'mainnet-beta': 'https://api.mainnet-beta.solana.com',

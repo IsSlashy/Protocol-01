@@ -6,13 +6,20 @@ import * as naclUtil from 'tweetnacl-util';
 export const WHITELIST_PROGRAM_ID = new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE');
 
 // Admin public key for encrypting emails (Volta Team)
-// This is the public key that can decrypt the email data
+// This is the X25519 public key that can decrypt the email data.
+// Secret key stored offline — NEVER commit the secret key.
+// Generated: nacl.box.keyPair() on 2026-03-11 (audit round 4)
 export const ADMIN_ENCRYPTION_PUBKEY = new Uint8Array([
-  // Replace with actual admin encryption public key (32 bytes)
-  // Generate with: nacl.box.keyPair()
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0xd6, 0x2e, 0x0f, 0x63, 0xc8, 0xf2, 0xf7, 0xe6,
+  0xdc, 0x07, 0x68, 0x8f, 0x8e, 0xbf, 0x57, 0xa4,
+  0xd0, 0xef, 0x29, 0x1d, 0x70, 0x0d, 0x63, 0xfa,
+  0xb8, 0x4c, 0x47, 0xe1, 0x5f, 0xb0, 0x23, 0x75,
 ]);
+
+// Runtime guard: never allow all-zeros encryption key
+if (ADMIN_ENCRYPTION_PUBKEY.every(b => b === 0)) {
+  throw new Error('ADMIN_ENCRYPTION_PUBKEY is all zeros — whitelist encryption is broken');
+}
 
 // ============ Types ============
 
