@@ -129,8 +129,9 @@ export default function Footer() {
       <div className="border-t border-p01-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-p01-text-dim font-mono">
-              &copy; {new Date().getFullYear()} PROTOCOL 01. All rights reserved.
+            <div className="flex items-center gap-3 text-sm text-p01-text-dim font-mono">
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan rounded">Beta</span>
+              <span>&copy; {new Date().getFullYear()} PROTOCOL 01. Devnet only — not audited.</span>
             </div>
             <div className="flex items-center gap-6">
               <a
