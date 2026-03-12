@@ -1,16 +1,11 @@
 /**
  * Proof generation for zkSPL circuits.
  *
- * DEFAULT MODE (trustless / client-side only):
- *   Local snarkjs (WASM + zkey files) — spending_key NEVER leaves the device.
+ * LOCAL ONLY — spending_key NEVER leaves the device.
+ * All proofs are generated client-side via snarkjs (WASM + zkey files).
  *
- * OPTIONAL remote backends (opt-in, NOT recommended — exposes spending_key):
- *   - Relayer HTTP endpoints (POST /api/zkspl/prove/{operation})
- *   - Remote Rust prover via HTTP POST
- *
- * SECURITY WARNING: The relayer and remote prover receive ALL circuit inputs
- * including spending_key in plaintext. Only use remote backends for testing
- * or when local proving is not feasible. Production should ALWAYS use local.
+ * Remote prover fallback has been REMOVED (security audit round 4):
+ * sending spending_key over HTTP is an unacceptable risk.
  */
 
 import { fieldToBytesBE } from './crypto';
@@ -22,7 +17,6 @@ import type {
   ConfidentialBalancePrivateInputs,
   BalanceProofPublicInputs,
   BalanceProofPrivateInputs,
-  ZkSplOperationType,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -30,8 +24,8 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the flat string-keyed input object that snarkjs / the remote prover
- * expects for the confidential_balance circuit.
+ * Build the flat string-keyed input object that snarkjs expects
+ * for the confidential_balance circuit.
  */
 export function buildBalanceCircuitInputs(
   pub: ConfidentialBalancePublicInputs,
@@ -120,25 +114,14 @@ function g2ToBytes(point: string[][]): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// ZkSplProver class
+// ZkSplProver class — local-only, no remote fallback
 // ---------------------------------------------------------------------------
 
-/**
- * Proof generation manager for zkSPL.
- *
- * Proof generation cascade (each tier falls back to the next):
- *   1. Relayer (if relayerUrl configured) — operation-specific endpoints
- *   2. Remote Rust prover (if remoteProverUrl configured) — circuit-level endpoints
- *   3. Local snarkjs — WASM + zkey files
- */
 export class ZkSplProver {
   private config: Required<ProverConfig>;
 
   constructor(config: ProverConfig = {}) {
     this.config = {
-      localOnly: config.localOnly ?? true,
-      remoteProverUrl: config.remoteProverUrl ?? '',
-      relayerUrl: config.relayerUrl ?? '',
       balanceWasmPath: config.balanceWasmPath ?? CIRCUIT_FILES.BALANCE_WASM,
       balanceZkeyPath: config.balanceZkeyPath ?? CIRCUIT_FILES.BALANCE_ZKEY,
       proofWasmPath: config.proofWasmPath ?? CIRCUIT_FILES.PROOF_WASM,
@@ -147,81 +130,15 @@ export class ZkSplProver {
     };
   }
 
-  /**
-   * Update the relayer URL at runtime (e.g., after config reload).
-   */
-  setRelayerUrl(url: string): void {
-    this.config.relayerUrl = url;
-  }
-
-  /**
-   * Update the remote Rust prover URL at runtime.
-   */
-  setRemoteProverUrl(url: string): void {
-    this.config.remoteProverUrl = url;
-  }
-
   // -------------------------------------------------------------------------
   // High-level: generate balance update proof
   // -------------------------------------------------------------------------
 
-  /**
-   * Generate a Groth16 proof for the confidential_balance circuit.
-   * Used for deposit, withdraw, send (debit side), receive (credit side / apply_pending).
-   *
-   * @param pub - Public inputs for the circuit
-   * @param priv - Private inputs for the circuit
-   * @param operationType - Optional operation type for relayer routing.
-   *   When the relayer URL is configured, this determines which endpoint is called:
-   *   'deposit' -> POST /api/zkspl/prove/deposit
-   *   'withdraw' -> POST /api/zkspl/prove/withdraw
-   *   'transfer' -> POST /api/zkspl/prove/transfer
-   *   If omitted, the relayer is skipped and only the Rust prover / local snarkjs are used.
-   */
   async generateBalanceProof(
     pub: ConfidentialBalancePublicInputs,
     priv: ConfidentialBalancePrivateInputs,
-    operationType?: ZkSplOperationType
   ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
     const inputs = buildBalanceCircuitInputs(pub, priv);
-
-    // DEFAULT: Local snarkjs (spending_key never leaves device)
-    if (this.config.localOnly) {
-      return this.proveLocal(
-        inputs,
-        this.config.balanceWasmPath,
-        this.config.balanceZkeyPath
-      );
-    }
-
-    // UNSAFE FALLBACK (opt-in only): Try remote backends for speed.
-    // WARNING: spending_key is sent in plaintext to these endpoints.
-
-    // 1. Try relayer (if configured and operation type is known)
-    if (this.config.relayerUrl && operationType) {
-      try {
-        return await this.proveViaRelayer(operationType, inputs);
-      } catch (err) {
-        console.warn(
-          '[ZkSplProver] Relayer proof generation failed, trying Rust prover:',
-          err
-        );
-      }
-    }
-
-    // 2. Try remote Rust prover
-    if (this.config.remoteProverUrl) {
-      try {
-        return await this.proveRemote('confidential_balance', inputs);
-      } catch (err) {
-        console.warn(
-          '[ZkSplProver] Remote prover failed, falling back to local snarkjs:',
-          err
-        );
-      }
-    }
-
-    // 3. Fall back to local snarkjs
     return this.proveLocal(
       inputs,
       this.config.balanceWasmPath,
@@ -233,158 +150,16 @@ export class ZkSplProver {
   // High-level: generate balance sufficiency proof
   // -------------------------------------------------------------------------
 
-  /**
-   * Generate a Groth16 proof for the balance_proof (sufficiency) circuit.
-   * Used for `prove_balance` (DeFi composability).
-   */
   async generateSufficiencyProof(
     pub: BalanceProofPublicInputs,
     priv: BalanceProofPrivateInputs
   ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
     const inputs = buildProofCircuitInputs(pub, priv);
-
-    // DEFAULT: Local snarkjs (spending_key never leaves device)
-    if (this.config.localOnly) {
-      return this.proveLocal(
-        inputs,
-        this.config.proofWasmPath,
-        this.config.proofZkeyPath
-      );
-    }
-
-    // UNSAFE FALLBACK (opt-in only)
-
-    // 1. Try relayer (if configured)
-    if (this.config.relayerUrl) {
-      try {
-        return await this.proveViaRelayer('balance-proof', inputs);
-      } catch (err) {
-        console.warn(
-          '[ZkSplProver] Relayer proof generation failed, trying Rust prover:',
-          err
-        );
-      }
-    }
-
-    // 2. Try remote Rust prover
-    if (this.config.remoteProverUrl) {
-      try {
-        return await this.proveRemote('balance_proof', inputs);
-      } catch (err) {
-        console.warn(
-          '[ZkSplProver] Remote prover failed, falling back to local snarkjs:',
-          err
-        );
-      }
-    }
-
-    // 3. Fall back to local snarkjs
     return this.proveLocal(
       inputs,
       this.config.proofWasmPath,
       this.config.proofZkeyPath
     );
-  }
-
-  // -------------------------------------------------------------------------
-  // Relayer-based proof generation
-  // -------------------------------------------------------------------------
-
-  /**
-   * Generate a proof via the relayer's zkSPL endpoints.
-   *
-   * Endpoints:
-   *   POST {relayerUrl}/api/zkspl/prove/deposit
-   *   POST {relayerUrl}/api/zkspl/prove/withdraw
-   *   POST {relayerUrl}/api/zkspl/prove/transfer
-   *   POST {relayerUrl}/api/zkspl/prove/balance-proof
-   *
-   * Request body: { inputs: Record<string, string> }
-   * Response body: { proof: { pi_a, pi_b, pi_c }, publicSignals: string[] }
-   */
-  private async proveViaRelayer(
-    operation: ZkSplOperationType,
-    inputs: Record<string, string>
-  ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-    const baseUrl = this.config.relayerUrl.replace(/\/+$/, '');
-    const url = `${baseUrl}/api/zkspl/prove/${operation}`;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeout);
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inputs }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(
-          `Relayer HTTP ${response.status} from ${operation}: ${text}`
-        );
-      }
-
-      const data = await response.json();
-
-      if (!data.proof || !data.publicSignals) {
-        throw new Error(
-          `Relayer response missing proof or publicSignals for ${operation}`
-        );
-      }
-
-      // The relayer returns the proof in snarkjs format (pi_a, pi_b, pi_c as
-      // string arrays). Convert to on-chain byte layout.
-      const proof = snarkjsProofToBytes(data.proof);
-      return { proof, publicSignals: data.publicSignals };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Remote Rust prover (direct)
-  // -------------------------------------------------------------------------
-
-  private async proveRemote(
-    circuit: string,
-    inputs: Record<string, string>
-  ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeout);
-
-    // Route to the correct prover endpoint based on circuit type.
-    // The base remoteProverUrl is e.g. "https://relayer.example.com/prove".
-    // zkSPL circuits use /prove/zkspl and /prove/balance-proof.
-    const circuitPaths: Record<string, string> = {
-      confidential_balance: '/zkspl',
-      balance_proof: '/balance-proof',
-    };
-    const url = this.config.remoteProverUrl + (circuitPaths[circuit] ?? '');
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ circuit, inputs }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Remote prover HTTP ${response.status}: ${text}`);
-      }
-
-      const data = await response.json();
-
-      // The remote prover returns the proof in snarkjs format
-      const proof = snarkjsProofToBytes(data.proof);
-      return { proof, publicSignals: data.publicSignals };
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   // -------------------------------------------------------------------------

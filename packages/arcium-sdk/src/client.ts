@@ -1,5 +1,6 @@
 import { Connection, PublicKey, Keypair, TransactionInstruction } from '@solana/web3.js';
 import * as anchor from '@coral-xyz/anchor';
+import { sha256 } from '@noble/hashes/sha256';
 import {
   RescueCipher,
   x25519,
@@ -90,6 +91,7 @@ export class ArciumClient {
   private ephemeralPublicKey: Uint8Array;
   private sharedSecret: Uint8Array | null = null;
   private cipher: RescueCipher | null = null;
+  private operationCount: number = 0;
 
   constructor(config: ArciumClientConfig) {
     this.connection = config.connection;
@@ -161,9 +163,24 @@ export class ArciumClient {
     return x25519Key;
   }
 
+  /**
+   * Rotate ephemeral keys after every 10 encrypt operations.
+   * Limits the exposure window if an ephemeral key is compromised.
+   */
+  private async maybeRotateKeys(): Promise<void> {
+    this.operationCount++;
+    if (this.operationCount % 10 === 0) {
+      await this.rotateKeys();
+    }
+  }
+
   /** Encrypt values for MPC computation. Returns number[][] (Rescue CTR blocks). */
   encrypt(values: bigint[]): EncryptedPayload {
     if (!this.cipher) throw new Error('Client not initialized — call initialize() first');
+    // Fire-and-forget key rotation check — rotateKeys() is async but we don't
+    // block encryption on the network round-trip.  The new keys take effect on
+    // the *next* encrypt() call after the rotation completes.
+    void this.maybeRotateKeys();
     const nonce = getRandomBytes(16);
     const ciphertexts: number[][] = this.cipher.encrypt(values, nonce);
     return {
@@ -225,6 +242,55 @@ export class ArciumClient {
     this.sharedSecret = null;
     this.cipher = null;
     await this.initialize();
+  }
+
+  /**
+   * Derive a deterministic proxy PDA from the current ephemeral session key.
+   *
+   * This PDA is unlinkable to the user's real wallet because it is seeded
+   * from the x25519 ephemeral key (which rotates every 10 operations and
+   * on every new session).  It can be used as a pseudonymous identifier in
+   * non-signing account fields (e.g. computation metadata, audit tags) so
+   * that the on-chain footprint does not reveal the user's wallet pubkey.
+   *
+   * NOTE: The PDA itself cannot *pay* for transactions — Solana requires
+   * the fee payer to be a real signer.  Full payer obfuscation requires a
+   * relayer service that submits transactions on behalf of users.
+   *
+   * @returns [proxyPDA, bump]
+   *
+   * TODO: Implement a relayer-based submission path where the relayer is
+   * the fee payer and this proxy PDA is the only identity visible on-chain.
+   */
+  deriveProxyPDA(): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from('arcium_proxy'), Buffer.from(this.ephemeralPublicKey)],
+      this.programId
+    );
+  }
+
+  /**
+   * Return a 32-byte SHA-256 identifier derived from the ephemeral session
+   * key.  Unlike `deriveProxyPDA()` this is a raw hash, not a Solana PDA,
+   * and can be used in off-chain indexing, log correlation, or as a
+   * pseudonymous tag inside encrypted payloads without leaking the wallet
+   * pubkey.
+   *
+   * The identifier changes whenever ephemeral keys rotate (every 10
+   * operations or on `rotateKeys()`).
+   */
+  getProxyIdentifier(): Uint8Array {
+    return sha256(
+      Buffer.concat([
+        Buffer.from('p01_proxy_id'),
+        Buffer.from(this.ephemeralPublicKey),
+      ])
+    );
+  }
+
+  /** Get the current ephemeral public key (x25519) */
+  getEphemeralPublicKey(): Uint8Array {
+    return this.ephemeralPublicKey;
   }
 
   /** Get provider for direct Anchor program access */

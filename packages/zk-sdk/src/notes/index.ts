@@ -227,7 +227,7 @@ export function decryptNote(
  * Serialize note data to bytes
  */
 function serializeNoteData(note: Note): Uint8Array {
-  const buffer = new Uint8Array(128);
+  const buffer = new Uint8Array(136);
   let offset = 0;
 
   // Amount (8 bytes)

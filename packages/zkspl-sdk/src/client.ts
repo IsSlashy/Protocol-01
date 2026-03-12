@@ -391,7 +391,7 @@ export class ZkSplClient {
       isDebit: 0,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'deposit');
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
     const newCommitmentBytes = fieldToBytes(newCommitment);
 
     // Build accounts
@@ -510,7 +510,7 @@ export class ZkSplClient {
       isDebit: 0,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'withdraw');
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
     const newCommitmentBytes = fieldToBytes(newCommitment);
 
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
@@ -630,7 +630,7 @@ export class ZkSplClient {
       isDebit: 1,
     };
 
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'transfer');
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
     const newCommitmentBytes = fieldToBytes(newCommitment);
     const amountHashBytes = fieldToBytes(amountHash);
 
@@ -743,7 +743,7 @@ export class ZkSplClient {
     };
 
     // apply_pending uses the same confidential_balance circuit as transfer (receive side)
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs, 'transfer');
+    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
     const newCommitmentBytes = fieldToBytes(newCommitment);
     const amountHashBytes = fieldToBytes(amountHash);
 
