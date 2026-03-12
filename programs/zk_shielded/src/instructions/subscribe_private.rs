@@ -91,7 +91,10 @@ pub struct SubscribePrivate<'info> {
     pub nullifier_record: Box<Account<'info, NullifierRecord>>,
 
     /// Denominated pool verification key data
-    /// CHECK: Validated by hash comparison
+    /// CHECK: Validated by hash comparison + owner check
+    #[account(
+        constraint = verification_key_data.owner == &crate::ID @ ZkShieldedError::InvalidVerificationKey
+    )]
     pub verification_key_data: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,

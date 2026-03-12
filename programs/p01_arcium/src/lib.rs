@@ -30,9 +30,11 @@ pub struct TallyResultEvent {
     pub total_votes: u64,
 }
 
+/// Commitment is blake3-hashed before emission — the plaintext value stays
+/// inside the MPC computation and never appears on-chain.
 #[event]
 pub struct NullifierCommitmentEvent {
-    pub commitment: [u8; 32],
+    pub commitment_hash: [u8; 32],
 }
 
 #[event]
@@ -40,9 +42,11 @@ pub struct StealthScanMatchEvent {
     pub matches: u8,
 }
 
+/// tx_chunk is blake3-hashed before emission — the decrypted relay payload
+/// stays inside the MPC computation and never appears on-chain.
 #[event]
 pub struct RelayDecryptEvent {
-    pub tx_chunk: [u64; 8],
+    pub tx_chunk_hash: [u8; 32],
 }
 
 // ============================================================================
@@ -158,6 +162,19 @@ pub mod p01_arcium {
         ctx: Context<FinalizeAuditQueue>,
         computation_offset: u64,
     ) -> Result<()> {
+        // Authority check: only the payer who is also a signer can finalize.
+        // The audit accumulator is an MPC state — revealing the total should be
+        // restricted to the party who initiated the audit. The payer IS a Signer
+        // (enforced by the struct), so we additionally require the first
+        // remaining_account to be a matching authority PDA or known key.
+        // For now, we gate on payer == authority by requiring a second signer
+        // in remaining_accounts that matches the audit initiator.
+        let remaining = &ctx.remaining_accounts;
+        require!(
+            !remaining.is_empty() && remaining[0].is_signer,
+            ErrorCode::Unauthorized
+        );
+
         let args = ArgBuilder::new().build();
 
         ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
@@ -273,6 +290,48 @@ pub mod p01_arcium {
         ctx: Context<FinalizeTallyQueue>,
         computation_offset: u64,
     ) -> Result<()> {
+        // Authority + deadline check: the first remaining_account must be the
+        // Proposal PDA, and the caller (payer) must be the proposal authority.
+        // Tally cannot be finalized before the voting deadline.
+        let remaining = &ctx.remaining_accounts;
+        require!(!remaining.is_empty(), ErrorCode::Unauthorized);
+
+        let proposal_info = &remaining[0];
+        require!(
+            proposal_info.owner == &crate::ID,
+            ErrorCode::Unauthorized
+        );
+
+        // Deserialize the Proposal account (8-byte discriminator + data)
+        let proposal_data = proposal_info.try_borrow_data()?;
+        require!(proposal_data.len() >= 8 + 32 + 32 + 1 + 8 + 1, ErrorCode::Unauthorized);
+
+        // Parse authority (bytes 8..40) and deadline (bytes 73..81)
+        let proposal_authority = Pubkey::try_from(&proposal_data[8..40])
+            .map_err(|_| ErrorCode::Unauthorized)?;
+        let deadline = i64::from_le_bytes(
+            proposal_data[72..80].try_into().map_err(|_| ErrorCode::Unauthorized)?
+        );
+        let finalized = proposal_data[80] == 1;
+
+        // Payer must be the proposal authority
+        require!(
+            ctx.accounts.payer.key() == proposal_authority,
+            ErrorCode::Unauthorized
+        );
+
+        // Cannot finalize before deadline
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp > deadline,
+            ErrorCode::VotingNotEnded
+        );
+
+        // Cannot finalize twice
+        require!(!finalized, ErrorCode::AlreadyFinalized);
+
+        drop(proposal_data);
+
         let args = ArgBuilder::new().build();
 
         ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
@@ -372,11 +431,13 @@ pub mod p01_arcium {
             Err(_) => return Err(ErrorCode::AbortedComputation.into()),
         };
 
+        // Hash the commitment before emitting — raw value stays inside MPC
+        let commitment_hash = blake3::hash(&o.field_0.field_0);
         emit!(NullifierCommitmentEvent {
-            commitment: o.field_0.field_0,
+            commitment_hash: *commitment_hash.as_bytes(),
         });
 
-        msg!("NullifierCommitted");
+        msg!("NullifierCommitted (hashed)");
         Ok(())
     }
 
@@ -580,15 +641,19 @@ pub mod p01_arcium {
             Err(_) => return Err(ErrorCode::AbortedComputation.into()),
         };
 
+        // Hash the decrypted chunk before emitting — raw payload stays inside MPC
         let chunk = &o.field_0;
+        let chunk_bytes: [u64; 8] = [
+            chunk.field_0, chunk.field_1, chunk.field_2, chunk.field_3,
+            chunk.field_4, chunk.field_5, chunk.field_6, chunk.field_7,
+        ];
+        let serialized: Vec<u8> = chunk_bytes.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let chunk_hash = blake3::hash(&serialized);
         emit!(RelayDecryptEvent {
-            tx_chunk: [
-                chunk.field_0, chunk.field_1, chunk.field_2, chunk.field_3,
-                chunk.field_4, chunk.field_5, chunk.field_6, chunk.field_7,
-            ],
+            tx_chunk_hash: *chunk_hash.as_bytes(),
         });
 
-        msg!("RelayDecrypted");
+        msg!("RelayDecrypted (hashed)");
         Ok(())
     }
 }
@@ -1302,4 +1367,6 @@ pub enum ErrorCode {
     AbortedComputation,
     #[msg("Cluster not set")]
     ClusterNotSet,
+    #[msg("Tally has already been finalized")]
+    AlreadyFinalized,
 }

@@ -177,21 +177,37 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
             ]
         }
         // Circuit 3: merkle_path
-        // Public inputs: [leaf, root]
+        // Public inputs: [leaf, root, depth]
         // Assertions: col5 at row 0 = leaf (carry), col0 at output_row = root
-        // output_row depends on depth which we don't know directly from public inputs.
-        // We only check leaf at row 0 and root is implicitly checked by constraints.
+        // output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS
         3 => {
             let leaf = if !public_inputs.is_empty() {
                 Felt::new(public_inputs[0])
             } else {
                 Felt::ZERO
             };
-            // We cannot determine the exact output row without knowing depth,
-            // so we check what we can: leaf binding at row 0.
-            vec![
-                BoundaryAssertion { col: 5, row: 0, value: leaf },
-            ]
+            let root = if public_inputs.len() > 1 {
+                Felt::new(public_inputs[1])
+            } else {
+                Felt::ZERO
+            };
+            let depth = if public_inputs.len() > 2 {
+                public_inputs[2] as usize
+            } else {
+                0
+            };
+            if depth > 0 && depth <= 32 {
+                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
+                vec![
+                    BoundaryAssertion { col: 5, row: 0, value: leaf },
+                    BoundaryAssertion { col: 0, row: output_row, value: root },
+                ]
+            } else {
+                // depth missing or invalid — only check leaf
+                vec![
+                    BoundaryAssertion { col: 5, row: 0, value: leaf },
+                ]
+            }
         }
         // Circuit 4: confidential_balance
         // Public inputs: [old_commitment, new_commitment, amount_hash, token_mint]

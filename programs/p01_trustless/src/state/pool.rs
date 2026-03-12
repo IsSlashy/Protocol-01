@@ -74,6 +74,9 @@ pub struct PoolState {
 
     /// Epoch corresponding to index 0 of the buffer
     pub epoch_note_start: u64,
+
+    /// Timestamp of last VK hash update (unix seconds, 0 = never updated)
+    pub vk_update_timestamp: i64,
 }
 
 impl PoolState {
@@ -102,7 +105,8 @@ impl PoolState {
         + 8   // mature_note_count
         + 8   // last_maturity_update_epoch
         + (8 * 32) // epoch_note_counts
-        + 8;  // epoch_note_start
+        + 8   // epoch_note_start
+        + 8;  // vk_update_timestamp
 
     pub const SEED_PREFIX: &'static [u8] = b"trustless_pool";
 

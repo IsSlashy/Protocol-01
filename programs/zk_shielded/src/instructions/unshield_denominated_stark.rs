@@ -18,19 +18,26 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0xb3, 0x7a, 0x18, 0x7d, 0xe6, 0x39, 0xce, 0xd8,
 ]);
 
+/// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
+/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash = 82
+const PROOF_BUF_AUTHORITY: usize = 8;
+const PROOF_BUF_CIRCUIT_ID: usize = 40; // 8 + 32
+const PROOF_BUF_VERIFIED: usize = 49;   // 8 + 32 + 1 + 4 + 4
+const PROOF_BUF_INPUTS_HASH: usize = 50; // 8 + 32 + 1 + 4 + 4 + 1
+const PROOF_BUF_MIN_LEN: usize = 82;    // 8 + 32 + 1 + 4 + 4 + 1 + 32
+
 /// Parse a verified STARK proof buffer.
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
 fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
-    require!(data.len() >= 82, ZkShieldedError::InvalidProof);
+    require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
     );
-    let authority = Pubkey::try_from(&data[8..40]).unwrap();
-    let circuit_id = data[40];
-    let verified = data[49] == 1;
+    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID]).unwrap();
+    let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
+    let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[50..82]);
+    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
     Ok((authority, circuit_id, verified, public_inputs_hash))
 }
 
@@ -50,7 +57,8 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
 #[instruction(
     nullifier: [u8; 32],
     merkle_root: [u8; 32],
-    min_epoch: u64
+    min_epoch: u64,
+    stark_commitment: u64
 )]
 pub struct UnshieldDenominatedStark<'info> {
     #[account(mut)]
@@ -131,6 +139,7 @@ pub fn handler(
     nullifier: [u8; 32],
     _merkle_root: [u8; 32],
     min_epoch: u64,
+    stark_commitment: u64,
 ) -> Result<()> {
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.denominated_pool;
@@ -185,15 +194,17 @@ pub fn handler(
     require!(verified, ZkShieldedError::InvalidProof);
 
     // Verify the proof was generated for THIS nullifier by checking the public inputs hash.
-    // The STARK verifier stores SHA-256(public_inputs) when it verifies; we recompute
-    // and compare to ensure the proof is bound to the nullifier being spent.
+    // The STARK verifier stores blake3(public_inputs_le_bytes) when it verifies via
+    // verify_stark_proof_v2. For pool_commitment (circuit 1), public_inputs = [nullifier_u64, commitment_u64].
+    //
+    // The on-chain nullifier [u8; 32] stores the Goldilocks u64 nullifier in bytes 0..8.
+    // We reconstruct the same blake3 hash the verifier computed.
     {
-        use anchor_lang::solana_program::hash::hashv;
-        // For pool_commitment circuit (ID 1), the single public input is the commitment
-        // which is derived from the nullifier. We hash the nullifier bytes as they
-        // were passed as the public input to the STARK verifier.
         let nullifier_u64 = u64::from_le_bytes(nullifier[..8].try_into().unwrap());
-        let expected_hash = hashv(&[&nullifier_u64.to_le_bytes()]).to_bytes();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&nullifier_u64.to_le_bytes());
+        hasher.update(&stark_commitment.to_le_bytes());
+        let expected_hash = *hasher.finalize().as_bytes();
         require!(
             stored_inputs_hash == expected_hash,
             ZkShieldedError::InvalidProof
@@ -206,8 +217,7 @@ pub fn handler(
     // Set verified = false by writing directly to the account data.
     {
         let mut proof_data_mut = proof_info.try_borrow_mut_data()?;
-        // verified is at offset 49
-        proof_data_mut[49] = 0;
+        proof_data_mut[PROOF_BUF_VERIFIED] = 0;
     }
 
     // -----------------------------------------------------------------------

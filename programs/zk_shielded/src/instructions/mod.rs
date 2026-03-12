@@ -4,7 +4,9 @@ pub mod store_vk_data;
 pub mod transfer;
 pub mod unshield;
 pub mod update_vk;
-pub mod transfer_via_relayer;
+// REMOVED: transfer_via_relayer — disabled due to unproven relayer fee commitment
+// and panic in insert(). Relaying is handled by the on-chain p01_relayer program.
+// pub mod transfer_via_relayer;
 pub mod init_denominated_pool;
 pub mod shield_denominated;
 pub mod unshield_denominated;
@@ -38,7 +40,7 @@ pub use store_vk_data::*;
 pub use transfer::*;
 pub use unshield::*;
 pub use update_vk::*;
-pub use transfer_via_relayer::*;
+// pub use transfer_via_relayer::*;
 pub use init_denominated_pool::*;
 pub use shield_denominated::*;
 pub use unshield_denominated::*;
