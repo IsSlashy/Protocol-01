@@ -14,7 +14,7 @@ const TRACE_WIDTH: usize = 3;
 const TRACE_LENGTH: usize = 32;
 const BLOWUP: usize = 16;
 const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-const NUM_QUERIES: usize = 128;
+const NUM_QUERIES: usize = 12;
 const MERKLE_DEPTH: usize = 9; // log2(512) = 9
 const NUM_ROUNDS: usize = 30;
 
@@ -1018,7 +1018,7 @@ fn generate_compact_proof_from_trace(
 // ============================================================================
 
 const GENERIC_BLOWUP: usize = 16;
-const GENERIC_NUM_QUERIES: usize = 128;
+const GENERIC_NUM_QUERIES: usize = 12;
 
 /// Generate compact proof for denominated pool commitment.
 ///

@@ -62,3 +62,6 @@ blake3 = "=1.8.2"
 
 # Pin base64ct to avoid edition2024 (pulled by spki → pkcs8 → signature)
 base64ct = "=1.7.3"
+
+# Pin time to avoid edition2024 (pulled by solana deps, Solana cargo is 1.84)
+time = "=0.3.41"

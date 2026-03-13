@@ -68,12 +68,13 @@ export default function ViewKeysScreen() {
   const [importKey, setImportKey] = useState('');
 
   // H3: Block screenshots when viewing keys
+  // TEMP: disabled for demo recording
   useEffect(() => {
-    if (showKeyModal) {
-      ScreenCapture.preventScreenCaptureAsync();
-    } else {
-      ScreenCapture.allowScreenCaptureAsync();
-    }
+    // if (showKeyModal) {
+    //   ScreenCapture.preventScreenCaptureAsync();
+    // } else {
+    //   ScreenCapture.allowScreenCaptureAsync();
+    // }
   }, [showKeyModal]);
 
   // Check initialization

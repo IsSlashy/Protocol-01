@@ -1114,8 +1114,17 @@ export async function unshieldStark(
     receipt.merkleRoot = newRoot === onChainRoot ? onChainRoot : newRoot;
   }
 
-  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
-  const nullifierBytes = bigintToLeBytes32(nullifier);
+  // For STARK unshield: use the Goldilocks nullifier from the STARK proof (publicInputs[0]).
+  // The on-chain hash check extracts u64 from nullifier[..8] and compares against the
+  // STARK proof's stored public inputs hash (blake3 of Goldilocks public inputs).
+  // We place the Goldilocks u64 nullifier in bytes 0-7 of the 32-byte nullifier arg.
+  const goldilocksNullifier = starkProofData.publicInputs[0] ?? 0n;
+  const nullifierBytes: number[] = new Array(32).fill(0);
+  let _nv = goldilocksNullifier;
+  for (let i = 0; i < 8; i++) {
+    nullifierBytes[i] = Number(_nv & 0xFFn);
+    _nv >>= 8n;
+  }
   const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
   // Emergency: min_epoch=0 bypasses maturity (on-chain check: current_epoch >= 0 + dynamic_delay → always true)
   const minEpoch = emergency ? 0n : currentEpoch - (poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay));

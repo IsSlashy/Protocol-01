@@ -69,7 +69,7 @@ export function useSecuritySettings(): UseSecuritySettingsReturn {
         biometricsEnabled: bio === 'true',
         requireAuthForSends: auth !== 'false', // Default to true
         hideBalanceByDefault: hide === 'true',
-        blockScreenshots: block !== 'false', // L4: Default to true (ON)
+        blockScreenshots: block === 'true', // TEMP: Default OFF for demo recording
         lockTimeout: timeout ? parseInt(timeout, 10) : 60,
       };
 
@@ -151,13 +151,10 @@ export function useSecuritySettings(): UseSecuritySettingsReturn {
   }, [checkBiometrics, loadSettings]);
 
   // Listen for screenshot blocking changes
+  // TEMP: Force allow screen capture for demo recording
   useEffect(() => {
     if (Platform.OS !== 'web' && !isLoading) {
-      if (settings.blockScreenshots) {
-        ScreenCapture.preventScreenCaptureAsync();
-      } else {
-        ScreenCapture.allowScreenCaptureAsync();
-      }
+      ScreenCapture.allowScreenCaptureAsync();
     }
   }, [settings.blockScreenshots, isLoading]);
 

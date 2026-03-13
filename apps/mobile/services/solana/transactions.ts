@@ -350,7 +350,9 @@ export async function getTransactionHistory(
     // 2. Batch-fetch parsed transaction details ----------------------------
     //    getParsedTransactions accepts an array of signatures and returns
     //    them all in one RPC call, eliminating the 1.5 s per-tx delay.
-    const BATCH_SIZE = 10; // Helius / public RPCs handle 10-tx batches well
+    //    Batch size kept small (5) to stay under devnet rate limits,
+    //    especially after STARK chunk uploads that consume RPC quota.
+    const BATCH_SIZE = 5;
     const allParsed: (ParsedTransactionWithMeta | null)[] = [];
 
     for (let i = 0; i < signatures.length; i += BATCH_SIZE) {
@@ -373,8 +375,8 @@ export async function getTransactionHistory(
           const errMsg = batchError?.message || String(batchError);
           batchRetries--;
           if ((errMsg.includes('429') || errMsg.includes('Too many')) && batchRetries > 0) {
-            // Rate limited — back off before retry
-            await new Promise(resolve => setTimeout(resolve, 1500 * (3 - batchRetries)));
+            // Rate limited — exponential backoff (3s, 6s)
+            await new Promise(resolve => setTimeout(resolve, 3000 * (3 - batchRetries)));
           } else {
             console.warn('[Transactions] Batch fetch failed, skipping batch:', errMsg.slice(0, 80));
             allParsed.push(...batch.map(() => null));
@@ -383,9 +385,9 @@ export async function getTransactionHistory(
         }
       }
 
-      // Small delay between batches to avoid rate limiting
+      // Delay between batches to stay under rate limits
       if (i + BATCH_SIZE < signatures.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 

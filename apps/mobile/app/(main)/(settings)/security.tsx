@@ -365,12 +365,9 @@ export default function SecuritySettingsScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // Apply immediately using expo-screen-capture
+    // TEMP: disabled for demo recording
     try {
-      if (value) {
-        await ScreenCapture.preventScreenCaptureAsync();
-      } else {
-        await ScreenCapture.allowScreenCaptureAsync();
-      }
+      await ScreenCapture.allowScreenCaptureAsync();
     } catch (err) {
       console.warn('[Security] Screen capture API error:', err);
     }
