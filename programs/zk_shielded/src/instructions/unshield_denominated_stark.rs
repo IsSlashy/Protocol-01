@@ -113,7 +113,7 @@ pub struct UnshieldDenominatedStark<'info> {
     /// - Circuit ID is 1 (pool_commitment)
     /// - Verified flag is true
     /// - Public inputs hash matches expected value
-    #[account(mut)]
+    /// CHECK: Read-only — proof buffer is owned by p01_stark_verifier, closed by caller.
     pub stark_proof_buffer: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
@@ -213,12 +213,9 @@ pub fn handler(
 
     drop(proof_data);
 
-    // Invalidate the proof buffer after use to prevent replay.
-    // Set verified = false by writing directly to the account data.
-    {
-        let mut proof_data_mut = proof_info.try_borrow_mut_data()?;
-        proof_data_mut[PROOF_BUF_VERIFIED] = 0;
-    }
+    // NOTE: Replay prevention is handled by the nullifier PDA (init constraint).
+    // The proof buffer is closed by the caller after this instruction completes.
+    // We do NOT write to the proof buffer here because it's owned by p01_stark_verifier.
 
     // -----------------------------------------------------------------------
     // Transfer funds with protocol fee (0.5%)

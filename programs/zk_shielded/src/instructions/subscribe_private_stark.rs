@@ -238,12 +238,8 @@ pub fn handler(
 
     drop(proof_data);
 
-    // Invalidate the proof buffer after use to prevent replay.
-    // Set verified = false by writing directly to the account data.
-    {
-        let mut proof_data_mut = proof_info.try_borrow_mut_data()?;
-        proof_data_mut[PROOF_BUF_VERIFIED] = 0;
-    }
+    // NOTE: Replay prevention handled by subscription state. Proof buffer owned by
+    // p01_stark_verifier — cannot write to it from zk_shielded. Caller closes it.
 
     // -----------------------------------------------------------------------
     // Transfer funds from pool to vault (identical to Groth16 version)

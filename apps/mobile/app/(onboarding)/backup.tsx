@@ -19,9 +19,10 @@ export default function BackupScreen() {
 
   // H3: Block screenshots while seed phrase is visible
   useEffect(() => {
-    ScreenCapture.preventScreenCaptureAsync();
+    // TEMP: disabled for demo recording
+    // ScreenCapture.preventScreenCaptureAsync();
     return () => {
-      ScreenCapture.allowScreenCaptureAsync();
+      // ScreenCapture.allowScreenCaptureAsync();
     };
   }, []);
 

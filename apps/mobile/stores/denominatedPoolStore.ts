@@ -565,6 +565,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             ),
           }));
 
+          // Refresh wallet balance immediately, delay transaction fetch
+          // to let RPC rate-limit window reset after STARK chunk uploads
+          useWalletStore.getState().refreshBalance();
+          setTimeout(() => {
+            useWalletStore.getState().refreshTransactions();
+          }, 5000);
+
           scheduleLocalNotification(
             'Unshield Confirmed',
             `${note.denomination} ${note.token} withdrawn from privacy pool`,
@@ -628,6 +635,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             ),
           }));
 
+          // Refresh wallet balance immediately, delay transaction fetch
+          // to let RPC rate-limit window reset after STARK chunk uploads
+          useWalletStore.getState().refreshBalance();
+          setTimeout(() => {
+            useWalletStore.getState().refreshTransactions();
+          }, 5000);
+
           scheduleLocalNotification(
             'Unshield Confirmed',
             `${note.denomination} ${note.token} withdrawn from privacy pool`,
@@ -689,6 +703,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
             ),
           }));
+
+          // Refresh wallet balance immediately, delay transaction fetch
+          // to let RPC rate-limit window reset after STARK chunk uploads
+          useWalletStore.getState().refreshBalance();
+          setTimeout(() => {
+            useWalletStore.getState().refreshTransactions();
+          }, 5000);
 
           scheduleLocalNotification(
             'Unshield Confirmed',
