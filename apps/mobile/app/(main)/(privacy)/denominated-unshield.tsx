@@ -158,6 +158,12 @@ function UnshieldScreenContent() {
       }, emergency);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Refresh wallet balance immediately, delay transaction fetch
+      // to let RPC rate-limit window reset after STARK chunk uploads
+      useWalletStore.getState().refreshBalance();
+      setTimeout(() => {
+        useWalletStore.getState().refreshTransactions();
+      }, 5000);
       const proofLabel = isMpcActive ? 'STARK + MPC' : 'STARK';
       p01Alert(
         emergency ? 'Emergency Unshield Complete' : `Unshielded (${proofLabel})!`,

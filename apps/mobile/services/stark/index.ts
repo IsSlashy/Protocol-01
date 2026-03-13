@@ -36,7 +36,7 @@ const CIRCUIT_BALANCE_PROOF = 2;
 const CIRCUIT_MERKLE_PATH = 3;
 const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
 const CIRCUIT_TRANSFER = 5;
-const MAX_CHUNK_SIZE = 900; // Safe tx size for proof upload
+const MAX_CHUNK_SIZE = 1000; // ~1000 bytes per chunk (fits in 1232-byte tx limit)
 
 // Instruction discriminators (from Anchor IDL)
 const DISCRIMINATORS = {
@@ -48,7 +48,7 @@ const DISCRIMINATORS = {
   closeProofBuffer: Buffer.from([130, 150, 6, 35, 193, 34, 243, 87]),
 };
 
-const PROOF_DATA_OFFSET = 50; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified
+const PROOF_DATA_OFFSET = 82; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
 const MAX_INIT_SIZE = 10_240; // Solana create_account limit
 
 // ---------------------------------------------------------------------------
@@ -319,18 +319,44 @@ export async function submitStarkProof(
     await signSendConfirm(conn, resizeTx, keypair, walletSigner);
   }
 
-  // Step 2: Upload proof in chunks
+  // Step 2: Upload proof in chunks (fire-and-forget, confirm all at end)
+  const { blockhash: chunkBlockhash } = await conn.getLatestBlockhash('confirmed');
   const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
+  const chunkSigs: string[] = [];
+
   for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
     onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
     const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
     const chunk = proof.proofBytes.slice(offset, end);
-
-    const chunkTx = new Transaction().add(
+    let chunkTx = new Transaction().add(
       buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
     );
-    await signSendConfirm(conn, chunkTx, keypair, walletSigner);
+    chunkTx.recentBlockhash = chunkBlockhash;
+
+    if (keypair) {
+      chunkTx.feePayer = keypair.publicKey;
+      chunkTx.sign(keypair);
+    } else if (walletSigner) {
+      chunkTx.feePayer = walletSigner.publicKey;
+      chunkTx = await walletSigner.signTransaction(chunkTx);
+    }
+
+    const sig = await conn.sendRawTransaction(chunkTx.serialize(), {
+      skipPreflight: true,
+    });
+    chunkSigs.push(sig);
   }
+
+  // Confirm all chunk uploads
+  onProgress?.('Confirming chunk uploads...');
+  await Promise.all(
+    chunkSigs.map(async (sig) => {
+      const result = await conn.confirmTransaction(sig, 'confirmed');
+      if (result.value.err) {
+        throw new Error(`Chunk upload failed: ${JSON.stringify(result.value.err)}`);
+      }
+    })
+  );
 
   // Step 3: Verify (requires ~900K CU for STARK verification)
   onProgress?.('Verifying STARK proof on-chain...');
@@ -521,17 +547,48 @@ export async function submitAndVerifyStarkProof(
     await signSendConfirm(conn, resizeTx, keypair, walletSigner);
   }
 
-  // Step 2: Upload proof in chunks
+  // Step 2: Upload proof in chunks (fire-and-forget, confirm all at end)
+  // Reuse one blockhash for all chunk txs to avoid N getLatestBlockhash RPCs.
+  // Send each tx immediately after signing without waiting for confirmation.
+  // This eliminates ~2s confirmation wait per chunk from the signing loop.
+  const { blockhash: chunkBlockhash } = await conn.getLatestBlockhash('confirmed');
   const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
+  const chunkSigs: string[] = [];
+
   for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
     onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
     const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
     const chunk = proof.proofBytes.slice(offset, end);
-    const chunkTx = new Transaction().add(
+    let chunkTx = new Transaction().add(
       buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
     );
-    await signSendConfirm(conn, chunkTx, keypair, walletSigner);
+    chunkTx.recentBlockhash = chunkBlockhash;
+
+    if (keypair) {
+      chunkTx.feePayer = keypair.publicKey;
+      chunkTx.sign(keypair);
+    } else if (walletSigner) {
+      chunkTx.feePayer = walletSigner.publicKey;
+      chunkTx = await walletSigner.signTransaction(chunkTx);
+    }
+
+    // Send immediately without waiting for confirmation
+    const sig = await conn.sendRawTransaction(chunkTx.serialize(), {
+      skipPreflight: true,
+    });
+    chunkSigs.push(sig);
   }
+
+  // Confirm all chunk uploads before verifying
+  onProgress?.('Confirming chunk uploads...');
+  await Promise.all(
+    chunkSigs.map(async (sig) => {
+      const result = await conn.confirmTransaction(sig, 'confirmed');
+      if (result.value.err) {
+        throw new Error(`Chunk upload failed: ${JSON.stringify(result.value.err)}`);
+      }
+    })
+  );
 
   // Step 3: Verify with v2 (multiple public inputs)
   onProgress?.('Verifying STARK proof on-chain...');

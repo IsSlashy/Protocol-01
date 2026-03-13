@@ -279,7 +279,7 @@ function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignature {
 const STARK_CIRCUIT_SUBSCRIBER_OWNERSHIP = 0;
 const STARK_CIRCUIT_POOL_COMMITMENT = 1;
 const STARK_CIRCUIT_BALANCE_PROOF = 2;
-const STARK_PROOF_DATA_OFFSET = 50;
+const STARK_PROOF_DATA_OFFSET = 82; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
 const STARK_MAX_CHUNK_SIZE = 900;
 
 const STARK_IDL = {

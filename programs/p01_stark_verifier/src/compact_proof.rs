@@ -100,7 +100,7 @@ pub const TRACE_WIDTH: usize = 3;
 pub const TRACE_LENGTH: usize = 32;
 pub const BLOWUP: usize = 16;
 pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-pub const NUM_QUERIES: usize = 128;
+pub const NUM_QUERIES: usize = 12;
 pub const MERKLE_DEPTH: usize = 9; // log2(512) = 9
 pub const NUM_ROUNDS: usize = 30;
 

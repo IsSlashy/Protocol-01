@@ -30,7 +30,7 @@ const PROGRAM_ID = new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs')
 const CIRCUIT_SUBSCRIBER_OWNERSHIP = 0;
 const CIRCUIT_POOL_COMMITMENT = 1;
 const CIRCUIT_BALANCE_PROOF = 2;
-const PROOF_DATA_OFFSET = 50; // 8 discriminator + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified
+const PROOF_DATA_OFFSET = 82; // 8 discriminator + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
 const MAX_CHUNK_SIZE = 900; // Safe chunk size for Solana tx
 
 // ---------------------------------------------------------------------------
