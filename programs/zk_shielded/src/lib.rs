@@ -308,6 +308,27 @@ pub mod zk_shielded {
         instructions::accept_authority_transfer::handler(ctx)
     }
 
+    // -----------------------------------------------------------------------
+    // Privacy Router instructions (cross-pool note splitting)
+    // -----------------------------------------------------------------------
+
+    /// Split a note from a high-denomination pool into multiple notes in a lower-denomination pool.
+    /// Requires a ZK proof of ownership + denomination conservation.
+    /// Supports up to 20 output notes per split operation.
+    /// Protocol fee: 0.3% of source denomination (same as shield).
+    pub fn split_note(
+        ctx: Context<SplitNote>,
+        proof: Groth16Proof,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        num_outputs: u8,
+        output_commitments: Vec<[u8; 32]>,
+        new_roots: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::split_note::handler(ctx, proof, nullifier, merkle_root, min_epoch, num_outputs, output_commitments, new_roots)
+    }
+
     /// Claim accrued periods from a subscription vault (retailer only)
     pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
         instructions::claim_period::handler(ctx)

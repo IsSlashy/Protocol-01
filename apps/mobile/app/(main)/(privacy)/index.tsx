@@ -208,6 +208,22 @@ export default function PrivacyDashboard() {
                   <Text style={[styles.quickActionText, { color: '#8B8BFF' }]}>Receive</Text>
                 </TouchableOpacity>
               </View>
+              {/* Quick Actions — Row 3: Privacy Router */}
+              <View style={[styles.quickActions, { marginTop: Spacing.sm }]}>
+                <TouchableOpacity
+                  style={[styles.quickAction, { flex: 1, backgroundColor: 'rgba(57, 197, 187, 0.08)', borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.2)' }]}
+                  onPress={() => router.push('/(main)/(privacy)/private-send' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Private Send with Privacy Router"
+                  accessibilityHint="Send SOL through multiple wallets with time delays for maximum anonymity"
+                >
+                  <Ionicons name="git-branch-outline" size={16} color={P01Colors.cyan} />
+                  <Text style={[styles.quickActionText, { color: P01Colors.cyan }]}>Private Send</Text>
+                  <View style={{ backgroundColor: 'rgba(57, 197, 187, 0.2)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 4 }}>
+                    <Text style={{ color: P01Colors.cyan, fontSize: 9, fontWeight: '700' }}>NEW</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
             </BlurView>
           </TouchableOpacity>
         </Animated.View>

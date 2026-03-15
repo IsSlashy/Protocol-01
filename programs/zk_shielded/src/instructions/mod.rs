@@ -32,6 +32,7 @@ pub mod pause_private_stark;
 pub mod resume_private_stark;
 pub mod propose_authority_transfer;
 pub mod accept_authority_transfer;
+pub mod split_note;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -66,3 +67,4 @@ pub use pause_private_stark::*;
 pub use resume_private_stark::*;
 pub use propose_authority_transfer::*;
 pub use accept_authority_transfer::*;
+pub use split_note::*;
