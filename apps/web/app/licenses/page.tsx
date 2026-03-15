@@ -13,7 +13,7 @@ const P01_PACKAGES = [
     license: "BSL-1.1",
     description:
       "The wallet application, browser extension, smart contracts, ZK circuits, and SDK packages are licensed under the Business Source License 1.1. Source code is viewable and forkable for non-commercial purposes. Commercial use requires explicit written permission.",
-    url: "https://github.com/IsSlashy/Protocol-01",
+    url: "https://github.com/IsSlashy/Protocol-01-releases",
   },
 ];
 

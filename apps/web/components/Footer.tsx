@@ -29,7 +29,7 @@ const footerLinks: Record<string, FooterSection> = {
     links: [
       { name: "SDK Demo", href: "/sdk-demo" },
       { name: "Documentation", href: "/docs" },
-      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01", external: true },
+      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
     ],
   },
   community: {
@@ -37,7 +37,7 @@ const footerLinks: Record<string, FooterSection> = {
     links: [
       { name: "Discord", href: "https://discord.gg/KfmhPFAHNH", external: true },
       { name: "Twitter / X", href: "https://x.com/Protocol01_", external: true },
-      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01", external: true },
+      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
     ],
   },
 };
@@ -55,7 +55,7 @@ const DiscordIcon = () => <MessageCircle size={18} />;
 
 const socialLinks = [
   { icon: XIcon, href: "https://x.com/Protocol01_", label: "Twitter/X" },
-  { icon: GithubIcon, href: "https://github.com/IsSlashy/Protocol-01", label: "GitHub" },
+  { icon: GithubIcon, href: "https://github.com/IsSlashy/Protocol-01-releases", label: "GitHub" },
   { icon: DiscordIcon, href: "https://discord.gg/KfmhPFAHNH", label: "Discord" },
 ];
 
@@ -143,7 +143,7 @@ export default function Footer() {
                 Twitter / X
               </a>
               <a
-                href="https://github.com/IsSlashy/Protocol-01"
+                href="https://github.com/IsSlashy/Protocol-01-releases"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors"
