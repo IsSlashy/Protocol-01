@@ -73,7 +73,7 @@ export default function Home() {
                 </svg>
               </a>
               <a
-                href="https://github.com/IsSlashy/Protocol-01"
+                href="https://github.com/IsSlashy/Protocol-01-releases"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hidden sm:flex w-9 h-9 items-center justify-center text-p01-text-muted hover:text-white transition-colors"

@@ -398,7 +398,7 @@ function SDKDemoContent() {
             </div>
             <div className="flex items-center gap-6">
               <a href="https://x.com/Protocol01_" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Twitter / X</a>
-              <a href="https://github.com/IsSlashy/Protocol-01" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">GitHub</a>
+              <a href="https://github.com/IsSlashy/Protocol-01-releases" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">GitHub</a>
               <a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Discord</a>
             </div>
           </div>
