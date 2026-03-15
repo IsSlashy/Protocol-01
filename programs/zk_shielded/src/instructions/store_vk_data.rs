@@ -72,8 +72,8 @@ pub struct WriteVkData<'info> {
 /// Seed for VK data PDA
 pub const VK_DATA_SEED: &[u8] = b"vk_data";
 
-/// Maximum VK data size
-pub const MAX_VK_SIZE: u32 = 2048;
+/// Maximum VK data size (note_split circuit has 27 IC points = 2180 bytes)
+pub const MAX_VK_SIZE: u32 = 4096;
 
 /// Maximum chunk size per transaction (~800 bytes to stay under tx limit)
 pub const MAX_CHUNK_SIZE: usize = 800;
@@ -122,11 +122,20 @@ pub fn handler_init(ctx: Context<InitVkData>, vk_size: u32) -> Result<()> {
         msg!("Resizing VK data account to {} bytes", required_space);
         vk_account.resize(required_space)?;
 
-        // Adjust lamports
+        // Transfer additional rent via CPI (can't directly debit authority — it's
+        // owned by the system program, not this program)
         if required_lamports > current_lamports {
             let diff = required_lamports - current_lamports;
-            **ctx.accounts.authority.try_borrow_mut_lamports()? -= diff;
-            **vk_account.try_borrow_mut_lamports()? += diff;
+            system_program::transfer(
+                CpiContext::new(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.authority.to_account_info(),
+                        to: vk_account.to_account_info(),
+                    },
+                ),
+                diff,
+            )?;
         }
     }
 

@@ -7,8 +7,8 @@ use crate::state::ShieldedPool;
 /// Seed for transfer VK data PDA (separate from unshield VK)
 pub const VK_DATA_TRANSFER_SEED: &[u8] = b"vk_data_transfer";
 
-/// Maximum VK data size
-const MAX_VK_SIZE: u32 = 2048;
+/// Maximum VK data size (note_split circuit has 27 IC points = 2180 bytes)
+const MAX_VK_SIZE: u32 = 4096;
 
 /// Maximum chunk size per transaction
 const MAX_CHUNK_SIZE: usize = 800;
@@ -85,8 +85,16 @@ pub fn handler_init_transfer(ctx: Context<InitTransferVkData>, vk_size: u32) -> 
 
         if required_lamports > current_lamports {
             let diff = required_lamports - current_lamports;
-            **ctx.accounts.authority.try_borrow_mut_lamports()? -= diff;
-            **vk_account.try_borrow_mut_lamports()? += diff;
+            system_program::transfer(
+                CpiContext::new(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.authority.to_account_info(),
+                        to: vk_account.to_account_info(),
+                    },
+                ),
+                diff,
+            )?;
         }
     }
 

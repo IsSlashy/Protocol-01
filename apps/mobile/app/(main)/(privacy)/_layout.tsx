@@ -23,6 +23,7 @@ export default function PrivacyLayout() {
       <Stack.Screen name="subscribe-normal" />
       <Stack.Screen name="subscribe-private" />
       <Stack.Screen name="vault-detail" />
+      <Stack.Screen name="private-send" />
     </Stack>
   );
 }
