@@ -19,7 +19,7 @@ const downloadOptions = [
     icon: Chrome,
     description: "Instant Download ZIP",
     filename: "P01-Extension-v0.3.0.zip",
-    link: "https://github.com/IsSlashy/Protocol-01/releases/download/v0.8.0/P01-Extension-v0.3.0.zip",
+    link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v0.8.0/P01-Extension-v0.3.0.zip",
     size: "10 MB",
   },
 ];
@@ -130,7 +130,7 @@ export default function CTA() {
               className="flex flex-col sm:flex-row items-center justify-center gap-4"
             >
               <a
-                href="https://github.com/IsSlashy/Protocol-01"
+                href="https://github.com/IsSlashy/Protocol-01-releases"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-p01-text-muted hover:text-white transition-colors"
