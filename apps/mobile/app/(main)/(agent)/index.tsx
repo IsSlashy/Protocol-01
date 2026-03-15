@@ -25,6 +25,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import * as VoiceService from '@/services/ai/voiceService';
+import * as LlamaService from '@/services/ai/llamaService';
 
 const QUICK_ACTIONS = [
   { icon: 'trending-up-outline' as const, label: 'SOL Price', color: Colors.primary },
@@ -115,9 +116,45 @@ export default function AgentDashboard() {
     return () => { showSub.remove(); hideSub.remove(); };
   }, [messages.length]);
 
+  // ── KV Cache Pre-warming ──────────────────────────────────────────────────
+  // When the on-device model is loaded and the user starts typing, pre-warm
+  // the KV cache with system prompt + conversation history. This means only
+  // the new user message needs prefill when they hit send (~1-2s faster).
+  const warmupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleTextChange = useCallback((text: string) => {
+    setInputText(text);
+
+    // Only warm up for on-device model
+    if (!LlamaService.isModelLoaded()) return;
+    if (config.provider !== 'llama-local') return;
+
+    // Debounce 500ms — don't warm on every keystroke
+    if (warmupTimerRef.current) clearTimeout(warmupTimerRef.current);
+    if (text.trim().length < 2) return; // wait for meaningful input
+
+    warmupTimerRef.current = setTimeout(() => {
+      // Build the messages that will be used for the next completion
+      const historyMessages = messages.map(m => ({ role: m.role, content: m.content }));
+      const warmupMessages = [
+        { role: 'user', content: 'You are P-01 Agent, a crypto assistant.\nRespond to the user.' },
+        { role: 'assistant', content: 'Understood. I am P-01 Agent, ready to help.' },
+        ...historyMessages,
+      ];
+      LlamaService.warmupCache(warmupMessages);
+    }, 500);
+  }, [messages, config.provider]);
+
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
     if (!text || isLoading) return;
+
+    // Cancel any in-progress warmup before sending
+    LlamaService.cancelWarmup();
+    if (warmupTimerRef.current) {
+      clearTimeout(warmupTimerRef.current);
+      warmupTimerRef.current = null;
+    }
 
     setInputText('');
     // Use streaming for cloud providers, regular for local
@@ -573,7 +610,7 @@ export default function AgentDashboard() {
                 <TextInput
                   ref={inputRef}
                   value={inputText}
-                  onChangeText={setInputText}
+                  onChangeText={handleTextChange}
                   placeholder="Ask anything..."
                   placeholderTextColor={Colors.textTertiary}
                   multiline
