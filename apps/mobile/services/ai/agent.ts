@@ -4,6 +4,7 @@ import { Stream } from '../solana/streams';
 import { analyzeStreams, formatAnalysisForAI, getBalanceSummary, StreamAnalysis } from './streamAnalyzer';
 import { getMarketSummary, formatMarketContext, MarketSummary } from '../crypto/marketData';
 import * as LlamaService from './llamaService';
+import { formatToolsForPrompt, parseToolCalls, executeTool } from './tools';
 
 // AI Service Configuration
 export interface AIConfig {
@@ -81,7 +82,7 @@ export const DEFAULT_CONFIGS: Record<string, Partial<AIConfig>> = {
   'gemma-cloud': {
     provider: 'gemma-cloud',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    model: 'gemma-3n-e4b-it',
+    model: 'gemini-2.0-flash',
     temperature: 0.7,
     maxTokens: 1024,
     gemmaBackend: 'google-ai',
@@ -351,21 +352,54 @@ export async function sendMessage(
   context?: AIContext
 ): Promise<ChatResponse> {
   const activeConfig = config || await loadConfig();
-
   const enhancedPrompt = buildEnhancedPrompt(activeConfig, context);
-
   const allMessages: ChatMessage[] = [
     { role: 'system', content: enhancedPrompt },
     ...messages,
   ];
 
+  // Tool-use loop: up to 3 rounds of tool calls
+  const MAX_TOOL_ROUNDS = 3;
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const response = await sendToProvider(allMessages, activeConfig, context);
+    if (!response.success || !response.message) return response;
+
+    // Check if the AI wants to invoke tools
+    const toolCalls = parseToolCalls(response.message);
+    if (toolCalls.length === 0) return response;
+
+    // Execute tools and inject results
+    const toolResults: string[] = [];
+    for (const call of toolCalls) {
+      const result = await executeTool(call.tool, call.input);
+      toolResults.push(`[Tool: ${call.tool}] ${JSON.stringify(result.success ? result.data : { error: result.error })}`);
+    }
+
+    // Strip tool blocks from the response, append tool results, and ask AI to continue
+    const cleanedResponse = response.message.replace(/```tool\s*\n?[\s\S]*?```/gi, '').trim();
+    if (cleanedResponse) {
+      allMessages.push({ role: 'assistant', content: cleanedResponse });
+    }
+    allMessages.push({
+      role: 'user',
+      content: `Tool results:\n${toolResults.join('\n')}\n\nUse these results to answer the user's question. Do not call tools again unless you need different information.`,
+    });
+  }
+
+  // Final round (no more tool calls allowed)
+  return sendToProvider(allMessages, activeConfig, context);
+}
+
+/** Route to the correct provider */
+async function sendToProvider(
+  allMessages: ChatMessage[],
+  activeConfig: AIConfig,
+  context?: AIContext,
+): Promise<ChatResponse> {
   try {
-    // Try provider-specific first
     if (activeConfig.provider === 'groq') {
       return await sendToGroq(allMessages, activeConfig);
     }
-
-    // Try llama-local if model is loaded
     if (activeConfig.provider === 'llama-local' || LlamaService.isModelLoaded()) {
       try {
         return await sendToLlamaLocal(allMessages, activeConfig, context);
@@ -373,7 +407,6 @@ export async function sendMessage(
         console.warn('[AI] llama-local failed, falling back:', error.message);
       }
     }
-
     if (activeConfig.provider === 'gemma' || activeConfig.provider === 'gemma-cloud') {
       return await sendToGemma(allMessages, activeConfig, context);
     } else if (activeConfig.provider === 'ollama') {
@@ -382,15 +415,12 @@ export async function sendMessage(
       return await sendToOpenAI(allMessages, activeConfig);
     } else if (activeConfig.provider === 'anthropic') {
       return await sendToAnthropic(allMessages, activeConfig);
-    } else {
-      return { success: false, error: 'Unknown AI provider' };
     }
+    return { success: false, error: 'Unknown AI provider' };
   } catch (error: any) {
-    // Sanitize error message to avoid leaking API keys from URLs in stack traces
     const safeMsg = error.message ? sanitizeUrl(error.message) : 'unknown error';
     console.error('AI request failed:', safeMsg);
-    // Last resort: rule-based
-    const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || '';
+    const lastUserMsg = allMessages.filter(m => m.role === 'user').pop()?.content || '';
     return sendToRuleBased(lastUserMsg, context);
   }
 }
@@ -506,7 +536,8 @@ async function streamFromGemini(
   // Google AI REST API requires the API key as a query parameter (?key=...).
   // This is a Google API requirement — there is no header-based auth option.
   // The URL is never logged; see sanitizeUrl() for log-safe redaction.
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const geminiModel = config.model || 'gemini-2.0-flash';
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
   const response = await fetch(geminiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -635,6 +666,9 @@ function buildEnhancedPrompt(config: AIConfig, context?: AIContext): string {
   const local = isLocalProvider(config);
   let prompt = local ? SYSTEM_PROMPT_LOCAL : SYSTEM_PROMPT;
 
+  // Inject tool definitions so the model can invoke them
+  prompt += `\n\n${formatToolsForPrompt()}`;
+
   if (context) {
     // Privacy gate: cloud providers only get market data unless user opts in.
     // On-device/local providers always get full context (data stays on device).
@@ -701,8 +735,9 @@ async function sendToGemma(messages: ChatMessage[], config: AIConfig, context?: 
       }));
 
       // Google AI REST API requires ?key= query param (no header-based auth available)
+      const geminiModel = config.model || 'gemini-2.0-flash';
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

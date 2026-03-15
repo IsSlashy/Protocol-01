@@ -31,7 +31,7 @@ type ProviderOption = {
 
 const PROVIDERS: ProviderOption[] = [
   { id: 'groq', label: 'Groq', description: 'Llama 3.3 70B — fastest cloud', icon: 'flash-outline' },
-  { id: 'gemma', label: 'Gemini', description: 'Google Gemini — free tier', icon: 'diamond-outline' },
+  { id: 'gemma', label: 'Gemini', description: 'Gemini 2.0 Flash — free', icon: 'diamond-outline' },
   { id: 'llama-local', label: 'On-Device', description: 'Gemma 3 1B — fully offline', icon: 'phone-portrait-outline' },
   { id: 'custom', label: 'Custom', description: 'OpenAI, Anthropic, Ollama', icon: 'code-slash-outline' },
 ];
@@ -46,7 +46,6 @@ export default function AISettingsScreen() {
     conversations, deleteConversation,
   } = useAIStore();
 
-  const [temperature, setTemperature] = useState(config.temperature);
   const [groqKey, setGroqKey] = useState(config.groqApiKey || '');
   const [geminiKey, setGeminiKey] = useState(config.apiKey || '');
   const [showGroqKey, setShowGroqKey] = useState(false);
@@ -58,7 +57,9 @@ export default function AISettingsScreen() {
       // Keep current provider but show custom options
       return;
     }
-    const defaults = DEFAULT_CONFIGS[providerId] || {};
+    // Map pill IDs to actual config keys
+    const configKey = providerId === 'gemma' ? 'gemma-cloud' : providerId;
+    const defaults = DEFAULT_CONFIGS[configKey] || {};
     updateConfig({
       ...defaults,
       groqApiKey: groqKey || config.groqApiKey,
@@ -96,12 +97,6 @@ export default function AISettingsScreen() {
     );
   };
 
-  const handleTemperatureChange = (delta: number) => {
-    const newTemp = Math.max(0.1, Math.min(1.0, Math.round((temperature + delta) * 10) / 10));
-    setTemperature(newTemp);
-    updateConfig({ temperature: newTemp });
-  };
-
   const handleDownloadModel = () => {
     p01Alert(
       'Download Gemma 3 1B',
@@ -126,14 +121,14 @@ export default function AISettingsScreen() {
 
   const currentProvider = config.provider === 'gemma-cloud' || (config.provider === 'gemma' && config.gemmaBackend === 'google-ai')
     ? 'gemma'
-    : config.provider === 'gemma' && config.gemmaBackend === 'on-device'
+    : config.provider === 'llama-local' || (config.provider === 'gemma' && config.gemmaBackend === 'on-device')
     ? 'llama-local'
     : config.provider;
 
   const providerLabel = (() => {
     if (config.provider === 'groq') return 'Groq (Llama 3.3 70B)';
     if (modelStatus === 'loaded') return 'On-device (Gemma 3 1B)';
-    if (config.provider === 'gemma' || config.provider === 'gemma-cloud') return 'Gemini Flash';
+    if (config.provider === 'gemma' || config.provider === 'gemma-cloud') return 'Gemini 2.0 Flash';
     return config.provider;
   })();
 
@@ -221,21 +216,23 @@ export default function AISettingsScreen() {
             />
           </GlassCard>
 
-          {/* Provider pills */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+          {/* Provider pills — 2×2 compact grid */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
             {PROVIDERS.map((p) => {
-              const isActive = currentProvider === p.id || (p.id === 'groq' && config.provider === 'groq');
+              const isActive = currentProvider === p.id;
               return (
                 <TouchableOpacity
                   key={p.id}
                   onPress={() => handleProviderChange(p.id)}
+                  activeOpacity={0.7}
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
-                    paddingHorizontal: 14,
-                    paddingVertical: 10,
-                    borderRadius: 14,
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
+                    borderRadius: 10,
                     overflow: 'hidden',
+                    width: '48.5%',
                   }}
                 >
                   <View style={StyleSheet.absoluteFill}>
@@ -246,7 +243,7 @@ export default function AISettingsScreen() {
                         StyleSheet.absoluteFill,
                         {
                           backgroundColor: isActive
-                            ? 'rgba(57, 197, 187, 0.1)'
+                            ? 'rgba(57, 197, 187, 0.12)'
                             : 'rgba(12, 12, 14, 0.65)',
                         },
                       ]}
@@ -256,10 +253,10 @@ export default function AISettingsScreen() {
                     style={[
                       StyleSheet.absoluteFill,
                       {
-                        borderRadius: 14,
+                        borderRadius: 10,
                         borderWidth: 1,
                         borderColor: isActive
-                          ? 'rgba(57, 197, 187, 0.3)'
+                          ? 'rgba(57, 197, 187, 0.35)'
                           : 'rgba(57, 197, 187, 0.07)',
                       },
                     ]}
@@ -267,17 +264,20 @@ export default function AISettingsScreen() {
                   />
                   <Ionicons
                     name={p.icon as any}
-                    size={16}
+                    size={14}
                     color={isActive ? P01Colors.cyan : Colors.textSecondary}
                   />
-                  <View style={{ marginLeft: 8 }}>
-                    <Text style={{ color: isActive ? P01Colors.cyan : Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.medium }}>
+                  <View style={{ marginLeft: 6, flex: 1 }}>
+                    <Text style={{ color: isActive ? P01Colors.cyan : Colors.text, fontSize: 12, fontFamily: FontFamily.medium }}>
                       {p.label}
                     </Text>
-                    <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
+                    <Text style={{ color: Colors.textTertiary, fontSize: 9 }} numberOfLines={1}>
                       {p.description}
                     </Text>
                   </View>
+                  {isActive && (
+                    <Ionicons name="checkmark-circle" size={14} color={P01Colors.cyan} style={{ marginLeft: 2 }} />
+                  )}
                 </TouchableOpacity>
               );
             })}
@@ -574,41 +574,6 @@ export default function AISettingsScreen() {
             )}
           </GlassCard>
           <InfoBox text="On-device AI runs entirely on your phone. No data sent to servers. Works offline." />
-        </Animated.View>
-
-        {/* Generation Settings */}
-        <Animated.View entering={FadeInDown.delay(300).springify()}>
-          <SectionTitle title="GENERATION" />
-          <GlassCard>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <IconBox icon="thermometer-outline" color={P01Colors.cyan} />
-                <View style={{ marginLeft: 12 }}>
-                  <Text style={{ color: Colors.text, fontSize: FontSize.md }}>Temperature</Text>
-                  <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
-                    {temperature <= 0.3 ? 'Precise' : temperature <= 0.6 ? 'Balanced' : 'Creative'}
-                  </Text>
-                </View>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <TouchableOpacity
-                  onPress={() => handleTemperatureChange(-0.1)}
-                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)' }}
-                >
-                  <Ionicons name="remove" size={18} color={Colors.textSecondary} />
-                </TouchableOpacity>
-                <Text style={{ color: P01Colors.cyan, fontSize: FontSize.lg, fontFamily: FontFamily.semibold, width: 32, textAlign: 'center' }}>
-                  {temperature.toFixed(1)}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => handleTemperatureChange(0.1)}
-                  style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.06)' }}
-                >
-                  <Ionicons name="add" size={18} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </GlassCard>
         </Animated.View>
 
         {/* Chat Data */}
