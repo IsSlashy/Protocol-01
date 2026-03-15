@@ -435,6 +435,70 @@ export function isOnDeviceAvailable(): boolean {
   return isNativeModuleAvailable();
 }
 
+// ── KV Cache Pre-warming ─────────────────────────────────────────────────────
+// Pre-process the system prompt + conversation history into the KV cache
+// while the user types. When they send, only the new tokens need prefill.
+// llama.cpp automatically reuses matching prefix tokens in the KV cache.
+
+let warmupAbortController: AbortController | null = null;
+let lastWarmupPrompt: string = '';
+
+/**
+ * Pre-warm the KV cache with the system prompt + conversation history.
+ * Call this when the user starts typing (debounced ~500ms).
+ * The next completion() call with the same prefix will skip prefill.
+ */
+export async function warmupCache(
+  messages: Array<{ role: string; content: string }>,
+): Promise<void> {
+  if (!llamaContext) return;
+
+  // Build the prompt that would be used for the next completion
+  const warmupMessages = [...messages];
+
+  // Abort any previous warmup
+  if (warmupAbortController) {
+    warmupAbortController.abort();
+  }
+  warmupAbortController = new AbortController();
+
+  try {
+    // Run completion with n_predict=0 — this fills the KV cache
+    // with all input tokens without generating any output
+    await llamaContext.completion({
+      messages: warmupMessages,
+      n_predict: 0,
+      temperature: 0.7,
+    });
+    lastWarmupPrompt = JSON.stringify(warmupMessages);
+    console.log('[LlamaService] KV cache warmed:', warmupMessages.length, 'messages');
+  } catch (error: any) {
+    // Warmup is best-effort — don't fail
+    if (error.message !== 'aborted') {
+      console.warn('[LlamaService] Warmup failed:', error.message);
+    }
+  }
+}
+
+/**
+ * Check if the KV cache is already warm for the given messages
+ */
+export function isCacheWarm(
+  messages: Array<{ role: string; content: string }>,
+): boolean {
+  return lastWarmupPrompt === JSON.stringify(messages);
+}
+
+/**
+ * Cancel any in-progress warmup (call when user sends message)
+ */
+export function cancelWarmup(): void {
+  if (warmupAbortController) {
+    warmupAbortController.abort();
+    warmupAbortController = null;
+  }
+}
+
 export const MODEL_INFO = {
   name: 'Gemma 3 1B',
   quantization: 'Q4_K_M',
