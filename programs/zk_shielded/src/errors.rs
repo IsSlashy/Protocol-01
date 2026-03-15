@@ -122,4 +122,20 @@ pub enum ZkShieldedError {
 
     #[msg("Pending authority does not match signer")]
     PendingAuthorityMismatch,
+
+    // Privacy Router errors
+    #[msg("Invalid split denomination — source denomination must equal num_outputs * target denomination")]
+    InvalidSplitDenomination,
+
+    #[msg("Too many split outputs — maximum is 20")]
+    TooManyOutputs,
+
+    #[msg("Invalid output count — must be between 1 and 20")]
+    InvalidOutputCount,
+
+    #[msg("Privacy route is not active")]
+    RouteNotActive,
+
+    #[msg("Unauthorized route access — not route authority")]
+    UnauthorizedRoute,
 }
