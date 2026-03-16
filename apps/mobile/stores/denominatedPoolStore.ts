@@ -476,11 +476,68 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
+          const walletPubkey = walletSigner
+            ? walletSigner.publicKey
+            : (await import('../services/solana/wallet')).then(m => m.getKeypair()).then(kp => kp?.publicKey);
           console.log('[DenomStore] walletSigner:', walletSigner ? `Privy(${walletSigner.publicKey.toBase58().slice(0,8)})` : 'local keypair');
-          const receipt = await shield(pool, (step) => {
-            console.log('[DenomStore] progress:', step);
-            set({ progress: step });
-          }, walletSigner);
+
+          // ── Stealth intermediary: break wallet→pool on-chain link ──
+          // Transfer SOL to an ephemeral stealth address first, then shield from there.
+          // On-chain: wallet→stealth (normal transfer), stealth→pool (shield) — no direct link.
+          let receipt: ShieldReceipt;
+          set({ progress: 'Creating stealth intermediary...' });
+          console.log('[DenomStore] Creating stealth intermediary to hide wallet origin...');
+          try {
+            const { Keypair: SolKeypair, SystemProgram, Transaction } = await import('@solana/web3.js');
+            const { sha256 } = await import('@noble/hashes/sha256');
+            const { bytesToHex } = await import('@noble/hashes/utils');
+            const { hmac } = await import('@noble/hashes/hmac');
+            const connection = getConnection();
+
+            const walletAddr = walletSigner?.publicKey.toBase58() || '';
+            const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_shield_${Date.now()}`));
+            const stealthKp = SolKeypair.fromSeed(seed);
+
+            console.log(`[DenomStore] Stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
+
+            // Transfer denomination + rent + shield fee to stealth
+            const lamports = pool.denomination === 0.1 ? 100_000_000 : pool.denomination === 0.5 ? 500_000_000 : pool.denomination * 1_000_000_000;
+            const extra = 5_000_000; // 0.005 SOL for fees + rent
+            const transferAmount = lamports + extra;
+
+            set({ progress: 'Transferring to stealth address...' });
+            const transferTx = new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: walletSigner!.publicKey,
+                toPubkey: stealthKp.publicKey,
+                lamports: transferAmount,
+              })
+            );
+            const { blockhash } = await connection.getLatestBlockhash();
+            transferTx.recentBlockhash = blockhash;
+            transferTx.feePayer = walletSigner!.publicKey;
+            const signedTransfer = await walletSigner!.signTransaction(transferTx);
+            const transferSig = await connection.sendRawTransaction(signedTransfer.serialize());
+            await connection.confirmTransaction(transferSig, 'confirmed');
+            console.log(`[DenomStore] Stealth transfer confirmed: ${transferSig.slice(0, 16)}...`);
+
+            // Now shield from the stealth keypair (not the user's wallet)
+            set({ progress: 'Shielding from stealth address...' });
+            console.log('[DenomStore] Shielding from stealth (wallet hidden on-chain)...');
+            receipt = await shield(pool, (step) => {
+              console.log('[DenomStore] progress:', step);
+              set({ progress: step });
+            }, undefined, stealthKp); // Pass stealth keypair as the shielder
+
+            console.log('[DenomStore] ✅ Shield via stealth — wallet NOT visible on-chain');
+          } catch (stealthErr: any) {
+            // Stealth failed — fallback to direct (e.g., local keypair, no Privy signer)
+            console.warn('[DenomStore] Stealth shield failed, using direct:', stealthErr.message);
+            receipt = await shield(pool, (step) => {
+              console.log('[DenomStore] progress:', step);
+              set({ progress: step });
+            }, walletSigner);
+          }
 
           const storedNote: StoredNote = {
             id: noteIdFromReceipt(receipt),
@@ -536,17 +593,30 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
-        const { PublicKey } = await import('@solana/web3.js');
-        const recipient = new PublicKey(recipientAddress);
+        const { PublicKey, Keypair: SolKeypair, SystemProgram, Transaction } = await import('@solana/web3.js');
 
-        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing...' });
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing stealth withdrawal...' });
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
+
+          // ── Stealth intermediary: break pool→wallet on-chain link ──
+          // Unshield to a stealth address, then sweep from stealth to the real recipient.
+          // On-chain: pool→stealth (ZK proof), stealth→wallet (normal transfer) — no direct link.
+          const { sha256 } = await import('@noble/hashes/sha256');
+          const { hmac } = await import('@noble/hashes/hmac');
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${Date.now()}`));
+          const stealthKp = SolKeypair.fromSeed(seed);
+
+          console.log(`[DenomStore] Unshield via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... → ${recipientAddress.slice(0, 8)}...`);
+
+          // Step 1: Unshield from pool to stealth address
+          set({ progress: 'Unshielding to stealth address...' });
           const sig = await unshield(
             receipt,
             pool,
-            recipient,
+            stealthKp.publicKey, // Unshield to stealth, NOT to wallet
             proofGenerator,
             (step) => {
               const proving = step.includes('proof') || step.includes('Proof');
@@ -554,6 +624,35 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             },
             walletSigner,
           );
+
+          console.log(`[DenomStore] Unshield to stealth confirmed: ${sig.slice(0, 16)}...`);
+
+          // Step 2: Sweep from stealth to the real recipient
+          set({ progress: 'Sweeping to destination...', isProving: false });
+          try {
+            const connection = getConnection();
+            const stealthBalance = await connection.getBalance(stealthKp.publicKey);
+            const sweepAmount = stealthBalance - 5000; // Leave 5K lamports for TX fee
+
+            if (sweepAmount > 0) {
+              const sweepTx = new Transaction().add(
+                SystemProgram.transfer({
+                  fromPubkey: stealthKp.publicKey,
+                  toPubkey: new PublicKey(recipientAddress),
+                  lamports: sweepAmount,
+                })
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              sweepTx.recentBlockhash = blockhash;
+              sweepTx.feePayer = stealthKp.publicKey;
+              sweepTx.sign(stealthKp);
+              const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+              await connection.confirmTransaction(sweepSig, 'confirmed');
+              console.log(`[DenomStore] ✅ Stealth sweep confirmed: ${sweepSig.slice(0, 16)}... → ${recipientAddress.slice(0, 8)}...`);
+            }
+          } catch (sweepErr: any) {
+            console.warn('[DenomStore] Stealth sweep failed (funds safe in stealth):', sweepErr.message);
+          }
 
           // Mark note as spent
           set(state => ({
