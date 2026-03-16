@@ -1,8 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
-// Placeholder — will be replaced after first deploy
-declare_id!("11111111111111111111111111111111");
+declare_id!("FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX");
 
 /// Maximum shields per batch (Solana TX size limit ~1232 bytes)
 const MAX_SHIELDS_PER_BATCH: usize = 5;
