@@ -288,9 +288,7 @@ async function stealthUnshieldAndSweep(
   console.log(`[Stealth] Unshield via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... → ${recipientAddress.slice(0, 8)}...`);
 
   // Step 0: Pre-fund stealth with enough SOL for TX fees
-  // STARK proof upload needs ~5 TXs (init + chunks + verify + unshield + close)
-  // Each TX ~5000 lamports = ~0.03 SOL total + rent for proof buffer (~0.01 SOL)
-  const FEE_FUND = 200_000_000; // 0.2 SOL — STARK proof buffer rent (~0.07) + init/upload/verify TXs (~0.05) + unshield TX + margin
+  const FEE_FUND = 500_000_000; // 0.5 SOL — large margin for STARK proof upload + unshield + fees
   onProgress?.('Funding stealth for fees...');
   const connection = getConnection();
   if (walletSigner) {
@@ -307,19 +305,28 @@ async function stealthUnshieldAndSweep(
     const signedFund = await walletSigner.signTransaction(fundTx);
     const fundSig = await connection.sendRawTransaction(signedFund.serialize());
     await connection.confirmTransaction(fundSig, 'confirmed');
-    console.log(`[Stealth] Fee funding confirmed: ${fundSig.slice(0, 16)}...`);
+    console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}... TX: ${fundSig.slice(0, 16)}...`);
   }
+
+  // Log balance before unshield
+  const balBefore = await connection.getBalance(stealthKp.publicKey);
+  console.log(`[Stealth] Balance before unshield: ${balBefore / 1e9} SOL`);
 
   // Step 1: Unshield to stealth — SIGNED BY STEALTH KEYPAIR (not wallet)
   onProgress?.('Unshielding to stealth address...');
   const sig = await unshieldFn(stealthKp.publicKey, stealthKp);
   console.log(`[Stealth] Unshield to stealth confirmed: ${sig.slice(0, 16)}...`);
 
+  // Log balance after unshield
+  const balAfter = await connection.getBalance(stealthKp.publicKey);
+  console.log(`[Stealth] Balance after unshield: ${balAfter / 1e9} SOL (delta: ${(balAfter - balBefore) / 1e9})`);
+
   // Step 2: Sweep from stealth to real recipient
   onProgress?.('Sweeping to destination...');
   try {
     await new Promise(r => setTimeout(r, 1500));
     const stealthBalance = await connection.getBalance(stealthKp.publicKey);
+    console.log(`[Stealth] Balance before sweep: ${stealthBalance / 1e9} SOL`);
     const sweepAmount = stealthBalance - 5000; // Leave 5K for fee
 
     if (sweepAmount > 0) {
@@ -760,17 +767,19 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           let sig: string;
 
           if (emergency) {
-            // Emergency: skip stealth (already a privacy compromise — bypasses maturation)
-            // Direct unshield is faster and more reliable
-            console.log('[DenomStore] Emergency STARK unshield — direct (no stealth)');
-            const { PublicKey } = await import('@solana/web3.js');
-            sig = await unshieldStark(
-              receipt, pool, new PublicKey(recipientAddress), starkProofData,
-              (step) => {
-                const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
-                set({ progress: step, isProving: proving });
-              },
-              walletSigner, true,
+            // Emergency via stealth too — test with full logging
+            console.log('[DenomStore] Emergency STARK unshield — via stealth (testing)');
+            sig = await stealthUnshieldAndSweep(
+              async (stealthPubkey, stealthKeypair) => unshieldStark(
+                receipt, pool, stealthPubkey, starkProofData,
+                (step) => {
+                  const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+                  set({ progress: step, isProving: proving });
+                },
+                undefined, true, stealthKeypair,
+              ),
+              recipientAddress, walletAddr, walletSigner,
+              (msg) => set({ progress: msg, isProving: false }),
             );
           } else {
             // Normal: stealth unshield for full privacy
