@@ -203,64 +203,13 @@ export default function PrivateSendScreen() {
       const { bytesToHex } = await import('@noble/hashes/utils');
       const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
 
-      const { initPrivacyRouter, startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
+      const { startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
 
+      // Ensure autonomous runner is started (idempotent)
       if (!isPrivacyRouterAvailable()) {
-        console.log('[PrivateSend] Initializing privacy router with STARK + MPC...');
-        await initPrivacyRouter({
-          spendingKeyHash,
-          callbacks: {
-            shield: async (params) => {
-              console.log(`[PrivateSend] 🛡️ HOP SHIELD (STARK): ${params.amount} SOL → ${params.denomination} SOL pool`);
-              // Shield via denominatedPoolStore — routes through Arcium MPC relay when available
-              const pool = findPool('SOL', params.denomination);
-              if (!pool) throw new Error(`No pool for ${params.denomination} SOL`);
-              const id = await shieldNote(pool);
-              console.log(`[PrivateSend] 🛡️ HOP SHIELD confirmed (MPC relay if available), note: ${id}`);
-              return { txSignature: `shield_${id}`, commitment: id };
-            },
-            unshield: async (params) => {
-              console.log(`[PrivateSend] 🔓 HOP UNSHIELD (STARK): ${params.denomination} SOL → ${params.toAddress.slice(0, 8)}...`);
-              console.log(`[PrivateSend] 🔓 Using STARK proof (quantum-resistant) — no Groth16`);
-
-              // Find the note that matches this nullifier
-              const notes = useDenominatedPoolStore.getState().notes;
-              const matchingNote = notes.find(n =>
-                n.denomination === params.denomination &&
-                n.status === 'pending' || n.status === 'mature'
-              );
-
-              if (!matchingNote) {
-                console.warn(`[PrivateSend] 🔓 No mature note found for ${params.denomination} SOL — scheduling for later`);
-                return { txSignature: `stark_pending_${Date.now().toString(36)}` };
-              }
-
-              // Generate STARK proof via mobile WASM prover
-              try {
-                const starkProvider = require('@/providers/StarkProverProvider');
-                const { generatePoolCommitmentProof } = starkProvider;
-
-                if (generatePoolCommitmentProof) {
-                  console.log(`[PrivateSend] 🔓 Generating STARK pool_commitment proof (WASM)...`);
-                  const proofData = await generatePoolCommitmentProof(BigInt(0)); // placeholder secret
-                  console.log(`[PrivateSend] 🔓 STARK proof generated: ${proofData.proofBytes.length} bytes`);
-
-                  const unshieldStark = useDenominatedPoolStore.getState().unshieldNoteStark;
-                  const sig = await unshieldStark(matchingNote.id, params.toAddress, proofData);
-                  console.log(`[PrivateSend] 🔓 STARK unshield TX: ${sig.slice(0, 16)}...`);
-                  return { txSignature: sig };
-                }
-              } catch (starkErr: any) {
-                console.warn(`[PrivateSend] 🔓 STARK proof failed:`, starkErr.message);
-              }
-
-              // Fallback: schedule for background execution
-              console.log(`[PrivateSend] 🔓 Queued for background STARK unshield`);
-              return { txSignature: `stark_queued_${Date.now().toString(36)}` };
-            },
-          },
-        });
-        console.log('[PrivateSend] Router initialized (STARK proofs + MPC relay)');
+        console.log('[PrivateSend] Starting autonomous runner...');
+        const { startAutonomousRunner } = await import('@/services/privacyRouter/autonomousRunner');
+        await startAutonomousRunner();
       }
 
       console.log('[PrivateSend] Planning remaining route hops...');
