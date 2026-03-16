@@ -21,6 +21,7 @@ import express from 'express';
 import cors from 'cors';
 import { PrivacyMempool, BundleFlushResult } from './mempool';
 import { createRpcRelay } from './rpc-relay';
+import { rateLimiter, securityHeaders, stripMetadata } from './security';
 
 // ---------------------------------------------------------------------------
 // Configuration from environment
@@ -38,19 +39,16 @@ const MAX_BUNDLE_SIZE = 20; // Max TXs per bundle submission
 const app = express();
 const mempool = new PrivacyMempool(RPC_URL, { batchWindowMs: BATCH_WINDOW_MS });
 
-// ── Privacy middleware: strip all identifying headers ──
-app.use((req, _res, next) => {
-  // Don't log IPs, user-agents, or any request metadata
-  // This is intentional — the bundler should not know who submits what
-  delete req.headers['x-forwarded-for'];
-  delete req.headers['x-real-ip'];
-  delete req.headers['user-agent'];
-  delete req.headers['referer'];
-  delete req.headers['origin'];
-  next();
-});
-
+// ── Security stack (order matters) ──
+// 1. Strip all identifying metadata from requests
+app.use(stripMetadata);
+// 2. Security response headers (anti-fingerprint, anti-clickjack)
+app.use(securityHeaders);
+// 3. Rate limiter (HMAC-hashed IP — never stores real addresses)
+app.use(rateLimiter);
+// 4. CORS
 app.use(cors({ origin: '*' }));
+// 5. Body parser
 app.use(express.json({ limit: '2mb' }));
 
 // ── Privacy RPC Relay ──
@@ -222,21 +220,24 @@ app.get('/health', (_req, res) => {
 // ---------------------------------------------------------------------------
 
 app.listen(PORT, () => {
+  const torEnabled = !!process.env.TOR_SOCKS_PROXY;
   console.log('');
   console.log('╔═══════════════════════════════════════════════╗');
-  console.log('║         P01 Bundle Engine v0.1.0              ║');
+  console.log('║         P01 Bundle Engine v0.2.0              ║');
   console.log('║   Privacy-first TX bundling for Solana        ║');
   console.log('╠═══════════════════════════════════════════════╣');
   console.log(`║  Port:    ${String(PORT).padEnd(36)}║`);
-  console.log(`║  RPC:     ${RPC_URL.slice(0, 36).padEnd(36)}║`);
+  console.log(`║  RPC:     ${RPC_URL.replace(/[?&](api-key|key)=[^&]+/gi, '').slice(0, 36).padEnd(36)}║`);
+  console.log(`║  Tor:     ${String(torEnabled ? 'ENABLED' : 'disabled').padEnd(36)}║`);
   console.log(`║  Window:  ${String(BATCH_WINDOW_MS + 'ms').padEnd(36)}║`);
+  console.log(`║  Rate:    ${String(process.env.RATE_LIMIT_RPM || '120').padEnd(33)}rpm║`);
   console.log('╚═══════════════════════════════════════════════╝');
   console.log('');
   console.log('  POST /v1/bundle       — Submit bundle (async)');
   console.log('  POST /v1/bundle/sync  — Submit bundle (wait for result)');
   console.log('  GET  /v1/bundle/:id   — Check bundle status');
   console.log('  GET  /v1/stats        — Mempool statistics');
-  console.log('  POST /v1/rpc          — Privacy RPC relay (Tor-routed)');
+  console.log('  POST /v1/rpc          — Privacy RPC relay');
   console.log('  GET  /v1/rpc/stats    — Relay statistics');
   console.log('  GET  /health          — Health check');
   console.log('');
