@@ -572,7 +572,9 @@ export async function submitAndVerifyStarkProof(
       chunkTx = await walletSigner.signTransaction(chunkTx);
     }
 
-    // Send immediately without waiting for confirmation
+    // Send with rate-limit protection — 500ms delay between chunks
+    // Devnet public RPC rate-limits at ~5 req/s
+    if (i > 0) await new Promise(r => setTimeout(r, 500));
     const sig = await conn.sendRawTransaction(chunkTx.serialize(), {
       skipPreflight: true,
     });
