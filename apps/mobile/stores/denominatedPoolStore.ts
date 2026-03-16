@@ -288,7 +288,7 @@ async function stealthUnshieldAndSweep(
   console.log(`[Stealth] Unshield via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... → ${recipientAddress.slice(0, 8)}...`);
 
   // Step 0: Pre-fund stealth with enough SOL for TX fees
-  const FEE_FUND = 500_000_000; // 0.5 SOL — large margin for STARK proof upload + unshield + fees
+  const FEE_FUND = 100_000_000; // 0.1 SOL — STARK buffer rent (~0.07) + TX fees (~0.003) + margin. Auto-recovered via sweep.
   onProgress?.('Funding stealth for fees...');
   const connection = getConnection();
   if (walletSigner) {
