@@ -50,7 +50,9 @@ export function deriveRouteStealthKeypair(params: {
   const seed = hmac(sha256, keyBytes, contextBytes);
 
   // Create Ed25519 keypair from the 32-byte seed
-  return Keypair.fromSeed(seed);
+  const kp = Keypair.fromSeed(seed);
+  console.log(`[Stealth] Derived keypair: hop=${hopIndex} out=${outputIndex} → ${kp.publicKey.toBase58().slice(0, 12)}...`);
+  return kp;
 }
 
 /**
@@ -70,6 +72,7 @@ export function deriveStealthAddress(params: {
   outputIndex: number;
 }): PublicKey {
   const keypair = deriveRouteStealthKeypair(params);
+  console.log(`[Stealth] Address: hop=${params.hopIndex} out=${params.outputIndex} → ${keypair.publicKey.toBase58().slice(0, 12)}...`);
   return keypair.publicKey;
 }
 
