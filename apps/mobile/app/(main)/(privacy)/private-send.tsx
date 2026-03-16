@@ -60,16 +60,37 @@ const ALL_LEVELS: PrivacyLevel[] = [1, 2, 3, 4, 5];
 // Main screen
 // ---------------------------------------------------------------------------
 
+type SendSource = 'wallet' | 'note';
+
 export default function PrivateSendScreen() {
   const router = useRouter();
   const { balance, publicKey } = useWalletStore();
+  const notes = useDenominatedPoolStore((s) => s.notes);
 
+  const [source, setSource] = useState<SendSource>('wallet');
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState('');
   const [privacyLevel, setPrivacyLevel] = useState<PrivacyLevel>(3);
   const [isStarting, setIsStarting] = useState(false);
 
   const solBalance = balance?.sol ?? 0;
+
+  // Available notes for "from note" mode
+  const availableNotes = useMemo(() =>
+    notes.filter(n => n.token === 'SOL' && (n.status === 'pending' || n.status === 'mature')),
+    [notes]
+  );
+
+  const selectedNote = availableNotes.find(n => n.id === selectedNoteId);
+
+  // Auto-set amount when note is selected
+  const handleSelectNote = useCallback((noteId: string) => {
+    setSelectedNoteId(noteId);
+    const note = availableNotes.find(n => n.id === noteId);
+    if (note) setAmount(note.denomination.toString());
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [availableNotes]);
 
   // Compute fee estimate whenever amount or privacy level changes
   const feeEstimate = useMemo<RouteFeeEstimate | null>(() => {
@@ -82,7 +103,9 @@ export default function PrivateSendScreen() {
   const parsedAmount = parseFloat(amount);
   const hasValidAmount = !isNaN(parsedAmount) && parsedAmount > 0;
   const hasRecipient = recipient.trim().length >= 32;
-  const hasEnoughBalance = hasValidAmount && parsedAmount <= solBalance;
+  const hasEnoughBalance = source === 'note'
+    ? hasValidAmount && !!selectedNote
+    : hasValidAmount && parsedAmount <= solBalance;
   const canStart = hasValidAmount && hasRecipient && hasEnoughBalance && !isStarting;
 
   // ── Handlers ──────────────────────────────────────────────────────
@@ -133,7 +156,48 @@ export default function PrivateSendScreen() {
 
     try {
       console.log(`[PrivateSend] Starting route: ${amt} SOL → ${recipient.trim().slice(0, 8)}... | Level ${privacyLevel} (${LEVEL_LABELS[privacyLevel]})`);
+      console.log(`[PrivateSend] Source: ${source === 'note' ? `note ${selectedNoteId?.slice(0, 8)}...` : 'wallet'}`);
       console.log(`[PrivateSend] Config: ${levelConfig.splits} splits, ${levelConfig.hops} hops`);
+
+      if (source === 'note' && selectedNote) {
+        // ── FROM NOTE: Already shielded — no wallet TX needed ──────
+        // This is MAXIMUM privacy: zero wallet transactions in the entire flow
+        console.log(`[PrivateSend] 🔒 Sending from shielded note: ${selectedNote.id} (${selectedNote.denomination} SOL)`);
+        console.log(`[PrivateSend] 🔒 Zero wallet footprint — all operations from pool`);
+
+        // Just plan the route — the note is already in the pool
+        const { sha256 } = await import('@noble/hashes/sha256');
+        const { bytesToHex } = await import('@noble/hashes/utils');
+        const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
+
+        const { startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
+        if (!isPrivacyRouterAvailable()) {
+          const { startAutonomousRunner } = await import('@/services/privacyRouter/autonomousRunner');
+          await startAutonomousRunner();
+        }
+
+        const route = await startPrivateRoute({
+          amount: selectedNote.denomination,
+          destination: recipient.trim(),
+          privacyLevel,
+          spendingKeyHash,
+        });
+
+        console.log(`[PrivateSend] ✅ Route from note: ${route.id.slice(0, 12)}... | ${route.hops.length} hops`);
+        route.hops.forEach((hop, i) => {
+          console.log(`[PrivateSend]   Hop ${i + 1}: ${hop.type} | ${hop.amount} SOL | ${new Date(hop.scheduledAt).toLocaleTimeString()}`);
+        });
+
+        useWalletStore.getState().refreshBalance?.();
+        p01Alert(
+          'Route Active (from Note)',
+          `Note ${selectedNote.denomination} SOL routed through ${route.hops.length} hops.\n\nZero wallet footprint — maximum privacy.\nETA: ${feeEstimate?.estimatedDuration || 'several hours'}`,
+        );
+        router.back();
+        return;
+      }
+
+      // ── FROM WALLET: Transfer to stealth first ───────────────────
 
       // ── Step 1: Transfer SOL to stealth intermediary ─────────────
       // This breaks the on-chain link between the user's wallet and the pool.
@@ -282,6 +346,106 @@ export default function PrivateSendScreen() {
         <Animated.View entering={FadeInDown.delay(50).duration(300)}>
           <Text style={styles.subtitle}>
             Enhanced privacy with multi-hop routing
+          </Text>
+        </Animated.View>
+
+        {/* ── Source Selector ─────────────────────────────────── */}
+        <Animated.View
+          entering={FadeInDown.delay(75).duration(300)}
+          style={styles.card}
+        >
+          <Text style={styles.sectionLabel}>SEND FROM</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => { setSource('wallet'); setSelectedNoteId(null); }}
+              activeOpacity={0.7}
+              style={{
+                flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
+                backgroundColor: source === 'wallet' ? 'rgba(57, 197, 187, 0.12)' : 'rgba(255,255,255,0.04)',
+                borderWidth: 1, borderColor: source === 'wallet' ? P01Colors.cyan : Colors.border,
+              }}
+            >
+              <Ionicons name="wallet-outline" size={18} color={source === 'wallet' ? P01Colors.cyan : Colors.textSecondary} />
+              <Text style={{ color: source === 'wallet' ? P01Colors.cyan : Colors.textSecondary, fontSize: 12, fontFamily: FontFamily.medium, marginTop: 4 }}>
+                Wallet
+              </Text>
+              <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 2 }}>
+                {solBalance.toFixed(2)} SOL
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSource('note')}
+              activeOpacity={0.7}
+              style={{
+                flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
+                backgroundColor: source === 'note' ? 'rgba(139, 139, 255, 0.12)' : 'rgba(255,255,255,0.04)',
+                borderWidth: 1, borderColor: source === 'note' ? '#8B8BFF' : Colors.border,
+                opacity: availableNotes.length === 0 ? 0.4 : 1,
+              }}
+              disabled={availableNotes.length === 0}
+            >
+              <Ionicons name="shield-checkmark-outline" size={18} color={source === 'note' ? '#8B8BFF' : Colors.textSecondary} />
+              <Text style={{ color: source === 'note' ? '#8B8BFF' : Colors.textSecondary, fontSize: 12, fontFamily: FontFamily.medium, marginTop: 4 }}>
+                Shielded Note
+              </Text>
+              <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 2 }}>
+                {availableNotes.length} note{availableNotes.length !== 1 ? 's' : ''} available
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Note selector (when source === 'note') */}
+          {source === 'note' && availableNotes.length > 0 && (
+            <View style={{ marginTop: 12, gap: 6 }}>
+              {availableNotes.map((note) => (
+                <TouchableOpacity
+                  key={note.id}
+                  onPress={() => handleSelectNote(note.id)}
+                  activeOpacity={0.7}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                    padding: 10, borderRadius: 10,
+                    backgroundColor: selectedNoteId === note.id ? 'rgba(139, 139, 255, 0.1)' : 'rgba(255,255,255,0.03)',
+                    borderWidth: 1, borderColor: selectedNoteId === note.id ? '#8B8BFF' : Colors.border,
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name={selectedNoteId === note.id ? 'radio-button-on' : 'radio-button-off'} size={16} color={selectedNoteId === note.id ? '#8B8BFF' : Colors.textTertiary} />
+                    <Text style={{ color: Colors.text, fontSize: 13, fontFamily: FontFamily.mono }}>
+                      {note.denomination} SOL
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={{
+                      paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+                      backgroundColor: note.status === 'mature' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 204, 0, 0.15)',
+                    }}>
+                      <Text style={{ color: note.status === 'mature' ? Colors.success : Colors.yellow, fontSize: 9, fontFamily: FontFamily.bold }}>
+                        {note.status === 'mature' ? 'MATURE' : 'PENDING'}
+                      </Text>
+                    </View>
+                    <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
+                      {note.id.slice(0, 8)}...
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {source === 'note' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+              <Ionicons name="lock-closed" size={12} color={P01Colors.cyan} />
+              <Text style={{ color: P01Colors.cyan, fontSize: 10, fontFamily: FontFamily.medium }}>
+                Zero wallet footprint — maximum privacy
+              </Text>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* ── (continued below) ── */}
+        <Animated.View entering={FadeInDown.delay(50).duration(300)}>
+          <Text style={styles.subtitle}>
           </Text>
         </Animated.View>
 
