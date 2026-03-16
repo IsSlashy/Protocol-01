@@ -757,28 +757,36 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const walletSigner = getWalletSignerIfPrivy();
           const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+          let sig: string;
 
-          // Stealth unshield: pool → stealth → recipient (wallet never linked to pool)
-          // The stealth keypair signs the unshield TX — wallet never appears as fee payer
-          const sig = await stealthUnshieldAndSweep(
-            async (stealthPubkey, stealthKeypair) => unshieldStark(
-              receipt,
-              pool,
-              stealthPubkey,
-              starkProofData,
+          if (emergency) {
+            // Emergency: skip stealth (already a privacy compromise — bypasses maturation)
+            // Direct unshield is faster and more reliable
+            console.log('[DenomStore] Emergency STARK unshield — direct (no stealth)');
+            const { PublicKey } = await import('@solana/web3.js');
+            sig = await unshieldStark(
+              receipt, pool, new PublicKey(recipientAddress), starkProofData,
               (step) => {
                 const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
                 set({ progress: step, isProving: proving });
               },
-              undefined, // NO walletSigner — stealth keypair signs via overrideKeypair
-              emergency,
-              stealthKeypair,
-            ),
-            recipientAddress,
-            walletAddr,
-            walletSigner,
-            (msg) => set({ progress: msg, isProving: false }),
-          );
+              walletSigner, true,
+            );
+          } else {
+            // Normal: stealth unshield for full privacy
+            sig = await stealthUnshieldAndSweep(
+              async (stealthPubkey, stealthKeypair) => unshieldStark(
+                receipt, pool, stealthPubkey, starkProofData,
+                (step) => {
+                  const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+                  set({ progress: step, isProving: proving });
+                },
+                undefined, false, stealthKeypair,
+              ),
+              recipientAddress, walletAddr, walletSigner,
+              (msg) => set({ progress: msg, isProving: false }),
+            );
+          }
 
           set(state => ({
             isLoading: false,
