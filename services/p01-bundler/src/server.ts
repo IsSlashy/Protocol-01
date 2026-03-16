@@ -20,6 +20,7 @@
 import express from 'express';
 import cors from 'cors';
 import { PrivacyMempool, BundleFlushResult } from './mempool';
+import { createRpcRelay } from './rpc-relay';
 
 // ---------------------------------------------------------------------------
 // Configuration from environment
@@ -51,6 +52,9 @@ app.use((req, _res, next) => {
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '2mb' }));
+
+// ── Privacy RPC Relay ──
+app.use('/v1/rpc', createRpcRelay());
 
 // Completed bundle results (short-lived cache for status polling)
 const bundleResults = new Map<string, BundleFlushResult>();
@@ -232,6 +236,8 @@ app.listen(PORT, () => {
   console.log('  POST /v1/bundle/sync  — Submit bundle (wait for result)');
   console.log('  GET  /v1/bundle/:id   — Check bundle status');
   console.log('  GET  /v1/stats        — Mempool statistics');
+  console.log('  POST /v1/rpc          — Privacy RPC relay (Tor-routed)');
+  console.log('  GET  /v1/rpc/stats    — Relay statistics');
   console.log('  GET  /health          — Health check');
   console.log('');
 });
