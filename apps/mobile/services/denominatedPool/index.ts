@@ -1167,9 +1167,18 @@ export async function unshieldStark(
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
   // Use stealth keypair if available (overrideKeypair), otherwise walletSigner
   onProgress?.('Submitting STARK proof on-chain...');
-  const starkSigner = keypair
-    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } } as WalletSigner
-    : walletSigner;
+  // Build a WalletSigner wrapper from the stealth keypair so ALL downstream
+  // functions (submitAndVerifyStarkProof, closeStarkProofBuffer, signAndSend)
+  // can use it without needing their own keypair/getKeypair() logic.
+  const starkSigner: WalletSigner = keypair
+    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
+    : walletSigner!;
+  console.log(`[DenomPool] STARK signer: stealth=${!!keypair} pubkey=${starkSigner.publicKey.toBase58().slice(0,12)}...`);
+
+  // IMPORTANT: Also override walletSigner for the rest of this function
+  // so signAndSend and closeProofBuffer use the stealth keypair too
+  const effectiveWalletSigner = starkSigner;
+  const effectiveKeypair = null; // Force walletSigner path in signAndSend
   const { proofBuffer } = await submitAndVerifyStarkProof(
     {
       proofBytes: starkProofData.proofBytes,
@@ -1220,11 +1229,11 @@ export async function unshieldStark(
   const tx = new Transaction();
   tx.add(...buildComputeBudgetIxs(300_000));
   tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+  const sig = await signAndSend(connection, tx, effectiveKeypair, effectiveWalletSigner);
 
   // Step 3: Close proof buffer (recover rent)
   onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+  await closeStarkProofBuffer(proofBuffer, effectiveWalletSigner, connection);
 
   onProgress?.('Done!');
   return sig;
