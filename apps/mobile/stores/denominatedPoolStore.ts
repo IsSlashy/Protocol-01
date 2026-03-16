@@ -288,8 +288,9 @@ async function stealthUnshieldAndSweep(
   console.log(`[Stealth] Unshield via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... → ${recipientAddress.slice(0, 8)}...`);
 
   // Step 0: Pre-fund stealth with enough SOL for TX fees
-  // This way the stealth signs the unshield TX, NOT the user's wallet
-  const FEE_FUND = 5_000_000; // 0.005 SOL for fees
+  // STARK proof upload needs ~5 TXs (init + chunks + verify + unshield + close)
+  // Each TX ~5000 lamports = ~0.03 SOL total + rent for proof buffer (~0.01 SOL)
+  const FEE_FUND = 50_000_000; // 0.05 SOL for fees + STARK proof buffer rent
   onProgress?.('Funding stealth for fees...');
   const connection = getConnection();
   if (walletSigner) {
