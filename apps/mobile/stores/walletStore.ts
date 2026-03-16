@@ -263,6 +263,16 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         }
       }, 2000);
 
+      // Start autonomous privacy router (non-blocking)
+      setTimeout(async () => {
+        try {
+          const { startAutonomousRunner } = await import('../services/privacyRouter/autonomousRunner');
+          await startAutonomousRunner();
+        } catch (err: any) {
+          console.warn('[WalletStore] Privacy router auto-start failed:', err.message);
+        }
+      }, 5000);
+
     } catch (error: any) {
       console.error('[WalletStore] Failed to initialize Privy wallet:', error);
       set({
