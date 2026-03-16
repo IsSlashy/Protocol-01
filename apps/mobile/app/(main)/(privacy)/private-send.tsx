@@ -167,17 +167,17 @@ export default function PrivateSendScreen() {
         })
       );
 
-      // Sign with Privy or local wallet
+      // Sign with Privy wallet
       const { getPrivySigner } = require('@/stores/walletStore');
-      const signer = getPrivySigner();
-      if (signer) {
+      const signTransaction = getPrivySigner();
+      if (signTransaction) {
         const { blockhash } = await connection.getLatestBlockhash();
         transferTx.recentBlockhash = blockhash;
         transferTx.feePayer = new PubKey(publicKey);
-        const signed = await signer.signTransaction(transferTx);
-        const sig = await connection.sendRawTransaction(signed.serialize());
-        await connection.confirmTransaction(sig, 'confirmed');
-        console.log(`[PrivateSend] 🕵️ Transfer TX: ${sig.slice(0, 16)}... (confirmed)`);
+        const signed = await signTransaction(transferTx);
+        const txSig = await connection.sendRawTransaction(signed.serialize());
+        await connection.confirmTransaction(txSig, 'confirmed');
+        console.log(`[PrivateSend] 🕵️ Transfer TX: ${txSig.slice(0, 16)}... (confirmed)`);
       } else {
         throw new Error('No wallet signer available — Privy wallet required');
       }
