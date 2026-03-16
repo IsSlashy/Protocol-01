@@ -892,11 +892,6 @@ const styles = StyleSheet.create({
   levelPillActive: {
     backgroundColor: P01Colors.cyanDim,
     borderColor: P01Colors.cyan,
-    shadowColor: P01Colors.cyan,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
   },
   levelPillText: {
     fontSize: FontSize.md,
