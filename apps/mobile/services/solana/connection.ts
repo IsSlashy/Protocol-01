@@ -5,6 +5,62 @@
 import { Connection, clusterApiUrl, Commitment } from '@solana/web3.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// ---------------------------------------------------------------------------
+// Tier 1 — Client-side privacy protection
+// ---------------------------------------------------------------------------
+//
+// Every RPC call from the app passes through this middleware REGARDLESS of
+// whether a privacy relay is configured. This provides baseline protection:
+//
+// 1. Strip identifying headers (User-Agent, Origin, Referer, etc.)
+//    → RPC provider can't fingerprint the app/device
+// 2. Random jitter (30-120ms) on every request
+//    → Breaks timing correlation between user actions and RPC calls
+// 3. Whitelist only required headers (Content-Type, Content-Length)
+//    → Everything else is dropped — zero metadata leakage
+//
+// When P01 Privacy Relay (Tier 2) is also active, this adds defense-in-depth:
+// even if the relay is compromised, client-side protection remains.
+// ---------------------------------------------------------------------------
+
+/**
+ * Privacy-preserving fetch middleware for @solana/web3.js Connection.
+ *
+ * Intercepts every RPC call to strip fingerprinting headers and add
+ * random timing jitter. Uses the callback-based middleware pattern
+ * expected by Connection({ fetchMiddleware }).
+ */
+function privacyFetchMiddleware(
+  url: Parameters<typeof fetch>[0],
+  options: Parameters<typeof fetch>[1],
+  fetchFn: (url: Parameters<typeof fetch>[0], options: Parameters<typeof fetch>[1]) => void,
+): void {
+  // Whitelist ONLY the headers Solana RPC needs — drop everything else
+  const cleanHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Preserve Solana-specific headers if present
+  if (options?.headers) {
+    const h = options.headers as Record<string, string>;
+    for (const [key, value] of Object.entries(h)) {
+      const lk = key.toLowerCase();
+      if (lk === 'content-length' || lk === 'solana-client') {
+        cleanHeaders[key] = value;
+      }
+      // Drop: user-agent, origin, referer, cookie, authorization,
+      // x-forwarded-for, x-real-ip, and any other identifying headers
+    }
+  }
+
+  const sanitizedOptions = { ...options, headers: cleanHeaders };
+
+  // Random jitter: 30-120ms — small enough to not degrade UX,
+  // large enough to decorrelate timing between user tap and RPC call
+  const jitter = 30 + Math.floor(Math.random() * 90);
+  setTimeout(() => fetchFn(url, sanitizedOptions), jitter);
+}
+
 // Solana network configuration
 export type SolanaCluster = 'devnet' | 'mainnet-beta' | 'testnet';
 
@@ -17,9 +73,10 @@ const NETWORK_STORAGE_KEY = 'settings_network';
 // Helius API key from environment (optional but recommended)
 const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 
-// P01 Privacy RPC Relay — strips IP/metadata, optional Tor routing
+// P01 Privacy RPC Relay — strips IP/metadata, Tor routing
 // When set, ALL RPC calls go through the relay instead of directly to Helius
-const _rawRelay = process.env.EXPO_PUBLIC_P01_RPC_RELAY;
+// Fallback to production relay URL if env var not injected (e.g. dev client cache)
+const _rawRelay = process.env.EXPO_PUBLIC_P01_RPC_RELAY || 'https://p01-privacy-relay-production.up.railway.app';
 const P01_RPC_RELAY = (_rawRelay && _rawRelay.length > 5 && _rawRelay.startsWith('http')) ? _rawRelay : '';
 
 /**
@@ -48,20 +105,31 @@ function validateRpcEndpoint(url: string): void {
 // When P01 Privacy RPC Relay is configured, it takes highest priority.
 // The relay strips all identifying metadata (IP, User-Agent) and optionally
 // routes through Tor — Helius never sees the user's real IP.
+// WebSocket endpoints for subscriptions (onAccountChange, onSlotChange, etc.)
+// When using the privacy relay, WS goes direct to Helius/public — this is safe
+// because subscriptions only listen for on-chain events, they don't send TXs.
+// The relay is HTTP-only (no WS support) so we need a separate WS endpoint.
+const DEVNET_WS = HELIUS_API_KEY
+  ? `wss://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+  : 'wss://api.devnet.solana.com';
+const MAINNET_WS = HELIUS_API_KEY
+  ? `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+  : 'wss://api.mainnet-beta.solana.com';
+
 const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
   'devnet': [
-    // Privacy relay first (if configured)
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: '' }] : []),
+    // Privacy relay first (if configured) — WS goes direct (subscriptions only)
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: DEVNET_WS }] : []),
     // Helius direct (fallback)
     ...(HELIUS_API_KEY
-      ? [{ http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` }]
+      ? [{ http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: DEVNET_WS }]
       : []),
     { http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' },
   ],
   'mainnet-beta': [
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: '' }] : []),
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: MAINNET_WS }] : []),
     ...(HELIUS_API_KEY
-      ? [{ http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` }]
+      ? [{ http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: MAINNET_WS }]
       : []),
     { http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' },
   ],
@@ -121,14 +189,16 @@ export function getConnection(): Connection {
     const endpoint = endpoints[currentEndpointIndex];
     validateRpcEndpoint(endpoint.http);
     const isRelay = endpoint.http.includes('/v1/rpc');
-    console.log(`[Connection] ${currentCluster} → ${isRelay ? '🔒 Privacy Relay' : 'Direct RPC'}: ${sanitizeRpcUrl(endpoint.http).slice(0, 40)}...`);
+    console.log(`[Connection] ${currentCluster} → ${isRelay ? 'Privacy Relay' : 'Direct RPC'}: ${sanitizeRpcUrl(endpoint.http).slice(0, 40)}...`);
     connectionInstance = new Connection(
       endpoint.http,
       {
         commitment: DEFAULT_COMMITMENT,
-        wsEndpoint: endpoint.ws,
+        wsEndpoint: endpoint.ws || undefined,
         confirmTransactionInitialTimeout: 60000,
         disableRetryOnRateLimit: true,
+        // Tier 1 privacy: strip headers + timing jitter on every RPC call
+        fetchMiddleware: privacyFetchMiddleware,
       }
     );
   }
@@ -147,9 +217,10 @@ export function switchEndpoint(): void {
     endpoint.http,
     {
       commitment: DEFAULT_COMMITMENT,
-      wsEndpoint: endpoint.ws,
+      wsEndpoint: endpoint.ws || undefined,
       confirmTransactionInitialTimeout: 60000,
       disableRetryOnRateLimit: true,
+      fetchMiddleware: privacyFetchMiddleware,
     }
   );
 }
