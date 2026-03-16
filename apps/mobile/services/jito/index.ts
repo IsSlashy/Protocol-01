@@ -220,19 +220,84 @@ export class JitoBundleProvider implements BundleProvider {
 // Local Bundle Provider (devnet fallback — sequential submission)
 // ---------------------------------------------------------------------------
 
-export class LocalBundleProvider implements BundleProvider {
-  readonly name = 'Local (devnet)';
+/**
+ * P01 Bundle Provider — connects to our own P01 Bundle Engine.
+ * Works on ANY cluster (devnet, testnet, mainnet).
+ * Privacy mempool: batches + shuffles + strips metadata.
+ */
+export class P01BundleProvider implements BundleProvider {
+  readonly name = 'P01 Bundler';
+  private endpoint: string;
+
+  constructor(endpoint?: string) {
+    this.endpoint = endpoint || process.env.EXPO_PUBLIC_P01_BUNDLER_URL || 'http://localhost:3099';
+  }
 
   async isAvailable(): Promise<boolean> {
-    return true; // Always available
+    try {
+      const res = await fetch(`${this.endpoint}/health`);
+      const data = await res.json();
+      return data.status === 'ok';
+    } catch {
+      return false;
+    }
   }
 
   async getTipAccounts(): Promise<PublicKey[]> {
-    return []; // No tips on devnet
+    return []; // P01 bundler doesn't require tips
   }
 
   async submitBundle(txs: (Transaction | VersionedTransaction)[]): Promise<BundleResult> {
-    console.log(`[LocalBundle] Submitting ${txs.length} transactions sequentially (devnet)...`);
+    console.log(`[P01Bundler] Submitting ${txs.length} TXs to privacy mempool...`);
+
+    const transactions = txs.map(tx => {
+      const bytes = tx instanceof VersionedTransaction
+        ? tx.serialize()
+        : tx.serialize();
+      return Buffer.from(bytes).toString('base64');
+    });
+
+    const bundleId = `p01_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const res = await fetch(`${this.endpoint}/v1/bundle/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactions, bundleId }),
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(`P01 Bundler error: ${data.error}`);
+    }
+
+    const signatures = (data.results || []).map((r: any) => r.signature || 'pending');
+    console.log(`[P01Bundler] Bundle ${bundleId.slice(0, 12)}... — ${signatures.length} TXs processed`);
+
+    return {
+      bundleId: data.bundleId || bundleId,
+      landed: data.landed ?? true,
+      signatures,
+    };
+  }
+}
+
+/**
+ * Local fallback — sequential submission when no bundler is available.
+ */
+export class LocalBundleProvider implements BundleProvider {
+  readonly name = 'Local (sequential)';
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async getTipAccounts(): Promise<PublicKey[]> {
+    return [];
+  }
+
+  async submitBundle(txs: (Transaction | VersionedTransaction)[]): Promise<BundleResult> {
+    console.log(`[LocalBundle] Submitting ${txs.length} transactions sequentially...`);
     const connection = getConnection();
     const signatures: string[] = [];
 
@@ -271,15 +336,23 @@ let _provider: BundleProvider | null = null;
 export async function getBundleProvider(): Promise<BundleProvider> {
   if (_provider) return _provider;
 
+  // Priority: P01 Bundler → Jito → Local fallback
+  const p01 = new P01BundleProvider();
+  if (await p01.isAvailable()) {
+    console.log('[Bundle] Using P01 Bundle Engine (privacy mempool)');
+    _provider = p01;
+    return _provider;
+  }
+
   const jito = new JitoBundleProvider();
   if (await jito.isAvailable()) {
     console.log('[Bundle] Using Jito bundle provider (mainnet)');
     _provider = jito;
-  } else {
-    console.log('[Bundle] Jito unavailable — using local bundle provider (devnet)');
-    _provider = new LocalBundleProvider();
+    return _provider;
   }
 
+  console.log('[Bundle] No bundler available — using local sequential fallback');
+  _provider = new LocalBundleProvider();
   return _provider;
 }
 
