@@ -1174,6 +1174,11 @@ export async function unshieldStark(
     ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
     : walletSigner!;
   console.log(`[DenomPool] STARK signer: stealth=${!!keypair} pubkey=${starkSigner.publicKey.toBase58().slice(0,12)}...`);
+  // Log balance of the signer before STARK operations
+  try {
+    const signerBal = await connection.getBalance(starkSigner.publicKey);
+    console.log(`[DenomPool] Signer balance: ${signerBal / 1e9} SOL`);
+  } catch {}
 
   // IMPORTANT: Also override walletSigner for the rest of this function
   // so signAndSend and closeProofBuffer use the stealth keypair too
@@ -1229,6 +1234,28 @@ export async function unshieldStark(
   const tx = new Transaction();
   tx.add(...buildComputeBudgetIxs(300_000));
   tx.add(ix);
+
+  // Simulate first to catch errors with detailed logs
+  try {
+    const { blockhash: simBh } = await connection.getLatestBlockhash();
+    const simTx = new Transaction();
+    simTx.add(...buildComputeBudgetIxs(300_000));
+    simTx.add(ix);
+    simTx.recentBlockhash = simBh;
+    simTx.feePayer = effectiveWalletSigner?.publicKey || walletPubkey;
+    const simResult = await connection.simulateTransaction(simTx);
+    if (simResult.value.err) {
+      console.error(`[DenomPool] Simulation FAILED:`, JSON.stringify(simResult.value.err));
+      console.error(`[DenomPool] Simulation logs:`, simResult.value.logs?.join('\n'));
+      const signerBal = await connection.getBalance(effectiveWalletSigner?.publicKey || walletPubkey);
+      console.error(`[DenomPool] Signer balance at failure: ${signerBal / 1e9} SOL`);
+    } else {
+      console.log(`[DenomPool] Simulation OK — CU used: ${simResult.value.unitsConsumed}`);
+    }
+  } catch (simErr: any) {
+    console.warn(`[DenomPool] Simulation error (non-fatal):`, simErr.message?.slice(0, 100));
+  }
+
   const sig = await signAndSend(connection, tx, effectiveKeypair, effectiveWalletSigner);
 
   // Step 3: Close proof buffer (recover rent)
