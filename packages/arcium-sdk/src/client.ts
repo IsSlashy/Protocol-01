@@ -5,7 +5,6 @@ import {
   RescueCipher,
   x25519,
   deserializeLE,
-  getArciumEnv,
   getComputationAccAddress,
   getClusterAccAddress,
   getMXEAccAddress,
@@ -206,18 +205,23 @@ export class ArciumClient {
     return new anchor.BN(deserializeLE(nonce).toString());
   }
 
-  /** Get all required Arcium account addresses for a computation */
+  /** Get all required Arcium account addresses for a computation.
+   *  Uses hardcoded cluster offset instead of getArciumEnv() which
+   *  crashes in React Native (checks isBrowser() → throws).
+   */
   getComputationAccounts(circuitName: CircuitName, computationOffset: anchor.BN) {
-    const arciumEnv = getArciumEnv();
+    // Hardcoded cluster offset — matches our deployed MXE account (3EzPEVpU...)
+    // This avoids calling getArciumEnv() which requires Node.js env vars
+    const clusterOffset = ARCIUM_CLUSTER_OFFSET;
     return {
       computationAccount: getComputationAccAddress(
-        arciumEnv.arciumClusterOffset,
+        clusterOffset,
         computationOffset
       ),
-      clusterAccount: getClusterAccAddress(arciumEnv.arciumClusterOffset),
+      clusterAccount: getClusterAccAddress(clusterOffset),
       mxeAccount: getMXEAccAddress(this.programId),
-      mempoolAccount: getMempoolAccAddress(arciumEnv.arciumClusterOffset),
-      executingPool: getExecutingPoolAccAddress(arciumEnv.arciumClusterOffset),
+      mempoolAccount: getMempoolAccAddress(clusterOffset),
+      executingPool: getExecutingPoolAccAddress(clusterOffset),
       compDefAccount: getCompDefAccAddress(
         this.programId,
         Buffer.from(getCompDefAccOffset(circuitName)).readUInt32LE()
