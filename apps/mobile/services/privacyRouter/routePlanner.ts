@@ -88,6 +88,8 @@ export function planRoute(params: {
   const levelConfig = PRIVACY_LEVEL_CONFIGS[privacyLevel];
   const { hops: numHops, splits: maxSplits } = levelConfig;
 
+  console.log(`[RoutePlanner] Planning: ${amount} SOL | Level ${privacyLevel} | ${numHops} hops, ${maxSplits} max splits`);
+
   // Merge config with level-specific defaults
   const minDelay = config?.minHopDelay ?? levelConfig.minDelayMs;
   const maxDelay = config?.maxHopDelay ?? levelConfig.maxDelayMs;
@@ -98,6 +100,8 @@ export function planRoute(params: {
   // Choose optimal denomination
   const { denomination, count } = chooseDenomination(amount, maxSplits);
   const numOutputs = count;
+
+  console.log(`[RoutePlanner] Denomination: ${denomination} SOL × ${numOutputs} notes = ${denomination * numOutputs} SOL`);
 
   // Build all hops across all cycles
   const hops: RouteHop[] = [];
@@ -254,6 +258,11 @@ export function planRoute(params: {
 
   // Sort hops by scheduled time for execution order
   hops.sort((a, b) => a.scheduledAt - b.scheduledAt);
+
+  const shieldCount = hops.filter(h => h.type === 'shield').length;
+  const unshieldCount = hops.filter(h => h.type === 'unshield').length;
+  const reshieldCount = hops.filter(h => h.type === 'reshield').length;
+  console.log(`[RoutePlanner] Total hops: ${hops.length} (${shieldCount} shield, ${unshieldCount} unshield, ${reshieldCount} reshield)`);
 
   // Calculate fee estimate
   const fees = estimateFees({ amount, privacyLevel });

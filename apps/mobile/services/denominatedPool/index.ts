@@ -715,7 +715,38 @@ export async function shield(
 
   onProgress?.('Sending transaction...');
   const tx = new Transaction().add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  // Route through Arcium MPC confidential relay when available.
+  // This hides the fee payer / signer — no on-chain link to the user's wallet.
+  let sig: string;
+  try {
+    const { useArciumStore } = await import('../../stores/arciumStore');
+    const { mpcEnabled } = useArciumStore.getState();
+    const { isMpcClientReady } = await import('../arcium/mpcClient');
+
+    if (mpcEnabled && isMpcClientReady()) {
+      onProgress?.('Routing via MPC relay (hiding origin)...');
+      console.log('[DenomPool] Shield via Arcium MPC confidential relay — origin hidden');
+      const { confidentialRelay } = await import('../arcium/confidentialRelay');
+      const { blockhash } = await connection.getLatestBlockhash();
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = walletPubkey;
+      const signTx = walletSigner
+        ? async (t: Transaction) => walletSigner.signTransaction(t)
+        : async (t: Transaction) => { t.sign(keypair!); return t; };
+      const signed = await signTx(tx);
+      const serialized = signed.serialize();
+      const relayResult = await confidentialRelay(serialized, walletPubkey, signTx);
+      sig = relayResult.signature;
+      console.log(`[DenomPool] MPC relay TX: ${sig.slice(0, 16)}... (wasMpcProtected: ${relayResult.wasMpcProtected})`);
+    } else {
+      console.log('[DenomPool] Shield via direct TX (MPC not available)');
+      sig = await signAndSend(connection, tx, keypair, walletSigner);
+    }
+  } catch (mpcError: any) {
+    console.warn('[DenomPool] MPC relay failed, falling back to direct:', mpcError.message);
+    sig = await signAndSend(connection, tx, keypair, walletSigner);
+  }
 
   onProgress?.('Done!');
 
