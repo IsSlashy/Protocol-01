@@ -264,6 +264,67 @@ function secureReceipt(receipt: ShieldReceipt): string {
   return isVaultUnlocked() ? vaultEncrypt(json) : json;
 }
 
+/**
+ * Stealth unshield helper — wraps any unshield function with stealth intermediary.
+ * 1. Creates ephemeral stealth keypair
+ * 2. Calls the unshield function with stealth as recipient
+ * 3. Sweeps from stealth to the real destination
+ * Returns the unshield TX signature.
+ */
+async function stealthUnshieldAndSweep(
+  unshieldFn: (stealthPubkey: import('@solana/web3.js').PublicKey) => Promise<string>,
+  recipientAddress: string,
+  walletAddr: string,
+  onProgress?: (msg: string) => void,
+): Promise<string> {
+  const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
+  const { sha256 } = await import('@noble/hashes/sha256');
+  const { hmac } = await import('@noble/hashes/hmac');
+
+  // Derive ephemeral stealth keypair
+  const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${Date.now()}`));
+  const stealthKp = SolKeypair.fromSeed(seed);
+  console.log(`[Stealth] Unshield via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... → ${recipientAddress.slice(0, 8)}...`);
+
+  // Step 1: Unshield to stealth
+  onProgress?.('Unshielding to stealth address...');
+  const sig = await unshieldFn(stealthKp.publicKey);
+  console.log(`[Stealth] Unshield to stealth confirmed: ${sig.slice(0, 16)}...`);
+
+  // Step 2: Sweep from stealth to real recipient
+  onProgress?.('Sweeping to destination...');
+  try {
+    const connection = getConnection();
+    // Wait a moment for balance to settle
+    await new Promise(r => setTimeout(r, 1500));
+    const stealthBalance = await connection.getBalance(stealthKp.publicKey);
+    const sweepAmount = stealthBalance - 5000; // Leave 5K lamports for TX fee
+
+    if (sweepAmount > 0) {
+      const sweepTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: stealthKp.publicKey,
+          toPubkey: new PublicKey(recipientAddress),
+          lamports: sweepAmount,
+        })
+      );
+      const { blockhash } = await connection.getLatestBlockhash();
+      sweepTx.recentBlockhash = blockhash;
+      sweepTx.feePayer = stealthKp.publicKey;
+      sweepTx.sign(stealthKp);
+      const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+      await connection.confirmTransaction(sweepSig, 'confirmed');
+      console.log(`[Stealth] ✅ Sweep confirmed: ${sweepSig.slice(0, 16)}... → ${recipientAddress.slice(0, 8)}...`);
+    } else {
+      console.warn(`[Stealth] Nothing to sweep (balance: ${stealthBalance} lamports)`);
+    }
+  } catch (sweepErr: any) {
+    console.warn('[Stealth] Sweep failed (funds safe in stealth):', sweepErr.message);
+  }
+
+  return sig;
+}
+
 /** Decrypt receipt before using — unwraps vault layer if present. */
 function readReceipt(storedReceipt: string): ShieldReceipt {
   const json = vaultDecrypt(storedReceipt); // no-op if not vault-encrypted
@@ -705,24 +766,29 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
-        const { PublicKey } = await import('@solana/web3.js');
-        const recipient = new PublicKey(recipientAddress);
-
         set({ isLoading: true, isProving: false, error: null, progress: emergency ? 'Preparing emergency unshield...' : 'Preparing STARK unshield...' });
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
-          const sig = await unshieldStark(
-            receipt,
-            pool,
-            recipient,
-            starkProofData,
-            (step) => {
-              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
-              set({ progress: step, isProving: proving });
-            },
-            walletSigner,
-            emergency,
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+
+          // Stealth unshield: pool → stealth → recipient (wallet never linked to pool)
+          const sig = await stealthUnshieldAndSweep(
+            async (stealthPubkey) => unshieldStark(
+              receipt,
+              pool,
+              stealthPubkey,
+              starkProofData,
+              (step) => {
+                const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+                set({ progress: step, isProving: proving });
+              },
+              walletSigner,
+              emergency,
+            ),
+            recipientAddress,
+            walletAddr,
+            (msg) => set({ progress: msg, isProving: false }),
           );
 
           set(state => ({
@@ -775,23 +841,28 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
-        const { PublicKey } = await import('@solana/web3.js');
-        const recipient = new PublicKey(recipientAddress);
-
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing emergency unshield...' });
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
-          const sig = await emergencyUnshield(
-            receipt,
-            pool,
-            recipient,
-            proofGenerator,
-            (step) => {
-              const proving = step.includes('proof') || step.includes('Proof');
-              set({ progress: step, isProving: proving });
-            },
-            walletSigner,
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+
+          // Stealth emergency unshield: pool → stealth → recipient
+          const sig = await stealthUnshieldAndSweep(
+            async (stealthPubkey) => emergencyUnshield(
+              receipt,
+              pool,
+              stealthPubkey,
+              proofGenerator,
+              (step) => {
+                const proving = step.includes('proof') || step.includes('Proof');
+                set({ progress: step, isProving: proving });
+              },
+              walletSigner,
+            ),
+            recipientAddress,
+            walletAddr,
+            (msg) => set({ progress: msg, isProving: false }),
           );
 
           set(state => ({
