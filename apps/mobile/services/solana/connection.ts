@@ -19,7 +19,8 @@ const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 
 // P01 Privacy RPC Relay — strips IP/metadata, optional Tor routing
 // When set, ALL RPC calls go through the relay instead of directly to Helius
-const P01_RPC_RELAY = process.env.EXPO_PUBLIC_P01_RPC_RELAY || '';
+const _rawRelay = process.env.EXPO_PUBLIC_P01_RPC_RELAY;
+const P01_RPC_RELAY = (_rawRelay && _rawRelay.length > 5 && _rawRelay.startsWith('http')) ? _rawRelay : '';
 
 /**
  * Strip API keys from RPC URLs before logging (M10).
@@ -119,6 +120,8 @@ export function getConnection(): Connection {
     const endpoints = RPC_ENDPOINTS[currentCluster];
     const endpoint = endpoints[currentEndpointIndex];
     validateRpcEndpoint(endpoint.http);
+    const isRelay = endpoint.http.includes('/v1/rpc');
+    console.log(`[Connection] ${currentCluster} → ${isRelay ? '🔒 Privacy Relay' : 'Direct RPC'}: ${sanitizeRpcUrl(endpoint.http).slice(0, 40)}...`);
     connectionInstance = new Connection(
       endpoint.http,
       {
