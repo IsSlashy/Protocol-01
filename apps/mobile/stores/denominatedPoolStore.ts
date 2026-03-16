@@ -308,6 +308,12 @@ async function stealthUnshieldAndSweep(
     console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}... TX: ${fundSig.slice(0, 16)}...`);
   }
 
+  // Random delay 1-3s between fund and unshield (breaks timing correlation)
+  const jitter = 1000 + Math.floor(Math.random() * 2000);
+  console.log(`[Stealth] Timing jitter: ${jitter}ms before unshield`);
+  onProgress?.('Waiting (timing privacy)...');
+  await new Promise(r => setTimeout(r, jitter));
+
   // Log balance before unshield
   const balBefore = await connection.getBalance(stealthKp.publicKey);
   console.log(`[Stealth] Balance before unshield: ${balBefore / 1e9} SOL`);
@@ -608,6 +614,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const transferSig = await connection.sendRawTransaction(signedTransfer.serialize());
             await connection.confirmTransaction(transferSig, 'confirmed');
             console.log(`[DenomStore] Stealth transfer confirmed: ${transferSig.slice(0, 16)}...`);
+
+            // Random delay 1-3s between transfer and shield (breaks timing correlation)
+            const delay = 1000 + Math.floor(Math.random() * 2000);
+            console.log(`[DenomStore] Timing jitter: ${delay}ms before shield`);
+            set({ progress: 'Waiting (timing privacy)...' });
+            await new Promise(r => setTimeout(r, delay));
 
             // Now shield from the stealth keypair (not the user's wallet)
             set({ progress: 'Shielding from stealth address...' });
