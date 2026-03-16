@@ -15,7 +15,7 @@
  * and ensures the background task is always registered.
  */
 
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus, NativeModules, Platform } from 'react-native';
 import {
   initPrivacyRouter,
   resumeRoutes,
@@ -136,6 +136,21 @@ async function pollPendingHops(): Promise<void> {
 
       // Refresh wallet balance after executing hops
       useWalletStore.getState().refreshBalance?.();
+
+      // Update foreground service notification
+      if (Platform.OS === 'android') {
+        try {
+          const { PrivacyRouterModule } = NativeModules;
+          const remainingHops = await checkPendingRoutes(spendingKeyHash);
+          if (remainingHops.length === 0) {
+            // All hops done — stop the service
+            await PrivacyRouterModule?.stopService();
+            console.log('[AutoRunner] All hops completed — foreground service stopped');
+          } else {
+            await PrivacyRouterModule?.updateNotification(remainingHops.length, '');
+          }
+        } catch {}
+      }
     }
 
     // Auto-refresh note maturity periodically
@@ -213,6 +228,23 @@ export async function startAutonomousRunner(): Promise<void> {
     _appStateListener = AppState.addEventListener('change', handleAppStateChange);
 
     _running = true;
+
+    // Start Android foreground service to survive app closure
+    if (Platform.OS === 'android') {
+      try {
+        const { PrivacyRouterModule } = NativeModules;
+        if (PrivacyRouterModule) {
+          // Count pending hops for notification
+          const pending = await checkPendingRoutes(spendingKeyHash);
+          const totalHops = pending.length;
+          await PrivacyRouterModule.startService(totalHops, '');
+          console.log('[AutoRunner] Android foreground service started');
+        }
+      } catch (fgErr: any) {
+        console.warn('[AutoRunner] Foreground service failed (non-fatal):', fgErr.message);
+      }
+    }
+
     console.log('[AutoRunner] ✅ Autonomous runner active — polling every 60s');
 
     // Immediately check for pending hops
@@ -225,7 +257,7 @@ export async function startAutonomousRunner(): Promise<void> {
 /**
  * Stop the autonomous runner (e.g., on logout).
  */
-export function stopAutonomousRunner(): void {
+export async function stopAutonomousRunner(): Promise<void> {
   if (!_running) return;
 
   if (_pollInterval) {
@@ -236,6 +268,14 @@ export function stopAutonomousRunner(): void {
   if (_appStateListener) {
     _appStateListener.remove();
     _appStateListener = null;
+  }
+
+  // Stop Android foreground service
+  if (Platform.OS === 'android') {
+    try {
+      const { PrivacyRouterModule } = NativeModules;
+      await PrivacyRouterModule?.stopService();
+    } catch {}
   }
 
   _running = false;
