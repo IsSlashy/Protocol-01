@@ -250,7 +250,8 @@ export async function executeHop(
   const hopLabel = `${hop.type}[${hop.id.slice(0, 8)}...]`;
 
   try {
-    console.log(`[PrivacyRouter] Executing hop: ${hopLabel}`);
+    console.log(`[PrivacyRouter] Executing hop: ${hopLabel} | route: ${route.id.slice(0, 8)}... | denom: ${hop.poolDenomination} SOL | stealth: ${hop.stealthAddress.slice(0, 8)}...`);
+    console.log(`[PrivacyRouter]   Scheduled: ${new Date(hop.scheduledAt).toLocaleTimeString()} | Retry: ${hop.retryCount}/3`);
 
     // Derive the stealth keypair for this hop
     const keypair = deriveRouteStealthKeypair({

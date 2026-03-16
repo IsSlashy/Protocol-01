@@ -129,6 +129,7 @@ export async function saveRoute(
   route: PrivacyRoute,
   spendingKeyHash: string,
 ): Promise<void> {
+  console.log(`[RouteCipher] Saving route ${route.id.slice(0, 8)}... (${route.hops.length} hops, status: ${route.status})`);
   const encrypted = await encryptRoute(route, spendingKeyHash);
 
   // Store route data (chunked if necessary)
@@ -190,6 +191,7 @@ export async function loadAllRoutes(
   spendingKeyHash: string,
 ): Promise<PrivacyRoute[]> {
   const routeIds = await getRouteIndex();
+  console.log(`[RouteCipher] Loading ${routeIds.length} routes from SecureStore`);
   const routes: PrivacyRoute[] = [];
 
   for (const routeId of routeIds) {
