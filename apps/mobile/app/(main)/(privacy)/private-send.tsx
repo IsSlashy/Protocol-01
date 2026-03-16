@@ -76,9 +76,9 @@ export default function PrivateSendScreen() {
 
   const solBalance = balance?.sol ?? 0;
 
-  // Available notes for "from note" mode
+  // Available notes for "from note" mode — ONLY mature notes (ready to spend)
   const availableNotes = useMemo(() =>
-    notes.filter(n => n.token === 'SOL' && (n.status === 'pending' || n.status === 'mature')),
+    notes.filter(n => n.token === 'SOL' && n.status === 'mature'),
     [notes]
   );
 
