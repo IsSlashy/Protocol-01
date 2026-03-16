@@ -17,6 +17,10 @@ const NETWORK_STORAGE_KEY = 'settings_network';
 // Helius API key from environment (optional but recommended)
 const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 
+// P01 Privacy RPC Relay — strips IP/metadata, optional Tor routing
+// When set, ALL RPC calls go through the relay instead of directly to Helius
+const P01_RPC_RELAY = process.env.EXPO_PUBLIC_P01_RPC_RELAY || '';
+
 /**
  * Strip API keys from RPC URLs before logging (M10).
  * Helius requires ?api-key= as a query param — this is their required auth method.
@@ -40,20 +44,28 @@ function validateRpcEndpoint(url: string): void {
 // This is Helius's required auth method — no header-based auth is available.
 // URLs containing the key are NEVER logged directly; use sanitizeRpcUrl() for safe output.
 // RPC endpoints - Helius first (if configured), then official Solana fallback
+// When P01 Privacy RPC Relay is configured, it takes highest priority.
+// The relay strips all identifying metadata (IP, User-Agent) and optionally
+// routes through Tor — Helius never sees the user's real IP.
 const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
-  'devnet': HELIUS_API_KEY
-    ? [
-        { http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` },
-        { http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' },
-      ]
-    : [{ http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' }],
-  'mainnet-beta': HELIUS_API_KEY
-    ? [
-        { http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` },
-        { http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' },
-      ]
-    : [{ http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' }],
+  'devnet': [
+    // Privacy relay first (if configured)
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: '' }] : []),
+    // Helius direct (fallback)
+    ...(HELIUS_API_KEY
+      ? [{ http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` }]
+      : []),
+    { http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' },
+  ],
+  'mainnet-beta': [
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: '' }] : []),
+    ...(HELIUS_API_KEY
+      ? [{ http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: `wss://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}` }]
+      : []),
+    { http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' },
+  ],
   'testnet': [
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: '' }] : []),
     { http: 'https://api.testnet.solana.com', ws: 'wss://api.testnet.solana.com' },
   ],
 };
