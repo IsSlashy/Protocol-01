@@ -154,15 +154,26 @@ export default function PrivateSendScreen() {
       console.log(`[PrivateSend] 🕵️ Step 1a: Transferring ${amt} SOL to stealth intermediary...`);
       console.log(`[PrivateSend] 🕵️ Stealth: ${stealthAddress.toBase58().slice(0, 12)}... (ephemeral, no link to you)`);
 
+      // Find the best pool FIRST so we know the denomination
+      const { ALL_POOLS, SOL_POOLS } = require('@/services/denominatedPool');
+      const solPools = (SOL_POOLS || ALL_POOLS.filter((p: any) => p.token === 'SOL'))
+        .sort((a: any, b: any) => b.denomination - a.denomination);
+      const pool = solPools.find((p: any) => p.denomination <= amt);
+      if (!pool) {
+        const available = solPools.map((p: any) => p.denomination).join(', ');
+        throw new Error(`No pool for ${amt} SOL. Available denominations: ${available}`);
+      }
+      console.log(`[PrivateSend] 🛡️ Best pool for ${amt} SOL: ${pool.denomination} SOL`);
+
       // Transfer SOL from user wallet to stealth address
-      // Amount = denomination + shield fee (0.3%) + TX fees + margin
+      // Amount = pool denomination + shield fee (0.3%) + TX fees + margin
       const { SystemProgram, Transaction, PublicKey: PubKey } = require('@solana/web3.js');
       const connection = getConnection();
-      const denomLamports = Math.round(amt * 1_000_000_000);
+      const denomLamports = Math.round(pool.denomination * 1_000_000_000);
       const shieldFee = Math.round(denomLamports * 0.003); // 0.3% protocol fee
       const txMargin = 10_000_000; // 0.01 SOL for TX fees + rent
       const lamports = denomLamports + shieldFee + txMargin;
-      console.log(`[PrivateSend] 🕵️ Transfer amount: ${lamports / 1e9} SOL (${amt} + ${shieldFee / 1e9} fee + ${txMargin / 1e9} margin)`);
+      console.log(`[PrivateSend] 🕵️ Transfer amount: ${lamports / 1e9} SOL (${pool.denomination} denom + ${shieldFee / 1e9} fee + ${txMargin / 1e9} margin)`);
 
       const transferTx = new Transaction().add(
         SystemProgram.transfer({
@@ -190,11 +201,6 @@ export default function PrivateSendScreen() {
       console.log(`[PrivateSend] 💰 SOL transferred to stealth address — wallet balance deducted`);
 
       // ── Step 1b: Shield from stealth address into anonymity pool ──
-      const pool = findPool('SOL', amt);
-      if (!pool) {
-        throw new Error(`No pool available for ${amt} SOL. Available: 0.1, 0.5, 1, 5, 10 SOL`);
-      }
-
       console.log(`[PrivateSend] 🛡️ Step 1b: Shielding from stealth into anonymity pool...`);
       console.log(`[PrivateSend] 🛡️ Pool: ${pool.poolPDA.toBase58().slice(0, 12)}... (${pool.denomination} SOL)`);
       console.log(`[PrivateSend] 🛡️ Source: ${stealthAddress.toBase58().slice(0, 12)}... (NOT your wallet)`);
