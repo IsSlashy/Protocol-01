@@ -155,9 +155,14 @@ export default function PrivateSendScreen() {
       console.log(`[PrivateSend] 🕵️ Stealth: ${stealthAddress.toBase58().slice(0, 12)}... (ephemeral, no link to you)`);
 
       // Transfer SOL from user wallet to stealth address
+      // Amount = denomination + shield fee (0.3%) + TX fees + margin
       const { SystemProgram, Transaction, PublicKey: PubKey } = require('@solana/web3.js');
       const connection = getConnection();
-      const lamports = Math.round(amt * 1_000_000_000);
+      const denomLamports = Math.round(amt * 1_000_000_000);
+      const shieldFee = Math.round(denomLamports * 0.003); // 0.3% protocol fee
+      const txMargin = 10_000_000; // 0.01 SOL for TX fees + rent
+      const lamports = denomLamports + shieldFee + txMargin;
+      console.log(`[PrivateSend] 🕵️ Transfer amount: ${lamports / 1e9} SOL (${amt} + ${shieldFee / 1e9} fee + ${txMargin / 1e9} margin)`);
 
       const transferTx = new Transaction().add(
         SystemProgram.transfer({
