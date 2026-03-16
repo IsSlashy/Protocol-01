@@ -290,7 +290,7 @@ async function stealthUnshieldAndSweep(
   // Step 0: Pre-fund stealth with enough SOL for TX fees
   // STARK proof upload needs ~5 TXs (init + chunks + verify + unshield + close)
   // Each TX ~5000 lamports = ~0.03 SOL total + rent for proof buffer (~0.01 SOL)
-  const FEE_FUND = 120_000_000; // 0.12 SOL — covers STARK proof buffer rent (~0.07) + TX fees (~0.03) + margin
+  const FEE_FUND = 200_000_000; // 0.2 SOL — STARK proof buffer rent (~0.07) + init/upload/verify TXs (~0.05) + unshield TX + margin
   onProgress?.('Funding stealth for fees...');
   const connection = getConnection();
   if (walletSigner) {
