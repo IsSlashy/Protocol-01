@@ -653,9 +653,10 @@ export async function shield(
   poolConfig: PoolConfig,
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
+  overrideKeypair?: import('@solana/web3.js').Keypair,
 ): Promise<ShieldReceipt> {
   onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
+  const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
 
   const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
