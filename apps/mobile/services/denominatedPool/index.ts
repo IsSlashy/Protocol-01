@@ -1165,7 +1165,11 @@ export async function unshieldStark(
   }
 
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
+  // Use stealth keypair if available (overrideKeypair), otherwise walletSigner
   onProgress?.('Submitting STARK proof on-chain...');
+  const starkSigner = keypair
+    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } } as WalletSigner
+    : walletSigner;
   const { proofBuffer } = await submitAndVerifyStarkProof(
     {
       proofBytes: starkProofData.proofBytes,
@@ -1173,7 +1177,7 @@ export async function unshieldStark(
       publicInputs: starkProofData.publicInputs,
       proofSize: starkProofData.proofSize,
     },
-    walletSigner,
+    starkSigner,
     onProgress,
     connection,
   );
