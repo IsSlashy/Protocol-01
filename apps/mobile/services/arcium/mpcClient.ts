@@ -79,7 +79,8 @@ async function getWalletInfo(): Promise<{ pubkey: PublicKey; signer: (tx: Transa
  */
 export async function getMpcClient(): Promise<any | null> {
   if (clientInstance) return clientInstance;
-  if (initError) return null;
+  // Don't permanently cache "no wallet" errors — wallet may become available after auth
+  if (initError && !initError.includes('wallet') && !initError.includes('No wallet')) return null;
 
   // Avoid concurrent initialization
   if (initPromise) return initPromise;

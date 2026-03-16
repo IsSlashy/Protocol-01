@@ -9,6 +9,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { useArciumStore } from '../stores/arciumStore';
+import { useWalletStore } from '../stores/walletStore';
 import { isArciumAvailable } from '../services/arcium';
 
 interface ArciumContextValue {
@@ -30,7 +31,9 @@ export function useArcium(): ArciumContextValue {
 export function ArciumProvider({ children }: { children: ReactNode }) {
   const { mpcEnabled, status, programAvailable, initialize, setProgramAvailable, setStatus } =
     useArciumStore();
+  const walletPublicKey = useWalletStore((s) => s.publicKey);
   const clientInitAttempted = useRef(false);
+  const walletReadyInit = useRef(false);
 
   // Load persisted preference on mount
   useEffect(() => {
@@ -101,6 +104,33 @@ export function ArciumProvider({ children }: { children: ReactNode }) {
       if (retryTimer) clearTimeout(retryTimer);
     };
   }, [mpcEnabled]);
+
+  // Re-init MPC when wallet becomes available (e.g., after Privy auth)
+  // This fixes the race condition where MPC init starts before auth completes
+  useEffect(() => {
+    if (!walletPublicKey || !mpcEnabled || !clientInitAttempted.current) return;
+    if (walletReadyInit.current) return; // Only retry once per wallet
+    walletReadyInit.current = true;
+
+    console.log('[MPC] Wallet now available — re-initializing MPC client...');
+    import('../services/arcium/mpcClient')
+      .then(({ resetMpcClient, getMpcClient }) => {
+        resetMpcClient(); // Clear cached error
+        return getMpcClient();
+      })
+      .then((client) => {
+        if (client) {
+          console.log('[MPC] Client initialized after wallet ready!');
+          setStatus('ready');
+          if (!programAvailable) setProgramAvailable(true);
+        } else {
+          console.warn('[MPC] Client still null after wallet-ready retry');
+        }
+      })
+      .catch((e) => {
+        console.warn('[MPC] Wallet-ready init error:', e.message);
+      });
+  }, [walletPublicKey, mpcEnabled]);
 
   const isMpcActive = mpcEnabled && status === 'ready';
 
