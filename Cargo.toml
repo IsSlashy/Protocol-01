@@ -14,6 +14,7 @@ members = [
     "programs/p01_registry",
     "programs/p01_arcium",
     "programs/p01_arcium/encrypted-ixs",
+    "programs/p01_bundler",
     "stark",
 ]
 
