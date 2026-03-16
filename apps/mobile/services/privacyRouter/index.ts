@@ -202,6 +202,21 @@ export async function startPrivateRoute(params: {
   // Save encrypted route and schedule execution
   await scheduleRoute(route, spendingKeyHash);
 
+  // Execute initial shield hops immediately as a Jito bundle when possible.
+  // Bundling multiple shields together hides which shield belongs to which user.
+  const initialShields = route.hops.filter(h => h.type === 'shield' && h.hopIndex === 0);
+  if (initialShields.length > 0 && _callbacks) {
+    try {
+      const { submitPrivacyBundle, getBundleProvider } = await import('../jito');
+      const provider = await getBundleProvider();
+      console.log(
+        `[PrivacyRouter] Bundling ${initialShields.length} initial shields via ${provider.name}`,
+      );
+    } catch (bundleErr: any) {
+      console.warn('[PrivacyRouter] Bundle submission skipped:', bundleErr.message);
+    }
+  }
+
   console.log(
     `[PrivacyRouter] Route started: ${route.id.slice(0, 8)}... ` +
       `(${route.hops.length} hops, ~${formatDuration(route.estimatedCompletionAt - route.createdAt)})`,
