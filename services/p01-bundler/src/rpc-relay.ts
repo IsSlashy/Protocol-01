@@ -46,24 +46,58 @@ const MAX_JITTER_MS = parseInt(process.env.RPC_JITTER_MS || '300', 10);
 const MAX_BODY_SIZE = 100_000; // 100KB
 
 // ---------------------------------------------------------------------------
-// Tor SOCKS5 agent (lazy-loaded)
+// Tor SOCKS5 agent (lazy-loaded, circuit rotation)
+// ---------------------------------------------------------------------------
+//
+// Privacy: We rotate the Tor circuit every TOR_ROTATION_MS by creating a
+// new SocksProxyAgent with a random username. Tor treats different SOCKS
+// credentials as different clients, assigning them separate circuits and
+// exit nodes. This prevents long-lived circuit correlation.
+//
+// No Tor control port needed — rotation is purely via SOCKS auth.
 // ---------------------------------------------------------------------------
 
 let torAgent: any = null;
+let torAgentCreatedAt = 0;
+
+/** How often to rotate the Tor circuit (ms). Default: 10 minutes. */
+const TOR_ROTATION_MS = parseInt(process.env.TOR_ROTATION_MS || '600000', 10);
+
+/** Track how many times we've rotated for stats */
+let totalCircuitRotations = 0;
 
 async function getTorAgent(): Promise<any> {
   if (!TOR_PROXY) return null;
-  if (torAgent) return torAgent;
+
+  const now = Date.now();
+
+  // Return existing agent if still within rotation window
+  if (torAgent && (now - torAgentCreatedAt) < TOR_ROTATION_MS) {
+    return torAgent;
+  }
 
   try {
-    // Try to load socks-proxy-agent (optional dependency)
     const { SocksProxyAgent } = await import('socks-proxy-agent');
-    torAgent = new SocksProxyAgent(TOR_PROXY);
-    console.log(`[RPC-Relay] Tor SOCKS5 proxy configured: ${TOR_PROXY}`);
+
+    // Random SOCKS auth credentials → Tor assigns a fresh circuit
+    const sessionId = Math.random().toString(36).slice(2, 12);
+    const proxyUrl = new URL(TOR_PROXY);
+    proxyUrl.username = `p01_${sessionId}`;
+    proxyUrl.password = 'x';
+
+    torAgent = new SocksProxyAgent(proxyUrl.toString());
+    torAgentCreatedAt = now;
+
+    if (totalCircuitRotations === 0) {
+      console.log(`[RPC-Relay] Tor SOCKS5 proxy active — circuit rotation every ${TOR_ROTATION_MS / 60_000}min`);
+    } else {
+      console.log(`[RPC-Relay] Tor circuit rotated (rotation #${totalCircuitRotations})`);
+    }
+    totalCircuitRotations++;
+
     return torAgent;
   } catch {
-    console.warn('[RPC-Relay] socks-proxy-agent not installed — Tor routing disabled');
-    console.warn('[RPC-Relay] Install with: npm install socks-proxy-agent');
+    console.warn('[RPC-Relay] socks-proxy-agent not available — Tor routing disabled');
     return null;
   }
 }
@@ -92,9 +126,21 @@ export function createRpcRelay(): Router {
   router.post('/', async (req: Request, res: Response) => {
     totalRequests++;
 
-    // Validate JSON-RPC request
     const body = req.body;
-    if (!body || !body.method) {
+
+    // Support batch JSON-RPC requests (array of requests)
+    const isBatch = Array.isArray(body);
+
+    // Validate: single request must have method, batch must be non-empty array
+    if (isBatch) {
+      if (body.length === 0) {
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32600, message: 'Empty batch request' },
+          id: null,
+        });
+      }
+    } else if (!body || !body.method) {
       return res.status(400).json({
         jsonrpc: '2.0',
         error: { code: -32600, message: 'Invalid JSON-RPC request' },
@@ -104,12 +150,15 @@ export function createRpcRelay(): Router {
 
     // Block dangerous methods that could leak info
     const blockedMethods = ['getIdentity', 'getClusterNodes'];
-    if (blockedMethods.includes(body.method)) {
-      return res.status(403).json({
-        jsonrpc: '2.0',
-        error: { code: -32601, message: 'Method not allowed through privacy relay' },
-        id: body.id,
-      });
+    const requests = isBatch ? body : [body];
+    for (const rpcReq of requests) {
+      if (blockedMethods.includes(rpcReq.method)) {
+        return res.status(403).json({
+          jsonrpc: '2.0',
+          error: { code: -32601, message: 'Method not allowed through privacy relay' },
+          id: rpcReq.id,
+        });
+      }
     }
 
     try {
@@ -119,8 +168,8 @@ export function createRpcRelay(): Router {
         await new Promise(r => setTimeout(r, jitter));
       }
 
-      // Forward to upstream RPC
-      const result = await forwardRpcRequest(body);
+      // Forward the entire body (single or batch) to upstream RPC
+      const result = await forwardRpcRequest(isBatch ? body : body);
       return res.json(result);
     } catch (err: any) {
       totalErrors++;
@@ -128,7 +177,7 @@ export function createRpcRelay(): Router {
       return res.status(502).json({
         jsonrpc: '2.0',
         error: { code: -32000, message: 'Upstream RPC error' },
-        id: body.id,
+        id: isBatch ? null : body.id,
       });
     }
   });
@@ -142,6 +191,8 @@ export function createRpcRelay(): Router {
       totalTorRouted,
       totalErrors,
       torEnabled: !!TOR_PROXY,
+      torCircuitRotations: totalCircuitRotations,
+      torRotationIntervalMin: TOR_ROTATION_MS / 60_000,
       upstreamRpc: UPSTREAM_RPC.replace(/[?&](api-key|key)=[^&]+/gi, ''),
       jitterMs: MAX_JITTER_MS,
     });

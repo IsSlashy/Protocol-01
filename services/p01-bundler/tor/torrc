@@ -1,0 +1,50 @@
+# ============================================================================
+# P01 Privacy Relay — Tor SOCKS5 Proxy Configuration
+# ============================================================================
+#
+# This is a CLIENT-ONLY config. We do NOT operate as a Tor relay or exit node.
+# The SOCKS5 proxy allows the P01 Bundle Engine to route all RPC traffic
+# through the Tor network, so upstream RPC providers (Helius, etc.) never
+# see the relay server's real IP address.
+#
+# Security model:
+#   User ──HTTPS──▷ P01 Relay ──Tor──▷ Solana RPC
+#   (IP hidden)       (IP hidden)        (sees Tor exit IP)
+#
+# ============================================================================
+
+# ── SOCKS5 proxy ──
+# Listen on all interfaces (Docker internal network only)
+SocksPort 0.0.0.0:9050
+
+# ── Data directory ──
+DataDirectory /var/lib/tor
+
+# ── Logging ──
+# Log to stderr (Docker captures it). SafeLogging scrubs IPs from logs.
+Log notice stderr
+SafeLogging 1
+
+# ── We are NOT a relay ──
+ORPort 0
+ExitRelay 0
+BridgeRelay 0
+
+# ── Circuit settings ──
+# Build timeout: max seconds to wait for a circuit
+CircuitBuildTimeout 30
+# Learn optimal build timeout from experience
+LearnCircuitBuildTimeout 1
+# Max seconds a circuit stays open before Tor builds a new one
+MaxCircuitDirtiness 600
+
+# ── Privacy hardening ──
+# Pad connections to resist traffic analysis
+ConnectionPadding 1
+# Use 3 entry guards for better path diversity
+NumEntryGuards 3
+
+# ── SOCKS isolation ──
+# Different SOCKS auth credentials → different circuits
+# The relay uses random usernames to force fresh circuits per rotation
+SocksPolicy accept *
