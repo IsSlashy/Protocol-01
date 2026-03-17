@@ -476,7 +476,7 @@ const payments = await scanForPayments({
       <div className="bg-p01-surface p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-2 font-display">ZK Proofs (zk-sdk)</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          Generate Groth16 proofs locally for shielded transfers and balance verification. 6 circuits up to 12,222 constraints.
+          Generate Groth16 proofs locally for shielded transfers and balance verification. 7 circuits up to 12,222 constraints.
         </p>
         <CodeBlock
           title="Shield & Transfer with ZK Proofs"
@@ -605,7 +605,7 @@ const result = await arcium.execute({
           ))}
         </div>
         <p className="text-p01-text-dim text-xs text-center mt-4 font-mono">
-          All proving runs client-side. No secrets leave the device. 6 Groth16 circuits + 6 STARK AIRs + 9 MPC circuits.
+          All proving runs client-side. No secrets leave the device. 7 Groth16 circuits + 6 STARK AIRs + 9 MPC circuits.
         </p>
       </div>
 

@@ -101,7 +101,7 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "ZK Shielded Pool (Groth16 + STARK)",
         description:
-          "Dual proof system: 6 Groth16 circuits (BN254, up to 12,222 constraints) + 6 STARK AIRs (Winterfell/Goldilocks, quantum-resistant). All circuits compiled with trusted setup.",
+          "Dual proof system: 7 Groth16 circuits (BN254, up to 12,222 constraints) + 6 STARK AIRs (Winterfell/Goldilocks, quantum-resistant). All circuits compiled with trusted setup.",
         icon: <Shield className="w-5 h-5" />,
       },
       {
@@ -277,13 +277,13 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "External Security Audit",
         description:
-          "Comprehensive audit of all 13 programs, 6 Groth16 circuits, 6 STARK AIRs, and 8 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.",
+          "Comprehensive audit of all 14 programs, 7 Groth16 circuits, 6 STARK AIRs, and 8 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.",
         icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "Trusted Setup Ceremony",
         description:
-          "Multi-party Groth16 trusted setup with 3+ contributors (currently 1). Powers of Tau + beacon finalization for all 6 circuits.",
+          "Multi-party Groth16 trusted setup with 3+ contributors (currently 1). Powers of Tau + beacon finalization for all 7 circuits.",
         icon: <Lock className="w-5 h-5" />,
       },
       {

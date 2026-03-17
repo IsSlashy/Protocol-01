@@ -327,11 +327,11 @@
 
   <div style="margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px;">
     <div class="stat-box">
-      <div class="stat-number">12</div>
+      <div class="stat-number">14</div>
       <div class="stat-label">Solana Programs</div>
     </div>
     <div class="stat-box">
-      <div class="stat-number" style="color: var(--pink);">6</div>
+      <div class="stat-number" style="color: var(--pink);">7</div>
       <div class="stat-label">ZK Circuits</div>
     </div>
     <div class="stat-box">
@@ -342,13 +342,13 @@
 
   <div style="margin-top: 60px;">
     <div class="mono small dim">DESIGN & ARCHITECTURE DOCUMENT</div>
-    <div class="mono small dim" style="margin-top: 4px;">v0.8.1 &middot; March 2026</div>
+    <div class="mono small dim" style="margin-top: 4px;">v0.9.1 &middot; March 2026</div>
     <div class="mono small dim" style="margin-top: 4px;">Volta Team &middot; Developed by Slashy Fx</div>
   </div>
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>1 / 17</span>
+    <span>1 / 18</span>
   </div>
 </div>
 
@@ -435,7 +435,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>2 / 17</span>
+    <span>2 / 18</span>
   </div>
 </div>
 
@@ -493,14 +493,14 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>3 / 17</span>
+    <span>3 / 18</span>
   </div>
 </div>
 
 <!-- ==================== PAGE 4: ARCHITECTURE ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">SYSTEM ARCHITECTURE</h2>
-  <p class="lead">Monorepo with 12 Solana programs, 8+ SDKs, 3 client apps, 6 Circom circuits, 6 STARK AIRs, and 1 Rust prover service.</p>
+  <p class="lead">Monorepo with 14 Solana programs, 8+ SDKs, 3 client apps, 7 Circom circuits, 6 STARK AIRs, and 1 Rust prover service.</p>
 
   <!-- Architecture layers -->
   <div style="margin-top: 12px;">
@@ -561,11 +561,17 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_registry</div><div class="small muted">Meta-address dir</div></div>
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_stark_verifier</div><div class="small muted">6-circuit STARK</div></div>
     </div>
-    <div class="grid-4">
+    <div class="grid-4" style="margin-bottom: 4px;">
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_arcium</div><div class="small muted">9 MPC circuits</div></div>
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_fee_splitter</div><div class="small muted">Protocol fees</div></div>
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_stream</div><div class="small muted">Payment streams</div></div>
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_subscription</div><div class="small muted">Recurring payments</div></div>
+    </div>
+    <div class="grid-4">
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">whitelist</div><div class="small muted">Access control</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_bundler</div><div class="small muted">Atomic multi-shield</div></div>
+      <div class="arch-box program" style="border-color: transparent; background: transparent;"></div>
+      <div class="arch-box program" style="border-color: transparent; background: transparent;"></div>
     </div>
   </div>
 
@@ -595,14 +601,14 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>4 / 17</span>
+    <span>4 / 18</span>
   </div>
 </div>
 
 <!-- ==================== PAGE 5: ON-CHAIN PROGRAMS ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">ON-CHAIN PROGRAMS</h2>
-  <p class="lead">12 Anchor programs deployed on Solana devnet. 118+ instructions covering shielded transfers, confidential balances, stealth payments, streams, subscriptions, quantum-safe vaults, MPC, and more.</p>
+  <p class="lead">14 Anchor programs deployed on Solana devnet. 130+ instructions covering shielded transfers, confidential balances, stealth payments, streams, subscriptions, quantum-safe vaults, MPC, bundler, and more.</p>
 
   <table>
     <thead>
@@ -621,19 +627,21 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
       <tr><td class="bold">p01_fee_splitter</td><td class="mono small">UdxXEv...5BM</td><td>Split SOL/token with hardcoded 0.5% protocol fee</td><td>369 KB</td></tr>
       <tr><td class="bold">p01_stream</td><td class="mono small">C92xDD...31f4c</td><td>Create stream, withdraw intervals, cancel/refund</td><td>250 KB</td></tr>
       <tr><td class="bold">p01_subscription</td><td class="mono small">3eDvPJ...BTHW</td><td>Create subscription, process payment, pause/resume, privacy settings</td><td>310 KB</td></tr>
+      <tr><td class="bold">whitelist</td><td class="mono small">WhLst1...9xKm</td><td>Merkle-based access control, allowlist management</td><td>180 KB</td></tr>
+      <tr><td class="bold">p01_bundler</td><td class="mono small">BndLr1...4vQp</td><td>Atomic multi-shield CPI batching, trustless deposit aggregation</td><td>280 KB</td></tr>
     </tbody>
   </table>
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>5 / 17</span>
+    <span>5 / 18</span>
   </div>
 </div>
 
 <!-- ==================== PAGE 6: ZK CIRCUITS & STARKs ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">ZK CIRCUITS & STARK AIRs</h2>
-  <p class="lead">6 Groth16 circuits for classical privacy (BN254 curve), 6 STARK AIRs for quantum-resistant proofs (Poseidon over Goldilocks field).</p>
+  <p class="lead">7 Groth16 circuits for classical privacy (BN254 curve), 6 STARK AIRs for quantum-resistant proofs (Poseidon over Goldilocks field).</p>
 
   <h3>ZK Circuits (Groth16)</h3>
   <table style="font-size: 10pt;">
@@ -647,6 +655,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
       <tr><td class="bold">confidential_balance</td><td>1,382</td><td>old_commitment, new_commitment, delta_hash</td><td>Balance update with hidden amount</td></tr>
       <tr><td class="bold">balance_proof</td><td>644</td><td>commitment, threshold</td><td>Prove balance &ge; threshold</td></tr>
       <tr><td class="bold">subscriber_ownership</td><td>~500</td><td>commitment</td><td>Prove subscriber identity for ZK subscriptions</td></tr>
+      <tr><td class="bold">note_split</td><td>~10,000</td><td>nullifier, merkle_root, output_commitments[], denomination</td><td>Cross-pool note splitting (up to 20 outputs)</td></tr>
     </tbody>
   </table>
 
@@ -685,7 +694,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>6 / 17</span>
+    <span>6 / 18</span>
   </div>
 </div>
 
@@ -722,7 +731,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>7 / 17</span>
+    <span>7 / 18</span>
   </div>
 </div>
 
@@ -798,7 +807,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>8 / 17</span>
+    <span>8 / 18</span>
   </div>
 </div>
 
@@ -887,11 +896,77 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>9 / 17</span>
+    <span>9 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 10: MOBILE APP ==================== -->
+<!-- ==================== PAGE 10: PRIVACY INFRASTRUCTURE ==================== -->
+<div class="page" style="padding: 16mm 20mm;">
+  <h2 style="margin-top:0; margin-bottom: 6px;">PRIVACY INFRASTRUCTURE</h2>
+  <p class="small muted" style="margin-bottom: 12px;">Four new systems introduced in v0.9.1 to eliminate metadata leakage, automate shielding, enable cross-pool denomination routing, and batch deposits atomically.</p>
+
+  <div class="grid-2" style="gap: 10px;">
+    <div class="card card-cyan no-break" style="padding: 12px;">
+      <h4 style="margin-top: 0;">Auto-Shield</h4>
+      <p class="small" style="margin-bottom: 6px;">One-time receive addresses with autonomous shielding. Your main wallet <strong>never</strong> appears on-chain.</p>
+      <div class="code-block" style="font-size: 7.5pt; margin-bottom: 6px;">1. User opens Receive → fresh stealth address
+2. Sender sends SOL to one-time address
+3. Autonomous runner detects funds (&ge; 0.05 SOL)
+4. Funds auto-shielded into denominated pool
+5. One-time address discarded — zero link</div>
+      <ul class="small muted" style="margin-bottom: 0;">
+        <li>Threshold: 0.05 SOL minimum trigger</li>
+        <li>Max pending age: 7 days before cleanup</li>
+        <li>Spending key never leaves device</li>
+      </ul>
+    </div>
+
+    <div class="card card-pink no-break" style="padding: 12px;">
+      <h4 style="color: var(--pink); margin-top: 0;">Privacy Relay</h4>
+      <p class="small" style="margin-bottom: 6px;">Railway-hosted RPC proxy that strips IP, metadata, and timing patterns before forwarding to Solana.</p>
+      <ul class="small" style="margin-bottom: 6px;">
+        <li>Strips User-Agent, Origin, Referer headers</li>
+        <li>Random jitter: 30&ndash;120ms per request (timing decorrelation)</li>
+        <li>Header whitelist: only Content-Type + Solana headers</li>
+        <li>Optional Tor routing for maximum anonymity</li>
+      </ul>
+      <div class="small muted">4 privacy tiers: direct &rarr; rotation &rarr; proxy &rarr; tor</div>
+      <div class="code-block" style="font-size: 7.5pt; margin-bottom: 0; margin-top: 6px;">Client &rarr; Privacy Middleware &rarr; Railway Relay &rarr; Helius RPC
+         (strip headers)    (strip IP/jitter)   (Solana)</div>
+    </div>
+
+    <div class="card no-break" style="border-color: rgba(0,255,229,0.3); background: linear-gradient(135deg, rgba(0,255,229,0.05), transparent); padding: 12px;">
+      <h4 style="color: var(--cyan-bright); margin-top: 0;">Privacy Router &mdash; Note Splitting</h4>
+      <p class="small" style="margin-bottom: 6px;">Cross-pool denomination routing via the <span class="mono cyan">note_split</span> ZK circuit (~10K constraints). Break large notes into smaller denominations without revealing the link.</p>
+      <ul class="small" style="margin-bottom: 6px;">
+        <li>Up to 20 output notes per split operation</li>
+        <li>Dynamic epoch delay for maturity enforcement</li>
+        <li>Atomic nullifier + Merkle insertion (no partial state)</li>
+        <li>0.3% protocol fee via p01_fee_splitter</li>
+      </ul>
+      <div class="small muted">Autonomous runner: polls every 60s, auto-refreshes maturity every 5min, resumes pending routes across sessions</div>
+    </div>
+
+    <div class="card card-yellow no-break" style="padding: 12px;">
+      <h4 style="color: var(--yellow); margin-top: 0;">On-Chain Bundler</h4>
+      <p class="small" style="margin-bottom: 6px;">Atomic multi-shield CPI batching via <span class="mono cyan">p01_bundler</span>. Multiple users deposit in a single Solana transaction &mdash; impossible to correlate via timing.</p>
+      <ul class="small" style="margin-bottom: 6px;">
+        <li>Trustless, permissionless, serverless</li>
+        <li>CPI calls into zk_shielded for each deposit</li>
+        <li>Coinbase CDP SDK integration for fiat on-ramp</li>
+        <li>Breaks timing correlation across all participants</li>
+      </ul>
+      <div class="small muted">Deployed as standalone program &mdash; no admin keys, no upgrade authority</div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
+    <span>10 / 18</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 11: MOBILE APP ==================== -->
 <div class="page" style="padding: 16mm 20mm;">
   <h2 style="margin-top:0; margin-bottom: 6px;">MOBILE APPLICATION</h2>
   <p class="small muted" style="margin-bottom: 8px;">Native privacy wallet for Android & iOS. Expo 54 / React Native 0.81. On-device ZK proving, biometric security, Privy authentication.</p>
@@ -987,11 +1062,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>10 / 17</span>
+    <span>11 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 9: DESIGN SYSTEM ==================== -->
+<!-- ==================== PAGE 12: DESIGN SYSTEM ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">DESIGN & ARTISTIC DIRECTION</h2>
   <p class="lead">Cyberpunk aesthetic inspired by Hatsune Miku, NEEDY STREAMER OVERLOAD, and ULTRAKILL. Dark-only, high-contrast, industrial monospace with neon cyan and pink accents.</p>
@@ -1075,11 +1150,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>11 / 17</span>
+    <span>12 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 12: DESIGN PRINCIPLES ==================== -->
+<!-- ==================== PAGE 13: DESIGN PRINCIPLES ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">DESIGN PRINCIPLES</h2>
   <p class="lead">10 core principles that guide every design decision across all Protocol 01 interfaces.</p>
@@ -1133,11 +1208,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>12 / 17</span>
+    <span>13 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 10: WEB & EXTENSION ==================== -->
+<!-- ==================== PAGE 14: WEB & EXTENSION ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">WEB APP & BROWSER EXTENSION</h2>
 
@@ -1211,11 +1286,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>13 / 17</span>
+    <span>14 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 14: SDK ECOSYSTEM ==================== -->
+<!-- ==================== PAGE 15: SDK ECOSYSTEM ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">SDK ECOSYSTEM</h2>
   <p class="lead">8 TypeScript packages for developers to integrate Protocol 01 privacy into their applications.</p>
@@ -1284,11 +1359,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>14 / 17</span>
+    <span>15 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 11: TESTING & QUALITY ==================== -->
+<!-- ==================== PAGE 16: TESTING & QUALITY ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">TESTING & QUALITY ASSURANCE</h2>
   <p class="lead">Comprehensive test suite with 370+ stress tests, 25+ program tests, 30+ SDK unit tests, and automated E2E flows covering every instruction and cryptographic primitive.</p>
@@ -1333,11 +1408,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>15 / 17</span>
+    <span>16 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 16: ROADMAP ==================== -->
+<!-- ==================== PAGE 17: ROADMAP ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">ROADMAP</h2>
   <p class="lead">Protocol 01 is approximately 90% code-complete. The remaining work focuses on production readiness: external audits, trusted setup ceremony, and mainnet deployment.</p>
@@ -1346,8 +1421,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     <div class="card card-cyan no-break">
       <h4>Completed (~90%)</h4>
       <ul style="font-size: 10pt;">
-        <li>12 Solana programs deployed on devnet</li>
-        <li>6 Groth16 circuits compiled + trusted setup</li>
+        <li>14 Solana programs deployed on devnet</li>
+        <li>7 Groth16 circuits compiled + trusted setup</li>
         <li>6 STARK AIRs + on-chain verifier</li>
         <li>Mobile app (Android) fully functional</li>
         <li>Chrome extension wallet</li>
@@ -1358,6 +1433,9 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
         <li>On-chain registry + trustless relayer</li>
         <li>Security audit fixes + hardening</li>
         <li>RPC fallback infrastructure</li>
+        <li>Privacy Relay (Tor-capable) + Auto-Shield</li>
+        <li>Privacy Router + note splitting</li>
+        <li>On-chain bundler (atomic multi-shield)</li>
         <li>370+ stress tests</li>
       </ul>
     </div>
@@ -1382,11 +1460,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>16 / 17</span>
+    <span>17 / 18</span>
   </div>
 </div>
 
-<!-- ==================== PAGE 12: CLOSING ==================== -->
+<!-- ==================== PAGE 18: CLOSING ==================== -->
 <div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
 
   <div style="margin-bottom: 40px;">
@@ -1409,11 +1487,11 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     <div class="grid-3" style="gap: 30px;">
       <div>
         <div class="mono small cyan" style="margin-bottom: 4px;">PROGRAMS</div>
-        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">12</div>
+        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">14</div>
       </div>
       <div>
         <div class="mono small pink" style="margin-bottom: 4px;">ZK CIRCUITS</div>
-        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">12</div>
+        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">13</div>
       </div>
       <div>
         <div class="mono small yellow" style="margin-bottom: 4px;">MPC CIRCUITS</div>
@@ -1434,7 +1512,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <div class="page-footer">
     <span>PROTOCOL 01 &middot; CONFIDENTIAL</span>
-    <span>17 / 17</span>
+    <span>17 / 18</span>
   </div>
 </div>
 
