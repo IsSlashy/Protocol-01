@@ -445,13 +445,13 @@ export async function sendMessageStreaming(
     ...messages,
   ];
 
-  // 1. On-device Gemma — skip cloud providers entirely
-  if (activeConfig.provider === 'gemma' && activeConfig.gemmaBackend === 'on-device' && LlamaService.isModelLoaded()) {
-    try {
-      return await streamFromLocal(allMessages, activeConfig, onToken);
-    } catch (error: any) {
-      console.warn('[AI] Local streaming failed:', error.message);
+  // 1. On-device Gemma — no cloud fallback
+  const isOnDevice = (activeConfig.provider === 'gemma' && activeConfig.gemmaBackend === 'on-device') || activeConfig.provider === 'llama-local';
+  if (isOnDevice) {
+    if (!LlamaService.isModelLoaded()) {
+      throw new Error('On-device model not loaded — load it in Agent Settings');
     }
+    return await streamFromLocal(allMessages, activeConfig, onToken);
   }
 
   // 2. Groq streaming (when key available)
@@ -474,7 +474,7 @@ export async function sendMessageStreaming(
     }
   }
 
-  // 4. Gemma local fallback
+  // 4. Local fallback (only for cloud providers that all failed)
   if (LlamaService.isModelLoaded()) {
     try {
       return await streamFromLocal(allMessages, activeConfig, onToken);
@@ -483,7 +483,7 @@ export async function sendMessageStreaming(
     }
   }
 
-  // 4. Fallback: non-streaming
+  // 5. Non-streaming fallback
   const response = await sendMessage(messages, activeConfig, context);
   if (response.success && response.message) {
     onToken(response.message);
@@ -610,23 +610,37 @@ async function streamFromLocal(
   config: AIConfig,
   onToken: (token: string) => void
 ): Promise<string> {
-  const systemPrompt = messages.find(m => m.role === 'system')?.content || SYSTEM_PROMPT_LOCAL;
-  const chatMessages = messages
-    .filter(m => m.role !== 'system')
-    .map(m => ({ role: m.role, content: m.content }));
+  if (!LlamaService.isModelLoaded()) {
+    throw new Error('Model not loaded');
+  }
+  if (llamaInProgress) {
+    throw new Error('AI is still processing');
+  }
 
-  const llamaMessages = [
-    { role: 'user', content: systemPrompt + '\n\nRespond to the user.' },
-    { role: 'assistant', content: 'Understood. I am P-01 Agent, ready to help.' },
-    ...chatMessages,
-  ];
+  LlamaService.cancelWarmup();
+  llamaInProgress = true;
 
-  const text = await LlamaService.chat(llamaMessages, onToken, {
-    temperature: config.temperature || 0.7,
-    maxTokens: config.maxTokens || 512,
-  });
+  try {
+    const systemPrompt = messages.find(m => m.role === 'system')?.content || SYSTEM_PROMPT_LOCAL;
+    const chatMessages = messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({ role: m.role, content: m.content }));
 
-  return text.trim();
+    const llamaMessages = [
+      { role: 'user', content: systemPrompt + '\n\nRespond to the user.' },
+      { role: 'assistant', content: 'Understood. I am P-01 Agent, ready to help.' },
+      ...chatMessages,
+    ];
+
+    const text = await LlamaService.chat(llamaMessages, onToken, {
+      temperature: config.temperature || 0.7,
+      maxTokens: config.maxTokens || 512,
+    });
+
+    return text.trim();
+  } finally {
+    llamaInProgress = false;
+  }
 }
 
 /**
@@ -810,10 +824,13 @@ async function sendToLlamaLocal(
     .filter(m => m.role !== 'system')
     .map(m => ({ role: m.role, content: m.content }));
 
+  // Keep only last 4 messages to stay within context window (1B model, 4096 ctx)
+  const recentMessages = chatMessages.slice(-4);
+
   const llamaMessages = [
     { role: 'user', content: systemPrompt + '\n\nRespond to the user.' },
     { role: 'assistant', content: 'Understood. I am P-01 Agent, ready to help.' },
-    ...chatMessages,
+    ...recentMessages,
   ];
 
   const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
@@ -831,9 +848,24 @@ async function sendToLlamaLocal(
     const suggestions = extractSuggestions(lastUserMessage, text);
     return { success: true, message: text.trim(), suggestions };
   } catch (error: any) {
-    const msg = error?.message || 'On-device AI failed';
-    console.error('[AI] LlamaLocal error:', msg);
-    return { success: false, error: `On-device: ${msg}` };
+    const msg = error?.message || 'native crash';
+    console.warn('[AI] LlamaLocal attempt 1 failed:', msg);
+
+    // Retry with reduced context (keep only last 2 user messages)
+    try {
+      const reduced = llamaMessages.slice(0, 2).concat(llamaMessages.slice(-3));
+      console.log('[AI] Retrying with reduced context:', reduced.length, 'messages');
+      const text = await LlamaService.chat(reduced, undefined, {
+        temperature: config.temperature || 0.7,
+        maxTokens: config.maxTokens || 256,
+      });
+      const suggestions = extractSuggestions(lastUserMessage, text);
+      return { success: true, message: text.trim(), suggestions };
+    } catch (retryError: any) {
+      const retryMsg = retryError?.message || 'On-device AI failed';
+      console.error('[AI] LlamaLocal retry failed:', retryMsg);
+      return { success: false, error: `On-device AI failed — try clearing chat history` };
+    }
   } finally {
     llamaInProgress = false;
   }
