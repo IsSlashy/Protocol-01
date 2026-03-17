@@ -1,13 +1,15 @@
 import React from 'react';
 import { View, Text, Switch, Platform } from 'react-native';
 
+import { Colors, P01Colors } from '@/constants/theme';
+
 const COLORS = {
-  text: '#ffffff',
-  textSecondary: '#9ca3af',
-  cyan: '#06b6d4',
-  switchTrackOff: '#3f3f46',
-  switchTrackOn: 'rgba(6, 182, 212, 0.3)',
-  switchThumbOff: '#6b7280',
+  text: Colors.text,
+  textSecondary: Colors.textSecondary,
+  cyan: P01Colors.cyan,
+  switchTrackOff: Colors.border,
+  switchTrackOn: P01Colors.cyanDim,
+  switchThumbOff: Colors.textTertiary,
 };
 
 interface ToggleRowProps {
