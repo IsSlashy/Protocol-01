@@ -446,8 +446,8 @@ const styles = StyleSheet.create({
   },
   amountSection: {
     alignItems: 'center',
-    marginBottom: Spacing['3xl'],
-    paddingVertical: Spacing['2xl'],
+    marginBottom: Spacing.lg,
+    paddingVertical: Spacing.lg,
   },
   amountLabel: {
     color: Colors.textTertiary,
@@ -527,7 +527,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceSecondary,
     borderRadius: BorderRadius.lg,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.primary + '40',
     flexDirection: 'row',
     alignItems: 'flex-start',
     padding: Spacing.lg,
@@ -623,8 +623,8 @@ const styles = StyleSheet.create({
   },
   bottomSection: {
     paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-    paddingBottom: 120,
+    paddingVertical: Spacing.md,
+    paddingBottom: 40,
   },
   sendButton: {
     backgroundColor: Colors.primary,
