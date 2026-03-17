@@ -138,11 +138,21 @@ export default function PrivateSendScreen() {
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) return;
 
-    // Validate recipient address
+    // Validate recipient — accept Solana address OR stealth meta-address (st:01... / st:02...)
+    let finalDestination = recipient.trim();
     try {
-      new (require('@solana/web3.js').PublicKey)(recipient.trim());
+      const { isMetaAddress, deriveStealthForRecipient } = require('@/services/stealth/keys');
+      if (isMetaAddress(finalDestination)) {
+        // Derive a one-time stealth address from the meta-address
+        const stealth = deriveStealthForRecipient(finalDestination);
+        console.log(`[PrivateSend] Meta-address detected — derived stealth: ${stealth.address.slice(0, 12)}...`);
+        console.log(`[PrivateSend] Sender + receiver both hidden on-chain`);
+        finalDestination = stealth.address;
+      } else {
+        new (require('@solana/web3.js').PublicKey)(finalDestination);
+      }
     } catch {
-      p01Alert('Invalid address', 'Please enter a valid Solana address.');
+      p01Alert('Invalid address', 'Enter a valid Solana address or P01 stealth address (st:01... or st:02...).');
       return;
     }
 
@@ -178,7 +188,7 @@ export default function PrivateSendScreen() {
 
         const route = await startPrivateRoute({
           amount: selectedNote.denomination,
-          destination: recipient.trim(),
+          destination: finalDestination,
           privacyLevel,
           spendingKeyHash,
         });
