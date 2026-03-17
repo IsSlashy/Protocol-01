@@ -44,12 +44,12 @@ interface Transaction {
   txHash: string;
 }
 
-const FILTER_TABS: { id: TransactionType; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'sent', label: 'Sent' },
-  { id: 'received', label: 'Received' },
-  { id: 'streams', label: 'Streams' },
-  { id: 'scheduled', label: 'Scheduled' },
+const FILTER_TABS: { id: TransactionType; label: string; icon: string }[] = [
+  { id: 'all', label: 'All', icon: 'layers-outline' },
+  { id: 'sent', label: 'Sent', icon: 'arrow-up-outline' },
+  { id: 'received', label: 'Received', icon: 'arrow-down-outline' },
+  { id: 'streams', label: 'Streams', icon: 'water-outline' },
+  { id: 'scheduled', label: 'Scheduled', icon: 'time-outline' },
 ];
 
 // Loading state type
@@ -393,138 +393,110 @@ export default function ActivityScreen() {
     ({ item }: { item: ListItem }) => {
       if (item.kind === 'header') {
         return (
-          <Text className="text-p01-text-muted text-sm font-medium mb-3 mt-4">
-            {item.date}
-          </Text>
+          <View className="flex-row items-center mt-5 mb-3">
+            <View className="h-px flex-1 bg-p01-border/50" />
+            <Text className="text-p01-text-muted text-xs font-semibold mx-3 uppercase tracking-wider">
+              {item.date}
+            </Text>
+            <View className="h-px flex-1 bg-p01-border/50" />
+          </View>
         );
       }
 
       const tx = item.tx;
+      const typeConfig = {
+        receive: { icon: 'arrow-down' as const, color: '#39c5bb', bg: 'rgba(57, 197, 187, 0.12)', label: 'Received', sign: '+' },
+        send: { icon: 'arrow-up' as const, color: '#ff77a8', bg: 'rgba(255, 119, 168, 0.12)', label: 'Sent', sign: '-' },
+        stream: { icon: 'water-outline' as const, color: '#6C8EFF', bg: 'rgba(108, 142, 255, 0.12)', label: 'Stream', sign: '-' },
+      }[tx.type] || { icon: 'swap-horizontal' as const, color: '#888', bg: 'rgba(136,136,136,0.1)', label: tx.type, sign: '' };
+
+      const statusStyle = {
+        completed: { color: '#39c5bb', bg: 'rgba(57, 197, 187, 0.15)', label: 'Confirmed' },
+        pending: { color: '#ffcc00', bg: 'rgba(255, 204, 0, 0.15)', label: 'Pending' },
+        failed: { color: '#ff3366', bg: 'rgba(255, 51, 102, 0.15)', label: 'Failed' },
+      }[tx.status] || { color: '#888', bg: 'rgba(136,136,136,0.1)', label: tx.status };
+
       return (
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => handleTransactionPress(tx)}
-          className="mb-3"
+          className="mb-2.5"
           accessibilityRole="button"
-          accessibilityLabel={`${tx.type === 'stream' ? 'Stream' : tx.type} ${tx.type === 'receive' ? 'plus' : 'minus'} ${tx.amount} ${tx.token}, ${tx.status}`}
+          accessibilityLabel={`${typeConfig.label} ${typeConfig.sign}${tx.amount} ${tx.token}, ${statusStyle.label}`}
         >
-          <Card variant="default" padding="md">
-            <View className="flex-row items-center justify-between">
-              <View className="flex-row items-center flex-1">
+          <View
+            className="bg-p01-surface rounded-2xl border border-p01-border overflow-hidden"
+          >
+            {/* Accent bar */}
+            <View style={{ height: 2, backgroundColor: typeConfig.color, opacity: 0.6 }} />
+
+            <View className="p-4">
+              <View className="flex-row items-center">
                 {/* Icon */}
                 <View
-                  className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${
-                    tx.type === 'receive'
-                      ? 'bg-green-500/20'
-                      : tx.type === 'send'
-                      ? 'bg-red-500/20'
-                      : 'bg-blue-500/20'
-                  }`}
+                  className="w-11 h-11 rounded-xl items-center justify-center mr-3"
+                  style={{ backgroundColor: typeConfig.bg }}
                 >
-                  <Ionicons
-                    name={
-                      tx.type === 'receive'
-                        ? 'arrow-down'
-                        : tx.type === 'send'
-                        ? 'arrow-up'
-                        : 'water-outline'
-                    }
-                    size={20}
-                    color={
-                      tx.type === 'receive'
-                        ? '#39c5bb'
-                        : tx.type === 'send'
-                        ? '#ef4444'
-                        : '#3b82f6'
-                    }
-                  />
+                  <Ionicons name={typeConfig.icon} size={20} color={typeConfig.color} />
                 </View>
 
                 {/* Details */}
-                <View className="flex-1">
+                <View className="flex-1 mr-2">
                   <View className="flex-row items-center">
-                    <Text className="text-white font-medium capitalize">
-                      {tx.type === 'stream' ? 'Stream' : tx.type}
+                    <Text className="text-white font-semibold text-base">
+                      {typeConfig.label}
                     </Text>
                     {tx.isPrivate && (
-                      <View className="ml-2 flex-row items-center bg-p01-cyan/20 px-2 py-0.5 rounded-full">
-                        <Ionicons
-                          name="shield-checkmark"
-                          size={10}
-                          color="#39c5bb"
-                        />
-                        <Text className="text-p01-cyan text-xs ml-1">
-                          Private
-                        </Text>
+                      <View className="ml-2 flex-row items-center bg-p01-cyan/15 px-2 py-0.5 rounded-full">
+                        <Ionicons name="shield-checkmark" size={10} color="#39c5bb" />
+                        <Text className="text-p01-cyan text-xs ml-1 font-medium">ZK</Text>
                       </View>
                     )}
                   </View>
                   <View className="flex-row items-center mt-1">
-                    <Text className="text-p01-text-muted text-sm">
+                    <Text className="text-p01-text-muted text-sm font-mono">
                       {tx.address}
                     </Text>
-                    <Text className="text-p01-text-dim text-xs mx-2">
-                      -
-                    </Text>
+                    <Text className="text-p01-text-dim text-xs mx-1.5">|</Text>
                     <Text className="text-p01-text-dim text-xs">
                       {formatTimeAgo(tx.timestamp)}
                     </Text>
                   </View>
                 </View>
-              </View>
 
-              {/* Amount */}
-              <View className="items-end">
-                <Text
-                  className={`font-semibold ${
-                    tx.type === 'receive'
-                      ? 'text-p01-cyan'
-                      : 'text-white'
-                  }`}
-                >
-                  {tx.type === 'receive' ? '+' : '-'}
-                  {tx.amount.toLocaleString()} {tx.token}
-                </Text>
-                <View className="flex-row items-center mt-1">
-                  <Text className="text-p01-text-muted text-sm mr-2">
-                    {formatUSD(tx.usdValue)}
-                  </Text>
+                {/* Amount + Status */}
+                <View className="items-end">
                   <Text
-                    className={`text-xs capitalize ${getStatusColor(
-                      tx.status
-                    )}`}
+                    className="font-bold text-base"
+                    style={{ color: tx.type === 'receive' ? '#39c5bb' : '#ffffff' }}
                   >
-                    {tx.status}
+                    {typeConfig.sign}{tx.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} {tx.token}
                   </Text>
+                  <View
+                    className="flex-row items-center mt-1 px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: statusStyle.bg }}
+                  >
+                    <View
+                      className="w-1.5 h-1.5 rounded-full mr-1"
+                      style={{ backgroundColor: statusStyle.color }}
+                    />
+                    <Text className="text-xs font-medium" style={{ color: statusStyle.color }}>
+                      {statusStyle.label}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
 
-            {/* Transaction Hash */}
-            <View className="flex-row items-center mt-3 pt-3 border-t border-p01-border">
-              <Ionicons
-                name="document-outline"
-                size={14}
-                color="#666666"
-              />
-              <Text className="text-p01-text-dim text-xs ml-2 font-mono">
-                {tx.txHash}
-              </Text>
-              <TouchableOpacity
-                className="ml-auto p-1"
-                onPress={() => handleTransactionPress(tx)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityRole="link"
-                accessibilityLabel="View transaction in explorer"
-              >
-                <Ionicons
-                  name="open-outline"
-                  size={14}
-                  color="#39c5bb"
-                />
-              </TouchableOpacity>
+              {/* TX Hash footer */}
+              <View className="flex-row items-center mt-3 pt-2.5 border-t border-p01-border/50">
+                <Ionicons name="link-outline" size={12} color="#555" />
+                <Text className="text-p01-text-dim text-xs ml-1.5 font-mono flex-1">
+                  {tx.txHash}
+                </Text>
+                <Ionicons name="open-outline" size={12} color="#39c5bb" />
+              </View>
             </View>
-          </Card>
+          </View>
         </TouchableOpacity>
       );
     },
@@ -654,16 +626,23 @@ export default function ActivityScreen() {
 
     // Empty state (not loading, not error, just no transactions)
     if (filteredTransactions.length === 0) {
+      const emptyConfig = {
+        all: { icon: 'layers-outline' as const, title: 'No activity yet', desc: 'Your transactions will appear here' },
+        sent: { icon: 'arrow-up-outline' as const, title: 'No sent transactions', desc: 'Outgoing transfers will show up here' },
+        received: { icon: 'arrow-down-outline' as const, title: 'Nothing received', desc: 'Incoming transfers will appear here' },
+        streams: { icon: 'water-outline' as const, title: 'No stream payments', desc: 'Recurring payment history will show here' },
+        scheduled: { icon: 'time-outline' as const, title: 'No scheduled payments', desc: 'Active streams will show upcoming payments' },
+      }[filter];
       return (
-        <View className="items-center justify-center py-20">
-          <Ionicons name="receipt-outline" size={64} color="#666666" />
-          <Text className="text-white text-lg font-semibold mt-4">
-            No transactions found
+        <View className="items-center justify-center py-24 px-8">
+          <View className="w-20 h-20 rounded-3xl bg-p01-surface border border-p01-border items-center justify-center mb-5">
+            <Ionicons name={emptyConfig.icon} size={36} color="#555" />
+          </View>
+          <Text className="text-white text-lg font-semibold text-center">
+            {emptyConfig.title}
           </Text>
-          <Text className="text-p01-text-muted text-center mt-2">
-            {filter === 'all'
-              ? 'Your transaction history will appear here'
-              : `No ${filter} transactions yet`}
+          <Text className="text-p01-text-muted text-center mt-2 text-sm leading-5">
+            {emptyConfig.desc}
           </Text>
         </View>
       );
@@ -683,28 +662,29 @@ export default function ActivityScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-p01-void" edges={['top']}>
-      {/* Header — always visible */}
+      {/* Header */}
       <View className="flex-row items-center justify-between px-5 py-4">
         <TouchableOpacity
           onPress={() => router.back()}
-          className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
+          className="w-10 h-10 bg-p01-surface rounded-2xl items-center justify-center border border-p01-border"
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Ionicons name="arrow-back" size={24} color="#ffffff" />
+          <Ionicons name="arrow-back" size={20} color="#ffffff" />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">Activity</Text>
+        <View className="items-center">
+          <Text className="text-white text-lg font-bold">Activity</Text>
+          <Text className="text-p01-text-dim text-xs mt-0.5">
+            {allTransactions.length} transaction{allTransactions.length !== 1 ? 's' : ''}
+          </Text>
+        </View>
         <TouchableOpacity
-          className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
-          onPress={() => {
-            const nextIdx = FILTER_TABS.findIndex(t => t.id === filter);
-            const next = FILTER_TABS[(nextIdx + 1) % FILTER_TABS.length];
-            setFilter(next.id);
-          }}
+          className="w-10 h-10 bg-p01-surface rounded-2xl items-center justify-center border border-p01-border"
+          onPress={onRefresh}
           accessibilityRole="button"
-          accessibilityLabel="Cycle transaction filter"
+          accessibilityLabel="Refresh transactions"
         >
-          <Ionicons name="filter-outline" size={20} color="#ffffff" />
+          <Ionicons name="refresh-outline" size={18} color="#39c5bb" />
         </TouchableOpacity>
       </View>
 
@@ -713,30 +693,62 @@ export default function ActivityScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ gap: 8 }}
+          contentContainerStyle={{ gap: 6 }}
         >
-          {FILTER_TABS.map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              onPress={() => setFilter(tab.id)}
-              className={`px-4 py-2 rounded-full ${
-                filter === tab.id
-                  ? 'bg-p01-cyan'
-                  : 'bg-p01-surface border border-p01-border'
-              }`}
-              accessibilityRole="button"
-              accessibilityLabel={`Filter by ${tab.label}`}
-              accessibilityState={{ selected: filter === tab.id }}
-            >
-              <Text
-                className={`font-medium ${
-                  filter === tab.id ? 'text-p01-void' : 'text-white'
+          {FILTER_TABS.map((tab) => {
+            const isActive = filter === tab.id;
+            const count = tab.id === 'all' ? filteredTransactions.length
+              : tab.id === 'scheduled' ? scheduledPayments.length
+              : allTransactions.filter(tx =>
+                  tab.id === 'sent' ? tx.type === 'send' :
+                  tab.id === 'received' ? tx.type === 'receive' :
+                  tab.id === 'streams' ? tx.type === 'stream' : true
+                ).length;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                onPress={() => setFilter(tab.id)}
+                className={`flex-row items-center px-4 py-2.5 rounded-2xl ${
+                  isActive
+                    ? 'bg-p01-cyan'
+                    : 'bg-p01-surface/80 border border-p01-border'
                 }`}
+                style={isActive ? { shadowColor: '#39c5bb', shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } } : undefined}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter by ${tab.label}`}
+                accessibilityState={{ selected: isActive }}
               >
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+                <Ionicons
+                  name={tab.icon as any}
+                  size={14}
+                  color={isActive ? '#0a0a0f' : '#888892'}
+                  style={{ marginRight: 6 }}
+                />
+                <Text
+                  className={`font-semibold text-sm ${
+                    isActive ? 'text-p01-void' : 'text-white'
+                  }`}
+                >
+                  {tab.label}
+                </Text>
+                {count > 0 && (
+                  <View
+                    className={`ml-1.5 min-w-5 h-5 rounded-full items-center justify-center px-1 ${
+                      isActive ? 'bg-p01-void/20' : 'bg-p01-border'
+                    }`}
+                  >
+                    <Text
+                      className={`text-xs font-bold ${
+                        isActive ? 'text-p01-void' : 'text-p01-text-muted'
+                      }`}
+                    >
+                      {count > 99 ? '99+' : count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 
