@@ -64,13 +64,14 @@ type SendSource = 'wallet' | 'note';
 
 export default function PrivateSendScreen() {
   const router = useRouter();
+  const params = require('expo-router').useLocalSearchParams() as { address?: string };
   const { balance, publicKey } = useWalletStore();
   const notes = useDenominatedPoolStore((s) => s.notes);
 
   const [source, setSource] = useState<SendSource>('wallet');
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [amount, setAmount] = useState('');
-  const [recipient, setRecipient] = useState('');
+  const [recipient, setRecipient] = useState(params.address || '');
   const [privacyLevel, setPrivacyLevel] = useState<PrivacyLevel>(3);
   const [isStarting, setIsStarting] = useState(false);
 
@@ -537,12 +538,18 @@ export default function PrivateSendScreen() {
               style={styles.recipientInput}
               value={recipient}
               onChangeText={setRecipient}
-              placeholder="Solana address (base58)"
+              placeholder="Solana or P01 stealth address"
               placeholderTextColor={Colors.textTertiary}
               autoCapitalize="none"
               autoCorrect={false}
               selectionColor={P01Colors.cyan}
             />
+            <TouchableOpacity
+              onPress={() => router.push('/(main)/(wallet)/scan')}
+              style={styles.pasteBtn}
+            >
+              <Ionicons name="scan-outline" size={18} color={P01Colors.cyan} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={handlePaste} style={styles.pasteBtn}>
               <Ionicons name="clipboard-outline" size={18} color={P01Colors.cyan} />
             </TouchableOpacity>
