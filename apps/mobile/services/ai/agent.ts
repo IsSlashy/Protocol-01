@@ -789,13 +789,20 @@ async function sendToGemma(messages: ChatMessage[], config: AIConfig, context?: 
 }
 
 // On-device Gemma 3 via llama.rn
+// Mutex to prevent concurrent completion calls (llama.rn is single-threaded)
+let llamaInProgress = false;
+
 async function sendToLlamaLocal(
   messages: ChatMessage[],
   config: AIConfig,
   context?: AIContext
 ): Promise<ChatResponse> {
   if (!LlamaService.isModelLoaded()) {
-    throw new Error('Model not loaded');
+    return { success: false, error: 'Model not loaded — load it in Agent Settings' };
+  }
+
+  if (llamaInProgress) {
+    return { success: false, error: 'AI is still processing — please wait' };
   }
 
   const systemPrompt = messages.find(m => m.role === 'system')?.content || SYSTEM_PROMPT_LOCAL;
@@ -811,13 +818,25 @@ async function sendToLlamaLocal(
 
   const lastUserMessage = messages.filter(m => m.role === 'user').pop()?.content || '';
 
-  const text = await LlamaService.chat(llamaMessages, undefined, {
-    temperature: config.temperature || 0.7,
-    maxTokens: config.maxTokens || 512,
-  });
+  // Cancel any in-progress KV cache warmup to avoid concurrent completion calls
+  LlamaService.cancelWarmup();
 
-  const suggestions = extractSuggestions(lastUserMessage, text);
-  return { success: true, message: text.trim(), suggestions };
+  llamaInProgress = true;
+  try {
+    const text = await LlamaService.chat(llamaMessages, undefined, {
+      temperature: config.temperature || 0.7,
+      maxTokens: config.maxTokens || 512,
+    });
+
+    const suggestions = extractSuggestions(lastUserMessage, text);
+    return { success: true, message: text.trim(), suggestions };
+  } catch (error: any) {
+    const msg = error?.message || 'On-device AI failed';
+    console.error('[AI] LlamaLocal error:', msg);
+    return { success: false, error: `On-device: ${msg}` };
+  } finally {
+    llamaInProgress = false;
+  }
 }
 
 // Rule-based fallback (trimmed)
