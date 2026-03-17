@@ -127,6 +127,7 @@ export class ZkSplProver {
       proofWasmPath: config.proofWasmPath ?? CIRCUIT_FILES.PROOF_WASM,
       proofZkeyPath: config.proofZkeyPath ?? CIRCUIT_FILES.PROOF_ZKEY,
       timeout: config.timeout ?? PROOF_GENERATION_TIMEOUT,
+      localOnly: config.localOnly ?? true,
     };
   }
 

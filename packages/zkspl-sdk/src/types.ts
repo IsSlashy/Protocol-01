@@ -163,6 +163,8 @@ export interface ProverConfig {
   proofZkeyPath?: string;
   /** Timeout for proof generation in ms (default 120000) */
   timeout?: number;
+  /** If true, all proofs are generated locally (no remote prover fallback) */
+  localOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------

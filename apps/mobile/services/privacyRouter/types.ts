@@ -158,6 +158,14 @@ export interface HopExecutionCallbacks {
     toAddress: string;
     fromKeypair: Uint8Array;
   }) => Promise<{ txSignature: string }>;
+
+  /** Split a note from high-denomination pool into multiple lower-denomination notes */
+  split?: (params: {
+    sourceDenomination: Denomination;
+    targetDenomination: Denomination;
+    numOutputs: number;
+    fromKeypair: Uint8Array;
+  }) => Promise<{ txSignature: string; outputCommitments: string[] }>;
 }
 
 /**
