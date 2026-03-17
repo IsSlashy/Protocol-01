@@ -304,10 +304,30 @@ export default function SendScreen() {
               >
                 <Ionicons name="scan-outline" size={20} color={Colors.primary} />
               </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  const { getStringAsync } = require('expo-clipboard');
+                  const text = await getStringAsync();
+                  if (text) { setRecipient(text.trim()); validateRecipient(text.trim()); }
+                }}
+                style={[styles.scanButton, { marginLeft: Spacing.xs }]}
+                accessibilityRole="button"
+                accessibilityLabel="Paste address"
+              >
+                <Ionicons name="clipboard-outline" size={20} color={Colors.primary} />
+              </TouchableOpacity>
             </View>
             {recipientError ? (
               <Text style={styles.errorText}>{recipientError}</Text>
             ) : null}
+          </Animated.View>
+
+          {/* Privacy Warning */}
+          <Animated.View entering={FadeInUp.delay(350)} style={styles.privacyWarning}>
+            <Ionicons name="eye-outline" size={16} color={P01.pink} />
+            <Text style={styles.privacyWarningText}>
+              Public send — visible on-chain. Use Private Send for full privacy.
+            </Text>
           </Animated.View>
 
           {/* Transaction Info */}
@@ -363,23 +383,23 @@ export default function SendScreen() {
             )}
           </TouchableOpacity>
 
-          {/* Split Send Option */}
+          {/* Private Send Option */}
           <TouchableOpacity
             onPress={() => router.push({
-              pathname: '/(main)/(wallet)/send-split',
-              params: { recipient, amount },
+              pathname: '/(main)/(privacy)/private-send',
+              params: { address: recipient || undefined },
             })}
             style={styles.splitSendButton}
             accessibilityRole="button"
-            accessibilityLabel="Split Send, split into multiple transactions over time"
+            accessibilityLabel="Private Send, fully anonymous multi-hop transfer"
           >
-            <View style={styles.splitSendIcon}>
-              <Ionicons name="git-branch" size={18} color={P01.pink} />
+            <View style={[styles.splitSendIcon, { backgroundColor: P01.cyanDim }]}>
+              <Ionicons name="shield-checkmark" size={18} color={P01.cyan} />
             </View>
             <View style={styles.splitSendContent}>
-              <Text style={styles.splitSendTitle}>Split Send (Privacy+)</Text>
+              <Text style={styles.splitSendTitle}>Private Send</Text>
               <Text style={styles.splitSendDesc}>
-                Split into multiple transactions over time
+                Stealth routing — sender and receiver hidden on-chain
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
@@ -537,6 +557,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: FontFamily.regular,
     marginTop: Spacing.sm,
+  },
+  privacyWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.xl,
+    backgroundColor: 'rgba(255, 119, 168, 0.08)',
+    borderRadius: BorderRadius.md,
+  },
+  privacyWarningText: {
+    color: P01.pink,
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
+    flex: 1,
   },
   infoCard: {
     backgroundColor: Colors.surfaceSecondary,
