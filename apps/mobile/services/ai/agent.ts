@@ -400,23 +400,22 @@ async function sendToProvider(
     if (activeConfig.provider === 'groq') {
       return await sendToGroq(allMessages, activeConfig);
     }
-    if (activeConfig.provider === 'llama-local' || LlamaService.isModelLoaded()) {
-      try {
-        return await sendToLlamaLocal(allMessages, activeConfig, context);
-      } catch (error: any) {
-        console.warn('[AI] llama-local failed, falling back:', error.message);
-      }
+    if (activeConfig.provider === 'llama-local') {
+      return await sendToLlamaLocal(allMessages, activeConfig, context);
     }
     if (activeConfig.provider === 'gemma' || activeConfig.provider === 'gemma-cloud') {
       return await sendToGemma(allMessages, activeConfig, context);
-    } else if (activeConfig.provider === 'ollama') {
+    }
+    if (activeConfig.provider === 'ollama') {
       return await sendToOllama(allMessages, activeConfig);
-    } else if (activeConfig.provider === 'openai') {
+    }
+    if (activeConfig.provider === 'openai') {
       return await sendToOpenAI(allMessages, activeConfig);
-    } else if (activeConfig.provider === 'anthropic') {
+    }
+    if (activeConfig.provider === 'anthropic') {
       return await sendToAnthropic(allMessages, activeConfig);
     }
-    return { success: false, error: 'Unknown AI provider' };
+    return { success: false, error: `Unknown AI provider: ${activeConfig.provider}` };
   } catch (error: any) {
     const safeMsg = error.message ? sanitizeUrl(error.message) : 'unknown error';
     console.error('AI request failed:', safeMsg);
