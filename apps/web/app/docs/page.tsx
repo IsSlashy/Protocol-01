@@ -971,45 +971,87 @@ function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
 export default function DocsPage() {
   return (
     <div className="min-h-screen bg-[#0a0a0c]" style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-      {/* Header */}
-      <header className="border-b border-[#2a2a30] bg-[#0a0a0c]/95 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      {/* Header — sticky nav */}
+      <header className="border-b border-[#2a2a30] bg-[#0a0a0c]/90 backdrop-blur-xl sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-[#39c5bb]/10 border border-[#39c5bb]/40 flex items-center justify-center">
-                <span className="text-[#39c5bb] font-mono font-bold text-xs">P01</span>
+            <Link href="/" className="flex items-center gap-3 group">
+              <div className="w-8 h-8 bg-[#39c5bb]/10 border border-[#39c5bb]/30 flex items-center justify-center group-hover:border-[#39c5bb]/60 transition-colors">
+                <span className="text-[#39c5bb] font-mono font-bold text-[10px]">P01</span>
               </div>
-              <span className="text-xl font-bold text-white tracking-wider">
-                DOCUMENTATION
-              </span>
+              <div className="hidden sm:flex items-center gap-2">
+                <span className="text-sm font-bold text-white tracking-wider">PROTOCOL 01</span>
+                <span className="text-[#555560]">/</span>
+                <span className="text-sm font-mono text-[#39c5bb] tracking-wider">DOCS</span>
+              </div>
+              <span className="sm:hidden text-sm font-mono text-[#39c5bb] tracking-wider">DOCS</span>
             </Link>
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-[#888892] hover:text-[#39c5bb] transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Home
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link href="/roadmap" className="hidden sm:flex text-xs font-mono text-[#555560] hover:text-[#888892] transition-colors uppercase tracking-wider">
+                Roadmap
+              </Link>
+              <Link href="/#download" className="hidden sm:flex text-xs font-mono text-[#555560] hover:text-[#888892] transition-colors uppercase tracking-wider">
+                Download
+              </Link>
+              <Link
+                href="/"
+                className="flex items-center gap-1.5 text-sm text-[#888892] hover:text-[#39c5bb] transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Home</span>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8 border-b border-[#2a2a30]">
-        <div className="max-w-7xl mx-auto">
+      {/* Hero — compact + impactful */}
+      <section className="relative overflow-hidden border-b border-[#2a2a30]">
+        {/* Subtle gradient background */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#39c5bb]/[0.03] via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#ff77a8]/[0.02] via-transparent to-[#39c5bb]/[0.02]" />
+
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-center"
           >
-            <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-              Privacy Technologies
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#39c5bb]/10 border border-[#39c5bb]/20 rounded-full mb-6">
+              <div className="w-1.5 h-1.5 bg-[#39c5bb] rounded-full animate-pulse" />
+              <span className="text-xs font-mono text-[#39c5bb] uppercase tracking-widest">Technical Documentation</span>
+            </div>
+
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-5 tracking-tight">
+              Privacy{" "}
+              <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
+                Technologies
+              </span>
             </h1>
-            <p className="text-lg text-[#888892] max-w-2xl mx-auto leading-relaxed">
-              Protocol 01 combines zero-knowledge proofs, multi-party computation, and post-quantum cryptography to deliver true financial privacy on Solana.
-              <br className="hidden sm:block" />
-              Every component is built from scratch for maximum security and efficiency.
+
+            <p className="text-base sm:text-lg text-[#888892] max-w-2xl mx-auto leading-relaxed mb-8">
+              Zero-knowledge proofs, multi-party computation, and post-quantum cryptography — delivering true financial privacy on Solana.
             </p>
+
+            {/* Quick stats */}
+            <div className="flex flex-wrap items-center justify-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-[#39c5bb]" />
+                <span className="text-[#888892]"><span className="text-white font-bold">6</span> ZK Circuits</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-[#ff77a8]" />
+                <span className="text-[#888892]"><span className="text-white font-bold">13</span> Programs</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Code className="w-4 h-4 text-[#00ffe5]" />
+                <span className="text-[#888892]"><span className="text-white font-bold">8</span> SDKs</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-[#ffcc00]" />
+                <span className="text-[#888892]"><span className="text-white font-bold">22</span> Modules</span>
+              </div>
+            </div>
           </motion.div>
         </div>
       </section>
