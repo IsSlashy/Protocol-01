@@ -233,6 +233,9 @@ export async function startAutonomousRunner(): Promise<void> {
     // Resume any routes from previous sessions
     await resumeRoutes(spendingKeyHash);
 
+    // Note locking is handled at Private Send time via lockNote().
+    // The persist middleware saves the locked status across sessions.
+
     // Start foreground polling
     _pollInterval = setInterval(pollPendingHops, POLL_INTERVAL_MS);
 
