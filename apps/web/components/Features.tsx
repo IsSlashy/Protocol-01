@@ -10,78 +10,18 @@ import {
 } from "lucide-react";
 
 const features = [
-  {
-    icon: Shield,
-    name: "Auto-Shield",
-    desc: "Funds auto-shield on receive. Your main wallet is never exposed.",
-    color: "#39c5bb",
-  },
-  {
-    icon: Wallet,
-    name: "Stealth Transfers",
-    desc: "One-time addresses for every transaction. Completely unlinkable.",
-    color: "#ff2d7a",
-  },
-  {
-    icon: Layers,
-    name: "Privacy Pools",
-    desc: "Fixed-denomination pools (0.1-100 SOL) break the deposit-withdrawal link.",
-    color: "#39c5bb",
-  },
-  {
-    icon: Radio,
-    name: "Private Subscriptions",
-    desc: "Recurring payments with zero traces. Pause, resume, cancel anytime.",
-    color: "#00ffe5",
-  },
-  {
-    icon: ArrowLeftRight,
-    name: "Token Swap",
-    desc: "Swap any Solana token via Jupiter. Best rates, low slippage.",
-    color: "#39c5bb",
-  },
-  {
-    icon: Bot,
-    name: "AI Agent",
-    desc: "56 tools. On-device LLM. Manage your privacy wallet with natural language.",
-    color: "#ffcc00",
-  },
-  {
-    icon: Lock,
-    name: "ZK Proofs",
-    desc: "Groth16 + STARK proofs. Quantum-resistant. All generated client-side.",
-    color: "#ff2d7a",
-  },
-  {
-    icon: Globe,
-    name: "Tor Relay",
-    desc: "All RPC calls routed through Tor. Your IP is never visible to anyone.",
-    color: "#00ffe5",
-  },
-  {
-    icon: Eye,
-    name: "Confidential Balances",
-    desc: "zkSPL — account-model tokens with hidden balances via Poseidon commitments.",
-    color: "#39c5bb",
-  },
-  {
-    icon: Fingerprint,
-    name: "Stealth Meta-Addresses",
-    desc: "Share one address forever. Senders derive fresh one-time addresses from it.",
-    color: "#ff2d7a",
-  },
-  {
-    icon: Calendar,
-    name: "Subscription Vaults",
-    desc: "On-chain escrow with auto-pause, ZK subscriber verification, retailer claims.",
-    color: "#ffcc00",
-  },
-  {
-    icon: Zap,
-    name: "Multi-Hop Routing",
-    desc: "Up to 20 splits, 14 hops, timing jitter. Paranoid-level privacy.",
-    color: "#00ffe5",
-  },
+  { icon: Shield, name: "Auto-Shield", color: "#39c5bb" },
+  { icon: Wallet, name: "Stealth Transfers", color: "#ff2d7a" },
+  { icon: Layers, name: "Privacy Pools", color: "#39c5bb" },
+  { icon: Radio, name: "Private Subscriptions", color: "#00ffe5" },
+  { icon: ArrowLeftRight, name: "Token Swap", color: "#39c5bb" },
+  { icon: Bot, name: "AI Agent", color: "#ffcc00" },
+  { icon: Lock, name: "ZK Proofs", color: "#ff2d7a" },
+  { icon: Globe, name: "Tor Relay", color: "#00ffe5" },
+  { icon: Eye, name: "Confidential Balances", color: "#39c5bb" },
+  { icon: Fingerprint, name: "Stealth Meta-Addresses", color: "#ff2d7a" },
+  { icon: Calendar, name: "Subscription Vaults", color: "#ffcc00" },
+  { icon: Zap, name: "Multi-Hop Routing", color: "#00ffe5" },
 ];
 
 export default function Features() {
@@ -89,86 +29,95 @@ export default function Features() {
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
   return (
-    <section className="section relative overflow-hidden py-24" ref={ref}>
-      <div className="relative z-10 max-w-7xl mx-auto">
+    <section className="relative overflow-hidden py-28 px-4 sm:px-6 lg:px-8" ref={ref}>
+      <div className="relative z-10 max-w-6xl mx-auto">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-16"
+          transition={{ duration: 0.6 }}
+          className="text-center mb-20"
         >
-          <span className="badge-cyan mb-4">Features</span>
-          <h2 className="section-title">
-            Everything you need.{" "}
-            <span className="text-[#39c5bb]">Nothing they can trace.</span>
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#39c5bb]/8 border border-[#39c5bb]/15 rounded-full mb-6">
+            <div className="w-1 h-1 bg-[#39c5bb] rounded-full" />
+            <span className="text-[10px] font-mono text-[#39c5bb] uppercase tracking-[0.25em]">
+              12 Privacy Modules
+            </span>
+          </div>
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white tracking-tight mb-4">
+            Everything you need.
+            <br />
+            <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
+              Nothing they can trace.
+            </span>
           </h2>
-          <p className="section-subtitle">
-            12 privacy modules working together. No KYC. No traces. Self-custody.
-          </p>
         </motion.div>
 
-        {/* Compact Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Liquid Glass Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {features.map((feature, i) => (
             <motion.div
               key={feature.name}
-              initial={{ opacity: 0, y: 20 }}
-              animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.4, delay: i * 0.05 }}
-              className="group card p-6 hover:border-[var(--accent)]/30 transition-all duration-300"
-              style={{ "--accent": feature.color } as React.CSSProperties}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={isInView ? { opacity: 1, scale: 1 } : {}}
+              transition={{ duration: 0.4, delay: i * 0.04 }}
+              className="group relative"
             >
-              <div className="flex items-start gap-4">
+              {/* Glow on hover */}
+              <div
+                className="absolute -inset-px rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-sm"
+                style={{ background: `linear-gradient(135deg, ${feature.color}20, transparent 60%)` }}
+              />
+
+              {/* Card */}
+              <div className="relative flex flex-col items-center text-center p-5 sm:p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300 cursor-default h-full">
+                {/* Icon */}
                 <div
-                  className="w-10 h-10 flex items-center justify-center shrink-0 border"
+                  className="w-11 h-11 rounded-xl flex items-center justify-center mb-3 transition-transform duration-300 group-hover:scale-110"
                   style={{
-                    backgroundColor: `${feature.color}10`,
-                    borderColor: `${feature.color}30`,
+                    backgroundColor: `${feature.color}12`,
+                    border: `1px solid ${feature.color}25`,
                     color: feature.color,
                   }}
                 >
-                  <feature.icon size={20} />
+                  <feature.icon size={20} strokeWidth={1.5} />
                 </div>
-                <div>
-                  <h3 className="text-white font-bold font-display text-base mb-1">
-                    {feature.name}
-                  </h3>
-                  <p className="text-[#888892] text-sm leading-relaxed">
-                    {feature.desc}
-                  </p>
-                </div>
+
+                {/* Name */}
+                <h3 className="text-sm font-semibold text-white/90 font-display tracking-wide">
+                  {feature.name}
+                </h3>
               </div>
             </motion.div>
           ))}
         </div>
 
-        {/* Bottom CTA */}
+        {/* Bottom */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={isInView ? { opacity: 1 } : {}}
-          transition={{ duration: 0.5, delay: 0.6 }}
-          className="mt-12 text-center space-y-4"
+          transition={{ duration: 0.5, delay: 0.5 }}
+          className="mt-14 flex flex-col items-center gap-5"
         >
-          <div className="inline-flex items-center gap-4 px-6 py-3 bg-[#151518] border border-[#2a2a30]">
+          {/* Network status */}
+          <div className="inline-flex items-center gap-4 px-5 py-2.5 rounded-full border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-[#39c5bb] animate-pulse" />
-              <span className="text-[#39c5bb] text-sm font-mono">DEVNET</span>
+              <div className="w-1.5 h-1.5 bg-[#39c5bb] rounded-full animate-pulse" />
+              <span className="text-[#39c5bb] text-xs font-mono tracking-wider">DEVNET</span>
             </div>
-            <span className="text-[#555560]">|</span>
+            <div className="w-px h-3 bg-white/10" />
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-[#ff2d7a]" />
-              <span className="text-[#888892] text-sm font-mono">MAINNET</span>
+              <div className="w-1.5 h-1.5 bg-[#ff2d7a] rounded-full" />
+              <span className="text-[#555560] text-xs font-mono tracking-wider">MAINNET</span>
             </div>
           </div>
-          <div>
-            <Link
-              href="/docs"
-              className="text-[#39c5bb] text-sm font-mono hover:underline"
-            >
-              Read the full technical documentation →
-            </Link>
-          </div>
+
+          <Link
+            href="/docs"
+            className="text-[#888892] text-xs font-mono tracking-wider hover:text-[#39c5bb] transition-colors"
+          >
+            EXPLORE DOCUMENTATION →
+          </Link>
         </motion.div>
       </div>
     </section>
