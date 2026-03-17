@@ -414,6 +414,13 @@ export default function DenominatedNotesScreen() {
           label: 'Transferred',
           bgColor: 'rgba(139, 139, 255, 0.1)',
         };
+      case 'locked':
+        return {
+          icon: 'lock-closed' as const,
+          color: P01Colors.pink,
+          label: 'Locked',
+          bgColor: P01Colors.pinkDim,
+        };
     }
   };
 
