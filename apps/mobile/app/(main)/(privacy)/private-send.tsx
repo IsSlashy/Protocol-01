@@ -161,6 +161,36 @@ export default function PrivateSendScreen() {
       return;
     }
 
+    // ── Consent popup — irreversible action ──────────────────────────
+    // The user MUST confirm before we lock the note and start the route.
+    // Once confirmed, the note is locked and the route cannot be cancelled.
+    const sourceLabel = source === 'note' && selectedNote
+      ? `shielded note (${selectedNote.denomination} SOL)`
+      : `wallet (${amt} SOL)`;
+
+    p01Alert(
+      'Confirm Private Send',
+      `You are about to send ${amt} SOL to ${finalDestination.slice(0, 8)}...${finalDestination.slice(-4)}\n\n` +
+      `Source: ${sourceLabel}\n` +
+      `Privacy level: ${LEVEL_LABELS[privacyLevel]}\n\n` +
+      `This action is IRREVERSIBLE. Once confirmed:\n` +
+      `\u2022 The note will be locked and cannot be withdrawn\n` +
+      `\u2022 The route cannot be cancelled\n` +
+      `\u2022 Funds will be delivered after all hops complete`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'I Confirm — Send',
+          style: 'destructive',
+          onPress: () => executePrivateSend(amt, finalDestination),
+        },
+      ],
+      'warning',
+    );
+  }, [amount, recipient, privacyLevel, publicKey, levelConfig, feeEstimate, router, shieldNote, source, selectedNote, selectedNoteId]);
+
+  // ── Actual execution (after consent) ──────────────────────────────
+  const executePrivateSend = useCallback(async (amt: number, finalDestination: string) => {
     setIsStarting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
@@ -174,6 +204,9 @@ export default function PrivateSendScreen() {
         // This is MAXIMUM privacy: zero wallet transactions in the entire flow
         console.log(`[PrivateSend] 🔒 Sending from shielded note: ${selectedNote.id} (${selectedNote.denomination} SOL)`);
         console.log(`[PrivateSend] 🔒 Zero wallet footprint — all operations from pool`);
+
+        // Lock the note — prevents withdrawal or double-spend during route
+        useDenominatedPoolStore.getState().lockNote(selectedNote.id);
 
         // Just plan the route — the note is already in the pool
         const { sha256 } = await import('@noble/hashes/sha256');
@@ -300,7 +333,7 @@ export default function PrivateSendScreen() {
       console.log('[PrivateSend] Planning remaining route hops...');
       const route = await startPrivateRoute({
         amount: amt,
-        destination: recipient.trim(),
+        destination: finalDestination,
         privacyLevel,
         spendingKeyHash,
       });
@@ -328,7 +361,7 @@ export default function PrivateSendScreen() {
     } finally {
       setIsStarting(false);
     }
-  }, [amount, recipient, privacyLevel, publicKey, levelConfig, feeEstimate, router, shieldNote]);
+  }, [publicKey, levelConfig, feeEstimate, router, shieldNote, source, selectedNote, selectedNoteId, privacyLevel]);
 
   // ── Render ────────────────────────────────────────────────────────
 

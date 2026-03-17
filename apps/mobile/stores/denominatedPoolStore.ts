@@ -42,7 +42,7 @@ import { scheduleLocalNotification } from '../services/notifications';
 // Types
 // ---------------------------------------------------------------------------
 
-export type NoteStatus = 'pending' | 'mature' | 'spent' | 'transferred' | 'imported';
+export type NoteStatus = 'pending' | 'mature' | 'spent' | 'transferred' | 'imported' | 'locked';
 export type NoteSource = 'shielded' | 'received' | 'imported_backup';
 
 export interface StoredNote {
@@ -86,6 +86,8 @@ interface DenominatedPoolState {
   refreshPoolInfo: (poolPDA?: string) => Promise<void>;
   refreshAllPools: () => Promise<void>;
   refreshNoteStatuses: () => Promise<void>;
+  /** Lock a note — prevents withdrawal while in an active privacy route */
+  lockNote: (noteId: string) => void;
   setSelectedToken: (token: TokenFilter) => void;
   setSelectedDenomination: (denom: number | null) => void;
   shieldNote: (pool: PoolConfig) => Promise<string>;
@@ -450,7 +452,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // If a nullifier PDA exists, the note was already spent (possibly on another device)
           const cluster = getCluster();
           const activeNotes = notes.filter(n =>
-            n.status !== 'spent' && n.status !== 'transferred' &&
+            n.status !== 'spent' && n.status !== 'transferred' && n.status !== 'locked' &&
             (n.cluster ?? 'devnet') === cluster
           );
           const nullifierPDAs: { noteId: string; pda: PublicKey }[] = [];
@@ -502,7 +504,10 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const minEpoch = currentEpoch - totalDelay;
             const isMature = receipt.depositEpoch <= minEpoch;
 
-            // imported notes go to mature when ready, pending/imported when not
+            // Preserve locked/spent/transferred — only update pending/mature/imported
+            if ((note.status as string) === 'locked' || (note.status as string) === 'spent' || (note.status as string) === 'transferred') {
+              return note;
+            }
             const newStatus: NoteStatus = isMature ? 'mature' : (note.status === 'imported' ? 'imported' : 'pending');
             return { ...note, status: newStatus };
           });
@@ -511,6 +516,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         } catch (err) {
           // refreshNoteStatuses error — non-fatal
         }
+      },
+
+      lockNote: (noteId: string) => {
+        const notes = get().notes.map(n =>
+          n.id === noteId ? { ...n, status: 'locked' as NoteStatus } : n
+        );
+        set({ notes });
+        console.log(`[DenomPool] Note ${noteId.slice(0, 8)}... LOCKED`);
       },
 
       // ------------------------------------------------------------------
@@ -688,6 +701,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
 
         const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
@@ -766,6 +780,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
 
         const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
@@ -854,6 +869,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
 
         const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
@@ -931,6 +947,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
         if (note.status !== 'mature') throw new Error('Note must be mature for transfer');
 
         const receipt = readReceipt(note.receiptJSON);
@@ -1060,16 +1077,22 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
     }),
     {
       name: 'p01-denominated-pool',
-      version: 2,
+      version: 4,
       storage: createJSONStorage(() => encryptedStorage),
       partialize: (state) => ({
         notes: state.notes,
         selectedToken: state.selectedToken,
       }),
       migrate: (persistedState: any, version: number) => {
-        // v1 → v2: storage changed from plain AsyncStorage to encrypted;
-        // data shape is the same, just accept it as-is.
-        return persistedState as any;
+        const state = persistedState as any;
+        if (version < 4 && state.notes) {
+          // v3 → v4: fix incorrectly locked notes from old auto-lock bug
+          console.log('[DenomPool] Migration v4: unlocking', state.notes.filter((n: any) => n.status === 'locked').length, 'notes');
+          state.notes = state.notes.map((n: any) =>
+            n.status === 'locked' ? { ...n, status: 'pending' } : n
+          );
+        }
+        return state;
       },
     },
   ),
