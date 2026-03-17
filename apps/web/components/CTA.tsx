@@ -17,10 +17,11 @@ const downloadOptions = [
   {
     platform: "Chrome Extension",
     icon: Chrome,
-    description: "Instant Download ZIP",
-    filename: "P01-Extension-v0.3.0.zip",
-    link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v0.8.0/P01-Extension-v0.3.0.zip",
-    size: "10 MB",
+    description: "Re-Work in progress",
+    filename: "",
+    link: "",
+    size: "Beta",
+    disabled: true,
   },
 ];
 
@@ -99,27 +100,44 @@ export default function CTA() {
               transition={{ duration: 0.5, delay: 0.5 }}
               className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto mb-12"
             >
-              {downloadOptions.map((option) => (
-                <a
-                  key={option.platform}
-                  href={option.link}
-                  download={option.filename}
-                  className="group flex items-center gap-4 p-4 rounded-xl bg-p01-void border border-p01-border transition-all duration-300 hover:border-p01-cyan/50 cursor-pointer no-underline"
-                >
-                  <div className="w-12 h-12 rounded-xl bg-p01-surface flex items-center justify-center text-p01-text-muted group-hover:text-p01-cyan transition-colors">
-                    <option.icon size={24} />
-                  </div>
-                  <div className="text-left flex-1">
-                    <div className="font-semibold text-white group-hover:text-p01-cyan transition-colors font-display">
-                      {option.platform}
+              {downloadOptions.map((option) => {
+                const isDisabled = !!(option as any).disabled;
+                const Tag = isDisabled ? 'div' : 'a';
+                return (
+                  <Tag
+                    key={option.platform}
+                    {...(isDisabled ? {} : { href: option.link, download: option.filename })}
+                    className={`group flex items-center gap-4 p-4 rounded-xl bg-p01-void border transition-all duration-300 no-underline ${
+                      isDisabled
+                        ? 'border-p01-border/50 opacity-50 cursor-not-allowed'
+                        : 'border-p01-border hover:border-p01-cyan/50 cursor-pointer'
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-xl bg-p01-surface flex items-center justify-center transition-colors ${
+                      isDisabled ? 'text-p01-text-dim' : 'text-p01-text-muted group-hover:text-p01-cyan'
+                    }`}>
+                      <option.icon size={24} />
                     </div>
-                    <div className="text-sm text-p01-text-dim">
-                      {option.description} ({option.size})
+                    <div className="text-left flex-1">
+                      <div className={`font-semibold font-display transition-colors ${
+                        isDisabled ? 'text-p01-text-muted' : 'text-white group-hover:text-p01-cyan'
+                      }`}>
+                        {option.platform}
+                      </div>
+                      <div className="text-sm text-p01-text-dim">
+                        {option.description} ({option.size})
+                      </div>
                     </div>
-                  </div>
-                  <Download size={20} className="text-p01-text-muted group-hover:text-p01-cyan transition-colors" />
-                </a>
-              ))}
+                    {isDisabled ? (
+                      <span className="text-[10px] font-mono text-[#ffcc00] border border-[#ffcc00]/30 bg-[#ffcc00]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        Soon
+                      </span>
+                    ) : (
+                      <Download size={20} className="text-p01-text-muted group-hover:text-p01-cyan transition-colors" />
+                    )}
+                  </Tag>
+                );
+              })}
             </motion.div>
 
             {/* Secondary Actions */}
