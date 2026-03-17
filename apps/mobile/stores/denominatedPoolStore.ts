@@ -585,7 +585,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const walletSigner = getWalletSignerIfPrivy();
           const walletPubkey = walletSigner
             ? walletSigner.publicKey
-            : (await import('../services/solana/wallet')).then(m => m.getKeypair()).then(kp => kp?.publicKey);
+            : (await (await import('../services/solana/wallet')).getKeypair())?.publicKey;
           console.log('[DenomStore] walletSigner:', walletSigner ? `Privy(${walletSigner.publicKey.toBase58().slice(0,8)})` : 'local keypair');
 
           // ── Stealth intermediary: break wallet→pool on-chain link ──
