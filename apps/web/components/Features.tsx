@@ -4,419 +4,151 @@ import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
 import Link from "next/link";
-import { Wallet, Radio, ArrowLeftRight, Bot, Shield, ArrowRight, Check, Lock, Layers, Calendar } from "lucide-react";
+import {
+  Wallet, Radio, ArrowLeftRight, Bot, Shield, Layers,
+  Lock, Calendar, Eye, Fingerprint, Globe, Zap,
+} from "lucide-react";
 
-const modules = [
+const features = [
   {
-    id: "streams",
-    icon: Radio,
-    name: "Private Subscriptions",
-    tagline: "Recurring payments without traces",
-    color: "cyan",
-    description: [
-      "Set up recurring private payments for subscriptions, memberships, and services.",
-      "Automatic monthly/weekly transfers with full privacy.",
-      "Perfect for creators, SaaS, and any subscription-based business.",
-    ],
-    features: [
-      "Automated recurring payments",
-      "Customizable intervals",
-      "Cancel anytime",
-      "100% private & untraceable",
-    ],
-    docsLink: "/docs#subscriptions",
-    codePreview: `// Create a private subscription
-const subscription = await p01.subscribe({
-  to: "p01:creator...",
-  amount: "9.99 USDC",
-  interval: "monthly",
-  privacy: "stealth" // Untraceable payments
-});
-
-// Manage subscription
-await subscription.pause();
-await subscription.cancel();`,
+    icon: Shield,
+    name: "Auto-Shield",
+    desc: "Funds auto-shield on receive. Your main wallet is never exposed.",
+    color: "#39c5bb",
   },
   {
-    id: "wallet",
     icon: Wallet,
     name: "Stealth Transfers",
-    tagline: "Send & receive without traces",
-    color: "pink",
-    description: [
-      "Send and receive SOL and SPL tokens without leaving a trace.",
-      "Stealth addresses ensure each transaction is completely unlinkable.",
-      "Works on both Devnet and Mainnet.",
-    ],
-    features: [
-      "One-time stealth addresses",
-      "Devnet & Mainnet support",
-      "SOL & SPL tokens (USDC, USDT...)",
-      "Instant private transfers",
-    ],
-    docsLink: "/docs#stealth-addresses",
-    codePreview: `// Send privately
-const tx = await p01.send({
-  to: "p01:7xK9...",
-  amount: "100",
-  token: "USDC",
-  privacy: "stealth" // One-time address
-});`,
+    desc: "One-time addresses for every transaction. Completely unlinkable.",
+    color: "#ff2d7a",
   },
   {
-    id: "swap",
+    icon: Layers,
+    name: "Privacy Pools",
+    desc: "Fixed-denomination pools (0.1-100 SOL) break the deposit-withdrawal link.",
+    color: "#39c5bb",
+  },
+  {
+    icon: Radio,
+    name: "Private Subscriptions",
+    desc: "Recurring payments with zero traces. Pause, resume, cancel anytime.",
+    color: "#00ffe5",
+  },
+  {
     icon: ArrowLeftRight,
     name: "Token Swap",
-    tagline: "Swap any Solana token",
-    color: "bright-cyan",
-    description: [
-      "Swap between any Solana tokens including SOL, USDC, USDT, BONK, JUP, RAY, ORCA, and more.",
-      "Powered by Jupiter aggregator for best rates.",
-    ],
-    features: [
-      "15+ tokens supported",
-      "Best rate aggregation",
-      "Low slippage",
-      "Instant swaps",
-    ],
-    docsLink: "/docs#client-sdk",
-    codePreview: `// Swap tokens
-const swap = await p01.swap({
-  from: "SOL",
-  to: "USDC",
-  amount: "10",
-  slippage: 0.5 // 0.5%
-});`,
+    desc: "Swap any Solana token via Jupiter. Best rates, low slippage.",
+    color: "#39c5bb",
   },
   {
-    id: "agent",
     icon: Bot,
     name: "AI Agent",
-    tagline: "Your privacy assistant",
-    color: "yellow",
-    description: [
-      "Chat naturally to manage your private finances.",
-      "The on-device AI agent helps you shield, transfer, and manage subscriptions.",
-      "No data leaves your device — privacy-first by design.",
-    ],
-    features: [
-      "Natural language commands",
-      "On-device LLM (no cloud)",
-      "Privacy-aware actions",
-      "Transaction management",
-    ],
-    docsLink: "/docs",
-    codePreview: `// AI Agent interaction
-agent.send("Shield 100 USDC privately");
-// → Generates ZK proof client-side
-// → Deposits to shielded pool
-// → Confirms: "100 USDC shielded ✓"
-
-agent.send("Send 50 USDC to alice.sol");
-// → Creates stealth address
-// → Routes through private relayer
-// → Zero trace on-chain`,
+    desc: "56 tools. On-device LLM. Manage your privacy wallet with natural language.",
+    color: "#ffcc00",
   },
   {
-    id: "security",
-    icon: Shield,
-    name: "Zero-Knowledge Proofs",
-    tagline: "Maximum privacy with ZK",
-    color: "pink",
-    description: [
-      "Advanced cryptography ensures your transactions and identity remain private.",
-      "ZK proofs verify without revealing sensitive data.",
-    ],
-    features: [
-      "ZK-proof transactions",
-      "No KYC required",
-      "Self-custody",
-      "Open source",
-    ],
-    docsLink: "/docs#zk-proofs",
-    codePreview: `// Generate ZK proof
-const proof = await p01.zk.prove({
-  statement: "balance > 100",
-  witness: privateData,
-  public: false
-});`,
-  },
-  {
-    id: "denominated-pools",
-    icon: Layers,
-    name: "Denominated Pools",
-    tagline: "Fixed-denomination privacy pools",
-    color: "pink",
-    description: [
-      "Tornado Cash-style privacy pools with fixed denominations for maximum anonymity.",
-      "All notes in a pool share the same value, breaking the link between deposits and withdrawals.",
-      "Supports SOL and USDC with P2P note sharing via BLE and NFC.",
-    ],
-    features: [
-      "Fixed denominations (0.1/1/10/100 SOL)",
-      "USDC pools (1/10/100/1000)",
-      "Epoch-based maturity protection",
-      "P2P note sharing (BLE + NFC)",
-    ],
-    docsLink: "/docs#denominated-pools",
-    codePreview: `// Shield into denominated pool
-const receipt = await p01.denominated.shield({
-  token: "SOL",
-  denomination: 1, // Exactly 1 SOL
-});
-
-// Unshield after maturity
-const sig = await p01.denominated.unshield({
-  receipt,
-  recipient: myWallet,
-  // ZK proof generated client-side
-});`,
-  },
-  {
-    id: "zkspl",
     icon: Lock,
-    name: "Confidential Balances (zkSPL)",
-    tagline: "Account-model confidential tokens",
-    color: "bright-cyan",
-    description: [
-      "Account-based confidential tokens using Poseidon hash commitments.",
-      "Quantum-resistant privacy: balances hidden behind ZK proofs.",
-      "Send, receive, deposit, and withdraw without revealing amounts on-chain.",
-    ],
-    features: [
-      "Poseidon hash commitments",
-      "Quantum-resistant cryptography",
-      "Balance proofs (prove balance >= threshold)",
-      "Account-model (no UTXO management)",
-    ],
-    docsLink: "/docs#zkspl",
-    codePreview: `// Deposit into confidential account
-await p01.confidential.deposit({
-  amount: 100,
-  token: "SOL",
-});
-
-// Prove balance without revealing it
-const proof = await p01.confidential.proveBalance({
-  threshold: 50, // Proves balance >= 50
-});`,
+    name: "ZK Proofs",
+    desc: "Groth16 + STARK proofs. Quantum-resistant. All generated client-side.",
+    color: "#ff2d7a",
   },
   {
-    id: "subscription-vaults",
+    icon: Globe,
+    name: "Tor Relay",
+    desc: "All RPC calls routed through Tor. Your IP is never visible to anyone.",
+    color: "#00ffe5",
+  },
+  {
+    icon: Eye,
+    name: "Confidential Balances",
+    desc: "zkSPL — account-model tokens with hidden balances via Poseidon commitments.",
+    color: "#39c5bb",
+  },
+  {
+    icon: Fingerprint,
+    name: "Stealth Meta-Addresses",
+    desc: "Share one address forever. Senders derive fresh one-time addresses from it.",
+    color: "#ff2d7a",
+  },
+  {
     icon: Calendar,
     name: "Subscription Vaults",
-    tagline: "On-chain recurring payments",
-    color: "cyan",
-    description: [
-      "Fully on-chain subscription vaults with configurable intervals and auto-pause.",
-      "Retailers can claim accrued periods; subscribers can pause, resume, or cancel anytime.",
-      "Private mode uses ZK proofs for subscriber identity verification.",
-    ],
-    features: [
-      "On-chain vault escrow",
-      "Auto-pause on insufficient funds",
-      "ZK private subscriber mode",
-      "Retailer claim periods",
-    ],
-    docsLink: "/docs#subscription-vaults",
-    codePreview: `// Create subscription vault
-const vault = await p01.vault.subscribe({
-  retailer: "Gk7m...",
-  rate: 9.99, // USDC per period
-  interval: "monthly",
-  private: true, // ZK subscriber proof
-});
-
-// Retailer claims earned periods
-await p01.vault.claim({ vault: vault.address });`,
+    desc: "On-chain escrow with auto-pause, ZK subscriber verification, retailer claims.",
+    color: "#ffcc00",
+  },
+  {
+    icon: Zap,
+    name: "Multi-Hop Routing",
+    desc: "Up to 20 splits, 14 hops, timing jitter. Paranoid-level privacy.",
+    color: "#00ffe5",
   },
 ];
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.2,
-    },
-  },
-} as const;
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 40 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: {
-      duration: 0.6,
-      ease: [0.16, 1, 0.3, 1] as const,
-    },
-  },
-} as const;
-
 export default function Features() {
   const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: "-100px" });
-
-  const getColorClasses = (color: string) => {
-    const colors: Record<string, { bg: string; text: string; border: string }> = {
-      cyan: {
-        bg: "bg-[#39c5bb]/10",
-        text: "text-[#39c5bb]",
-        border: "border-[#39c5bb]/40",
-      },
-      pink: {
-        bg: "bg-[#ff2d7a]/10",
-        text: "text-[#ff2d7a]",
-        border: "border-[#ff2d7a]/40",
-      },
-      "bright-cyan": {
-        bg: "bg-[#00ffe5]/10",
-        text: "text-[#00ffe5]",
-        border: "border-[#00ffe5]/40",
-      },
-      yellow: {
-        bg: "bg-[#ffcc00]/10",
-        text: "text-[#ffcc00]",
-        border: "border-[#ffcc00]/40",
-      },
-    };
-    return colors[color] || colors.cyan;
-  };
+  const isInView = useInView(ref, { once: true, margin: "-80px" });
 
   return (
-    <section className="section relative overflow-hidden" ref={ref}>
+    <section className="section relative overflow-hidden py-24" ref={ref}>
       <div className="relative z-10 max-w-7xl mx-auto">
-        {/* Section Header */}
+        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.5 }}
-          className="text-center mb-20"
+          className="text-center mb-16"
         >
           <span className="badge-cyan mb-4">Features</span>
           <h2 className="section-title">
-            Private payments.{" "}
-            <span className="text-[#39c5bb]">Recurring or one-time.</span>
+            Everything you need.{" "}
+            <span className="text-[#39c5bb]">Nothing they can trace.</span>
           </h2>
-          <div className="section-subtitle space-y-1">
-            <p>Subscribe to services, pay creators, and transfer funds—all without leaving traces.</p>
-            <p>Works on Devnet for testing and Mainnet for real transactions.</p>
-          </div>
+          <p className="section-subtitle">
+            12 privacy modules working together. No KYC. No traces. Self-custody.
+          </p>
         </motion.div>
 
-        {/* Modules - Apple style alternating layout */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          animate={isInView ? "visible" : "hidden"}
-          className="space-y-8"
-        >
-          {modules.map((module, index) => {
-            const colors = getColorClasses(module.color);
-            const isReversed = index % 2 === 1;
-
-            return (
-              <motion.div
-                key={module.id}
-                variants={itemVariants}
-                className={`card p-0 overflow-hidden group hover:${colors.border} transition-all duration-500`}
-              >
+        {/* Compact Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {features.map((feature, i) => (
+            <motion.div
+              key={feature.name}
+              initial={{ opacity: 0, y: 20 }}
+              animate={isInView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.4, delay: i * 0.05 }}
+              className="group card p-6 hover:border-[var(--accent)]/30 transition-all duration-300"
+              style={{ "--accent": feature.color } as React.CSSProperties}
+            >
+              <div className="flex items-start gap-4">
                 <div
-                  className={`flex flex-col ${
-                    isReversed ? "lg:flex-row-reverse" : "lg:flex-row"
-                  } items-stretch`}
+                  className="w-10 h-10 flex items-center justify-center shrink-0 border"
+                  style={{
+                    backgroundColor: `${feature.color}10`,
+                    borderColor: `${feature.color}30`,
+                    color: feature.color,
+                  }}
                 >
-                  {/* Content Side */}
-                  <div className="flex-1 p-8 lg:p-12">
-                    <div className="flex items-center gap-4 mb-6">
-                      {/* Industrial square icon container */}
-                      <div
-                        className={`w-14 h-14 ${colors.bg} ${colors.text} flex items-center justify-center group-hover:scale-105 transition-transform border ${colors.border}`}
-                      >
-                        <module.icon size={28} />
-                      </div>
-                      <div>
-                        <h3 className="text-2xl font-bold font-display text-white">
-                          {module.name}
-                        </h3>
-                        <p className={`text-sm ${colors.text}`}>{module.tagline}</p>
-                      </div>
-                    </div>
-
-                    <div className="text-p01-text-muted text-lg mb-8 space-y-1">
-                      {module.description.map((line, i) => (
-                        <p key={i}>{line}</p>
-                      ))}
-                    </div>
-
-                    <ul className="space-y-3 mb-8">
-                      {module.features.map((feature, i) => (
-                        <li key={i} className="flex items-center gap-3">
-                          <div
-                            className={`w-5 h-5 ${colors.bg} ${colors.text} flex items-center justify-center`}
-                          >
-                            <Check size={12} />
-                          </div>
-                          <span className="text-[#888892] font-mono text-sm">{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    <Link
-                      href={module.docsLink}
-                      className={`inline-flex items-center gap-2 ${colors.text} hover:gap-4 transition-all font-medium font-display uppercase tracking-wider text-sm`}
-                    >
-                      Learn more about {module.name}
-                      <ArrowRight size={18} />
-                    </Link>
-                  </div>
-
-                  {/* Code Preview Side */}
-                  <div className="flex-1 bg-p01-void p-8 lg:p-12 border-t lg:border-t-0 lg:border-l border-p01-border">
-                    <div className="h-full flex flex-col">
-                      <div className="flex items-center gap-2 mb-4">
-                        <div className="w-3 h-3 rounded-full bg-p01-red/60" />
-                        <div className="w-3 h-3 rounded-full bg-p01-yellow/60" />
-                        <div className="w-3 h-3 rounded-full bg-p01-cyan/60" />
-                        <span className="ml-4 text-p01-text-dim text-xs font-mono">
-                          example.ts
-                        </span>
-                      </div>
-                      <pre className="flex-1 overflow-auto">
-                        <code className="text-sm font-mono text-p01-text-muted whitespace-pre-wrap">
-                          {module.codePreview.split("\n").map((line, i) => (
-                            <div key={i} className="leading-relaxed">
-                              {line.includes("//") ? (
-                                <span className="text-p01-text-dim">{line}</span>
-                              ) : line.includes("await") || line.includes("const") ? (
-                                <>
-                                  <span className="text-p01-pink">
-                                    {line.split(" ")[0]}
-                                  </span>
-                                  <span>{line.substring(line.indexOf(" "))}</span>
-                                </>
-                              ) : (
-                                line
-                              )}
-                            </div>
-                          ))}
-                        </code>
-                      </pre>
-                    </div>
-                  </div>
+                  <feature.icon size={20} />
                 </div>
-              </motion.div>
-            );
-          })}
-        </motion.div>
+                <div>
+                  <h3 className="text-white font-bold font-display text-base mb-1">
+                    {feature.name}
+                  </h3>
+                  <p className="text-[#888892] text-sm leading-relaxed">
+                    {feature.desc}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
 
-        {/* Network Info */}
+        {/* Bottom CTA */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.5, delay: 0.5 }}
-          className="mt-16 text-center"
+          initial={{ opacity: 0 }}
+          animate={isInView ? { opacity: 1 } : {}}
+          transition={{ duration: 0.5, delay: 0.6 }}
+          className="mt-12 text-center space-y-4"
         >
           <div className="inline-flex items-center gap-4 px-6 py-3 bg-[#151518] border border-[#2a2a30]">
             <div className="flex items-center gap-2">
@@ -428,7 +160,14 @@ export default function Features() {
               <div className="w-2 h-2 bg-[#ff2d7a]" />
               <span className="text-[#888892] text-sm font-mono">MAINNET</span>
             </div>
-            <span className="text-[#555560] text-xs font-mono ml-2">Switch anytime in settings</span>
+          </div>
+          <div>
+            <Link
+              href="/docs"
+              className="text-[#39c5bb] text-sm font-mono hover:underline"
+            >
+              Read the full technical documentation →
+            </Link>
           </div>
         </motion.div>
       </div>
