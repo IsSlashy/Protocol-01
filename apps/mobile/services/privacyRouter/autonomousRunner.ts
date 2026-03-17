@@ -26,6 +26,7 @@ import { findPool } from '../denominatedPool';
 import { useDenominatedPoolStore } from '../../stores/denominatedPoolStore';
 import { useWalletStore } from '../../stores/walletStore';
 import type { HopExecutionCallbacks } from './types';
+import { useAutoShieldStore } from '../../stores/autoShieldStore';
 
 // ---------------------------------------------------------------------------
 // State
@@ -163,6 +164,14 @@ async function pollPendingHops(): Promise<void> {
       } catch {
         // Non-critical
       }
+
+      // Auto-shield: check pending receive addresses for incoming funds
+      try {
+        await useAutoShieldStore.getState().checkAndAutoShield();
+        useAutoShieldStore.getState().cleanup();
+      } catch {
+        // Non-critical — retries next cycle
+      }
     }
   } catch (err: any) {
     console.error('[AutoRunner] Poll error:', err.message?.slice(0, 100));
@@ -208,6 +217,9 @@ export async function startAutonomousRunner(): Promise<void> {
     const { sha256 } = require('@noble/hashes/sha256');
     const { bytesToHex } = require('@noble/hashes/utils');
     const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey)));
+
+    // Load auto-shield receive addresses from SecureStore
+    await useAutoShieldStore.getState().load();
 
     // Initialize the router if not already done
     if (!isPrivacyRouterAvailable()) {
