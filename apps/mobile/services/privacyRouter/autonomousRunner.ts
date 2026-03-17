@@ -48,6 +48,17 @@ let _lastMaturityRefresh = 0;
 // Real execution callbacks
 // ---------------------------------------------------------------------------
 
+/** Send a local push notification when a hop completes */
+async function notifyHopComplete(hopType: string, hopIndex: number, totalHops: number, denomination: number): Promise<void> {
+  try {
+    const { p01Alert } = require('@/stores/alertStore');
+    p01Alert(
+      `Route Progress`,
+      `${hopType === 'shield' ? 'Shield' : hopType === 'unshield' ? 'Unshield' : 'Split'} hop ${hopIndex}/${totalHops} completed (${denomination} SOL)`,
+    );
+  } catch {}
+}
+
 function buildCallbacks(): HopExecutionCallbacks {
   return {
     shield: async (params) => {
@@ -61,6 +72,32 @@ function buildCallbacks(): HopExecutionCallbacks {
 
       console.log(`[AutoRunner] 🛡️ Shield confirmed: ${noteId}`);
       return { txSignature: `shield_${noteId}`, commitment: noteId };
+    },
+
+    split: async (params) => {
+      console.log(`[AutoRunner] ✂️ SPLIT: ${params.sourceDenomination} SOL → ${params.numOutputs}x ${params.targetDenomination} SOL`);
+
+      const sourcePool = findPool('SOL', params.sourceDenomination);
+      const targetPool = findPool('SOL', params.targetDenomination);
+      if (!sourcePool) throw new Error(`No source pool for ${params.sourceDenomination} SOL`);
+      if (!targetPool) throw new Error(`No target pool for ${params.targetDenomination} SOL`);
+
+      // Find a mature note in the source pool
+      const store = useDenominatedPoolStore.getState();
+      const matureNote = store.notes.find(
+        n => n.denomination === params.sourceDenomination &&
+             n.status === 'mature' &&
+             n.token === 'SOL'
+      );
+
+      if (!matureNote) {
+        throw new Error(`RETRY: No mature note for ${params.sourceDenomination} SOL split`);
+      }
+
+      console.log(`[AutoRunner] ✂️ Split note ${matureNote.id.slice(0, 8)}... into ${params.numOutputs} outputs`);
+      // Note: actual ZK proof generation requires WebView prover (not available in background)
+      // For now, mark as RETRY — the split will execute when the app is in foreground
+      throw new Error(`RETRY: Split proof generation requires foreground WebView prover`);
     },
 
     unshield: async (params) => {
@@ -127,6 +164,9 @@ async function pollPendingHops(): Promise<void> {
           const result = await executeHop(hop, route, spendingKeyHash, callbacks);
           if (result.success) {
             console.log(`[AutoRunner] ✅ Hop ${hop.id.slice(0, 8)}... completed: ${result.txSignature?.slice(0, 16)}...`);
+            // Notify user of hop completion
+            const completedCount = route.hops.filter((h: any) => h.status === 'completed').length + 1;
+            notifyHopComplete(hop.type, completedCount, route.hops.length, hop.amount);
           } else {
             console.warn(`[AutoRunner] ⚠️ Hop ${hop.id.slice(0, 8)}... failed: ${result.error}`);
           }

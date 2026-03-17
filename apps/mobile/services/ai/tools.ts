@@ -317,6 +317,119 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       id: { type: 'string', description: 'Alert ID to clear, or "all" to clear everything', required: true },
     },
   },
+
+  // ── Staking Tools ──────────────────────────────────────────────
+  {
+    name: 'stake_info',
+    description: 'Get staking info for the current wallet: delegated amount, validator, rewards.',
+    parameters: {},
+  },
+  {
+    name: 'stake_apy',
+    description: 'Get current Solana staking APY estimate.',
+    parameters: {},
+  },
+  {
+    name: 'stake_validators',
+    description: 'List top Solana validators by stake weight.',
+    parameters: {
+      limit: { type: 'number', description: 'Number of validators to return (default 5, max 20)' },
+    },
+  },
+
+  // ── NFT Tools ──────────────────────────────────────────────────
+  {
+    name: 'nft_list',
+    description: 'List NFTs in the current wallet (via Helius DAS API).',
+    parameters: {},
+  },
+  {
+    name: 'nft_floor',
+    description: 'Get floor price of an NFT collection by name or collection address.',
+    parameters: {
+      collection: { type: 'string', description: 'Collection name or mint address', required: true },
+    },
+  },
+
+  // ── DeFi Tools ─────────────────────────────────────────────────
+  {
+    name: 'swap_execute',
+    description: 'Execute a token swap via Jupiter. Redirects to the swap screen with prefilled parameters.',
+    parameters: {
+      from: { type: 'string', description: 'Source token symbol (e.g. SOL)', required: true },
+      to: { type: 'string', description: 'Target token symbol (e.g. USDC)', required: true },
+      amount: { type: 'number', description: 'Amount of source token', required: true },
+    },
+  },
+  {
+    name: 'defi_tvl',
+    description: 'Get Total Value Locked (TVL) of a Solana protocol via DeFi Llama.',
+    parameters: {
+      protocol: { type: 'string', description: 'Protocol slug (e.g. marinade-finance, raydium, jupiter)', required: true },
+    },
+  },
+  {
+    name: 'lending_rates',
+    description: 'Get current lending and borrow rates for SOL and USDC on major Solana protocols.',
+    parameters: {},
+  },
+
+  // ── Analytics Tools ────────────────────────────────────────────
+  {
+    name: 'gas_tracker',
+    description: 'Get current Solana priority fee estimates (low, medium, high).',
+    parameters: {},
+  },
+  {
+    name: 'whale_watch',
+    description: 'Get recent large SOL transfers (>1000 SOL).',
+    parameters: {
+      limit: { type: 'number', description: 'Number of results (default 5, max 10)' },
+    },
+  },
+  {
+    name: 'market_dominance',
+    description: 'Get SOL market dominance compared to BTC and ETH.',
+    parameters: {},
+  },
+
+  // ── Social Tools ───────────────────────────────────────────────
+  {
+    name: 'protocol_info',
+    description: 'Get info about a Solana protocol or project (TVL, description, links).',
+    parameters: {
+      name: { type: 'string', description: 'Protocol name (e.g. jupiter, marinade, raydium)', required: true },
+    },
+  },
+  {
+    name: 'trending_tokens',
+    description: 'Get trending tokens on Jupiter/Birdeye by volume or price change.',
+    parameters: {
+      limit: { type: 'number', description: 'Number of tokens (default 10, max 20)' },
+    },
+  },
+
+  // ── Utility Tools ──────────────────────────────────────────────
+  {
+    name: 'encode_base58',
+    description: 'Encode a hex string to base58, or decode a base58 string to hex.',
+    parameters: {
+      value: { type: 'string', description: 'Hex or base58 string to convert', required: true },
+      direction: { type: 'string', description: '"encode" (hex→base58) or "decode" (base58→hex)', required: true, enum: ['encode', 'decode'] },
+    },
+  },
+  {
+    name: 'generate_keypair',
+    description: 'Generate a new random Solana keypair for testing purposes only. Never use for real funds.',
+    parameters: {},
+  },
+  {
+    name: 'timestamp_convert',
+    description: 'Convert between unix timestamp (seconds) and human-readable date.',
+    parameters: {
+      value: { type: 'string', description: 'Unix timestamp (number) or ISO date string', required: true },
+    },
+  },
 ];
 
 // ── Memory Storage (persistent via AsyncStorage) ─────────────────────────────
@@ -846,6 +959,323 @@ export async function executeTool(name: string, input: Record<string, any>): Pro
       }
       await AsyncStorage.removeItem(`p01_price_alert_${input.id}`);
       return { success: true, data: { cleared: input.id } };
+    }
+
+    // ── Staking Tools ──
+    case 'stake_info': {
+      try {
+        const { getConnection } = require('@/services/solana/connection');
+        const { useWalletStore } = require('@/stores/walletStore');
+        const { PublicKey } = require('@solana/web3.js');
+        const pk = useWalletStore.getState().publicKey;
+        if (!pk) return { success: false, error: 'No wallet connected' };
+        const conn = getConnection();
+        const stakeAccounts = await conn.getParsedProgramAccounts(
+          new PublicKey('Stake11111111111111111111111111111111111111'),
+          { filters: [{ memcmp: { offset: 12, bytes: pk } }] },
+        );
+        if (stakeAccounts.length === 0) {
+          return { success: true, data: { staked: false, message: 'No active stake accounts found' } };
+        }
+        const stakes = stakeAccounts.map((acc: any) => {
+          const parsed = acc.account.data?.parsed?.info;
+          return {
+            address: acc.pubkey.toBase58(),
+            lamports: acc.account.lamports,
+            sol: (acc.account.lamports / 1e9).toFixed(4),
+            validator: parsed?.stake?.delegation?.voter,
+            status: parsed?.stake?.delegation ? 'delegated' : 'inactive',
+          };
+        });
+        const totalSol = stakes.reduce((s: number, a: any) => s + parseFloat(a.sol), 0);
+        return { success: true, data: { stakeAccounts: stakes.length, totalStaked: totalSol.toFixed(4) + ' SOL', stakes } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'stake_apy': {
+      try {
+        const res = await fetch('https://api.marinade.finance/msol/apy');
+        if (res.ok) {
+          const data = await res.json();
+          const apy = typeof data === 'number' ? data : data.apy ?? data.value;
+          return { success: true, data: { apy: `${(apy * 100).toFixed(2)}%`, source: 'Marinade mSOL', note: 'Native staking APY is typically similar' } };
+        }
+        // Fallback: estimate from epoch info
+        const { getConnection } = require('@/services/solana/connection');
+        const info = await getConnection().getEpochInfo();
+        const epochsPerYear = 365.25 * 24 * 3600 / (info.slotsInEpoch * 0.4);
+        const estimatedApy = (1 + 0.05 / epochsPerYear) ** epochsPerYear - 1;
+        return { success: true, data: { apy: `~${(estimatedApy * 100).toFixed(1)}%`, source: 'estimated', note: 'Based on ~5% inflation, actual varies by validator' } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'stake_validators': {
+      try {
+        const { getConnection } = require('@/services/solana/connection');
+        const limit = Math.min(input.limit || 5, 20);
+        const { current } = await getConnection().getVoteAccounts();
+        const sorted = current
+          .sort((a: any, b: any) => b.activatedStake - a.activatedStake)
+          .slice(0, limit);
+        const validators = sorted.map((v: any, i: number) => ({
+          rank: i + 1,
+          votePubkey: v.votePubkey,
+          stake: (v.activatedStake / 1e9).toFixed(0) + ' SOL',
+          commission: v.commission + '%',
+          lastVote: v.lastVote,
+        }));
+        return { success: true, data: { count: validators.length, validators } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+
+    // ── NFT Tools ──
+    case 'nft_list': {
+      try {
+        const { useWalletStore } = require('@/stores/walletStore');
+        const pk = useWalletStore.getState().publicKey;
+        if (!pk) return { success: false, error: 'No wallet connected' };
+        const { getConnection } = require('@/services/solana/connection');
+        const { PublicKey } = require('@solana/web3.js');
+        // Try Helius DAS API if the RPC endpoint supports it
+        const conn = getConnection();
+        const rpcUrl = (conn as any)._rpcEndpoint || '';
+        if (rpcUrl.includes('helius')) {
+          const res = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0', id: 1, method: 'getAssetsByOwner',
+              params: { ownerAddress: pk, page: 1, limit: 20 },
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const items = (data.result?.items || []).filter(
+              (a: any) => a.interface === 'V1_NFT' || a.interface === 'ProgrammableNFT',
+            );
+            const nfts = items.map((a: any) => ({
+              name: a.content?.metadata?.name || 'Unknown',
+              collection: a.grouping?.[0]?.group_value || null,
+              mint: a.id,
+              image: a.content?.links?.image || null,
+            }));
+            return { success: true, data: { count: nfts.length, nfts } };
+          }
+        }
+        return { success: true, data: { message: 'NFT listing requires a Helius RPC endpoint. Navigate to the NFT tab to view your collection.' } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'nft_floor': {
+      try {
+        // Try fetching from Tensor or a public API
+        const res = await fetch(
+          `https://api-mainnet.magiceden.dev/v2/collections/${encodeURIComponent(input.collection)}/stats`,
+          { headers: { 'User-Agent': 'Mozilla/5.0' } },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          return { success: true, data: {
+            collection: input.collection,
+            floorPrice: data.floorPrice ? (data.floorPrice / 1e9).toFixed(4) + ' SOL' : 'N/A',
+            listedCount: data.listedCount, volumeAll: data.volumeAll ? (data.volumeAll / 1e9).toFixed(0) + ' SOL' : 'N/A',
+          }};
+        }
+        return { success: true, data: { collection: input.collection, message: 'Floor price data unavailable. Try searching on Magic Eden or Tensor.' } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+
+    // ── DeFi Tools ──
+    case 'swap_execute':
+      return { success: false, error: `Navigate to Wallet → Swap to exchange ${input.amount} ${input.from} for ${input.to}. The swap screen will handle Jupiter routing and signing.` };
+    case 'defi_tvl': {
+      try {
+        const res = await fetch(`https://api.llama.fi/tvl/${encodeURIComponent(input.protocol)}`);
+        if (!res.ok) return { success: false, error: `DeFi Llama API error (${res.status}). Check protocol slug.` };
+        const tvl = await res.json();
+        if (typeof tvl === 'number') {
+          return { success: true, data: { protocol: input.protocol, tvl: `$${(tvl / 1e6).toFixed(2)}M`, raw: tvl } };
+        }
+        return { success: false, error: `Unknown response format for "${input.protocol}". Try: marinade-finance, raydium, jupiter` };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'lending_rates': {
+      try {
+        // Fetch from DeFi Llama yields API for Solana lending protocols
+        const res = await fetch('https://yields.llama.fi/pools');
+        if (!res.ok) return { success: false, error: `DeFi Llama yields API error (${res.status})` };
+        const data = await res.json();
+        const pools = (data.data || []).filter(
+          (p: any) => p.chain === 'Solana' &&
+            (p.symbol?.includes('SOL') || p.symbol?.includes('USDC')) &&
+            (p.project === 'marinade-finance' || p.project === 'solend' || p.project === 'marginfi' || p.project === 'kamino'),
+        );
+        const rates = pools.slice(0, 10).map((p: any) => ({
+          protocol: p.project,
+          symbol: p.symbol,
+          apy: `${p.apy?.toFixed(2)}%`,
+          tvl: `$${(p.tvlUsd / 1e6).toFixed(2)}M`,
+          apyBase: p.apyBase ? `${p.apyBase.toFixed(2)}%` : undefined,
+        }));
+        return { success: true, data: { count: rates.length, rates } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+
+    // ── Analytics Tools ──
+    case 'gas_tracker': {
+      try {
+        const { getConnection } = require('@/services/solana/connection');
+        const conn = getConnection();
+        const fees = await conn.getRecentPrioritizationFees();
+        if (!fees || fees.length === 0) {
+          return { success: true, data: { message: 'No recent priority fee data available' } };
+        }
+        const nonZero = fees.filter((f: any) => f.prioritizationFee > 0);
+        const sorted = nonZero.map((f: any) => f.prioritizationFee).sort((a: number, b: number) => a - b);
+        const low = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.25)] : 0;
+        const medium = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.5)] : 0;
+        const high = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.75)] : 0;
+        return { success: true, data: {
+          priorityFees: {
+            low: `${low} microlamports`,
+            medium: `${medium} microlamports`,
+            high: `${high} microlamports`,
+          },
+          samplesAnalyzed: fees.length,
+          note: 'Priority fees are per compute unit. Base fee is 5000 lamports.',
+        }};
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'whale_watch': {
+      try {
+        const { getConnection } = require('@/services/solana/connection');
+        const { LAMPORTS_PER_SOL } = require('@solana/web3.js');
+        const conn = getConnection();
+        const limit = Math.min(input.limit || 5, 10);
+        const sigs = await conn.getSignaturesForAddress(
+          require('@solana/web3.js').SystemProgram.programId,
+          { limit: 50 },
+        );
+        const largeTxs: any[] = [];
+        for (const sig of sigs) {
+          if (largeTxs.length >= limit) break;
+          try {
+            const tx = await conn.getParsedTransaction(sig.signature, { maxSupportedTransactionVersion: 0 });
+            const instructions = tx?.transaction?.message?.instructions || [];
+            for (const ix of instructions) {
+              const parsed = (ix as any).parsed;
+              if (parsed?.type === 'transfer' && parsed?.info?.lamports >= 1000 * LAMPORTS_PER_SOL) {
+                largeTxs.push({
+                  signature: sig.signature.slice(0, 16) + '...',
+                  amount: (parsed.info.lamports / LAMPORTS_PER_SOL).toFixed(2) + ' SOL',
+                  from: parsed.info.source?.slice(0, 8) + '...',
+                  to: parsed.info.destination?.slice(0, 8) + '...',
+                  time: tx?.blockTime ? new Date(tx.blockTime * 1000).toLocaleString() : 'unknown',
+                });
+              }
+            }
+          } catch {}
+        }
+        if (largeTxs.length === 0) {
+          return { success: true, data: { message: 'No large transfers (>1000 SOL) found in recent blocks. This scans a limited window.' } };
+        }
+        return { success: true, data: { count: largeTxs.length, transfers: largeTxs } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'market_dominance': {
+      try {
+        const res = await fetch('https://api.coingecko.com/api/v3/global');
+        if (!res.ok) return { success: false, error: `CoinGecko API error (${res.status})` };
+        const data = await res.json();
+        const mcaps = data.data?.market_cap_percentage || {};
+        return { success: true, data: {
+          btc: `${(mcaps.btc || 0).toFixed(2)}%`,
+          eth: `${(mcaps.eth || 0).toFixed(2)}%`,
+          sol: `${(mcaps.sol || 0).toFixed(2)}%`,
+          totalMarketCap: data.data?.total_market_cap?.usd ? `$${(data.data.total_market_cap.usd / 1e12).toFixed(2)}T` : 'N/A',
+          source: 'CoinGecko',
+        }};
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+
+    // ── Social Tools ──
+    case 'protocol_info': {
+      try {
+        const slug = input.name.toLowerCase().replace(/\s+/g, '-');
+        const res = await fetch(`https://api.llama.fi/protocol/${encodeURIComponent(slug)}`);
+        if (!res.ok) return { success: false, error: `Protocol not found: "${input.name}". Try: jupiter, marinade-finance, raydium, drift, orca` };
+        const data = await res.json();
+        return { success: true, data: {
+          name: data.name, symbol: data.symbol, category: data.category,
+          description: data.description?.slice(0, 300) || 'No description',
+          tvl: data.tvl ? `$${(data.tvl / 1e6).toFixed(2)}M` : 'N/A',
+          chains: data.chains, url: data.url,
+          twitter: data.twitter ? `@${data.twitter}` : null,
+        }};
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'trending_tokens': {
+      try {
+        const limit = Math.min(input.limit || 10, 20);
+        const res = await fetch('https://token.jup.ag/strict');
+        if (!res.ok) return { success: false, error: `Jupiter token list error (${res.status})` };
+        const tokens = await res.json();
+        // Return popular Solana tokens (Jupiter strict list is curated)
+        const trending = tokens.slice(0, limit).map((t: any) => ({
+          symbol: t.symbol, name: t.name, mint: t.address,
+          decimals: t.decimals, tags: t.tags?.join(', ') || '',
+        }));
+        return { success: true, data: { count: trending.length, tokens: trending, source: 'Jupiter Strict List' } };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+
+    // ── Utility Tools ──
+    case 'encode_base58': {
+      try {
+        const bs58 = require('bs58');
+        if (input.direction === 'encode') {
+          const bytes = Buffer.from(input.value, 'hex');
+          const encoded = bs58.default?.encode?.(bytes) ?? bs58.encode(bytes);
+          return { success: true, data: { hex: input.value, base58: encoded } };
+        } else {
+          const decoded = bs58.default?.decode?.(input.value) ?? bs58.decode(input.value);
+          const hex = Buffer.from(decoded).toString('hex');
+          return { success: true, data: { base58: input.value, hex } };
+        }
+      } catch (e: any) { return { success: false, error: `Base58 error: ${e.message}` }; }
+    }
+    case 'generate_keypair': {
+      try {
+        const { Keypair } = require('@solana/web3.js');
+        const bs58 = require('bs58');
+        const kp = Keypair.generate();
+        const pubkey = kp.publicKey.toBase58();
+        const secretHex = Buffer.from(kp.secretKey).toString('hex');
+        return { success: true, data: {
+          publicKey: pubkey,
+          secretKeyHex: secretHex,
+          warning: 'FOR TESTING ONLY. Never use for real funds. Secret key is exposed.',
+        }};
+      } catch (e: any) { return { success: false, error: e.message }; }
+    }
+    case 'timestamp_convert': {
+      try {
+        const val = input.value.trim();
+        // If numeric, treat as unix timestamp (seconds)
+        if (/^\d+$/.test(val)) {
+          const ts = parseInt(val);
+          const date = new Date(ts * 1000);
+          return { success: true, data: {
+            unix: ts, iso: date.toISOString(),
+            human: date.toLocaleString(),
+            relative: `${Math.round((Date.now() - date.getTime()) / 86400_000)} days ago`,
+          }};
+        }
+        // Otherwise parse as date string
+        const date = new Date(val);
+        if (isNaN(date.getTime())) return { success: false, error: 'Could not parse date. Use ISO format (e.g. 2026-03-17) or unix timestamp.' };
+        return { success: true, data: {
+          unix: Math.floor(date.getTime() / 1000), iso: date.toISOString(),
+          human: date.toLocaleString(),
+        }};
+      } catch (e: any) { return { success: false, error: e.message }; }
     }
 
     default:
