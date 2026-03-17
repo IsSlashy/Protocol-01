@@ -655,9 +655,20 @@ const docsArchLayers = [
     name: "Client Layer",
     hex: "#39c5bb",
     nodes: [
-      { label: "MOBILE APP", sub: "React Native / Expo" },
-      { label: "EXTENSION", sub: "Chrome / Brave" },
-      { label: "WEB APP", sub: "Next.js" },
+      { label: "MOBILE APP", sub: "React Native / Expo 54" },
+      { label: "EXTENSION", sub: "Chrome MV3 (beta)" },
+      { label: "WEB APP", sub: "Next.js 16" },
+      { label: "AI AGENT", sub: "56 Tools / On-Device LLM" },
+    ],
+  },
+  {
+    name: "Privacy Layer",
+    hex: "#ff2d7a",
+    nodes: [
+      { label: "TOR RELAY", sub: "3-Tier IP Anonymization" },
+      { label: "AUTO-SHIELD", sub: "Stealth Receive + Auto Pool" },
+      { label: "PRIVACY ROUTER", sub: "Multi-Hop / 5 Levels" },
+      { label: "META-ADDRESSES", sub: "st:01 / st:02 P01-to-P01" },
     ],
   },
   {
@@ -678,9 +689,10 @@ const docsArchLayers = [
     name: "Protocol Layer",
     hex: "#00ffe5",
     nodes: [
-      { label: "STEALTH", sub: "ECDH Addresses" },
+      { label: "STEALTH", sub: "ECDH + ML-KEM-768" },
       { label: "SHIELDED", sub: "ZK Pool + Merkle Tree" },
       { label: "DENOMINATED", sub: "Fixed-Denom Pools" },
+      { label: "NOTE SPLIT", sub: "Cross-Pool Splitting" },
       { label: "zkSPL", sub: "Confidential Balances" },
       { label: "PAYMENTS", sub: "Streams & Subscriptions" },
       { label: "VAULTS", sub: "Subscription Vaults" },
@@ -694,6 +706,7 @@ const docsArchLayers = [
       { label: "ON-CHAIN RELAYER", sub: "Trustless ZK Relay" },
       { label: "STARK VERIFIER", sub: "FRI + Goldilocks" },
       { label: "QUANTUM VAULT", sub: "WOTS+ / Hash-Timelock" },
+      { label: "BUNDLER", sub: "Atomic Batch Shield" },
       { label: "CRANK", sub: "Auto Subscription Payments" },
     ],
   },
@@ -701,7 +714,7 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "13 PROGRAMS", sub: "Anchor 0.32.1 / Rust" },
+      { label: "15 PROGRAMS", sub: "Anchor 0.32.1 / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
       { label: "alt_bn128 + FRI", sub: "ZK Verification" },
     ],
