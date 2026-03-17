@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono, Inter } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import DepthBackground from "@/components/DepthBackground";
 
@@ -82,6 +83,7 @@ export default function RootLayout({
           {/* Main content */}
           <main className="relative z-10">{children}</main>
         </div>
+        <Analytics />
       </body>
     </html>
   );
