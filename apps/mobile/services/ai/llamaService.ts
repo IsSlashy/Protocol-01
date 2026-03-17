@@ -315,7 +315,7 @@ export async function initModel(
     llamaContext = await initLlama(
       {
         model: modelPath,
-        n_ctx: 2048,
+        n_ctx: 4096,
         n_gpu_layers: 99,
         use_mlock: true,
         flash_attn_type: 'auto',
