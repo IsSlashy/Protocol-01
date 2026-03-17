@@ -2,12 +2,14 @@ import React from 'react';
 import { TouchableOpacity, View, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+import { Colors, P01Colors } from '@/constants/theme';
+
 const COLORS = {
-  text: '#ffffff',
-  textSecondary: '#9ca3af',
-  textMuted: '#6b7280',
-  surface: '#27272a',
-  cyan: '#06b6d4',
+  text: Colors.text,
+  textSecondary: Colors.textSecondary,
+  textMuted: Colors.textTertiary,
+  surface: Colors.surfaceSecondary,
+  cyan: P01Colors.cyan,
 };
 
 interface SettingsRowProps {
