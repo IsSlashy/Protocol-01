@@ -418,9 +418,8 @@ async function sendToProvider(
     return { success: false, error: `Unknown AI provider: ${activeConfig.provider}` };
   } catch (error: any) {
     const safeMsg = error.message ? sanitizeUrl(error.message) : 'unknown error';
-    console.error('AI request failed:', safeMsg);
-    const lastUserMsg = allMessages.filter(m => m.role === 'user').pop()?.content || '';
-    return sendToRuleBased(lastUserMsg, context);
+    console.error('[AI] Provider request failed:', safeMsg);
+    return { success: false, error: safeMsg };
   }
 }
 
@@ -751,20 +750,29 @@ async function sendToGemma(messages: ChatMessage[], config: AIConfig, context?: 
         }
       );
 
-      if (response.ok) {
-        const data = await response.json();
-        const message = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (message) {
-          const suggestions = extractSuggestions(lastUserMessage, message);
-          return { success: true, message, suggestions };
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        console.warn(`[AI] Gemini API ${response.status}:`, errText.slice(0, 200));
+        if (response.status === 429) {
+          return { success: false, error: 'Gemini rate limit — wait a moment and retry' };
         }
+        return { success: false, error: `Gemini error (${response.status})` };
       }
+
+      const data = await response.json();
+      const message = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (message) {
+        const suggestions = extractSuggestions(lastUserMessage, message);
+        return { success: true, message, suggestions };
+      }
+      return { success: false, error: 'Gemini returned empty response' };
     } catch (error: any) {
       console.warn('[AI] Gemini API failed:', error.message);
+      return { success: false, error: `Gemini: ${error.message || 'connection failed'}` };
     }
   }
 
-  // Fallback to rule-based responses
+  // No API key — fallback to rule-based responses
   return sendToRuleBased(lastUserMessage, context);
 }
 
