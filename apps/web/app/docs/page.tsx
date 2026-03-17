@@ -477,6 +477,177 @@ import { P01AuthClient } from '@p01/auth-sdk';
 import { RpcConnectionManager } from '@p01/rpc-config';
 const conn = RpcConnectionManager.getConnection(); // Auto-fallback chain`,
   },
+  {
+    id: "auto-shield",
+    title: "Auto-Shield Receive",
+    icon: <Shield className="w-6 h-6" />,
+    description:
+      "When receiving funds, the app generates a one-time stealth address instead of exposing the main wallet. Incoming funds are automatically detected and shielded into the privacy pool — the main wallet is never visible to senders.",
+    details: [
+      "Receive screen generates fresh stealth addresses (HMAC-derived from viewing secret key)",
+      "Autonomous runner polls every 5 minutes for incoming funds on stealth addresses",
+      "When balance detected (>0.05 SOL), auto-shields to the best matching denomination pool",
+      "Main wallet NEVER appears on-chain for incoming transfers",
+      "Stealth receive addresses tracked in SecureStore with cleanup after 7 days",
+      "Settings toggle in Privacy Settings to enable/disable auto-shielding",
+      "Compatible with any Solana wallet sender — no Protocol 01 required on sender side",
+    ],
+    codeExample: `// Auto-Shield flow (autonomous runner)
+// 1. User opens Receive → stealth address generated
+const seed = hmac(sha256, viewingSecretKey, "p01_auto_receive_42");
+const keypair = Keypair.fromSeed(seed);
+// Display keypair.publicKey as QR code
+
+// 2. Sender sends SOL to the stealth address (any wallet)
+// 3. Runner detects funds → auto-shields
+const balance = await connection.getBalance(stealthAddress);
+if (balance > MIN_THRESHOLD) {
+  await shield(pool, progressCb, undefined, keypair);
+  // Main wallet never visible on-chain
+}`,
+  },
+  {
+    id: "tor-relay",
+    title: "Privacy Relay (Tor Routing)",
+    icon: <Network className="w-6 h-6" />,
+    description:
+      "All RPC calls from the mobile app are routed through a 3-tier privacy relay. The relay strips identifying headers, adds timing jitter, and routes through Tor — upstream RPC providers never see the user's real IP address.",
+    details: [
+      "Tier 1 (Client): fetchMiddleware strips User-Agent, Origin, Referer + adds 30-120ms jitter",
+      "Tier 2 (Relay): Express server with HMAC rate limiter (zero IP storage), security headers, metadata stripping",
+      "Tier 3 (Tor): SOCKS5 proxy with circuit rotation every 10 minutes via random authentication",
+      "Deployed on Railway — single container (Node 22 Alpine + Tor sidecar)",
+      "Supports batch JSON-RPC forwarding for getParsedTransactions",
+      "Helius RPC upstream via Tor — API key hidden, IP anonymized",
+      "Fallback: app works without relay (Tier 1 client-side protection always active)",
+      "13K+ requests tested with 100% Tor routing and 0 errors",
+    ],
+    codeExample: `// 3-tier privacy architecture
+// Tier 1: Client-side (always active)
+const connection = new Connection(relayUrl, {
+  fetchMiddleware: privacyFetchMiddleware, // Strip headers + jitter
+});
+
+// Tier 2: Relay server (Railway)
+app.use(stripMetadata);     // 20+ headers removed
+app.use(securityHeaders);   // HSTS, CSP, no-referrer
+app.use(rateLimiter);       // HMAC-hashed IP (zero storage)
+
+// Tier 3: Tor SOCKS5
+const agent = new SocksProxyAgent("socks5h://tor:9050");
+// Circuit rotates every 10min via random SOCKS auth`,
+  },
+  {
+    id: "stealth-meta-addresses",
+    title: "Stealth Meta-Addresses (P01-to-P01)",
+    icon: <Key className="w-6 h-6" />,
+    description:
+      "For P01-to-P01 transfers, users share a persistent stealth meta-address (st:01...). The sender's Private Send auto-derives a fresh one-time stealth destination — both sender AND receiver are fully hidden on-chain.",
+    details: [
+      "Meta-address format: st:01<base58(spending_ed25519_pub + viewing_x25519_pub)>",
+      "v2 hybrid: st:02<base58(spending + viewing + ML-KEM-768 pub)> — quantum-resistant",
+      "Persistent stealth keys (Ed25519 + X25519) stored in SecureStore",
+      "Private Send detects meta-addresses and auto-derives stealth destination",
+      "QR scanner auto-detects st:01/st:02 and routes to Private Send",
+      "On-chain trail: stealth_sender → pool → stealth_receiver (no real wallet visible)",
+      "Receive screen shows compact 'Copy P01 ID' for easy sharing",
+    ],
+    codeExample: `// Receiver: share meta-address
+const keys = await getOrCreateStealthKeys();
+const metaAddress = createMetaAddress(keys);
+// → "st:012u2trSt1XytE271..."
+
+// Sender: Private Send auto-derives stealth destination
+if (isMetaAddress(destination)) {
+  const stealth = deriveStealthForRecipient(destination);
+  finalDestination = stealth.address;
+  // Both sender + receiver hidden on-chain
+}`,
+  },
+  {
+    id: "note-splitting",
+    title: "Cross-Pool Note Splitting",
+    icon: <GitBranch className="w-6 h-6" />,
+    description:
+      "Split a high-denomination note into multiple lower-denomination notes across pools. Enables the Privacy Router to break large amounts into smaller, harder-to-trace pieces with a single ZK proof.",
+    details: [
+      "On-chain instruction: split_note in zk_shielded program (deployed on devnet)",
+      "Circuit: note_split.circom (~10K constraints, max 20 outputs)",
+      "Denomination conservation enforced: source = numOutputs × target",
+      "Same nullifier PDA pattern as unshield (atomic double-spend prevention)",
+      "Protocol fee: 0.3% of source denomination",
+      "Groth16 proof verifies ownership + output commitment correctness",
+      "Mobile SDK: splitNote() function with proofGenerator callback",
+    ],
+    codeExample: `// Split 1 SOL into 10 × 0.1 SOL
+const result = await splitNote(
+  sourcePool,  // 1 SOL pool
+  targetPool,  // 0.1 SOL pool
+  receipt,     // Source note receipt
+  10,          // Number of outputs
+  outputSecrets,
+  proofGenerator,
+);
+// → 10 new notes in 0.1 SOL pool`,
+  },
+  {
+    id: "privacy-router",
+    title: "Multi-Hop Privacy Router",
+    icon: <Zap className="w-6 h-6" />,
+    description:
+      "The Privacy Router plans and executes multi-hop routes through the privacy pool system. Routes include shield, unshield, reshield, and split operations with configurable timing delays to maximize anonymity.",
+    details: [
+      "5 privacy levels: Minimal (1 hop) → Paranoid (14+ hops, 20 splits)",
+      "Autonomous runner executes hops in background (60s polling, Android foreground service)",
+      "Timing jitter: random delays between hops (hours) prevent correlation",
+      "Note locking: notes in active routes are locked (cannot withdraw or re-send)",
+      "Consent popup: irreversibility warning before route starts",
+      "Route progress: locked notes show hop X/Y, progress bar, next hop ETA",
+      "Routes encrypted in SecureStore, survive app restarts",
+      "In-app notification on each hop completion",
+    ],
+    codeExample: `// Start a Paranoid-level private send
+const route = await startPrivateRoute({
+  amount: 0.1,
+  destination: "7gWpzSZA...",
+  privacyLevel: 5, // Paranoid
+  spendingKeyHash,
+});
+// → 14 hops over ~2 days
+// → Shield → Unshield → Reshield → ... → Final delivery
+// → Each hop uses a different stealth address`,
+  },
+  {
+    id: "ai-agent",
+    title: "AI Agent (56 Tools)",
+    icon: <Cpu className="w-6 h-6" />,
+    description:
+      "On-device AI agent with 56 tools covering wallet operations, privacy actions, Solana network queries, DeFi analytics, and device features. Runs locally (Gemma 3 via llama.rn) — no data leaves the device.",
+    details: [
+      "Wallet (6): balance, address, send, history, airdrop, stealth receive",
+      "Privacy (5): shield, notes list, private send, route status, privacy level",
+      "Solana (6): slot, epoch, TPS, tx lookup, account info, rent calculator",
+      "Token/DeFi (6): token balance, swap quote, swap execute, TVL, lending rates, portfolio",
+      "Analytics (3): gas tracker, whale watch, market dominance",
+      "Staking (3): stake info, APY, validators",
+      "NFT (2): list NFTs, floor price",
+      "Social (2): protocol info, trending tokens",
+      "Conversion (3): SOL/USD, SOL/lamports, epoch/date",
+      "Device (3): share, haptic, notification",
+      "Alerts (3): set price alert, list alerts, clear alerts",
+      "Utility (4): calculate, validate address, base58 encode, generate keypair",
+      "Memory (3): save, read, list persistent agent memory",
+      "Tool-use loop: up to 3 rounds of tool execution per message",
+    ],
+    codeExample: `// User: "What's my balance and shield 0.1 SOL"
+// Agent calls tools:
+const balance = await executeTool("wallet_balance", {});
+// → { sol: "3.69", usd: "$520.13" }
+
+// Agent responds and calls shield tool:
+await executeTool("privacy_shield", { amount: 0.1 });
+// → Redirects to Privacy → Shield screen`,
+  },
 ];
 
 const docsArchLayers = [
