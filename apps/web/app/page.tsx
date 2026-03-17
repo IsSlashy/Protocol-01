@@ -37,6 +37,9 @@ export default function Home() {
               <a href="/roadmap" className="text-sm text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">
                 Roadmap
               </a>
+              <a href="/sdk-demo" className="text-sm text-[#555560] hover:text-[#888892] transition-colors font-mono uppercase tracking-wider text-[10px]">
+                SDK Preview
+              </a>
             </div>
 
             {/* Social & CTA */}

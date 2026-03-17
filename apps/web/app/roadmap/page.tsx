@@ -441,8 +441,7 @@ export default function RoadmapPage() {
                         duration: 0.4,
                         delay: phaseIndex * 0.15 + itemIndex * 0.06,
                       }}
-                      className={`rounded-xl border p-5 transition-colors hover:border-opacity-50 ${styles.borderColor}`}
-                      style={{ backgroundColor: THEME.surfaceColor }}
+                      className={`rounded-2xl border p-5 transition-colors bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]`}
                     >
                       <div className="flex items-start gap-4">
                         <div
@@ -510,7 +509,7 @@ export default function RoadmapPage() {
               href="https://github.com/IsSlashy/Protocol-01-releases"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-lg transition-colors"
+              className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-2xl transition-colors"
               style={{
                 backgroundColor: THEME.primaryColor,
                 color: THEME.backgroundColor,
@@ -522,11 +521,7 @@ export default function RoadmapPage() {
               href="https://discord.gg/KfmhPFAHNH"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-lg border transition-colors hover:text-white"
-              style={{
-                borderColor: THEME.borderColor,
-                color: THEME.mutedColor,
-              }}
+              className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-2xl border transition-colors text-[#888892] hover:text-white bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
             >
               Discord
             </a>
@@ -539,8 +534,7 @@ export default function RoadmapPage() {
         <a
           href="/protocol-01-design-document.pdf"
           download
-          className="group flex items-center gap-3 px-5 py-2.5 border rounded-lg transition-all duration-300 hover:bg-[#151518]"
-          style={{ borderColor: THEME.borderColor }}
+          className="group flex items-center gap-3 px-5 py-2.5 border rounded-2xl transition-all duration-300 bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
         >
           <FileText className="w-4 h-4 transition-colors" style={{ color: THEME.dimColor }} />
           <span className="text-sm" style={{ color: THEME.mutedColor }}>
