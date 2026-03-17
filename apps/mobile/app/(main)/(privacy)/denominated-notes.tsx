@@ -62,11 +62,21 @@ function GlassCard({ children, style }: { children: React.ReactNode; style?: any
   );
 }
 
+interface RouteProgress {
+  routeId: string;
+  completedHops: number;
+  totalHops: number;
+  nextHopAt?: number;
+  destination: string;
+  status: string;
+}
+
 export default function DenominatedNotesScreen() {
   const router = useRouter();
   const [showHistory, setShowHistory] = useState(false);
   const [currentSlot, setCurrentSlot] = useState<number | null>(null);
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
+  const [routeProgress, setRouteProgress] = useState<Record<string, RouteProgress>>({});
   const [slotDurationMs, setSlotDurationMs] = useState(DEFAULT_SLOT_DURATION_MS);
 
   const {
@@ -101,6 +111,37 @@ export default function DenominatedNotesScreen() {
     }
     // Refresh on-chain nullifier status to mark spent notes correctly
     refreshNoteStatuses().catch(() => {});
+
+    // Load route progress for locked notes
+    (async () => {
+      try {
+        const { useWalletStore } = require('@/stores/walletStore');
+        const pk = useWalletStore.getState().publicKey;
+        if (!pk) return;
+        const { sha256 } = require('@noble/hashes/sha256');
+        const { bytesToHex } = require('@noble/hashes/utils');
+        const skHash = bytesToHex(sha256(new TextEncoder().encode(pk)));
+        const { loadAllRoutes } = require('@/services/privacyRouter/routeCipher');
+        const routes = await loadAllRoutes(skHash);
+        const progress: Record<string, RouteProgress> = {};
+        for (const route of routes) {
+          if (route.status === 'completed' || route.status === 'failed') continue;
+          const completed = route.hops.filter((h: any) => h.status === 'completed').length;
+          const nextHop = route.hops.find((h: any) => h.status !== 'completed');
+          // Key by denomination to match with notes
+          const key = `${route.sourceDenomination}_${route.createdAt}`;
+          progress[key] = {
+            routeId: route.id,
+            completedHops: completed,
+            totalHops: route.hops.length,
+            nextHopAt: nextHop?.scheduledAt,
+            destination: route.destination,
+            status: route.status,
+          };
+        }
+        setRouteProgress(progress);
+      } catch {}
+    })();
   }, []);
 
   const cluster = getCluster();
@@ -530,6 +571,47 @@ export default function DenominatedNotesScreen() {
                 )}
               </>
             )}
+            {note.status === 'locked' && (() => {
+              // Find matching route progress
+              const progressKey = Object.keys(routeProgress).find(k =>
+                k.startsWith(`${note.denomination}_`)
+              );
+              const rp = progressKey ? routeProgress[progressKey] : null;
+              const pct = rp ? Math.round((rp.completedHops / rp.totalHops) * 100) : 0;
+              const nextIn = rp?.nextHopAt
+                ? formatTimeRemaining(rp.nextHopAt - Date.now())
+                : null;
+              return (
+                <>
+                  <View style={styles.lockedBanner}>
+                    <Ionicons name="lock-closed" size={14} color={P01Colors.pink} />
+                    <Text style={styles.lockedBannerText}>
+                      {rp ? `Routing · Hop ${rp.completedHops}/${rp.totalHops}` : 'Locked'}
+                    </Text>
+                  </View>
+                  {rp && (
+                    <View style={styles.progressContainer}>
+                      <View style={styles.progressBar}>
+                        <View style={[styles.progressFill, { width: `${Math.max(5, pct)}%` as any }]} />
+                      </View>
+                      <View style={styles.progressInfo}>
+                        <Text style={styles.progressText}>
+                          {pct}% complete
+                        </Text>
+                        {nextIn && (
+                          <Text style={styles.progressText}>
+                            Next hop in {nextIn}
+                          </Text>
+                        )}
+                      </View>
+                      <Text style={styles.progressDest}>
+                        To: {rp.destination.slice(0, 8)}...{rp.destination.slice(-4)}
+                      </Text>
+                    </View>
+                  )}
+                </>
+              );
+            })()}
             {(note.status === 'pending' || note.status === 'imported') && (() => {
               const maturity = getMaturityInfo(note);
               const timeStr = maturity.remainingMs > 0
@@ -1004,6 +1086,54 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: FontFamily.medium,
     color: P01Colors.yellow,
+  },
+
+  /* ── Locked note with route progress ───────────────────────── */
+  lockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: P01Colors.pinkDim,
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginTop: Spacing.sm,
+  },
+  lockedBannerText: {
+    fontSize: 12,
+    fontFamily: FontFamily.medium,
+    color: P01Colors.pink,
+    flex: 1,
+  },
+  progressContainer: {
+    marginTop: 8,
+  },
+  progressBar: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: P01Colors.pink,
+  },
+  progressInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  progressText: {
+    fontSize: 11,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+  },
+  progressDest: {
+    fontSize: 11,
+    fontFamily: FontFamily.mono,
+    color: Colors.textTertiary,
+    marginTop: 2,
   },
 
   /* ── Compact collapsible actions ────────────────────────────── */
