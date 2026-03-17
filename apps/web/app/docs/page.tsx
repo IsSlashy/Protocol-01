@@ -892,6 +892,82 @@ const ArchitectureDiagram = () => (
   </div>
 );
 
+function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
+  const [open, setOpen] = React.useState(false);
+
+  return (
+    <motion.div
+      id={tech.id}
+      initial={{ opacity: 0, y: 10 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ delay: index * 0.03 }}
+      className="border border-[#2a2a30] rounded-lg overflow-hidden bg-[#151518] hover:border-[#39c5bb]/20 transition-colors"
+    >
+      {/* Header — always visible, clickable */}
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-4 p-4 sm:p-5 text-left cursor-pointer hover:bg-[#1a1a1f] transition-colors"
+      >
+        <div className="w-10 h-10 bg-[#39c5bb]/10 border border-[#39c5bb]/30 flex items-center justify-center text-[#39c5bb] shrink-0">
+          {tech.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-base font-bold text-white">{tech.title}</h3>
+          <p className="text-xs text-[#888892] mt-0.5 truncate">{tech.description}</p>
+        </div>
+        <motion.div
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
+          className="text-[#555560] shrink-0"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </motion.div>
+      </button>
+
+      {/* Expandable content */}
+      <motion.div
+        initial={false}
+        animate={{
+          height: open ? "auto" : 0,
+          opacity: open ? 1 : 0,
+        }}
+        transition={{ duration: 0.3, ease: "easeInOut" }}
+        className="overflow-hidden"
+      >
+        <div className="px-4 sm:px-5 pb-5 pt-1 border-t border-[#2a2a30]">
+          <p className="text-[#888892] text-sm leading-relaxed mb-4">{tech.description}</p>
+
+          <h4 className="text-xs font-bold text-[#39c5bb] uppercase tracking-wider mb-3">
+            Key Features
+          </h4>
+          <ul className="space-y-1.5 mb-5">
+            {tech.details.map((detail, i) => (
+              <li key={i} className="flex items-start gap-2.5 text-sm text-[#888892]">
+                <CheckCircle className="w-3.5 h-3.5 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                <span className="break-words">{detail}</span>
+              </li>
+            ))}
+          </ul>
+
+          {tech.codeExample && (
+            <>
+              <h4 className="text-xs font-bold text-[#ff77a8] uppercase tracking-wider mb-2">
+                Code Example
+              </h4>
+              <pre className="bg-[#0a0a0c] border border-[#2a2a30] p-3 rounded-lg overflow-x-auto text-xs font-mono text-[#888892] whitespace-pre-wrap break-words">
+                {tech.codeExample}
+              </pre>
+            </>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 export default function DocsPage() {
   return (
     <div className="min-h-screen bg-[#0a0a0c]" style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
@@ -949,60 +1025,20 @@ export default function DocsPage() {
         </div>
       </section>
 
-      {/* Technologies */}
+      {/* Technologies — Collapsible Accordion */}
       <section className="py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-8 flex items-center gap-3">
+          <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-3">
             <Zap className="w-6 h-6 text-[#ff77a8]" />
             Core Technologies
           </h2>
+          <p className="text-[#888892] mb-8 text-sm">
+            {technologies.length} modules — click to expand technical details and code examples.
+          </p>
 
-          <div className="space-y-8">
+          <div className="space-y-2">
             {technologies.map((tech, index) => (
-              <motion.div
-                key={tech.id}
-                id={tech.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.05 }}
-                className="bg-[#151518] border border-[#2a2a30] rounded-lg overflow-hidden"
-              >
-                <div className="p-6 border-b border-[#2a2a30]">
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-12 h-12 bg-[#39c5bb]/10 border border-[#39c5bb]/40 flex items-center justify-center text-[#39c5bb]">
-                      {tech.icon}
-                    </div>
-                    <h3 className="text-xl font-bold text-white">{tech.title}</h3>
-                  </div>
-                  <p className="text-[#888892] whitespace-normal break-words leading-relaxed">{tech.description}</p>
-                </div>
-
-                <div className="p-6 bg-[#0a0a0c]/50">
-                  <h4 className="text-sm font-bold text-[#39c5bb] uppercase tracking-wider mb-4">
-                    Key Features
-                  </h4>
-                  <ul className="space-y-2 mb-6">
-                    {tech.details.map((detail, i) => (
-                      <li key={i} className="flex items-start gap-3 text-sm text-[#888892]">
-                        <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                        <span className="break-words">{detail}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  {tech.codeExample && (
-                    <>
-                      <h4 className="text-sm font-bold text-[#ff77a8] uppercase tracking-wider mb-3">
-                        Code Example
-                      </h4>
-                      <pre className="bg-[#0a0a0c] border border-[#2a2a30] p-4 rounded-lg overflow-x-auto text-xs sm:text-sm font-mono text-[#888892] whitespace-pre-wrap break-words">
-                        {tech.codeExample}
-                      </pre>
-                    </>
-                  )}
-                </div>
-              </motion.div>
+              <TechAccordion key={tech.id} tech={tech} index={index} />
             ))}
           </div>
         </div>
