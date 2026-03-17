@@ -25,6 +25,7 @@ import {
   type PrivacyLevel,
 } from '../../../services/solana/decoyTransactions';
 import { useArcium } from '@/providers/ArciumProvider';
+import { useAutoShieldStore } from '@/stores/autoShieldStore';
 
 const STORAGE_KEYS = {
   PRIVACY_LEVEL: 'settings_privacy_level',
@@ -93,6 +94,8 @@ export default function PrivacySettingsScreen() {
   const [privateByDefault, setPrivateByDefault] = useState(true);
   const [ephemeralWallets, setEphemeralWallets] = useState(false);
   const { } = useArcium(); // MPC always on
+  const autoShieldEnabled = useAutoShieldStore((s) => s.enabled);
+  const setAutoShieldEnabled = useAutoShieldStore((s) => s.setEnabled);
 
   useEffect(() => {
     loadSettings();
@@ -267,6 +270,16 @@ export default function PrivacySettingsScreen() {
             description="Generate new addresses for each transaction"
             value={alwaysUseStealth}
             onValueChange={handleStealthToggle}
+          />
+          <GlassDivider />
+          <ToggleRow
+            label="Auto-shield incoming"
+            description="Automatically shield funds received on stealth addresses"
+            value={autoShieldEnabled}
+            onValueChange={(v) => {
+              setAutoShieldEnabled(v);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
           />
           <GlassDivider />
           <SettingsRow
