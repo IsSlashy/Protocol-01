@@ -212,6 +212,48 @@ const roadmap: RoadmapPhase[] = [
           "Comprehensive test suite: 106 program stress tests, 124 crypto SDK tests, 140 mobile service tests, E2E flows, 69 Rust STARK tests. All passing.",
         icon: <TestTube className="w-5 h-5" />,
       },
+      {
+        title: "Privacy Relay (Tor Routing)",
+        description:
+          "3-tier privacy relay deployed on Railway. Client-side header stripping + jitter, server-side Tor SOCKS5 routing with circuit rotation every 10min. 13K+ requests tested, 100% Tor-routed.",
+        icon: <Globe className="w-5 h-5" />,
+      },
+      {
+        title: "Auto-Shield Receive",
+        description:
+          "One-time stealth addresses on Receive screen. Incoming funds auto-detected and shielded into the pool. Main wallet never exposed to senders.",
+        icon: <Shield className="w-5 h-5" />,
+      },
+      {
+        title: "Stealth Meta-Addresses (P01-to-P01)",
+        description:
+          "Persistent st:01/st:02 meta-addresses for full P01-to-P01 privacy. Sender auto-derives one-time stealth destination. Both sides hidden on-chain.",
+        icon: <Eye className="w-5 h-5" />,
+      },
+      {
+        title: "Multi-Hop Privacy Router",
+        description:
+          "5 privacy levels (1-14+ hops). Autonomous runner with Android foreground service. Note locking, consent popup, route progress tracking, timing jitter.",
+        icon: <Zap className="w-5 h-5" />,
+      },
+      {
+        title: "Cross-Pool Note Splitting",
+        description:
+          "Split high-denomination notes into multiple lower-denomination notes across pools. ZK proof (10K constraints), on-chain instruction deployed, mobile SDK ready.",
+        icon: <Layers className="w-5 h-5" />,
+      },
+      {
+        title: "AI Agent — 56 Tools",
+        description:
+          "Expanded from 10 to 56 tools: wallet ops, privacy actions, Solana queries, DeFi analytics, staking, NFTs, alerts, conversions, device features. On-device LLM.",
+        icon: <Bot className="w-5 h-5" />,
+      },
+      {
+        title: "0 TypeScript Errors",
+        description:
+          "Full codebase audit: 56 screens, 80+ components, all using P01 design system. Zero TypeScript errors. Settings components fixed to use theme constants.",
+        icon: <Code className="w-5 h-5" />,
+      },
     ],
   },
   {
