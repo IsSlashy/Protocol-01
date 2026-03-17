@@ -377,7 +377,7 @@ export default function SettingsScreen() {
         <GlassCard delay={400}>
           <SettingsRow
             label="About P-01"
-            value="v1.0.0"
+            value="v0.9.1"
             leftIcon="information-circle-outline"
             onPress={() => router.push('/(main)/(settings)/about')}
           />
@@ -456,7 +456,7 @@ export default function SettingsScreen() {
 
         {/* Version Footer */}
         <Animated.View entering={FadeInDown.delay(540).duration(300)} style={styles.footer}>
-          <Text style={styles.footerVersion}>Protocol 01 v1.0.0</Text>
+          <Text style={styles.footerVersion}>Protocol 01 v0.9.1</Text>
           <Text style={styles.footerBuilt}>Built on Solana</Text>
         </Animated.View>
       </ScrollView>
