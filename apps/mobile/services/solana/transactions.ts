@@ -347,20 +347,17 @@ export async function getTransactionHistory(
       return [];
     }
 
-    // 2. Batch-fetch parsed transaction details ----------------------------
-    //    getParsedTransactions accepts an array of signatures and returns
-    //    them all in one RPC call, eliminating the 1.5 s per-tx delay.
-    //    Batch size kept small (5) to stay under devnet rate limits,
-    //    especially after STARK chunk uploads that consume RPC quota.
+    // 2. Fetch parsed transaction details ------------------------------------
+    //    Try batch first (fast), fall back to individual fetches if batch
+    //    is not supported (e.g. Helius free tier, privacy relay).
     const BATCH_SIZE = 5;
     const allParsed: (ParsedTransactionWithMeta | null)[] = [];
+    let useBatch = true;
 
     for (let i = 0; i < signatures.length; i += BATCH_SIZE) {
       const batch = signatures.slice(i, i + BATCH_SIZE).map(s => s.signature);
-      let batchRetries = 3;
-      let batchSuccess = false;
 
-      while (batchRetries > 0 && !batchSuccess) {
+      if (useBatch) {
         try {
           const results = await withTimeout(
             connection.getParsedTransactions(batch, {
@@ -370,24 +367,35 @@ export async function getTransactionHistory(
             'getParsedTransactions',
           );
           allParsed.push(...results);
-          batchSuccess = true;
-        } catch (batchError: any) {
-          const errMsg = batchError?.message || String(batchError);
-          batchRetries--;
-          if ((errMsg.includes('429') || errMsg.includes('Too many')) && batchRetries > 0) {
-            // Rate limited — exponential backoff (3s, 6s)
-            await new Promise(resolve => setTimeout(resolve, 3000 * (3 - batchRetries)));
-          } else {
-            console.warn('[Transactions] Batch fetch failed, skipping batch:', errMsg.slice(0, 80));
-            allParsed.push(...batch.map(() => null));
-            batchSuccess = true; // exit loop, already pushed nulls
+        } catch {
+          // Batch not supported — switch to individual fetches for all remaining
+          useBatch = false;
+          console.log('[Transactions] Batch not available — using individual fetches');
+          // Fall through to individual fetch for this batch
+        }
+      }
+
+      if (!useBatch) {
+        // Individual fetch fallback (slower but works with any RPC)
+        for (const sig of batch) {
+          try {
+            const result = await withTimeout(
+              connection.getParsedTransaction(sig, {
+                maxSupportedTransactionVersion: 0,
+              }),
+              TIMEOUT_MS,
+              'getParsedTransaction',
+            );
+            allParsed.push(result);
+          } catch {
+            allParsed.push(null);
           }
         }
       }
 
       // Delay between batches to stay under rate limits
       if (i + BATCH_SIZE < signatures.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, useBatch ? 500 : 200));
       }
     }
 

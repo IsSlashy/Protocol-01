@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,50 +7,85 @@ import {
   Share,
   StyleSheet,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import QRCode from 'react-native-qrcode-svg';
 
 import { useWalletStore } from '@/stores/walletStore';
+import { useAutoShieldStore } from '@/stores/autoShieldStore';
+import { getMetaAddress } from '@/services/stealth/keys';
 import { getCluster } from '@/services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
-// P-01 Design System Colors - NO purple allowed
+// P-01 Design System Colors
 const P01 = {
   cyan: '#39c5bb',
   cyanDim: 'rgba(57, 197, 187, 0.15)',
   pink: '#ff77a8',
   pinkDim: 'rgba(255, 119, 168, 0.15)',
 };
-import QRCode from 'react-native-qrcode-svg';
 
 export default function ReceiveScreen() {
   const router = useRouter();
-  const { publicKey, formattedPublicKey } = useWalletStore();
+  const { publicKey } = useWalletStore();
+  const { generateReceiveAddress, isGenerating, load } = useAutoShieldStore();
 
   const [copied, setCopied] = useState(false);
+  const [copiedMeta, setCopiedMeta] = useState(false);
+  const [stealthAddress, setStealthAddress] = useState<string | null>(null);
+  const [metaAddress, setMetaAddress] = useState<string | null>(null);
+  const [showPublic, setShowPublic] = useState(false);
+
+  // Generate a fresh stealth address + load meta-address on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      await load();
+      if (!showPublic && publicKey) {
+        try {
+          const addr = await generateReceiveAddress();
+          if (mounted) setStealthAddress(addr);
+        } catch (err) {
+          console.error('[Receive] Failed to generate stealth address:', err);
+        }
+        try {
+          const meta = await getMetaAddress();
+          if (mounted) setMetaAddress(meta);
+        } catch {}
+      }
+    })();
+    return () => { mounted = false; };
+  }, [showPublic]);
+
+  const displayAddress = showPublic ? publicKey : stealthAddress;
+  const isPrivate = !showPublic && !!stealthAddress;
 
   const handleCopy = async () => {
-    if (publicKey) {
-      await Clipboard.setStringAsync(publicKey);
+    if (displayAddress) {
+      await Clipboard.setStringAsync(displayAddress);
       setCopied(true);
       if (Platform.OS !== 'web') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
+      // Auto-clear clipboard after 60s (security)
+      setTimeout(async () => {
+        try { await Clipboard.setStringAsync(''); } catch {}
+      }, 60_000);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
   const handleShare = async () => {
-    if (publicKey) {
+    if (displayAddress) {
       try {
         await Share.share({
-          message: `My Solana address: ${publicKey}`,
+          message: displayAddress,
         });
       } catch (error) {
         console.error('Error sharing:', error);
@@ -58,10 +93,15 @@ export default function ReceiveScreen() {
     }
   };
 
-  const formatAddressMultiline = (address: string) => {
-    if (!address) return '';
-    const mid = Math.floor(address.length / 2);
-    return `${address.slice(0, mid)}\n${address.slice(mid)}`;
+  const handleNewAddress = async () => {
+    if (!publicKey) return;
+    try {
+      const addr = await generateReceiveAddress();
+      setStealthAddress(addr);
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch {}
   };
 
   return (
@@ -85,37 +125,78 @@ export default function ReceiveScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Privacy Mode Toggle */}
+        <Animated.View entering={FadeInUp.delay(150)} style={styles.modeToggle}>
+          <TouchableOpacity
+            style={[styles.modeButton, !showPublic && styles.modeButtonActive]}
+            onPress={() => setShowPublic(false)}
+          >
+            <Ionicons
+              name="shield-checkmark"
+              size={16}
+              color={!showPublic ? Colors.background : Colors.textSecondary}
+            />
+            <Text style={[styles.modeButtonText, !showPublic && styles.modeButtonTextActive]}>
+              Private
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeButton, showPublic && styles.modeButtonActive]}
+            onPress={() => setShowPublic(true)}
+          >
+            <Ionicons
+              name="eye-outline"
+              size={16}
+              color={showPublic ? Colors.background : Colors.textSecondary}
+            />
+            <Text style={[styles.modeButtonText, showPublic && styles.modeButtonTextActive]}>
+              Public
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+
         {/* QR Code Section */}
         <Animated.View entering={FadeInUp.delay(200)} style={styles.qrSection}>
-          <View style={styles.qrContainer} accessibilityLabel="QR code for your wallet address" accessibilityRole="image">
-            {publicKey ? (
+          <View style={styles.qrContainer} accessibilityLabel="QR code for receive address" accessibilityRole="image">
+            {displayAddress ? (
               <QRCode
-                value={`solana:${publicKey}`}
+                value={`solana:${displayAddress}`}
                 size={200}
                 color="#000000"
                 backgroundColor="#ffffff"
               />
             ) : (
               <View style={styles.qrPlaceholder}>
-                <Text style={styles.qrPlaceholderText}>Loading...</Text>
+                <ActivityIndicator size="large" color={Colors.primary} />
+                <Text style={styles.qrPlaceholderText}>Generating...</Text>
               </View>
             )}
           </View>
 
-          {/* Network Badge */}
-          <View style={styles.networkBadge}>
-            <View style={styles.networkDot} />
-            <Text style={styles.networkText}>
-              Solana {getCluster() === 'mainnet-beta' ? 'Mainnet' : getCluster() === 'devnet' ? 'Devnet' : 'Testnet'}
-            </Text>
+          {/* Badges */}
+          <View style={styles.badgeRow}>
+            {isPrivate && (
+              <View style={[styles.badge, styles.privacyBadge]}>
+                <Ionicons name="shield-checkmark" size={14} color={P01.cyan} />
+                <Text style={[styles.badgeText, { color: P01.cyan }]}>Auto-shields</Text>
+              </View>
+            )}
+            <View style={styles.badge}>
+              <View style={[styles.networkDot, { backgroundColor: P01.pink }]} />
+              <Text style={[styles.badgeText, { color: P01.pink }]}>
+                Solana {getCluster() === 'mainnet-beta' ? 'Mainnet' : getCluster() === 'devnet' ? 'Devnet' : 'Testnet'}
+              </Text>
+            </View>
           </View>
         </Animated.View>
 
         {/* Address Card */}
         <Animated.View entering={FadeInUp.delay(300)} style={styles.addressCard}>
-          <Text style={styles.addressLabel}>YOUR WALLET ADDRESS</Text>
+          <Text style={styles.addressLabel}>
+            {isPrivate ? 'ONE-TIME PRIVATE ADDRESS' : 'YOUR WALLET ADDRESS'}
+          </Text>
           <Text style={styles.addressText} selectable>
-            {publicKey}
+            {displayAddress || 'Generating...'}
           </Text>
 
           {/* Action Buttons */}
@@ -123,6 +204,7 @@ export default function ReceiveScreen() {
             <TouchableOpacity
               style={[styles.actionButton, copied && styles.actionButtonActive]}
               onPress={handleCopy}
+              disabled={!displayAddress}
               accessibilityRole="button"
               accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
             >
@@ -132,48 +214,111 @@ export default function ReceiveScreen() {
                 color={copied ? Colors.background : Colors.primary}
               />
               <Text style={[styles.actionButtonText, copied && styles.actionButtonTextActive]}>
-                {copied ? 'Copied!' : 'Copy Address'}
+                {copied ? 'Copied!' : 'Copy'}
               </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionButton} onPress={handleShare} accessibilityRole="button" accessibilityLabel="Share address">
+            <TouchableOpacity style={styles.actionButton} onPress={handleShare} disabled={!displayAddress} accessibilityRole="button" accessibilityLabel="Share address">
               <Ionicons name="share-outline" size={20} color={Colors.primary} />
               <Text style={styles.actionButtonText}>Share</Text>
             </TouchableOpacity>
+
+            {isPrivate && (
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={handleNewAddress}
+                disabled={isGenerating}
+                accessibilityRole="button"
+                accessibilityLabel="Generate new address"
+              >
+                <Ionicons name="refresh-outline" size={20} color={Colors.primary} />
+                <Text style={styles.actionButtonText}>New</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </Animated.View>
 
-        {/* Info Card */}
-        <Animated.View entering={FadeInUp.delay(400)} style={styles.infoCard}>
-          <View style={styles.infoRow}>
-            <Ionicons name="information-circle" size={20} color={Colors.primary} />
-            <Text style={styles.infoTitle}>Receiving SOL</Text>
-          </View>
-          <Text style={styles.infoText}>
-            Share your address or QR code with the sender. Transactions on
-            Solana are typically confirmed within 1-2 seconds.
-          </Text>
-        </Animated.View>
+        {/* Meta-Address Card (for P01-to-P01 transfers) */}
+        {isPrivate && metaAddress && (
+          <Animated.View entering={FadeInUp.delay(350)} style={styles.addressCard}>
+            <Text style={styles.addressLabel}>P01 STEALTH ADDRESS (share with P01 users)</Text>
+            <Text style={[styles.addressText, { fontSize: 11 }]} selectable numberOfLines={2}>
+              {metaAddress}
+            </Text>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={[styles.actionButton, copiedMeta && styles.actionButtonActive]}
+                onPress={async () => {
+                  await Clipboard.setStringAsync(metaAddress);
+                  setCopiedMeta(true);
+                  if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  setTimeout(async () => { try { await Clipboard.setStringAsync(''); } catch {} }, 60_000);
+                  setTimeout(() => setCopiedMeta(false), 2000);
+                }}
+              >
+                <Ionicons
+                  name={copiedMeta ? 'checkmark' : 'copy-outline'}
+                  size={20}
+                  color={copiedMeta ? Colors.background : P01.cyan}
+                />
+                <Text style={[styles.actionButtonText, copiedMeta && styles.actionButtonTextActive]}>
+                  {copiedMeta ? 'Copied!' : 'Copy P01 Address'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        )}
+
+        {/* Privacy Info */}
+        {isPrivate ? (
+          <Animated.View entering={FadeInUp.delay(400)} style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <Ionicons name="shield-checkmark" size={20} color={P01.cyan} />
+              <Text style={[styles.infoTitle, { color: P01.cyan }]}>Private Receive</Text>
+            </View>
+            <Text style={styles.infoText}>
+              This is a one-time address. Funds sent here will be automatically
+              shielded into your privacy pool. Your main wallet is never exposed.
+            </Text>
+          </Animated.View>
+        ) : (
+          <Animated.View entering={FadeInUp.delay(400)} style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <Ionicons name="warning" size={20} color={P01.pink} />
+              <Text style={[styles.infoTitle, { color: P01.pink }]}>Public Address</Text>
+            </View>
+            <Text style={styles.infoText}>
+              This is your main wallet address. Sending to this address is visible
+              on-chain and can be linked to your identity. Use Private mode instead.
+            </Text>
+          </Animated.View>
+        )}
 
         {/* Tips */}
         <Animated.View entering={FadeInUp.delay(500)} style={styles.tipsCard}>
-          <Text style={styles.tipsTitle}>Tips</Text>
+          <Text style={styles.tipsTitle}>How it works</Text>
           <View style={styles.tipRow}>
             <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
             <Text style={styles.tipText}>
-              Always verify the address before sending
+              {isPrivate
+                ? 'Fresh address generated each time — never reused'
+                : 'Always verify the address before sending'}
             </Text>
           </View>
           <View style={styles.tipRow}>
             <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
             <Text style={styles.tipText}>
-              This address can receive SOL and SPL tokens
+              {isPrivate
+                ? 'Funds auto-shield to your privacy pool (~60s)'
+                : 'This address can receive SOL and SPL tokens'}
             </Text>
           </View>
           <View style={styles.tipRow}>
             <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
             <Text style={styles.tipText}>
-              You're on Devnet - use the faucet for test SOL
+              {isPrivate
+                ? 'Your real wallet is never visible to the sender'
+                : 'Transactions are visible on-chain to everyone'}
             </Text>
           </View>
         </Animated.View>
@@ -207,6 +352,33 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: FontFamily.semibold,
   },
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.lg,
+    padding: 4,
+    marginBottom: Spacing.xl,
+  },
+  modeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+  },
+  modeButtonActive: {
+    backgroundColor: Colors.primary,
+  },
+  modeButtonText: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    fontFamily: FontFamily.semibold,
+  },
+  modeButtonTextActive: {
+    color: Colors.background,
+  },
   scrollView: {
     flex: 1,
   },
@@ -227,58 +399,19 @@ const styles = StyleSheet.create({
   qrPlaceholder: {
     width: 200,
     height: 200,
-    backgroundColor: Colors.text,
-    position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: Spacing.md,
   },
   qrPlaceholderText: {
     color: Colors.textTertiary,
     fontSize: 14,
   },
-  qrCorner: {
-    position: 'absolute',
-    width: 40,
-    height: 40,
-    borderWidth: 6,
-    borderColor: '#000',
-    borderRadius: 4,
-  },
-  qrCornerTL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0 },
-  qrCornerTR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0 },
-  qrCornerBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0 },
-  qrCornerBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0 },
-  qrLogo: {
-    width: 48,
-    height: 48,
-    borderRadius: BorderRadius.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  qrLogoText: {
-    color: Colors.text,
-    fontSize: 24,
-    fontFamily: FontFamily.bold,
-  },
-  qrPattern: {
-    position: 'absolute',
-    top: 48,
-    left: 48,
-    right: 48,
-    bottom: 48,
+  badgeRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    zIndex: 0,
+    gap: Spacing.sm,
   },
-  qrDot: {
-    width: 8,
-    height: 8,
-    margin: 2,
-    borderRadius: 1,
-  },
-  networkBadge: {
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: P01.pinkDim,
@@ -287,16 +420,17 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     gap: Spacing.xs,
   },
+  privacyBadge: {
+    backgroundColor: P01.cyanDim,
+  },
+  badgeText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+  },
   networkDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: P01.pink,
-  },
-  networkText: {
-    color: P01.pink,
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
   },
   addressCard: {
     backgroundColor: Colors.surfaceSecondary,
@@ -396,5 +530,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 13,
     fontFamily: FontFamily.regular,
+    flex: 1,
   },
 });
