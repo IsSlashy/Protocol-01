@@ -50,16 +50,35 @@ export default function AISettingsScreen() {
   const [geminiKey, setGeminiKey] = useState(config.apiKey || '');
   const [showGroqKey, setShowGroqKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showCustom, setShowCustom] = useState(
+    config.provider === 'openai' || config.provider === 'anthropic' || config.provider === 'ollama'
+  );
+  const [customBaseUrl, setCustomBaseUrl] = useState(config.baseUrl || '');
+  const [customModel, setCustomModel] = useState(config.model || '');
   const nativeAvailable = isOnDeviceAvailable();
 
   const handleProviderChange = (providerId: string) => {
     if (providerId === 'custom') {
-      // Keep current provider but show custom options
+      setShowCustom(!showCustom);
       return;
     }
+    setShowCustom(false);
     // Map pill IDs to actual config keys
     const configKey = providerId === 'gemma' ? 'gemma-cloud' : providerId;
     const defaults = DEFAULT_CONFIGS[configKey] || {};
+    updateConfig({
+      ...defaults,
+      groqApiKey: groqKey || config.groqApiKey,
+      apiKey: geminiKey || config.apiKey,
+      voiceEnabled: config.voiceEnabled,
+      voiceAutoSend: config.voiceAutoSend,
+    } as any);
+  };
+
+  const handleCustomProviderSelect = (provider: 'openai' | 'anthropic' | 'ollama') => {
+    const defaults = DEFAULT_CONFIGS[provider] || {};
+    setCustomBaseUrl((defaults as any).baseUrl || '');
+    setCustomModel((defaults as any).model || '');
     updateConfig({
       ...defaults,
       groqApiKey: groqKey || config.groqApiKey,
@@ -119,7 +138,10 @@ export default function AISettingsScreen() {
     );
   };
 
-  const currentProvider = config.provider === 'gemma-cloud' || (config.provider === 'gemma' && config.gemmaBackend === 'google-ai')
+  const isCustomProvider = config.provider === 'openai' || config.provider === 'anthropic' || config.provider === 'ollama';
+  const currentProvider = isCustomProvider
+    ? 'custom'
+    : config.provider === 'gemma-cloud' || (config.provider === 'gemma' && config.gemmaBackend === 'google-ai')
     ? 'gemma'
     : config.provider === 'llama-local' || (config.provider === 'gemma' && config.gemmaBackend === 'on-device')
     ? 'llama-local'
@@ -282,6 +304,94 @@ export default function AISettingsScreen() {
               );
             })}
           </View>
+
+          {/* Custom provider sub-options */}
+          {showCustom && (
+            <GlassCard>
+              <View style={{ padding: 14 }}>
+                <Text style={{ color: Colors.text, fontSize: FontSize.sm, fontFamily: FontFamily.semibold, marginBottom: 10 }}>
+                  Select Provider
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {(['openai', 'anthropic', 'ollama'] as const).map((p) => {
+                    const labels = { openai: 'OpenAI', anthropic: 'Anthropic', ollama: 'Ollama' };
+                    const isActive = config.provider === p;
+                    return (
+                      <TouchableOpacity
+                        key={p}
+                        onPress={() => handleCustomProviderSelect(p)}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 8,
+                          borderRadius: 10,
+                          alignItems: 'center',
+                          backgroundColor: isActive ? 'rgba(57, 197, 187, 0.15)' : 'rgba(0, 0, 0, 0.3)',
+                          borderWidth: 1,
+                          borderColor: isActive ? 'rgba(57, 197, 187, 0.35)' : 'rgba(57, 197, 187, 0.07)',
+                        }}
+                      >
+                        <Text style={{ color: isActive ? P01Colors.cyan : Colors.text, fontSize: 12, fontFamily: FontFamily.medium }}>
+                          {labels[p]}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {(config.provider === 'openai' || config.provider === 'anthropic' || config.provider === 'ollama') && (
+                <>
+                  <GlassDivider />
+                  <View style={{ padding: 14 }}>
+                    <Text style={{ color: Colors.textSecondary, fontSize: FontSize.xs, marginBottom: 4 }}>Base URL</Text>
+                    <TextInput
+                      value={customBaseUrl}
+                      onChangeText={setCustomBaseUrl}
+                      onBlur={() => updateConfig({ baseUrl: customBaseUrl })}
+                      placeholder={config.provider === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com/v1'}
+                      placeholderTextColor={Colors.textTertiary}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={{
+                        color: Colors.text,
+                        fontSize: FontSize.sm,
+                        fontFamily: FontFamily.mono,
+                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        height: 40,
+                        borderWidth: 1,
+                        borderColor: 'rgba(57, 197, 187, 0.07)',
+                      }}
+                    />
+                  </View>
+                  <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
+                    <Text style={{ color: Colors.textSecondary, fontSize: FontSize.xs, marginBottom: 4 }}>Model</Text>
+                    <TextInput
+                      value={customModel}
+                      onChangeText={setCustomModel}
+                      onBlur={() => updateConfig({ model: customModel })}
+                      placeholder={config.provider === 'ollama' ? 'gemma3:2b' : 'gpt-4o-mini'}
+                      placeholderTextColor={Colors.textTertiary}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={{
+                        color: Colors.text,
+                        fontSize: FontSize.sm,
+                        fontFamily: FontFamily.mono,
+                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        height: 40,
+                        borderWidth: 1,
+                        borderColor: 'rgba(57, 197, 187, 0.07)',
+                      }}
+                    />
+                  </View>
+                </>
+              )}
+            </GlassCard>
+          )}
         </Animated.View>
 
         {/* API Keys */}
