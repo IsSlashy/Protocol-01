@@ -66,6 +66,7 @@ export default function DenominatedNotesScreen() {
   const router = useRouter();
   const [showHistory, setShowHistory] = useState(false);
   const [currentSlot, setCurrentSlot] = useState<number | null>(null);
+  const [expandedNote, setExpandedNote] = useState<string | null>(null);
   const [slotDurationMs, setSlotDurationMs] = useState(DEFAULT_SLOT_DURATION_MS);
 
   const {
@@ -152,8 +153,8 @@ export default function DenominatedNotesScreen() {
             if (!cancelled) setCurrentSlot(s);
           } catch {}
         }, 30_000);
-      } catch (e) {
-        console.error('[DenomNotes] Slot init failed:', e);
+      } catch {
+        // Non-critical — slot polling will retry in 30s
       }
     };
 
@@ -491,37 +492,42 @@ export default function DenominatedNotesScreen() {
             {/* Status + Actions */}
             {note.status === 'mature' && (
               <>
-                <View style={styles.readyBanner}>
+                <TouchableOpacity
+                  style={styles.readyBanner}
+                  onPress={() => setExpandedNote(expandedNote === note.id ? null : note.id)}
+                  activeOpacity={0.7}
+                >
                   <Ionicons name="shield-checkmark" size={14} color={P01Colors.green} />
-                  <Text style={styles.readyBannerText}>Mature · Ready</Text>
-                </View>
-                <View style={styles.noteActions}>
-                  <TouchableOpacity style={styles.actionBtn} onPress={() => handleUnshield(note)}>
-                    <Ionicons name="arrow-up-circle" size={16} color={P01Colors.cyan} />
-                    <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Withdraw</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: P01Colors.cyanDim }]}
-                    onPress={() => handleNearbyShare(note)}
-                  >
-                    <Ionicons name="radio-outline" size={16} color={P01Colors.cyan} />
-                    <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Nearby</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: 'rgba(139, 139, 255, 0.12)' }]}
-                    onPress={() => handleTransfer(note)}
-                  >
-                    <Ionicons name="swap-horizontal" size={16} color="#8B8BFF" />
-                    <Text style={[styles.actionText, { color: '#8B8BFF' }]}>Send</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]}
-                    onPress={() => handleManualShare(note)}
-                  >
-                    <Ionicons name="alert-circle-outline" size={16} color={Colors.textSecondary} />
-                    <Text style={[styles.actionText, { color: Colors.textSecondary }]}>Share</Text>
-                  </TouchableOpacity>
-                </View>
+                  <Text style={[styles.readyBannerText, { flex: 1 }]}>Ready</Text>
+                  <Ionicons
+                    name={expandedNote === note.id ? 'chevron-up' : 'chevron-down'}
+                    size={14}
+                    color={P01Colors.green}
+                  />
+                </TouchableOpacity>
+                {expandedNote === note.id && (
+                  <View style={styles.compactActions}>
+                    <TouchableOpacity style={styles.compactBtn} onPress={() => handleUnshield(note)}>
+                      <Ionicons name="wallet-outline" size={16} color={P01Colors.cyan} />
+                      <Text style={[styles.compactBtnText, { color: P01Colors.cyan }]}>Withdraw</Text>
+                    </TouchableOpacity>
+                    <View style={styles.compactDivider} />
+                    <TouchableOpacity style={styles.compactBtn} onPress={() => handleTransfer(note)}>
+                      <Ionicons name="send-outline" size={16} color={P01Colors.pink} />
+                      <Text style={[styles.compactBtnText, { color: P01Colors.pink }]}>Send</Text>
+                    </TouchableOpacity>
+                    <View style={styles.compactDivider} />
+                    <TouchableOpacity style={styles.compactBtn} onPress={() => handleNearbyShare(note)}>
+                      <Ionicons name="radio-outline" size={16} color="#6C8EFF" />
+                      <Text style={[styles.compactBtnText, { color: '#6C8EFF' }]}>Nearby</Text>
+                    </TouchableOpacity>
+                    <View style={styles.compactDivider} />
+                    <TouchableOpacity style={styles.compactBtn} onPress={() => handleManualShare(note)}>
+                      <Ionicons name="share-outline" size={16} color={Colors.textSecondary} />
+                      <Text style={[styles.compactBtnText, { color: Colors.textSecondary }]}>Share</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </>
             )}
             {(note.status === 'pending' || note.status === 'imported') && (() => {
@@ -1000,7 +1006,33 @@ const styles = StyleSheet.create({
     color: P01Colors.yellow,
   },
 
-  /* ── Note actions ───────────────────────────────────────────── */
+  /* ── Compact collapsible actions ────────────────────────────── */
+  compactActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  compactBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+  },
+  compactBtnText: {
+    fontSize: 12,
+    fontFamily: FontFamily.medium,
+  },
+  compactDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
   noteActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
