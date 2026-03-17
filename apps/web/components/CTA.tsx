@@ -107,10 +107,10 @@ export default function CTA() {
                   <Tag
                     key={option.platform}
                     {...(isDisabled ? {} : { href: option.link, download: option.filename })}
-                    className={`group flex items-center gap-4 p-4 rounded-xl bg-p01-void border transition-all duration-300 no-underline ${
+                    className={`group flex items-center gap-4 p-4 rounded-2xl bg-white/[0.02] backdrop-blur-md border transition-all duration-300 no-underline ${
                       isDisabled
-                        ? 'border-p01-border/50 opacity-50 cursor-not-allowed'
-                        : 'border-p01-border hover:border-p01-cyan/50 cursor-pointer'
+                        ? 'border-white/[0.04] opacity-50 cursor-not-allowed'
+                        : 'border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12] cursor-pointer'
                     }`}
                   >
                     <div className={`w-12 h-12 rounded-xl bg-p01-surface flex items-center justify-center transition-colors ${
@@ -184,7 +184,7 @@ export default function CTA() {
             { value: "0", label: "KYC Required" },
             { value: "∞", label: "Privacy" },
           ].map((stat) => (
-            <div key={stat.label} className="text-center">
+            <div key={stat.label} className="text-center bg-white/[0.03] backdrop-blur-sm border border-white/[0.06] rounded-2xl px-6 py-4 hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
               <div className="text-3xl sm:text-4xl font-bold font-display text-white mb-2">
                 {stat.value}
               </div>
