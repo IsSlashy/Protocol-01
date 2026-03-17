@@ -24,6 +24,7 @@ import { getConnection } from '../services/solana/connection';
 import { useWalletStore } from './walletStore';
 import { useDenominatedPoolStore } from './denominatedPoolStore';
 import { findPool } from '../services/denominatedPool';
+import { getOrCreateStealthKeys } from '../services/stealth/keys';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -124,11 +125,13 @@ export const useAutoShieldStore = create<AutoShieldState>((set, get) => ({
 
       const counter = get().counter;
 
-      // Deterministic derivation: HMAC(walletPubKey, "p01_auto_receive_<counter>")
-      // This allows recovery from the wallet seed + counter
+      // Deterministic derivation: HMAC(viewingSecretKey, "p01_auto_receive_<counter>")
+      // Uses the stealth viewing secret key (SecureStore) — NOT the public key.
+      // Only the device owner can derive receive addresses.
+      const stealthKeys = await getOrCreateStealthKeys();
       const seed = hmac(
         sha256,
-        new TextEncoder().encode(publicKey),
+        stealthKeys.viewingSecretKey,
         `p01_auto_receive_${counter}`,
       );
 
