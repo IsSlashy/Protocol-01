@@ -403,6 +403,9 @@ async function sendToProvider(
     if (activeConfig.provider === 'llama-local') {
       return await sendToLlamaLocal(allMessages, activeConfig, context);
     }
+    if ((activeConfig.provider === 'gemma') && activeConfig.gemmaBackend === 'on-device') {
+      return await sendToLlamaLocal(allMessages, activeConfig, context);
+    }
     if (activeConfig.provider === 'gemma' || activeConfig.provider === 'gemma-cloud') {
       return await sendToGemma(allMessages, activeConfig, context);
     }
@@ -442,7 +445,16 @@ export async function sendMessageStreaming(
     ...messages,
   ];
 
-  // 1. Groq streaming (highest priority when key available)
+  // 1. On-device Gemma — skip cloud providers entirely
+  if (activeConfig.provider === 'gemma' && activeConfig.gemmaBackend === 'on-device' && LlamaService.isModelLoaded()) {
+    try {
+      return await streamFromLocal(allMessages, activeConfig, onToken);
+    } catch (error: any) {
+      console.warn('[AI] Local streaming failed:', error.message);
+    }
+  }
+
+  // 2. Groq streaming (when key available)
   const groqKey = activeConfig.groqApiKey || GROQ_API_KEY;
   if (groqKey && (activeConfig.provider === 'groq' || activeConfig.provider === 'gemma' || activeConfig.provider === 'gemma-cloud')) {
     try {
@@ -452,7 +464,7 @@ export async function sendMessageStreaming(
     }
   }
 
-  // 2. Gemini streaming
+  // 3. Gemini streaming
   const geminiKey = activeConfig.apiKey || GEMINI_API_KEY;
   if (geminiKey) {
     try {
@@ -462,7 +474,7 @@ export async function sendMessageStreaming(
     }
   }
 
-  // 3. Gemma local with onToken callback
+  // 4. Gemma local fallback
   if (LlamaService.isModelLoaded()) {
     try {
       return await streamFromLocal(allMessages, activeConfig, onToken);
