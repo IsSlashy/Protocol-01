@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, JetBrains_Mono, Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import DepthBackground from "@/components/DepthBackground";
 
@@ -84,6 +85,7 @@ export default function RootLayout({
           <main className="relative z-10">{children}</main>
         </div>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

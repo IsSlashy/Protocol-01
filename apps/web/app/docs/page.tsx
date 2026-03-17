@@ -81,7 +81,7 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
     description:
       "Dual proof system: Groth16 ZK-SNARKs for compact on-chain verification via BN254 pairing, and STARKs (Winterfell) for quantum-resistant proofs over the Goldilocks field. STARKs are hash-based — immune to Shor's algorithm — and are now the default for denominated pool unshielding.",
     details: [
-      "6 Groth16 circuits: transfer (12,222c), denominated_pool (4,273c), denominated_transfer (5,628c), confidential_balance (1,382c), balance_proof (644c), subscriber_ownership (~500c)",
+      "7 Groth16 circuits: transfer (12,222c), denominated_pool (4,273c), denominated_transfer (5,628c), confidential_balance (1,382c), balance_proof (644c), subscriber_ownership (~500c), note_split (~10,000c)",
       "6 STARK AIRs: subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer",
       "STARK: Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR (x^7, 30 rounds)",
       "Compact STARK proofs (9-15KB) with Blake3 Merkle trees, 16 FRI queries, 128-bit security",
@@ -714,7 +714,7 @@ const docsArchLayers = [
     name: "Solana Blockchain",
     hex: "#ffcc00",
     nodes: [
-      { label: "15 PROGRAMS", sub: "Anchor 0.32.1 / Rust" },
+      { label: "14 PROGRAMS", sub: "Anchor 0.32.1 / Rust" },
       { label: "SPL Tokens", sub: "Token Standard" },
       { label: "alt_bn128 + FRI", sub: "ZK Verification" },
     ],
@@ -1050,11 +1050,11 @@ export default function DocsPage() {
             <div className="flex flex-wrap items-center justify-center gap-6 text-sm">
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-[#39c5bb]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">6</span> ZK Circuits</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">7</span> ZK Circuits</span>
               </div>
               <div className="flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-[#ff77a8]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">13</span> Programs</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">14</span> Programs</span>
               </div>
               <div className="flex items-center gap-2">
                 <Code className="w-4 h-4 text-[#00ffe5]" />
@@ -1062,7 +1062,7 @@ export default function DocsPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-[#ffcc00]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">22</span> Modules</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">21</span> Modules</span>
               </div>
             </div>
           </motion.div>
@@ -1366,7 +1366,7 @@ export default function DocsPage() {
               <span className="text-sm text-[#888892] group-hover:text-white transition-colors">
                 Design & Architecture Document
               </span>
-              <span className="text-xs text-[#555560] ml-2 font-mono">PDF · 17 pages</span>
+              <span className="text-xs text-[#555560] ml-2 font-mono">PDF · 18 pages</span>
             </div>
             <Download className="w-3.5 h-3.5 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
           </a>
