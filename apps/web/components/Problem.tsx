@@ -144,7 +144,7 @@ export default function Problem() {
             <motion.div
               key={index}
               variants={itemVariants}
-              className="card-hover p-6 group"
+              className="bg-white/[0.02] backdrop-blur-md border border-white/[0.06] rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300 p-6 group"
             >
               {/* Industrial square icon */}
               <div className="flex items-center justify-center w-12 h-12 bg-[#ffcc00]/10 text-[#ffcc00] border border-[#ffcc00]/30 mb-4 group-hover:scale-105 transition-transform">
@@ -181,7 +181,7 @@ export default function Problem() {
                 <div className="text-p01-yellow font-mono text-sm mb-4 uppercase tracking-wider">
                   WITHOUT PROTOCOL 01
                 </div>
-                <div className="bg-[#0a0a0c] p-6 border border-[#ffcc00]/30">
+                <div className="bg-white/[0.02] backdrop-blur-md p-6 border border-white/[0.06] rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
                   <div className="space-y-3 font-mono text-sm">
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Eye className="text-p01-yellow" size={16} />
@@ -219,7 +219,7 @@ export default function Problem() {
                 <div className="text-p01-cyan font-mono text-sm mb-4 uppercase tracking-wider">
                   WITH PROTOCOL 01
                 </div>
-                <div className="bg-[#0a0a0c] p-6 border border-[#39c5bb]/30">
+                <div className="bg-white/[0.03] backdrop-blur-md p-6 border border-white/[0.08] rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
                   <div className="space-y-3 font-mono text-sm">
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />

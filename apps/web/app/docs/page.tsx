@@ -902,7 +902,7 @@ function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
       transition={{ delay: index * 0.03 }}
-      className="border border-[#2a2a30] rounded-lg overflow-hidden bg-[#151518] hover:border-[#39c5bb]/20 transition-colors"
+      className="border border-white/[0.06] rounded-2xl overflow-hidden bg-white/[0.02] backdrop-blur-sm hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors"
     >
       {/* Header — always visible, clickable */}
       <button
@@ -1094,7 +1094,7 @@ export default function DocsPage() {
             Security Model
           </h2>
           <div className="grid md:grid-cols-2 gap-6">
-            <div className="bg-[#151518] border border-[#2a2a30] p-6 rounded-lg">
+            <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
               <h3 className="text-lg font-bold text-white mb-4">Threat Model</h3>
               <ul className="space-y-2 text-sm text-[#888892]">
                 <li className="flex items-start gap-2">
@@ -1115,7 +1115,7 @@ export default function DocsPage() {
                 </li>
               </ul>
             </div>
-            <div className="bg-[#151518] border border-[#2a2a30] p-6 rounded-lg">
+            <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
               <h3 className="text-lg font-bold text-white mb-4">Guarantees</h3>
               <ul className="space-y-2 text-sm text-[#888892]">
                 <li className="flex items-start gap-2">
@@ -1143,7 +1143,7 @@ export default function DocsPage() {
           </div>
 
           {/* Security Hardening */}
-          <div className="mt-6 bg-[#151518] border border-[#2a2a30] p-6 rounded-lg">
+          <div className="mt-6 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
             <h3 className="text-lg font-bold text-white mb-4">Security Hardening (Mobile)</h3>
             <div className="grid md:grid-cols-3 gap-4 text-sm text-[#888892]">
               <ul className="space-y-2">
@@ -1207,7 +1207,7 @@ export default function DocsPage() {
           </p>
 
           {/* Comparison table */}
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-2xl">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#2a2a30]">
@@ -1263,7 +1263,7 @@ export default function DocsPage() {
 
           {/* Visual summary */}
           <div className="grid md:grid-cols-2 gap-6 mt-8">
-            <div className="bg-[#151518] border border-[#39c5bb]/20 p-6 rounded-lg">
+            <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
               <div className="flex items-center gap-3 mb-4">
                 <Shield className="w-5 h-5 text-[#39c5bb]" />
                 <h3 className="text-lg font-bold text-white">MPC Off — Already Private</h3>
@@ -1287,7 +1287,7 @@ export default function DocsPage() {
                 </li>
               </ul>
             </div>
-            <div className="bg-[#151518] border border-[#f59e0b]/20 p-6 rounded-lg">
+            <div className="bg-white/[0.03] backdrop-blur-sm border border-white/[0.08] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
               <div className="flex items-center gap-3 mb-4">
                 <Network className="w-5 h-5 text-[#f59e0b]" />
                 <h3 className="text-lg font-bold text-white">MPC On — Maximum Privacy</h3>
@@ -1328,7 +1328,7 @@ export default function DocsPage() {
               <a
                 key={tech.id}
                 href={`#${tech.id}`}
-                className="bg-[#151518] border border-[#2a2a30] p-4 rounded-lg hover:border-[#39c5bb]/50 transition-colors"
+                className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-4 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-[#39c5bb]">{tech.icon}</span>
@@ -1346,7 +1346,7 @@ export default function DocsPage() {
           <a
             href="/protocol-01-design-document.pdf"
             download
-            className="group flex items-center gap-3 px-5 py-3 border border-[#2a2a30] hover:border-[#39c5bb]/40 rounded-lg transition-all duration-300 hover:bg-[#151518]"
+            className="group flex items-center gap-3 px-5 py-3 border rounded-2xl transition-all duration-300 bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
           >
             <FileText className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
             <div>
