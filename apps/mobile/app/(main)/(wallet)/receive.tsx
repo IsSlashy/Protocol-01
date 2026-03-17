@@ -238,34 +238,25 @@ export default function ReceiveScreen() {
           </View>
         </Animated.View>
 
-        {/* Meta-Address Card (for P01-to-P01 transfers) */}
+        {/* P01 ID — persistent stealth address for P01-to-P01 transfers */}
         {isPrivate && metaAddress && (
-          <Animated.View entering={FadeInUp.delay(350)} style={styles.addressCard}>
-            <Text style={styles.addressLabel}>P01 STEALTH ADDRESS (share with P01 users)</Text>
-            <Text style={[styles.addressText, { fontSize: 11 }]} selectable numberOfLines={2}>
-              {metaAddress}
-            </Text>
-            <View style={styles.actionButtons}>
-              <TouchableOpacity
-                style={[styles.actionButton, copiedMeta && styles.actionButtonActive]}
-                onPress={async () => {
-                  await Clipboard.setStringAsync(metaAddress);
-                  setCopiedMeta(true);
-                  if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  setTimeout(async () => { try { await Clipboard.setStringAsync(''); } catch {} }, 60_000);
-                  setTimeout(() => setCopiedMeta(false), 2000);
-                }}
-              >
-                <Ionicons
-                  name={copiedMeta ? 'checkmark' : 'copy-outline'}
-                  size={20}
-                  color={copiedMeta ? Colors.background : P01.cyan}
-                />
-                <Text style={[styles.actionButtonText, copiedMeta && styles.actionButtonTextActive]}>
-                  {copiedMeta ? 'Copied!' : 'Copy P01 Address'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+          <Animated.View entering={FadeInUp.delay(350)}>
+            <TouchableOpacity
+              style={styles.metaRow}
+              onPress={async () => {
+                await Clipboard.setStringAsync(metaAddress);
+                setCopiedMeta(true);
+                if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                setTimeout(async () => { try { await Clipboard.setStringAsync(''); } catch {} }, 60_000);
+                setTimeout(() => setCopiedMeta(false), 2000);
+              }}
+            >
+              <Ionicons name="finger-print" size={16} color={P01.cyan} />
+              <Text style={styles.metaLabel}>
+                {copiedMeta ? 'P01 ID copied!' : 'Copy P01 ID (for P01 users)'}
+              </Text>
+              <Ionicons name={copiedMeta ? 'checkmark' : 'copy-outline'} size={14} color={P01.cyan} />
+            </TouchableOpacity>
           </Animated.View>
         )}
 
@@ -506,6 +497,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: FontFamily.regular,
     lineHeight: 20,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+    marginBottom: Spacing.xl,
+  },
+  metaLabel: {
+    color: P01.cyan,
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
   },
   tipsCard: {
     backgroundColor: Colors.surfaceSecondary,

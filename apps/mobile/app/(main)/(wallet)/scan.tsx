@@ -94,6 +94,12 @@ export default function ScanScreen() {
         setError('Invalid ZK address format.');
         setTimeout(() => { setError(''); setIsScanning(true); }, 3000);
       }
+    } else if (address.startsWith('st:01') || address.startsWith('st:02')) {
+      // P01 stealth meta-address → route to Private Send
+      router.push({
+        pathname: '/(main)/(privacy)/private-send',
+        params: { address },
+      });
     } else if (isValidSolanaAddress(address) || address.endsWith('.sol')) {
       // Navigate back to send screen with the address
       router.push({
