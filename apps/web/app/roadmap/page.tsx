@@ -503,7 +503,7 @@ export default function RoadmapPage() {
             Shape the Future of Privacy
           </h3>
           <p className="text-sm mb-8 max-w-md mx-auto" style={{ color: THEME.mutedColor }}>
-            P-01 is open source. Contribute, suggest features, or follow our progress.
+            Join the community. Test, suggest features, or follow our progress.
           </p>
           <div className="flex items-center justify-center gap-4 flex-wrap">
             <a

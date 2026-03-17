@@ -312,7 +312,7 @@ function Ecosystem() {
             { value: "28+", label: "Technologies" },
             { value: "13", label: "On-chain Programs" },
             { value: "8", label: "Client SDKs" },
-            { value: "100%", label: "Open Source" },
+            { value: "100%", label: "Self-Custody" },
           ].map((s) => (
             <div key={s.label} className="text-center">
               <div className="text-lg sm:text-xl font-bold font-display text-white">
