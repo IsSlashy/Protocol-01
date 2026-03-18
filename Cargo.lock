@@ -1759,6 +1759,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "encrypted-ixs"
+version = "0.1.0"
+dependencies = [
+ "arcis",
+ "blake3",
+]
+
+[[package]]
 name = "enum-ordinalize"
 version = "4.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2590,14 +2598,6 @@ dependencies = [
  "arcium-anchor",
  "arcium-client",
  "arcium-macros",
- "blake3",
-]
-
-[[package]]
-name = "p01-arcium-circuits"
-version = "0.1.0"
-dependencies = [
- "arcis",
  "blake3",
 ]
 

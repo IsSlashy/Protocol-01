@@ -141,6 +141,59 @@ mod circuits {
     }
 
     // =========================================================================
+    // UC6b: Private Binary Voting (Optimized — 2 comparisons instead of 8)
+    // =========================================================================
+    //
+    // Lightweight variant for yes/no (0/1) votes.
+    // Only 2 option buckets → 75% fewer MPC comparisons.
+
+    #[derive(Copy, Clone)]
+    pub struct BinaryTally {
+        pub option_0: u64,
+        pub option_1: u64,
+        pub total_votes: u64,
+    }
+
+    #[derive(Copy, Clone)]
+    pub struct BinaryVoteInput {
+        /// Option index (0 = no, 1 = yes)
+        pub option: u64,
+        /// Vote weight (1 for unweighted, token amount for weighted)
+        pub weight: u64,
+    }
+
+    /// Cast an encrypted binary vote. 2 comparisons instead of 8.
+    /// MPC adds weight to option_0 or option_1 without revealing which.
+    #[instruction]
+    pub fn private_vote_binary(
+        vote: Enc<Shared, BinaryVoteInput>,
+        tally: Enc<Mxe, BinaryTally>,
+    ) -> Enc<Mxe, BinaryTally> {
+        let v = vote.to_arcis();
+        let mut t = tally.to_arcis();
+
+        let w = v.weight;
+        let opt = v.option;
+
+        t.option_0 = t.option_0 + w * (if opt == 0 { 1 } else { 0 });
+        t.option_1 = t.option_1 + w * (if opt == 1 { 1 } else { 0 });
+        t.total_votes = t.total_votes + 1;
+
+        Mxe::get().from_arcis(t)
+    }
+
+    /// Reveal the final binary tally after voting period ends.
+    #[instruction]
+    pub fn finalize_tally_binary(tally: Enc<Mxe, BinaryTally>) -> BinaryTally {
+        let t = tally.to_arcis();
+        BinaryTally {
+            option_0: t.option_0.reveal(),
+            option_1: t.option_1.reveal(),
+            total_votes: t.total_votes.reveal(),
+        }
+    }
+
+    // =========================================================================
     // UC3: Hidden Nullifier Commitment
     // =========================================================================
     //

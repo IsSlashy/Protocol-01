@@ -22,6 +22,7 @@ echo "  Build complete."
 # Step 2: Check compiled circuits exist
 echo "[2/4] Verifying compiled circuits..."
 for circuit in balance_audit finalize_audit private_vote finalize_tally \
+               private_vote_binary finalize_tally_binary \
                nullifier_commit private_lookup register_viewing_key \
                stealth_scan_single threshold_decrypt; do
   if [ -f "build/${circuit}.arcis" ]; then
