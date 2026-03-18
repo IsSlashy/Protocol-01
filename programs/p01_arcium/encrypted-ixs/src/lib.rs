@@ -225,7 +225,7 @@ mod circuits {
         let n = input.to_arcis();
 
         // SHA3-256 commitment of the nullifier bytes
-        let mut hasher = SHA3_256::new();
+        let hasher = SHA3_256::new();
         let commitment = hasher.digest(&n.data);
 
         // Return revealed commitment (public on-chain)
@@ -360,7 +360,7 @@ mod circuits {
             hash_input[i + 32] = ann.ephemeral_key[i];
         }
 
-        let mut hasher = SHA3_256::new();
+        let hasher = SHA3_256::new();
         let shared_secret = hasher.digest(&hash_input);
 
         // view_tag = shared_secret[0]
