@@ -13,6 +13,8 @@ const COMP_DEF_PRIVATE_LOOKUP: u32 = comp_def_offset("private_lookup");
 const COMP_DEF_REGISTER_VIEWING_KEY: u32 = comp_def_offset("register_viewing_key");
 const COMP_DEF_STEALTH_SCAN: u32 = comp_def_offset("stealth_scan_single");
 const COMP_DEF_THRESHOLD_DECRYPT: u32 = comp_def_offset("threshold_decrypt");
+const COMP_DEF_PRIVATE_VOTE_BINARY: u32 = comp_def_offset("private_vote_binary");
+const COMP_DEF_FINALIZE_TALLY_BINARY: u32 = comp_def_offset("finalize_tally_binary");
 
 // ============================================================================
 // Events
@@ -40,6 +42,13 @@ pub struct NullifierCommitmentEvent {
 #[event]
 pub struct StealthScanMatchEvent {
     pub matches: u8,
+}
+
+#[event]
+pub struct BinaryTallyResultEvent {
+    pub option_0: u64,
+    pub option_1: u64,
+    pub total_votes: u64,
 }
 
 /// tx_chunk is blake3-hashed before emission — the decrypted relay payload
@@ -102,6 +111,16 @@ pub mod p01_arcium {
     }
 
     pub fn init_threshold_decrypt_comp_def(ctx: Context<InitThresholdDecryptCompDef>) -> Result<()> {
+        init_comp_def(ctx.accounts, None, None)?;
+        Ok(())
+    }
+
+    pub fn init_private_vote_binary_comp_def(ctx: Context<InitPrivateVoteBinaryCompDef>) -> Result<()> {
+        init_comp_def(ctx.accounts, None, None)?;
+        Ok(())
+    }
+
+    pub fn init_finalize_tally_binary_comp_def(ctx: Context<InitFinalizeTallyBinaryCompDef>) -> Result<()> {
         init_comp_def(ctx.accounts, None, None)?;
         Ok(())
     }
@@ -380,6 +399,142 @@ pub mod p01_arcium {
             t.field_4, t.field_5, t.field_6, t.field_7
         );
 
+        Ok(())
+    }
+
+    // ========================================================================
+    // UC6b: Private Binary Vote (optimized — 2 comparisons)
+    // ========================================================================
+
+    pub fn private_vote_binary(
+        ctx: Context<PrivateVoteBinaryQueue>,
+        computation_offset: u64,
+        encrypted_option: [u8; 32],
+        encrypted_weight: [u8; 32],
+        pub_key: [u8; 32],
+        nonce: u128,
+    ) -> Result<()> {
+        let args = ArgBuilder::new()
+            .x25519_pubkey(pub_key)
+            .plaintext_u128(nonce)
+            .encrypted_u64(encrypted_option)
+            .encrypted_u64(encrypted_weight)
+            .build();
+
+        ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
+
+        queue_computation(
+            ctx.accounts,
+            computation_offset,
+            args,
+            vec![PrivateVoteBinaryCallback::callback_ix(
+                computation_offset,
+                &ctx.accounts.mxe_account,
+                &[],
+            )?],
+            1,
+            0,
+        )?;
+
+        Ok(())
+    }
+
+    #[arcium_callback(encrypted_ix = "private_vote_binary")]
+    pub fn private_vote_binary_callback(
+        ctx: Context<PrivateVoteBinaryCallback>,
+        output: SignedComputationOutputs<PrivateVoteBinaryOutput>,
+    ) -> Result<()> {
+        match output.verify_output(
+            &ctx.accounts.cluster_account,
+            &ctx.accounts.computation_account,
+        ) {
+            Ok(_) => {
+                msg!("BinaryVoteRecorded");
+                Ok(())
+            }
+            Err(_) => Err(ErrorCode::AbortedComputation.into()),
+        }
+    }
+
+    pub fn finalize_tally_binary(
+        ctx: Context<FinalizeTallyBinaryQueue>,
+        computation_offset: u64,
+    ) -> Result<()> {
+        let remaining = &ctx.remaining_accounts;
+        require!(!remaining.is_empty(), ErrorCode::Unauthorized);
+
+        let proposal_info = &remaining[0];
+        require!(
+            proposal_info.owner == &crate::ID,
+            ErrorCode::Unauthorized
+        );
+
+        let proposal_data = proposal_info.try_borrow_data()?;
+        require!(proposal_data.len() >= 8 + 32 + 32 + 1 + 8 + 1, ErrorCode::Unauthorized);
+
+        let proposal_authority = Pubkey::try_from(&proposal_data[8..40])
+            .map_err(|_| ErrorCode::Unauthorized)?;
+        let deadline = i64::from_le_bytes(
+            proposal_data[72..80].try_into().map_err(|_| ErrorCode::Unauthorized)?
+        );
+        let finalized = proposal_data[80] == 1;
+
+        require!(
+            ctx.accounts.payer.key() == proposal_authority,
+            ErrorCode::Unauthorized
+        );
+
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp > deadline,
+            ErrorCode::VotingNotEnded
+        );
+
+        require!(!finalized, ErrorCode::AlreadyFinalized);
+
+        drop(proposal_data);
+
+        let args = ArgBuilder::new().build();
+
+        ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
+
+        queue_computation(
+            ctx.accounts,
+            computation_offset,
+            args,
+            vec![FinalizeTallyBinaryCallback::callback_ix(
+                computation_offset,
+                &ctx.accounts.mxe_account,
+                &[],
+            )?],
+            1,
+            0,
+        )?;
+
+        Ok(())
+    }
+
+    #[arcium_callback(encrypted_ix = "finalize_tally_binary")]
+    pub fn finalize_tally_binary_callback(
+        ctx: Context<FinalizeTallyBinaryCallback>,
+        output: SignedComputationOutputs<FinalizeTallyBinaryOutput>,
+    ) -> Result<()> {
+        let o = match output.verify_output(
+            &ctx.accounts.cluster_account,
+            &ctx.accounts.computation_account,
+        ) {
+            Ok(o) => o,
+            Err(_) => return Err(ErrorCode::AbortedComputation.into()),
+        };
+
+        let t = &o.field_0;
+        emit!(BinaryTallyResultEvent {
+            option_0: t.field_0,
+            option_1: t.field_1,
+            total_votes: t.field_2,
+        });
+
+        msg!("BinaryTallyResult: no={}, yes={}", t.field_0, t.field_1);
         Ok(())
     }
 
@@ -873,6 +1028,46 @@ pub struct InitThresholdDecryptCompDef<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[init_computation_definition_accounts("private_vote_binary", payer)]
+#[derive(Accounts)]
+pub struct InitPrivateVoteBinaryCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Box<Account<'info, MXEAccount>>,
+    #[account(mut)]
+    /// CHECK: comp_def_account
+    pub comp_def_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_mxe_lut_pda!(mxe_account.lut_offset_slot))]
+    /// CHECK: address_lookup_table
+    pub address_lookup_table: UncheckedAccount<'info>,
+    #[account(address = LUT_PROGRAM_ID)]
+    /// CHECK: lut_program
+    pub lut_program: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
+#[init_computation_definition_accounts("finalize_tally_binary", payer)]
+#[derive(Accounts)]
+pub struct InitFinalizeTallyBinaryCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Box<Account<'info, MXEAccount>>,
+    #[account(mut)]
+    /// CHECK: comp_def_account
+    pub comp_def_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_mxe_lut_pda!(mxe_account.lut_offset_slot))]
+    /// CHECK: address_lookup_table
+    pub address_lookup_table: UncheckedAccount<'info>,
+    #[account(address = LUT_PROGRAM_ID)]
+    /// CHECK: lut_program
+    pub lut_program: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
 // ============================================================================
 // Arcium account macros — queue computation (12 required fields each)
 // ============================================================================
@@ -1192,6 +1387,76 @@ pub struct ThresholdDecryptQueue<'info> {
     pub arcium_program: Program<'info, Arcium>,
 }
 
+#[queue_computation_accounts("private_vote_binary", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct PrivateVoteBinaryQueue<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        init_if_needed, space = 9, payer = payer,
+        seeds = [&SIGN_PDA_SEED], bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, ArciumSignerAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: mempool_account
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: executing_pool
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset, mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_PRIVATE_VOTE_BINARY))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(mut, address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
+}
+
+#[queue_computation_accounts("finalize_tally_binary", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct FinalizeTallyBinaryQueue<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        init_if_needed, space = 9, payer = payer,
+        seeds = [&SIGN_PDA_SEED], bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, ArciumSignerAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: mempool_account
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: executing_pool
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset, mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_FINALIZE_TALLY_BINARY))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(mut, address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
+}
+
 // ============================================================================
 // Arcium account macros — callback (6 required fields each)
 // ============================================================================
@@ -1337,6 +1602,40 @@ pub struct StealthScanSingleCallback<'info> {
 pub struct ThresholdDecryptCallback<'info> {
     pub arcium_program: Program<'info, Arcium>,
     #[account(address = derive_comp_def_pda!(COMP_DEF_THRESHOLD_DECRYPT))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    /// CHECK: instructions_sysvar
+    pub instructions_sysvar: AccountInfo<'info>,
+}
+
+#[callback_accounts("private_vote_binary")]
+#[derive(Accounts)]
+pub struct PrivateVoteBinaryCallback<'info> {
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_PRIVATE_VOTE_BINARY))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    /// CHECK: instructions_sysvar
+    pub instructions_sysvar: AccountInfo<'info>,
+}
+
+#[callback_accounts("finalize_tally_binary")]
+#[derive(Accounts)]
+pub struct FinalizeTallyBinaryCallback<'info> {
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_FINALIZE_TALLY_BINARY))]
     pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
     #[account(address = derive_mxe_pda!())]
     pub mxe_account: Account<'info, MXEAccount>,

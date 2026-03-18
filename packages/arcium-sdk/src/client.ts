@@ -41,6 +41,7 @@ export const ARCIUM_CLUSTER_OFFSET = 456;
 export const CIRCUITS = {
   BALANCE_AUDIT: 'balance_audit',
   PRIVATE_VOTE: 'private_vote',
+  PRIVATE_VOTE_BINARY: 'private_vote_binary',
   NULLIFIER_COMMIT: 'nullifier_commit',
   PRIVATE_LOOKUP: 'private_lookup',
   STEALTH_SCAN: 'stealth_scan',
