@@ -195,3 +195,108 @@ export async function finalizeTally(
 
   return { tallies, totalVotes, winner, signature: finalizeSig };
 }
+
+// ============================================================================
+// UC6b: Binary Voting (optimized — 2 MPC comparisons instead of 8)
+// ============================================================================
+
+export interface BinaryTallyResult {
+  /** Votes for option 0 (no) */
+  no: bigint;
+  /** Votes for option 1 (yes) */
+  yes: bigint;
+  /** Total votes cast */
+  totalVotes: bigint;
+  /** Finalization signature */
+  signature: string;
+}
+
+/**
+ * Cast an encrypted binary vote (yes/no).
+ * Uses private_vote_binary circuit — 75% fewer MPC comparisons.
+ */
+export async function castBinaryVote(
+  client: ArciumClient,
+  program: anchor.Program,
+  proposalId: Uint8Array,
+  vote: boolean,
+  weight: bigint = 1n
+): Promise<VoteReceipt> {
+  const optionIndex = vote ? 1 : 0;
+  const payload = client.encrypt([BigInt(optionIndex), weight]);
+  const computationOffset = client.newComputationOffset();
+  const accounts = client.getComputationAccounts(CIRCUITS.PRIVATE_VOTE_BINARY, computationOffset);
+
+  const [proposalAddress] = getProposalAddress(client.programId, proposalId);
+  const [ballotAddress] = getBallotAddress(client.programId, proposalId, client.wallet.publicKey);
+
+  const sig = await program.methods
+    .privateVoteBinary(
+      computationOffset,
+      Array.from(payload.ciphertexts[0]),
+      Array.from(payload.ciphertexts[1]),
+      Array.from(payload.publicKey),
+      client.nonceToU128(payload.nonce)
+    )
+    .accountsPartial({
+      ...accounts,
+      proposal: proposalAddress,
+      ballot: ballotAddress,
+      voter: client.wallet.publicKey,
+    })
+    .rpc({ commitment: 'confirmed' });
+
+  return {
+    computationOffset,
+    voter: client.wallet.publicKey,
+    encryptedVote: payload.ciphertexts[0],
+    signature: sig,
+  };
+}
+
+/**
+ * Finalize binary voting and reveal tally.
+ * Only callable by authority after deadline.
+ */
+export async function finalizeBinaryTally(
+  client: ArciumClient,
+  program: anchor.Program,
+  proposalId: Uint8Array
+): Promise<BinaryTallyResult> {
+  const computationOffset = client.newComputationOffset();
+  const accounts = client.getComputationAccounts(CIRCUITS.PRIVATE_VOTE_BINARY, computationOffset);
+  const [proposalAddress] = getProposalAddress(client.programId, proposalId);
+
+  const sig = await program.methods
+    .finalizeTallyBinary(computationOffset)
+    .accountsPartial({
+      ...accounts,
+      proposal: proposalAddress,
+      authority: client.wallet.publicKey,
+    })
+    .remainingAccounts([
+      { pubkey: proposalAddress, isWritable: false, isSigner: false },
+    ])
+    .rpc({ commitment: 'confirmed' });
+
+  const finalizeSig = await client.awaitFinalization(computationOffset);
+
+  const tx = await client.connection.getTransaction(finalizeSig, {
+    commitment: 'confirmed',
+    maxSupportedTransactionVersion: 0,
+  });
+
+  const logs = tx?.meta?.logMessages || [];
+  const tallyLine = logs.find((l) => l.includes('BinaryTallyResult:'));
+  let no = 0n;
+  let yes = 0n;
+  if (tallyLine) {
+    const match = tallyLine.match(/no=(\d+), yes=(\d+)/);
+    if (match) {
+      no = BigInt(match[1]);
+      yes = BigInt(match[2]);
+    }
+  }
+
+  return { no, yes, totalVotes: no + yes, signature: finalizeSig };
+}

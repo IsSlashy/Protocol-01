@@ -75,6 +75,8 @@ describe('p01_arcium — Arcium MPC Integration', () => {
       'finalize_audit',
       'private_vote',
       'finalize_tally',
+      'private_vote_binary',
+      'finalize_tally_binary',
       'nullifier_commit',
       'private_lookup',
       'register_viewing_key',
@@ -265,6 +267,82 @@ describe('p01_arcium — Arcium MPC Integration', () => {
         expect(e.message).to.include('already in use');
         console.log('  Double-vote correctly rejected');
       }
+    });
+  });
+
+  // =========================================================================
+  // UC6b: Binary Vote (optimized — 2 comparisons)
+  // =========================================================================
+
+  describe('UC6b: Binary Vote (optimized)', () => {
+    const proposalId = randomBytes(32);
+
+    it('Create proposal for binary vote', async () => {
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const [proposalAddress] = PublicKey.findProgramAddressSync(
+        [Buffer.from('p01_proposal'), proposalId],
+        PROGRAM_ID
+      );
+
+      const tx = await program.methods
+        .createProposal(Array.from(proposalId), 2, new anchor.BN(deadline))
+        .accountsPartial({
+          proposal: proposalAddress,
+          authority: provider.wallet.publicKey,
+          payer: provider.wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc({ commitment: 'confirmed' });
+
+      console.log('  Binary proposal created:', tx);
+    });
+
+    it('Cast binary vote (yes)', async () => {
+      const optionIndex = 1n; // yes
+      const weight = 1n;
+      const { ciphertexts, nonce, pubKey } = encrypt([optionIndex, weight]);
+      const computationOffset = new anchor.BN(randomBytes(8), 'hex');
+      const accounts = getAccounts('private_vote_binary', computationOffset);
+
+      const [proposalAddress] = PublicKey.findProgramAddressSync(
+        [Buffer.from('p01_proposal'), proposalId],
+        PROGRAM_ID
+      );
+      const [ballotAddress] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('p01_ballot'),
+          proposalId,
+          provider.wallet.publicKey.toBuffer(),
+        ],
+        PROGRAM_ID
+      );
+
+      const tx = await program.methods
+        .privateVoteBinary(
+          computationOffset,
+          Array.from(ciphertexts[0]),
+          Array.from(ciphertexts[1]),
+          Array.from(pubKey),
+          new anchor.BN(deserializeLE(nonce).toString())
+        )
+        .accountsPartial({
+          ...accounts,
+          proposal: proposalAddress,
+          ballot: ballotAddress,
+          voter: provider.wallet.publicKey,
+        })
+        .rpc({ commitment: 'confirmed' });
+
+      console.log('  Binary vote cast:', tx);
+
+      const finalizeSig = await awaitComputationFinalization(
+        provider,
+        computationOffset,
+        PROGRAM_ID,
+        'confirmed'
+      );
+
+      console.log('  MPC finalized:', finalizeSig);
     });
   });
 

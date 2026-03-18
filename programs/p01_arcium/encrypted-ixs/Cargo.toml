@@ -1,12 +1,12 @@
 [package]
-name = "p01-arcium-circuits"
+name = "encrypted-ixs"
 version = "0.1.0"
 edition = "2021"
 description = "Protocol 01 — Arcis MPC circuits for confidential computation"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "p01_arcium_circuits"
+name = "encrypted_ixs"
 
 [dependencies]
 arcis = "0.8.5"
