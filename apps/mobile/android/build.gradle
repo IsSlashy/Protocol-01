@@ -22,16 +22,3 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
-
-// Force consistent JVM target across all subprojects (Java 17)
-subprojects { sub ->
-  sub.plugins.whenPluginAdded { plugin ->
-    if (plugin.class.name.contains('kotlin') || plugin.class.name.contains('android')) {
-      sub.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-        compilerOptions {
-          jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-        }
-      }
-    }
-  }
-}
