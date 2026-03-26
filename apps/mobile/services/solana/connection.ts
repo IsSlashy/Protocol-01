@@ -118,8 +118,8 @@ const MAINNET_WS = HELIUS_API_KEY
 
 const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
   'devnet': [
-    // Privacy relay first (if configured) — WS goes direct (subscriptions only)
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: DEVNET_WS }] : []),
+    // Privacy relay first (if configured) — pass network so relay routes correctly
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc?network=devnet`, ws: DEVNET_WS }] : []),
     // Helius direct (fallback)
     ...(HELIUS_API_KEY
       ? [{ http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: DEVNET_WS }]
@@ -127,14 +127,16 @@ const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
     { http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' },
   ],
   'mainnet-beta': [
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: MAINNET_WS }] : []),
+    // Privacy relay with network param — if relay doesn't support it, skip to Helius
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc?network=mainnet-beta`, ws: MAINNET_WS }] : []),
+    // Helius direct — preferred for mainnet (no relay latency)
     ...(HELIUS_API_KEY
       ? [{ http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: MAINNET_WS }]
       : []),
     { http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' },
   ],
   'testnet': [
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc`, ws: '' }] : []),
+    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc?network=testnet`, ws: '' }] : []),
     { http: 'https://api.testnet.solana.com', ws: 'wss://api.testnet.solana.com' },
   ],
 };
