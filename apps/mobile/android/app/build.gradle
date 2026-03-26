@@ -15,14 +15,13 @@ react {
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
 
     enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
-    // Use Expo CLI to bundle the app, this ensures the Metro config
-    // works correctly with Expo projects.
-    cliFile = new File(["node", "--print", "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })"].execute(null, rootDir).text.trim())
+    // Use a wrapper script that fixes entry file paths for pnpm monorepo on Windows.
+    // The wrapper converts relative --entry-file to absolute before forwarding to expo CLI.
+    cliFile = new File(projectRoot, "scripts/bundle-fix.js")
     bundleCommand = "export:embed"
 
     /* Folders */
-     //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
+    root = file(projectRoot)
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
@@ -92,10 +91,14 @@ android {
         applicationId 'com.protocol01.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        versionCode 14
         versionName "0.9.2"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
     }
     signingConfigs {
         debug {
@@ -152,9 +155,26 @@ android {
     }
 }
 
+// Fix llama.rn task dependency: syncRNLlamaHtpAssets writes to the android dir
+// but isn't declared as a dependency of the JS bundling task.
+afterEvaluate {
+    tasks.configureEach { task ->
+        if (task.name.contains('createBundle') && task.name.contains('JsAndAssets')) {
+            def syncTask = tasks.findByName('syncRNLlamaHtpAssets')
+            if (syncTask != null) {
+                task.dependsOn(syncTask)
+            }
+        }
+    }
+}
+
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // RxJava2 — needed for RxJavaPlugins.setErrorHandler in MainApplication
+    // to prevent react-native-ble-plx crash on BLE disconnect (NPE in SafePromise.reject)
+    implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
