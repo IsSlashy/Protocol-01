@@ -219,13 +219,27 @@ async function pollPendingHops(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// App state handling — poll when app comes to foreground
+// App state handling — pause in background, resume in foreground
 // ---------------------------------------------------------------------------
 
 function handleAppStateChange(nextState: AppStateStatus): void {
-  if (nextState === 'active' && _running) {
-    console.log('[AutoRunner] App foregrounded — checking pending hops');
+  if (!_running) return;
+
+  if (nextState === 'active') {
+    // Resume polling when app comes to foreground
+    if (!_pollInterval) {
+      console.log('[AutoRunner] App foregrounded — resuming polling');
+      _pollInterval = setInterval(pollPendingHops, POLL_INTERVAL_MS);
+    }
+    // Immediately check for pending hops
     pollPendingHops();
+  } else if (nextState === 'background') {
+    // Pause polling when app goes to background to prevent OOM/ANR
+    if (_pollInterval) {
+      console.log('[AutoRunner] App backgrounded — pausing polling');
+      clearInterval(_pollInterval);
+      _pollInterval = null;
+    }
   }
 }
 

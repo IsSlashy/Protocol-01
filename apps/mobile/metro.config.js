@@ -14,13 +14,27 @@ config.projectRoot = projectRoot;
 // Monorepo setup - watch the workspace root but only resolve from project
 config.watchFolders = [workspaceRoot];
 
-// Exclude Rust target/, .git, and other non-JS directories from Metro's file watcher
+// Exclude Rust target/, .git, and other non-JS directories from Metro's resolver
 // Prevents crashes from transient temp files in cargo build artifacts
 config.resolver.blockList = [
   /[/\\]target[/\\]/,
   /[/\\]\.git[/\\]/,
   /[/\\]\.anchor[/\\]/,
+  /[/\\]wasm-out[/\\]/,
+  /[/\\]arcium-review[/\\]/,
 ];
+
+// Also exclude from the file watcher to prevent EACCES crashes on Rust target dirs
+config.watcher = {
+  ...config.watcher,
+  additionalExclusions: [
+    /[/\\]target[/\\]/,
+    /[/\\]\.git[/\\]/,
+    /[/\\]\.anchor[/\\]/,
+    /[/\\]wasm-out[/\\]/,
+    /[/\\]arcium-review[/\\]/,
+  ],
+};
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),

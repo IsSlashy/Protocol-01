@@ -186,18 +186,16 @@ export function useRealtimeSync(options: UseRealtimeSyncOptions = {}): UseRealti
     }
   }, [getService]);
 
-  // Poll status from service
+  // Poll status from service (fixed: removed `status` from deps to avoid excessive re-creation)
   useEffect(() => {
     const service = getService();
     const interval = setInterval(() => {
       const currentStatus = service.getStatus();
-      if (currentStatus !== status) {
-        setStatus(currentStatus);
-      }
-    }, 1000);
+      setStatus(prev => prev !== currentStatus ? currentStatus : prev);
+    }, 5000); // Reduced frequency: 5s instead of 1s
 
     return () => clearInterval(interval);
-  }, [getService, status]);
+  }, [getService]);
 
   // Auto-start when wallet becomes available
   useEffect(() => {
