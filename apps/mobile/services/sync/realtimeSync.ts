@@ -8,6 +8,7 @@
  */
 
 import { Connection, PublicKey, Logs, Context } from '@solana/web3.js';
+import { AppState, AppStateStatus } from 'react-native';
 import { getConnection } from '../solana/connection';
 import { syncFromBlockchain, loadStreams, Stream } from '../solana/streams';
 import { useStreamStore } from '../../stores/streamStore';
@@ -65,6 +66,7 @@ export class RealtimeSyncService {
   private listeners: Set<SyncEventListener> = new Set();
   private knownStreamIds: Set<string> = new Set();
   private isStarting: boolean = false;
+  private appStateListener: any = null;
 
   constructor(config: RealtimeSyncConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -113,6 +115,9 @@ export class RealtimeSyncService {
       // Start periodic sync interval
       this.startPeriodicSync();
 
+      // Listen for AppState to pause/resume periodic sync in background
+      this.startAppStateListener();
+
       // Perform initial sync
       await this.performSync();
 
@@ -148,6 +153,12 @@ export class RealtimeSyncService {
     if (this.syncIntervalId) {
       clearInterval(this.syncIntervalId);
       this.syncIntervalId = null;
+    }
+
+    // Remove AppState listener
+    if (this.appStateListener) {
+      this.appStateListener.remove();
+      this.appStateListener = null;
     }
 
     // Unsubscribe from logs
@@ -396,6 +407,32 @@ export class RealtimeSyncService {
       default:
         return frequency;
     }
+  }
+
+  private startAppStateListener(): void {
+    // Remove old listener if any
+    if (this.appStateListener) {
+      this.appStateListener.remove();
+    }
+
+    this.appStateListener = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'background') {
+        // Pause periodic sync when app is backgrounded
+        if (this.syncIntervalId) {
+          console.debug('[RealtimeSync] App backgrounded — pausing periodic sync');
+          clearInterval(this.syncIntervalId);
+          this.syncIntervalId = null;
+        }
+      } else if (state === 'active') {
+        // Resume periodic sync when app comes back
+        if (!this.syncIntervalId && this.status !== 'disconnected') {
+          console.debug('[RealtimeSync] App foregrounded — resuming periodic sync');
+          this.startPeriodicSync();
+          // Immediate sync on foreground
+          this.performSync().catch(() => {});
+        }
+      }
+    });
   }
 
   private startPeriodicSync(): void {

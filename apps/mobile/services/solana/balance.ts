@@ -201,9 +201,12 @@ async function cacheBalance(publicKey: string, balance: WalletBalance): Promise<
  */
 export async function clearBalanceCache(publicKey: string): Promise<void> {
   try {
-    const cacheKey = getBalanceCacheKey(publicKey);
-    const cluster = getCluster();
-    await AsyncStorage.removeItem(cacheKey);
+    // Clear cache for ALL networks to prevent stale cross-network data
+    await Promise.all([
+      AsyncStorage.removeItem(`${BALANCE_CACHE_KEY}devnet_${publicKey}`),
+      AsyncStorage.removeItem(`${BALANCE_CACHE_KEY}mainnet-beta_${publicKey}`),
+      AsyncStorage.removeItem(`${BALANCE_CACHE_KEY}testnet_${publicKey}`),
+    ]);
   } catch (error) {
     console.warn('[Balance] Failed to clear cache:', error);
   }

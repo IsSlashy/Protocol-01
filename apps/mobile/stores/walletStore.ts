@@ -32,6 +32,12 @@ import { scheduleLocalNotification } from '../services/notifications';
 
 // Store Privy signer for transactions
 let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
+
+// Track WS listener cleanup so we can remove it on logout/re-init
+let _wsAccountChangeCleanup: (() => void) | null = null;
+
+// Track the autonomous runner start timer so we can cancel it on logout
+let _autonomousRunnerTimer: ReturnType<typeof setTimeout> | null = null;
 export function setPrivySigner(signer: ((tx: Transaction) => Promise<Transaction>) | null) {
   privySigner = signer;
 }
@@ -153,11 +159,17 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         // REAL-TIME: Subscribe to account changes via WebSocket
         // Auto-refresh balance when SOL is received/sent (any page, no pull needed)
         try {
+          // Clean up previous listener before re-subscribing (prevents accumulation)
+          if (_wsAccountChangeCleanup) {
+            _wsAccountChangeCleanup();
+            _wsAccountChangeCleanup = null;
+          }
+
           const ws = getSolanaWebSocket();
           await ws.connect();
           await ws.subscribe(publicKey);
           let lastRefresh = 0;
-          ws.on('account_change', async () => {
+          const handler = async () => {
             // Debounce: skip if refreshed within last 2s
             const now = Date.now();
             if (now - lastRefresh < 2000) return;
@@ -186,7 +198,10 @@ export const useWalletStore = create<WalletState>((set, get) => ({
                 },
               ).catch(() => {});
             }
-          });
+          };
+          ws.on('account_change', handler);
+          // Store cleanup function so logout/re-init can remove this listener
+          _wsAccountChangeCleanup = () => ws.off('account_change', handler);
         } catch (err: any) {
           console.warn('[Wallet] WebSocket subscription failed:', err.message);
         }
@@ -263,8 +278,12 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         }
       }, 2000);
 
-      // Start autonomous privacy router (non-blocking)
-      setTimeout(async () => {
+      // Start autonomous privacy router (non-blocking, cancellable on logout)
+      if (_autonomousRunnerTimer) clearTimeout(_autonomousRunnerTimer);
+      _autonomousRunnerTimer = setTimeout(async () => {
+        _autonomousRunnerTimer = null;
+        // Guard: don't start if wallet was logged out before timer fired
+        if (!get().hasWallet || !get().publicKey) return;
         try {
           const { startAutonomousRunner } = await import('../services/privacyRouter/autonomousRunner');
           await startAutonomousRunner();
@@ -356,11 +375,31 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   logout: async () => {
     try {
       set({ loading: true, error: null });
-      // Disconnect WebSocket before deleting wallet
+
+      // 1. Cancel pending autonomous runner start timer (race condition guard)
+      if (_autonomousRunnerTimer) {
+        clearTimeout(_autonomousRunnerTimer);
+        _autonomousRunnerTimer = null;
+      }
+
+      // 2. Stop the autonomous privacy router (clears intervals + AppState listener)
+      try {
+        const { stopAutonomousRunner } = await import('../services/privacyRouter/autonomousRunner');
+        await stopAutonomousRunner();
+      } catch {}
+
+      // 3. Remove WS account_change listener before disconnecting
+      if (_wsAccountChangeCleanup) {
+        _wsAccountChangeCleanup();
+        _wsAccountChangeCleanup = null;
+      }
+
+      // 4. Disconnect WebSocket before deleting wallet
       try {
         const ws = getSolanaWebSocket();
         await ws.disconnect();
       } catch {}
+
       const outgoingAddress = get().publicKey;
       await deleteWallet();
       // Archive notes for outgoing wallet, then reset stores
@@ -371,6 +410,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         balance: null,
         transactions: [],
         loading: false,
+        isPrivyWallet: false,
       });
     } catch (error: any) {
       set({

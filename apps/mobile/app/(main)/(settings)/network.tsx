@@ -160,17 +160,48 @@ export default function NetworkSettingsScreen() {
       // Save and apply the network selection
       await setCluster(selectedNetwork);
 
+      // Force full app reload to cleanly switch networks
+      // This is the only reliable way: reset connection, caches, and re-initialize
+      console.log('[Network] Switching to', selectedNetwork, '— restarting app');
+      const { resetConnection } = require('../../../services/solana/connection');
+      resetConnection();
+
+      // Clear ALL balance caches so stale data never appears
+      const { useWalletStore } = require('../../../stores/walletStore');
+      const pk = useWalletStore.getState().publicKey;
+      if (pk) {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        await Promise.all([
+          AsyncStorage.removeItem(`p01_balance_cache_devnet_${pk}`),
+          AsyncStorage.removeItem(`p01_balance_cache_mainnet-beta_${pk}`),
+          AsyncStorage.removeItem(`p01_balance_cache_testnet_${pk}`),
+          AsyncStorage.removeItem(`p01_tx_cache_${pk}`),
+        ]).catch(() => {});
+      }
+
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      const label = selectedNetwork === 'mainnet-beta' ? 'Mainnet' :
+                    selectedNetwork === 'devnet' ? 'Devnet' : 'Testnet';
+
+      // Reset wallet state and re-initialize with new network
+      useWalletStore.setState({
+        balance: { sol: 0, tokens: [], totalUsd: 0 },
+        transactions: [],
+        initialized: false,
+      });
 
       p01Alert(
         'Network Updated',
-        `Switched to ${selectedNetwork === 'mainnet-beta' ? 'Mainnet' :
-                       selectedNetwork === 'devnet' ? 'Devnet' : 'Testnet'}. ` +
-        'Please restart the app to fully apply the changes.',
+        `Switched to ${label}.`,
         [
           {
             text: 'OK',
-            onPress: () => router.back(),
+            onPress: () => {
+              // Re-initialize wallet with new network
+              useWalletStore.getState().initialize();
+              router.replace('/(main)/(wallet)');
+            },
           },
         ]
       );
