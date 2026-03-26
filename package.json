@@ -46,7 +46,7 @@
     "poseidon-lite": "^0.3.0",
     "snarkjs": "^0.7.5",
     "ts-mocha": "^11.1.0",
-    "turbo": "^2.5.0",
+    "turbo": "^2.8.20",
     "typescript": "^5.9.0"
   },
   "packageManager": "pnpm@8.15.0",
