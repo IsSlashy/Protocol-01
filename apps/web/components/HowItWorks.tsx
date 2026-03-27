@@ -3,39 +3,41 @@
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
 import { Wallet, Shield, Send, ArrowDownToLine } from "lucide-react";
+import { useT } from "@/i18n";
 
 const steps = [
   {
     num: "01",
     icon: Wallet,
-    title: "CONNECT",
-    desc: "Create or import your Solana wallet",
+    title: "step1Title",
+    desc: "step1Desc",
     color: "#39c5bb",
   },
   {
     num: "02",
     icon: Shield,
-    title: "SHIELD",
-    desc: "Deposit tokens into the ZK shielded pool",
+    title: "step2Title",
+    desc: "step2Desc",
     color: "#ff77a8",
   },
   {
     num: "03",
     icon: Send,
-    title: "TRANSFER",
-    desc: "Send privately via ZK proofs (Groth16 + STARK)",
+    title: "step3Title",
+    desc: "step3Desc",
     color: "#00ffe5",
   },
   {
     num: "04",
     icon: ArrowDownToLine,
-    title: "RECEIVE",
-    desc: "Withdraw to any wallet — zero trace",
+    title: "step4Title",
+    desc: "step4Desc",
     color: "#ffcc00",
   },
 ];
 
 export default function HowItWorks() {
+  const t = useT();
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
 
@@ -64,15 +66,15 @@ export default function HowItWorks() {
           transition={{ duration: 0.5 }}
           className="text-center mb-20"
         >
-          <span className="badge-cyan mb-4">How it works</span>
+          <span className="badge-cyan mb-4">{t('howItWorks.badge')}</span>
           <h2 className="section-title">
-            Four steps to{" "}
+            {t('howItWorks.title')}{" "}
             <span className="text-p01-cyan text-glow-cyan">
-              financial privacy
+              {t('howItWorks.titleHighlight')}
             </span>
           </h2>
           <div className="section-subtitle">
-            <p>From wallet creation to untraceable transfers in under a minute.</p>
+            <p>{t('howItWorks.subtitle')}</p>
           </div>
         </motion.div>
 
@@ -131,7 +133,7 @@ export default function HowItWorks() {
                 className="text-[10px] font-mono tracking-[0.3em] mb-3 uppercase"
                 style={{ color: `${step.color}90` }}
               >
-                Step {step.num}
+                {t('howItWorks.step')} {step.num}
               </div>
 
               {/* Icon container */}
@@ -174,12 +176,12 @@ export default function HowItWorks() {
                 className="text-base font-bold font-display tracking-[0.15em] mb-2"
                 style={{ color: step.color }}
               >
-                {step.title}
+                {t(`howItWorks.${step.title}`)}
               </h3>
 
               {/* Description */}
               <p className="text-sm text-[#888892] max-w-[200px] font-mono leading-relaxed">
-                {step.desc}
+                {t(`howItWorks.${step.desc}`)}
               </p>
 
               {/* Mobile arrow */}
@@ -214,21 +216,21 @@ export default function HowItWorks() {
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 bg-[#39c5bb] animate-pulse" />
             <span className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
-              Instant operations
+              {t('howItWorks.instantOps')}
             </span>
           </div>
           <span className="text-[#2a2a30]">|</span>
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 bg-[#ff77a8] animate-pulse" />
             <span className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
-              ~3s shield + unshield
+              {t('howItWorks.shieldTime')}
             </span>
           </div>
           <span className="text-[#2a2a30]">|</span>
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 bg-[#00ffe5] animate-pulse" />
             <span className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
-              Zero traces
+              {t('howItWorks.zeroTraces')}
             </span>
           </div>
         </motion.div>

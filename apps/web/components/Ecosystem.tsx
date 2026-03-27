@@ -3,6 +3,7 @@
 import { memo } from "react";
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
+import { useT } from "@/i18n";
 
 
 // Tech logo SVGs — small recognizable icons for each technology
@@ -175,40 +176,41 @@ const techLogos: Record<string, JSX.Element> = {
 };
 
 const techsRow1 = [
-  { name: "Solana", category: "L1 Blockchain" },
-  { name: "Anchor", category: "Smart Contracts" },
-  { name: "Circom", category: "ZK Circuits" },
-  { name: "ark-circom", category: "Rust Prover" },
-  { name: "Groth16", category: "ZK Proof System" },
-  { name: "STARK", category: "Quantum-Safe Proofs" },
-  { name: "Poseidon", category: "ZK Hash" },
-  { name: "Jupiter", category: "DEX Aggregator" },
-  { name: "React Native", category: "Mobile" },
-  { name: "Expo", category: "App Platform" },
-  { name: "Next.js", category: "Web Framework" },
-  { name: "TypeScript", category: "Language" },
-  { name: "Docker", category: "Deployment" },
+  { name: "Solana", category: "l1Blockchain" },
+  { name: "Anchor", category: "smartContracts" },
+  { name: "Circom", category: "zkCircuits" },
+  { name: "ark-circom", category: "rustProver" },
+  { name: "Groth16", category: "zkProofSystem" },
+  { name: "STARK", category: "quantumSafeProofs" },
+  { name: "Poseidon", category: "zkHash" },
+  { name: "Jupiter", category: "dexAggregator" },
+  { name: "React Native", category: "mobile" },
+  { name: "Expo", category: "appPlatform" },
+  { name: "Next.js", category: "webFramework" },
+  { name: "TypeScript", category: "language" },
+  { name: "Docker", category: "deployment" },
 ];
 
 const techsRow2 = [
-  { name: "Winterfell", category: "STARK Prover" },
-  { name: "BN254", category: "Elliptic Curve" },
-  { name: "Goldilocks", category: "Quantum-Safe Field" },
-  { name: "Curve25519", category: "ECDH" },
-  { name: "Merkle Trees", category: "Data Structure" },
-  { name: "Nullifiers", category: "Anti Double-Spend" },
-  { name: "ML-KEM", category: "Post-Quantum KEM" },
-  { name: "Zustand", category: "State Mgmt" },
-  { name: "Reanimated", category: "Animations" },
-  { name: "Tailwind", category: "Styling" },
-  { name: "Vite", category: "Build Tool" },
-  { name: "llama.rn", category: "On-Device AI" },
-  { name: "SPL Tokens", category: "Token Standard" },
+  { name: "Winterfell", category: "starkProver" },
+  { name: "BN254", category: "ellipticCurve" },
+  { name: "Goldilocks", category: "quantumSafeField" },
+  { name: "Curve25519", category: "ecdh" },
+  { name: "Merkle Trees", category: "dataStructure" },
+  { name: "Nullifiers", category: "antiDoubleSpend" },
+  { name: "ML-KEM", category: "postQuantumKEM" },
+  { name: "Zustand", category: "stateMgmt" },
+  { name: "Reanimated", category: "animations" },
+  { name: "Tailwind", category: "styling" },
+  { name: "Vite", category: "buildTool" },
+  { name: "llama.rn", category: "onDeviceAI" },
+  { name: "SPL Tokens", category: "tokenStandard" },
 ];
 
 function Ecosystem() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-50px" });
+  const t = useT();
 
   // Duplicate arrays for seamless loop
   const row1 = [...techsRow1, ...techsRow1];
@@ -227,11 +229,11 @@ function Ecosystem() {
           className="text-center mb-12 px-6"
         >
           <span className="text-[10px] font-mono text-[#555560] uppercase tracking-[0.4em]">
-            Ecosystem & Technologies
+            {t('ecosystem.badge')}
           </span>
           <h3 className="text-xl sm:text-2xl font-bold font-display text-white mt-3 tracking-wider">
-            BUILT WITH THE{" "}
-            <span className="text-p01-cyan">BEST IN CLASS</span>
+            {t('ecosystem.title')}{" "}
+            <span className="text-p01-cyan">{t('ecosystem.titleHighlight')}</span>
           </h3>
         </motion.div>
 
@@ -266,7 +268,7 @@ function Ecosystem() {
                     {tech.name}
                   </span>
                   <span className="text-[10px] font-mono text-[#555560]">
-                    {tech.category}
+                    {t(`ecosystem.${tech.category}`)}
                   </span>
                 </div>
               ))}
@@ -293,7 +295,7 @@ function Ecosystem() {
                     {tech.name}
                   </span>
                   <span className="text-[10px] font-mono text-[#555560]">
-                    {tech.category}
+                    {t(`ecosystem.${tech.category}`)}
                   </span>
                 </div>
               ))}
@@ -309,17 +311,17 @@ function Ecosystem() {
           className="flex items-center justify-center gap-6 mt-10 px-6"
         >
           {[
-            { value: "28+", label: "Technologies" },
-            { value: "13", label: "On-chain Programs" },
-            { value: "8", label: "Client SDKs" },
-            { value: "100%", label: "Self-Custody" },
+            { value: "28+", label: "technologies" },
+            { value: "13", label: "onChainPrograms" },
+            { value: "8", label: "clientSDKs" },
+            { value: "100%", label: "selfCustody" },
           ].map((s) => (
             <div key={s.label} className="text-center">
               <div className="text-lg sm:text-xl font-bold font-display text-white">
                 {s.value}
               </div>
               <div className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
-                {s.label}
+                {t(`ecosystem.${s.label}`)}
               </div>
             </div>
           ))}

@@ -4,20 +4,21 @@ import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
 import { Github, Smartphone, Chrome, Download } from "lucide-react";
+import { useT } from "@/i18n";
 
 const downloadOptions = [
   {
-    platform: "Android",
+    platform: "android",
     icon: Smartphone,
-    description: "Instant Download APK",
+    description: "androidDesc",
     filename: "protocol-01-v0.9.4.apk",
     link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v0.9.4/protocol-01-v0.9.4.apk",
     size: "191 MB",
   },
   {
-    platform: "Chrome Extension",
+    platform: "chromeExtension",
     icon: Chrome,
-    description: "Re-Work in progress",
+    description: "chromeDesc",
     filename: "",
     link: "",
     size: "Beta",
@@ -28,6 +29,7 @@ const downloadOptions = [
 export default function CTA() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
+  const t = useT();
 
   return (
     <section className="section relative overflow-hidden" ref={ref}>
@@ -67,7 +69,7 @@ export default function CTA() {
             >
               <span className="w-2 h-2 bg-[#39c5bb]" />
               <span className="text-[#39c5bb] text-sm font-medium font-mono uppercase tracking-wider">
-                Now Available
+                {t('cta.badge')}
               </span>
             </motion.div>
 
@@ -78,8 +80,8 @@ export default function CTA() {
               transition={{ duration: 0.5, delay: 0.3 }}
               className="text-4xl sm:text-5xl lg:text-6xl font-bold font-display mb-6 tracking-tight"
             >
-              Ready to become{" "}
-              <span className="text-[#39c5bb]">invisible</span>?
+              {t('cta.title')}{" "}
+              <span className="text-[#39c5bb]">{t('cta.titleHighlight')}</span>?
             </motion.h2>
 
             {/* Subtitle */}
@@ -89,8 +91,8 @@ export default function CTA() {
               transition={{ duration: 0.5, delay: 0.4 }}
               className="text-lg text-p01-text-muted max-w-2xl mx-auto mb-12 space-y-1"
             >
-              <p>Download Protocol 01 and take back control of your financial privacy.</p>
-              <p>Free to use. Self-custody. Built for everyone.</p>
+              <p>{t('cta.subtitle1')}</p>
+              <p>{t('cta.subtitle2')}</p>
             </motion.div>
 
             {/* Download Buttons */}
@@ -122,15 +124,15 @@ export default function CTA() {
                       <div className={`font-semibold font-display transition-colors ${
                         isDisabled ? 'text-p01-text-muted' : 'text-white group-hover:text-p01-cyan'
                       }`}>
-                        {option.platform}
+                        {t(`cta.${option.platform}`)}
                       </div>
                       <div className="text-sm text-p01-text-dim">
-                        {option.description} ({option.size})
+                        {t(`cta.${option.description}`)} ({option.size})
                       </div>
                     </div>
                     {isDisabled ? (
                       <span className="text-[10px] font-mono text-[#ffcc00] border border-[#ffcc00]/30 bg-[#ffcc00]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                        Soon
+                        {t('cta.soon')}
                       </span>
                     ) : (
                       <Download size={20} className="text-p01-text-muted group-hover:text-p01-cyan transition-colors" />
@@ -154,7 +156,7 @@ export default function CTA() {
                 className="inline-flex items-center gap-2 text-p01-text-muted hover:text-white transition-colors"
               >
                 <Github size={20} />
-                <span>View on GitHub</span>
+                <span>{t('cta.viewOnGithub')}</span>
               </a>
               <span className="hidden sm:block text-p01-border">|</span>
               <a
@@ -166,7 +168,7 @@ export default function CTA() {
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
                 </svg>
-                <span>Join Discord</span>
+                <span>{t('cta.joinDiscord')}</span>
               </a>
             </motion.div>
           </div>
@@ -180,15 +182,15 @@ export default function CTA() {
           className="mt-16 grid grid-cols-3 gap-8"
         >
           {[
-            { value: "100%", label: "Self-Custody" },
-            { value: "0", label: "KYC Required" },
-            { value: "∞", label: "Privacy" },
+            { value: "100%", label: "selfCustody" },
+            { value: "0", label: "kycRequired" },
+            { value: "∞", label: "privacy" },
           ].map((stat) => (
             <div key={stat.label} className="text-center bg-white/[0.03] backdrop-blur-sm border border-white/[0.06] rounded-2xl px-6 py-4 hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
               <div className="text-3xl sm:text-4xl font-bold font-display text-white mb-2">
                 {stat.value}
               </div>
-              <div className="text-sm text-p01-text-muted">{stat.label}</div>
+              <div className="text-sm text-p01-text-muted">{t(`cta.${stat.label}`)}</div>
             </div>
           ))}
         </motion.div>

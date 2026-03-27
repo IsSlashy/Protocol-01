@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useT } from "@/i18n";
 import {
   ArrowLeft,
   CheckCircle,
@@ -80,17 +81,17 @@ const PHASE_STYLES: Record<PhaseStatus, { badge: string; badgeBg: string; border
 };
 
 const PHASE_LABELS: Record<PhaseStatus, string> = {
-  shipped: "SHIPPED",
-  next: "IN PROGRESS",
-  future: "PLANNED",
+  shipped: "roadmap.shipped",
+  next: "roadmap.inProgress",
+  future: "roadmap.planned",
 };
 
 const roadmap: RoadmapPhase[] = [
   {
     id: "current",
     status: "shipped",
-    title: "Current",
-    subtitle: "Live in production",
+    title: "roadmap.current",
+    subtitle: "roadmap.currentSub",
     items: [
       {
         title: "Stealth Addresses (ECDH)",
@@ -259,8 +260,8 @@ const roadmap: RoadmapPhase[] = [
   {
     id: "next",
     status: "next",
-    title: "Next",
-    subtitle: "Actively building",
+    title: "roadmap.next",
+    subtitle: "roadmap.nextSub",
     items: [
       {
         title: "P-01 Internal Network Mapping",
@@ -303,8 +304,8 @@ const roadmap: RoadmapPhase[] = [
   {
     id: "future",
     status: "future",
-    title: "Future",
-    subtitle: "On the horizon",
+    title: "roadmap.future",
+    subtitle: "roadmap.futureSub",
     items: [
       {
         title: "Desktop App",
@@ -323,6 +324,7 @@ const roadmap: RoadmapPhase[] = [
 ];
 
 export default function RoadmapPage() {
+  const t = useT();
   return (
     <div
       className="min-h-screen"
@@ -344,7 +346,7 @@ export default function RoadmapPage() {
               style={{ color: THEME.mutedColor }}
             >
               <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline font-mono">Back</span>
+              <span className="hidden sm:inline font-mono">{t('nav.back')}</span>
             </Link>
             <div className="h-6 w-px" style={{ backgroundColor: THEME.borderColor }} />
             <div className="flex items-center gap-3">
@@ -362,7 +364,7 @@ export default function RoadmapPage() {
                   P01
                 </span>
               </div>
-              <h1 className="text-lg font-bold font-display tracking-wider">ROADMAP</h1>
+              <h1 className="text-lg font-bold font-display tracking-wider">{t('roadmap.title')}</h1>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -371,7 +373,7 @@ export default function RoadmapPage() {
               className="text-xs font-mono uppercase tracking-wider hover:text-white transition-colors"
               style={{ color: THEME.mutedColor }}
             >
-              Docs
+              {t('nav.docs')}
             </Link>
           </div>
         </div>
@@ -389,14 +391,13 @@ export default function RoadmapPage() {
             className="text-xs font-mono tracking-[0.2em] mb-4"
             style={{ color: THEME.primaryColor }}
           >
-            {"> PROTOCOL 01 // DEVELOPMENT ROADMAP"}
+            {t('roadmap.heroSubtitle')}
           </p>
           <h2 className="text-3xl sm:text-4xl font-bold font-display tracking-wide mb-4">
-            Building Private Finance
+            {t('roadmap.heroTitle')}
           </h2>
           <p className="text-base max-w-2xl mx-auto" style={{ color: THEME.mutedColor }}>
-            Our path from stealth addresses and ZK proofs to fully on-chain
-            privacy with no backend required.
+            {t('roadmap.heroDesc')}
           </p>
         </motion.div>
       </section>
@@ -418,14 +419,14 @@ export default function RoadmapPage() {
                   <span
                     className={`px-3 py-1 text-[11px] font-mono font-bold tracking-wider border rounded ${styles.badge} ${styles.badgeBg}`}
                   >
-                    {PHASE_LABELS[phase.status]}
+                    {t(PHASE_LABELS[phase.status])}
                   </span>
                   <div>
                     <h3 className="text-xl font-bold font-display tracking-wide">
-                      {phase.title}
+                      {t(phase.title)}
                     </h3>
                     <p className="text-sm" style={{ color: THEME.dimColor }}>
-                      {phase.subtitle}
+                      {t(phase.subtitle)}
                     </p>
                   </div>
                 </div>
@@ -496,13 +497,13 @@ export default function RoadmapPage() {
             className="text-xs font-mono tracking-[0.2em] mb-4"
             style={{ color: THEME.primaryColor }}
           >
-            {"> BUILD WITH US"}
+            {t('roadmap.buildWithUs')}
           </p>
           <h3 className="text-2xl font-bold font-display tracking-wide mb-4">
-            Shape the Future of Privacy
+            {t('roadmap.shapeFuture')}
           </h3>
           <p className="text-sm mb-8 max-w-md mx-auto" style={{ color: THEME.mutedColor }}>
-            Join the community. Test, suggest features, or follow our progress.
+            {t('roadmap.joinCommunity')}
           </p>
           <div className="flex items-center justify-center gap-4 flex-wrap">
             <a
