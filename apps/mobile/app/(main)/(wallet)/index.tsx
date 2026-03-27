@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: Spacing.lg, color: Colors.textSecondary, fontFamily: FontFamily.medium, fontSize: 15 },
   scrollView: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
+  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 160 },
   balanceCardOuter: {
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
