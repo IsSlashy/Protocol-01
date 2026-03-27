@@ -1113,7 +1113,7 @@ export default function DocsPage() {
           </div>
 
           <p className="text-xs text-[#555560] mt-6 text-center font-mono">
-            MPC adds ~1-2s per operation · Zero overhead when disabled · Toggle on/off in Privacy Zone
+            {t('docs.mpcFootnote')}
           </p>
         </div>
       </section>
@@ -1121,7 +1121,7 @@ export default function DocsPage() {
       {/* Quick Links */}
       <section className="py-12 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
         <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-6">Quick Navigation</h2>
+          <h2 className="text-2xl font-bold text-white mb-6">{t('docs.quickNav')}</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {technologies.map((tech) => (
               <a
@@ -1150,15 +1150,15 @@ export default function DocsPage() {
             <FileText className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
             <div>
               <span className="text-sm text-[#888892] group-hover:text-white transition-colors">
-                Design & Architecture Document
+                {t('docs.designDoc')}
               </span>
-              <span className="text-xs text-[#555560] ml-2 font-mono">PDF · 18 pages</span>
+              <span className="text-xs text-[#555560] ml-2 font-mono">{t('docs.designDocMeta')}</span>
             </div>
             <Download className="w-3.5 h-3.5 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
           </a>
         </div>
         <p className="text-center text-[10px] text-[#555560] font-mono mt-3 tracking-wider">
-          PROGRESSIVELY UPDATED · LAST REVISION MARCH 2026
+          {t('docs.designDocRevision')}
         </p>
       </section>
 
@@ -1167,18 +1167,18 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto text-center space-y-3">
           <div className="flex items-center justify-center gap-2">
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-[#39c5bb]/30 text-[#39c5bb] rounded">
-              Beta
+              {t('docs.footerBeta')}
             </span>
             <span className="text-[#2a2a30]">·</span>
             <span className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
-              Devnet Only
+              {t('docs.footerDevnet')}
             </span>
           </div>
           <p className="text-[#555560] text-sm font-mono">
-            &copy; {new Date().getFullYear()} PROTOCOL 01 | Built from scratch for privacy
+            &copy; {new Date().getFullYear()} PROTOCOL 01 | {t('docs.footerBuilt')}
           </p>
           <p className="text-[10px] text-[#555560]/50 font-mono">
-            This software is in active development. Not audited. Use at your own risk.
+            {t('docs.footerDisclaimer')}
           </p>
         </div>
       </footer>
