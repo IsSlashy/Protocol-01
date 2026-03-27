@@ -362,20 +362,7 @@ export default function RoadmapPage() {
             </Link>
             <div className="h-6 w-px" style={{ backgroundColor: THEME.borderColor }} />
             <div className="flex items-center gap-3">
-              <div
-                className="w-8 h-8 flex items-center justify-center border"
-                style={{
-                  backgroundColor: THEME.primaryColor + "15",
-                  borderColor: THEME.primaryColor + "40",
-                }}
-              >
-                <span
-                  className="font-mono font-bold text-xs"
-                  style={{ color: THEME.primaryColor }}
-                >
-                  P01
-                </span>
-              </div>
+              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
               <h1 className="text-lg font-bold font-display tracking-wider">{t('roadmap.title')}</h1>
             </div>
           </div>
