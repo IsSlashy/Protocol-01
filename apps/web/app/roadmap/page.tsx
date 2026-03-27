@@ -94,177 +94,148 @@ const roadmap: RoadmapPhase[] = [
     subtitle: "roadmap.currentSub",
     items: [
       {
-        title: "Stealth Addresses (ECDH)",
-        description:
-          "One-time addresses for every transaction using Elliptic Curve Diffie-Hellman key exchange. Recipients receive funds without revealing their public address.",
+        title: "roadmap.items.stealthAddresses.title",
+        description: "roadmap.items.stealthAddresses.desc",
         icon: <Eye className="w-5 h-5" />,
       },
       {
-        title: "ZK Shielded Pool (Groth16 + STARK)",
-        description:
-          "Dual proof system: 7 Groth16 circuits (BN254, up to 12,222 constraints) + 6 STARK AIRs (Winterfell/Goldilocks, quantum-resistant). All circuits compiled with trusted setup.",
+        title: "roadmap.items.zkShieldedPool.title",
+        description: "roadmap.items.zkShieldedPool.desc",
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "On-Chain Relayer + Quantum Vault",
-        description:
-          "Fully on-chain trustless relayer (no backend server). Quantum vault with WOTS+ signatures, hash-timelock, and commit-then-reveal for quantum-safe withdrawals.",
+        title: "roadmap.items.onChainRelayer.title",
+        description: "roadmap.items.onChainRelayer.desc",
         icon: <Radio className="w-5 h-5" />,
       },
       {
-        title: "Payment Streams",
-        description:
-          "Real-time token streaming for subscriptions and recurring payments. Create, pause, and cancel streams with per-second settlement.",
+        title: "roadmap.items.paymentStreams.title",
+        description: "roadmap.items.paymentStreams.desc",
         icon: <Zap className="w-5 h-5" />,
       },
       {
-        title: "Jupiter Swap Integration",
-        description:
-          "In-app token swaps powered by Jupiter aggregator with best-price routing across Solana DEXes.",
+        title: "roadmap.items.jupiterSwap.title",
+        description: "roadmap.items.jupiterSwap.desc",
         icon: <Layers className="w-5 h-5" />,
       },
       {
-        title: "Mobile App + Browser Extension",
-        description:
-          "Full-featured Solana wallet available as a React Native mobile app and Chrome browser extension with dApp connectivity.",
+        title: "roadmap.items.mobileApp.title",
+        description: "roadmap.items.mobileApp.desc",
         icon: <Wallet className="w-5 h-5" />,
       },
       {
-        title: "AI Agent",
-        description:
-          "On-device AI agent that manages private finances through natural language. Shield, transfer, and manage subscriptions by chatting — no data leaves your phone.",
+        title: "roadmap.items.aiAgent.title",
+        description: "roadmap.items.aiAgent.desc",
         icon: <Bot className="w-5 h-5" />,
       },
       {
-        title: "Instant ZK Operations",
-        description:
-          "Shield and unshield in ~3 seconds total via filledSubtrees optimization. Local-only proving via snarkjs (WebView on mobile) — spending key never leaves device.",
+        title: "roadmap.items.instantZk.title",
+        description: "roadmap.items.instantZk.desc",
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "On-Chain Smart Contracts",
-        description:
-          "13 Anchor programs deployed to devnet (118+ instructions). Trustless, permissionless privacy — no server required for core operations.",
+        title: "roadmap.items.onChainContracts.title",
+        description: "roadmap.items.onChainContracts.desc",
         icon: <Code className="w-5 h-5" />,
       },
       {
-        title: "Advanced Privacy (Decoy Transactions + Noise)",
-        description:
-          "Amount noise (\u00b120% variation) and timing noise (\u00b124h delay) to defeat chain analysis heuristics. Multiple privacy levels from standard to maximum.",
+        title: "roadmap.items.advancedPrivacy.title",
+        description: "roadmap.items.advancedPrivacy.desc",
         icon: <Lock className="w-5 h-5" />,
       },
       {
-        title: "Denominated Pools",
-        description:
-          "Tornado Cash-style fixed-denomination privacy pools for SOL and USDC. Epoch-based maturity, PDA-per-nullifier, 32K notes per pool. P2P note sharing via BLE and NFC.",
+        title: "roadmap.items.denominatedPools.title",
+        description: "roadmap.items.denominatedPools.desc",
         icon: <Layers className="w-5 h-5" />,
       },
       {
-        title: "Confidential Balances (zkSPL)",
-        description:
-          "Account-model confidential tokens using Poseidon hash commitments. Quantum-resistant privacy with balance proofs. Full SDK, on-chain program, and mobile/extension integration.",
+        title: "roadmap.items.confidentialBalances.title",
+        description: "roadmap.items.confidentialBalances.desc",
         icon: <Lock className="w-5 h-5" />,
       },
       {
-        title: "Subscription Vaults",
-        description:
-          "On-chain recurring payment vaults with configurable intervals. Normal and ZK-private subscriber modes. Auto-pause on insufficient funds, retailer claim periods.",
+        title: "roadmap.items.subscriptionVaults.title",
+        description: "roadmap.items.subscriptionVaults.desc",
         icon: <Radio className="w-5 h-5" />,
       },
       {
-        title: "P2P Note Sharing (BLE + NFC)",
-        description:
-          "Share denominated pool notes between devices using BLE (ECDH encrypted) or NFC (HCE with PIN-derived encryption). Anti-MITM fingerprint verification.",
+        title: "roadmap.items.p2pNoteSharing.title",
+        description: "roadmap.items.p2pNoteSharing.desc",
         icon: <Wallet className="w-5 h-5" />,
       },
       {
-        title: "STARK Migration (On-Chain Verifier)",
-        description:
-          "Custom FRI verifier on-chain (no Winterfell dependency). 6 STARK AIRs with compact proofs (9-15KB). Mobile WASM prover (82KB). ~889K CU verification. Quantum-resistant by default.",
+        title: "roadmap.items.starkMigration.title",
+        description: "roadmap.items.starkMigration.desc",
         icon: <Cpu className="w-5 h-5" />,
       },
       {
-        title: "Arcium MPC Integration (9 Circuits)",
-        description:
-          "Multi-party computation via Arcium Cerberus protocol. 6 use cases: confidential relay, anonymous registry, hidden nullifier, balance audit, stealth scan, private vote. 1-of-N honest node.",
+        title: "roadmap.items.arciumMpc.title",
+        description: "roadmap.items.arciumMpc.desc",
         icon: <Network className="w-5 h-5" />,
       },
       {
-        title: "On-Chain Registry (EIP-5564)",
-        description:
-          "Stealth meta-address directory on Solana. Register/update spending + viewing public keys, optional ML-KEM-768 pubkey for quantum-resistant stealth v2.",
+        title: "roadmap.items.onChainRegistry.title",
+        description: "roadmap.items.onChainRegistry.desc",
         icon: <FileText className="w-5 h-5" />,
       },
       {
-        title: "Security Hardening",
-        description:
-          "Spending key never leaves device. PIN with SHA-256 + progressive lockout. SecureStore for all secrets. Clipboard auto-clear (60s). App switcher blur. android:allowBackup=false.",
+        title: "roadmap.items.securityHardening.title",
+        description: "roadmap.items.securityHardening.desc",
         icon: <Lock className="w-5 h-5" />,
       },
       {
-        title: "RPC Fallback Infrastructure",
-        description:
-          "@p01/rpc-config package with priority-based connection manager. QuickNode \u2192 Helius \u2192 public fallback chain. Auto-switch on 429/502/503 errors. URL sanitization.",
+        title: "roadmap.items.rpcFallback.title",
+        description: "roadmap.items.rpcFallback.desc",
         icon: <Server className="w-5 h-5" />,
       },
       {
-        title: "370+ Automated Tests",
-        description:
-          "Comprehensive test suite: 106 program stress tests, 124 crypto SDK tests, 140 mobile service tests, E2E flows, 69 Rust STARK tests. All passing.",
+        title: "roadmap.items.automatedTests.title",
+        description: "roadmap.items.automatedTests.desc",
         icon: <TestTube className="w-5 h-5" />,
       },
       {
-        title: "Privacy Relay (Tor Routing)",
-        description:
-          "3-tier privacy relay deployed on Railway. Client-side header stripping + jitter, server-side Tor SOCKS5 routing with circuit rotation every 10min. 13K+ requests tested, 100% Tor-routed.",
+        title: "roadmap.items.privacyRelay.title",
+        description: "roadmap.items.privacyRelay.desc",
         icon: <Globe className="w-5 h-5" />,
       },
       {
-        title: "Auto-Shield Receive",
-        description:
-          "One-time stealth addresses on Receive screen. Incoming funds auto-detected and shielded into the pool. Main wallet never exposed to senders.",
+        title: "roadmap.items.autoShieldReceive.title",
+        description: "roadmap.items.autoShieldReceive.desc",
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "Stealth Meta-Addresses (P01-to-P01)",
-        description:
-          "Persistent st:01/st:02 meta-addresses for full P01-to-P01 privacy. Sender auto-derives one-time stealth destination. Both sides hidden on-chain.",
+        title: "roadmap.items.stealthMetaAddresses.title",
+        description: "roadmap.items.stealthMetaAddresses.desc",
         icon: <Eye className="w-5 h-5" />,
       },
       {
-        title: "Multi-Hop Privacy Router",
-        description:
-          "5 privacy levels (1-14+ hops). Autonomous runner with Android foreground service. Note locking, consent popup, route progress tracking, timing jitter.",
+        title: "roadmap.items.multiHopRouter.title",
+        description: "roadmap.items.multiHopRouter.desc",
         icon: <Zap className="w-5 h-5" />,
       },
       {
-        title: "Cross-Pool Note Splitting",
-        description:
-          "Split high-denomination notes into multiple lower-denomination notes across pools. ZK proof (10K constraints), on-chain instruction deployed, mobile SDK ready.",
+        title: "roadmap.items.crossPoolSplitting.title",
+        description: "roadmap.items.crossPoolSplitting.desc",
         icon: <Layers className="w-5 h-5" />,
       },
       {
-        title: "AI Agent — 56 Tools",
-        description:
-          "Expanded from 10 to 56 tools: wallet ops, privacy actions, Solana queries, DeFi analytics, staking, NFTs, alerts, conversions, device features. On-device LLM.",
+        title: "roadmap.items.aiAgent56Tools.title",
+        description: "roadmap.items.aiAgent56Tools.desc",
         icon: <Bot className="w-5 h-5" />,
       },
       {
-        title: "0 TypeScript Errors",
-        description:
-          "Full codebase audit: 56 screens, 80+ components, all using P01 design system. Zero TypeScript errors. Settings components fixed to use theme constants.",
+        title: "roadmap.items.zeroTsErrors.title",
+        description: "roadmap.items.zeroTsErrors.desc",
         icon: <Code className="w-5 h-5" />,
       },
       {
-        title: "Full Stealth Unshield (v0.9.5)",
-        description:
-          "User wallet never appears on-chain during unshield. Ephemeral stealth signer pays fees, ECDH one-time recipient receives from pool. Delayed auto-sweep with timing jitter. MPC nullifier fix (4\u00d7u64 chunks).",
+        title: "roadmap.items.fullStealthUnshield.title",
+        description: "roadmap.items.fullStealthUnshield.desc",
         icon: <Eye className="w-5 h-5" />,
       },
       {
-        title: "i18n (EN/FR/JA)",
-        description:
-          "Full internationalization across all mobile screens and web pages. English, French, and Japanese. Language auto-detected from device settings.",
+        title: "roadmap.items.i18n.title",
+        description: "roadmap.items.i18n.desc",
         icon: <Globe className="w-5 h-5" />,
       },
     ],
@@ -276,39 +247,33 @@ const roadmap: RoadmapPhase[] = [
     subtitle: "roadmap.nextSub",
     items: [
       {
-        title: "P-01 Internal Network Mapping",
-        description:
-          "Map internal transaction flows to optimize privacy routing and reduce on-chain fingerprinting across the P-01 network.",
+        title: "roadmap.items.networkMapping.title",
+        description: "roadmap.items.networkMapping.desc",
         icon: <Globe className="w-5 h-5" />,
       },
       {
-        title: "Fiat On-Ramp (Buy Crypto)",
-        description:
-          "Buy SOL, USDC, and USDT with credit card or bank transfer. Direct fiat-to-crypto without leaving the app.",
+        title: "roadmap.items.fiatOnRamp.title",
+        description: "roadmap.items.fiatOnRamp.desc",
         icon: <CreditCard className="w-5 h-5" />,
       },
       {
-        title: "External Security Audit",
-        description:
-          "Comprehensive audit of all 14 programs, 7 Groth16 circuits, 6 STARK AIRs, and 8 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.",
+        title: "roadmap.items.securityAudit.title",
+        description: "roadmap.items.securityAudit.desc",
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "Trusted Setup Ceremony",
-        description:
-          "Multi-party Groth16 trusted setup with 3+ contributors (currently 1). Powers of Tau + beacon finalization for all 7 circuits.",
+        title: "roadmap.items.trustedSetup.title",
+        description: "roadmap.items.trustedSetup.desc",
         icon: <Lock className="w-5 h-5" />,
       },
       {
-        title: "iOS Build & Testing",
-        description:
-          "iOS build and testing — currently only Android is verified. Requires CocoaPods setup, code signing, and TestFlight deployment.",
+        title: "roadmap.items.iosBuild.title",
+        description: "roadmap.items.iosBuild.desc",
         icon: <Wallet className="w-5 h-5" />,
       },
       {
-        title: "DeFi Composability",
-        description:
-          "Enable confidential balances and shielded pools to interact with Solana DeFi protocols. Composable privacy for lending, swapping, and staking.",
+        title: "roadmap.items.defiComposability.title",
+        description: "roadmap.items.defiComposability.desc",
         icon: <Layers className="w-5 h-5" />,
       },
     ],
@@ -320,15 +285,13 @@ const roadmap: RoadmapPhase[] = [
     subtitle: "roadmap.futureSub",
     items: [
       {
-        title: "Desktop App",
-        description:
-          "Native desktop application for macOS, Windows, and Linux with full wallet functionality and hardware wallet support.",
+        title: "roadmap.items.desktopApp.title",
+        description: "roadmap.items.desktopApp.desc",
         icon: <Cpu className="w-5 h-5" />,
       },
       {
-        title: "CLI Tool",
-        description:
-          "Command-line interface for developers and power users. Script transactions, automate streams, and integrate P-01 into existing workflows.",
+        title: "roadmap.items.cliTool.title",
+        description: "roadmap.items.cliTool.desc",
         icon: <Terminal className="w-5 h-5" />,
       },
     ],
@@ -455,7 +418,7 @@ export default function RoadmapPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <h4 className="font-semibold text-sm">{item.title}</h4>
+                            <h4 className="font-semibold text-sm">{t(item.title)}</h4>
                             {phase.status === "shipped" && (
                               <CheckCircle
                                 className="w-4 h-4 flex-shrink-0"
@@ -473,7 +436,7 @@ export default function RoadmapPage() {
                             className="text-xs leading-relaxed"
                             style={{ color: THEME.mutedColor }}
                           >
-                            {item.description}
+                            {t(item.description)}
                           </p>
                         </div>
                       </div>
@@ -538,14 +501,14 @@ export default function RoadmapPage() {
         >
           <FileText className="w-4 h-4 transition-colors" style={{ color: THEME.dimColor }} />
           <span className="text-sm" style={{ color: THEME.mutedColor }}>
-            Design & Architecture Document
+            {t('roadmap.designDoc')}
           </span>
           <span className="text-xs font-mono" style={{ color: THEME.dimColor }}>PDF</span>
           <Download className="w-3.5 h-3.5 transition-colors" style={{ color: THEME.dimColor }} />
         </a>
       </div>
       <p className="text-center text-[10px] font-mono tracking-wider pb-4" style={{ color: THEME.dimColor }}>
-        PROGRESSIVELY UPDATED · LAST REVISION MARCH 2026
+        {t('roadmap.lastRevision')}
       </p>
 
       {/* Footer */}
@@ -556,16 +519,16 @@ export default function RoadmapPage() {
               style={{ borderColor: THEME.primaryColor + "50", color: THEME.primaryColor }}>
               Beta
             </span>
-            <span style={{ color: THEME.borderColor }}>·</span>
+            <span style={{ color: THEME.borderColor }}>&middot;</span>
             <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: THEME.dimColor }}>
-              Devnet Only
+              {t('roadmap.devnetOnly')}
             </span>
           </div>
           <p className="text-sm font-mono" style={{ color: THEME.dimColor }}>
-            &copy; {new Date().getFullYear()} PROTOCOL 01 | Built from scratch for privacy
+            &copy; {new Date().getFullYear()} PROTOCOL 01 | {t('roadmap.builtFromScratch')}
           </p>
           <p className="text-[10px] font-mono" style={{ color: THEME.dimColor + "80" }}>
-            This software is in active development. Not audited. Use at your own risk.
+            {t('roadmap.disclaimer')}
           </p>
         </div>
       </footer>
