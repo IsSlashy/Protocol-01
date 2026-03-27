@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef, useState, useEffect } from "react";
 import { Eye, Database, Network, AlertTriangle } from "lucide-react";
+import { useT } from "@/i18n";
 
 // ─── CountUp Animation ───
 function CountUp({
@@ -51,32 +52,29 @@ const stats = [
     icon: Eye,
     value: "100%",
     countUp: { end: 100, suffix: "%" },
-    label: "of blockchain transactions are public",
-    description:
-      "Every transfer you make is permanently recorded and visible to anyone",
+    label: "problem.stat1Label" as const,
+    description: "problem.stat1Desc" as const,
   },
   {
     icon: Database,
     value: "73%",
     countUp: { end: 73, suffix: "%" },
-    label: "of users have been deanonymized",
-    description:
-      "Blockchain analytics can link your wallet to your real identity",
+    label: "problem.stat2Label" as const,
+    description: "problem.stat2Desc" as const,
   },
   {
     icon: Network,
     value: "24/7",
     countUp: undefined,
-    label: "surveillance by governments & corporations",
-    description: "Your financial activity is constantly monitored and analyzed",
+    label: "problem.stat3Label" as const,
+    description: "problem.stat3Desc" as const,
   },
   {
     icon: AlertTriangle,
     value: "$4.3B",
     countUp: { end: 4.3, prefix: "$", suffix: "B", decimals: 1 },
-    label: "stolen through wallet tracking",
-    description:
-      "Bad actors use public data to target high-value wallets",
+    label: "problem.stat4Label" as const,
+    description: "problem.stat4Desc" as const,
   },
 ];
 
@@ -103,6 +101,7 @@ const itemVariants = {
 } as const;
 
 export default function Problem() {
+  const t = useT();
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
 
@@ -119,17 +118,14 @@ export default function Problem() {
           transition={{ duration: 0.5 }}
           className="text-center mb-16"
         >
-          <span className="badge-yellow mb-4">The Problem</span>
+          <span className="badge-yellow mb-4">{t("problem.badge")}</span>
           <h2 className="section-title">
-            Your blockchain activity is{" "}
-            <span className="text-[#ffcc00]">completely exposed</span>
+            {t("problem.title")}{" "}
+            <span className="text-[#ffcc00]">{t("problem.titleHighlight")}</span>
           </h2>
           <div className="section-subtitle space-y-1">
-            <p>Traditional blockchains offer pseudonymity, not privacy.</p>
-            <p>
-              Every transaction you make creates a permanent trail that can be
-              traced back to you.
-            </p>
+            <p>{t("problem.subtitle1")}</p>
+            <p>{t("problem.subtitle2")}</p>
           </div>
         </motion.div>
 
@@ -158,10 +154,10 @@ export default function Problem() {
                 )}
               </div>
               <div className="text-p01-text-muted text-sm font-medium mb-2">
-                {stat.label}
+                {t(stat.label)}
               </div>
               <div className="text-p01-text-dim text-xs">
-                {stat.description}
+                {t(stat.description)}
               </div>
             </motion.div>
           ))}
@@ -179,26 +175,26 @@ export default function Problem() {
               {/* Before - Exposed */}
               <div className="flex-1 text-center">
                 <div className="text-p01-yellow font-mono text-sm mb-4 uppercase tracking-wider">
-                  WITHOUT PROTOCOL 01
+                  {t("problem.without")}
                 </div>
                 <div className="bg-white/[0.02] backdrop-blur-md p-6 border border-white/[0.06] rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
                   <div className="space-y-3 font-mono text-sm">
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Eye className="text-p01-yellow" size={16} />
-                      <span>7xK9f...8c2e sent 100 SOL</span>
+                      <span>{t("problem.sent100")}</span>
                     </div>
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Eye className="text-p01-yellow" size={16} />
-                      <span>7xK9f...8c2e received 50k USDC</span>
+                      <span>{t("problem.received50k")}</span>
                     </div>
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Eye className="text-p01-yellow" size={16} />
-                      <span>7xK9f...8c2e = John Smith</span>
+                      <span>{t("problem.identityExposed")}</span>
                     </div>
                   </div>
                   <div className="mt-4 p-3 bg-[#ffcc00]/10 border border-[#ffcc00]/30">
                     <span className="text-[#ffcc00] text-xs font-medium font-mono uppercase">
-                      Identity Exposed - All history visible
+                      {t("problem.exposedStatus")}
                     </span>
                   </div>
                 </div>
@@ -217,30 +213,30 @@ export default function Problem() {
               {/* After - Protected */}
               <div className="flex-1 text-center">
                 <div className="text-p01-cyan font-mono text-sm mb-4 uppercase tracking-wider">
-                  WITH PROTOCOL 01
+                  {t("problem.with")}
                 </div>
                 <div className="bg-white/[0.03] backdrop-blur-md p-6 border border-white/[0.08] rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
                   <div className="space-y-3 font-mono text-sm">
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />
                       <span className="blur-sm">
-                        ????...???? sent ??? SOL
+                        {t("problem.hiddenSent")}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />
                       <span className="blur-sm">
-                        ????...???? received ??? USDC
+                        {t("problem.hiddenReceived")}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-p01-text-muted">
                       <Shield className="text-p01-cyan" size={16} />
-                      <span className="blur-sm">Identity = Unknown</span>
+                      <span className="blur-sm">{t("problem.hiddenIdentity")}</span>
                     </div>
                   </div>
                   <div className="mt-4 p-3 bg-[#39c5bb]/10 border border-[#39c5bb]/30">
                     <span className="text-[#39c5bb] text-xs font-medium font-mono uppercase">
-                      Fully Anonymous - Zero knowledge
+                      {t("problem.anonymousStatus")}
                     </span>
                   </div>
                 </div>

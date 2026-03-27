@@ -1,6 +1,7 @@
 "use client";
 
 import { Github, MessageCircle } from "lucide-react";
+import { useT } from "@/i18n";
 
 interface FooterLink {
   name: string;
@@ -15,25 +16,25 @@ interface FooterSection {
 
 const footerLinks: Record<string, FooterSection> = {
   product: {
-    title: "Product",
+    title: "product",
     links: [
-      { name: "Mobile App", href: "#download" },
-      { name: "Chrome Extension", href: "#download" },
-      { name: "Features", href: "#features" },
-      { name: "SDK Demo", href: "/sdk-demo" },
-      { name: "Roadmap", href: "/roadmap" },
+      { name: "mobileApp", href: "#download" },
+      { name: "chromeExtension", href: "#download" },
+      { name: "features", href: "#features" },
+      { name: "sdkDemo", href: "/sdk-demo" },
+      { name: "roadmap", href: "/roadmap" },
     ],
   },
   developers: {
-    title: "Developers",
+    title: "developers",
     links: [
-      { name: "SDK Demo", href: "/sdk-demo" },
-      { name: "Documentation", href: "/docs" },
+      { name: "sdkDemo", href: "/sdk-demo" },
+      { name: "documentation", href: "/docs" },
       { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
     ],
   },
   community: {
-    title: "Community",
+    title: "community",
     links: [
       { name: "Discord", href: "https://discord.gg/KfmhPFAHNH", external: true },
       { name: "Twitter / X", href: "https://x.com/Protocol01_", external: true },
@@ -60,6 +61,7 @@ const socialLinks = [
 ];
 
 export default function Footer() {
+  const t = useT();
   return (
     <footer className="relative border-t border-p01-border bg-p01-void">
       {/* Main Footer */}
@@ -77,11 +79,11 @@ export default function Footer() {
               </span>
             </div>
             <div className="text-p01-text-muted text-sm mb-6 max-w-xs space-y-1">
-              <p>Anonymous Solana wallet with stealth addresses for private transactions.</p>
-              <p>Complete financial privacy.</p>
+              <p>{t('footer.brandDesc1')}</p>
+              <p>{t('footer.brandDesc2')}</p>
             </div>
             <p className="text-p01-cyan text-xs font-mono mb-6">
-              &gt; The system cannot see you.
+              &gt; {t('footer.tagline')}
             </p>
             {/* Social Links - industrial squares */}
             <div className="flex items-center gap-4">
@@ -104,7 +106,7 @@ export default function Footer() {
           {Object.values(footerLinks).map((section) => (
             <div key={section.title}>
               <h3 className="text-sm font-semibold text-white mb-4 font-display uppercase tracking-wider">
-                {section.title}
+                {t(`footer.${section.title}`)}
               </h3>
               <ul className="space-y-3">
                 {section.links.map((link) => (
@@ -115,7 +117,7 @@ export default function Footer() {
                       rel={link.external ? "noopener noreferrer" : undefined}
                       className="text-sm text-p01-text-muted hover:text-p01-cyan transition-colors inline-flex items-center gap-1"
                     >
-                      {link.name}
+                      {t(`footer.${link.name}`)}
                     </a>
                   </li>
                 ))}
@@ -131,7 +133,7 @@ export default function Footer() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3 text-sm text-p01-text-dim font-mono">
               <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan rounded">Beta</span>
-              <span>&copy; {new Date().getFullYear()} PROTOCOL 01. Devnet only — not audited.</span>
+              <span>&copy; {new Date().getFullYear()} {t('footer.copyright')}</span>
             </div>
             <div className="flex items-center gap-6">
               <a

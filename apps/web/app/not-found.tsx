@@ -1,6 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import { useT } from "@/i18n";
 
 export default function NotFound() {
+  const t = useT();
   return (
     <div
       className="min-h-screen flex items-center justify-center"
@@ -28,7 +32,7 @@ export default function NotFound() {
             className="text-xs font-mono uppercase tracking-[0.4em]"
             style={{ color: "#ff2d7a" }}
           >
-            [ PAGE NOT FOUND ]
+            {t('notFound.status')}
           </span>
         </div>
 
@@ -37,9 +41,9 @@ export default function NotFound() {
           className="text-base font-mono mb-8 max-w-md mx-auto"
           style={{ color: "#888892" }}
         >
-          This route does not exist in the protocol.
+          {t('notFound.desc1')}
           <br />
-          The page you are looking for has been moved or never existed.
+          {t('notFound.desc2')}
         </p>
 
         {/* Actions */}
@@ -58,14 +62,14 @@ export default function NotFound() {
             >
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
-            Return Home
+            {t('notFound.returnHome')}
           </Link>
           <Link
             href="/docs"
             className="px-6 py-3 font-bold uppercase tracking-wider text-sm border transition-colors"
             style={{ borderColor: "#2a2a30", color: "#888892" }}
           >
-            Documentation
+            {t('notFound.documentation')}
           </Link>
         </div>
 
