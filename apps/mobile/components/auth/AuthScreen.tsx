@@ -31,6 +31,7 @@ import * as Haptics from 'expo-haptics';
 import { Logo } from '../onboarding/Logo';
 import { PrivyLoginButton, AuthDivider, SocialLoginGrid } from './PrivyLoginButton';
 import { EmailLoginForm } from './EmailLoginForm';
+import { useT } from '@/i18n';
 
 // P-01 Colors
 const P01 = {
@@ -68,6 +69,7 @@ export function AuthScreen({
   onImportWallet,
   loading,
 }: AuthScreenProps) {
+  const t = useT();
   const [mode, setMode] = useState<AuthMode>('main');
   const [submittedValue, setSubmittedValue] = useState('');
 
@@ -146,11 +148,11 @@ export function AuthScreen({
               </View>
 
               <View style={styles.titleContainer}>
-                <Text style={styles.systemLabel}>[ AUTHENTICATION ]</Text>
-                <Text style={styles.title} accessibilityRole="header">CONNECT</Text>
+                <Text style={styles.systemLabel}>{t('auth.authentication')}</Text>
+                <Text style={styles.title} accessibilityRole="header">{t('auth.connect')}</Text>
                 <View style={styles.statusIndicator}>
                   <View style={styles.statusDot} />
-                  <Text style={styles.statusText}>SECURE CHANNEL</Text>
+                  <Text style={styles.statusText}>{t('auth.secureChannel')}</Text>
                 </View>
               </View>
             </Animated.View>
@@ -208,11 +210,11 @@ export function AuthScreen({
                   activeOpacity={0.7}
                   style={styles.textButton}
                   accessibilityRole="button"
-                  accessibilityLabel="Import wallet from seed phrase"
+                  accessibilityLabel={t('auth.importWalletLabel')}
                 >
                   <Text style={styles.textButtonLabel}>
-                    Have a seed phrase?{' '}
-                    <Text style={styles.textButtonHighlight}>Import</Text>
+                    {t('auth.haveSeedPhrase')}{' '}
+                    <Text style={styles.textButtonHighlight}>{t('auth.import')}</Text>
                   </Text>
                 </TouchableOpacity>
               )}
@@ -220,10 +222,10 @@ export function AuthScreen({
 
             {/* Terms */}
             <Text style={styles.terms} accessibilityRole="text">
-              By continuing, you agree to our{' '}
-              <Text style={styles.termsLink} accessibilityRole="link">Terms of Service</Text>
-              {' '}and{' '}
-              <Text style={styles.termsLink} accessibilityRole="link">Privacy Policy</Text>
+              {t('auth.termsAgreement')}{' '}
+              <Text style={styles.termsLink} accessibilityRole="link">{t('auth.termsOfService')}</Text>
+              {' '}{t('auth.and')}{' '}
+              <Text style={styles.termsLink} accessibilityRole="link">{t('auth.privacyPolicy')}</Text>
             </Text>
           </Animated.View>
         ) : (
@@ -247,9 +249,9 @@ export function AuthScreen({
       </ScrollView>
 
       {/* Security Badge */}
-      <View style={styles.securityBadge} accessibilityRole="text" accessibilityLabel="End-to-end encrypted">
+      <View style={styles.securityBadge} accessibilityRole="text" accessibilityLabel={t('auth.endToEndEncrypted')}>
         <Ionicons name="shield-checkmark" size={14} color={P01.cyan} />
-        <Text style={styles.securityText}>End-to-end encrypted</Text>
+        <Text style={styles.securityText}>{t('auth.endToEndEncrypted')}</Text>
       </View>
     </SafeAreaView>
   );

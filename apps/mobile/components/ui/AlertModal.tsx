@@ -1,170 +1,89 @@
 /**
- * AlertModal — Protocol 01 styled alert dialog.
- *
- * Driven by the global useAlertStore. Mount once in _layout.tsx.
- * Replaces all native Alert.alert() calls with the P01 cyber aesthetic.
+ * AlertModal — Minimal P01 alert dialog.
+ * Driven by useAlertStore. Mount once in _layout.tsx.
  */
-
 import React, { useEffect, useRef } from 'react';
 import {
-  Modal,
-  View,
-  Text,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  StyleSheet,
-  Animated,
-  Easing,
-  Platform,
+  Modal, View, Text, TouchableOpacity, TouchableWithoutFeedback,
+  StyleSheet, Animated, Platform,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAlertStore, type AlertButton } from '@/stores/alertStore';
-import { Colors, FontFamily, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, BorderRadius, P01Colors } from '@/constants/theme';
 
-// ---------------------------------------------------------------------------
-// Icon mapping
-// ---------------------------------------------------------------------------
-const iconConfig: Record<string, { name: keyof typeof Ionicons.glyphMap; color: string }> = {
-  warning: { name: 'warning', color: '#eab308' },
-  error: { name: 'alert-circle', color: '#ff3366' },
+const ICONS: Record<string, { name: keyof typeof Ionicons.glyphMap; color: string }> = {
+  warning: { name: 'warning', color: P01Colors.yellow },
+  error:   { name: 'alert-circle', color: '#ff3366' },
   success: { name: 'checkmark-circle', color: P01Colors.cyan },
-  info: { name: 'information-circle', color: P01Colors.cyan },
-  question: { name: 'help-circle', color: P01Colors.pink },
+  info:    { name: 'information-circle', color: P01Colors.cyan },
+  question:{ name: 'help-circle', color: P01Colors.pink },
 };
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 export default function AlertModal() {
   const { visible, title, message, buttons, icon, dismiss } = useAlertStore();
 
-  const scaleAnim = useRef(new Animated.Value(0.85)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
-  const borderGlow = useRef(new Animated.Value(0)).current;
-  const scanLine = useRef(new Animated.Value(-40)).current;
+  const scale = useRef(new Animated.Value(0.92)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (visible) {
-      scaleAnim.setValue(0.85);
-      opacityAnim.setValue(0);
+      scale.setValue(0.92);
+      opacity.setValue(0);
       Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: true }),
-        Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: 1, friction: 10, tension: 80, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
       ]).start();
-
-      // Border glow pulse
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(borderGlow, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(borderGlow, { toValue: 0, duration: 1500, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-      ).start();
-
-      // Scan line sweep
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(800 + Math.random() * 1500),
-          Animated.timing(scanLine, { toValue: 120, duration: 300, useNativeDriver: true }),
-          Animated.timing(scanLine, { toValue: -40, duration: 0, useNativeDriver: true }),
-        ]),
-      ).start();
-    } else {
-      borderGlow.stopAnimation();
-      scanLine.stopAnimation();
     }
   }, [visible]);
 
   const handleButton = (btn: AlertButton) => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     dismiss();
-    // Slight delay so modal closes before callback runs
-    setTimeout(() => btn.onPress?.(), 150);
+    setTimeout(() => btn.onPress?.(), 120);
   };
 
-  const borderColor = borderGlow.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(57, 197, 187, 0.15)', 'rgba(57, 197, 187, 0.45)'],
-  });
-
-  const iconInfo = icon ? iconConfig[icon] : null;
+  const iconInfo = icon ? ICONS[icon] : null;
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={dismiss}>
       <TouchableWithoutFeedback onPress={dismiss}>
-        <View style={s.overlay}>
-          <BlurView intensity={25} tint="dark" style={StyleSheet.absoluteFill} />
-          <View style={s.backdropTint} />
-
+        <View style={st.overlay}>
           <TouchableWithoutFeedback>
-            <Animated.View style={[s.card, { opacity: opacityAnim, transform: [{ scale: scaleAnim }] }]}>
-              {/* Animated border glow */}
-              <Animated.View style={[s.borderGlow, { borderColor }]} />
+            <Animated.View style={[st.card, { opacity, transform: [{ scale }] }]}>
 
-              {/* Top accent line */}
-              <View style={s.accentLine} />
-
-              {/* Scan line effect */}
-              <Animated.View style={[s.scanLine, { transform: [{ translateY: scanLine }] }]} />
-
-              {/* Content */}
-              <View style={s.content}>
-                {/* Icon */}
+              {/* Icon + Title row */}
+              <View style={st.headerRow}>
                 {iconInfo && (
-                  <View style={s.iconRow}>
-                    <View style={[s.iconCircle, { backgroundColor: `${iconInfo.color}18` }]}>
-                      <Ionicons name={iconInfo.name} size={32} color={iconInfo.color} />
-                    </View>
+                  <View style={[st.iconWrap, { backgroundColor: `${iconInfo.color}15` }]}>
+                    <Ionicons name={iconInfo.name} size={20} color={iconInfo.color} />
                   </View>
                 )}
-
-                {/* Title */}
-                <Text style={s.title}>{title}</Text>
-
-                {/* Message */}
-                {!!message && <Text style={s.message}>{message}</Text>}
-
-                {/* Buttons */}
-                <View style={s.buttonsWrap}>
-                  {buttons.map((btn, i) => {
-                    const isDestructive = btn.style === 'destructive';
-                    const isCancel = btn.style === 'cancel';
-                    const isPrimary = !isDestructive && !isCancel;
-
-                    return (
-                      <TouchableOpacity
-                        key={i}
-                        onPress={() => handleButton(btn)}
-                        activeOpacity={0.8}
-                        style={[
-                          s.button,
-                          isPrimary && s.buttonPrimary,
-                          isDestructive && s.buttonDestructive,
-                          isCancel && s.buttonCancel,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            s.buttonText,
-                            isPrimary && s.buttonTextPrimary,
-                            isDestructive && s.buttonTextDestructive,
-                            isCancel && s.buttonTextCancel,
-                          ]}
-                        >
-                          {btn.text}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <Text style={st.title} numberOfLines={2}>{title}</Text>
               </View>
 
-              {/* Corner accents */}
-              <View style={[s.corner, s.cornerBL]} />
-              <View style={[s.corner, s.cornerBLV]} />
-              <View style={[s.corner, s.cornerBR]} />
-              <View style={[s.corner, s.cornerBRV]} />
+              {/* Message */}
+              {!!message && <Text style={st.message}>{message}</Text>}
+
+              {/* Buttons */}
+              <View style={st.buttons}>
+                {buttons.length > 1 && buttons.filter(b => b.style === 'cancel').map((btn, i) => (
+                  <TouchableOpacity key={`c${i}`} onPress={() => handleButton(btn)}
+                    activeOpacity={0.7} style={st.btnCancel}>
+                    <Text style={st.btnCancelText}>{btn.text}</Text>
+                  </TouchableOpacity>
+                ))}
+                {buttons.filter(b => b.style !== 'cancel').map((btn, i) => {
+                  const destructive = btn.style === 'destructive';
+                  return (
+                    <TouchableOpacity key={`a${i}`} onPress={() => handleButton(btn)}
+                      activeOpacity={0.8}
+                      style={[st.btnPrimary, destructive && { backgroundColor: '#ff3366' }]}>
+                      <Text style={st.btnPrimaryText}>{btn.text}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </Animated.View>
           </TouchableWithoutFeedback>
         </View>
@@ -173,116 +92,56 @@ export default function AlertModal() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-const s = StyleSheet.create({
+const st = StyleSheet.create({
   overlay: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backdropTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   card: {
-    width: '85%',
-    maxWidth: 360,
-    backgroundColor: Colors.surface ?? '#111113',
-    borderRadius: 20,
-    overflow: 'hidden',
+    width: '82%', maxWidth: 340,
+    backgroundColor: '#151518',
+    borderRadius: BorderRadius.xl,
+    padding: 20,
   },
-  borderGlow: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 20,
-    borderWidth: 1,
+
+  // Header
+  headerRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8,
   },
-  accentLine: {
-    height: 2,
-    backgroundColor: P01Colors.cyan,
-  },
-  scanLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(57, 197, 187, 0.18)',
-  },
-  content: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 24,
-  },
-  iconRow: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  iconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
+  iconWrap: {
+    width: 34, height: 34, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
   },
   title: {
-    fontSize: 18,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-    textAlign: 'center',
-    marginBottom: 8,
+    flex: 1, fontSize: 16, fontFamily: FontFamily.semibold, color: Colors.text,
   },
+
+  // Message
   message: {
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
+    fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    lineHeight: 19, marginBottom: 18, marginTop: 4,
   },
-  buttonsWrap: {
-    gap: 10,
+
+  // Buttons
+  buttons: {
+    flexDirection: 'row', gap: 8,
   },
-  button: {
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonPrimary: {
+  btnPrimary: {
+    flex: 1, paddingVertical: 12, borderRadius: BorderRadius.md,
+    alignItems: 'center', justifyContent: 'center',
     backgroundColor: P01Colors.cyan,
   },
-  buttonDestructive: {
-    backgroundColor: '#ff3366',
+  btnPrimaryText: {
+    fontSize: 14, fontFamily: FontFamily.semibold, color: '#000',
   },
-  buttonCancel: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+  btnCancel: {
+    flex: 1, paddingVertical: 12, borderRadius: BorderRadius.md,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  buttonText: {
-    fontSize: 15,
-    fontFamily: FontFamily.bold,
-    letterSpacing: 0.3,
+  btnCancelText: {
+    fontSize: 14, fontFamily: FontFamily.medium, color: Colors.textSecondary,
   },
-  buttonTextPrimary: {
-    color: '#0a0a0c',
-  },
-  buttonTextDestructive: {
-    color: '#fff',
-  },
-  buttonTextCancel: {
-    color: Colors.textTertiary,
-  },
-  // Corner accents
-  corner: {
-    position: 'absolute',
-    backgroundColor: `${P01Colors.cyan}80`,
-  },
-  cornerBL: { bottom: 0, left: 0, width: 24, height: 2 },
-  cornerBLV: { bottom: 0, left: 0, width: 2, height: 24 },
-  cornerBR: { bottom: 0, right: 0, width: 24, height: 2 },
-  cornerBRV: { bottom: 0, right: 0, width: 2, height: 24 },
 });
 
 export { AlertModal };

@@ -124,6 +124,18 @@ export const SOL_POOLS: PoolConfig[] = [
     poolPDA: new PublicKey('4t5nFqX9Xw1Bcv9kp2RQJF4vC8xPnbNZPViZjFWA9KQa'),
     treePDA: new PublicKey('5bGshmezFLkUDZgex5xQEEiXaKaHHo7Xxnum9qumeQyJ'),
   },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 500, decimals: 9,
+    denominationAtomic: 500_000_000_000n,
+    poolPDA: new PublicKey('2EzaXUxVdNdBgsv3woAe3DkqnY9aY9NdqqKyPbbbnF7t'),
+    treePDA: new PublicKey('BvbM2Z2fJc6NkHdwuL97cNgjuxcJ8RVdAKbtngLPHsuY'),
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1000, decimals: 9,
+    denominationAtomic: 1_000_000_000_000n,
+    poolPDA: new PublicKey('5XaB2x77DYRx7sPWKdUpUUCE9QrgR8Lfgm1DmWy2notb'),
+    treePDA: new PublicKey('CKY1dDhboZhzgr7BS1ZtLh5XxQFfqFUNyokkCLP82oaC'),
+  },
 ];
 
 export const USDC_POOLS: PoolConfig[] = [
@@ -154,6 +166,24 @@ export const USDC_POOLS: PoolConfig[] = [
     poolPDA: new PublicKey('Dq7CHfsasR7VU3cVgDsyGnWmwBH3LtT4gTBBHEMDHvFF'),
     treePDA: new PublicKey('EAicVNr5qitSzP7Dc1Z7DZUzV3Pidoqt21Lk7fBWfmtn'),
     vaultATA: new PublicKey('GmiMpZfWSUKsvvJeirZSnYuhcvkbs2GfrN1jfCDmxE2H'),
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10_000, decimals: 6,
+    denominationAtomic: 10_000_000_000n,
+    poolPDA: new PublicKey('AbSw23KXkQ9d8a28XsYMxjnWqsB7cBxhFNS9bNy1DMy3'),
+    treePDA: new PublicKey('R6X8uUZJyPX9Xp1cLJ5JVJYYBXgjZGnB2qCacFRbM1x'),
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 20_000, decimals: 6,
+    denominationAtomic: 20_000_000_000n,
+    poolPDA: new PublicKey('8hJN8JypFPA3389sb8b9kTQ7Ck9QHWUm8ACXmEcfkJ3C'),
+    treePDA: new PublicKey('7vvJG5WP77sesQUMEz29PH91y1VWfA4Pmrxv3RbazFF6'),
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 50_000, decimals: 6,
+    denominationAtomic: 50_000_000_000n,
+    poolPDA: new PublicKey('EgJFHJv6frVsLUrzqxZpa9wGTACjTLWMRzm8xCKJuP9K'),
+    treePDA: new PublicKey('4UjapT1xSbjQNGqrXn86vFBNYa9JiMgN2fNqCpaJZsEv'),
   },
 ];
 
@@ -1374,12 +1404,18 @@ export async function transferNote(
   proofGenerator: ProofGenerator,
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
+  stealthKeypair?: Keypair,
 ): Promise<{ txSig: string; recipientNote: ShareableNote }> {
   onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
+
+  // If a stealth keypair is provided, use it as the signer (wallet stays hidden)
+  const keypair = stealthKeypair ?? (walletSigner ? null : await getKeypair());
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
 
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  // When stealth is used, the stealth keypair signs — wallet never appears on-chain
+  const signerPubkey = stealthKeypair
+    ? stealthKeypair.publicKey
+    : (keypair ? keypair.publicKey : walletSigner!.publicKey);
   const connection = getConnection();
 
   onProgress?.('Reading pool state...');
@@ -1443,7 +1479,7 @@ export async function transferNote(
   const vkDataPDA = getTransferVkDataPDA();
 
   const keys = [
-    { pubkey: walletPubkey, isSigner: true, isWritable: true },
+    { pubkey: signerPubkey, isSigner: true, isWritable: true },
     { pubkey: poolConfig.poolPDA, isSigner: false, isWritable: true },
     { pubkey: poolConfig.treePDA, isSigner: false, isWritable: true },
     { pubkey: nullifierPDA, isSigner: false, isWritable: true },
@@ -1457,7 +1493,10 @@ export async function transferNote(
   const tx = new Transaction();
   tx.add(...buildComputeBudgetIxs(500_000));
   tx.add(ix);
-  const txSig = await signAndSend(connection, tx, keypair, walletSigner);
+  // If stealth keypair is signing, use it directly (not wallet signer)
+  const txSig = stealthKeypair
+    ? await signAndSend(connection, tx, stealthKeypair, undefined)
+    : await signAndSend(connection, tx, keypair, walletSigner);
 
   onProgress?.('Done!');
 

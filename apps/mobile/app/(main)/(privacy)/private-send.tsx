@@ -1,72 +1,35 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors, FontSize } from '@/constants/theme';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import { useT } from '@/i18n';
 import { useWalletStore } from '@/stores/walletStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
-import { findPool } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { deriveRouteStealthKeypair } from '@/services/privacyRouter/stealthManager';
 import { estimateFees } from '@/services/privacyRouter/routePlanner';
 import type { PrivacyLevel, RouteFeeEstimate } from '@/services/privacyRouter/types';
 import { PRIVACY_LEVEL_CONFIGS } from '@/services/privacyRouter/types';
-
-// ---------------------------------------------------------------------------
-// Privacy level display metadata
-// ---------------------------------------------------------------------------
-
-const LEVEL_LABELS: Record<PrivacyLevel, string> = {
-  1: 'Basic',
-  2: 'Standard',
-  3: 'Enhanced',
-  4: 'Maximum',
-  5: 'Paranoid',
-};
-
-const LEVEL_TIMES: Record<PrivacyLevel, string> = {
-  1: '~30min-1h',
-  2: '~1-4h',
-  3: '~4-8h',
-  4: '~8-16h',
-  5: '~24-48h',
-};
-
-const LEVEL_FEE_PERCENTS: Record<PrivacyLevel, string> = {
-  1: '~0.8%',
-  2: '~1.6%',
-  3: '~2.4%',
-  4: '~3.2%',
-  5: '~4.0%',
-};
-
-const ALL_LEVELS: PrivacyLevel[] = [1, 2, 3, 4, 5];
-
-// ---------------------------------------------------------------------------
-// Main screen
-// ---------------------------------------------------------------------------
+import { findPool } from '@/services/denominatedPool';
 
 type SendSource = 'wallet' | 'note';
 
 export default function PrivateSendScreen() {
+  const t = useT();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = require('expo-router').useLocalSearchParams() as { address?: string };
   const { balance, publicKey } = useWalletStore();
-  const notes = useDenominatedPoolStore((s) => s.notes);
+  const notes = useDenominatedPoolStore(s => s.notes);
+  const shieldNote = useDenominatedPoolStore(s => s.shieldNote);
 
   const [source, setSource] = useState<SendSource>('wallet');
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -76,16 +39,34 @@ export default function PrivateSendScreen() {
   const [isStarting, setIsStarting] = useState(false);
 
   const solBalance = balance?.sol ?? 0;
-
-  // Available notes for "from note" mode — ONLY mature notes (ready to spend)
-  const availableNotes = useMemo(() =>
-    notes.filter(n => n.token === 'SOL' && n.status === 'mature'),
-    [notes]
-  );
-
+  const availableNotes = useMemo(() => notes.filter(n => n.token === 'SOL' && n.status === 'mature'), [notes]);
   const selectedNote = availableNotes.find(n => n.id === selectedNoteId);
+  const levelConfig = PRIVACY_LEVEL_CONFIGS[privacyLevel];
+  const LEVELS: { level: PrivacyLevel; label: string; time: string; fee: string }[] = [
+    { level: 1, label: t('privateSend.basic'), time: '~30m-1h', fee: '~0.8%' },
+    { level: 2, label: t('privateSend.standard'), time: '~1-4h', fee: '~1.6%' },
+    { level: 3, label: t('privateSend.enhanced'), time: '~4-8h', fee: '~2.4%' },
+    { level: 4, label: t('privateSend.maximum'), time: '~8-16h', fee: '~3.2%' },
+    { level: 5, label: t('privateSend.paranoid'), time: '~24-48h', fee: '~4.0%' },
+  ];
+  const levelInfo = LEVELS.find(l => l.level === privacyLevel)!;
 
-  // Auto-set amount when note is selected
+  const parsedAmount = parseFloat(amount);
+  const hasAmount = !isNaN(parsedAmount) && parsedAmount > 0;
+  const hasRecipient = recipient.trim().length >= 32;
+  const hasBalance = source === 'note' ? hasAmount && !!selectedNote : hasAmount && parsedAmount <= solBalance;
+  const canStart = hasAmount && hasRecipient && hasBalance && !isStarting;
+
+  const feeEstimate = useMemo<RouteFeeEstimate | null>(() => {
+    if (!hasAmount) return null;
+    return estimateFees({ amount: parsedAmount, privacyLevel });
+  }, [amount, privacyLevel]);
+
+  const handlePaste = useCallback(async () => {
+    const text = await Clipboard.getStringAsync();
+    if (text) { setRecipient(text.trim()); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }
+  }, []);
+
   const handleSelectNote = useCallback((noteId: string) => {
     setSelectedNoteId(noteId);
     const note = availableNotes.find(n => n.id === noteId);
@@ -93,1031 +74,354 @@ export default function PrivateSendScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [availableNotes]);
 
-  // Compute fee estimate whenever amount or privacy level changes
-  const feeEstimate = useMemo<RouteFeeEstimate | null>(() => {
-    const amt = parseFloat(amount);
-    if (isNaN(amt) || amt <= 0) return null;
-    return estimateFees({ amount: amt, privacyLevel });
-  }, [amount, privacyLevel]);
-
-  const levelConfig = PRIVACY_LEVEL_CONFIGS[privacyLevel];
-  const parsedAmount = parseFloat(amount);
-  const hasValidAmount = !isNaN(parsedAmount) && parsedAmount > 0;
-  const hasRecipient = recipient.trim().length >= 32;
-  const hasEnoughBalance = source === 'note'
-    ? hasValidAmount && !!selectedNote
-    : hasValidAmount && parsedAmount <= solBalance;
-  const canStart = hasValidAmount && hasRecipient && hasEnoughBalance && !isStarting;
-
-  // ── Handlers ──────────────────────────────────────────────────────
-
-  const handlePaste = useCallback(async () => {
-    const text = await Clipboard.getStringAsync();
-    if (text) {
-      setRecipient(text.trim());
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-  }, []);
-
-  const handleMax = useCallback(() => {
-    if (solBalance > 0) {
-      // Leave a small buffer for network fees
-      const max = Math.max(0, solBalance - 0.01);
-      setAmount(max > 0 ? max.toFixed(4) : '0');
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-  }, [solBalance]);
-
-  const handleSelectLevel = useCallback((level: PrivacyLevel) => {
-    setPrivacyLevel(level);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
-
-  const shieldNote = useDenominatedPoolStore((s) => s.shieldNote);
-
+  // ── Start Route ─────────────────────────────────────────────
   const handleStartRoute = useCallback(async () => {
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) return;
 
-    // Validate recipient — accept Solana address OR stealth meta-address (st:01... / st:02...)
     let finalDestination = recipient.trim();
     try {
       const { isMetaAddress, deriveStealthForRecipient } = require('@/services/stealth/keys');
       if (isMetaAddress(finalDestination)) {
-        // Derive a one-time stealth address from the meta-address
         const stealth = deriveStealthForRecipient(finalDestination);
-        console.log(`[PrivateSend] Meta-address detected — derived stealth: ${stealth.address.slice(0, 12)}...`);
-        console.log(`[PrivateSend] Sender + receiver both hidden on-chain`);
         finalDestination = stealth.address;
       } else {
         new (require('@solana/web3.js').PublicKey)(finalDestination);
       }
     } catch {
-      p01Alert('Invalid address', 'Enter a valid Solana address or P01 stealth address (st:01... or st:02...).');
-      return;
+      return p01Alert(t('common.invalidAddress'), t('alerts.invalidAddress'));
     }
 
-    if (amt < 0.1) {
-      p01Alert('Minimum amount', 'The minimum routable amount is 0.1 SOL.');
-      return;
-    }
+    if (amt < 0.1) return p01Alert(t('common.warning'), t('privateSend.minimumAmount'));
 
-    // ── Consent popup — irreversible action ──────────────────────────
-    // The user MUST confirm before we lock the note and start the route.
-    // Once confirmed, the note is locked and the route cannot be cancelled.
-    const sourceLabel = source === 'note' && selectedNote
-      ? `shielded note (${selectedNote.denomination} SOL)`
-      : `wallet (${amt} SOL)`;
+    const srcLabel = source === 'note' && selectedNote
+      ? `shielded note (${selectedNote.denomination} SOL)` : `wallet (${amt} SOL)`;
 
-    p01Alert(
-      'Confirm Private Send',
-      `You are about to send ${amt} SOL to ${finalDestination.slice(0, 8)}...${finalDestination.slice(-4)}\n\n` +
-      `Source: ${sourceLabel}\n` +
-      `Privacy level: ${LEVEL_LABELS[privacyLevel]}\n\n` +
-      `This action is IRREVERSIBLE. Once confirmed:\n` +
-      `\u2022 The note will be locked and cannot be withdrawn\n` +
-      `\u2022 The route cannot be cancelled\n` +
-      `\u2022 Funds will be delivered after all hops complete`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'I Confirm — Send',
-          style: 'destructive',
-          onPress: () => executePrivateSend(amt, finalDestination),
-        },
-      ],
-      'warning',
-    );
-  }, [amount, recipient, privacyLevel, publicKey, levelConfig, feeEstimate, router, shieldNote, source, selectedNote, selectedNoteId]);
+    p01Alert(t('privateSend.confirmPrivateSend'),
+      `${t('common.send')} ${amt} SOL to ${finalDestination.slice(0, 8)}...${finalDestination.slice(-4)}\n\nSource: ${srcLabel}\nPrivacy: ${levelInfo.label}\n\n${t('privateSend.irreversible')}`,
+      [{ text: t('common.cancel'), style: 'cancel' },
+       { text: t('common.send'), style: 'destructive', onPress: () => executePrivateSend(amt, finalDestination) }],
+      'warning');
+  }, [amount, recipient, privacyLevel, source, selectedNote]);
 
-  // ── Actual execution (after consent) ──────────────────────────────
-  const executePrivateSend = useCallback(async (amt: number, finalDestination: string) => {
+  const executePrivateSend = useCallback(async (amt: number, dest: string) => {
     setIsStarting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-
     try {
-      console.log(`[PrivateSend] Starting route: ${amt} SOL → ${recipient.trim().slice(0, 8)}... | Level ${privacyLevel} (${LEVEL_LABELS[privacyLevel]})`);
-      console.log(`[PrivateSend] Source: ${source === 'note' ? `note ${selectedNoteId?.slice(0, 8)}...` : 'wallet'}`);
-      console.log(`[PrivateSend] Config: ${levelConfig.splits} splits, ${levelConfig.hops} hops`);
+      console.log(`[PrivateSend] ${amt} SOL → ${dest.slice(0, 8)}... | Level ${privacyLevel}`);
 
       if (source === 'note' && selectedNote) {
-        // ── FROM NOTE: Already shielded — no wallet TX needed ──────
-        // This is MAXIMUM privacy: zero wallet transactions in the entire flow
-        console.log(`[PrivateSend] 🔒 Sending from shielded note: ${selectedNote.id} (${selectedNote.denomination} SOL)`);
-        console.log(`[PrivateSend] 🔒 Zero wallet footprint — all operations from pool`);
-
-        // Lock the note — prevents withdrawal or double-spend during route
         useDenominatedPoolStore.getState().lockNote(selectedNote.id);
-
-        // Just plan the route — the note is already in the pool
         const { sha256 } = await import('@noble/hashes/sha256');
         const { bytesToHex } = await import('@noble/hashes/utils');
-        const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
-
+        const skHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
         const { startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
         if (!isPrivacyRouterAvailable()) {
           const { startAutonomousRunner } = await import('@/services/privacyRouter/autonomousRunner');
           await startAutonomousRunner();
         }
-
-        const route = await startPrivateRoute({
-          amount: selectedNote.denomination,
-          destination: finalDestination,
-          privacyLevel,
-          spendingKeyHash,
-        });
-
-        console.log(`[PrivateSend] ✅ Route from note: ${route.id.slice(0, 12)}... | ${route.hops.length} hops`);
-        route.hops.forEach((hop, i) => {
-          console.log(`[PrivateSend]   Hop ${i + 1}: ${hop.type} | ${hop.amount} SOL | ${new Date(hop.scheduledAt).toLocaleTimeString()}`);
-        });
-
+        const route = await startPrivateRoute({ amount: selectedNote.denomination, destination: dest, privacyLevel, spendingKeyHash: skHash });
         useWalletStore.getState().refreshBalance?.();
-        p01Alert(
-          'Route Active (from Note)',
-          `Note ${selectedNote.denomination} SOL routed through ${route.hops.length} hops.\n\nZero wallet footprint — maximum privacy.\nETA: ${feeEstimate?.estimatedDuration || 'several hours'}`,
-        );
-        router.back();
-        return;
+        p01Alert(t('privateSend.routeActive'), t('privateSend.routeDesc', { hops: route.hops.length }));
+        router.back(); return;
       }
 
-      // ── FROM WALLET: Transfer to stealth first ───────────────────
+      // FROM WALLET: stealth → shield → route
+      const { sha256: sha256E } = require('@noble/hashes/sha256');
+      const { bytesToHex: bthE } = require('@noble/hashes/utils');
+      const skHash = bthE(sha256E(new TextEncoder().encode(publicKey || 'default')));
+      const ephId = `ephemeral_${Date.now().toString(36)}`;
+      const stealthKp = deriveRouteStealthKeypair({ spendingKeyHash: skHash, routeId: ephId, hopIndex: 0, outputIndex: 0 });
 
-      // ── Step 1: Transfer SOL to stealth intermediary ─────────────
-      // This breaks the on-chain link between the user's wallet and the pool.
-      // On-chain it looks like a normal SOL transfer to a random address.
-      const { sha256: sha256Early } = require('@noble/hashes/sha256');
-      const { bytesToHex: bthEarly } = require('@noble/hashes/utils');
-      const skHash = bthEarly(sha256Early(new TextEncoder().encode(publicKey || 'default')));
-      const ephemeralRouteId = `ephemeral_${Date.now().toString(36)}`;
-
-      const stealthKeypair = deriveRouteStealthKeypair({
-        spendingKeyHash: skHash,
-        routeId: ephemeralRouteId,
-        hopIndex: 0,
-        outputIndex: 0,
-      });
-
-      const stealthAddress = stealthKeypair.publicKey;
-      console.log(`[PrivateSend] 🕵️ Step 1a: Transferring ${amt} SOL to stealth intermediary...`);
-      console.log(`[PrivateSend] 🕵️ Stealth: ${stealthAddress.toBase58().slice(0, 12)}... (ephemeral, no link to you)`);
-
-      // Find the best pool FIRST so we know the denomination
       const { ALL_POOLS, SOL_POOLS } = require('@/services/denominatedPool');
-      const solPools = (SOL_POOLS || ALL_POOLS.filter((p: any) => p.token === 'SOL'))
-        .sort((a: any, b: any) => b.denomination - a.denomination);
+      const solPools = (SOL_POOLS || ALL_POOLS.filter((p: any) => p.token === 'SOL')).sort((a: any, b: any) => b.denomination - a.denomination);
       const pool = solPools.find((p: any) => p.denomination <= amt);
-      if (!pool) {
-        const available = solPools.map((p: any) => p.denomination).join(', ');
-        throw new Error(`No pool for ${amt} SOL. Available denominations: ${available}`);
-      }
-      console.log(`[PrivateSend] 🛡️ Best pool for ${amt} SOL: ${pool.denomination} SOL`);
+      if (!pool) throw new Error(`No pool for ${amt} SOL.`);
 
-      // Transfer SOL from user wallet to stealth address
-      // Amount = pool denomination + shield fee (0.3%) + TX fees + margin
       const { SystemProgram, Transaction, PublicKey: PubKey } = require('@solana/web3.js');
       const connection = getConnection();
-      const denomLamports = Math.round(pool.denomination * 1_000_000_000);
-      const shieldFee = Math.round(denomLamports * 0.003); // 0.3% protocol fee
-      const txMargin = 10_000_000; // 0.01 SOL for TX fees + rent
-      const lamports = denomLamports + shieldFee + txMargin;
-      console.log(`[PrivateSend] 🕵️ Transfer amount: ${lamports / 1e9} SOL (${pool.denomination} denom + ${shieldFee / 1e9} fee + ${txMargin / 1e9} margin)`);
+      const lamports = Math.round(pool.denomination * 1e9) + Math.round(pool.denomination * 1e9 * 0.003) + 10_000_000;
 
-      const transferTx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: new PubKey(publicKey),
-          toPubkey: stealthAddress,
-          lamports,
-        })
-      );
-
-      // Sign with Privy wallet
+      const transferTx = new Transaction().add(SystemProgram.transfer({ fromPubkey: new PubKey(publicKey), toPubkey: stealthKp.publicKey, lamports }));
       const { getPrivySigner } = require('@/stores/walletStore');
-      const signTransaction = getPrivySigner();
-      if (signTransaction) {
-        const { blockhash } = await connection.getLatestBlockhash();
-        transferTx.recentBlockhash = blockhash;
-        transferTx.feePayer = new PubKey(publicKey);
-        const signed = await signTransaction(transferTx);
-        const txSig = await connection.sendRawTransaction(signed.serialize());
-        await connection.confirmTransaction(txSig, 'confirmed');
-        console.log(`[PrivateSend] 🕵️ Transfer TX: ${txSig.slice(0, 16)}... (confirmed)`);
-      } else {
-        throw new Error('No wallet signer available — Privy wallet required');
-      }
-
-      console.log(`[PrivateSend] 💰 SOL transferred to stealth address — wallet balance deducted`);
-
-      // ── Step 1b: Shield from stealth address into anonymity pool ──
-      console.log(`[PrivateSend] 🛡️ Step 1b: Shielding from stealth into anonymity pool...`);
-      console.log(`[PrivateSend] 🛡️ Pool: ${pool.poolPDA.toBase58().slice(0, 12)}... (${pool.denomination} SOL)`);
-      console.log(`[PrivateSend] 🛡️ Source: ${stealthAddress.toBase58().slice(0, 12)}... (NOT your wallet)`);
+      const signTx = getPrivySigner();
+      if (!signTx) throw new Error('No wallet signer available');
+      const { blockhash } = await connection.getLatestBlockhash();
+      transferTx.recentBlockhash = blockhash; transferTx.feePayer = new PubKey(publicKey);
+      const signed = await signTx(transferTx);
+      const txSig = await connection.sendRawTransaction(signed.serialize());
+      await connection.confirmTransaction(txSig, 'confirmed');
 
       const noteId = await shieldNote(pool);
-      console.log(`[PrivateSend] 🛡️ Shield confirmed! Note: ${noteId}`);
-      console.log(`[PrivateSend] ✅ On-chain trail: YourWallet → Stealth → Pool (link broken)`);
 
-      // ── Step 2: Plan the route for remaining hops ─────────────────
       const { sha256 } = await import('@noble/hashes/sha256');
       const { bytesToHex } = await import('@noble/hashes/utils');
       const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
-
       const { startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
-
-      // Ensure autonomous runner is started (idempotent)
       if (!isPrivacyRouterAvailable()) {
-        console.log('[PrivateSend] Starting autonomous runner...');
         const { startAutonomousRunner } = await import('@/services/privacyRouter/autonomousRunner');
         await startAutonomousRunner();
       }
-
-      console.log('[PrivateSend] Planning remaining route hops...');
-      const route = await startPrivateRoute({
-        amount: amt,
-        destination: finalDestination,
-        privacyLevel,
-        spendingKeyHash,
-      });
-
-      console.log(`[PrivateSend] ✅ Route created: ${route.id.slice(0, 12)}...`);
-      console.log(`[PrivateSend] 📊 ${route.hops.length} hops | ${route.numOutputs} splits | ${route.sourceDenomination} → ${route.targetDenomination} SOL`);
-      console.log(`[PrivateSend] 💰 Fee estimate: ${route.totalFeeEstimate.toFixed(4)} SOL`);
-      console.log(`[PrivateSend] ⏱️ ETA: ${new Date(route.estimatedCompletionAt).toLocaleTimeString()}`);
-
-      route.hops.forEach((hop, i) => {
-        console.log(`[PrivateSend]   Hop ${i + 1}: ${hop.type} | ${hop.amount} SOL | stealth: ${hop.stealthAddress.slice(0, 8)}... | scheduled: ${new Date(hop.scheduledAt).toLocaleTimeString()}`);
-      });
-
-      // Refresh wallet balance to reflect the locked SOL
+      const route = await startPrivateRoute({ amount: amt, destination: dest, privacyLevel, spendingKeyHash });
       useWalletStore.getState().refreshBalance?.();
-
-      p01Alert(
-        'SOL Locked & Route Active',
-        `${pool.denomination} SOL shielded into anonymity pool.\n\n${route.hops.length} hops will execute over ${feeEstimate?.estimatedDuration || 'several hours'} to deliver funds to the destination.\n\nRoute: ${route.id.slice(0, 12)}...`,
-      );
+      p01Alert(t('privateSend.routeActive'), `${pool.denomination} SOL shielded. ${route.hops.length} hops over ${feeEstimate?.estimatedDuration || 'several hours'}.`);
       router.back();
     } catch (err: any) {
-      console.error('[PrivateSend] ❌ Error:', err.message, err.stack?.slice(0, 300));
-      p01Alert('Error', err.message || 'Failed to create privacy route.');
-    } finally {
-      setIsStarting(false);
-    }
+      console.error('[PrivateSend]', err.message);
+      p01Alert(t('common.error'), err.message || t('alerts.errorGeneric'));
+    } finally { setIsStarting(false); }
   }, [publicKey, levelConfig, feeEstimate, router, shieldNote, source, selectedNote, selectedNoteId, privacyLevel]);
 
-  // ── Render ────────────────────────────────────────────────────────
-
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+    <View style={st.container}>
+      <View style={[st.header, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Ionicons name="git-network-outline" size={20} color={P01Colors.cyan} />
-          <Text style={styles.headerTitle}>Private Send</Text>
-        </View>
+        <Text style={st.headerTitle}>{t('privateSend.title')}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Subtitle */}
-        <Animated.View entering={FadeInDown.delay(50).duration(300)}>
-          <Text style={styles.subtitle}>
-            Enhanced privacy with multi-hop routing
-          </Text>
-        </Animated.View>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: 160 }}
+        showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
-        {/* ── Source Selector ─────────────────────────────────── */}
-        <Animated.View
-          entering={FadeInDown.delay(75).duration(300)}
-          style={styles.card}
-        >
-          <Text style={styles.sectionLabel}>SEND FROM</Text>
+        {/* Source selector */}
+        <Animated.View entering={FadeInDown.delay(50).duration(250)} style={st.card}>
+          <Text style={st.label}>{t('privateSend.sendFrom')}</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity
-              onPress={() => { setSource('wallet'); setSelectedNoteId(null); }}
-              activeOpacity={0.7}
-              style={{
-                flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
-                backgroundColor: source === 'wallet' ? 'rgba(57, 197, 187, 0.12)' : 'rgba(255,255,255,0.04)',
-                borderWidth: 1, borderColor: source === 'wallet' ? P01Colors.cyan : Colors.border,
-              }}
-            >
-              <Ionicons name="wallet-outline" size={18} color={source === 'wallet' ? P01Colors.cyan : Colors.textSecondary} />
-              <Text style={{ color: source === 'wallet' ? P01Colors.cyan : Colors.textSecondary, fontSize: 12, fontFamily: FontFamily.medium, marginTop: 4 }}>
-                Wallet
-              </Text>
-              <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 2 }}>
-                {solBalance.toFixed(2)} SOL
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setSource('note')}
-              activeOpacity={0.7}
-              style={{
-                flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center',
-                backgroundColor: source === 'note' ? 'rgba(139, 139, 255, 0.12)' : 'rgba(255,255,255,0.04)',
-                borderWidth: 1, borderColor: source === 'note' ? '#8B8BFF' : Colors.border,
-                opacity: availableNotes.length === 0 ? 0.4 : 1,
-              }}
-              disabled={availableNotes.length === 0}
-            >
-              <Ionicons name="shield-checkmark-outline" size={18} color={source === 'note' ? '#8B8BFF' : Colors.textSecondary} />
-              <Text style={{ color: source === 'note' ? '#8B8BFF' : Colors.textSecondary, fontSize: 12, fontFamily: FontFamily.medium, marginTop: 4 }}>
-                Shielded Note
-              </Text>
-              <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 2 }}>
-                {availableNotes.length} note{availableNotes.length !== 1 ? 's' : ''} available
-              </Text>
-            </TouchableOpacity>
+            {[
+              { key: 'wallet' as const, icon: 'wallet-outline', title: t('privateSend.walletSource'), sub: `${solBalance.toFixed(2)} SOL`, color: P01Colors.cyan },
+              { key: 'note' as const, icon: 'shield-checkmark-outline', title: t('privateSend.noteSource'), sub: t('privateSend.notesAvailable', { count: availableNotes.length }), color: '#8B8BFF', disabled: availableNotes.length === 0 },
+            ].map(s => (
+              <TouchableOpacity key={s.key} onPress={() => { setSource(s.key); if (s.key === 'wallet') setSelectedNoteId(null); }}
+                disabled={s.disabled} activeOpacity={0.7}
+                style={[st.sourceBtn, source === s.key && { backgroundColor: `${s.color}15`, borderColor: s.color }, s.disabled && { opacity: 0.4 }]}>
+                <Ionicons name={s.icon as any} size={18} color={source === s.key ? s.color : Colors.textSecondary} />
+                <Text style={[st.sourceName, source === s.key && { color: s.color }]}>{s.title}</Text>
+                <Text style={st.sourceSub}>{s.sub}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          {/* Note selector (when source === 'note') */}
+          {/* Note list */}
           {source === 'note' && availableNotes.length > 0 && (
-            <View style={{ marginTop: 12, gap: 6 }}>
-              {availableNotes.map((note) => (
-                <TouchableOpacity
-                  key={note.id}
-                  onPress={() => handleSelectNote(note.id)}
-                  activeOpacity={0.7}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                    padding: 10, borderRadius: 10,
-                    backgroundColor: selectedNoteId === note.id ? 'rgba(139, 139, 255, 0.1)' : 'rgba(255,255,255,0.03)',
-                    borderWidth: 1, borderColor: selectedNoteId === note.id ? '#8B8BFF' : Colors.border,
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Ionicons name={selectedNoteId === note.id ? 'radio-button-on' : 'radio-button-off'} size={16} color={selectedNoteId === note.id ? '#8B8BFF' : Colors.textTertiary} />
-                    <Text style={{ color: Colors.text, fontSize: 13, fontFamily: FontFamily.mono }}>
-                      {note.denomination} SOL
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <View style={{
-                      paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
-                      backgroundColor: note.status === 'mature' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 204, 0, 0.15)',
-                    }}>
-                      <Text style={{ color: note.status === 'mature' ? Colors.success : Colors.yellow, fontSize: 9, fontFamily: FontFamily.bold }}>
-                        {note.status === 'mature' ? 'MATURE' : 'PENDING'}
-                      </Text>
-                    </View>
-                    <Text style={{ color: Colors.textTertiary, fontSize: 10 }}>
-                      {note.id.slice(0, 8)}...
-                    </Text>
+            <View style={{ marginTop: 10, gap: 6 }}>
+              {availableNotes.map(n => (
+                <TouchableOpacity key={n.id} onPress={() => handleSelectNote(n.id)} activeOpacity={0.7}
+                  style={[st.noteRow, selectedNoteId === n.id && { backgroundColor: 'rgba(139,139,255,0.1)', borderColor: '#8B8BFF' }]}>
+                  <Ionicons name={selectedNoteId === n.id ? 'radio-button-on' : 'radio-button-off'} size={16}
+                    color={selectedNoteId === n.id ? '#8B8BFF' : Colors.textTertiary} />
+                  <Text style={st.noteDenom}>{n.denomination} SOL</Text>
+                  <View style={[st.badge, { backgroundColor: 'rgba(16,185,129,0.15)' }]}>
+                    <Text style={[st.badgeText, { color: P01Colors.green }]}>{t('privacy.mature').toUpperCase()}</Text>
                   </View>
                 </TouchableOpacity>
               ))}
             </View>
           )}
+        </Animated.View>
 
-          {source === 'note' && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
-              <Ionicons name="lock-closed" size={12} color={P01Colors.cyan} />
-              <Text style={{ color: P01Colors.cyan, fontSize: 10, fontFamily: FontFamily.medium }}>
-                Zero wallet footprint — maximum privacy
-              </Text>
+        {/* Amount */}
+        <Animated.View entering={FadeInDown.delay(100).duration(250)} style={{ alignItems: 'center', marginVertical: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+            <TextInput style={st.amountInput} value={amount} onChangeText={setAmount}
+              placeholder="0" placeholderTextColor={Colors.textTertiary} keyboardType="decimal-pad" />
+            <Text style={st.amountSuffix}>SOL</Text>
+          </View>
+          <Text style={st.balText}>{t('common.available')}: {solBalance.toFixed(4)} SOL</Text>
+          <View style={{ flexDirection: 'row', gap: 6, marginTop: 10 }}>
+            {[0.25, 0.5, 0.75, 1].map(pct => (
+              <TouchableOpacity key={pct} onPress={() => { setAmount((Math.max(0, solBalance - 0.01) * pct).toFixed(4)); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                style={st.pctBtn}>
+                <Text style={st.pctText}>{pct === 1 ? t('send.max') : `${pct * 100}%`}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </Animated.View>
+
+        {/* Recipient */}
+        <Animated.View entering={FadeInDown.delay(150).duration(250)} style={st.card}>
+          <Text style={st.label}>{t('privateSend.destination')}</Text>
+          <View style={st.recipientWrap}>
+            <TextInput style={st.recipientInput} value={recipient} onChangeText={setRecipient}
+              placeholder={t('privateSend.enterDestination')} placeholderTextColor={Colors.textTertiary}
+              autoCapitalize="none" autoCorrect={false} multiline numberOfLines={2} />
+            <View style={{ flexDirection: 'row', gap: 4 }}>
+              <TouchableOpacity onPress={() => router.push('/(main)/(wallet)/scan')} style={st.iconBtn}>
+                <Ionicons name="scan-outline" size={16} color={P01Colors.cyan} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handlePaste} style={st.iconBtn}>
+                <Ionicons name="clipboard-outline" size={16} color={P01Colors.cyan} />
+              </TouchableOpacity>
             </View>
-          )}
-        </Animated.View>
-
-        {/* ── (continued below) ── */}
-        <Animated.View entering={FadeInDown.delay(50).duration(300)}>
-          <Text style={styles.subtitle}>
-          </Text>
-        </Animated.View>
-
-        {/* ── Amount Input ───────────────────────────────────────── */}
-        <Animated.View
-          entering={FadeInDown.delay(100).duration(300)}
-          style={styles.card}
-        >
-          <Text style={styles.sectionLabel}>AMOUNT</Text>
-          <View style={styles.amountRow}>
-            <TextInput
-              style={styles.amountInput}
-              value={amount}
-              onChangeText={setAmount}
-              placeholder="0.00"
-              placeholderTextColor={Colors.textTertiary}
-              keyboardType="decimal-pad"
-              selectionColor={P01Colors.cyan}
-            />
-            <Text style={styles.amountSuffix}>SOL</Text>
-          </View>
-          <View style={styles.balanceRow}>
-            <Text style={styles.balanceText}>
-              Balance: {solBalance.toFixed(4)} SOL
-            </Text>
-            <TouchableOpacity onPress={handleMax} style={styles.maxBtn}>
-              <Text style={styles.maxBtnText}>MAX</Text>
-            </TouchableOpacity>
-          </View>
-          {hasValidAmount && !hasEnoughBalance && (
-            <View style={styles.warningRow}>
-              <Ionicons name="warning" size={14} color={Colors.warning} />
-              <Text style={styles.warningText}>Insufficient balance</Text>
-            </View>
-          )}
-        </Animated.View>
-
-        {/* ── Recipient Input ────────────────────────────────────── */}
-        <Animated.View
-          entering={FadeInDown.delay(150).duration(300)}
-          style={styles.card}
-        >
-          <Text style={styles.sectionLabel}>DESTINATION ADDRESS</Text>
-          <View style={styles.recipientRow}>
-            <TextInput
-              style={styles.recipientInput}
-              value={recipient}
-              onChangeText={setRecipient}
-              placeholder="Solana or P01 stealth address"
-              placeholderTextColor={Colors.textTertiary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              selectionColor={P01Colors.cyan}
-            />
-            <TouchableOpacity
-              onPress={() => router.push('/(main)/(wallet)/scan')}
-              style={styles.pasteBtn}
-            >
-              <Ionicons name="scan-outline" size={18} color={P01Colors.cyan} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handlePaste} style={styles.pasteBtn}>
-              <Ionicons name="clipboard-outline" size={18} color={P01Colors.cyan} />
-            </TouchableOpacity>
           </View>
         </Animated.View>
 
-        {/* ── Privacy Level Selector ─────────────────────────────── */}
-        <Animated.View
-          entering={FadeInDown.delay(200).duration(300)}
-          style={styles.card}
-        >
-          <Text style={styles.sectionLabel}>PRIVACY LEVEL</Text>
-          <View style={styles.levelRow}>
-            {ALL_LEVELS.map((level) => {
-              const isSelected = level === privacyLevel;
+        {/* Privacy Level */}
+        <Animated.View entering={FadeInDown.delay(200).duration(250)} style={st.card}>
+          <Text style={st.label}>{t('privateSend.privacyLevel')}</Text>
+          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
+            {LEVELS.map(l => {
+              const sel = l.level === privacyLevel;
               return (
-                <TouchableOpacity
-                  key={level}
-                  onPress={() => handleSelectLevel(level)}
-                  activeOpacity={0.7}
-                  style={[
-                    styles.levelPill,
-                    isSelected && styles.levelPillActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.levelPillText,
-                      isSelected && styles.levelPillTextActive,
-                    ]}
-                  >
-                    {level}
-                  </Text>
+                <TouchableOpacity key={l.level} onPress={() => { setPrivacyLevel(l.level); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                  style={[st.lvlPill, sel && st.lvlPillActive]}>
+                  <Text style={[st.lvlNum, sel && { color: P01Colors.cyan }]}>{l.level}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
 
-          {/* Selected level label */}
-          <View style={styles.levelLabelRow}>
-            <Text style={styles.levelName}>{LEVEL_LABELS[privacyLevel]}</Text>
-            <Text style={styles.levelFee}>{LEVEL_FEE_PERCENTS[privacyLevel]} fees</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+            <Text style={st.lvlLabel}>{levelInfo.label}</Text>
+            <Text style={st.lvlFee}>{levelInfo.fee}</Text>
           </View>
 
-          {/* Level details card */}
-          <View style={styles.levelDetails}>
-            <View style={styles.levelDetailRow}>
-              <Ionicons name="layers-outline" size={14} color={Colors.textTertiary} />
-              <Text style={styles.levelDetailLabel}>Hops</Text>
-              <Text style={styles.levelDetailValue}>{levelConfig.hops}</Text>
-            </View>
-            <View style={styles.levelDetailDivider} />
-            <View style={styles.levelDetailRow}>
-              <Ionicons name="git-branch-outline" size={14} color={Colors.textTertiary} />
-              <Text style={styles.levelDetailLabel}>Splits</Text>
-              <Text style={styles.levelDetailValue}>{levelConfig.splits} wallets</Text>
-            </View>
-            <View style={styles.levelDetailDivider} />
-            <View style={styles.levelDetailRow}>
-              <Ionicons name="time-outline" size={14} color={Colors.textTertiary} />
-              <Text style={styles.levelDetailLabel}>Estimated time</Text>
-              <Text style={styles.levelDetailValue}>{LEVEL_TIMES[privacyLevel]}</Text>
-            </View>
-            <View style={styles.levelDetailDivider} />
-            <View style={styles.levelDetailRow}>
-              <Ionicons name="people-outline" size={14} color={Colors.textTertiary} />
-              <Text style={styles.levelDetailLabel}>Anonymity set</Text>
-              <Text style={styles.levelDetailValue}>
-                {levelConfig.splits * levelConfig.hops}x multiplier
-              </Text>
-            </View>
+          <View style={st.detailBox}>
+            {[
+              [t('privateSend.hops'), `${levelConfig.hops}`, 'layers-outline'],
+              [t('privateSend.splits'), `${levelConfig.splits}`, 'git-branch-outline'],
+              [t('privateSend.estimatedTime'), levelInfo.time, 'time-outline'],
+            ].map(([label, val, icon], i) => (
+              <View key={label}>
+                {i > 0 && <View style={st.detailDivider} />}
+                <View style={st.detailRow}>
+                  <Ionicons name={icon as any} size={13} color={Colors.textTertiary} />
+                  <Text style={st.detailLabel}>{label}</Text>
+                  <Text style={st.detailValue}>{val}</Text>
+                </View>
+              </View>
+            ))}
           </View>
         </Animated.View>
 
-        {/* ── Fee Breakdown Card ─────────────────────────────────── */}
+        {/* Fees */}
         {feeEstimate && (
-          <Animated.View
-            entering={FadeInUp.delay(100).duration(300)}
-            style={styles.card}
-          >
-            <Text style={styles.sectionLabel}>FEE BREAKDOWN</Text>
-            <View style={styles.feeGrid}>
-              <FeeRow
-                icon="shield-outline"
-                label="Shield fees"
-                value={`${feeEstimate.shieldFees.toFixed(6)} SOL`}
-                sublabel="0.3% per shield"
-              />
-              <View style={styles.feeDivider} />
-              <FeeRow
-                icon="shield-half-outline"
-                label="Unshield fees"
-                value={`${feeEstimate.unshieldFees.toFixed(6)} SOL`}
-                sublabel="0.5% per unshield"
-              />
-              <View style={styles.feeDivider} />
-              <FeeRow
-                icon="flash-outline"
-                label="Network fees"
-                value={`${feeEstimate.networkFees.toFixed(6)} SOL`}
-                sublabel={`${feeEstimate.numTransactions} transactions`}
-              />
-              <View style={styles.feeDivider} />
-
-              {/* Total */}
-              <View style={styles.feeTotalRow}>
-                <View style={styles.feeTotalLeft}>
-                  <Ionicons name="calculator-outline" size={14} color={P01Colors.cyan} />
-                  <Text style={styles.feeTotalLabel}>Total cost</Text>
+          <Animated.View entering={FadeInDown.delay(250).duration(250)} style={st.card}>
+            <Text style={st.label}>{t('privateSend.fees')}</Text>
+            <View style={st.detailBox}>
+              {[
+                [t('privateSend.shieldFees'), `${feeEstimate.shieldFees.toFixed(6)} SOL`],
+                [t('privateSend.unshieldFees'), `${feeEstimate.unshieldFees.toFixed(6)} SOL`],
+                [t('privateSend.networkFees'), `${feeEstimate.networkFees.toFixed(6)} SOL`],
+              ].map(([k, v], i) => (
+                <View key={k}>
+                  {i > 0 && <View style={st.detailDivider} />}
+                  <View style={st.detailRow}>
+                    <Text style={st.detailLabel}>{k}</Text>
+                    <Text style={st.detailValue}>{v}</Text>
+                  </View>
                 </View>
-                <View style={styles.feeTotalRight}>
-                  <Text style={styles.feeTotalValue}>
-                    {feeEstimate.totalFees.toFixed(6)} SOL
-                  </Text>
-                  <Text style={styles.feeTotalPercent}>
-                    ({feeEstimate.totalCostPercent.toFixed(2)}%)
-                  </Text>
-                </View>
+              ))}
+              <View style={st.detailDivider} />
+              <View style={st.detailRow}>
+                <Text style={[st.detailLabel, { color: P01Colors.cyan, fontFamily: FontFamily.semibold }]}>{t('privateSend.totalFees')}</Text>
+                <Text style={[st.detailValue, { color: P01Colors.cyan }]}>{feeEstimate.totalFees.toFixed(6)} SOL ({feeEstimate.totalCostPercent.toFixed(2)}%)</Text>
               </View>
             </View>
           </Animated.View>
         )}
-
-        {/* ── Privacy Explanation ────────────────────────────────── */}
-        <Animated.View
-          entering={FadeInDown.delay(300).duration(300)}
-          style={styles.infoCard}
-        >
-          <Ionicons
-            name="information-circle-outline"
-            size={16}
-            color={Colors.textTertiary}
-          />
-          <Text style={styles.infoText}>
-            Your funds will be split into{' '}
-            <Text style={styles.infoHighlight}>{levelConfig.splits}</Text>{' '}
-            separate notes, each routed through{' '}
-            <Text style={styles.infoHighlight}>{levelConfig.hops}</Text>{' '}
-            anonymity pools with randomized time delays. The route is encrypted
-            and stored locally — only your spending key can reconstruct it.
-          </Text>
-        </Animated.View>
-
-        {/* Bottom spacer for button + liquid glass tab bar */}
-        <View style={{ height: 180 }} />
       </ScrollView>
 
-      {/* ── Action Button ──────────────────────────────────────── */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          onPress={handleStartRoute}
-          disabled={!canStart}
-          activeOpacity={0.8}
-          style={{ width: '100%' }}
-        >
-          <LinearGradient
-            colors={
-              canStart
-                ? [P01Colors.cyan, '#20A89E']
-                : ['rgba(57,197,187,0.3)', 'rgba(57,197,187,0.15)']
-            }
-            style={styles.startBtn}
-          >
-            {isStarting ? (
-              <ActivityIndicator size="small" color="#000" />
-            ) : (
-              <>
-                <Ionicons name="rocket-outline" size={20} color="#000" />
-                <Text style={styles.startBtnText}>Start Private Send</Text>
-              </>
-            )}
-          </LinearGradient>
+      {/* CTA */}
+      <View style={[st.cta, { paddingBottom: 95 + insets.bottom }]}>
+        <TouchableOpacity onPress={handleStartRoute} disabled={!canStart} activeOpacity={0.8}
+          style={[st.ctaBtn, !canStart && { opacity: 0.4 }]}>
+          {isStarting ? <ActivityIndicator size="small" color="#000" /> : (
+            <>
+              <Ionicons name="rocket-outline" size={18} color="#000" />
+              <Text style={st.ctaText}>{t('privateSend.startPrivateSend')}</Text>
+            </>
+          )}
         </TouchableOpacity>
-
-        {!canStart && hasValidAmount && hasRecipient && !hasEnoughBalance && (
-          <Text style={styles.bottomHint}>Insufficient SOL balance</Text>
-        )}
-        {!canStart && !hasValidAmount && (
-          <Text style={styles.bottomHint}>Enter an amount to continue</Text>
-        )}
-        {!canStart && hasValidAmount && !hasRecipient && (
-          <Text style={styles.bottomHint}>Enter a destination address</Text>
-        )}
       </View>
-    </SafeAreaView>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Fee Row sub-component
-// ---------------------------------------------------------------------------
-
-function FeeRow({
-  icon,
-  label,
-  value,
-  sublabel,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-  sublabel: string;
-}) {
-  return (
-    <View style={styles.feeRow}>
-      <View style={styles.feeRowLeft}>
-        <Ionicons name={icon} size={14} color={Colors.textTertiary} />
-        <View>
-          <Text style={styles.feeLabel}>{label}</Text>
-          <Text style={styles.feeSublabel}>{sublabel}</Text>
-        </View>
-      </View>
-      <Text style={styles.feeValue}>{value}</Text>
     </View>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-
-  // ── Header ──────────────────────────────────────────
+const st = StyleSheet.create({
+  container: { flex: 1, backgroundColor: 'transparent' },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-  },
-  headerCenter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,
   },
   backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 40, height: 40, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
   },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-  },
+  headerTitle: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text },
 
-  // ── Scroll ──────────────────────────────────────────
-  scrollView: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 40,
-  },
-
-  subtitle: {
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    marginBottom: Spacing.lg,
-  },
-
-  // ── Cards ───────────────────────────────────────────
+  // Cards
   card: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    marginBottom: Spacing.md,
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+    padding: Spacing.xl, marginBottom: 12,
   },
-  sectionLabel: {
-    fontSize: 11,
-    fontFamily: FontFamily.bold,
-    color: Colors.textTertiary,
-    letterSpacing: 1.2,
-    marginBottom: Spacing.md,
+  label: { fontSize: 11, fontFamily: FontFamily.bold, color: Colors.textTertiary, letterSpacing: 1, marginBottom: 10 },
+
+  // Source selector
+  sourceBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: BorderRadius.md, alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: Colors.surfaceTertiary,
+  },
+  sourceName: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginTop: 4 },
+  sourceSub: { fontSize: 10, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 2 },
+
+  // Note row
+  noteRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: Colors.surfaceTertiary,
+  },
+  noteDenom: { flex: 1, fontSize: 13, fontFamily: FontFamily.mono, color: Colors.text },
+  badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 9, fontFamily: FontFamily.bold },
+
+  // Amount
+  amountInput: { fontSize: 48, fontFamily: FontFamily.bold, color: Colors.text, minWidth: 60, textAlign: 'center' },
+  amountSuffix: { fontSize: 22, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginLeft: 8 },
+  balText: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 6 },
+  pctBtn: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(57,197,187,0.08)', borderWidth: 1, borderColor: 'rgba(57,197,187,0.15)',
+  },
+  pctText: { fontSize: 12, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+
+  // Recipient
+  recipientWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: BorderRadius.md,
+    borderWidth: 1, borderColor: Colors.surfaceTertiary, paddingHorizontal: 12, paddingVertical: 8,
+  },
+  recipientInput: { flex: 1, fontSize: 14, fontFamily: FontFamily.mono, color: Colors.text, minHeight: 44, padding: 0 },
+  iconBtn: {
+    width: 34, height: 34, borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(57,197,187,0.08)', alignItems: 'center', justifyContent: 'center',
   },
 
-  // ── Amount ──────────────────────────────────────────
-  amountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: Spacing.sm,
+  // Privacy level
+  lvlPill: {
+    flex: 1, paddingVertical: 10, borderRadius: BorderRadius.md, alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: Colors.surfaceTertiary,
   },
-  amountInput: {
-    flex: 1,
-    fontSize: 32,
-    fontFamily: FontFamily.mono,
-    color: Colors.text,
-    padding: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingBottom: Spacing.sm,
-  },
-  amountSuffix: {
-    fontSize: FontSize.lg,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textSecondary,
-    marginLeft: Spacing.sm,
-    paddingBottom: Spacing.sm,
-  },
-  balanceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: Spacing.sm,
-  },
-  balanceText: {
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-  },
-  maxBtn: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: P01Colors.cyanDim,
-    borderWidth: 1,
-    borderColor: `${P01Colors.cyan}40`,
-  },
-  maxBtnText: {
-    fontSize: 11,
-    fontFamily: FontFamily.bold,
-    color: P01Colors.cyan,
-    letterSpacing: 0.8,
-  },
-  warningRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: Spacing.sm,
-  },
-  warningText: {
-    fontSize: FontSize.xs,
-    fontFamily: FontFamily.medium,
-    color: Colors.warning,
-  },
+  lvlPillActive: { backgroundColor: 'rgba(57,197,187,0.12)', borderColor: P01Colors.cyan },
+  lvlNum: { fontSize: 15, fontFamily: FontFamily.bold, color: Colors.textSecondary },
+  lvlLabel: { fontSize: 16, fontFamily: FontFamily.semibold, color: Colors.text },
+  lvlFee: { fontSize: 13, fontFamily: FontFamily.mono, color: P01Colors.pink },
 
-  // ── Recipient ───────────────────────────────────────
-  recipientRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
+  // Detail box
+  detailBox: {
+    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: BorderRadius.md, padding: 12,
+    borderWidth: 1, borderColor: Colors.surfaceTertiary,
   },
-  recipientInput: {
-    flex: 1,
-    fontSize: FontSize.md,
-    fontFamily: FontFamily.mono,
-    color: Colors.text,
-    padding: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    paddingBottom: Spacing.sm,
-  },
-  pasteBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: P01Colors.cyanDim,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: `${P01Colors.cyan}30`,
-  },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7 },
+  detailLabel: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textTertiary },
+  detailValue: { fontSize: 13, fontFamily: FontFamily.mono, color: Colors.text },
+  detailDivider: { height: 1, backgroundColor: Colors.surfaceTertiary },
 
-  // ── Privacy Level ───────────────────────────────────
-  levelRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
+  // CTA
+  cta: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: Spacing.xl },
+  ctaBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    paddingVertical: 16, borderRadius: BorderRadius.md, backgroundColor: P01Colors.cyan,
   },
-  levelPill: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  levelPillActive: {
-    backgroundColor: P01Colors.cyanDim,
-    borderColor: P01Colors.cyan,
-  },
-  levelPillText: {
-    fontSize: FontSize.md,
-    fontFamily: FontFamily.bold,
-    color: Colors.textSecondary,
-  },
-  levelPillTextActive: {
-    color: P01Colors.cyan,
-  },
-  levelLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: Spacing.sm,
-  },
-  levelName: {
-    fontSize: FontSize.lg,
-    fontFamily: FontFamily.semibold,
-    color: Colors.text,
-  },
-  levelFee: {
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.mono,
-    color: P01Colors.pink,
-  },
-
-  // ── Level details ───────────────────────────────────
-  levelDetails: {
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-  },
-  levelDetailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 7,
-  },
-  levelDetailLabel: {
-    flex: 1,
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-  },
-  levelDetailValue: {
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.monoMedium,
-    color: Colors.text,
-  },
-  levelDetailDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginHorizontal: 4,
-  },
-
-  // ── Fee Breakdown ───────────────────────────────────
-  feeGrid: {
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-  },
-  feeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  feeRowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  feeLabel: {
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-  },
-  feeSublabel: {
-    fontSize: FontSize.xs,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginTop: 1,
-  },
-  feeValue: {
-    fontSize: FontSize.sm,
-    fontFamily: FontFamily.mono,
-    color: Colors.text,
-  },
-  feeDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginHorizontal: 4,
-  },
-  feeTotalRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 10,
-  },
-  feeTotalLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  feeTotalLabel: {
-    fontSize: FontSize.md,
-    fontFamily: FontFamily.semibold,
-    color: P01Colors.cyan,
-  },
-  feeTotalRight: {
-    alignItems: 'flex-end',
-  },
-  feeTotalValue: {
-    fontSize: FontSize.md,
-    fontFamily: FontFamily.monoMedium,
-    color: P01Colors.cyan,
-  },
-  feeTotalPercent: {
-    fontSize: FontSize.xs,
-    fontFamily: FontFamily.mono,
-    color: P01Colors.pink,
-    marginTop: 2,
-  },
-
-  // ── Info card ───────────────────────────────────────
-  infoCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    lineHeight: 18,
-  },
-  infoHighlight: {
-    color: P01Colors.cyan,
-    fontFamily: FontFamily.semibold,
-  },
-
-  // ── Bottom bar ──────────────────────────────────────
-  // Extra paddingBottom to sit above the liquid glass tab bar (~90px)
-  bottomBar: {
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
-    paddingBottom: 100,
-    backgroundColor: Colors.background,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    alignItems: 'center',
-  },
-  startBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 16,
-    borderRadius: BorderRadius.md,
-  },
-  startBtnText: {
-    fontSize: FontSize.lg,
-    fontFamily: FontFamily.bold,
-    color: '#000',
-  },
-  bottomHint: {
-    fontSize: FontSize.xs,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginTop: Spacing.sm,
-  },
+  ctaText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
 });

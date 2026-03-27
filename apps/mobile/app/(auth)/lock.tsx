@@ -1,4 +1,4 @@
-import { View, Text, Pressable, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, Pressable, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,14 +8,14 @@ import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOut } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { scheduleLocalNotification } from '@/services/notifications';
 import { unlockVault, unlockVaultBiometric, isVaultEnabled } from '@/utils/crypto/noteVault';
 import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
+import { useT } from '@/i18n';
 
 export default function LockScreen() {
+  const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [isBiometricSupported, setIsBiometricSupported] = useState(false);
@@ -64,10 +64,10 @@ export default function LockScreen() {
         const enrolled = compatible && await LocalAuthentication.isEnrolledAsync();
         if (enrolled) {
           const result = await LocalAuthentication.authenticateAsync({
-            promptMessage: 'Unlock P-01',
-            cancelLabel: 'Cancel',
+            promptMessage: t('lock.unlockP01'),
+            cancelLabel: t('common.cancel'),
             disableDeviceFallback: false,
-            fallbackLabel: 'Use Passcode',
+            fallbackLabel: t('lock.usePasscode'),
           });
           if (result.success) {
             if (await isVaultEnabled()) await unlockVaultBiometric();
@@ -79,9 +79,9 @@ export default function LockScreen() {
         } else {
           // No biometrics enrolled or no hardware — use device screen lock (PIN/pattern/password)
           const deviceResult = await LocalAuthentication.authenticateAsync({
-            promptMessage: 'Authenticate to access wallet',
+            promptMessage: t('lock.authenticateToAccess'),
             disableDeviceFallback: false,
-            cancelLabel: 'Cancel',
+            cancelLabel: t('common.cancel'),
           });
           if (deviceResult.success) {
             if (await isVaultEnabled()) await unlockVaultBiometric();
@@ -131,7 +131,7 @@ export default function LockScreen() {
       const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000);
       setPinError(true);
       setPin('');
-      p01Alert('Too many attempts', `Try again in ${remaining} seconds.`);
+      p01Alert(t('lock.tooManyAttempts'), t('lock.tryAgainIn', { seconds: remaining }));
       return;
     }
 
@@ -176,15 +176,15 @@ export default function LockScreen() {
       // Security alert notifications (fire-and-forget, don't block auth flow)
       if (lockoutSeconds > 0) {
         scheduleLocalNotification(
-          'Account Locked',
-          `Too many failed attempts. Locked for ${lockoutSeconds} seconds.`,
+          t('lock.accountLocked'),
+          t('lock.accountLockedDesc', { seconds: lockoutSeconds }),
           { category: 'security', action: 'lockout', failedAttempts: attempts },
           { channelId: 'security' },
         ).catch(() => {});
       } else {
         scheduleLocalNotification(
-          'Security Alert',
-          'Failed authentication attempt detected.',
+          t('lock.securityAlert'),
+          t('lock.failedAuthAttempt'),
           { category: 'security', action: 'failed_pin' },
           { channelId: 'security' },
         ).catch(() => {});
@@ -202,10 +202,10 @@ export default function LockScreen() {
 
     try {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Unlock P-01',
-        cancelLabel: 'Cancel',
+        promptMessage: t('lock.unlockP01'),
+        cancelLabel: t('common.cancel'),
         disableDeviceFallback: false,
-        fallbackLabel: 'Use Passcode',
+        fallbackLabel: t('lock.usePasscode'),
       });
 
       if (result.success) {
@@ -216,36 +216,19 @@ export default function LockScreen() {
       } else {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         scheduleLocalNotification(
-          'Security Alert',
-          'Failed authentication attempt detected.',
+          t('lock.securityAlert'),
+          t('lock.failedAuthAttempt'),
           { category: 'security', action: 'failed_biometric' },
           { channelId: 'security' },
         ).catch(() => {});
       }
     } catch (error) {
       console.error('[Lock] Authentication error:', error);
-      p01Alert('Error', 'Authentication failed. Please try again.');
+      p01Alert(t('common.error'), t('lock.authError'));
     } finally {
       setIsAuthenticating(false);
     }
   };
-
-  // Glass card wrapper component
-  const GlassCard = ({ children, style }: { children: React.ReactNode; style?: any }) => (
-    <View style={[styles.glassCardOuter, style]}>
-      <BlurView intensity={14} tint="dark" style={styles.glassCardBlur}>
-        <LinearGradient
-          colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.glassCardInner}>
-          {children}
-        </View>
-      </BlurView>
-    </View>
-  );
 
   // PIN Entry View
   if (showPinEntry) {
@@ -253,12 +236,12 @@ export default function LockScreen() {
       <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         {/* Header */}
         <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.logoContainer}>
-          <GlassCard style={styles.logoCardWrapper}>
-            <Ionicons name="keypad" size={36} color={P01Colors.cyan} />
-          </GlassCard>
-          <Text style={styles.title}>Enter PIN</Text>
+          <View style={styles.pinIconWrap}>
+            <Ionicons name="keypad" size={32} color={P01Colors.cyan} />
+          </View>
+          <Text style={styles.title}>{t('lock.enterPin')}</Text>
           <Text style={[styles.subtitle, pinError && styles.subtitleError]}>
-            {pinError ? 'Incorrect PIN' : 'Enter your 6-digit PIN'}
+            {pinError ? t('lock.incorrectPin') : t('lock.enterYourPin')}
           </Text>
         </Animated.View>
 
@@ -299,20 +282,14 @@ export default function LockScreen() {
                   disabled={key === ''}
                   activeOpacity={0.6}
                   accessibilityRole="button"
-                  accessibilityLabel={key === 'delete' ? 'Delete last digit' : key === '' ? undefined : `Digit ${key}`}
+                  accessibilityLabel={key === 'delete' ? t('lock.deleteLastDigit') : key === '' ? undefined : `${key}`}
                 >
                   {key === 'delete' ? (
                     <Ionicons name="backspace-outline" size={28} color={Colors.text} />
                   ) : key !== '' ? (
-                    <BlurView intensity={12} tint="dark" style={styles.keypadButtonBlur}>
-                      <LinearGradient
-                        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={StyleSheet.absoluteFill}
-                      />
+                    <View style={styles.keypadButtonInner}>
                       <Text style={styles.keypadButtonText}>{key}</Text>
-                    </BlurView>
+                    </View>
                   ) : null}
                 </TouchableOpacity>
               ))}
@@ -323,12 +300,10 @@ export default function LockScreen() {
         {/* Lockout warning */}
         {lockoutUntil > Date.now() && (
           <Animated.View entering={FadeIn} style={styles.lockoutContainer}>
-            <GlassCard>
-              <View style={styles.lockoutContent}>
-                <Ionicons name="lock-closed" size={16} color={Colors.error} />
-                <Text style={styles.lockoutText}>Too many attempts. Try again later.</Text>
-              </View>
-            </GlassCard>
+            <View style={styles.lockoutCard}>
+              <Ionicons name="lock-closed" size={16} color={Colors.error} />
+              <Text style={styles.lockoutText}>{t('lock.tooManyAttemptsLater')}</Text>
+            </View>
           </Animated.View>
         )}
       </View>
@@ -341,15 +316,16 @@ export default function LockScreen() {
       {/* Top spacer */}
       <View style={{ flex: 1 }} />
 
-      {/* Logo */}
+      {/* Logo — App icon */}
       <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.logoContainer}>
-        <View style={styles.logoGlowRing}>
-          <GlassCard style={styles.logoCardWrapper}>
-            <Text style={styles.logoText}>01</Text>
-          </GlassCard>
-        </View>
-        <Text style={styles.title}>P-01</Text>
-        <Text style={styles.subtitle}>Tap to unlock your wallet</Text>
+        <Image
+          source={require('@/assets/images/01-miku.png')}
+          style={styles.appLogo}
+          resizeMode="contain"
+          accessibilityLabel="Protocol 01 logo"
+        />
+        <Text style={styles.title}>PROTOCOL 01</Text>
+        <Text style={styles.subtitle}>{t('lock.tapToUnlock')}</Text>
       </Animated.View>
 
       {/* Unlock Button */}
@@ -360,38 +336,27 @@ export default function LockScreen() {
             disabled={isAuthenticating}
             style={styles.unlockButton}
             accessibilityRole="button"
-            accessibilityLabel="Unlock with biometrics"
+            accessibilityLabel={t('lock.unlockWithBiometrics')}
             accessibilityState={{ disabled: isAuthenticating }}
           >
-            <View style={styles.fingerprintOuter}>
-              <BlurView intensity={14} tint="dark" style={styles.fingerprintBlur}>
-                <LinearGradient
-                  colors={[
-                    isAuthenticating
-                      ? 'rgba(85, 85, 96, 0.08)'
-                      : 'rgba(57, 197, 187, 0.12)',
-                    'rgba(255, 119, 168, 0.04)',
-                    'transparent',
-                  ]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons
-                  name="finger-print"
-                  size={44}
-                  color={isAuthenticating ? Colors.textTertiary : P01Colors.cyan}
-                />
-              </BlurView>
+            <View style={[
+              styles.fingerprintCircle,
+              isAuthenticating && styles.fingerprintCircleActive,
+            ]}>
+              <Ionicons
+                name="finger-print"
+                size={40}
+                color={isAuthenticating ? Colors.textTertiary : P01Colors.cyan}
+              />
             </View>
             <Text style={styles.unlockText}>
-              {isAuthenticating ? 'Authenticating...' : 'Tap to unlock'}
+              {isAuthenticating ? t('lock.authenticating') : t('lock.tapToUnlock')}
             </Text>
           </Pressable>
         ) : (
           <View style={styles.unlockButton}>
             <Text style={styles.biometricUnavailableText}>
-              Loading...
+              {t('common.loading')}
             </Text>
           </View>
         )}
@@ -400,16 +365,16 @@ export default function LockScreen() {
       {/* Bottom spacer */}
       <View style={{ flex: 1.2 }} />
 
-      {/* Switch/Add Wallet Option — safely above gesture bar */}
+      {/* Switch/Add Wallet Option */}
       <Animated.View entering={FadeInDown.delay(500)} style={styles.switchWalletContainer}>
         <TouchableOpacity
           onPress={async () => {
             // M2: Require authentication before allowing wallet switch
             try {
               const result = await LocalAuthentication.authenticateAsync({
-                promptMessage: 'Authenticate to switch wallets',
+                promptMessage: t('lock.authenticateToSwitch'),
                 disableDeviceFallback: false,
-                cancelLabel: 'Cancel',
+                cancelLabel: t('common.cancel'),
               });
               if (result.success) {
                 router.push('/(onboarding)');
@@ -421,20 +386,10 @@ export default function LockScreen() {
           style={styles.switchWalletButton}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel="Use another wallet"
+          accessibilityLabel={t('lock.useAnotherWallet')}
         >
-          <BlurView intensity={12} tint="dark" style={styles.switchWalletBlur}>
-            <LinearGradient
-              colors={['rgba(57, 197, 187, 0.04)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <Ionicons name="swap-horizontal-outline" size={16} color={Colors.textSecondary} />
-            <Text style={styles.switchWalletText}>
-              Use another wallet
-            </Text>
-          </BlurView>
+          <Ionicons name="swap-horizontal-outline" size={16} color={Colors.textTertiary} />
+          <Text style={styles.switchWalletText}>{t('lock.useAnotherWallet')}</Text>
         </TouchableOpacity>
       </Animated.View>
     </View>
@@ -453,36 +408,28 @@ const styles = StyleSheet.create({
   logoContainer: {
     alignItems: 'center',
   },
-  logoGlowRing: {
-    borderRadius: 999,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.12)',
-    shadowColor: P01Colors.cyan,
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
+  appLogo: {
+    width: 80,
+    height: 80,
+    marginBottom: Spacing.lg,
   },
-  logoCardWrapper: {
-    marginBottom: 0,
-  },
-  logoText: {
-    color: P01Colors.cyan,
-    fontSize: 36,
-    fontFamily: FontFamily.bold,
-    fontWeight: 'bold',
+  pinIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: P01Colors.cyanDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
   },
   title: {
     color: Colors.text,
-    fontSize: 28,
+    fontSize: 22,
     fontFamily: FontFamily.bold,
-    fontWeight: 'bold',
-    marginTop: Spacing.xl,
     letterSpacing: 2,
   },
   subtitle: {
-    color: Colors.textSecondary,
+    color: Colors.textTertiary,
     fontSize: 14,
     fontFamily: FontFamily.regular,
     marginTop: Spacing.sm,
@@ -491,49 +438,24 @@ const styles = StyleSheet.create({
     color: Colors.error,
   },
 
-  // Glass card
-  glassCardOuter: {
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-  },
-  glassCardBlur: {
-    overflow: 'hidden',
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
-  },
-  glassCardInner: {
-    padding: Spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
   // Biometric unlock
   unlockButton: {
     alignItems: 'center',
   },
-  fingerprintOuter: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.2)',
-    marginBottom: Spacing.lg,
-    shadowColor: P01Colors.cyan,
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 8,
-  },
-  fingerprintBlur: {
-    flex: 1,
+  fingerprintCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.surfaceSecondary,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    marginBottom: Spacing.lg,
+  },
+  fingerprintCircleActive: {
+    backgroundColor: 'rgba(85, 85, 96, 0.2)',
   },
   unlockText: {
-    color: Colors.textSecondary,
+    color: Colors.textTertiary,
     fontSize: 14,
     fontFamily: FontFamily.regular,
   },
@@ -551,20 +473,16 @@ const styles = StyleSheet.create({
     marginBottom: Spacing['5xl'],
   },
   pinDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: 'rgba(42, 42, 48, 0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.1)',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: Colors.surfaceSecondary,
   },
   pinDotFilled: {
     backgroundColor: P01Colors.cyan,
-    borderColor: P01Colors.cyan,
   },
   pinDotError: {
     backgroundColor: Colors.error,
-    borderColor: Colors.error,
   },
 
   // Keypad
@@ -581,26 +499,23 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 36,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  keypadButtonBlur: {
+  keypadButtonInner: {
     flex: 1,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: 36,
   },
   keypadButtonEmpty: {
     backgroundColor: 'transparent',
-    borderWidth: 0,
   },
   keypadButtonText: {
     color: Colors.text,
     fontSize: 28,
-    fontWeight: '600',
     fontFamily: FontFamily.semibold,
   },
 
@@ -610,20 +525,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   switchWalletButton: {
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-  },
-  switchWalletBlur: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.xl,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.surfaceSecondary,
   },
   switchWalletText: {
-    color: Colors.textSecondary,
+    color: Colors.textTertiary,
     fontSize: 14,
     fontFamily: FontFamily.regular,
     marginLeft: Spacing.sm,
@@ -633,10 +543,14 @@ const styles = StyleSheet.create({
   lockoutContainer: {
     marginTop: Spacing['2xl'],
   },
-  lockoutContent: {
+  lockoutCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.errorDim,
   },
   lockoutText: {
     color: Colors.error,

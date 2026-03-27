@@ -6,9 +6,11 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'react-native';
 import Constants from 'expo-constants';
 import { Colors, FontFamily, P01Colors } from '@/constants/theme';
 import { checkForUpdate } from '@/services/updates/versionCheck';
+import { useT } from '@/i18n';
 
 const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 const BUILD_NUMBER = String(Constants.expoConfig?.android?.versionCode ?? Constants.expoConfig?.ios?.buildNumber ?? '1');
@@ -76,6 +78,7 @@ const LinkRow: React.FC<LinkRowProps> = ({ label, onPress }) => (
 );
 
 export default function AboutScreen() {
+  const t = useT();
   const router = useRouter();
   const devTapCount = useRef(0);
 
@@ -116,36 +119,32 @@ export default function AboutScreen() {
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>About</Text>
+        <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>{t('settings.about')}</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 140 }}
       >
         {/* Logo and Version */}
         <Animated.View entering={FadeInDown.delay(100).duration(400)} style={{ alignItems: 'center', paddingVertical: 32 }}>
-          <View style={{
-            width: 96,
-            height: 96,
-            borderRadius: 24,
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: 16,
-            borderWidth: 1,
-            borderColor: 'rgba(57, 197, 187, 0.3)',
-            backgroundColor: 'rgba(57, 197, 187, 0.08)',
-          }}>
-            <Text style={{ color: P01Colors.cyan, fontSize: 36, fontWeight: '700' }}>01</Text>
-          </View>
+          <Image
+            source={require('@/assets/images/Protocol.png')}
+            style={{
+              width: 96,
+              height: 96,
+              borderRadius: 24,
+              marginBottom: 16,
+            }}
+          />
           <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: '700' }}>Protocol 01</Text>
           <Text style={{ color: P01Colors.cyan, fontSize: 16, marginTop: 4 }}>P-01 Wallet</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
-            <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>Version {APP_VERSION}</Text>
+            <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>{t('settings.version')} {APP_VERSION}</Text>
             <Text style={{ color: Colors.textTertiary, fontSize: 14, marginHorizontal: 8 }}>|</Text>
-            <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>Build {BUILD_NUMBER}</Text>
+            <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>{t('settings.build')} {BUILD_NUMBER}</Text>
           </View>
         </Animated.View>
 
@@ -161,7 +160,7 @@ export default function AboutScreen() {
           <GlassCard>
             <View style={{ padding: 16 }}>
               <Text style={{ color: Colors.textSecondary, fontSize: 14, lineHeight: 22, textAlign: 'center' }}>
-                Protocol 01 is a privacy-focused Solana wallet that uses advanced cryptographic techniques including stealth addresses, ring signatures, and decoy transactions to protect your financial privacy.
+                {t('settings.aboutDescription')}
               </Text>
             </View>
           </GlassCard>
@@ -177,7 +176,7 @@ export default function AboutScreen() {
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="cloud-download-outline" size={20} color={P01Colors.cyan} />
-                <Text style={{ color: '#ffffff', fontSize: 16, marginLeft: 12 }}>Check for Updates</Text>
+                <Text style={{ color: '#ffffff', fontSize: 16, marginLeft: 12 }}>{t('settings.checkForUpdates')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
             </TouchableOpacity>
@@ -187,22 +186,22 @@ export default function AboutScreen() {
         {/* Legal Links */}
         <Animated.View entering={FadeInDown.delay(400).duration(400)} style={{ marginHorizontal: 16, marginBottom: 24 }}>
           <Text style={{ color: Colors.textTertiary, fontSize: 12, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8, paddingHorizontal: 16 }}>
-            Legal
+            {t('settings.legal')}
           </Text>
           <GlassCard>
             <View>
               <LinkRow
-                label="Privacy Policy"
+                label={t('settings.privacyPolicy')}
                 onPress={() => Linking.openURL('https://protocol-01.vercel.app/privacy')}
               />
               <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: 16 }} />
               <LinkRow
-                label="Terms of Service"
+                label={t('settings.termsOfService')}
                 onPress={() => Linking.openURL('https://protocol-01.vercel.app/terms')}
               />
               <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: 16 }} />
               <LinkRow
-                label="Open Source Licenses"
+                label={t('settings.openSource')}
                 onPress={() => Linking.openURL('https://protocol-01.vercel.app/licenses')}
               />
             </View>
@@ -213,9 +212,9 @@ export default function AboutScreen() {
         <Animated.View entering={FadeInDown.delay(500).duration(400)} style={{ marginHorizontal: 16, marginBottom: 24 }}>
           <GlassCard>
             <View style={{ padding: 16 }}>
-              <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600', marginBottom: 12 }}>Built With</Text>
+              <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600', marginBottom: 12 }}>{t('settings.builtWith')}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {['Solana', 'React Native', 'Expo', 'Light Protocol', 'ZK Compression'].map((tech) => (
+                {['Solana', 'React Native', 'Expo', 'Groth16', 'STARKs', 'Arcium MPC', 'Poseidon', 'ML-KEM'].map((tech) => (
                   <View key={tech} style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: 'rgba(255, 255, 255, 0.06)', borderRadius: 9999 }}>
                     <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{tech}</Text>
                   </View>
@@ -228,12 +227,12 @@ export default function AboutScreen() {
         {/* Credits */}
         <Animated.View entering={FadeInDown.delay(600).duration(400)} style={{ alignItems: 'center', paddingVertical: 16 }}>
           <Text style={{ color: Colors.textTertiary, fontSize: 12 }}>
-            Made with privacy in mind
+            {t('settings.madeBy')}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
             <Ionicons name="shield-checkmark" size={14} color={P01Colors.cyan} />
             <Text style={{ color: 'rgba(57, 197, 187, 0.7)', fontSize: 12, marginLeft: 4 }}>
-              Your keys, your coins
+              {t('settings.yourKeys')}
             </Text>
           </View>
         </Animated.View>

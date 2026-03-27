@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import nacl from 'tweetnacl';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { encryptForRelayer, decryptRelayJob } from './encrypt';
 import { selectRelayer } from './select';
 import { generateJobId } from './submit';

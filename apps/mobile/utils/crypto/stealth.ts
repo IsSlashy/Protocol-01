@@ -16,7 +16,7 @@
 import { Keypair, PublicKey } from '@solana/web3.js';
 import * as Crypto from 'expo-crypto';
 import nacl from 'tweetnacl';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { hkdf } from '@noble/hashes/hkdf';
 import { sha256 } from '@noble/hashes/sha256';
 import bs58 from 'bs58';

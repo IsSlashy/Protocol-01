@@ -15,10 +15,10 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 
 
-import { AgentAvatar, ChatBubble, SuggestionChip, QuickActionButton } from '@/components/agent';
+import { ChatBubble, SuggestionChip } from '@/components/agent';
 import { VoiceButton } from '@/components/agent/VoiceButton';
 import { useAIStore, DisplayMessage } from '@/stores/aiStore';
 import { useWalletStore } from '@/stores/walletStore';
@@ -26,17 +26,19 @@ import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import * as VoiceService from '@/services/ai/voiceService';
 import * as LlamaService from '@/services/ai/llamaService';
+import { useT } from '@/i18n';
 
 const QUICK_ACTIONS = [
-  { icon: 'trending-up-outline' as const, label: 'SOL Price', color: Colors.primary },
-  { icon: 'pulse-outline' as const, label: 'Fear & Greed', color: Colors.yellow },
-  { icon: 'wallet-outline' as const, label: 'My Portfolio', color: Colors.primary },
-  { icon: 'analytics-outline' as const, label: 'Analyze Streams', color: Colors.pink },
-  { icon: 'globe-outline' as const, label: 'Market Summary', color: Colors.primary },
-  { icon: 'help-circle-outline' as const, label: 'Help', color: Colors.textSecondary },
+  { icon: 'trending-up-outline' as const, key: 'solPrice' as const, prompt: 'SOL Price', color: Colors.primary },
+  { icon: 'pulse-outline' as const, key: 'fearGreed' as const, prompt: 'Fear & Greed', color: Colors.yellow },
+  { icon: 'wallet-outline' as const, key: 'myPortfolio' as const, prompt: 'My Portfolio', color: Colors.primary },
+  { icon: 'analytics-outline' as const, key: 'analyzeStreams' as const, prompt: 'Analyze Streams', color: Colors.pink },
+  { icon: 'globe-outline' as const, key: 'marketSummary' as const, prompt: 'Market Summary', color: Colors.primary },
+  { icon: 'help-circle-outline' as const, key: 'help' as const, prompt: 'Help', color: Colors.textSecondary },
 ];
 
 export default function AgentDashboard() {
+  const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
@@ -264,103 +266,78 @@ export default function AgentDashboard() {
   return (
     <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       <View style={{ flex: 1 }}>
-        {/* Glass Header */}
-        <View style={{ overflow: 'hidden' }}>
-          <BlurView
-            intensity={30}
-            tint="dark"
-            style={{
-              paddingTop: insets.top + 4,
-              paddingBottom: 10,
-              paddingHorizontal: Spacing.lg,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              backgroundColor: 'rgba(10, 10, 12, 0.75)',
-              borderBottomWidth: 1,
-              borderBottomColor: 'rgba(57, 197, 187, 0.1)',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-              <AgentAvatar size="sm" isActive={isConnected} />
-              <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text
-                  style={{
-                    color: Colors.text,
-                    fontFamily: FontFamily.semibold,
-                    fontSize: FontSize.md,
-                  }}
-                  numberOfLines={1}
-                  accessibilityRole="header"
-                >
-                  {chatTitle}
-                </Text>
-                <Text
-                  style={{
-                    color: isConnected ? Colors.primary : Colors.textTertiary,
-                    fontSize: FontSize.xs,
-                  }}
-                  accessibilityLabel={`Agent status: ${isConnected ? 'online' : 'offline'}`}
-                >
-                  {isConnected ? 'Online' : 'Offline'}
-                </Text>
-              </View>
-            </View>
+        {/* Header */}
+        <Animated.View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingTop: insets.top + 8,
+            paddingBottom: Spacing.lg,
+            paddingHorizontal: Spacing.xl,
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{
+              width: 6, height: 6, borderRadius: 3,
+              backgroundColor: isConnected ? Colors.primary : Colors.textTertiary,
+              marginRight: 8,
+            }} />
+            <Text
+              style={{
+                color: Colors.text,
+                fontFamily: FontFamily.bold,
+                fontSize: 18,
+                letterSpacing: 1,
+              }}
+              numberOfLines={1}
+              accessibilityRole="header"
+            >
+              {hasMessages && chatTitle !== 'P-01 Agent' ? chatTitle : 'AGENT'}
+            </Text>
+          </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              {/* New Chat */}
-              {hasMessages && (
-                <TouchableOpacity
-                  onPress={handleNewChat}
-                  accessibilityRole="button"
-                  accessibilityLabel="New chat"
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 19,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                  }}
-                >
-                  <Ionicons name="add-outline" size={22} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              )}
-              {/* History */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+            {hasMessages && (
               <TouchableOpacity
-                onPress={() => router.push('/(main)/(agent)/history')}
+                onPress={handleNewChat}
                 accessibilityRole="button"
-                accessibilityLabel="Chat history"
+                accessibilityLabel="New chat"
                 style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                  width: 40, height: 40, borderRadius: 9999,
+                  alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: Colors.surfaceSecondary,
                 }}
               >
-                <Ionicons name="time-outline" size={20} color={Colors.textSecondary} />
+                <Ionicons name="add-outline" size={20} color={Colors.text} />
               </TouchableOpacity>
-              {/* Settings */}
-              <TouchableOpacity
-                onPress={() => router.push('/(main)/(agent)/settings')}
-                accessibilityRole="button"
-                accessibilityLabel="Agent settings"
-                style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: 19,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: 'rgba(255, 255, 255, 0.06)',
-                }}
-              >
-                <Ionicons name="settings-outline" size={20} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-          </BlurView>
-        </View>
+            )}
+            <TouchableOpacity
+              onPress={() => router.push('/(main)/(agent)/history')}
+              accessibilityRole="button"
+              accessibilityLabel="Chat history"
+              style={{
+                width: 40, height: 40, borderRadius: 9999,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: Colors.surfaceSecondary,
+              }}
+            >
+              <Ionicons name="time-outline" size={20} color={Colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push('/(main)/(agent)/settings')}
+              accessibilityRole="button"
+              accessibilityLabel="Agent settings"
+              style={{
+                width: 40, height: 40, borderRadius: 9999,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: Colors.surfaceSecondary,
+              }}
+            >
+              <Ionicons name="settings-outline" size={20} color={Colors.text} />
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
 
         {/* Content */}
         {!hasMessages ? (
@@ -376,119 +353,67 @@ export default function AgentDashboard() {
               />
             }
             ListHeaderComponent={
-              <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 24 }}>
-                {/* Avatar + Greeting */}
+              <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 12 }}>
+                {/* Greeting + inline market data */}
                 <Animated.View
-                  entering={FadeInDown.delay(100).springify()}
-                  style={{ alignItems: 'center', marginBottom: 20 }}
+                  style={{ marginBottom: 28 }}
                 >
-                  <AgentAvatar size="lg" isActive={true} />
-                  <Text
-                    style={{
-                      color: Colors.text,
-                      fontSize: FontSize.xl,
-                      fontFamily: FontFamily.bold,
-                      marginTop: Spacing.lg,
-                    }}
-                  >
-                    Hey, I'm P-01 Agent
+                  <Text style={{
+                    color: Colors.text,
+                    fontSize: 24,
+                    fontFamily: FontFamily.semibold,
+                    letterSpacing: -0.3,
+                  }}>
+                    {t('agent.howCanIHelp')}
                   </Text>
-                  <Text
-                    style={{
-                      color: Colors.textSecondary,
-                      textAlign: 'center',
-                      marginTop: 6,
-                      fontSize: FontSize.sm,
-                      lineHeight: 20,
-                    }}
-                  >
-                    Your crypto assistant. Ask me about prices,{'\n'}market sentiment, or your portfolio.
+                  <Text style={{
+                    color: Colors.textTertiary,
+                    marginTop: 4,
+                    fontSize: 13,
+                    fontFamily: FontFamily.regular,
+                  }}>
+                    {marketData?.prices?.SOL
+                      ? `SOL $${marketData.prices.SOL.toFixed(2)}${marketData.fearGreed ? `  ·  F&G ${marketData.fearGreed.value}` : ''}`
+                      : t('agent.marketFallback')
+                    }
                   </Text>
-
-                  {/* Market snapshot */}
-                  {marketData?.prices?.SOL && (
-                    <Animated.View
-                      entering={FadeIn.delay(400)}
-                      accessibilityRole="text"
-                      accessibilityLabel={`SOL price $${marketData.prices.SOL.toFixed(2)}${marketData.fearGreed ? `, Fear and Greed index ${marketData.fearGreed.value} out of 100` : ''}`}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        marginTop: Spacing.lg,
-                        paddingHorizontal: Spacing.lg,
-                        paddingVertical: Spacing.sm,
-                        borderRadius: 999,
-                        backgroundColor: Colors.primaryDim,
-                        borderWidth: 1,
-                        borderColor: 'rgba(57, 197, 187, 0.2)',
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: Colors.primary,
-                          fontSize: FontSize.sm,
-                          fontFamily: FontFamily.medium,
-                        }}
-                      >
-                        SOL ${marketData.prices.SOL.toFixed(2)}
-                      </Text>
-                      {marketData.fearGreed && (
-                        <>
-                          <View
-                            style={{
-                              width: 1,
-                              height: 14,
-                              backgroundColor: 'rgba(57, 197, 187, 0.3)',
-                              marginHorizontal: 10,
-                            }}
-                          />
-                          <Text
-                            style={{
-                              color: Colors.primary,
-                              fontSize: FontSize.sm,
-                              fontFamily: FontFamily.medium,
-                            }}
-                          >
-                            F&G {marketData.fearGreed.value}/100
-                          </Text>
-                        </>
-                      )}
-                    </Animated.View>
-                  )}
                 </Animated.View>
 
-                {/* Quick Actions Grid */}
-                <Animated.View entering={FadeInUp.delay(200).springify()} style={{ marginBottom: 120 }}>
-                  <Text
-                    style={{
-                      fontSize: FontSize.xs,
-                      fontFamily: FontFamily.semibold,
-                      letterSpacing: 1,
-                      textTransform: 'uppercase',
-                      marginBottom: 10,
-                      color: Colors.textTertiary,
-                    }}
-                    accessibilityRole="header"
-                  >
-                    Quick Actions
-                  </Text>
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                    }}
-                  >
-                    {QUICK_ACTIONS.map((action) => (
-                      <View key={action.label} style={{ width: '31%' }}>
-                        <QuickActionButton
-                          icon={action.icon}
-                          label={action.label}
-                          color={action.color}
-                          variant="compact"
-                          onPress={() => handleQuickAction(action.label)}
-                        />
-                      </View>
+                {/* Quick Actions — 2-column grid */}
+                <Animated.View style={{ marginBottom: 120 }}>
+                  <View style={{
+                    flexDirection: 'row',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                  }}>
+                    {QUICK_ACTIONS.map((action, i) => (
+                      <Animated.View
+                        key={action.key}
+                        style={{ width: '48%' as any, flexGrow: 1, flexBasis: '47%' as any }}
+                      >
+                        <TouchableOpacity
+                          onPress={() => handleQuickAction(action.prompt)}
+                          activeOpacity={0.7}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            gap: 10,
+                            paddingHorizontal: 14,
+                            paddingVertical: 13,
+                            borderRadius: 14,
+                            backgroundColor: Colors.surfaceSecondary,
+                          }}
+                        >
+                          <Ionicons name={action.icon} size={16} color={action.color} />
+                          <Text style={{
+                            color: Colors.textSecondary,
+                            fontSize: 13,
+                            fontFamily: FontFamily.medium,
+                          }}>
+                            {t(`agent.${action.key}`)}
+                          </Text>
+                        </TouchableOpacity>
+                      </Animated.View>
                     ))}
                   </View>
                 </Animated.View>
@@ -549,7 +474,6 @@ export default function AgentDashboard() {
                 {/* Suggestion chips */}
                 {latestSuggestions && latestSuggestions.length > 0 && !isLoading && (
                   <Animated.View
-                    entering={FadeIn.delay(200)}
                     style={{ paddingHorizontal: Spacing.lg, marginTop: 4, marginBottom: 8 }}
                   >
                     <FlatList
@@ -579,9 +503,7 @@ export default function AgentDashboard() {
             tint="dark"
             style={{
               paddingBottom: keyboardVisible ? 8 : (insets.bottom + 88),
-              backgroundColor: 'rgba(10, 10, 12, 0.8)',
-              borderTopWidth: 1,
-              borderTopColor: 'rgba(57, 197, 187, 0.08)',
+              backgroundColor: 'rgba(10, 10, 12, 0.85)',
             }}
           >
             <View
@@ -600,9 +522,7 @@ export default function AgentDashboard() {
                   alignItems: 'flex-end',
                   borderRadius: 22,
                   paddingHorizontal: 16,
-                  backgroundColor: 'rgba(21, 21, 24, 0.8)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(57, 197, 187, 0.12)',
+                  backgroundColor: Colors.surfaceSecondary,
                   minHeight: 44,
                   maxHeight: 120,
                 }}
@@ -611,7 +531,7 @@ export default function AgentDashboard() {
                   ref={inputRef}
                   value={inputText}
                   onChangeText={handleTextChange}
-                  placeholder="Ask anything..."
+                  placeholder={t('agent.askAnything')}
                   placeholderTextColor={Colors.textTertiary}
                   multiline
                   maxLength={1000}

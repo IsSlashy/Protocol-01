@@ -1,20 +1,22 @@
 /**
  * Version Check — checks GitHub releases for app updates.
  *
- * On each app foreground (max once per 24h), fetches the latest GitHub
- * release tag and compares it against the running app version.
- * If a newer version exists, prompts the user via p01Alert with a
- * download link to the APK asset.
+ * Fetches the latest release from Protocol-01-releases repo,
+ * compares against the running app version, and if newer:
+ * - Downloads the APK in-app via expo-file-system
+ * - Triggers native Android install via intent
  *
  * Fully self-contained — no app store dependency.
  */
 
 import Constants from 'expo-constants';
-import * as Linking from 'expo-linking';
+import { File, Paths } from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { p01Alert } from '@/stores/alertStore';
 
-const GITHUB_REPO = 'IsSlashy/Protocol-01';
+const GITHUB_REPO = 'IsSlashy/Protocol-01-releases';
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 const LAST_CHECK_KEY = 'p01_update_last_check';
 const SKIPPED_VERSION_KEY = 'p01_update_skipped';
@@ -74,17 +76,55 @@ async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
   }
 }
 
+/** Download APK and trigger native Android install */
+async function downloadAndInstall(apkUrl: string, version: string): Promise<void> {
+  try {
+    p01Alert('Downloading Update', `Downloading v${version}...`);
+
+    // Download APK bytes
+    const response = await fetch(apkUrl, {
+      headers: { Accept: 'application/octet-stream' },
+    });
+    if (!response.ok) {
+      p01Alert('Update Failed', 'Download failed. Please try again.');
+      return;
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+
+    // Write to cache file
+    const apkFile = new File(Paths.cache, `protocol01-v${version}.apk`);
+    apkFile.write(new Uint8Array(arrayBuffer));
+
+    // Trigger native Android package installer
+    await IntentLauncher.startActivityAsync(
+      'android.intent.action.INSTALL_PACKAGE' as any,
+      {
+        data: apkFile.uri,
+        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+        type: 'application/vnd.android.package-archive',
+      },
+    );
+  } catch (error: any) {
+    console.error('[Update] Install failed:', error);
+    p01Alert('Update Failed', `Could not install update: ${error?.message ?? 'Unknown error'}`);
+  }
+}
+
 /**
- * Check for updates. Call on app foreground.
+ * Check for updates.
  *
- * - Skips if checked within the last 24h
+ * - Skips if checked within the last 24h (unless forced)
  * - Skips if user dismissed this specific version
- * - Shows p01Alert with "Update" / "Later" / "Skip" buttons
+ * - Downloads + installs APK natively in-app
+ * - Shows "up to date" confirmation when forced
  *
  * @param force  bypass the 24h cooldown (e.g. from settings "Check for updates")
  */
 export async function checkForUpdate(force = false): Promise<void> {
   try {
+    if (Platform.OS !== 'android') return;
+
     // Throttle: max once per 24h unless forced
     if (!force) {
       const lastCheck = await AsyncStorage.getItem(LAST_CHECK_KEY);
@@ -96,43 +136,77 @@ export async function checkForUpdate(force = false): Promise<void> {
     await AsyncStorage.setItem(LAST_CHECK_KEY, String(Date.now()));
 
     const release = await fetchLatestRelease();
-    if (!release) return;
+    if (!release) {
+      if (force) p01Alert('Update Check', 'Could not reach update server. Check your connection.');
+      return;
+    }
 
     const current = getCurrentVersion();
-    if (!isNewer(release.version, current)) return;
 
-    // Skip if user already dismissed this version
+    if (!isNewer(release.version, current)) {
+      if (force) {
+        p01Alert('Up to Date', `Protocol 01 v${current} is the latest version.`);
+      }
+      return;
+    }
+
+    // Skip if user already dismissed this version (auto-check only)
     if (!force) {
       const skipped = await AsyncStorage.getItem(SKIPPED_VERSION_KEY);
       if (skipped === release.version) return;
     }
 
-    // Show update prompt
-    const downloadUrl = release.apkUrl || release.htmlUrl;
+    // Build changelog preview (first 3 lines)
+    const changelog = release.body
+      .split('\n')
+      .filter((l: string) => l.trim().length > 0)
+      .slice(0, 3)
+      .join('\n');
 
-    p01Alert(
-      'Update Available',
-      `Version ${release.version} is available (current: ${current}).`,
-      [
-        {
-          text: 'Update',
-          style: 'default',
-          onPress: () => Linking.openURL(downloadUrl),
-        },
-        {
-          text: 'Later',
-          style: 'cancel',
-        },
-        {
-          text: 'Skip',
-          style: 'destructive',
-          onPress: async () => {
-            await AsyncStorage.setItem(SKIPPED_VERSION_KEY, release.version);
+    const message = `Version ${release.version} is available (current: v${current}).${changelog ? '\n\n' + changelog : ''}`;
+
+    if (release.apkUrl) {
+      p01Alert(
+        'Update Available',
+        message,
+        [
+          {
+            text: 'Update Now',
+            style: 'default',
+            onPress: () => downloadAndInstall(release.apkUrl!, release.version),
           },
-        },
-      ],
-    );
+          {
+            text: 'Later',
+            style: 'cancel',
+          },
+          {
+            text: 'Skip Version',
+            style: 'destructive',
+            onPress: async () => {
+              await AsyncStorage.setItem(SKIPPED_VERSION_KEY, release.version);
+            },
+          },
+        ],
+      );
+    } else {
+      // Fallback: no APK attached, open GitHub releases page
+      p01Alert(
+        'Update Available',
+        message,
+        [
+          {
+            text: 'View Release',
+            style: 'default',
+            onPress: () => {
+              const Linking = require('expo-linking');
+              Linking.openURL(release.htmlUrl);
+            },
+          },
+          { text: 'Later', style: 'cancel' },
+        ],
+      );
+    }
   } catch {
-    // Silent fail — update check is non-critical
+    if (force) p01Alert('Update Check', 'Something went wrong. Please try again.');
   }
 }

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { isDevnet } from '@/services/solana/connection';
+import { useT } from '@/i18n';
 
 interface WalletHeaderProps {
   onScan: () => void;
@@ -11,6 +12,7 @@ interface WalletHeaderProps {
 }
 
 export default function WalletHeader({ onScan, onSettings }: WalletHeaderProps) {
+  const t = useT();
   return (
     <Animated.View entering={FadeInDown.delay(100)} style={styles.header}>
       <View style={styles.left}>

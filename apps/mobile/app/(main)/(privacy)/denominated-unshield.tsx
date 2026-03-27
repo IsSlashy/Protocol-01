@@ -1,23 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  StyleSheet,
+  View, Text, ScrollView, TouchableOpacity, TextInput,
+  ActivityIndicator, StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
-  useDenominatedPoolStore,
-  type StoredNote,
-  type NoteStatus,
+  useDenominatedPoolStore, type StoredNote, type NoteStatus,
 } from '@/stores/denominatedPoolStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useArcium } from '@/providers/ArciumProvider';
@@ -29,25 +22,18 @@ import { PublicKey } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { p01Alert } from '@/stores/alertStore';
+import { useT } from '@/i18n';
 
 export default function DenominatedUnshieldScreen() {
-  return <UnshieldScreenContent />;
-}
-
-function UnshieldScreenContent() {
+  const t = useT();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ noteId?: string; emergency?: string }>();
   const isEmergencyMode = params.emergency === '1';
 
   const {
-    notes,
-    isLoading,
-    isProving,
-    error,
-    progress,
-    unshieldNoteStark,
-    emergencyUnshieldNote,
-    refreshNoteStatuses,
+    notes, isLoading, isProving, error, progress,
+    unshieldNoteStark, emergencyUnshieldNote, refreshNoteStatuses,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
@@ -63,7 +49,6 @@ function UnshieldScreenContent() {
   const pendingNotes = notes.filter(n => n.status === 'pending');
   const selectableNotes = emergencyToggle ? [...matureNotes, ...pendingNotes] : matureNotes;
 
-  // Pre-select note from params
   useEffect(() => {
     if (params.noteId) {
       const note = notes.find(n => n.id === params.noteId);
@@ -72,633 +57,433 @@ function UnshieldScreenContent() {
     refreshNoteStatuses();
   }, [params.noteId]);
 
-  // Load own wallet address — use walletStore publicKey as fallback for Privy wallets
   useEffect(() => {
     (async () => {
       if (useOwnWallet) {
         const keypair = await getKeypair();
-        if (keypair) {
-          setRecipient(keypair.publicKey.toBase58());
-        } else if (walletPublicKey) {
-          setRecipient(walletPublicKey);
-        }
+        if (keypair) setRecipient(keypair.publicKey.toBase58());
+        else if (walletPublicKey) setRecipient(walletPublicKey);
       }
     })();
   }, [useOwnWallet, walletPublicKey]);
 
-  const confirmEmergencyUnshield = useCallback(() => {
-    p01Alert(
-      'Privacy Warning',
-      'Emergency unshield bypasses the maturity delay. This may reduce your privacy by creating a timing link between your deposit and withdrawal.\n\nOnly use this if you urgently need your funds.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Proceed',
-          style: 'destructive',
-          onPress: () => executeUnshield(true),
-        },
-      ],
-    );
-  }, [selectedNote, recipient]);
-
   const executeUnshield = useCallback(async (emergency: boolean) => {
     if (!selectedNote) {
-      p01Alert('Select a Note', 'Please select a note to withdraw.');
+      p01Alert(t('shieldUnshield.selectNote'), t('shieldUnshield.selectNoteFirst'));
       return;
     }
-    // M5: Validate recipient is a valid Solana address using PublicKey constructor
-    let isValidRecipient = false;
-    try {
-      new PublicKey(recipient);
-      isValidRecipient = true;
-    } catch {}
-    if (!recipient || !isValidRecipient) {
-      p01Alert('Invalid Recipient', 'Please enter a valid Solana address.');
+    let isValid = false;
+    try { new PublicKey(recipient); isValid = true; } catch {}
+    if (!recipient || !isValid) {
+      p01Alert(t('common.error'), t('shieldUnshield.invalidRecipient'));
       return;
     }
-
-    // Biometric gate — require auth before unshielding funds
     const authed = await requireBiometricAuth('Authenticate to unshield funds');
     if (!authed) {
-      p01Alert('Authentication Required', 'You must authenticate to unshield funds.');
+      p01Alert(t('common.error'), t('shieldUnshield.authRequired'));
       return;
     }
-
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
     try {
-      let sig: string;
-
-      // Both normal and emergency use STARK (quantum-resistant)
-      // Emergency passes emergency=true which sets minEpoch=0 on-chain (bypasses maturity)
       if (!starkReady) {
-        p01Alert('STARK Not Ready', 'STARK prover is still loading. Please wait a moment.');
+        p01Alert(t('common.error'), t('shieldUnshield.starkNotReady'));
         return;
       }
-
-      // Parse receipt to get note secrets for STARK proof
       const receipt = receiptFromJSON(vaultDecrypt(selectedNote.receiptJSON));
-
-      // Generate pool_commitment STARK proof on-device
       const starkResult = await generatePoolCommitmentProof(
         receipt.nullifierPreimage.toString(),
         receipt.secret.toString(),
         receipt.depositEpoch.toString(),
         receipt.tokenMint.toString(),
       );
-
-      // Parse STARK proof result
       const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-      const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
-
-      sig = await unshieldNoteStark(selectedNote.id, recipient, {
-        proofBytes,
-        publicInputs,
-        proofSize: starkResult.proofSize,
+      const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
+      const sig = await unshieldNoteStark(selectedNote.id, recipient, {
+        proofBytes, publicInputs, proofSize: starkResult.proofSize,
       }, emergency);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Refresh wallet balance immediately, delay transaction fetch
-      // to let RPC rate-limit window reset after STARK chunk uploads
       useWalletStore.getState().refreshBalance();
-      setTimeout(() => {
-        useWalletStore.getState().refreshTransactions();
-      }, 5000);
+      setTimeout(() => useWalletStore.getState().refreshTransactions(), 5000);
       const proofLabel = isMpcActive ? 'STARK + MPC' : 'STARK';
+      const mpcNote = isMpcActive ? `\n\n${t('shieldUnshield.nullifierHidden')}` : '';
       p01Alert(
-        emergency ? 'Emergency Unshield Complete' : `Unshielded (${proofLabel})!`,
-        `${selectedNote.denomination} ${selectedNote.token} withdrawn to ${recipient.slice(0, 8)}...${isMpcActive ? '\n\nNullifier hidden via MPC — withdrawal unlinkable.' : ''}\n\nTx: ${sig.slice(0, 16)}...`,
+        emergency ? t('shieldUnshield.emergencyComplete') : `${t('shieldUnshield.unshieldComplete')} (${proofLabel})`,
+        `${selectedNote.denomination} ${selectedNote.token} → ${recipient.slice(0, 8)}...${mpcNote}\n\nTx: ${sig.slice(0, 16)}...`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      p01Alert('Unshield Failed', err.message);
+      p01Alert(t('common.error'), err.message);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, emergencyUnshieldNote, starkReady, generatePoolCommitmentProof, router]);
+  }, [selectedNote, recipient, unshieldNoteStark, starkReady, generatePoolCommitmentProof, router, t, isMpcActive]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {
-      confirmEmergencyUnshield();
+      p01Alert(
+        t('shieldUnshield.privacyWarning'),
+        t('shieldUnshield.emergencyWarning'),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('privacy.proceed'), style: 'destructive', onPress: () => executeUnshield(true) },
+        ],
+      );
     } else {
       executeUnshield(false);
     }
-  }, [emergencyToggle, selectedNote, confirmEmergencyUnshield, executeUnshield]);
+  }, [emergencyToggle, executeUnshield, t]);
 
   const statusIcon = (status: NoteStatus) => {
     switch (status) {
       case 'mature': return { name: 'checkmark-circle' as const, color: P01Colors.cyan };
       case 'pending': return { name: 'time' as const, color: P01Colors.yellow };
-      case 'spent': return { name: 'close-circle' as const, color: Colors.textTertiary };
+      default: return { name: 'close-circle' as const, color: Colors.textTertiary };
     }
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+    <View style={[st.container, { paddingTop: insets.top }]}>
+      {/* ── Header ── */}
+      <View style={st.header}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
+          <Ionicons name="arrow-back" size={20} color={Colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {emergencyToggle ? 'Emergency Unshield' : 'Unshield'}
+        <Text style={st.headerTitle}>
+          {emergencyToggle ? t('privacy.emergencyUnshield') : t('shieldUnshield.unshieldTitle')}
         </Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: insets.bottom + 100 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Emergency toggle */}
-        <Animated.View entering={FadeInDown.delay(0)}>
-          <View style={styles.modeToggle}>
-            <TouchableOpacity
-              style={[styles.modeBtn, !emergencyToggle && styles.modeBtnActive]}
+        {/* ── Mode Toggle ── */}
+        <Animated.View entering={FadeInDown.duration(250)}>
+          <View style={st.toggle}>
+            <ToggleBtn
+              label={t('shieldUnshield.normal')}
+              active={!emergencyToggle}
+              color={P01Colors.cyan}
               onPress={() => { setEmergencyToggle(false); setSelectedNote(null); }}
-            >
-              <Text style={[styles.modeText, !emergencyToggle && styles.modeTextActive]}>
-                Normal
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.modeBtn, emergencyToggle && styles.modeBtnEmergency]}
+            />
+            <ToggleBtn
+              label={t('shieldUnshield.emergency')}
+              icon="warning"
+              active={emergencyToggle}
+              color="#FF6B35"
               onPress={() => { setEmergencyToggle(true); setSelectedNote(null); }}
-            >
-              <Ionicons
-                name="warning"
-                size={14}
-                color={emergencyToggle ? '#FF6B35' : Colors.textTertiary}
-              />
-              <Text style={[styles.modeText, emergencyToggle && styles.modeTextEmergency]}>
-                Emergency
-              </Text>
-            </TouchableOpacity>
+            />
           </View>
         </Animated.View>
 
-        {/* Emergency warning */}
+        {/* ── Emergency Warning ── */}
         {emergencyToggle && (
-          <Animated.View entering={FadeInDown.delay(50)}>
-            <View style={styles.warningCard}>
-              <Ionicons name="warning" size={18} color="#FF6B35" />
-              <Text style={styles.warningText}>
-                Emergency mode bypasses the maturity delay. This reduces your privacy
-                by linking deposit and withdrawal timing. Only use if you urgently need funds.
-              </Text>
+          <Animated.View entering={FadeInDown.duration(200)}>
+            <View style={st.alertCard}>
+              <Ionicons name="warning" size={16} color="#FF6B35" />
+              <Text style={st.alertText}>{t('shieldUnshield.emergencyWarning')}</Text>
             </View>
           </Animated.View>
         )}
 
-        {/* Step 1: Select Note */}
-        <Animated.View entering={FadeInDown.delay(50)}>
-          <Text style={styles.sectionTitle}>
-            1. Select {emergencyToggle ? 'a' : 'a Mature'} Note
+        {/* ── Section: Select Note ── */}
+        <Animated.View entering={FadeInDown.delay(60).duration(250)}>
+          <Text style={st.sectionLabel}>
+            {emergencyToggle ? t('shieldUnshield.selectANote') : t('shieldUnshield.selectMatureNote')}
           </Text>
 
           {selectableNotes.length === 0 && notes.filter(n => n.status !== 'spent').length === 0 && (
-            <View style={styles.emptyCard}>
-              <Ionicons name="receipt-outline" size={32} color={Colors.textTertiary} />
-              <Text style={styles.emptyText}>No notes found. Shield some funds first.</Text>
+            <View style={st.emptyCard}>
+              <View style={st.emptyIcon}>
+                <Ionicons name="receipt-outline" size={24} color={Colors.textTertiary} />
+              </View>
+              <Text style={st.emptyText}>{t('shieldUnshield.noNotesFound')}</Text>
               <TouchableOpacity
-                style={styles.emptyAction}
+                style={st.emptyAction}
                 onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
               >
-                <Text style={styles.emptyActionText}>Go to Shield</Text>
+                <Text style={st.emptyActionText}>{t('shieldUnshield.goToShield')}</Text>
               </TouchableOpacity>
             </View>
           )}
 
           {!emergencyToggle && matureNotes.length === 0 && pendingNotes.length > 0 && (
-            <View style={styles.infoCard}>
-              <Ionicons name="time-outline" size={18} color={P01Colors.yellow} />
-              <Text style={styles.infoText}>
-                {pendingNotes.length} note(s) still maturing. Notes need ~1 epoch (~1 hour) before withdrawal.
-                Use Emergency mode to bypass this.
+            <View style={st.infoCard}>
+              <Ionicons name="time-outline" size={16} color={P01Colors.yellow} />
+              <Text style={st.infoText}>
+                {t('shieldUnshield.notesMaturing', { count: pendingNotes.length })}
               </Text>
             </View>
           )}
 
-          {selectableNotes.map((note, i) => {
-            const isSelected = selectedNote?.id === note.id;
-            const icon = statusIcon(note.status);
-
-            return (
-              <Animated.View key={note.id} entering={FadeInUp.delay(100 + i * 60)}>
-                <TouchableOpacity
-                  style={[styles.noteCard, isSelected && styles.noteCardSelected]}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setSelectedNote(note);
-                  }}
-                  disabled={isLoading}
-                >
-                  <View style={styles.noteLeft}>
-                    <Ionicons name={icon.name} size={24} color={icon.color} />
-                    <View>
-                      <Text style={styles.noteAmount}>{note.denomination} {note.token}</Text>
-                      <Text style={styles.noteTime}>
-                        {new Date(note.shieldedAt).toLocaleString()}
-                      </Text>
+          <View style={{ gap: 8 }}>
+            {selectableNotes.map((note, i) => {
+              const isSelected = selectedNote?.id === note.id;
+              const icon = statusIcon(note.status);
+              return (
+                <Animated.View key={note.id} entering={FadeInDown.delay(100 + i * 40).duration(250)}>
+                  <TouchableOpacity
+                    style={[st.noteCard, isSelected && st.noteCardSelected]}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedNote(note); }}
+                    disabled={isLoading}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[st.noteIcon, { backgroundColor: `${icon.color}18` }]}>
+                      <Ionicons name={icon.name} size={20} color={icon.color} />
                     </View>
-                  </View>
-                  <View style={styles.noteRight}>
-                    {note.status === 'pending' && emergencyToggle && (
-                      <View style={styles.pendingBadge}>
-                        <Text style={styles.pendingBadgeText}>Immature</Text>
-                      </View>
-                    )}
-                    {isSelected ? (
-                      <Ionicons name="radio-button-on" size={22} color={P01Colors.cyan} />
-                    ) : (
-                      <Ionicons name="radio-button-off" size={22} color={Colors.textTertiary} />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              </Animated.View>
-            );
-          })}
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
+                      <Text style={st.noteTime}>{new Date(note.shieldedAt).toLocaleString()}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      {note.status === 'pending' && emergencyToggle && (
+                        <Badge text={t('shieldUnshield.immature').toUpperCase()} color="#FF6B35" />
+                      )}
+                      <Ionicons
+                        name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                        size={20}
+                        color={isSelected ? P01Colors.cyan : Colors.textTertiary}
+                      />
+                    </View>
+                  </TouchableOpacity>
+                </Animated.View>
+              );
+            })}
+          </View>
         </Animated.View>
 
-        {/* Step 2: Recipient */}
-        <Animated.View entering={FadeInUp.delay(250)}>
-          <Text style={styles.sectionTitle}>2. Recipient Address</Text>
+        {/* ── Section: Recipient ── */}
+        <Animated.View entering={FadeInDown.delay(180).duration(250)}>
+          <Text style={st.sectionLabel}>{t('shieldUnshield.recipientAddress')}</Text>
 
-          <View style={styles.recipientToggle}>
-            <TouchableOpacity
-              style={[styles.toggleBtn, useOwnWallet && styles.toggleBtnActive]}
+          <View style={st.toggle}>
+            <ToggleBtn
+              label={t('shieldUnshield.myWallet')}
+              active={useOwnWallet}
+              color={P01Colors.cyan}
               onPress={() => setUseOwnWallet(true)}
-            >
-              <Text style={[styles.toggleText, useOwnWallet && styles.toggleTextActive]}>
-                My Wallet
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.toggleBtn, !useOwnWallet && styles.toggleBtnActive]}
+            />
+            <ToggleBtn
+              label={t('shieldUnshield.custom')}
+              active={!useOwnWallet}
+              color={P01Colors.cyan}
               onPress={() => { setUseOwnWallet(false); setRecipient(''); }}
-            >
-              <Text style={[styles.toggleText, !useOwnWallet && styles.toggleTextActive]}>
-                Custom
-              </Text>
-            </TouchableOpacity>
+            />
           </View>
 
           {!useOwnWallet && (
             <TextInput
-              style={styles.addressInput}
+              style={st.addressInput}
               value={recipient}
               onChangeText={setRecipient}
-              placeholder="Solana address..."
+              placeholder={t('shieldUnshield.solanaAddress')}
               placeholderTextColor={Colors.textTertiary}
               autoCapitalize="none"
               autoCorrect={false}
             />
           )}
 
-          {useOwnWallet && recipient && (
-            <View style={styles.addressPreview}>
-              <Text style={styles.addressPreviewText} numberOfLines={1}>
-                {recipient}
-              </Text>
+          {useOwnWallet && recipient ? (
+            <View style={st.addressPreview}>
+              <Ionicons name="wallet-outline" size={14} color={Colors.textSecondary} />
+              <Text style={st.addressPreviewText} numberOfLines={1}>{recipient}</Text>
             </View>
-          )}
+          ) : null}
         </Animated.View>
 
-        {/* Step 3: Confirm */}
-        <Animated.View entering={FadeInUp.delay(350)}>
+        {/* ── Confirm Button ── */}
+        <Animated.View entering={FadeInDown.delay(260).duration(250)}>
           <TouchableOpacity
             style={[
-              styles.confirmBtn,
-              emergencyToggle && selectedNote?.status === 'pending' && styles.confirmBtnEmergency,
-              (!selectedNote || isLoading) && styles.confirmBtnDisabled,
+              st.confirmBtn,
+              emergencyToggle && selectedNote?.status === 'pending' && st.confirmBtnEmergency,
+              (!selectedNote || isLoading) && st.confirmBtnDisabled,
             ]}
             onPress={handleUnshield}
             disabled={!selectedNote || isLoading}
+            activeOpacity={0.8}
           >
             {isLoading ? (
-              <View style={styles.confirmLoading}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <ActivityIndicator size="small" color="#000" />
-                <Text style={styles.confirmBtnText}>
-                  {isProving ? 'Generating proof...' : progress || 'Processing...'}
+                <Text style={st.confirmText}>
+                  {isProving ? t('shieldUnshield.generatingProof') : progress || t('shieldUnshield.unshielding')}
                 </Text>
               </View>
             ) : (
               <>
-                <Ionicons
-                  name={emergencyToggle ? 'warning' : 'arrow-up-circle'}
-                  size={22}
-                  color="#000"
-                />
-                <Text style={styles.confirmBtnText}>
+                <Ionicons name={emergencyToggle ? 'warning' : 'arrow-up-circle'} size={20} color="#000" />
+                <Text style={st.confirmText}>
                   {selectedNote
-                    ? `${emergencyToggle && selectedNote.status === 'pending' ? 'Emergency ' : ''}Withdraw ${selectedNote.denomination} ${selectedNote.token}`
-                    : 'Select a note first'}
+                    ? (emergencyToggle && selectedNote.status === 'pending'
+                      ? t('shieldUnshield.emergencyWithdraw', { amount: selectedNote.denomination, token: selectedNote.token })
+                      : t('shieldUnshield.withdraw', { amount: selectedNote.denomination, token: selectedNote.token }))
+                    : t('shieldUnshield.selectNoteFirst')}
                 </Text>
               </>
             )}
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Privacy Note */}
-        <Animated.View entering={FadeInUp.delay(400)}>
-          <View style={styles.privacyNote}>
-            <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
-            <Text style={styles.privacyNoteText}>
-              STARK proof generated on-device (quantum-resistant). No private data leaves your phone.
-            </Text>
+        {/* ── Privacy Footer ── */}
+        <Animated.View entering={FadeInDown.delay(320).duration(250)}>
+          <View style={st.privacyFooter}>
+            <Ionicons name="lock-closed" size={13} color={Colors.textTertiary} />
+            <Text style={st.privacyText}>{t('shieldUnshield.starkOnDevice')}</Text>
           </View>
         </Animated.View>
 
-        {/* Error */}
+        {/* ── Error ── */}
         {error && !isLoading && (
-          <View style={styles.errorCard}>
-            <Ionicons name="warning" size={18} color={Colors.error} />
-            <Text style={styles.errorText}>{error}</Text>
+          <View style={st.errorCard}>
+            <Ionicons name="alert-circle" size={16} color={Colors.error} />
+            <Text style={st.errorText}>{error}</Text>
           </View>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+// ─── Sub-components ─────────────────────────────────────────────────
+
+function ToggleBtn({ label, icon, active, color, onPress }: {
+  label: string; icon?: string; active: boolean; color: string; onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[st.toggleBtn, active && { backgroundColor: `${color}18`, borderColor: `${color}40` }]}
+      onPress={onPress} activeOpacity={0.7}
+    >
+      {icon && <Ionicons name={icon as any} size={14} color={active ? color : Colors.textTertiary} />}
+      <Text style={[st.toggleText, active && { color }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function Badge({ text, color }: { text: string; color: string }) {
+  return (
+    <View style={[st.badge, { backgroundColor: `${color}20` }]}>
+      <Text style={[st.badgeText, { color }]}>{text}</Text>
+    </View>
+  );
+}
+
+// ─── Styles ─────────────────────────────────────────────────────────
+
+const st = StyleSheet.create({
+  container: { flex: 1, backgroundColor: 'transparent' },
+
+  // Header
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center', alignItems: 'center',
+    width: 40, height: 40, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
   },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-  },
-  scrollView: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 120,
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
-  },
-  modeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  modeBtnActive: {
-    backgroundColor: P01Colors.cyanDim,
-    borderColor: P01Colors.cyan,
-  },
-  modeBtnEmergency: {
-    backgroundColor: 'rgba(255, 107, 53, 0.1)',
-    borderColor: '#FF6B35',
-  },
-  modeText: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: Colors.textSecondary,
-  },
-  modeTextActive: {
-    color: P01Colors.cyan,
-  },
-  modeTextEmergency: {
-    color: '#FF6B35',
-  },
-  warningCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    padding: Spacing.md,
-    backgroundColor: 'rgba(255, 107, 53, 0.1)',
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 107, 53, 0.3)',
-    marginBottom: Spacing.md,
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    color: '#FF6B35',
-    lineHeight: 18,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.md,
-    marginTop: Spacing.lg,
-  },
-  emptyCard: {
-    alignItems: 'center',
-    gap: Spacing.md,
-    padding: Spacing['2xl'],
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-  },
-  emptyAction: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: BorderRadius.md,
-    backgroundColor: P01Colors.cyanDim,
-  },
-  emptyActionText: {
-    fontSize: 13,
-    fontFamily: FontFamily.semibold,
-    color: P01Colors.cyan,
-  },
-  infoCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    padding: Spacing.md,
-    backgroundColor: P01Colors.yellowDim,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 204, 0, 0.3)',
-    marginBottom: Spacing.md,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    color: P01Colors.yellow,
-    lineHeight: 18,
-  },
-  noteCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: Spacing.lg,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: Spacing.sm,
-  },
-  noteCardSelected: {
-    borderColor: P01Colors.cyan,
-    backgroundColor: P01Colors.cyanDim,
-  },
-  noteLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    flex: 1,
-  },
-  noteRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  noteAmount: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  noteTime: {
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginTop: 2,
-  },
-  pendingBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255, 107, 53, 0.15)',
-  },
-  pendingBadgeText: {
-    fontSize: 10,
-    fontFamily: FontFamily.medium,
-    color: '#FF6B35',
-  },
-  recipientToggle: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
+  headerTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
+
+  // Toggle
+  toggle: {
+    flexDirection: 'row', gap: 4, padding: 4,
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg, marginBottom: Spacing.lg,
   },
   toggleBtn: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10, borderRadius: BorderRadius.md,
+    borderWidth: 1, borderColor: 'transparent',
   },
-  toggleBtnActive: {
-    backgroundColor: P01Colors.cyanDim,
-    borderColor: P01Colors.cyan,
+  toggleText: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.textSecondary },
+
+  // Alert / Info cards
+  alertCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    padding: 14, backgroundColor: 'rgba(255,107,53,0.08)', borderRadius: BorderRadius.xl,
+    borderWidth: 1, borderColor: 'rgba(255,107,53,0.2)', marginBottom: Spacing.lg,
   },
-  toggleText: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: Colors.textSecondary,
+  alertText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: '#FF6B35', lineHeight: 19 },
+  infoCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    padding: 14, backgroundColor: `${P01Colors.yellow}10`, borderRadius: BorderRadius.xl,
+    borderWidth: 1, borderColor: `${P01Colors.yellow}30`, marginBottom: 12,
   },
-  toggleTextActive: {
-    color: P01Colors.cyan,
+  infoText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: P01Colors.yellow, lineHeight: 19 },
+
+  // Section
+  sectionLabel: {
+    fontSize: 12, fontFamily: FontFamily.semibold, color: Colors.textSecondary,
+    letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: Spacing.md, marginTop: Spacing.lg,
   },
+
+  // Note cards
+  noteCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 14, backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+  },
+  noteCardSelected: { borderWidth: 1, borderColor: `${P01Colors.cyan}40` },
+  noteIcon: {
+    width: 42, height: 42, borderRadius: BorderRadius.md,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  noteAmount: { fontSize: 15, fontFamily: FontFamily.bold, color: Colors.text },
+  noteTime: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 2 },
+
+  // Badge
+  badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 9, fontFamily: FontFamily.semibold },
+
+  // Empty state
+  emptyCard: {
+    alignItems: 'center', gap: 12, padding: 32,
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+  },
+  emptyIcon: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: '#1a1a1f', alignItems: 'center', justifyContent: 'center',
+  },
+  emptyText: { fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary, textAlign: 'center' },
+  emptyAction: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: BorderRadius.full, backgroundColor: P01Colors.cyanDim },
+  emptyActionText: { fontSize: 13, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+
+  // Recipient
   addressInput: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.lg,
-    color: Colors.text,
-    fontFamily: FontFamily.mono,
-    fontSize: 13,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+    paddingHorizontal: 16, paddingVertical: 14,
+    color: Colors.text, fontFamily: FontFamily.mono, fontSize: 13,
   },
   addressPreview: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+    paddingHorizontal: 14, paddingVertical: 12,
   },
-  addressPreviewText: {
-    fontFamily: FontFamily.mono,
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
+  addressPreviewText: { flex: 1, fontFamily: FontFamily.mono, fontSize: 12, color: Colors.textSecondary },
+
+  // Confirm button
   confirmBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    backgroundColor: P01Colors.cyan,
-    borderRadius: BorderRadius.md,
-    paddingVertical: Spacing.lg,
-    marginTop: Spacing['2xl'],
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: P01Colors.cyan, borderRadius: BorderRadius.lg,
+    paddingVertical: 16, marginTop: Spacing.xl,
   },
-  confirmBtnEmergency: {
-    backgroundColor: '#FF6B35',
+  confirmBtnEmergency: { backgroundColor: '#FF6B35' },
+  confirmBtnDisabled: { opacity: 0.4 },
+  confirmText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
+
+  // Privacy footer
+  privacyFooter: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, marginTop: Spacing.lg,
   },
-  confirmBtnDisabled: {
-    opacity: 0.4,
-  },
-  confirmBtnText: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: '#000',
-  },
-  confirmLoading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  privacyNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    justifyContent: 'center',
-    marginTop: Spacing.lg,
-  },
-  privacyNoteText: {
-    fontSize: 11,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-  },
+  privacyText: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary },
+
+  // Error
   errorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: Colors.errorDim,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.error,
-    marginTop: Spacing.lg,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: `${Colors.error}12`, borderRadius: BorderRadius.xl,
+    padding: 14, marginTop: Spacing.lg,
   },
-  errorText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    color: Colors.error,
-  },
+  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
 });

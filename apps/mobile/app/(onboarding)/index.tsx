@@ -10,8 +10,10 @@ import Animated, {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Logo } from '../../components/onboarding';
 import { useAuth } from '@/providers/PrivyProvider';
+import { useT } from '@/i18n';
 
 export default function WelcomeScreen() {
+  const t = useT();
   const router = useRouter();
   const { isReady, isAuthenticated, hasWallet } = useAuth();
 
@@ -50,15 +52,15 @@ export default function WelcomeScreen() {
 
         <Animated.View entering={FadeInUp.delay(600).duration(600)} style={{ marginTop: 24, alignItems: 'center' }}>
           <Text style={{ color: '#ff2d7a', fontSize: 12, fontWeight: 'bold', letterSpacing: 6, marginBottom: 8 }}>
-            [ SYSTEM STATUS ]
+            {t('onboarding.systemStatus')}
           </Text>
           <Text style={{ color: 'white', fontSize: 24, fontWeight: '900', letterSpacing: 2, textAlign: 'center' }}>
-            UNTRACEABLE
+            {t('onboarding.untraceable')}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
             <View style={{ width: 8, height: 8, backgroundColor: '#39c5bb', marginRight: 8 }} />
             <Text style={{ color: '#555560', fontSize: 12, letterSpacing: 4 }}>
-              READY
+              {t('onboarding.ready')}
             </Text>
           </View>
         </Animated.View>
@@ -78,7 +80,7 @@ export default function WelcomeScreen() {
             }}
           >
             <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 }}>
-              GET STARTED
+              {t('onboarding.getStarted').toUpperCase()}
             </Text>
           </TouchableOpacity>
         </Animated.View>
@@ -86,8 +88,8 @@ export default function WelcomeScreen() {
         <Animated.View entering={FadeInDown.delay(1100).duration(600)} style={{ marginTop: 24, alignItems: 'center' }}>
           <TouchableOpacity onPress={handleImportWallet} activeOpacity={0.7}>
             <Text style={{ color: '#a0a0a0', fontSize: 16 }}>
-              Already have a wallet?{' '}
-              <Text style={{ color: '#39c5bb', fontWeight: '500' }}>Import</Text>
+              {t('onboarding.alreadyHaveWallet')}{' '}
+              <Text style={{ color: '#39c5bb', fontWeight: '500' }}>{t('onboarding.import')}</Text>
             </Text>
           </TouchableOpacity>
         </Animated.View>

@@ -1,106 +1,58 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-  Linking,
-  Image,
+  View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Linking, StyleSheet,
 } from 'react-native';
-import {
-  PublicKey,
-  Transaction,
-  SystemProgram,
-  sendAndConfirmTransaction,
-} from '@solana/web3.js';
+import { PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
 import { p01Alert } from '../../../stores/alertStore';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { Card } from '../../../components/ui/Card';
-import { StreamProgress, ServiceLogo } from '../../../components/streams';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { Stream, StreamPayment, formatFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
 import { getExplorerUrl, getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
+import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
+import { sendSolWithSigner } from '../../../services/solana/transactions';
 import {
-  DenominatedPoolProverProvider,
-  useDenominatedPoolProver,
+  DenominatedPoolProverProvider, useDenominatedPoolProver,
 } from '../../../components/privacy/DenominatedPoolProver';
-import {
-  getServiceById,
-  CATEGORY_CONFIG,
-  ServiceCategory,
-} from '../../../services/subscriptions/serviceRegistry';
-
-// Protocol 01 Color System
-const P01_COLORS = {
-  cyan: '#39c5bb',
-  cyanDim: '#2a9d95',
-  pink: '#ff77a8',
-  brightCyan: '#00ffe5',
-  yellow: '#ffcc00',
-  red: '#ff3366',
-  textMuted: '#888892',
-  textDim: '#555560',
-};
-
-const ACCENT = P01_COLORS.pink;
+import { getServiceById, CATEGORY_CONFIG, ServiceCategory } from '../../../services/subscriptions/serviceRegistry';
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { useT } from '@/i18n';
 
 export default function StreamDetailScreen() {
-  return (
-    <DenominatedPoolProverProvider>
-      <StreamDetailContent />
-    </DenominatedPoolProverProvider>
-  );
+  return <DenominatedPoolProverProvider><DetailContent /></DenominatedPoolProverProvider>;
 }
 
-function StreamDetailContent() {
+function DetailContent() {
+  const t = useT();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  // p01Alert imported at top level (no hook needed)
-  const {
-    streams,
-    processingPayment,
-    refresh,
-    pauseStream,
-    resumeStream,
-    cancelStream,
-    deleteStream,
-    processPayment,
-  } = useStreamStore();
+  const { streams, processingPayment, refresh, pauseStream, resumeStream, cancelStream, deleteStream } = useStreamStore();
   const { generateProof } = useDenominatedPoolProver();
+  const { publicKey, isPrivyWallet } = useWalletStore();
 
   const [stream, setStream] = useState<Stream | null>(null);
   const [copied, setCopied] = useState(false);
-  const [zkPayProgress, setZkPayProgress] = useState<string | null>(null);
-  const [isZkPaying, setIsZkPaying] = useState(false);
-  const { notes: denomNotes } = useDenominatedPoolStore();
+  const [paying, setPaying] = useState(false);
+  const [payProgress, setPayProgress] = useState<string | null>(null);
 
-  useEffect(() => {
-    const found = streams.find((s) => s.id === id);
-    setStream(found || null);
-  }, [streams, id]);
+  useEffect(() => { setStream(streams.find(s => s.id === id) || null); }, [streams, id]);
 
-  // Get service info if the stream has a serviceId
   const serviceInfo = stream?.serviceId ? getServiceById(stream.serviceId) : null;
-  const serviceColor = serviceInfo?.color || stream?.serviceColor || ACCENT;
-  const categoryConfig = serviceInfo?.category
-    ? CATEGORY_CONFIG[serviceInfo.category]
-    : stream?.serviceCategory
-    ? CATEGORY_CONFIG[stream.serviceCategory as ServiceCategory]
-    : null;
+  const accent = stream?.useZkPool ? P01Colors.pink : P01Colors.cyan;
+  const accentDim = stream?.useZkPool ? P01Colors.pinkDim : P01Colors.cyanDim;
 
   if (!stream) {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void items-center justify-center">
-        <ActivityIndicator size="large" color={ACCENT} />
-        <Text className="text-gray-400 mt-4">Loading stream...</Text>
-      </SafeAreaView>
+      <View style={[st.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={P01Colors.cyan} />
+      </View>
     );
   }
 
@@ -109,698 +61,319 @@ function StreamDetailContent() {
     ? (stream.paymentsCompleted / stream.totalPayments) * 100
     : (stream.amountStreamed / stream.totalAmount) * 100;
 
-  const handleCopyAddress = async () => {
+  const statusColor = stream.status === 'active' ? P01Colors.cyan
+    : stream.status === 'paused' ? P01Colors.yellow
+    : stream.status === 'completed' ? P01Colors.green : Colors.error;
+
+  // ── Handlers ──────────────────────────────────────────────
+
+  const handleCopy = async () => {
     await Clipboard.setStringAsync(stream.recipientAddress);
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
   const handlePauseResume = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (stream.status === 'active') {
-      await pauseStream(stream.id);
-    } else if (stream.status === 'paused') {
-      await resumeStream(stream.id);
-    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    stream.status === 'active' ? await pauseStream(stream.id) : await resumeStream(stream.id);
     await refresh();
   };
 
   const handleCancel = () => {
-    const remaining = stream.totalAmount - stream.amountStreamed;
-    const cancelMessage = stream.useZkPool
-      ? `Are you sure you want to cancel "${stream.name}"? ${remaining > 0 ? `${remaining.toFixed(4)} SOL remains in your private balance.` : 'All payments have been processed.'}`
-      : `Are you sure you want to cancel "${stream.name}"? This will stop all future payments and remove the subscription.`;
-
-    p01Alert(
-      'Cancel Stream',
-      cancelMessage,
-      [
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await cancelStream(stream.id);
-            await deleteStream(stream.id);
-            router.back();
-          },
-        },
-        { text: 'No', style: 'cancel' },
-      ],
-      'warning',
-    );
-  };
-
-  const handleDelete = () => {
-    p01Alert(
-      'Delete Stream',
-      'Are you sure you want to delete this stream? This will remove it from your history.',
-      [
-        {
-          text: 'Yes, Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            await deleteStream(stream.id);
-            router.back();
-          },
-        },
-        { text: 'No', style: 'cancel' },
-      ],
-      'warning',
-    );
+    p01Alert(t('streams.cancelStream'), t('streams.cancelStreamConfirm', { name: stream.name }),
+      [{ text: t('streams.cancelStream'), style: 'destructive', onPress: async () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        await cancelStream(stream.id); await deleteStream(stream.id); router.back();
+      }}, { text: t('streams.keepStream'), style: 'cancel' }], 'warning');
   };
 
   const handlePayNow = async () => {
-    if (!stream) return;
+    const intervalMs = stream.frequency === 'daily' ? 86_400_000 : stream.frequency === 'weekly' ? 604_800_000
+      : stream.frequency === 'biweekly' ? 1_209_600_000 : 2_592_000_000;
 
-    if (stream.useZkPool) {
-      // ZK stream: unshield a denomination pool note on-chain
-      const poolStore = useDenominatedPoolStore.getState();
-      const matureNotes = poolStore.getActiveNotes()
-        .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
-        .sort((a: any, b: any) => a.denomination - b.denomination);
-      const availableNote = matureNotes.find((n: any) => n.denomination >= stream.amountPerPayment);
+    const doPayment = async () => {
+      try {
+        setPaying(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        let sig: string; let paid = stream.amountPerPayment;
 
-      if (!availableNote) {
-        p01Alert('Insufficient Balance', 'No mature shielded notes available. Shield more SOL first.', undefined, 'error');
-        return;
-      }
+        if (stream.useZkPool) {
+          setPayProgress(t('shieldUnshield.generatingProof'));
+          const store = useDenominatedPoolStore.getState();
+          const note = store.getActiveNotes()
+            .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
+            .sort((a: any, b: any) => a.denomination - b.denomination)
+            .find((n: any) => n.denomination >= stream.amountPerPayment);
+          if (!note) throw new Error('No mature note large enough.');
+          sig = await store.unshieldNote(note.id, stream.recipientAddress, generateProof);
+          paid = note.denomination;
+        } else {
+          setPayProgress(t('shieldUnshield.sendingTransaction'));
+          const signer = getPrivySigner();
+          if (isPrivyWallet && signer && publicKey) {
+            const r = await sendSolWithSigner(stream.recipientAddress, stream.amountPerPayment, new PublicKey(publicKey), signer);
+            if (!r.success || !r.signature) throw new Error(r.error || 'Failed');
+            sig = r.signature;
+          } else {
+            const kp = await getKeypair(); if (!kp) throw new Error('Wallet not found');
+            const tx = new Transaction().add(SystemProgram.transfer({
+              fromPubkey: kp.publicKey, toPubkey: new PublicKey(stream.recipientAddress),
+              lamports: Math.round(stream.amountPerPayment * 1e9),
+            }));
+            sig = await sendAndConfirmTransaction(getConnection(), tx, [kp], { commitment: 'confirmed' });
+          }
+        }
 
-      p01Alert(
-        'Private Payment',
-        `Unshield ${availableNote.denomination} SOL note to pay ${stream.name}? This generates a ZK proof and sends a real on-chain transaction.`,
-        [
-          {
-            text: 'Pay with ZK Proof',
-            style: 'default',
-            onPress: async () => {
-            try {
-              setIsZkPaying(true);
-              setZkPayProgress('Generating ZK proof...');
-              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        const now = Date.now();
+        const payment: StreamPayment = {
+          id: `payment_${now}`, amount: stream.amountPerPayment, actualAmount: paid,
+          signature: sig, timestamp: now, status: 'success',
+        };
+        const completed = stream.paymentsCompleted + 1;
+        const done = stream.totalPayments ? completed >= stream.totalPayments : false;
+        await updateStreamRecord(stream.id, {
+          amountStreamed: stream.amountStreamed + paid, paymentsCompleted: completed,
+          nextPaymentDate: now + intervalMs, status: done ? 'completed' : stream.status,
+          paymentHistory: [...stream.paymentHistory, payment],
+        });
+        await refresh();
+        p01Alert(t('streams.paymentSent'), t('streams.paymentConfirmed', { amount: paid.toFixed(4), tx: sig.slice(0, 8) }), undefined, 'success');
+      } catch (e: any) {
+        p01Alert(t('streams.paymentFailed'), e.message, undefined, 'error');
+      } finally { setPaying(false); setPayProgress(null); }
+    };
 
-              const sig = await poolStore.unshieldNote(
-                availableNote.id,
-                stream.recipientAddress,
-                generateProof,
-              );
-
-              setZkPayProgress('Recording payment...');
-              const now = Date.now();
-              const intervalMs = stream.frequency === 'daily' ? 86400000
-                : stream.frequency === 'weekly' ? 604800000
-                : stream.frequency === 'biweekly' ? 1209600000
-                : 2592000000; // monthly
-
-              const payment: StreamPayment = {
-                id: `payment_${now}`,
-                amount: stream.amountPerPayment,
-                actualAmount: availableNote.denomination,
-                signature: sig,
-                timestamp: now,
-                status: 'success',
-              };
-
-              const newPaymentsCompleted = stream.paymentsCompleted + 1;
-              let newStatus = stream.status;
-              if (stream.totalPayments && newPaymentsCompleted >= stream.totalPayments) {
-                newStatus = 'completed';
-              }
-
-              await updateStreamRecord(stream.id, {
-                amountStreamed: stream.amountStreamed + availableNote.denomination,
-                paymentsCompleted: newPaymentsCompleted,
-                nextPaymentDate: now + intervalMs,
-                status: newStatus,
-                paymentHistory: [...stream.paymentHistory, payment],
-              });
-              await refresh();
-
-              setZkPayProgress(null);
-              p01Alert('Payment Sent!', `${availableNote.denomination} SOL paid on-chain via ZK proof. Tx: ${sig.slice(0, 8)}...`, undefined, 'success');
-            } catch (error: any) {
-              p01Alert('Payment Failed', error.message || 'ZK payment failed.', undefined, 'error');
-            } finally {
-              setIsZkPaying(false);
-              setZkPayProgress(null);
-            }
-          },
-          },
-          { text: 'Cancel', style: 'cancel' },
-        ],
-        'question',
-      );
-    } else {
-      // Normal wallet: real SOL transfer
-      p01Alert(
-        'Process Payment',
-        `Send ${stream.amountPerPayment.toFixed(4)} SOL to ${stream.recipientAddress.slice(0, 8)}...?`,
-        [
-          {
-            text: 'Pay Now',
-            style: 'default',
-            onPress: async () => {
-            try {
-              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              setIsZkPaying(true);
-              setZkPayProgress('Sending transaction...');
-
-              const keypair = await getKeypair();
-              if (!keypair) throw new Error('Wallet not found');
-
-              const connection = getConnection();
-              const lamports = Math.round(stream.amountPerPayment * 1_000_000_000);
-
-              const transferIx = SystemProgram.transfer({
-                fromPubkey: keypair.publicKey,
-                toPubkey: new PublicKey(stream.recipientAddress),
-                lamports,
-              });
-
-              const tx = new Transaction().add(transferIx);
-              const sig = await sendAndConfirmTransaction(connection, tx, [keypair], {
-                commitment: 'confirmed',
-              });
-
-              const now = Date.now();
-              const intervalMs = stream.frequency === 'daily' ? 86400000
-                : stream.frequency === 'weekly' ? 604800000
-                : stream.frequency === 'biweekly' ? 1209600000
-                : 2592000000;
-
-              const payment: StreamPayment = {
-                id: `payment_${now}`,
-                amount: stream.amountPerPayment,
-                actualAmount: stream.amountPerPayment,
-                signature: sig,
-                timestamp: now,
-                status: 'success',
-              };
-
-              const newPaymentsCompleted = stream.paymentsCompleted + 1;
-              let newStatus = stream.status;
-              if (stream.totalPayments && newPaymentsCompleted >= stream.totalPayments) {
-                newStatus = 'completed';
-              }
-
-              await updateStreamRecord(stream.id, {
-                amountStreamed: stream.amountStreamed + stream.amountPerPayment,
-                paymentsCompleted: newPaymentsCompleted,
-                nextPaymentDate: now + intervalMs,
-                status: newStatus,
-                paymentHistory: [...stream.paymentHistory, payment],
-              });
-              await refresh();
-
-              p01Alert('Payment Sent!', `${stream.amountPerPayment.toFixed(4)} SOL confirmed on-chain. Tx: ${sig.slice(0, 8)}...`, undefined, 'success');
-            } catch (error: any) {
-              p01Alert('Payment Failed', error.message || 'Transaction failed.', undefined, 'error');
-            } finally {
-              setIsZkPaying(false);
-              setZkPayProgress(null);
-            }
-          },
-          },
-          { text: 'Cancel', style: 'cancel' },
-        ],
-        'question',
-      );
-    }
+    p01Alert(stream.useZkPool ? t('streams.zkPrivate') : t('streams.payNow'),
+      `Send ${stream.amountPerPayment.toFixed(4)} SOL${stream.useZkPool ? ' via ZK proof' : ''}?`,
+      [{ text: stream.useZkPool ? t('streams.payZK') : t('streams.payNow'), onPress: doPayment }, { text: t('common.cancel'), style: 'cancel' }],
+      'question');
   };
 
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const formatTimeUntil = (timestamp: number): string => {
-    const now = Date.now();
-    const diff = timestamp - now;
-    if (diff <= 0) return 'Due now';
-
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-
-    if (days > 0) return `${days}d ${hours}h`;
-    return `${hours}h`;
-  };
-
-  const openExplorer = (signature: string) => {
-    if (signature) {
-      const url = getExplorerUrl(signature, 'tx');
-      Linking.openURL(url);
-    }
+  const fmt = (ts: number) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const fmtFull = (ts: number) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const timeUntil = (ts: number) => {
+    const d = ts - Date.now(); if (d <= 0) return t('streams.dueNow');
+    const days = Math.floor(d / 86_400_000); const hrs = Math.floor((d % 86_400_000) / 3_600_000);
+    return days > 0 ? `${days}d ${hrs}h` : `${hrs}h`;
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
+    <View style={st.container}>
       {/* Header */}
-      <View className="flex-row items-center justify-between px-4 py-4">
-        <TouchableOpacity
-          onPress={() => router.back()}
-          className="w-10 h-10 rounded-full items-center justify-center"
-          style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={20} color={ACCENT} />
+      <View style={[st.header, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
+          <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">{stream.name}</Text>
-        {/* Empty view for header alignment */}
-        <View className="w-10 h-10" />
+        <Text style={st.headerTitle}>{stream.name}</Text>
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView
-        className="flex-1 px-4"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
-      >
-        {/* Service Info Banner (if detected service) */}
-        {serviceInfo && (
-          <View
-            className="flex-row items-center p-4 rounded-2xl mb-4"
-            style={{
-              backgroundColor: `${serviceColor}15`,
-              borderWidth: 1,
-              borderColor: `${serviceColor}30`,
-            }}
-          >
-            <ServiceLogo service={serviceInfo} size={48} />
-            <View className="flex-1 ml-3">
-              <Text className="text-white text-lg font-semibold">
-                {serviceInfo.name}
-              </Text>
-              {categoryConfig && (
-                <View className="flex-row items-center mt-1">
-                  <Ionicons
-                    name={categoryConfig.icon as any}
-                    size={14}
-                    color={categoryConfig.color}
-                  />
-                  <Text className="text-sm ml-1" style={{ color: categoryConfig.color }}>
-                    {categoryConfig.label}
-                  </Text>
-                </View>
-              )}
-            </View>
-            <View
-              className="px-3 py-1.5 rounded-lg"
-              style={{ backgroundColor: `${serviceColor}25` }}
-            >
-              <Text className="text-xs font-semibold" style={{ color: serviceColor }}>
-                Subscription
-              </Text>
-            </View>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+        {/* Status pill */}
+        <Animated.View entering={FadeIn.duration(250)} style={{ alignItems: 'center', marginBottom: 20 }}>
+          <View style={[st.statusPill, { backgroundColor: `${statusColor}20` }]}>
+            <View style={[st.statusDot, { backgroundColor: statusColor }]} />
+            <Text style={[st.statusText, { color: statusColor }]}>{stream.status.toUpperCase()}</Text>
           </View>
-        )}
+        </Animated.View>
 
-        {/* Status Banner */}
-        <View className="items-center mb-6">
-          <View
-            className="flex-row items-center gap-2 px-4 py-2 rounded-xl"
-            style={{
-              backgroundColor:
-                stream.status === 'active'
-                  ? 'rgba(57, 197, 187, 0.2)'
-                  : stream.status === 'paused'
-                  ? 'rgba(255, 204, 0, 0.2)'
-                  : stream.status === 'completed'
-                  ? 'rgba(255, 119, 168, 0.2)'
-                  : 'rgba(255, 51, 102, 0.2)',
-            }}
-          >
-            <View
-              className="w-2 h-2 rounded-full"
-              style={{
-                backgroundColor:
-                  stream.status === 'active'
-                    ? P01_COLORS.cyan
-                    : stream.status === 'paused'
-                    ? P01_COLORS.yellow
-                    : stream.status === 'completed'
-                    ? serviceColor
-                    : P01_COLORS.red,
-              }}
-            />
-            <Text
-              className="font-semibold uppercase"
-              style={{
-                color:
-                  stream.status === 'active'
-                    ? P01_COLORS.cyan
-                    : stream.status === 'paused'
-                    ? P01_COLORS.yellow
-                    : stream.status === 'completed'
-                    ? serviceColor
-                    : P01_COLORS.red,
-              }}
-            >
-              {stream.status === 'active' ? 'Active' : stream.status}
-            </Text>
-          </View>
-        </View>
+        {/* Main amount card */}
+        <Animated.View entering={FadeInDown.delay(60).duration(250)} style={st.card}>
+          <Text style={st.cardLabel}>{t('streams.paymentAmount')}</Text>
+          <Text style={st.bigAmount}>{stream.amountPerPayment.toFixed(4)}</Text>
+          <Text style={[st.bigUnit, { color: accent }]}>SOL {formatFrequency(stream.frequency)}</Text>
 
-        {/* Main Card */}
-        <Card
-          variant="glass"
-          className="mb-6"
-          style={{
-            borderWidth: 1,
-            borderColor: isDue ? 'rgba(255, 51, 102, 0.5)' : `${serviceColor}40`,
-          }}
-        >
-          {/* Amount per Payment */}
-          <View className="items-center mb-4">
-            <Text className="text-gray-400 text-sm mb-1">Payment Amount</Text>
-            <Text className="text-white text-4xl font-bold">
-              {stream.amountPerPayment.toFixed(4)}
-            </Text>
-            <Text style={{ color: serviceColor }} className="text-lg font-semibold">
-              SOL {formatFrequency(stream.frequency)}
-            </Text>
-          </View>
-
-          {/* Progress */}
+          {/* Progress bar */}
           {stream.totalPayments && (
-            <View className="mb-4">
-              <View className="flex-row justify-between mb-2">
-                <Text className="text-gray-500 text-sm">Progress</Text>
-                <Text className="text-white text-sm font-semibold">
-                  {stream.paymentsCompleted}/{stream.totalPayments} payments
-                </Text>
+            <View style={{ marginTop: 16 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                <Text style={st.dimText}>{t('streams.progress')}</Text>
+                <Text style={st.smallWhite}>{stream.paymentsCompleted}/{stream.totalPayments}</Text>
               </View>
-              <StreamProgress progress={progress} height={8} showGlow={stream.status === 'active'} />
+              <View style={st.progressTrack}>
+                <View style={[st.progressFill, { width: `${Math.min(progress, 100)}%`, backgroundColor: accent }]} />
+              </View>
             </View>
           )}
 
-          {/* Stats */}
-          <View className="flex-row justify-between pt-4 border-t border-gray-800">
-            <View className="items-center flex-1">
-              <Text className="text-gray-500 text-xs">Total Sent</Text>
-              <Text className="text-white font-bold text-lg">
-                {stream.amountStreamed.toFixed(4)}
-              </Text>
-              <Text className="text-gray-500 text-xs">SOL</Text>
+          {/* Stats row */}
+          <View style={st.statsRow}>
+            <View style={{ alignItems: 'center', flex: 1 }}>
+              <Text style={st.dimText}>{t('streams.totalSent')}</Text>
+              <Text style={st.statNum}>{stream.amountStreamed.toFixed(4)}</Text>
             </View>
-            <View className="w-px bg-gray-800" />
-            <View className="items-center flex-1">
-              <Text className="text-gray-500 text-xs">Payments</Text>
-              <Text className="text-white font-bold text-lg">
-                {stream.paymentsCompleted}
-              </Text>
-              <Text className="text-gray-500 text-xs">completed</Text>
+            <View style={st.statDivider} />
+            <View style={{ alignItems: 'center', flex: 1 }}>
+              <Text style={st.dimText}>{t('streams.payments')}</Text>
+              <Text style={st.statNum}>{stream.paymentsCompleted}</Text>
             </View>
           </View>
-        </Card>
+        </Animated.View>
 
-        {/* Automatic Payments Info */}
+        {/* Next payment */}
         {stream.status === 'active' && (
-          <View
-            className="p-4 rounded-2xl mb-4"
-            style={{
-              backgroundColor: 'rgba(0, 255, 136, 0.08)',
-              borderWidth: 1,
-              borderColor: 'rgba(0, 255, 136, 0.2)',
-            }}
-          >
-            <View className="flex-row items-center gap-3">
-              <View
-                className="w-10 h-10 rounded-full items-center justify-center"
-                style={{ backgroundColor: 'rgba(0, 255, 136, 0.15)' }}
-              >
-                <Ionicons name="flash" size={20} color="#00ff88" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-white font-semibold text-sm">Automatic Payments Enabled</Text>
-                <Text className="text-gray-400 text-xs mt-0.5">
-                  Payments are processed automatically by the protocol
-                </Text>
-              </View>
+          <Animated.View entering={FadeInDown.delay(120).duration(250)}
+            style={[st.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
+            <View>
+              <Text style={st.dimText}>{t('streams.nextPaymentIn')}</Text>
+              <Text style={[st.nextTime, { color: isDue ? Colors.error : accent }]}>{timeUntil(stream.nextPaymentDate)}</Text>
+              <Text style={st.dimText}>{fmt(stream.nextPaymentDate)}</Text>
             </View>
-          </View>
-        )}
-
-        {/* Next Payment Card */}
-        {stream.status === 'active' && (
-          <View
-            className="p-4 rounded-2xl mb-6"
-            style={{
-              backgroundColor: isDue ? 'rgba(255, 51, 102, 0.1)' : `${serviceColor}15`,
-              borderWidth: 1,
-              borderColor: isDue ? 'rgba(255, 51, 102, 0.3)' : `${serviceColor}30`,
-            }}
-          >
-            <View className="flex-row items-center justify-between">
-              <View>
-                <Text className="text-gray-400 text-sm">Next Payment</Text>
-                <Text
-                  className="text-xl font-bold"
-                  style={{ color: isDue ? P01_COLORS.red : serviceColor }}
-                >
-                  {formatTimeUntil(stream.nextPaymentDate)}
-                </Text>
-              </View>
-              {isDue && (
-                <TouchableOpacity
-                  onPress={handlePayNow}
-                  disabled={processingPayment === stream.id || isZkPaying}
-                  className="px-4 py-2 rounded-xl flex-row items-center"
-                  style={{ backgroundColor: serviceColor }}
-                  accessibilityRole="button"
-                  accessibilityLabel={stream.useZkPool ? 'Pay now with ZK proof' : 'Pay now'}
-                  accessibilityState={{ disabled: processingPayment === stream.id || isZkPaying }}
-                >
-                  {(processingPayment === stream.id || isZkPaying) ? (
-                    <View style={{ alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color="#fff" />
-                      {zkPayProgress && (
-                        <Text style={{ color: '#fff', fontSize: 9, marginTop: 2 }}>{zkPayProgress}</Text>
-                      )}
-                    </View>
-                  ) : (
-                    <>
-                      <Ionicons name={stream.useZkPool ? 'eye-off' : 'flash'} size={16} color="#fff" />
-                      <Text className="text-white font-semibold ml-1">
-                        {stream.useZkPool ? 'Pay (ZK)' : 'Pay Now'}
-                      </Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        )}
-
-        {/* Recipient Card */}
-        <View
-          className="p-4 rounded-2xl mb-6"
-          style={{ backgroundColor: 'rgba(26, 26, 26, 0.8)' }}
-        >
-          <Text className="text-gray-400 text-sm mb-3">Recipient</Text>
-          <TouchableOpacity
-            onPress={handleCopyAddress}
-            className="flex-row items-center justify-between"
-            accessibilityRole="button"
-            accessibilityLabel={copied ? 'Address copied' : 'Copy recipient address'}
-          >
-            <View className="flex-1">
-              {stream.recipientName && (
-                <Text className="text-white font-semibold mb-1">{stream.recipientName}</Text>
-              )}
-              <Text className="text-gray-500 font-mono text-sm" numberOfLines={1}>
-                {stream.recipientAddress}
-              </Text>
-            </View>
-            <View
-              className="ml-3 p-2 rounded-lg"
-              style={{ backgroundColor: `${serviceColor}20` }}
-            >
-              <Ionicons
-                name={copied ? 'checkmark' : 'copy-outline'}
-                size={18}
-                color={copied ? P01_COLORS.cyan : serviceColor}
-              />
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* Schedule Card */}
-        <View
-          className="p-4 rounded-2xl mb-6"
-          style={{ backgroundColor: 'rgba(26, 26, 26, 0.8)' }}
-        >
-          <Text className="text-gray-400 text-sm mb-3">Schedule</Text>
-
-          <View className="space-y-3">
-            <View className="flex-row justify-between">
-              <Text className="text-gray-500">Frequency</Text>
-              <Text className="text-white">{formatFrequency(stream.frequency)}</Text>
-            </View>
-            <View className="flex-row justify-between">
-              <Text className="text-gray-500">Started</Text>
-              <Text className="text-white">{formatDate(stream.startDate)}</Text>
-            </View>
-            {stream.endDate && (
-              <View className="flex-row justify-between">
-                <Text className="text-gray-500">Ends</Text>
-                <Text className="text-white">{formatDate(stream.endDate)}</Text>
-              </View>
+            {isDue && (
+              <TouchableOpacity onPress={handlePayNow} disabled={paying}
+                style={[st.payBtn, { backgroundColor: accent }]}>
+                {paying ? (
+                  <View style={{ alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="#000" />
+                    {payProgress && <Text style={st.payProgressText}>{payProgress}</Text>}
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name={stream.useZkPool ? 'eye-off' : 'flash'} size={16} color="#000" />
+                    <Text style={st.payBtnText}>{stream.useZkPool ? t('streams.payZK') : t('streams.payNow')}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
             )}
-            <View className="flex-row justify-between">
-              <Text className="text-gray-500">Created</Text>
-              <Text className="text-white">{formatDate(stream.createdAt)}</Text>
-            </View>
-          </View>
-        </View>
+          </Animated.View>
+        )}
 
-        {/* ZK Stream Low Balance Warning */}
-        {stream.useZkPool && stream.status === 'paused' && (() => {
-          const lastPayment = stream.paymentHistory[stream.paymentHistory.length - 1];
-          const isBalanceIssue = lastPayment?.status === 'failed' &&
-            lastPayment?.error?.includes('private balance');
-          if (!isBalanceIssue) return null;
-          return (
-            <View style={{
-              backgroundColor: 'rgba(255, 204, 0, 0.12)',
-              borderWidth: 1,
-              borderColor: 'rgba(255, 204, 0, 0.3)',
-              borderRadius: 12,
-              padding: 14,
-              marginBottom: 16,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 12,
-            }}>
-              <Ionicons name="alert-circle" size={24} color={P01_COLORS.yellow} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: P01_COLORS.yellow, fontSize: 13, fontWeight: '600' }}>
-                  Auto-paused — Insufficient Private Balance
-                </Text>
-                <Text style={{ color: P01_COLORS.textMuted, fontSize: 11, marginTop: 4 }}>
-                  Shield more SOL in your private wallet, then resume this subscription.
-                </Text>
-              </View>
-            </View>
-          );
-        })()}
+        {/* Recipient */}
+        <Animated.View entering={FadeInDown.delay(180).duration(250)} style={st.card}>
+          <Text style={st.cardLabel}>{t('streams.recipient')}</Text>
+          <TouchableOpacity onPress={handleCopy} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Text style={st.monoText} numberOfLines={1}>{stream.recipientAddress}</Text>
+            <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={16} color={copied ? P01Colors.cyan : Colors.textSecondary} />
+          </TouchableOpacity>
+        </Animated.View>
 
-        {/* Action Buttons (inside scroll, above tab bar) */}
+        {/* Schedule */}
+        <Animated.View entering={FadeInDown.delay(240).duration(250)} style={st.card}>
+          <Text style={st.cardLabel}>{t('streams.schedule')}</Text>
+          {[
+            [t('streams.frequency'), formatFrequency(stream.frequency)],
+            [t('streams.started'), fmt(stream.startDate)],
+            ...(stream.endDate ? [[t('streams.ends'), fmt(stream.endDate)]] : []),
+          ].map(([k, v]) => (
+            <View key={k} style={st.schedRow}>
+              <Text style={st.dimText}>{k}</Text>
+              <Text style={st.smallWhite}>{v}</Text>
+            </View>
+          ))}
+        </Animated.View>
+
+        {/* Actions */}
         {(stream.status === 'active' || stream.status === 'paused') && (
-          <View className="mb-6">
-            <View
-              style={{
-                flexDirection: 'row',
-                gap: 12,
-              }}
-            >
-              <TouchableOpacity
-                onPress={handlePauseResume}
-                className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
-                style={{ backgroundColor: `${serviceColor}20` }}
-                accessibilityRole="button"
-                accessibilityLabel={stream.status === 'active' ? 'Pause stream' : 'Resume stream'}
-              >
-                <Ionicons
-                  name={stream.status === 'active' ? 'pause' : 'play'}
-                  size={20}
-                  color={serviceColor}
-                />
-                <Text className="font-semibold ml-2" style={{ color: serviceColor }}>
-                  {stream.status === 'active' ? 'Pause' : 'Resume'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={handleCancel}
-                className="flex-1 py-4 rounded-xl flex-row items-center justify-center"
-                style={{ backgroundColor: 'rgba(255, 51, 102, 0.2)' }}
-                accessibilityRole="button"
-                accessibilityLabel="Cancel stream"
-              >
-                <Ionicons name="close-circle" size={20} color="#ef4444" />
-                <Text className="font-semibold ml-2 text-red-500">Cancel Stream</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          <Animated.View entering={FadeInDown.delay(300).duration(250)} style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+            <TouchableOpacity onPress={handlePauseResume}
+              style={[st.actionBtn, { backgroundColor: accentDim }]}>
+              <Ionicons name={stream.status === 'active' ? 'pause' : 'play'} size={18} color={accent} />
+              <Text style={[st.actionText, { color: accent }]}>{stream.status === 'active' ? t('streams.pause') : t('streams.resume')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleCancel}
+              style={[st.actionBtn, { backgroundColor: 'rgba(255,51,102,0.12)' }]}>
+              <Ionicons name="close-circle" size={18} color={Colors.error} />
+              <Text style={[st.actionText, { color: Colors.error }]}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </Animated.View>
         )}
 
         {/* Payment History */}
         {stream.paymentHistory.length > 0 && (
-          <View
-            className="p-4 rounded-2xl mb-6"
-            style={{ backgroundColor: 'rgba(26, 26, 26, 0.8)' }}
-          >
-            <Text className="text-gray-400 text-sm mb-3">
-              Payment History ({stream.paymentHistory.length})
-            </Text>
-
-            {stream.paymentHistory.slice().reverse().map((payment, index) => (
-              <TouchableOpacity
-                key={payment.id}
-                onPress={() => {
-                  if (payment.signature) {
-                    openExplorer(payment.signature);
-                  } else {
-                    p01Alert(
-                      'No Transaction',
-                      payment.status === 'failed'
-                        ? `This payment failed: ${payment.error || 'Unknown error'}`
-                        : 'This payment was recorded locally but not sent to the blockchain.',
-                      undefined,
-                      payment.status === 'failed' ? 'error' : 'info',
-                    );
-                  }
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`Payment ${payment.amount.toFixed(4)} SOL, ${payment.status === 'success' ? 'successful' : 'failed'}`}
-                className="flex-row items-center justify-between py-3"
-                style={{
-                  borderTopWidth: index > 0 ? 1 : 0,
-                  borderTopColor: 'rgba(75, 85, 99, 0.3)',
-                }}
-              >
-                <View className="flex-row items-center flex-1">
-                  <View
-                    className="w-8 h-8 rounded-full items-center justify-center mr-3"
-                    style={{
-                      backgroundColor:
-                        payment.status === 'success'
-                          ? 'rgba(57, 197, 187, 0.2)'
-                          : 'rgba(255, 51, 102, 0.2)',
-                    }}
-                  >
-                    <Ionicons
-                      name={payment.status === 'success' ? 'checkmark' : 'close'}
-                      size={14}
-                      color={payment.status === 'success' ? P01_COLORS.cyan : P01_COLORS.red}
-                    />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-white font-semibold">
-                      {payment.amount.toFixed(4)} SOL
-                    </Text>
-                    <Text className="text-gray-500 text-xs">
-                      {formatDate(payment.timestamp)}
-                    </Text>
-                  </View>
+          <Animated.View entering={FadeInDown.delay(360).duration(250)} style={st.card}>
+            <Text style={st.cardLabel}>{t('streams.paymentHistory')} ({stream.paymentHistory.length})</Text>
+            {stream.paymentHistory.slice().reverse().map((p, i) => (
+              <TouchableOpacity key={p.id}
+                onPress={() => p.signature ? Linking.openURL(getExplorerUrl(p.signature, 'tx')) : null}
+                style={[st.historyRow, i > 0 && { borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary }]}>
+                <View style={[st.historyIcon, { backgroundColor: p.status === 'success' ? P01Colors.cyanDim : 'rgba(255,51,102,0.15)' }]}>
+                  <Ionicons name={p.status === 'success' ? 'checkmark' : 'close'} size={12}
+                    color={p.status === 'success' ? P01Colors.cyan : Colors.error} />
                 </View>
-                {payment.signature ? (
-                  <Ionicons name="open-outline" size={16} color={P01_COLORS.cyan} />
-                ) : (
-                  <Ionicons name="alert-circle-outline" size={16} color={P01_COLORS.textMuted} />
-                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={st.smallWhite}>{p.amount.toFixed(4)} SOL</Text>
+                  <Text style={st.dimText}>{fmtFull(p.timestamp)}</Text>
+                </View>
+                {p.signature && <Ionicons name="open-outline" size={14} color={P01Colors.cyan} />}
               </TouchableOpacity>
             ))}
-          </View>
+          </Animated.View>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
+
+const st = StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,
+  },
+  backBtn: {
+    width: 40, height: 40, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  },
+  headerTitle: { fontSize: 18, fontFamily: FontFamily.semibold, color: Colors.text },
+
+  // Status
+  statusPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: BorderRadius.full,
+  },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  statusText: { fontSize: 12, fontFamily: FontFamily.semibold },
+
+  // Cards
+  card: {
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+    padding: Spacing.xl, marginBottom: 12,
+  },
+  cardLabel: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginBottom: 10 },
+
+  // Big amount
+  bigAmount: { fontSize: 36, fontFamily: FontFamily.bold, color: Colors.text, textAlign: 'center' },
+  bigUnit: { fontSize: 15, fontFamily: FontFamily.semibold, textAlign: 'center', marginTop: 2 },
+
+  // Progress
+  progressTrack: { height: 6, backgroundColor: Colors.surfaceTertiary, borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 3 },
+
+  // Stats
+  statsRow: {
+    flexDirection: 'row', marginTop: 16, paddingTop: 14,
+    borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary,
+  },
+  statDivider: { width: 1, backgroundColor: Colors.surfaceTertiary },
+  statNum: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text, marginTop: 2 },
+
+  // Next payment
+  nextTime: { fontSize: 22, fontFamily: FontFamily.bold, marginVertical: 2 },
+  payBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: BorderRadius.md,
+  },
+  payBtnText: { fontSize: 13, fontFamily: FontFamily.semibold, color: '#000' },
+  payProgressText: { fontSize: 9, fontFamily: FontFamily.medium, color: '#000', marginTop: 2 },
+
+  // Text helpers
+  dimText: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary },
+  smallWhite: { fontSize: 13, fontFamily: FontFamily.medium, color: Colors.text },
+  monoText: { fontSize: 13, fontFamily: FontFamily.mono, color: Colors.textSecondary, flex: 1 },
+
+  // Schedule
+  schedRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+
+  // Actions
+  actionBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 14, borderRadius: BorderRadius.lg,
+  },
+  actionText: { fontSize: 14, fontFamily: FontFamily.semibold },
+
+  // History
+  historyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+  historyIcon: {
+    width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+  },
+});
