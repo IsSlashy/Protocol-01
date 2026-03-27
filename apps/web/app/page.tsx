@@ -19,9 +19,7 @@ export default function Home() {
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-                <span className="text-p01-cyan font-mono font-bold text-xs">P01</span>
-              </div>
+              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
               <span className="text-lg font-bold font-display text-white tracking-wider">
                 PROTOCOL 01
               </span>

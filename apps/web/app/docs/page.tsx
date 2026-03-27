@@ -988,9 +988,7 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
             <Link href="/" className="flex items-center gap-3 group">
-              <div className="w-8 h-8 bg-[#39c5bb]/10 border border-[#39c5bb]/30 flex items-center justify-center group-hover:border-[#39c5bb]/60 transition-colors">
-                <span className="text-[#39c5bb] font-mono font-bold text-[10px]">P01</span>
-              </div>
+              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
               <div className="hidden sm:flex items-center gap-2">
                 <span className="text-sm font-bold text-white tracking-wider">PROTOCOL 01</span>
                 <span className="text-[#555560]">/</span>

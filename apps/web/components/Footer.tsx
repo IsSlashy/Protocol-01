@@ -71,9 +71,7 @@ export default function Footer() {
           <div className="col-span-2">
             <div className="flex items-center gap-3 mb-6">
               {/* Industrial square logo */}
-              <div className="w-10 h-10 bg-[#39c5bb]/10 border border-[#39c5bb]/40 flex items-center justify-center">
-                <span className="text-[#39c5bb] font-mono font-bold text-xs">P01</span>
-              </div>
+              <img src="/icon.png" alt="Protocol 01" className="w-10 h-10 rounded-lg" />
               <span className="text-xl font-bold font-display text-white tracking-wider">
                 PROTOCOL 01
               </span>
