@@ -324,8 +324,8 @@ function SDKDemoContent() {
       <header className="border-b border-p01-border/50 bg-p01-surface/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/" className="text-p01-cyan font-bold text-xl font-mono">
-              P-01
+            <Link href="/" className="flex items-center gap-2">
+              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
             </Link>
             <span className="text-p01-text-dim">/</span>
             <span className="text-white font-medium">SDK Demo</span>
