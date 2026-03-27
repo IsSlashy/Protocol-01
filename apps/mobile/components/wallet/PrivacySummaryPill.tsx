@@ -5,6 +5,7 @@ import Animated, { FadeInUp } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { Colors, FontFamily, P01Colors } from '@/constants/theme';
 import { useArcium } from '@/providers/ArciumProvider';
+import { useT } from '@/i18n';
 
 interface PrivacySummaryPillProps {
   shieldedBalance: number;
@@ -19,6 +20,7 @@ export default function PrivacySummaryPill({
   denominatedBalance = 0,
   onPress,
 }: PrivacySummaryPillProps) {
+  const t = useT();
   const total = shieldedBalance + confidentialBalance + denominatedBalance;
   const { isMpcActive } = useArcium();
 
@@ -31,7 +33,7 @@ export default function PrivacySummaryPill({
           </View>
           <View style={styles.info}>
             <View style={styles.labelRow}>
-              <Text style={styles.label}>Private Balance</Text>
+              <Text style={styles.label}>{t('wallet.privacySummary')}</Text>
               {isMpcActive && (
                 <View style={styles.mpcBadge}>
                   <Ionicons name="git-network" size={9} color="#f59e0b" />

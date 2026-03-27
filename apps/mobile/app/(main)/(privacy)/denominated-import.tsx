@@ -12,13 +12,12 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { useDenominatedPoolStore, type NoteSource } from '@/stores/denominatedPoolStore';
 import { decodeShareableNote, ALL_POOLS } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
-
-type ImportSource = 'received' | 'imported_backup';
 
 export default function DenominatedImportScreen() {
   const router = useRouter();
@@ -26,15 +25,31 @@ export default function DenominatedImportScreen() {
   const { importNote } = useDenominatedPoolStore();
 
   const [noteData, setNoteData] = useState('');
-  const [source, setSource] = useState<ImportSource>('received');
+  const [isBackup, setIsBackup] = useState(false);
   const [preview, setPreview] = useState<{
     token: string;
     denomination: number;
-    pool: string;
     poolFound: boolean;
   } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [imported, setImported] = useState(false);
+
+  const tryPreview = useCallback((text: string) => {
+    setPreview(null);
+    setPreviewError(null);
+    try {
+      const decoded = decodeShareableNote(text.trim());
+      const poolFound = ALL_POOLS.some(p => p.poolPDA.toBase58() === decoded.pool);
+      setPreview({ token: decoded.token, denomination: decoded.denominationHuman, poolFound });
+      if (!poolFound) {
+        setPreviewError('Unknown pool — this note may be from a different network.');
+      }
+    } catch {
+      if (text.trim().length > 10) {
+        setPreviewError('Invalid note. Make sure you copied the full data.');
+      }
+    }
+  }, []);
 
   const handlePaste = useCallback(async () => {
     const text = await Clipboard.getStringAsync();
@@ -42,234 +57,172 @@ export default function DenominatedImportScreen() {
       setNoteData(text);
       tryPreview(text);
     }
-  }, []);
-
-  const tryPreview = useCallback((text: string) => {
-    setPreview(null);
-    setPreviewError(null);
-    try {
-      const decoded = decodeShareableNote(text.trim());
-
-      // Verify pool exists in known config
-      const poolFound = ALL_POOLS.some(p => p.poolPDA.toBase58() === decoded.pool);
-
-      setPreview({
-        token: decoded.token,
-        denomination: decoded.denominationHuman,
-        pool: decoded.pool,
-        poolFound,
-      });
-
-      if (!poolFound) {
-        setPreviewError('Warning: This pool address is not in the known pool list. The note may be from a different network.');
-      }
-    } catch {
-      if (text.trim().length > 10) {
-        setPreviewError('Invalid note format. Make sure you copied the full note data.');
-      }
-    }
-  }, []);
+  }, [tryPreview]);
 
   const handleTextChange = useCallback((text: string) => {
     setNoteData(text);
-    if (text.trim().length > 20) {
-      tryPreview(text);
-    } else {
-      setPreview(null);
-      setPreviewError(null);
-    }
+    if (text.trim().length > 20) tryPreview(text);
+    else { setPreview(null); setPreviewError(null); }
   }, [tryPreview]);
 
   const handleImport = useCallback(() => {
     if (!noteData.trim()) {
-      p01Alert('Empty', 'Please paste note data first.');
+      p01Alert('Empty', 'Paste note data first.');
       return;
     }
-
     try {
-      importNote(noteData.trim(), source as NoteSource);
+      const source: NoteSource = isBackup ? 'imported_backup' : 'received';
+      importNote(noteData.trim(), source);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setImported(true);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Import Failed', (err as Error).message);
     }
-  }, [noteData, importNote, source]);
+  }, [noteData, importNote, isBackup]);
 
+  // ─── Success screen ────────────────────────────────
   if (imported) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={Colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Import Note</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={styles.centered}>
-          <Ionicons name="checkmark-circle" size={56} color={P01Colors.green} />
-          <Text style={styles.successTitle}>Note Imported</Text>
-          {preview && (
-            <Text style={styles.successDetail}>
-              {preview.denomination} {preview.token} note added to your wallet.
+      <SafeAreaView style={st.container} edges={['top']}>
+        <View style={st.successContainer}>
+          <Animated.View entering={FadeIn.duration(400)} style={st.successContent}>
+            <View style={st.successIcon}>
+              <Ionicons name="checkmark-circle" size={56} color={P01Colors.cyan} />
+            </View>
+            <Text style={st.successTitle}>Note Received</Text>
+            {preview && (
+              <Text style={st.successAmount}>
+                {preview.denomination} {preview.token}
+              </Text>
+            )}
+            <Text style={st.successHint}>
+              {isBackup
+                ? 'Your note has been restored from backup.'
+                : 'The note will mature before you can send or withdraw it.'}
             </Text>
-          )}
-          <Text style={styles.successHint}>
-            {source === 'received'
-              ? 'The note will mature before you can withdraw or transfer it.'
-              : 'Your note has been restored from backup.'}
-          </Text>
-          <TouchableOpacity
-            style={styles.doneBtn}
-            onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
-          >
-            <Text style={styles.doneBtnText}>View Notes</Text>
-          </TouchableOpacity>
+          </Animated.View>
+
+          <View style={st.successActions}>
+            <TouchableOpacity
+              style={st.primaryBtn}
+              onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
+            >
+              <Text style={st.primaryBtnText}>View Notes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={st.ghostBtn}
+              onPress={() => router.back()}
+            >
+              <Text style={st.ghostBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </SafeAreaView>
     );
   }
 
+  // ─── Main screen ───────────────────────────────────
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+    <SafeAreaView style={st.container} edges={['top']}>
+      <View style={st.header}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Receive Note</Text>
+        <Text style={st.headerTitle}>Receive</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Source selector */}
-        <Text style={styles.label}>Import Source</Text>
-        <View style={styles.sourceRow}>
-          <TouchableOpacity
-            style={[styles.sourceBtn, source === 'received' && styles.sourceBtnActive]}
-            onPress={() => setSource('received')}
-          >
-            <Ionicons
-              name="swap-horizontal"
-              size={16}
-              color={source === 'received' ? P01Colors.cyan : Colors.textTertiary}
-            />
-            <Text style={[
-              styles.sourceBtnText,
-              source === 'received' && styles.sourceBtnTextActive,
-            ]}>
-              Received
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.sourceBtn, source === 'imported_backup' && styles.sourceBtnActive]}
-            onPress={() => setSource('imported_backup')}
-          >
-            <Ionicons
-              name="cloud-download"
-              size={16}
-              color={source === 'imported_backup' ? P01Colors.cyan : Colors.textTertiary}
-            />
-            <Text style={[
-              styles.sourceBtnText,
-              source === 'imported_backup' && styles.sourceBtnTextActive,
-            ]}>
-              Backup Restore
-            </Text>
-          </TouchableOpacity>
-        </View>
+      <ScrollView style={st.scroll} contentContainerStyle={st.scrollContent}>
+        {/* Big paste area */}
+        <Animated.View entering={FadeInDown.duration(300)}>
+          <View style={st.pasteCard}>
+            <TouchableOpacity style={st.pasteBigBtn} onPress={handlePaste} activeOpacity={0.7}>
+              <View style={st.pasteIconWrap}>
+                <Ionicons name="clipboard" size={28} color={P01Colors.cyan} />
+              </View>
+              <Text style={st.pasteTitle}>Paste Note</Text>
+              <Text style={st.pasteHint}>
+                Tap to paste the note data from your clipboard
+              </Text>
+            </TouchableOpacity>
 
-        {/* Info */}
-        <View style={styles.infoCard}>
-          <Ionicons name="information-circle" size={18} color={P01Colors.cyan} />
-          <Text style={styles.infoText}>
-            {source === 'received'
-              ? 'Paste a shareable note received from another user. The note will be added to your local wallet.'
-              : 'Restore a note from a previous backup. Use this if you reinstalled the app or cleared data.'}
-          </Text>
-        </View>
+            {/* Or type manually */}
+            <View style={st.orRow}>
+              <View style={st.orLine} />
+              <Text style={st.orText}>or paste manually</Text>
+              <View style={st.orLine} />
+            </View>
 
-        {/* Input area */}
-        <Text style={styles.label}>Note Data</Text>
-        <View style={styles.inputWrapper}>
-          <TextInput
-            style={styles.input}
-            value={noteData}
-            onChangeText={handleTextChange}
-            placeholder="Paste note data here..."
-            placeholderTextColor={Colors.textTertiary}
-            multiline
-            numberOfLines={6}
-            textAlignVertical="top"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TouchableOpacity style={styles.pasteBtn} onPress={handlePaste}>
-            <Ionicons name="clipboard" size={16} color={P01Colors.cyan} />
-            <Text style={styles.pasteBtnText}>Paste</Text>
-          </TouchableOpacity>
-        </View>
+            <TextInput
+              style={st.input}
+              value={noteData}
+              onChangeText={handleTextChange}
+              placeholder="Paste note data here..."
+              placeholderTextColor={Colors.textTertiary}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+        </Animated.View>
 
         {/* Preview */}
         {preview && (
-          <View style={[styles.previewCard, !preview.poolFound && styles.previewCardWarning]}>
-            <Ionicons
-              name="receipt"
-              size={20}
-              color={preview.poolFound ? P01Colors.cyan : P01Colors.yellow}
-            />
-            <View style={styles.previewContent}>
-              <Text style={styles.previewTitle}>
-                {preview.denomination} {preview.token}
-              </Text>
-              <Text style={styles.previewPool}>
-                Pool: {preview.pool.slice(0, 12)}...{preview.pool.slice(-6)}
-              </Text>
-              {preview.poolFound && (
-                <View style={styles.verifiedRow}>
-                  <Ionicons name="checkmark-circle" size={14} color={P01Colors.green} />
-                  <Text style={styles.verifiedText}>Known pool verified</Text>
-                </View>
-              )}
+          <Animated.View entering={FadeIn.duration(200)}>
+            <View style={[st.previewCard, !preview.poolFound && st.previewCardWarn]}>
+              <View style={st.previewLeft}>
+                <Ionicons
+                  name={preview.poolFound ? 'checkmark-circle' : 'alert-circle'}
+                  size={24}
+                  color={preview.poolFound ? P01Colors.cyan : P01Colors.yellow}
+                />
+              </View>
+              <View style={st.previewInfo}>
+                <Text style={st.previewAmount}>{preview.denomination} {preview.token}</Text>
+                <Text style={st.previewStatus}>
+                  {preview.poolFound ? 'Valid note — pool verified' : 'Unknown pool'}
+                </Text>
+              </View>
             </View>
-            <Ionicons
-              name={preview.poolFound ? 'checkmark-circle' : 'alert-circle'}
-              size={20}
-              color={preview.poolFound ? P01Colors.green : P01Colors.yellow}
-            />
+          </Animated.View>
+        )}
+
+        {/* Error */}
+        {previewError && !preview?.poolFound && (
+          <View style={st.errorCard}>
+            <Ionicons name="alert-circle" size={14} color={Colors.error} />
+            <Text style={st.errorText}>{previewError}</Text>
           </View>
         )}
 
-        {previewError && (
-          <View style={styles.errorCard}>
-            <Ionicons name="alert-circle" size={16} color={previewError.startsWith('Warning') ? P01Colors.yellow : Colors.error} />
-            <Text style={[
-              styles.errorText,
-              previewError.startsWith('Warning') && { color: P01Colors.yellow },
-            ]}>
-              {previewError}
-            </Text>
-          </View>
-        )}
-
-        {/* Privacy note */}
-        <View style={styles.privacyNote}>
-          <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
-          <Text style={styles.privacyText}>
-            Notes are stored locally on your device only. Never share your note data publicly.
-          </Text>
-        </View>
+        {/* Backup toggle */}
+        <TouchableOpacity
+          style={st.backupToggle}
+          onPress={() => setIsBackup(!isBackup)}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isBackup ? 'checkbox' : 'square-outline'}
+            size={20}
+            color={isBackup ? P01Colors.cyan : Colors.textTertiary}
+          />
+          <Text style={st.backupText}>This is a backup restore</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* Import button */}
-      <View style={[styles.footer, { paddingBottom: Math.max(Spacing.xl, insets.bottom + 96) }]}>
+      <View style={[st.footer, { paddingBottom: Math.max(Spacing.xl, insets.bottom + 96) }]}>
         <TouchableOpacity
-          style={[styles.importBtn, !preview && styles.disabledBtn]}
+          style={[st.importBtn, !preview && st.importBtnDisabled]}
           onPress={handleImport}
           disabled={!preview}
         >
-          <Ionicons name="download" size={20} color="#000" />
-          <Text style={styles.importBtnText}>
-            {source === 'received' ? 'Import Note' : 'Restore Note'}
+          <Ionicons name="download" size={18} color="#000" />
+          <Text style={st.importBtnText}>
+            {preview ? `Receive ${preview.denomination} ${preview.token}` : 'Receive Note'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -277,8 +230,10 @@ export default function DenominatedImportScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
+  // Header
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
@@ -288,74 +243,93 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center',
   },
   headerTitle: { color: Colors.text, fontSize: 20, fontFamily: FontFamily.bold },
-  scrollView: { flex: 1 },
+  scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: Spacing.lg },
-  successTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  successDetail: { fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary, textAlign: 'center' },
-  successHint: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, textAlign: 'center', paddingHorizontal: 32 },
-  doneBtn: {
-    paddingHorizontal: 24, paddingVertical: 12, borderRadius: BorderRadius.md,
-    backgroundColor: P01Colors.cyanDim, marginTop: Spacing.md,
+
+  // Paste card
+  pasteCard: {
+    backgroundColor: '#0f0f12', borderRadius: 20, padding: 20, marginBottom: Spacing.lg,
   },
-  doneBtnText: { fontSize: 15, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
-  label: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.textSecondary, marginBottom: Spacing.sm },
-  sourceRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
-  sourceBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: Spacing.md, borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
-  },
-  sourceBtnActive: {
-    backgroundColor: P01Colors.cyanDim, borderColor: P01Colors.cyan + '60',
-  },
-  sourceBtnText: { fontSize: 13, fontFamily: FontFamily.medium, color: Colors.textTertiary },
-  sourceBtnTextActive: { color: P01Colors.cyan },
-  infoCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    backgroundColor: P01Colors.cyanDim, borderRadius: BorderRadius.md,
-    padding: Spacing.md, marginBottom: Spacing.xl,
-  },
-  infoText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary, lineHeight: 19 },
-  inputWrapper: { marginBottom: Spacing.lg },
-  input: {
-    backgroundColor: Colors.surface, borderRadius: BorderRadius.md,
-    padding: Spacing.lg, color: Colors.text, fontFamily: FontFamily.mono, fontSize: 12,
-    borderWidth: 1, borderColor: Colors.border, minHeight: 120,
-  },
-  pasteBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    position: 'absolute', top: 8, right: 8,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: BorderRadius.sm,
+  pasteBigBtn: { alignItems: 'center', paddingVertical: 24 },
+  pasteIconWrap: {
+    width: 56, height: 56, borderRadius: 16,
     backgroundColor: P01Colors.cyanDim,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
   },
-  pasteBtnText: { fontSize: 12, fontFamily: FontFamily.medium, color: P01Colors.cyan },
+  pasteTitle: { fontSize: 17, fontFamily: FontFamily.bold, color: Colors.text },
+  pasteHint: {
+    fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    marginTop: 4, textAlign: 'center',
+  },
+
+  // Or divider
+  orRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 16 },
+  orLine: { flex: 1, height: 1, backgroundColor: Colors.border },
+  orText: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary },
+
+  // Input
+  input: {
+    backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 12,
+    padding: 14, color: Colors.text, fontFamily: FontFamily.mono, fontSize: 12,
+    borderWidth: 1, borderColor: Colors.border, minHeight: 70,
+  },
+
+  // Preview
   previewCard: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-    backgroundColor: Colors.surface, borderRadius: BorderRadius.md,
-    padding: Spacing.lg, borderWidth: 1, borderColor: P01Colors.cyan, marginBottom: Spacing.lg,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: P01Colors.cyanDim, borderRadius: 14, padding: 16, marginBottom: Spacing.lg,
   },
-  previewCardWarning: { borderColor: P01Colors.yellow },
-  previewContent: { flex: 1 },
-  previewTitle: { fontSize: 16, fontFamily: FontFamily.bold, color: Colors.text },
-  previewPool: { fontSize: 12, fontFamily: FontFamily.mono, color: Colors.textTertiary, marginTop: 2 },
-  verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  verifiedText: { fontSize: 11, fontFamily: FontFamily.regular, color: P01Colors.green },
+  previewCardWarn: { backgroundColor: P01Colors.yellowDim },
+  previewLeft: {},
+  previewInfo: { flex: 1 },
+  previewAmount: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
+  previewStatus: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2 },
+
+  // Error
   errorCard: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.errorDim, borderRadius: BorderRadius.md,
-    padding: Spacing.md, marginBottom: Spacing.lg,
+    backgroundColor: Colors.errorDim, borderRadius: 10, padding: 10, marginBottom: Spacing.lg,
   },
-  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
-  privacyNote: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: Spacing.sm,
+  errorText: { flex: 1, fontSize: 12, fontFamily: FontFamily.regular, color: Colors.error },
+
+  // Backup toggle
+  backupToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8,
   },
-  privacyText: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary },
-  footer: { padding: Spacing.xl },
+  backupText: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary },
+
+  // Footer
+  footer: { paddingHorizontal: Spacing.xl },
   importBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 16, borderRadius: BorderRadius.lg, backgroundColor: '#8B8BFF',
+    paddingVertical: 16, borderRadius: 14, backgroundColor: '#8B8BFF',
   },
-  disabledBtn: { opacity: 0.4 },
+  importBtnDisabled: { opacity: 0.4 },
   importBtnText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
+
+  // Success
+  successContainer: {
+    flex: 1, justifyContent: 'space-between', paddingHorizontal: Spacing.xl,
+  },
+  successContent: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  successIcon: { marginBottom: 8 },
+  successTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
+  successAmount: { fontSize: 18, fontFamily: FontFamily.semibold, color: '#8B8BFF' },
+  successHint: {
+    fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    textAlign: 'center', marginTop: 8, lineHeight: 19,
+  },
+  successActions: { gap: 10, paddingBottom: 80 },
+  primaryBtn: {
+    paddingVertical: 16, borderRadius: 14, alignItems: 'center',
+    backgroundColor: P01Colors.cyan,
+  },
+  primaryBtnText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
+  ghostBtn: {
+    paddingVertical: 16, borderRadius: 14, alignItems: 'center',
+    backgroundColor: '#0f0f12',
+  },
+  ghostBtnText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
 });

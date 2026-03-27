@@ -297,7 +297,21 @@ export default function ShareNoteScreen() {
                 selectedTransport === 'nfc' && styles.transportCardOuterActive,
                 !isNfcAvailable && styles.transportCardDisabled,
               ]}
-              onPress={() => p01Alert('Coming Soon', 'NFC sharing is experimental and not yet available. Use Bluetooth instead.')}
+              onPress={() => {
+                if (!isNfcAvailable) {
+                  p01Alert('NFC Unavailable', 'NFC is not available on this device or is disabled in settings.');
+                  return;
+                }
+                p01Alert(
+                  'Experimental Feature',
+                  'NFC Tap sharing is experimental and may be unstable. Bluetooth is recommended for reliable transfers.\n\nContinue with NFC?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Use NFC', onPress: handleStartNfc },
+                  ],
+                  'warning',
+                );
+              }}
               disabled={false}
             >
               <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
@@ -307,10 +321,10 @@ export default function ShareNoteScreen() {
                   end={{ x: 1, y: 1 }}
                   style={StyleSheet.absoluteFill}
                 />
-                <Ionicons name="phone-portrait" size={28} color={Colors.textTertiary} />
+                <Ionicons name="phone-portrait" size={28} color={isNfcAvailable ? P01Colors.pink : Colors.textTertiary} />
                 <Text style={styles.transportTitle}>NFC Tap</Text>
-                <Text style={[styles.transportDesc, { color: P01Colors.pink }]}>
-                  Experimental — coming soon
+                <Text style={[styles.transportDesc, { color: P01Colors.yellow }]}>
+                  Experimental
                 </Text>
               </BlurView>
             </TouchableOpacity>

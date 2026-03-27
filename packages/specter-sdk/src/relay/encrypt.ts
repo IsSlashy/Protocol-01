@@ -13,7 +13,7 @@
 import nacl from 'tweetnacl';
 import { sha256 } from '@noble/hashes/sha256';
 import { hkdf } from '@noble/hashes/hkdf';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { KEM_PUBLIC_KEY_SIZE } from './types';
 
 const RELAY_HKDF_INFO_V1 = 'p01_relay_job_v1';

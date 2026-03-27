@@ -20,8 +20,10 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { validateMnemonic } from '../../services/solana/wallet';
 import { useWalletStore } from '../../stores/walletStore';
+import { useT } from '@/i18n';
 
 export default function ImportWalletScreen() {
+  const t = useT();
   const router = useRouter();
   const { importExistingWallet } = useWalletStore();
   const [mnemonic, setMnemonic] = useState('');
@@ -34,14 +36,14 @@ export default function ImportWalletScreen() {
 
     // Validate word count
     if (words.length !== 12 && words.length !== 24) {
-      setError('Please enter a valid 12 or 24 word recovery phrase');
+      setError(t('auth.invalidWordCount'));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
     // Validate mnemonic
     if (!validateMnemonic(normalizedMnemonic)) {
-      setError('Invalid recovery phrase. Please check your words.');
+      setError(t('auth.invalidRecoveryPhrase'));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
@@ -60,11 +62,11 @@ export default function ImportWalletScreen() {
       await SecureStore.setItemAsync('p01_onboarded', 'true');
 
       p01Alert(
-        'Wallet Imported!',
-        `Your wallet has been successfully imported.\n\nAddress: ${pubKey.slice(0, 8)}...${pubKey.slice(-8)}`,
+        t('auth.walletImported'),
+        t('auth.walletImportedDesc', { address: `${pubKey.slice(0, 8)}...${pubKey.slice(-8)}` }),
         [
           {
-            text: 'Set Up Security',
+            text: t('auth.setUpSecurity'),
             onPress: () => router.replace('/(onboarding)/security'),
           },
         ]
@@ -92,7 +94,7 @@ export default function ImportWalletScreen() {
           >
             <Ionicons name="arrow-back" size={24} color="#ffffff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Import Wallet</Text>
+          <Text style={styles.headerTitle}>{t('onboarding.importWallet')}</Text>
           <View style={styles.backButton} />
         </View>
 
@@ -110,9 +112,9 @@ export default function ImportWalletScreen() {
 
           {/* Title */}
           <Animated.View entering={FadeInDown.delay(200)} style={styles.titleContainer}>
-            <Text style={styles.title}>Enter Recovery Phrase</Text>
+            <Text style={styles.title}>{t('auth.enterRecoveryPhrase')}</Text>
             <Text style={styles.subtitle}>
-              Enter your 12 or 24 word recovery phrase to restore your wallet
+              {t('auth.enterRecoveryPhraseDesc')}
             </Text>
           </Animated.View>
 
@@ -120,7 +122,7 @@ export default function ImportWalletScreen() {
           <Animated.View entering={FadeInDown.delay(300)} style={styles.inputContainer}>
             <TextInput
               style={[styles.input, error && styles.inputError]}
-              placeholder="Enter your recovery phrase..."
+              placeholder={t('auth.enterRecoveryPlaceholder')}
               placeholderTextColor="#555560"
               value={mnemonic}
               onChangeText={(text) => {
@@ -138,18 +140,18 @@ export default function ImportWalletScreen() {
 
           {/* Tips */}
           <Animated.View entering={FadeInDown.delay(400)} style={styles.tipsContainer}>
-            <Text style={styles.tipsTitle}>Tips:</Text>
+            <Text style={styles.tipsTitle}>{t('auth.tips')}</Text>
             <View style={styles.tipRow}>
               <Ionicons name="checkmark-circle" size={16} color="#39c5bb" />
-              <Text style={styles.tipText}>Words should be separated by spaces</Text>
+              <Text style={styles.tipText}>{t('auth.tipSpaces')}</Text>
             </View>
             <View style={styles.tipRow}>
               <Ionicons name="checkmark-circle" size={16} color="#39c5bb" />
-              <Text style={styles.tipText}>Check spelling carefully</Text>
+              <Text style={styles.tipText}>{t('auth.tipSpelling')}</Text>
             </View>
             <View style={styles.tipRow}>
               <Ionicons name="checkmark-circle" size={16} color="#39c5bb" />
-              <Text style={styles.tipText}>Use lowercase letters only</Text>
+              <Text style={styles.tipText}>{t('auth.tipLowercase')}</Text>
             </View>
           </Animated.View>
 
@@ -157,8 +159,7 @@ export default function ImportWalletScreen() {
           <Animated.View entering={FadeInDown.delay(500)} style={styles.warningContainer}>
             <Ionicons name="shield-checkmark" size={20} color="#39c5bb" />
             <Text style={styles.warningText}>
-              Your recovery phrase is encrypted and stored securely on your device.
-              We never have access to your keys.
+              {t('auth.secureStorageNote')}
             </Text>
           </Animated.View>
         </ScrollView>
@@ -176,7 +177,7 @@ export default function ImportWalletScreen() {
             {isLoading ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
-              <Text style={styles.importButtonText}>Import Wallet</Text>
+              <Text style={styles.importButtonText}>{t('onboarding.importWallet')}</Text>
             )}
           </TouchableOpacity>
         </View>

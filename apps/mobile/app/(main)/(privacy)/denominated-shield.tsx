@@ -11,10 +11,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   FadeIn,
+  FadeInDown,
   SlideInDown,
   SlideOutDown,
 } from 'react-native-reanimated';
@@ -33,281 +33,18 @@ import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constant
 
 type TokenTab = 'SOL' | 'USDC';
 
-// ─── Confirmation Sheet ───────────────────────────────────────────
-interface ConfirmSheetProps {
-  visible: boolean;
-  pool: PoolConfig | null;
-  walletBalance: number;
-  noteCount: number;
-  isProcessing: boolean;
-  progress: string | null;
-  onConfirm: () => void;
-  onClose: () => void;
-}
-
-function ConfirmSheet({
-  visible,
-  pool,
-  walletBalance,
-  noteCount,
-  isProcessing,
-  progress,
-  onConfirm,
-  onClose,
-}: ConfirmSheetProps) {
-  if (!pool) return null;
-
-  const denomination = pool.denomination;
-  const token = pool.token;
-  const balanceSol = walletBalance / LAMPORTS_PER_SOL;
-  const needed = Number(pool.denominationAtomic) / (token === 'SOL' ? LAMPORTS_PER_SOL : 1e6);
-  const hasEnough = token === 'SOL'
-    ? walletBalance >= Number(pool.denominationAtomic) + 50_000
-    : true;
-  const anonymityLabel = noteCount === 0 ? 'New pool' :
-    noteCount < 10 ? `${noteCount} notes (Low)` :
-    noteCount < 100 ? `${noteCount} notes (Medium)` : `${noteCount} notes (High)`;
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <View style={cs.overlay}>
-        <TouchableOpacity style={cs.backdrop} activeOpacity={1} onPress={isProcessing ? undefined : onClose} />
-
-        <Animated.View
-          entering={SlideInDown.duration(200)}
-          exiting={SlideOutDown.duration(150)}
-          style={cs.sheet}
-        >
-          {/* Drag handle */}
-          <View style={cs.dragRow}>
-            <View style={cs.dragHandle} />
-          </View>
-
-          {/* Header */}
-          <View style={cs.sheetHeader}>
-            <LinearGradient
-              colors={[P01Colors.cyanDim, 'rgba(57, 197, 187, 0.05)']}
-              style={cs.sheetIconWrap}
-            >
-              <Ionicons name="shield-checkmark" size={28} color={P01Colors.cyan} />
-            </LinearGradient>
-            <View style={{ flex: 1 }}>
-              <Text style={cs.sheetTitle}>Shield {token}</Text>
-              <Text style={cs.sheetSubtitle}>Deposit into privacy pool</Text>
-            </View>
-          </View>
-
-          {/* Amount display */}
-          <View style={cs.amountCard}>
-            <Text style={cs.amountValue}>{denomination}</Text>
-            <Text style={cs.amountToken}>{token}</Text>
-          </View>
-
-          {/* Details */}
-          <View style={cs.detailsCard}>
-            <DetailRow
-              icon="wallet-outline"
-              label="Your balance"
-              value={`${balanceSol.toFixed(4)} SOL`}
-              valueColor={hasEnough ? Colors.text : '#EF4444'}
-            />
-            <View style={cs.detailDivider} />
-            <DetailRow
-              icon="people-outline"
-              label="Anonymity set"
-              value={anonymityLabel}
-              valueColor={noteCount >= 100 ? P01Colors.green : noteCount >= 10 ? P01Colors.cyan : P01Colors.yellow}
-            />
-            <View style={cs.detailDivider} />
-            <DetailRow
-              icon="time-outline"
-              label="Maturity"
-              value="~1 epoch (~1 hour)"
-              valueColor={Colors.textSecondary}
-            />
-            <View style={cs.detailDivider} />
-            <DetailRow
-              icon="hardware-chip-outline"
-              label="Proof system"
-              value="STARK (PQ-safe)"
-              valueColor="#8B5CF6"
-            />
-          </View>
-
-          {/* Insufficient balance warning */}
-          {!hasEnough && (
-            <View style={cs.warningCard}>
-              <Ionicons name="warning" size={16} color="#FBBF24" />
-              <Text style={cs.warningText}>
-                Insufficient balance. You need {needed} {token} + fees.
-              </Text>
-            </View>
-          )}
-
-          {/* Processing overlay inside sheet */}
-          {isProcessing && (
-            <Animated.View entering={FadeIn.duration(200)} style={cs.processingCard}>
-              <ActivityIndicator size="small" color={P01Colors.cyan} />
-              <Text style={cs.processingText}>{progress || 'Processing...'}</Text>
-            </Animated.View>
-          )}
-
-          {/* Buttons */}
-          <View style={cs.sheetActions}>
-            <TouchableOpacity
-              style={cs.cancelBtn}
-              onPress={onClose}
-              disabled={isProcessing}
-              activeOpacity={0.7}
-            >
-              <Text style={cs.cancelBtnText}>Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={onConfirm}
-              disabled={isProcessing || !hasEnough}
-              activeOpacity={0.8}
-              style={{ flex: 1 }}
-            >
-              <LinearGradient
-                colors={isProcessing || !hasEnough
-                  ? ['rgba(57,197,187,0.3)', 'rgba(57,197,187,0.15)']
-                  : [P01Colors.cyan, '#20A89E']}
-                style={cs.confirmBtn}
-              >
-                {isProcessing ? (
-                  <ActivityIndicator size="small" color="#000" />
-                ) : (
-                  <>
-                    <Ionicons name="shield-checkmark" size={18} color="#000" />
-                    <Text style={cs.confirmBtnText}>Shield {denomination} {token}</Text>
-                  </>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-
-          {/* Fine print */}
-          <Text style={cs.finePrint}>
-            Your note will be stored locally. Keep this device safe.
-          </Text>
-        </Animated.View>
-      </View>
-    </Modal>
-  );
-}
-
-function DetailRow({ icon, label, value, valueColor }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  value: string;
-  valueColor: string;
-}) {
-  return (
-    <View style={cs.detailRow}>
-      <Ionicons name={icon} size={16} color={Colors.textTertiary} />
-      <Text style={cs.detailLabel}>{label}</Text>
-      <Text style={[cs.detailValue, { color: valueColor }]}>{value}</Text>
-    </View>
-  );
-}
-
-// ─── Result Modal ─────────────────────────────────────────────────
-interface ResultModalProps {
-  visible: boolean;
-  type: 'success' | 'error';
-  title: string;
-  message: string;
-  actions?: Array<{ label: string; onPress: () => void; primary?: boolean }>;
-  onDismiss: () => void;
-}
-
-function ResultModal({ visible, type, title, message, actions, onDismiss }: ResultModalProps) {
-  const iconColor = type === 'success' ? P01Colors.cyan : '#EF4444';
-  const iconName = type === 'success' ? 'checkmark-circle' : 'alert-circle';
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={onDismiss}
-    >
-      <View style={rm.overlay}>
-        <TouchableOpacity style={rm.backdrop} activeOpacity={1} onPress={onDismiss} />
-        <View
-          style={[rm.card, { borderColor: `${iconColor}55` }]}
-        >
-          {/* Top accent */}
-          <View style={[rm.topAccent, { backgroundColor: iconColor }]} />
-
-          {/* Icon */}
-          <View style={[rm.iconWrap, { backgroundColor: `${iconColor}15` }]}>
-            <Ionicons name={iconName} size={40} color={iconColor} />
-          </View>
-
-          <Text style={rm.title}>{title}</Text>
-          <Text style={rm.message}>{message}</Text>
-
-          {/* Actions */}
-          <View style={rm.actions}>
-            {actions?.map((action, i) => (
-              <TouchableOpacity
-                key={i}
-                style={[
-                  rm.actionBtn,
-                  action.primary
-                    ? { backgroundColor: iconColor }
-                    : { backgroundColor: 'transparent', borderWidth: 1, borderColor: Colors.border },
-                ]}
-                onPress={action.onPress}
-                activeOpacity={0.7}
-              >
-                <Text style={[
-                  rm.actionText,
-                  action.primary ? { color: '#000' } : { color: Colors.text },
-                ]}>
-                  {action.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Corner accents */}
-          <View style={[rm.corner, rm.cornerBL, { backgroundColor: `${iconColor}60` }]} />
-          <View style={[rm.corner, rm.cornerBLv, { backgroundColor: `${iconColor}60` }]} />
-          <View style={[rm.corner, rm.cornerBR, { backgroundColor: `${iconColor}60` }]} />
-          <View style={[rm.corner, rm.cornerBRv, { backgroundColor: `${iconColor}60` }]} />
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 // ─── Main Screen ──────────────────────────────────────────────────
 export default function DenominatedShieldScreen() {
   const router = useRouter();
   const [tokenTab, setTokenTab] = useState<TokenTab>('SOL');
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [loadingBalance, setLoadingBalance] = useState(true);
-
-  // Confirmation sheet
   const [selectedPool, setSelectedPool] = useState<PoolConfig | null>(null);
-
-  // Result modal
   const [resultModal, setResultModal] = useState<{
     visible: boolean;
     type: 'success' | 'error';
     title: string;
     message: string;
-    actions?: ResultModalProps['actions'];
   }>({ visible: false, type: 'success', title: '', message: '' });
 
   const {
@@ -349,16 +86,15 @@ export default function DenominatedShieldScreen() {
     refreshPoolInfo();
   }, [fetchBalance]);
 
+  const balanceSol = walletBalance / LAMPORTS_PER_SOL;
+
   const handleSelectPool = useCallback((pool: PoolConfig) => {
-    console.log('[Shield] Pool selected:', pool.denomination, pool.token, 'PDA:', pool.poolPDA.toBase58().slice(0, 8));
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSelectedPool(pool);
   }, []);
 
   const handleConfirmShield = useCallback(async () => {
     if (!selectedPool) return;
-    console.log('[Shield] Confirm pressed for', selectedPool.denomination, selectedPool.token);
-    console.log('[Shield] Wallet pubkey:', walletPublicKey || 'NONE');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     // Refresh balance right before check
@@ -371,61 +107,41 @@ export default function DenominatedShieldScreen() {
       }
     } catch {}
 
-    console.log('[Shield] Balance refreshed:', currentBalance, 'lamports =', (currentBalance / LAMPORTS_PER_SOL).toFixed(4), 'SOL');
-
     const needed = Number(selectedPool.denominationAtomic);
-    console.log('[Shield] Needed:', needed, 'lamports + 50000 fees');
     if (selectedPool.token === 'SOL' && currentBalance < needed + 50_000) {
-      console.log('[Shield] INSUFFICIENT BALANCE — aborting');
       setSelectedPool(null);
       setResultModal({
         visible: true,
         type: 'error',
         title: 'Insufficient Balance',
-        message: `You need ${selectedPool.denomination} SOL + fees.\n\nCurrent balance: ${(currentBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`,
-        actions: [{ label: 'OK', onPress: () => setResultModal(m => ({ ...m, visible: false })), primary: true }],
+        message: `You need ${selectedPool.denomination} SOL + fees.\nCurrent: ${(currentBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`,
       });
       return;
     }
 
     try {
-      console.log('[Shield] Calling shieldNote()...');
       await shieldNote(selectedPool);
-      console.log('[Shield] shieldNote() SUCCESS');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const pool = selectedPool;
       setSelectedPool(null);
       setResultModal({
         visible: true,
         type: 'success',
-        title: 'Shielded!',
-        message: `${pool.denomination} ${pool.token} deposited into the privacy pool.\n\nYour note is saved locally and will mature after ~1 epoch (~1 hour).`,
-        actions: [
-          {
-            label: 'View Notes',
-            onPress: () => {
-              setResultModal(m => ({ ...m, visible: false }));
-              router.push('/(main)/(privacy)/denominated-notes' as any);
-            },
-            primary: true,
-          },
-          { label: 'Done', onPress: () => setResultModal(m => ({ ...m, visible: false })) },
-        ],
+        title: 'Deposited!',
+        message: `${pool.denomination} ${pool.token} is now in your private wallet.\nIt will be ready to use in ~1 hour.`,
       });
       fetchBalance();
     } catch (err: any) {
-      console.error('[Shield] FAILED:', err.message, err);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setSelectedPool(null);
       setResultModal({
         visible: true,
         type: 'error',
-        title: 'Shield Failed',
+        title: 'Deposit Failed',
         message: err.message || 'An unknown error occurred.',
-        actions: [{ label: 'OK', onPress: () => setResultModal(m => ({ ...m, visible: false })), primary: true }],
       });
     }
-  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, router, fetchBalance]);
+  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, fetchBalance]);
 
   const getPoolNoteCount = (pool: PoolConfig): number => {
     const cached = poolCache[pool.poolPDA.toBase58()];
@@ -433,635 +149,404 @@ export default function DenominatedShieldScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={st.container} edges={['top']}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+      <View style={st.header}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Ionicons name="shield-checkmark" size={20} color={P01Colors.cyan} />
-          <Text style={styles.headerTitle}>Shield</Text>
-        </View>
+        <Text style={st.headerTitle}>Deposit</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        style={st.scroll}
+        contentContainerStyle={st.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Wallet Balance Card */}
-        <LinearGradient
-          colors={['rgba(57,197,187,0.06)', 'rgba(57,197,187,0.01)']}
-          style={styles.balanceCard}
-        >
-          <View style={styles.balanceLeft}>
-            <Text style={styles.balanceLabel}>Available</Text>
-            <Text style={styles.balanceValue}>
-              {loadingBalance ? '...' : (walletBalance / LAMPORTS_PER_SOL).toFixed(4)}
-            </Text>
-            <Text style={styles.balanceSuffix}>SOL</Text>
-          </View>
-          <TouchableOpacity onPress={fetchBalance} style={styles.refreshBtn}>
-            <Ionicons name="refresh" size={18} color={P01Colors.cyan} />
-          </TouchableOpacity>
-        </LinearGradient>
-
-        {/* Token Tabs */}
-        <View style={styles.tabRow}>
-          {(['SOL', 'USDC'] as TokenTab[]).map(tab => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.tab, tokenTab === tab && styles.tabActive]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setTokenTab(tab);
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.tabText, tokenTab === tab && styles.tabTextActive]}>
-                {tab}
+        {/* Balance */}
+        <Animated.View entering={FadeIn.duration(300)}>
+          <View style={st.balanceCard}>
+            <Text style={st.balanceLabel}>Available</Text>
+            <View style={st.balanceRow}>
+              <Text style={st.balanceValue}>
+                {loadingBalance ? '...' : balanceSol.toFixed(4)}
               </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+              <Text style={st.balanceSuffix}>SOL</Text>
+            </View>
+          </View>
+        </Animated.View>
 
-        {/* Explainer */}
-        <View style={styles.explainer}>
-          <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
-          <Text style={styles.explainerText}>
-            Choose a denomination. Same-size deposits are indistinguishable — the larger the pool, the stronger your privacy.
+        {/* Token toggle */}
+        <Animated.View entering={FadeInDown.delay(50).duration(250)}>
+          <View style={st.tokenRow}>
+            {(['SOL', 'USDC'] as TokenTab[]).map(tab => (
+              <TouchableOpacity
+                key={tab}
+                style={[st.tokenBtn, tokenTab === tab && st.tokenBtnActive]}
+                onPress={() => { Haptics.selectionAsync(); setTokenTab(tab); }}
+              >
+                <Text style={[st.tokenText, tokenTab === tab && st.tokenTextActive]}>
+                  {tab}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </Animated.View>
+
+        {/* Amount chips */}
+        <Animated.View entering={FadeInDown.delay(100).duration(300)}>
+          <Text style={st.sectionLabel}>Choose amount</Text>
+          <View style={st.chipsGrid}>
+            {pools.map((pool, i) => {
+              const noteCount = getPoolNoteCount(pool);
+              const canAfford = pool.token === 'SOL' ? balanceSol >= pool.denomination : true;
+              const privacyLevel = noteCount === 0 ? 0 : noteCount < 10 ? 1 : noteCount < 100 ? 2 : 3;
+              const privacyDots = ['', '\u25CF', '\u25CF\u25CF', '\u25CF\u25CF\u25CF'][privacyLevel];
+              const privacyColor = [Colors.textTertiary, P01Colors.yellow, P01Colors.cyan, P01Colors.green][privacyLevel];
+
+              return (
+                <TouchableOpacity
+                  key={pool.poolPDA.toBase58()}
+                  style={[
+                    st.chip,
+                    !canAfford && st.chipDimmed,
+                  ]}
+                  onPress={() => handleSelectPool(pool)}
+                  disabled={isLoading || !canAfford}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[st.chipAmount, !canAfford && st.chipAmountDim]}>
+                    {pool.denomination}
+                  </Text>
+                  <Text style={st.chipToken}>{pool.token}</Text>
+                  {noteCount > 0 && (
+                    <Text style={[st.chipPrivacy, { color: privacyColor }]}>
+                      {privacyDots}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={st.privacyLegend}>
+            <Text style={st.legendText}>Privacy level: </Text>
+            <Text style={[st.legendDot, { color: P01Colors.yellow }]}>{'\u25CF'} Low  </Text>
+            <Text style={[st.legendDot, { color: P01Colors.cyan }]}>{'\u25CF\u25CF'} Med  </Text>
+            <Text style={[st.legendDot, { color: P01Colors.green }]}>{'\u25CF\u25CF\u25CF'} High</Text>
+          </View>
+        </Animated.View>
+
+        {/* Hint */}
+        <View style={st.hint}>
+          <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
+          <Text style={st.hintText}>
+            Deposits with the same amount are indistinguishable from each other.
+            More deposits = stronger privacy.
           </Text>
         </View>
 
-        {/* Section label */}
-        <Text style={styles.sectionLabel}>SELECT AMOUNT</Text>
-
-        {/* Pool Cards */}
-        {pools.map((pool) => {
-          const noteCount = getPoolNoteCount(pool);
-          const anonymityLevel = noteCount === 0 ? 0 :
-            noteCount < 10 ? 1 : noteCount < 100 ? 2 : 3;
-          const anonymityLabel = ['Empty', 'Low', 'Medium', 'High'][anonymityLevel];
-          const anonymityColor = [Colors.textTertiary, P01Colors.yellow, P01Colors.cyan, P01Colors.green][anonymityLevel];
-          const balanceSol = walletBalance / LAMPORTS_PER_SOL;
-          const canAfford = pool.token === 'SOL' ? balanceSol >= pool.denomination : true;
-
-          return (
-            <TouchableOpacity
-              key={pool.poolPDA.toBase58()}
-              style={[styles.poolCard, !canAfford && styles.poolCardDimmed]}
-              onPress={() => handleSelectPool(pool)}
-              disabled={isLoading}
-              activeOpacity={0.7}
-            >
-              <LinearGradient
-                colors={canAfford
-                  ? [P01Colors.cyanDim, 'rgba(57, 197, 187, 0.02)']
-                  : ['rgba(50,50,50,0.08)', 'rgba(30,30,30,0.02)']}
-                style={[styles.poolCardGradient, !canAfford && { borderColor: Colors.border }]}
-              >
-                <View style={styles.poolHeader}>
-                  {/* Left: amount */}
-                  <View style={styles.poolLeft}>
-                    <Text style={[styles.poolAmount, !canAfford && { color: Colors.textSecondary }]}>
-                      {pool.denomination}
-                    </Text>
-                    <Text style={styles.poolToken}>{pool.token}</Text>
-                  </View>
-
-                  {/* Right: anonymity + chevron */}
-                  <View style={styles.poolRight}>
-                    <View style={[styles.anonymityBadge, { borderColor: anonymityColor }]}>
-                      <View style={[styles.anonymityDot, { backgroundColor: anonymityColor }]} />
-                      <Text style={[styles.anonymityText, { color: anonymityColor }]}>
-                        {anonymityLabel}
-                      </Text>
-                    </View>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={20}
-                      color={canAfford ? P01Colors.cyan : Colors.textTertiary}
-                    />
-                  </View>
-                </View>
-
-                {/* Bottom row: pool stats */}
-                <View style={styles.poolMeta}>
-                  <View style={styles.poolMetaItem}>
-                    <Ionicons name="people" size={12} color={Colors.textTertiary} />
-                    <Text style={styles.poolMetaText}>{noteCount} notes</Text>
-                  </View>
-                  <View style={styles.poolMetaDot} />
-                  <View style={styles.poolMetaItem}>
-                    <Ionicons name="time" size={12} color={Colors.textTertiary} />
-                    <Text style={styles.poolMetaText}>~1h maturity</Text>
-                  </View>
-                  <View style={styles.poolMetaDot} />
-                  <View style={styles.poolMetaItem}>
-                    <Ionicons name="hardware-chip" size={12} color={Colors.textTertiary} />
-                    <Text style={styles.poolMetaText}>STARK</Text>
-                  </View>
-                  {!canAfford && (
-                    <>
-                      <View style={styles.poolMetaDot} />
-                      <Text style={[styles.poolMetaText, { color: '#EF4444' }]}>Insufficient</Text>
-                    </>
-                  )}
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          );
-        })}
-
-        {/* Error */}
         {error && !isLoading && (
-          <View style={styles.errorCard}>
-            <Ionicons name="warning" size={18} color={Colors.error} />
-            <Text style={styles.errorText}>{error}</Text>
+          <View style={st.errorCard}>
+            <Ionicons name="warning" size={16} color={Colors.error} />
+            <Text style={st.errorText}>{error}</Text>
           </View>
         )}
       </ScrollView>
 
-      {/* Confirmation Sheet */}
-      <ConfirmSheet
-        visible={selectedPool !== null}
-        pool={selectedPool}
-        walletBalance={walletBalance}
-        noteCount={selectedPool ? getPoolNoteCount(selectedPool) : 0}
-        isProcessing={isLoading}
-        progress={progress}
-        onConfirm={handleConfirmShield}
-        onClose={() => { if (!isLoading) setSelectedPool(null); }}
-      />
+      {/* ─── Confirm Sheet ──────────────────────────────── */}
+      {selectedPool && (
+        <Modal
+          visible
+          transparent
+          animationType="none"
+          onRequestClose={() => { if (!isLoading) setSelectedPool(null); }}
+          statusBarTranslucent
+        >
+          <View style={cs.overlay}>
+            <TouchableOpacity
+              style={cs.backdrop}
+              activeOpacity={1}
+              onPress={isLoading ? undefined : () => setSelectedPool(null)}
+            />
+            <Animated.View
+              entering={SlideInDown.duration(200)}
+              exiting={SlideOutDown.duration(150)}
+              style={cs.sheet}
+            >
+              <View style={cs.dragRow}>
+                <View style={cs.dragHandle} />
+              </View>
 
-      {/* Result Modal */}
-      <ResultModal
-        visible={resultModal.visible}
-        type={resultModal.type}
-        title={resultModal.title}
-        message={resultModal.message}
-        actions={resultModal.actions}
-        onDismiss={() => setResultModal(m => ({ ...m, visible: false }))}
-      />
+              {/* Amount */}
+              <View style={cs.amountRow}>
+                <Text style={cs.amountValue}>{selectedPool.denomination}</Text>
+                <Text style={cs.amountToken}>{selectedPool.token}</Text>
+              </View>
+
+              {/* Details */}
+              <View style={cs.details}>
+                <View style={cs.detailRow}>
+                  <Text style={cs.detailLabel}>Your balance</Text>
+                  <Text style={cs.detailValue}>{balanceSol.toFixed(4)} SOL</Text>
+                </View>
+                <View style={cs.detailRow}>
+                  <Text style={cs.detailLabel}>Ready in</Text>
+                  <Text style={cs.detailValue}>~1 hour</Text>
+                </View>
+                <View style={cs.detailRow}>
+                  <Text style={cs.detailLabel}>Pool size</Text>
+                  <Text style={cs.detailValue}>
+                    {getPoolNoteCount(selectedPool)} deposits
+                  </Text>
+                </View>
+              </View>
+
+              {/* Processing */}
+              {isLoading && (
+                <Animated.View entering={FadeIn.duration(200)} style={cs.processingCard}>
+                  <ActivityIndicator size="small" color={P01Colors.cyan} />
+                  <Text style={cs.processingText}>{progress || 'Processing...'}</Text>
+                </Animated.View>
+              )}
+
+              {/* Buttons */}
+              <View style={cs.actions}>
+                <TouchableOpacity
+                  style={cs.cancelBtn}
+                  onPress={() => setSelectedPool(null)}
+                  disabled={isLoading}
+                >
+                  <Text style={cs.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[cs.confirmBtn, isLoading && { opacity: 0.5 }]}
+                  onPress={handleConfirmShield}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color="#000" />
+                  ) : (
+                    <Text style={cs.confirmText}>
+                      Deposit {selectedPool.denomination} {selectedPool.token}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <Text style={cs.finePrint}>
+                Your deposit is stored locally on this device.
+              </Text>
+            </Animated.View>
+          </View>
+        </Modal>
+      )}
+
+      {/* ─── Result Modal ───────────────────────────────── */}
+      {resultModal.visible && (
+        <Modal visible transparent animationType="fade" statusBarTranslucent>
+          <View style={rm.overlay}>
+            <TouchableOpacity
+              style={rm.backdrop}
+              activeOpacity={1}
+              onPress={() => setResultModal(m => ({ ...m, visible: false }))}
+            />
+            <View style={rm.card}>
+              <View style={[rm.iconWrap, {
+                backgroundColor: resultModal.type === 'success' ? P01Colors.cyanDim : Colors.errorDim,
+              }]}>
+                <Ionicons
+                  name={resultModal.type === 'success' ? 'checkmark-circle' : 'alert-circle'}
+                  size={40}
+                  color={resultModal.type === 'success' ? P01Colors.cyan : Colors.error}
+                />
+              </View>
+              <Text style={rm.title}>{resultModal.title}</Text>
+              <Text style={rm.message}>{resultModal.message}</Text>
+              <View style={rm.actions}>
+                {resultModal.type === 'success' && (
+                  <TouchableOpacity
+                    style={rm.primaryBtn}
+                    onPress={() => {
+                      setResultModal(m => ({ ...m, visible: false }));
+                      router.push('/(main)/(privacy)/denominated-notes' as any);
+                    }}
+                  >
+                    <Text style={rm.primaryText}>View Notes</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={rm.secondaryBtn}
+                  onPress={() => setResultModal(m => ({ ...m, visible: false }))}
+                >
+                  <Text style={rm.secondaryText}>
+                    {resultModal.type === 'success' ? 'Done' : 'OK'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────
-const styles = StyleSheet.create({
+// ─── Main Styles ──────────────────────────────────────────────────
+const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-  },
-  headerCenter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
   },
   backBtn: {
     width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-  },
-  scrollView: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 120,
-  },
+  headerTitle: { color: Colors.text, fontSize: 20, fontFamily: FontFamily.bold },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
 
-  /* Balance card */
+  // Balance
   balanceCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: `${P01Colors.cyan}25`,
+    backgroundColor: '#0f0f12', borderRadius: 20, padding: 20, marginBottom: Spacing.lg,
   },
-  balanceLeft: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
-  },
-  balanceLabel: {
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-    color: Colors.textTertiary,
-    marginRight: 4,
-  },
-  balanceValue: {
-    fontSize: 22,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  balanceSuffix: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: Colors.textSecondary,
-  },
-  refreshBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: `${P01Colors.cyan}15`,
-    justifyContent: 'center', alignItems: 'center',
-  },
+  balanceLabel: { fontSize: 13, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginBottom: 4 },
+  balanceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
+  balanceValue: { fontSize: 32, fontFamily: FontFamily.bold, color: Colors.text },
+  balanceSuffix: { fontSize: 16, fontFamily: FontFamily.medium, color: Colors.textSecondary },
 
-  /* Tabs */
-  tabRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
+  // Token toggle
+  tokenRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.lg },
+  tokenBtn: {
+    paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20,
     backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: Colors.border,
   },
-  tabActive: {
-    backgroundColor: P01Colors.cyanDim,
-    borderColor: P01Colors.cyan,
-  },
-  tabText: {
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textSecondary,
-  },
-  tabTextActive: { color: P01Colors.cyan },
+  tokenBtnActive: { backgroundColor: P01Colors.cyanDim },
+  tokenText: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.textSecondary },
+  tokenTextActive: { color: P01Colors.cyan },
 
-  /* Explainer */
-  explainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  explainerText: {
-    flex: 1,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    lineHeight: 18,
-  },
-
-  /* Section label */
+  // Chips
   sectionLabel: {
-    fontSize: 11,
-    fontFamily: FontFamily.bold,
-    color: Colors.textTertiary,
-    letterSpacing: 1.2,
-    marginBottom: Spacing.md,
+    fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text, marginBottom: 12,
   },
-
-  /* Pool cards */
-  poolCard: {
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
-    marginBottom: Spacing.sm,
+  chipsGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12,
   },
-  poolCardDimmed: {
-    opacity: 0.6,
-  },
-  poolCardGradient: {
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
+  chip: {
+    width: '30%' as any,
+    flexGrow: 1,
+    alignItems: 'center',
+    paddingVertical: 18,
+    borderRadius: 16,
+    backgroundColor: '#0f0f12',
     borderWidth: 1,
-    borderColor: `${P01Colors.cyan}25`,
+    borderColor: 'rgba(57, 197, 187, 0.15)',
   },
-  poolHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.sm,
-  },
-  poolLeft: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
-  },
-  poolAmount: {
-    fontSize: 28,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  poolToken: {
-    fontSize: 16,
-    fontFamily: FontFamily.medium,
-    color: Colors.textSecondary,
-  },
-  poolRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  anonymityBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderRadius: BorderRadius.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  anonymityDot: { width: 6, height: 6, borderRadius: 3 },
-  anonymityText: { fontSize: 11, fontFamily: FontFamily.mono },
-  poolMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  poolMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  poolMetaText: {
-    fontSize: 11,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-  },
-  poolMetaDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: Colors.border,
-  },
+  chipDimmed: { opacity: 0.35, borderColor: Colors.border },
+  chipAmount: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
+  chipAmountDim: { color: Colors.textSecondary },
+  chipToken: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginTop: 2 },
+  chipPrivacy: { fontSize: 8, marginTop: 4, letterSpacing: 2 },
 
-  /* Error */
+  // Legend
+  privacyLegend: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg,
+  },
+  legendText: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary },
+  legendDot: { fontSize: 11, fontFamily: FontFamily.medium },
+
+  // Hint
+  hint: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    padding: 12, backgroundColor: '#0f0f12', borderRadius: 12, marginBottom: Spacing.lg,
+  },
+  hintText: { flex: 1, fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, lineHeight: 17 },
+
+  // Error
   errorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: Colors.errorDim,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.error,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.errorDim, borderRadius: 12, padding: 12,
   },
-  errorText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    color: Colors.error,
-  },
+  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
 });
 
 // ─── Confirm Sheet Styles ─────────────────────────────────────────
 const cs = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.75)',
-  },
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
   sheet: {
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 40,
-    borderTopWidth: 1,
-    borderTopColor: `${P01Colors.cyan}30`,
+    backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: Spacing.xl, paddingBottom: 40,
   },
-  dragRow: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: Spacing.md,
+  dragRow: { alignItems: 'center', paddingTop: 10, paddingBottom: 16 },
+  dragHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.border },
+  amountRow: {
+    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center',
+    gap: 8, marginBottom: 20,
   },
-  dragHandle: {
-    width: 40, height: 4, borderRadius: 2,
-    backgroundColor: Colors.border,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: Spacing.xl,
-  },
-  sheetIconWrap: {
-    width: 52, height: 52, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sheetTitle: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  sheetSubtitle: {
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginTop: 2,
-  },
-  amountCard: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    borderRadius: BorderRadius.lg,
-    paddingVertical: Spacing.xl,
-    marginBottom: Spacing.lg,
-    borderWidth: 1.5,
-    borderColor: 'rgba(57, 197, 187, 0.35)',
-  },
-  amountValue: {
-    fontSize: 44,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  amountToken: {
-    fontSize: 20,
-    fontFamily: FontFamily.medium,
-    color: Colors.textSecondary,
-  },
-  detailsCard: {
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+  amountValue: { fontSize: 48, fontFamily: FontFamily.bold, color: Colors.text },
+  amountToken: { fontSize: 20, fontFamily: FontFamily.medium, color: Colors.textSecondary },
+  details: {
+    backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 14, padding: 14, marginBottom: 16,
   },
   detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 8,
+    flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8,
   },
-  detailLabel: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-  },
-  detailValue: {
-    fontSize: 13,
-    fontFamily: FontFamily.semibold,
-  },
-  detailDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginHorizontal: 4,
-  },
-  warningCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(251, 191, 36, 0.1)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(251, 191, 36, 0.3)',
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: '#FBBF24',
-    lineHeight: 17,
-  },
+  detailLabel: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textTertiary },
+  detailValue: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.text },
   processingCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: `${P01Colors.cyan}10`,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: P01Colors.cyanDim, borderRadius: 12, padding: 12, marginBottom: 12,
   },
-  processingText: {
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-    color: P01Colors.cyan,
-  },
-  sheetActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginTop: Spacing.sm,
-  },
+  processingText: { fontSize: 13, fontFamily: FontFamily.medium, color: P01Colors.cyan },
+  actions: { flexDirection: 'row', gap: 10 },
   cancelBtn: {
-    flex: 0.4,
-    paddingVertical: 14,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
+    flex: 0.35, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+    borderWidth: 1, borderColor: Colors.border,
   },
-  cancelBtnText: {
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-    color: Colors.text,
-  },
+  cancelText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
   confirmBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: BorderRadius.md,
+    flex: 0.65, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+    backgroundColor: P01Colors.cyan,
   },
-  confirmBtnText: {
-    fontSize: 15,
-    fontFamily: FontFamily.bold,
-    color: '#000',
-  },
+  confirmText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
   finePrint: {
-    fontSize: 11,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    marginTop: Spacing.md,
+    fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary,
+    textAlign: 'center', marginTop: 12,
   },
 });
 
 // ─── Result Modal Styles ──────────────────────────────────────────
 const rm = StyleSheet.create({
   overlay: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    flex: 1, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.75)',
   },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
+  backdrop: { ...StyleSheet.absoluteFillObject },
   card: {
-    width: '85%',
-    maxWidth: 360,
-    backgroundColor: Colors.surface,
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-  },
-  topAccent: {
-    height: 2,
+    width: '85%', maxWidth: 360, backgroundColor: Colors.surface,
+    borderRadius: 20, overflow: 'hidden', alignItems: 'center', padding: 24,
   },
   iconWrap: {
     width: 64, height: 64, borderRadius: 32,
-    alignItems: 'center', justifyContent: 'center',
-    alignSelf: 'center',
-    marginTop: 28,
-    marginBottom: 16,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
   },
-  title: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-    textAlign: 'center',
-    marginBottom: 8,
-    paddingHorizontal: 24,
-  },
+  title: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text, marginBottom: 8 },
   message: {
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 20,
-    paddingHorizontal: 24,
-    marginBottom: 24,
+    fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    textAlign: 'center', lineHeight: 20, marginBottom: 20,
   },
-  actions: {
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    gap: 10,
+  actions: { width: '100%', gap: 10 },
+  primaryBtn: {
+    paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+    backgroundColor: P01Colors.cyan,
   },
-  actionBtn: {
-    paddingVertical: 13,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
+  primaryText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
+  secondaryBtn: {
+    paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+    borderWidth: 1, borderColor: Colors.border,
   },
-  actionText: {
-    fontSize: 15,
-    fontFamily: FontFamily.bold,
-  },
-  corner: { position: 'absolute' },
-  cornerBL: { bottom: 0, left: 0, width: 24, height: 2 },
-  cornerBLv: { bottom: 0, left: 0, width: 2, height: 24 },
-  cornerBR: { bottom: 0, right: 0, width: 24, height: 2 },
-  cornerBRv: { bottom: 0, right: 0, width: 2, height: 24 },
+  secondaryText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
 });

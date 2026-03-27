@@ -16,19 +16,19 @@ import * as SecureStore from 'expo-secure-store';
 import { Logo } from '../../components/onboarding';
 import { ProgressSteps, type Step } from '../../components/onboarding';
 import { createWallet } from '../../services/solana/wallet';
-
-const STEPS: Step[] = [
-  { id: '1', label: 'Generating keypair', status: 'pending' },
-  { id: '2', label: 'Creating secure storage', status: 'pending' },
-  { id: '3', label: 'Encrypting keys', status: 'pending' },
-  { id: '4', label: 'Setting up wallet', status: 'pending' },
-];
+import { useT } from '@/i18n';
 
 const STEP_DURATION = 800;
 
 export default function CreateWalletScreen() {
+  const t = useT();
   const router = useRouter();
-  const [steps, setSteps] = useState<Step[]>(STEPS);
+  const [steps, setSteps] = useState<Step[]>(() => [
+    { id: '1', label: t('onboarding.generatingKeypair'), status: 'pending' },
+    { id: '2', label: t('onboarding.creatingSecureStorage'), status: 'pending' },
+    { id: '3', label: t('onboarding.encryptingKeys'), status: 'pending' },
+    { id: '4', label: t('onboarding.settingUpWallet'), status: 'pending' },
+  ]);
   const [mnemonic, setMnemonic] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const progressWidth = useSharedValue(0);
@@ -106,13 +106,13 @@ export default function CreateWalletScreen() {
 
     } catch (err: any) {
       console.error('[CreateWallet] Wallet creation error:', err);
-      setError(err.message || 'Failed to create wallet');
+      setError(err.message || t('onboarding.walletCreationFailed'));
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
       p01Alert(
-        'Error',
-        err.message || 'Failed to create wallet. Please try again.',
-        [{ text: 'Retry', onPress: () => startWalletCreation() }]
+        t('common.error'),
+        err.message || t('onboarding.walletCreationFailed'),
+        [{ text: t('common.retry'), onPress: () => startWalletCreation() }]
       );
     }
   };
@@ -149,10 +149,10 @@ export default function CreateWalletScreen() {
           style={{ alignItems: 'center', marginBottom: 48 }}
         >
           <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-            Creating Your Wallet
+            {t('onboarding.creatingWallet')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            Please wait while we set up your secure wallet
+            {t('onboarding.creatingWalletDesc')}
           </Text>
         </Animated.View>
 
@@ -214,7 +214,7 @@ export default function CreateWalletScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#39c5bb', marginRight: 8 }} />
             <Text style={{ color: '#555560', fontSize: 14 }}>
-              Encrypted with military-grade security
+              {t('onboarding.encryptedSecurity')}
             </Text>
           </View>
         </Animated.View>

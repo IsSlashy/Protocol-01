@@ -22,6 +22,7 @@ import Animated, {
   interpolateColor,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { useT } from '@/i18n';
 
 // P-01 Colors
 const P01 = {
@@ -47,17 +48,13 @@ interface PrivyLoginButtonProps {
   variant?: 'primary' | 'secondary' | 'outline';
 }
 
-const methodConfig: Record<LoginMethod, {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  color: string;
-}> = {
-  email: { icon: 'mail', label: 'Continue with Email', color: P01.cyan },
-  sms: { icon: 'phone-portrait', label: 'Continue with Phone', color: P01.cyan },
-  google: { icon: 'logo-google', label: 'Continue with Google', color: '#4285F4' },
-  apple: { icon: 'logo-apple', label: 'Continue with Apple', color: '#ffffff' },
-  twitter: { icon: 'logo-twitter', label: 'Continue with X', color: '#1DA1F2' },
-  wallet: { icon: 'wallet', label: 'Create New Wallet', color: P01.pink },
+const methodIcons: Record<LoginMethod, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
+  email: { icon: 'mail', color: P01.cyan },
+  sms: { icon: 'phone-portrait', color: P01.cyan },
+  google: { icon: 'logo-google', color: '#4285F4' },
+  apple: { icon: 'logo-apple', color: '#ffffff' },
+  twitter: { icon: 'logo-twitter', color: '#1DA1F2' },
+  wallet: { icon: 'wallet', color: P01.pink },
 };
 
 const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
@@ -69,7 +66,19 @@ export function PrivyLoginButton({
   disabled = false,
   variant = 'secondary',
 }: PrivyLoginButtonProps) {
-  const config = methodConfig[method];
+  const t = useT();
+  const iconConfig = methodIcons[method];
+  const getMethodLabel = (m: LoginMethod): string => {
+    switch (m) {
+      case 'email': return t('auth.continueWithEmail');
+      case 'sms': return t('auth.continueWithPhone');
+      case 'google': return t('auth.continueWithGoogle');
+      case 'apple': return t('auth.continueWithApple');
+      case 'twitter': return t('auth.continueWithX');
+      case 'wallet': return t('auth.createNewWallet');
+    }
+  };
+  const label = getMethodLabel(method);
   const scale = useSharedValue(1);
   const glowOpacity = useSharedValue(0);
 
@@ -98,8 +107,8 @@ export function PrivyLoginButton({
   }));
 
   const isPrimary = variant === 'primary';
-  const bgColor = isPrimary ? config.color : P01.surface;
-  const borderColor = isPrimary ? config.color : P01.border;
+  const bgColor = isPrimary ? iconConfig.color : P01.surface;
+  const borderColor = isPrimary ? iconConfig.color : P01.border;
   const textColor = isPrimary ? P01.void : P01.textPrimary;
 
   return (
@@ -110,7 +119,7 @@ export function PrivyLoginButton({
       disabled={disabled || loading}
       activeOpacity={0.9}
       accessibilityRole="button"
-      accessibilityLabel={config.label}
+      accessibilityLabel={label}
       accessibilityState={{ disabled: disabled || loading, busy: loading }}
       style={[
         styles.button,
@@ -127,7 +136,7 @@ export function PrivyLoginButton({
         style={[
           styles.glow,
           glowStyle,
-          { backgroundColor: config.color },
+          { backgroundColor: iconConfig.color },
         ]}
       />
 
@@ -140,13 +149,13 @@ export function PrivyLoginButton({
             <View
               style={[
                 styles.iconContainer,
-                { backgroundColor: `${config.color}20` },
+                { backgroundColor: `${iconConfig.color}20` },
               ]}
             >
-              <Ionicons name={config.icon} size={20} color={config.color} />
+              <Ionicons name={iconConfig.icon} size={20} color={iconConfig.color} />
             </View>
             <Text style={[styles.label, { color: textColor }]}>
-              {config.label}
+              {label}
             </Text>
             <Ionicons
               name="chevron-forward"
@@ -164,10 +173,11 @@ export function PrivyLoginButton({
  * Divider with "OR" text
  */
 export function AuthDivider() {
+  const t = useT();
   return (
     <View style={styles.divider}>
       <View style={styles.dividerLine} />
-      <Text style={styles.dividerText}>OR</Text>
+      <Text style={styles.dividerText}>{t('auth.or')}</Text>
       <View style={styles.dividerLine} />
     </View>
   );
@@ -220,13 +230,16 @@ interface SocialButtonProps {
   loading?: boolean;
 }
 
-const socialIconLabels: Record<string, string> = {
-  'logo-google': 'Sign in with Google',
-  'logo-apple': 'Sign in with Apple',
-  'logo-twitter': 'Sign in with X',
-};
-
 function SocialButton({ icon, color, onPress, loading }: SocialButtonProps) {
+  const t = useT();
+  const getSocialIconLabel = (ic: string): string => {
+    switch (ic) {
+      case 'logo-google': return t('auth.signInWithGoogle');
+      case 'logo-apple': return t('auth.signInWithApple');
+      case 'logo-twitter': return t('auth.signInWithX');
+      default: return t('auth.signIn');
+    }
+  };
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -234,7 +247,7 @@ function SocialButton({ icon, color, onPress, loading }: SocialButtonProps) {
       activeOpacity={0.8}
       style={styles.socialButton}
       accessibilityRole="button"
-      accessibilityLabel={socialIconLabels[icon] || 'Sign in'}
+      accessibilityLabel={getSocialIconLabel(icon)}
       accessibilityState={{ disabled: loading, busy: loading }}
     >
       {loading ? (

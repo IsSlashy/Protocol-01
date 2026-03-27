@@ -11,10 +11,12 @@ import { p01Alert } from '@/stores/alertStore';
 import { AuthScreen } from '@/components/auth';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { useWalletStore } from '@/stores/walletStore';
+import { useT } from '@/i18n';
 
 type LoginMethod = 'email' | 'sms' | 'google' | 'apple' | 'twitter' | 'wallet';
 
 export default function LoginScreen() {
+  const t = useT();
   const router = useRouter();
   const {
     ready,
@@ -85,9 +87,9 @@ export default function LoginScreen() {
     } catch (error: any) {
       console.error(`[Login] Error with ${method}:`, error);
       p01Alert(
-        'Authentication Failed',
-        error.message || 'Please try again.',
-        [{ text: 'OK' }]
+        t('auth.authFailed'),
+        error.message || t('onboarding.authFailedDesc'),
+        [{ text: t('common.ok') }]
       );
     } finally {
       // Only clear loading for methods that don't require OTP

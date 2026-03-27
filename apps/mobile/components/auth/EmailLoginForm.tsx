@@ -28,6 +28,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { useT } from '@/i18n';
 
 // P-01 Colors
 const P01 = {
@@ -62,6 +63,7 @@ export function EmailLoginForm({
   onBack,
   onResendOtp,
 }: EmailLoginFormProps) {
+  const t = useT();
   const [step, setStep] = useState<AuthStep>('input');
   const [value, setValue] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -99,14 +101,14 @@ export function EmailLoginForm({
     if (mode === 'email') {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(value)) {
-        setError('Please enter a valid email address');
+        setError(t('auth.validEmail'));
         triggerShake();
         return false;
       }
     } else {
       const phoneRegex = /^\+?[\d\s-]{10,}$/;
       if (!phoneRegex.test(value)) {
-        setError('Please enter a valid phone number');
+        setError(t('auth.validPhone'));
         triggerShake();
         return false;
       }
@@ -116,7 +118,7 @@ export function EmailLoginForm({
 
   const handleSubmit = async () => {
     if (!value.trim()) {
-      setError(`Please enter your ${mode === 'email' ? 'email' : 'phone number'}`);
+      setError(mode === 'email' ? t('auth.enterYourEmail') : t('auth.enterYourPhone'));
       triggerShake();
       return;
     }
@@ -132,7 +134,7 @@ export function EmailLoginForm({
       setCountdown(60);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
-      setError(err.message || 'Failed to send verification code');
+      setError(err.message || t('auth.failedToSendCode'));
       triggerShake();
     } finally {
       setLoading(false);
@@ -171,7 +173,7 @@ export function EmailLoginForm({
       await onVerifyOtp(code);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
-      setError(err.message || 'Invalid verification code');
+      setError(err.message || t('auth.invalidCode'));
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
       triggerShake();
@@ -189,7 +191,7 @@ export function EmailLoginForm({
       setCountdown(60);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err: any) {
-      setError(err.message || 'Failed to resend code');
+      setError(err.message || t('auth.failedToResend'));
     } finally {
       setLoading(false);
     }
@@ -203,7 +205,7 @@ export function EmailLoginForm({
       {/* Header */}
       <View style={styles.header}>
         {onBack && (
-          <TouchableOpacity onPress={onBack} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+          <TouchableOpacity onPress={onBack} style={styles.backButton} accessibilityRole="button" accessibilityLabel={t('common.back')}>
             <Ionicons name="arrow-back" size={24} color={P01.cyan} />
           </TouchableOpacity>
         )}
@@ -211,14 +213,14 @@ export function EmailLoginForm({
           <Text style={styles.title} accessibilityRole="header">
             {step === 'input'
               ? mode === 'email'
-                ? 'Enter your email'
-                : 'Enter your phone'
-              : 'Verify your code'}
+                ? t('auth.enterEmail')
+                : t('auth.enterPhone')
+              : t('auth.verifyCode')}
           </Text>
           <Text style={styles.subtitle}>
             {step === 'input'
-              ? `We'll send you a verification code`
-              : `Code sent to ${value}`}
+              ? t('auth.sendVerificationCode')
+              : t('auth.codeSentTo', { value })}
           </Text>
         </View>
       </View>
@@ -250,8 +252,8 @@ export function EmailLoginForm({
                 autoCorrect={false}
                 autoFocus
                 style={styles.input}
-                accessibilityLabel={mode === 'email' ? 'Email address' : 'Phone number'}
-                accessibilityHint={mode === 'email' ? 'Enter your email to receive a verification code' : 'Enter your phone number to receive a verification code'}
+                accessibilityLabel={mode === 'email' ? t('auth.emailAddress') : t('auth.phoneNumber')}
+                accessibilityHint={mode === 'email' ? t('auth.emailHint') : t('auth.phoneHint')}
               />
             </View>
           </Animated.View>
@@ -271,14 +273,14 @@ export function EmailLoginForm({
             activeOpacity={0.8}
             style={[styles.submitButton, loading && styles.submitButtonDisabled]}
             accessibilityRole="button"
-            accessibilityLabel="Continue"
+            accessibilityLabel={t('auth.continue')}
             accessibilityState={{ disabled: loading, busy: loading }}
           >
             {loading ? (
               <ActivityIndicator color={P01.void} />
             ) : (
               <>
-                <Text style={styles.submitButtonText}>CONTINUE</Text>
+                <Text style={styles.submitButtonText}>{t('auth.continue')}</Text>
                 <Ionicons name="arrow-forward" size={20} color={P01.void} />
               </>
             )}
@@ -308,7 +310,7 @@ export function EmailLoginForm({
                   error && styles.otpInputError,
                 ]}
                 autoFocus={index === 0}
-                accessibilityLabel={`Verification code digit ${index + 1} of 6`}
+                accessibilityLabel={t('auth.verificationDigit', { index: index + 1 })}
               />
             ))}
           </Animated.View>
@@ -327,7 +329,7 @@ export function EmailLoginForm({
             disabled={countdown > 0 || loading}
             style={styles.resendButton}
             accessibilityRole="button"
-            accessibilityLabel={countdown > 0 ? `Resend code in ${countdown} seconds` : 'Resend code'}
+            accessibilityLabel={countdown > 0 ? t('auth.resendIn', { countdown }) : t('auth.resendCode')}
             accessibilityState={{ disabled: countdown > 0 || loading }}
           >
             <Text
@@ -337,15 +339,15 @@ export function EmailLoginForm({
               ]}
             >
               {countdown > 0
-                ? `Resend code in ${countdown}s`
-                : 'Resend code'}
+                ? t('auth.resendCodeIn', { countdown })
+                : t('auth.resendCode')}
             </Text>
           </TouchableOpacity>
 
           {loading && (
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="large" color={P01.cyan} />
-              <Text style={styles.loadingText}>Verifying...</Text>
+              <Text style={styles.loadingText}>{t('auth.verifying')}</Text>
             </View>
           )}
         </Animated.View>

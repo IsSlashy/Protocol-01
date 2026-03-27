@@ -116,6 +116,7 @@ export default function MainLayout() {
         tabBar={(props) => <LiquidGlassTabBar {...props} />}
         screenOptions={{
         headerShown: false,
+        animation: 'none',
         sceneStyle: { backgroundColor: 'transparent' },
         tabBarStyle: {
           position: 'absolute',

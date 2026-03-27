@@ -8,16 +8,15 @@ import {
   ActivityIndicator,
   StyleSheet,
   Platform,
+  InteractionManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
+// BlurView + LinearGradient removed — flat surface for performance
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import Animated, {
-  FadeInUp,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -34,6 +33,7 @@ import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constant
 import { isDevnet } from '@/services/solana/connection';
 import { formatBalance } from '@/services/solana/balance';
 
+import { useT } from '@/i18n';
 import WalletHeader from '@/components/wallet/WalletHeader';
 import PrivacySummaryPill from '@/components/wallet/PrivacySummaryPill';
 import AssetsList from '@/components/wallet/AssetsList';
@@ -41,6 +41,7 @@ import RecentActivity from '@/components/wallet/RecentActivity';
 import DevnetAirdropFAB from '@/components/wallet/DevnetAirdropFAB';
 
 export default function WalletHomeScreen() {
+  const t = useT();
   const router = useRouter();
   const { settings: securitySettings, isLoading: securityLoading } = useSecuritySettings();
   const { formatAmount, initialize: initSettings } = useSettingsStore();
@@ -91,9 +92,12 @@ export default function WalletHomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (initialized && !loading && hasWallet && transactions.length === 0) {
-        refreshTransactions();
-      }
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (initialized && !loading && hasWallet && transactions.length === 0) {
+          refreshTransactions();
+        }
+      });
+      return () => task.cancel();
     }, [initialized, loading, hasWallet, transactions.length, refreshTransactions])
   );
 
@@ -142,8 +146,8 @@ export default function WalletHomeScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary} accessibilityLabel="Loading wallet" />
-          <Text style={styles.loadingText} accessibilityRole="text">Loading wallet...</Text>
+          <ActivityIndicator size="large" color={Colors.primary} accessibilityLabel={t('wallet.loadingWallet')} />
+          <Text style={styles.loadingText} accessibilityRole="text">{t('wallet.loadingWallet')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -153,26 +157,11 @@ export default function WalletHomeScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600', marginBottom: 12 }} accessibilityRole="header">
-            No Wallet Found
-          </Text>
-          <Text style={{ color: '#888', fontSize: 14, textAlign: 'center', marginBottom: 24, paddingHorizontal: 32 }}>
-            Create a new wallet or import an existing one to get started.
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.replace('/(onboarding)')}
-            style={{
-              backgroundColor: Colors.primary,
-              paddingHorizontal: 32,
-              paddingVertical: 14,
-              borderRadius: 12,
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Set up wallet"
-          >
-            <Text style={{ color: '#0a0a0c', fontWeight: '700', fontSize: 16 }}>
-              Set Up Wallet
-            </Text>
+          <Text style={styles.noWalletTitle} accessibilityRole="header">{t('wallet.noWallet')}</Text>
+          <Text style={styles.noWalletDesc}>{t('wallet.noWalletDesc')}</Text>
+          <TouchableOpacity onPress={() => router.replace('/(onboarding)')} style={styles.setupBtn}
+            accessibilityRole="button" accessibilityLabel={t('wallet.setupWallet')}>
+            <Text style={styles.setupBtnText}>{t('wallet.setupWallet')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -194,26 +183,19 @@ export default function WalletHomeScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
       >
-        {/* Balance Card — Liquid Glass */}
-        <Animated.View entering={FadeInUp.delay(200)} style={styles.balanceCardOuter}>
-          <BlurView intensity={18} tint="dark" style={styles.balanceCard}>
-            {/* Subtle gradient glow */}
-            <LinearGradient
-              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.04)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
+        {/* Balance Card */}
+        <Animated.View style={styles.balanceCardOuter}>
+          <View style={styles.balanceCard}>
 
             {/* Address chip */}
-            <TouchableOpacity style={styles.addressChip} onPress={copyAddress} accessibilityRole="button" accessibilityLabel={`Copy wallet address ${formattedPublicKey}`} accessibilityHint="Copies full address to clipboard">
+            <TouchableOpacity style={styles.addressChip} onPress={copyAddress} accessibilityRole="button" accessibilityLabel={`${t('wallet.copyAddress')} ${formattedPublicKey}`} accessibilityHint={t('wallet.addressCopied')}>
               <View style={styles.addressDot} />
               <Text style={styles.addressText}>{formattedPublicKey}</Text>
               <Ionicons name="copy-outline" size={12} color={Colors.textTertiary} />
             </TouchableOpacity>
 
             {/* Balance */}
-            <TouchableOpacity onPress={toggleBalanceVisibility} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={balanceHidden ? 'Show balance' : 'Hide balance'} accessibilityHint="Toggles balance visibility">
+            <TouchableOpacity onPress={toggleBalanceVisibility} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={balanceHidden ? t('wallet.showBalance') : t('wallet.hideBalance')} accessibilityHint={balanceHidden ? t('wallet.showBalance') : t('wallet.hideBalance')}>
               <Animated.View style={[styles.balanceContainer, balanceAnimatedStyle]}>
                 {balanceHidden ? (
                   <View style={styles.hiddenBalance}>
@@ -225,6 +207,11 @@ export default function WalletHomeScreen() {
                     <Text style={styles.balanceAmount}>{formattedBalance}</Text>
                     <View style={styles.solBalanceRow}>
                       <Text style={styles.solBalance}>{formattedSolBalance} SOL</Text>
+                      <DevnetAirdropFAB
+                        publicKey={publicKey}
+                        requestAirdrop={async (amount: number) => { await requestDevnetAirdrop(amount); }}
+                        refreshBalance={refreshBalance}
+                      />
                     </View>
                   </>
                 )}
@@ -233,37 +220,37 @@ export default function WalletHomeScreen() {
 
             {/* Action buttons */}
             <View style={[styles.actionButtons, isDevnet() && styles.actionButtonsDevnet]}>
-              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/send')} accessibilityLabel="Send tokens" accessibilityRole="button">
+              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/send')} accessibilityLabel={t('wallet.send')} accessibilityRole="button">
                 <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.12)' }]}>
                   <Ionicons name="arrow-up" size={20} color={P01Colors.cyan} />
                 </View>
-                <Text style={[styles.actionLabel, { color: P01Colors.cyan }]}>Send</Text>
+                <Text style={[styles.actionLabel, { color: P01Colors.cyan }]}>{t('wallet.send')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/receive')} accessibilityLabel="Receive tokens" accessibilityRole="button">
+              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/receive')} accessibilityLabel={t('wallet.receive')} accessibilityRole="button">
                 <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.08)' }]}>
                   <Ionicons name="arrow-down" size={20} color={P01Colors.cyan} />
                 </View>
-                <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>Receive</Text>
+                <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>{t('wallet.receive')}</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/swap')} accessibilityLabel="Swap tokens" accessibilityRole="button">
+              <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/swap')} accessibilityLabel={t('wallet.swap')} accessibilityRole="button">
                 <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.08)' }]}>
                   <Ionicons name="swap-horizontal" size={20} color={P01Colors.pink} />
                 </View>
-                <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>Swap</Text>
+                <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>{t('wallet.swap')}</Text>
               </TouchableOpacity>
 
               {!isDevnet() && (
-                <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/buy')} accessibilityLabel="Buy crypto" accessibilityRole="button">
+                <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/buy')} accessibilityLabel={t('wallet.buy')} accessibilityRole="button">
                   <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.06)' }]}>
                     <Ionicons name="card" size={20} color={P01Colors.pink} />
                   </View>
-                  <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>Buy</Text>
+                  <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>{t('wallet.buy')}</Text>
                 </TouchableOpacity>
               )}
             </View>
-          </BlurView>
+          </View>
         </Animated.View>
 
         {/* Privacy Summary Pill — taps to Privacy tab */}
@@ -290,12 +277,6 @@ export default function WalletHomeScreen() {
         />
       </ScrollView>
 
-      {/* Devnet Airdrop FAB */}
-      <DevnetAirdropFAB
-        publicKey={publicKey}
-        requestAirdrop={async (amount: number) => { await requestDevnetAirdrop(amount); }}
-        refreshBalance={refreshBalance}
-      />
     </SafeAreaView>
   );
 }
@@ -307,16 +288,14 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1 },
   scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
   balanceCardOuter: {
-    borderRadius: 24,
+    borderRadius: BorderRadius.xl,
     overflow: 'hidden',
     marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   balanceCard: {
     padding: Spacing.xl,
     paddingTop: 20,
-    backgroundColor: 'rgba(12, 12, 14, 0.7)',
+    backgroundColor: Colors.surfaceSecondary,
   },
   addressChip: {
     flexDirection: 'row',
@@ -343,6 +322,7 @@ const styles = StyleSheet.create({
   solBalanceRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
     marginTop: 6,
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -352,7 +332,13 @@ const styles = StyleSheet.create({
   solBalance: { color: Colors.textTertiary, fontSize: 14, fontFamily: FontFamily.medium },
   actionButtons: { flexDirection: 'row', justifyContent: 'space-evenly' },
   actionButtonsDevnet: { justifyContent: 'space-evenly' },
-  actionButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xs, minWidth: 64 },
-  actionIcon: { width: 50, height: 50, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
-  actionLabel: { color: Colors.textSecondary, fontSize: 12, fontFamily: FontFamily.medium },
+  actionButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.xs, minWidth: 56 },
+  actionIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginBottom: 5 },
+  actionLabel: { color: Colors.textSecondary, fontSize: 11, fontFamily: FontFamily.medium },
+
+  // No wallet
+  noWalletTitle: { color: Colors.text, fontSize: 18, fontFamily: FontFamily.semibold, marginBottom: 8 },
+  noWalletDesc: { color: Colors.textSecondary, fontSize: 14, fontFamily: FontFamily.regular, textAlign: 'center', marginBottom: 24, paddingHorizontal: 32 },
+  setupBtn: { backgroundColor: P01Colors.cyan, paddingHorizontal: 28, paddingVertical: 14, borderRadius: BorderRadius.md },
+  setupBtnText: { color: '#000', fontFamily: FontFamily.bold, fontSize: 15 },
 });

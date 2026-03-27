@@ -62,7 +62,7 @@ const PROVER_HTML = `
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net file:; style-src 'unsafe-inline'; connect-src file:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' file: blob:; worker-src blob:; style-src 'unsafe-inline'; connect-src file:;">
 </head>
 <body>
 <script>
@@ -190,15 +190,15 @@ const PROVER_HTML = `
   // Send ready immediately
   window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
 
-  // Load snarkjs asynchronously
+  // Load snarkjs from local APK assets (no CDN — fully offline)
   var s = document.createElement('script');
-  s.src = 'https://cdn.jsdelivr.net/npm/snarkjs@0.7.0/build/snarkjs.min.js';
+  s.src = 'snarkjs.min.js';
   s.onload = function() {
     window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'snarkjsLoaded' }));
   };
   s.onerror = function() {
     window.ReactNativeWebView.postMessage(JSON.stringify({
-      type: 'error', id: 'snarkjs', error: 'Failed to load snarkjs from CDN'
+      type: 'error', id: 'snarkjs', error: 'Failed to load snarkjs from local assets. Ensure snarkjs.min.js is in android/app/src/main/assets/.'
     }));
   };
   document.head.appendChild(s);
@@ -232,10 +232,12 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
   const [error, setError] = useState<string | null>(null);
 
   const readyRef = useRef(false);
+  const snarkjsReadyRef = useRef(false);
   // Track loaded circuits by type
   const circuitLoadedMap = useRef<Record<string, boolean>>({});
   const assetLoadFailedMap = useRef<Record<string, boolean>>({});
   const readyPromise = useRef<{ resolve: () => void; reject: (e: Error) => void } | null>(null);
+  const snarkjsPromise = useRef<{ resolve: () => void } | null>(null);
   const circuitPromise = useRef<{ resolve: () => void } | null>(null);
 
   // ------------------------------------------------------------------
@@ -254,7 +256,9 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
       }
 
       if (data.type === 'snarkjsLoaded') {
-        console.log('[DenomProver] snarkjs loaded from CDN');
+        console.log('[DenomProver] snarkjs loaded from local assets');
+        snarkjsReadyRef.current = true;
+        snarkjsPromise.current?.resolve();
         return;
       }
 
@@ -325,6 +329,20 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
   };
 
   // ------------------------------------------------------------------
+  // Wait for snarkjs to be loaded
+  // ------------------------------------------------------------------
+
+  const waitForSnarkjs = (): Promise<void> => {
+    if (snarkjsReadyRef.current) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      snarkjsPromise.current = { resolve };
+      setTimeout(() => {
+        if (!snarkjsReadyRef.current) reject(new Error('snarkjs load timed out — check android assets'));
+      }, 15000);
+    });
+  };
+
+  // ------------------------------------------------------------------
   // Wait for circuit loaded/failed message
   // ------------------------------------------------------------------
 
@@ -348,6 +366,7 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
       }
 
       await waitForReady();
+      await waitForSnarkjs();
 
       if (circuitLoadedMap.current[circuit]) return true;
 
@@ -402,7 +421,7 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
     async (inputs: Record<string, string | string[]>, circuit: CircuitType = 'pool'): Promise<DenominatedPoolProof> => {
       // Ensure circuit is loaded
       const ready = await preloadCircuit(circuit);
-      if (!ready) throw new Error(`Failed to load ${circuit} circuit. Ensure internet is available for snarkjs CDN.`);
+      if (!ready) throw new Error(`Failed to load ${circuit} circuit. Ensure circuit files are in android assets.`);
 
       if (!webViewRef.current) throw new Error('WebView not available');
 
@@ -424,14 +443,14 @@ export function DenominatedPoolProverProvider({ children }: { children: ReactNod
           true;
         `);
 
-        // 3 minute timeout
+        // 5 minute timeout (9831-constraint circuit is slow on mobile WebView)
         setTimeout(() => {
           if (pendingRequests.has(id)) {
             pendingRequests.delete(id);
             setIsProving(false);
-            reject(new Error('Proof generation timed out (3 min)'));
+            reject(new Error('Proof generation timed out (5 min)'));
           }
-        }, 180_000);
+        }, 300_000);
       });
     },
     [preloadCircuit],

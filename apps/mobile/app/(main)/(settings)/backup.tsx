@@ -18,11 +18,10 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import * as ScreenCapture from 'expo-screen-capture';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { useT } from '@/i18n';
 import { useWalletStore } from '@/stores/walletStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import {
@@ -46,16 +45,9 @@ const GlassCard: React.FC<{ children: React.ReactNode; delay?: number; style?: o
   style,
 }) => (
   <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-      <LinearGradient
-        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+    <View style={styles.glassBlur}>
       {children}
-    </BlurView>
+    </View>
   </Animated.View>
 );
 
@@ -70,6 +62,7 @@ const GlassDivider: React.FC = () => <View style={styles.divider} />;
 /* ──────────────────────── Screen ──────────────────────── */
 
 export default function BackupRecoveryScreen() {
+  const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getBackupMnemonic, publicKey, isPrivyWallet } = useWalletStore();
@@ -131,9 +124,9 @@ export default function BackupRecoveryScreen() {
   const handleShowSeedPhrase = async () => {
     if (isPrivyWallet) {
       p01Alert(
-        'Privy Wallet',
+        t('common.warning'),
         'Your wallet is managed by Privy. The private key is secured by Privy\'s infrastructure and cannot be exported as a seed phrase.\n\nUse the Encrypted Backup feature below to back up your privacy pool notes.',
-        [{ text: 'OK' }],
+        [{ text: t('common.ok') }],
       );
       return;
     }
@@ -152,10 +145,10 @@ export default function BackupRecoveryScreen() {
         setShowSeedModal(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } else {
-        p01Alert('Error', 'Could not retrieve seed phrase. If you imported via Privy, seed phrases are managed by Privy.');
+        p01Alert(t('common.error'), t('alerts.errorGeneric'));
       }
     } catch {
-      p01Alert('Authentication Failed', 'Please try again.');
+      p01Alert(t('common.error'), t('alerts.errorGeneric'));
     }
   };
 
@@ -191,7 +184,7 @@ export default function BackupRecoveryScreen() {
       });
       if (!result.success) return;
     } catch {
-      p01Alert('Authentication Failed', 'Please try again.');
+      p01Alert(t('common.error'), t('alerts.errorGeneric'));
       return;
     }
 
@@ -203,11 +196,11 @@ export default function BackupRecoveryScreen() {
 
   const handleCreateBackup = async () => {
     if (exportPassword.length < 8) {
-      p01Alert('Weak Password', 'Password must be at least 8 characters.');
+      p01Alert(t('common.warning'), 'Password must be at least 8 characters.');
       return;
     }
     if (exportPassword !== exportConfirmPassword) {
-      p01Alert('Mismatch', 'Passwords do not match.');
+      p01Alert(t('common.error'), 'Passwords do not match.');
       return;
     }
 
@@ -222,11 +215,11 @@ export default function BackupRecoveryScreen() {
 
       // Offer to copy or share
       p01Alert(
-        'Backup Created',
+        t('common.success'),
         `Encrypted backup with ${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''} created successfully.`,
         [
           {
-            text: 'Copy to Clipboard',
+            text: t('common.copied'),
             onPress: async () => {
               await Clipboard.setStringAsync(encoded);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -236,7 +229,7 @@ export default function BackupRecoveryScreen() {
             },
           },
           {
-            text: 'Share',
+            text: t('common.share'),
             onPress: () => {
               Share.share({
                 message: encoded,
@@ -244,7 +237,7 @@ export default function BackupRecoveryScreen() {
               });
             },
           },
-          { text: 'Done', style: 'cancel' },
+          { text: t('common.done'), style: 'cancel' },
         ],
       );
 
@@ -256,7 +249,7 @@ export default function BackupRecoveryScreen() {
       ).catch(() => {});
     } catch (err) {
       setExporting(false);
-      p01Alert('Backup Failed', (err as Error).message);
+      p01Alert(t('common.error'), (err as Error).message);
     }
   };
 
@@ -281,11 +274,11 @@ export default function BackupRecoveryScreen() {
 
   const handleRestoreBackup = async () => {
     if (!importData.trim()) {
-      p01Alert('Error', 'Paste your encrypted backup data.');
+      p01Alert(t('common.error'), t('alerts.errorGeneric'));
       return;
     }
     if (!importPassword) {
-      p01Alert('Error', 'Enter the backup password.');
+      p01Alert(t('common.error'), t('alerts.errorGeneric'));
       return;
     }
 
@@ -304,7 +297,7 @@ export default function BackupRecoveryScreen() {
         setShowImportModal(false);
 
         p01Alert(
-          'Notes Restored',
+          t('common.success'),
           `${imported} note${imported !== 1 ? 's' : ''} imported from backup.`,
         );
       } else {
@@ -312,21 +305,21 @@ export default function BackupRecoveryScreen() {
         setImporting(false);
 
         p01Alert(
-          'Different Wallet Detected',
+          t('common.warning'),
           `This backup is from wallet ${payload.publicKey.slice(0, 4)}...${payload.publicKey.slice(-4)}. ` +
           `Restoring will replace your current wallet. Continue?`,
           [
-            { text: 'Cancel', style: 'cancel' },
+            { text: t('common.cancel'), style: 'cancel' },
             {
-              text: 'Import Notes Only',
+              text: t('privacy.importNote'),
               onPress: () => {
                 const imported = restoreNotes(payload);
                 setShowImportModal(false);
-                p01Alert('Done', `${imported} notes imported (wallet unchanged).`);
+                p01Alert(t('common.done'), `${imported} notes imported.`);
               },
             },
             {
-              text: 'Full Restore',
+              text: t('settings.restoreBackup'),
               style: 'destructive',
               onPress: async () => {
                 try {
@@ -334,11 +327,11 @@ export default function BackupRecoveryScreen() {
                   const imported = restoreNotes(payload);
                   setShowImportModal(false);
                   p01Alert(
-                    'Wallet Restored',
-                    `Wallet and ${imported} notes restored from backup. Restart the app for full effect.`,
+                    t('common.success'),
+                    `Wallet and ${imported} notes restored from backup.`,
                   );
                 } catch (err) {
-                  p01Alert('Restore Failed', (err as Error).message);
+                  p01Alert(t('common.error'), (err as Error).message);
                 }
               },
             },
@@ -347,7 +340,7 @@ export default function BackupRecoveryScreen() {
       }
     } catch (err) {
       setImporting(false);
-      p01Alert('Restore Failed', (err as Error).message);
+      p01Alert(t('common.error'), (err as Error).message);
     }
   };
 
@@ -356,7 +349,7 @@ export default function BackupRecoveryScreen() {
   const handleExportNotes = async () => {
     const encoded = exportAllNotes();
     if (encoded.length === 0) {
-      p01Alert('No Notes', 'No active notes to export.');
+      p01Alert(t('alerts.noNotes'), t('privacy.noBackup'));
       return;
     }
 
@@ -364,8 +357,8 @@ export default function BackupRecoveryScreen() {
     await Clipboard.setStringAsync(data);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     p01Alert(
-      'Notes Exported',
-      `${encoded.length} note${encoded.length !== 1 ? 's' : ''} copied to clipboard. Store safely — contains private keys. Auto-clears in 60s.`,
+      t('privacy.noteExported'),
+      t('privacy.noteExportedDesc'),
     );
     setTimeout(async () => {
       try { await Clipboard.setStringAsync(''); } catch {}
@@ -385,7 +378,7 @@ export default function BackupRecoveryScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
           <Ionicons name="arrow-back" size={20} color={Colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Backup & Recovery</Text>
+        <Text style={styles.headerTitle}>{t('settings.backup')}</Text>
         <View style={{ width: 40 }} />
       </Animated.View>
 
@@ -402,12 +395,12 @@ export default function BackupRecoveryScreen() {
             </View>
             <View style={{ flex: 1, marginLeft: Spacing.lg }}>
               <Text style={styles.rowLabel}>
-                {isBackedUp ? 'Wallet Backed Up' : 'Not Backed Up'}
+                {isBackedUp ? t('settings.backup') : t('settings.backupNow')}
               </Text>
               <Text style={styles.rowDescription}>
                 {isBackedUp && lastBackupAt
-                  ? `Last backup: ${new Date(lastBackupAt).toLocaleDateString()}`
-                  : 'Back up your wallet to protect your funds'}
+                  ? `${t('settings.lastBackup')}: ${new Date(lastBackupAt).toLocaleDateString()}`
+                  : t('settings.backupNow')}
               </Text>
             </View>
           </View>
@@ -416,14 +409,7 @@ export default function BackupRecoveryScreen() {
         {/* Warning if not backed up */}
         {!isBackedUp && (
           <Animated.View entering={FadeInDown.delay(150).duration(350)} style={styles.warningOuter}>
-            <BlurView intensity={14} tint="dark" style={[styles.glassBlur, { padding: Spacing.lg }]}>
-              <LinearGradient
-                colors={['rgba(239, 68, 68, 0.08)', 'rgba(239, 68, 68, 0.03)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="none"
-              />
+            <View style={[styles.glassBlur, { padding: Spacing.lg }]}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                 <View style={styles.warningIcon}>
                   <Ionicons name="warning" size={22} color="#ef4444" />
@@ -435,34 +421,34 @@ export default function BackupRecoveryScreen() {
                   </Text>
                 </View>
               </View>
-            </BlurView>
+            </View>
           </Animated.View>
         )}
 
         {/* ── SEED PHRASE ── */}
-        <SectionTitle title="SEED PHRASE" delay={200} />
+        <SectionTitle title={t('settings.seedPhrase').toUpperCase()} delay={200} />
         <GlassCard delay={220}>
           <TouchableOpacity style={styles.actionRow} onPress={handleShowSeedPhrase} activeOpacity={0.7}>
             <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.15)' }]}>
               <Ionicons name="key" size={20} color={P01Colors.cyan} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>View Seed Phrase</Text>
-              <Text style={styles.rowDescription}>12-word recovery phrase</Text>
+              <Text style={styles.rowLabel}>{t('settings.seedPhrase')}</Text>
+              <Text style={styles.rowDescription}>{t('settings.viewKeys')}</Text>
             </View>
             <Ionicons name="lock-closed" size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
         </GlassCard>
 
         <Animated.View entering={FadeInDown.delay(240).duration(300)} style={styles.tipOuter}>
-          <BlurView intensity={10} tint="dark" style={[styles.glassBlur, { padding: Spacing.md }]}>
+          <View style={[styles.glassBlur, { padding: Spacing.md }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="eye-off" size={14} color="#eab308" />
               <Text style={styles.tipText}>
                 Never share your seed phrase. Write it down and store it offline.
               </Text>
             </View>
-          </BlurView>
+          </View>
         </Animated.View>
 
         {/* ── ENCRYPTED BACKUP ── */}
@@ -473,7 +459,7 @@ export default function BackupRecoveryScreen() {
               <Ionicons name="download-outline" size={20} color={P01Colors.blue} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Export Encrypted Backup</Text>
+              <Text style={styles.rowLabel}>{t('settings.exportKeys')}</Text>
               <Text style={styles.rowDescription}>
                 Wallet + {activeNotes.length} note{activeNotes.length !== 1 ? 's' : ''} — password protected
               </Text>
@@ -486,8 +472,8 @@ export default function BackupRecoveryScreen() {
               <Ionicons name="push-outline" size={20} color={P01Colors.pink} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Restore from Backup</Text>
-              <Text style={styles.rowDescription}>Decrypt and import wallet + notes</Text>
+              <Text style={styles.rowLabel}>{t('settings.restoreBackup')}</Text>
+              <Text style={styles.rowDescription}>{t('settings.restoreBackup')}</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
@@ -523,8 +509,8 @@ export default function BackupRecoveryScreen() {
               <Ionicons name="document-text-outline" size={20} color={P01Colors.cyan} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Export All Notes</Text>
-              <Text style={styles.rowDescription}>Copy raw note data to clipboard</Text>
+              <Text style={styles.rowLabel}>{t('privacy.backupNotes')}</Text>
+              <Text style={styles.rowDescription}>{t('privacy.notesStoredLocally')}</Text>
             </View>
             <Ionicons name="copy-outline" size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
@@ -534,8 +520,8 @@ export default function BackupRecoveryScreen() {
               <Ionicons name="add-circle-outline" size={20} color={P01Colors.pink} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>Import Note</Text>
-              <Text style={styles.rowDescription}>Paste a shared or backed-up note</Text>
+              <Text style={styles.rowLabel}>{t('privacy.importNote')}</Text>
+              <Text style={styles.rowDescription}>{t('privacy.import')}</Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
           </TouchableOpacity>
@@ -543,21 +529,14 @@ export default function BackupRecoveryScreen() {
 
         {/* Info Card */}
         <Animated.View entering={FadeInDown.delay(450).duration(350)} style={styles.infoOuter}>
-          <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-            <LinearGradient
-              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
+          <View style={styles.glassBlur}>
             <View style={styles.infoContent}>
               <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
               <Text style={styles.infoText}>
                 Encrypted backups include your seed phrase and all privacy pool notes. They are protected with XSalsa20-Poly1305 encryption. Without the password, the backup is unreadable.
               </Text>
             </View>
-          </BlurView>
+          </View>
         </Animated.View>
       </ScrollView>
 
@@ -573,40 +552,26 @@ export default function BackupRecoveryScreen() {
             <TouchableOpacity onPress={() => { setShowSeedModal(false); setSeedPhrase([]); }} style={styles.backButton}>
               <Ionicons name="close" size={20} color={Colors.text} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Seed Phrase</Text>
+            <Text style={styles.headerTitle}>{t('settings.seedPhrase')}</Text>
             <View style={{ width: 40 }} />
           </View>
 
           <ScrollView style={{ flex: 1, paddingHorizontal: Spacing.lg }}>
             {/* Warning */}
             <Animated.View entering={FadeInUp.delay(100).duration(350)} style={styles.modalWarningOuter}>
-              <BlurView intensity={14} tint="dark" style={[styles.glassBlur, { padding: Spacing.lg }]}>
-                <LinearGradient
-                  colors={['rgba(239, 68, 68, 0.08)', 'rgba(239, 68, 68, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                />
+              <View style={[styles.glassBlur, { padding: Spacing.lg }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons name="warning" size={20} color="#ef4444" />
                   <Text style={styles.modalWarningText}>
                     Do not share this phrase. Anyone with it can steal your funds.
                   </Text>
                 </View>
-              </BlurView>
+              </View>
             </Animated.View>
 
             {/* Seed Grid */}
             <Animated.View entering={FadeInUp.delay(200).duration(350)} style={styles.seedGridOuter}>
-              <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                />
+              <View style={styles.glassBlur}>
                 <View style={{ padding: Spacing.lg }}>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                     {seedPhrase.map((word, index) => (
@@ -619,7 +584,7 @@ export default function BackupRecoveryScreen() {
                     ))}
                   </View>
                 </View>
-              </BlurView>
+              </View>
             </Animated.View>
 
             {/* Copy */}
@@ -627,7 +592,7 @@ export default function BackupRecoveryScreen() {
               <TouchableOpacity style={styles.secondaryButton} onPress={handleCopySeed} activeOpacity={0.7}>
                 <Ionicons name={seedCopied ? 'checkmark' : 'copy-outline'} size={18} color={seedCopied ? P01Colors.cyan : Colors.text} />
                 <Text style={[styles.secondaryButtonText, seedCopied && { color: P01Colors.cyan }]}>
-                  {seedCopied ? 'Copied!' : 'Copy to Clipboard'}
+                  {seedCopied ? t('common.copied') : t('common.paste')}
                 </Text>
               </TouchableOpacity>
             </Animated.View>
@@ -635,7 +600,7 @@ export default function BackupRecoveryScreen() {
             {/* Confirm */}
             <Animated.View entering={FadeInUp.delay(400).duration(350)}>
               <TouchableOpacity style={styles.primaryButton} onPress={handleConfirmSeedBackup} activeOpacity={0.8}>
-                <Text style={styles.primaryButtonText}>I've Saved My Seed Phrase</Text>
+                <Text style={styles.primaryButtonText}>{t('common.done')}</Text>
               </TouchableOpacity>
             </Animated.View>
           </ScrollView>
@@ -654,21 +619,14 @@ export default function BackupRecoveryScreen() {
             <TouchableOpacity onPress={() => setShowExportModal(false)} style={styles.backButton}>
               <Ionicons name="close" size={20} color={Colors.text} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Export Backup</Text>
+            <Text style={styles.headerTitle}>{t('settings.exportKeys')}</Text>
             <View style={{ width: 40 }} />
           </View>
 
           <ScrollView style={{ flex: 1, paddingHorizontal: Spacing.lg }} keyboardShouldPersistTaps="handled">
             {/* Summary */}
             <Animated.View entering={FadeInUp.delay(100)} style={styles.exportSummary}>
-              <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                  pointerEvents="none"
-                />
+              <View style={styles.glassBlur}>
                 <View style={{ padding: Spacing.lg }}>
                   <Text style={styles.exportSummaryTitle}>Backup Contents</Text>
                   <View style={styles.exportItem}>
@@ -687,7 +645,7 @@ export default function BackupRecoveryScreen() {
                     <Text style={styles.exportItemText}>App settings</Text>
                   </View>
                 </View>
-              </BlurView>
+              </View>
             </Animated.View>
 
             {/* Password */}
@@ -743,7 +701,7 @@ export default function BackupRecoveryScreen() {
                 {exporting ? (
                   <ActivityIndicator color={Colors.background} />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Create Encrypted Backup</Text>
+                  <Text style={styles.primaryButtonText}>{t('settings.backupNow')}</Text>
                 )}
               </TouchableOpacity>
             </Animated.View>
@@ -763,7 +721,7 @@ export default function BackupRecoveryScreen() {
             <TouchableOpacity onPress={() => setShowImportModal(false)} style={styles.backButton}>
               <Ionicons name="close" size={20} color={Colors.text} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>Restore Backup</Text>
+            <Text style={styles.headerTitle}>{t('settings.restoreBackup')}</Text>
             <View style={{ width: 40 }} />
           </View>
 
@@ -785,14 +743,7 @@ export default function BackupRecoveryScreen() {
             {/* Preview */}
             {importPreview && (
               <Animated.View entering={FadeInUp.delay(150)} style={styles.previewOuter}>
-                <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-                  <LinearGradient
-                    colors={['rgba(34, 197, 94, 0.06)', 'rgba(34, 197, 94, 0.02)', 'transparent']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
-                  />
+                <View style={styles.glassBlur}>
                   <View style={{ padding: Spacing.md }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
                       <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
@@ -807,7 +758,7 @@ export default function BackupRecoveryScreen() {
                       </Text>
                     ) : null}
                   </View>
-                </BlurView>
+                </View>
               </Animated.View>
             )}
 
@@ -840,7 +791,7 @@ export default function BackupRecoveryScreen() {
                 {importing ? (
                   <ActivityIndicator color={Colors.background} />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Decrypt & Restore</Text>
+                  <Text style={styles.primaryButtonText}>{t('settings.restoreBackup')}</Text>
                 )}
               </TouchableOpacity>
             </Animated.View>
@@ -868,11 +819,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: BorderRadius.full,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: '#0f0f12',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   headerTitle: {
     color: Colors.text,
@@ -896,11 +845,9 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.lg,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
-  glassBlur: { backgroundColor: 'rgba(12, 12, 14, 0.65)' },
-  divider: { height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: Spacing.lg },
+  glassBlur: { backgroundColor: '#0f0f12' },
+  divider: { height: 1, backgroundColor: 'rgba(255, 255, 255, 0.06)', marginHorizontal: Spacing.lg },
 
   /* Status */
   statusRow: { padding: Spacing.lg, flexDirection: 'row', alignItems: 'center' },
@@ -931,8 +878,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
   },
   warningIcon: {
     width: 40,
@@ -951,8 +896,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
     borderRadius: BorderRadius.md,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(234, 179, 8, 0.15)',
   },
   tipText: { color: '#eab308', fontSize: 12, marginLeft: Spacing.sm, flex: 1 },
 
@@ -965,7 +908,7 @@ const styles = StyleSheet.create({
   noteStat: { flex: 1, alignItems: 'center' },
   noteStatValue: { color: Colors.text, fontSize: 18, fontFamily: FontFamily.bold },
   noteStatLabel: { color: Colors.textTertiary, fontSize: 11, fontFamily: FontFamily.medium, marginTop: 2 },
-  noteStatDivider: { width: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginVertical: 4 },
+  noteStatDivider: { width: 1, backgroundColor: 'rgba(255, 255, 255, 0.06)', marginVertical: 4 },
 
   /* Info */
   infoOuter: {
@@ -973,8 +916,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.lg,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   infoContent: { flexDirection: 'row', alignItems: 'flex-start', padding: Spacing.lg },
   infoText: { color: Colors.textSecondary, fontSize: 13, marginLeft: Spacing.md, flex: 1, lineHeight: 20 },
@@ -985,8 +926,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
     borderRadius: BorderRadius.lg,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
   },
   modalWarningText: { color: '#f87171', fontSize: 14, marginLeft: Spacing.sm, flex: 1 },
 
@@ -995,8 +934,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   seedWordWrapper: { width: '33.33%', padding: Spacing.sm },
   seedWordCell: {
@@ -1018,9 +955,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md + 2,
     borderRadius: BorderRadius.md,
     marginBottom: Spacing.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
+    backgroundColor: '#0f0f12',
     gap: Spacing.sm,
   },
   secondaryButtonText: { fontFamily: FontFamily.semibold, color: Colors.text },
@@ -1042,8 +977,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   exportSummaryTitle: {
     color: Colors.text,
@@ -1064,14 +997,12 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
   },
   input: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: '#0f0f12',
     borderRadius: BorderRadius.md,
     padding: Spacing.md,
     color: Colors.text,
     fontFamily: FontFamily.mono,
     fontSize: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 0 },
   eyeButton: {
@@ -1085,8 +1016,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     borderRadius: BorderRadius.lg,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(34, 197, 94, 0.2)',
   },
   previewLine: { color: Colors.textSecondary, fontSize: 13, marginTop: 4 },
 });

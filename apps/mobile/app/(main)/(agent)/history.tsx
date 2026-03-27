@@ -1,338 +1,185 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  FlatList,
-  TextInput,
+  View, Text, TouchableOpacity, FlatList, TextInput, StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import Animated, { FadeIn, FadeInDown, SlideOutRight } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
 import { useAIStore, Conversation } from '@/stores/aiStore';
-import { Colors, FontSize, FontFamily, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import { useT } from '@/i18n';
+
+const formatDate = (timestamp: number): string => {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
 
 export default function ChatHistory() {
+  const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [searchQuery, setSearchQuery] = useState('');
 
   const {
-    conversations,
-    activeConversationId,
-    switchConversation,
-    deleteConversation,
-    createConversation,
-    clearMessages,
+    conversations, activeConversationId,
+    switchConversation, deleteConversation,
+    createConversation, clearMessages,
   } = useAIStore();
 
   const filteredConversations = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
-    }
+    const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
+    if (!searchQuery.trim()) return sorted;
     const lower = searchQuery.toLowerCase();
-    return [...conversations]
-      .filter(c =>
-        c.title.toLowerCase().includes(lower) ||
-        c.messages.some(m => m.content.toLowerCase().includes(lower))
-      )
-      .sort((a, b) => b.updatedAt - a.updatedAt);
+    return sorted.filter(c =>
+      c.title.toLowerCase().includes(lower) ||
+      c.messages.some(m => m.content.toLowerCase().includes(lower))
+    );
   }, [conversations, searchQuery]);
 
-  const handleSelectConversation = useCallback((conv: Conversation) => {
+  const handleSelect = useCallback((conv: Conversation) => {
     switchConversation(conv.id);
     router.back();
   }, [switchConversation, router]);
 
-  const handleDeleteConversation = useCallback((conv: Conversation) => {
+  const handleDelete = useCallback((conv: Conversation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     p01Alert(
-      'Delete Conversation',
-      `Delete "${conv.title}"?`,
+      t('agent.deleteConversation'),
+      t('agent.deleteConversationConfirm', { title: conv.title }),
       [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteConversation(conv.id),
-        },
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: () => deleteConversation(conv.id) },
       ]
     );
-  }, [deleteConversation]);
+  }, [deleteConversation, t]);
 
   const handleNewChat = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     clearMessages();
     createConversation();
     router.back();
   }, [clearMessages, createConversation, router]);
 
-  const formatDate = (timestamp: number): string => {
-    const now = Date.now();
-    const diff = now - timestamp;
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 7) return `${days}d ago`;
-    return new Date(timestamp).toLocaleDateString();
-  };
-
-  const renderConversation = useCallback(({ item, index }: { item: Conversation; index: number }) => {
+  const renderItem = useCallback(({ item, index }: { item: Conversation; index: number }) => {
     const isActive = item.id === activeConversationId;
-    const lastMessage = item.messages[item.messages.length - 1];
-    const messageCount = item.messages.length;
+    const lastMsg = item.messages[item.messages.length - 1];
+    const count = item.messages.length;
 
     return (
-      <Animated.View entering={FadeInDown.delay(index * 50).springify()}>
+      <Animated.View entering={FadeInDown.delay(index * 40).duration(250)}>
         <TouchableOpacity
-          onPress={() => handleSelectConversation(item)}
-          onLongPress={() => handleDeleteConversation(item)}
+          onPress={() => handleSelect(item)}
+          onLongPress={() => handleDelete(item)}
           activeOpacity={0.7}
-          style={{
-            marginHorizontal: Spacing.lg,
-            marginBottom: 10,
-            borderRadius: 16,
-            overflow: 'hidden',
-            borderWidth: 1,
-            borderColor: isActive
-              ? 'rgba(57, 197, 187, 0.3)'
-              : 'rgba(42, 42, 48, 0.5)',
-          }}
+          style={[st.card, isActive && st.cardActive]}
         >
-          <BlurView
-            intensity={15}
-            tint="dark"
-            style={{
-              padding: 14,
-              backgroundColor: isActive
-                ? 'rgba(57, 197, 187, 0.06)'
-                : 'rgba(21, 21, 24, 0.7)',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flex: 1, marginRight: 10 }}>
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    color: isActive ? Colors.primary : Colors.text,
-                    fontSize: FontSize.md,
-                    fontFamily: FontFamily.semibold,
-                  }}
-                >
-                  {item.title}
-                </Text>
-                {lastMessage && (
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      color: Colors.textSecondary,
-                      fontSize: FontSize.sm,
-                      marginTop: 3,
-                    }}
-                  >
-                    {lastMessage.role === 'user' ? 'You: ' : 'Agent: '}
-                    {lastMessage.content.replace(/\n/g, ' ')}
-                  </Text>
-                )}
-              </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs }}>
-                  {formatDate(item.updatedAt)}
-                </Text>
-                <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs, marginTop: 2 }}>
-                  {messageCount} msgs
-                </Text>
-              </View>
+          {/* Icon */}
+          <View style={[st.cardIcon, isActive ? st.cardIconActive : st.cardIconDefault]}>
+            <Ionicons
+              name={isActive ? 'chatbubble' : 'chatbubble-outline'}
+              size={18}
+              color={isActive ? P01Colors.cyan : Colors.textTertiary}
+            />
+          </View>
+
+          {/* Content */}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text
+              numberOfLines={1}
+              style={[st.cardTitle, isActive && { color: P01Colors.cyan }]}
+            >
+              {item.title}
+            </Text>
+            {lastMsg && (
+              <Text numberOfLines={1} style={st.cardPreview}>
+                {lastMsg.role === 'user' ? 'You: ' : 'Agent: '}
+                {lastMsg.content.replace(/\n/g, ' ')}
+              </Text>
+            )}
+          </View>
+
+          {/* Meta */}
+          <View style={{ alignItems: 'flex-end', gap: 3 }}>
+            <Text style={st.cardTime}>{formatDate(item.updatedAt)}</Text>
+            <View style={st.countChip}>
+              <Text style={st.countText}>{count}</Text>
             </View>
-          </BlurView>
+          </View>
         </TouchableOpacity>
       </Animated.View>
     );
-  }, [activeConversationId, handleSelectConversation, handleDeleteConversation]);
+  }, [activeConversationId, handleSelect, handleDelete]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: 'transparent', paddingTop: insets.top }}>
-      {/* Header */}
-      <View style={{ overflow: 'hidden' }}>
-        <BlurView
-          intensity={30}
-          tint="dark"
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: Spacing.lg,
-            paddingVertical: 12,
-            backgroundColor: 'rgba(10, 10, 12, 0.75)',
-            borderBottomWidth: 1,
-            borderBottomColor: 'rgba(57, 197, 187, 0.1)',
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <TouchableOpacity
-              onPress={() => router.back()}
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 19,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: 'rgba(255, 255, 255, 0.06)',
-              }}
-            >
-              <Ionicons name="chevron-back" size={22} color={Colors.text} />
-            </TouchableOpacity>
-            <Text
-              style={{
-                color: Colors.text,
-                fontFamily: FontFamily.semibold,
-                fontSize: FontSize.lg,
-                marginLeft: 10,
-              }}
-            >
-              Chat History
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={handleNewChat}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingHorizontal: 14,
-              paddingVertical: 8,
-              borderRadius: 999,
-              backgroundColor: Colors.primaryDim,
-              borderWidth: 1,
-              borderColor: 'rgba(57, 197, 187, 0.25)',
-            }}
-          >
-            <Ionicons name="add" size={18} color={Colors.primary} />
-            <Text
-              style={{
-                color: Colors.primary,
-                fontSize: FontSize.sm,
-                fontFamily: FontFamily.medium,
-                marginLeft: 4,
-              }}
-            >
-              New Chat
-            </Text>
-          </TouchableOpacity>
-        </BlurView>
+    <View style={[st.container, { paddingTop: insets.top }]}>
+      {/* ── Header ── */}
+      <View style={st.header}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
+          <Ionicons name="arrow-back" size={20} color={Colors.text} />
+        </TouchableOpacity>
+        <Text style={st.headerTitle}>{t('agent.chatHistory')}</Text>
+        <TouchableOpacity onPress={handleNewChat} style={st.newBtn}>
+          <Ionicons name="add" size={18} color="#000" />
+          <Text style={st.newBtnText}>{t('agent.newChat')}</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Search Bar */}
-      <View style={{ paddingHorizontal: Spacing.lg, paddingVertical: 10 }}>
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: 'rgba(21, 21, 24, 0.8)',
-            borderRadius: 14,
-            paddingHorizontal: 14,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            height: 42,
-          }}
-        >
-          <Ionicons name="search-outline" size={18} color={Colors.textTertiary} />
+      {/* ── Search ── */}
+      <View style={st.searchWrap}>
+        <View style={st.searchBar}>
+          <Ionicons name="search-outline" size={16} color={Colors.textTertiary} />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder="Search conversations..."
+            placeholder={t('agent.searchConversations')}
             placeholderTextColor={Colors.textTertiary}
-            style={{
-              flex: 1,
-              color: Colors.text,
-              fontSize: FontSize.sm,
-              fontFamily: FontFamily.regular,
-              marginLeft: 8,
-              paddingVertical: 0,
-            }}
+            style={st.searchInput}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color={Colors.textTertiary} />
+              <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
             </TouchableOpacity>
           )}
         </View>
       </View>
 
-      {/* Conversation List */}
+      {/* ── List ── */}
       {filteredConversations.length > 0 ? (
         <FlatList
           data={filteredConversations}
-          renderItem={renderConversation}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={{ paddingTop: 4, paddingBottom: insets.bottom + 20 }}
+          renderItem={renderItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingTop: 4, paddingBottom: insets.bottom + 24 }}
           showsVerticalScrollIndicator={false}
+          ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         />
       ) : (
-        // Empty state
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 }}>
-          <Animated.View entering={FadeIn.delay(100)} style={{ alignItems: 'center' }}>
-            <View
-              style={{
-                width: 80,
-                height: 80,
-                borderRadius: 40,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: Colors.primaryDim,
-                marginBottom: 20,
-              }}
-            >
-              <Ionicons name="chatbubbles-outline" size={36} color={Colors.primary} />
+        <View style={st.emptyWrap}>
+          <Animated.View entering={FadeIn.delay(100).duration(300)} style={{ alignItems: 'center' }}>
+            <View style={st.emptyIcon}>
+              <Ionicons name="chatbubbles-outline" size={28} color={P01Colors.cyan} />
             </View>
-            <Text
-              style={{
-                color: Colors.text,
-                fontSize: FontSize.xl,
-                fontFamily: FontFamily.bold,
-                marginBottom: 8,
-              }}
-            >
-              {searchQuery ? 'No Results' : 'No Conversations'}
+            <Text style={st.emptyTitle}>
+              {searchQuery ? t('agent.noResults') : t('agent.noConversations')}
             </Text>
-            <Text
-              style={{
-                color: Colors.textSecondary,
-                fontSize: FontSize.sm,
-                textAlign: 'center',
-                lineHeight: 20,
-              }}
-            >
-              {searchQuery
-                ? 'Try a different search term.'
-                : 'Start chatting with P-01 Agent to see your conversation history here.'}
+            <Text style={st.emptyDesc}>
+              {searchQuery ? t('agent.noResultsDesc') : t('agent.noConversationsDesc')}
             </Text>
             {!searchQuery && (
-              <TouchableOpacity
-                onPress={handleNewChat}
-                style={{
-                  marginTop: 20,
-                  paddingHorizontal: 20,
-                  paddingVertical: 10,
-                  borderRadius: 999,
-                  backgroundColor: Colors.primary,
-                }}
-              >
-                <Text
-                  style={{
-                    color: Colors.background,
-                    fontSize: FontSize.sm,
-                    fontFamily: FontFamily.semibold,
-                  }}
-                >
-                  Start Chatting
-                </Text>
+              <TouchableOpacity onPress={handleNewChat} style={st.startBtn}>
+                <Ionicons name="chatbubble-outline" size={16} color="#000" />
+                <Text style={st.startBtnText}>{t('agent.startChatting')}</Text>
               </TouchableOpacity>
             )}
           </Animated.View>
@@ -341,3 +188,80 @@ export default function ChatHistory() {
     </View>
   );
 }
+
+const st = StyleSheet.create({
+  container: { flex: 1, backgroundColor: 'transparent' },
+
+  // Header
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+  },
+  backBtn: {
+    width: 40, height: 40, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  },
+  headerTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
+  newBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: BorderRadius.full,
+    backgroundColor: P01Colors.cyan,
+  },
+  newBtnText: { fontSize: 13, fontFamily: FontFamily.semibold, color: '#000' },
+
+  // Search
+  searchWrap: { paddingHorizontal: Spacing.xl, marginBottom: 12 },
+  searchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+    paddingHorizontal: 14, height: 42,
+  },
+  searchInput: {
+    flex: 1, color: Colors.text, fontSize: 14,
+    fontFamily: FontFamily.regular, paddingVertical: 0,
+  },
+
+  // Cards
+  card: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 14, backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+  },
+  cardActive: {
+    borderWidth: 1, borderColor: `${P01Colors.cyan}30`,
+  },
+  cardIcon: {
+    width: 42, height: 42, borderRadius: BorderRadius.md,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  cardIconActive: { backgroundColor: `${P01Colors.cyan}18` },
+  cardIconDefault: { backgroundColor: '#1a1a1f' },
+  cardTitle: { fontSize: 14, fontFamily: FontFamily.medium, color: Colors.text },
+  cardPreview: {
+    fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 3,
+  },
+  cardTime: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary },
+  countChip: {
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6,
+    backgroundColor: `${P01Colors.cyan}18`,
+  },
+  countText: { fontSize: 10, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+
+  // Empty state
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
+  emptyIcon: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: `${P01Colors.cyan}18`, alignItems: 'center', justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: { fontSize: 16, fontFamily: FontFamily.semibold, color: Colors.text, marginBottom: 4 },
+  emptyDesc: {
+    fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    textAlign: 'center', lineHeight: 20,
+  },
+  startBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginTop: 20, paddingHorizontal: 20, paddingVertical: 10,
+    borderRadius: BorderRadius.full, backgroundColor: P01Colors.cyan,
+  },
+  startBtnText: { fontSize: 14, fontFamily: FontFamily.semibold, color: '#000' },
+});

@@ -53,9 +53,9 @@ export default function DevnetAirdropFAB({ publicKey, requestAirdrop, refreshBal
   return (
     <TouchableOpacity style={[styles.fab, loading && { opacity: 0.7 }]} onPress={handlePress} disabled={loading} accessibilityRole="button" accessibilityLabel="Request devnet airdrop" accessibilityHint="Requests 1 SOL from the devnet faucet" accessibilityState={{ disabled: loading, busy: loading }}>
       {loading ? (
-        <ActivityIndicator size="small" color="#000" />
+        <ActivityIndicator size="small" color={P01Colors.pink} />
       ) : (
-        <Ionicons name="water" size={22} color="#000" />
+        <Ionicons name="water" size={14} color={P01Colors.pink} />
       )}
     </TouchableOpacity>
   );
@@ -63,19 +63,11 @@ export default function DevnetAirdropFAB({ publicKey, requestAirdrop, refreshBal
 
 const styles = StyleSheet.create({
   fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 150,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: P01Colors.pink,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 119, 168, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: P01Colors.pink,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 8,
   },
 });

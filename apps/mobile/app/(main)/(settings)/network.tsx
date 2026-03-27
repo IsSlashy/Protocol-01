@@ -11,14 +11,13 @@ import { useRouter } from 'expo-router';
 import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { getCluster, getConnection, setCluster } from '../../../services/solana/connection';
+import { useT } from '@/i18n';
 
 type NetworkType = 'mainnet-beta' | 'devnet' | 'testnet';
 
@@ -37,16 +36,9 @@ interface GlassCardProps {
 
 const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
   <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-      <LinearGradient
-        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+    <View style={styles.glassBlur}>
       {children}
-    </BlurView>
+    </View>
   </Animated.View>
 );
 
@@ -102,6 +94,7 @@ const NetworkRadio: React.FC<NetworkRadioProps> = ({ label, description, selecte
 /* ──────────────────────── Screen ──────────────────────── */
 
 export default function NetworkSettingsScreen() {
+  const t = useT();
   const router = useRouter();
 
   const [selectedNetwork, setSelectedNetwork] = useState<NetworkType>(getCluster());
@@ -192,11 +185,11 @@ export default function NetworkSettingsScreen() {
       });
 
       p01Alert(
-        'Network Updated',
+        t('settings.network'),
         `Switched to ${label}.`,
         [
           {
-            text: 'OK',
+            text: t('common.ok'),
             onPress: () => {
               // Re-initialize wallet with new network
               useWalletStore.getState().initialize();
@@ -207,7 +200,7 @@ export default function NetworkSettingsScreen() {
       );
     } catch (error) {
       console.error('Failed to save network:', error);
-      p01Alert('Error', 'Failed to save network settings. Please try again.');
+      p01Alert(t('common.error'), t('alerts.errorGeneric'));
     } finally {
       setIsSaving(false);
     }
@@ -260,20 +253,20 @@ export default function NetworkSettingsScreen() {
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Network Settings</Text>
+        <Text style={styles.headerTitle}>{t('settings.network')}</Text>
         <View style={{ width: 40 }} />
       </Animated.View>
 
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 140 }}
+        contentContainerStyle={{ paddingBottom: 200 }}
       >
         {/* SELECT NETWORK */}
         <SectionTitle title="SELECT NETWORK" delay={80} />
         <GlassCard delay={100}>
           <NetworkRadio
-            label="Mainnet"
+            label={t('settings.mainnet')}
             description="Production network (real funds)"
             selected={selectedNetwork === 'mainnet-beta'}
             color="#22c55e"
@@ -281,7 +274,7 @@ export default function NetworkSettingsScreen() {
           />
           <GlassDivider />
           <NetworkRadio
-            label="Devnet"
+            label={t('settings.devnet')}
             description="Development network (test tokens)"
             selected={selectedNetwork === 'devnet'}
             color="#eab308"
@@ -290,7 +283,7 @@ export default function NetworkSettingsScreen() {
           <GlassDivider />
           <NetworkRadio
             label="Testnet"
-            description="Test network (experimental)"
+            description={t('common.experimental')}
             selected={selectedNetwork === 'testnet'}
             color="#3b82f6"
             onSelect={() => handleNetworkSelect('testnet')}
@@ -317,14 +310,7 @@ export default function NetworkSettingsScreen() {
             accessibilityRole="button"
             accessibilityLabel="Test network connection"
           >
-            <BlurView intensity={14} tint="dark" style={styles.testButtonBlur}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="none"
-              />
+            <View style={styles.testButtonBlur}>
               {isTesting ? (
                 <ActivityIndicator color={P01Colors.cyan} />
               ) : (
@@ -333,7 +319,7 @@ export default function NetworkSettingsScreen() {
                   <Text style={styles.testButtonText}>Test Connection</Text>
                 </View>
               )}
-            </BlurView>
+            </View>
           </TouchableOpacity>
 
           {/* Test Result */}
@@ -357,8 +343,8 @@ export default function NetworkSettingsScreen() {
                 ]}
               >
                 {testResult === 'success'
-                  ? 'Connection successful!'
-                  : 'Connection failed. Try again later.'}
+                  ? t('common.success')
+                  : t('common.failed')}
               </Text>
             </Animated.View>
           )}
@@ -367,63 +353,42 @@ export default function NetworkSettingsScreen() {
         {/* Warning for Mainnet */}
         {selectedNetwork === 'mainnet-beta' && (
           <Animated.View entering={FadeInDown.duration(300)} style={styles.alertOuter}>
-            <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-              <LinearGradient
-                colors={['rgba(234, 179, 8, 0.08)', 'rgba(234, 179, 8, 0.02)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="none"
-              />
+            <View style={styles.glassBlur}>
               <View style={styles.alertContent}>
                 <Ionicons name="warning" size={20} color="#eab308" />
                 <Text style={styles.alertTextYellow}>
                   You are connecting to Mainnet. All transactions will use real SOL and tokens. Make sure you understand the risks.
                 </Text>
               </View>
-            </BlurView>
+            </View>
           </Animated.View>
         )}
 
         {/* Info for Devnet */}
         {selectedNetwork === 'devnet' && (
           <Animated.View entering={FadeInDown.duration(300)} style={styles.alertOuter}>
-            <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="none"
-              />
+            <View style={styles.glassBlur}>
               <View style={styles.alertContent}>
                 <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
                 <Text style={styles.alertTextMuted}>
                   Devnet tokens have no real value. You can get free test SOL using the airdrop button on the wallet screen.
                 </Text>
               </View>
-            </BlurView>
+            </View>
           </Animated.View>
         )}
 
         {/* Info for Testnet */}
         {selectedNetwork === 'testnet' && (
           <Animated.View entering={FadeInDown.duration(300)} style={styles.alertOuter}>
-            <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-              <LinearGradient
-                colors={['rgba(59, 130, 246, 0.08)', 'rgba(59, 130, 246, 0.02)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-                pointerEvents="none"
-              />
+            <View style={styles.glassBlur}>
               <View style={styles.alertContent}>
                 <Ionicons name="flask-outline" size={20} color="#3b82f6" />
                 <Text style={styles.alertTextBlue}>
                   Testnet is used for experimental features and may experience downtime or resets. Not recommended for regular use.
                 </Text>
               </View>
-            </BlurView>
+            </View>
           </Animated.View>
         )}
       </ScrollView>
@@ -441,7 +406,7 @@ export default function NetworkSettingsScreen() {
           {isSaving ? (
             <ActivityIndicator color="#0a0a0a" />
           ) : (
-            <Text style={styles.saveButtonText}>Save Network Settings</Text>
+            <Text style={styles.saveButtonText}>{t('common.save')}</Text>
           )}
         </TouchableOpacity>
       </Animated.View>
@@ -469,11 +434,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: BorderRadius.full,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: '#0f0f12',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   headerTitle: {
     color: Colors.text,
@@ -497,17 +460,15 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.lg,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   glassBlur: {
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    backgroundColor: '#0f0f12',
   },
 
   /* Divider */
   divider: {
     height: 1,
-    backgroundColor: 'rgba(57, 197, 187, 0.07)',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     marginHorizontal: Spacing.lg,
   },
 
@@ -594,11 +555,9 @@ const styles = StyleSheet.create({
   testButton: {
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.12)',
   },
   testButtonBlur: {
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    backgroundColor: '#0f0f12',
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
@@ -619,15 +578,12 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     padding: Spacing.md,
     borderRadius: BorderRadius.lg,
-    borderWidth: 1,
   },
   testResultSuccess: {
     backgroundColor: 'rgba(57, 197, 187, 0.08)',
-    borderColor: 'rgba(57, 197, 187, 0.15)',
   },
   testResultError: {
     backgroundColor: 'rgba(239, 68, 68, 0.08)',
-    borderColor: 'rgba(239, 68, 68, 0.15)',
   },
   testResultText: {
     fontSize: 14,
@@ -641,8 +597,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.lg,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   alertContent: {
     flexDirection: 'row',
@@ -678,7 +632,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     paddingHorizontal: Spacing.lg,
-    paddingBottom: 100,
+    paddingBottom: 140,
     paddingTop: Spacing.lg,
   },
   saveButton: {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useConfidentialStore } from '@/stores/confidentialStore';
@@ -21,399 +19,297 @@ import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useArcium } from '@/providers/ArciumProvider';
 import { useArciumStore } from '@/stores/arciumStore';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, Spacing, P01Colors } from '@/constants/theme';
+import { useT } from '@/i18n';
+
+// ─── Human-readable action buttons ─────────────────────────────
+const ACTION_CONFIGS = [
+  { key: 'deposit', i18nKey: 'privacy.deposit', icon: 'arrow-down-circle' as const, route: '/(main)/(privacy)/denominated-shield', color: P01Colors.cyan, bg: P01Colors.cyanDim },
+  { key: 'withdraw', i18nKey: 'privacy.withdraw', icon: 'arrow-up-circle' as const, route: '/(main)/(privacy)/denominated-unshield', color: P01Colors.pink, bg: P01Colors.pinkDim },
+  { key: 'send', i18nKey: 'common.send', icon: 'paper-plane' as const, route: '/(main)/(privacy)/denominated-transfer', color: '#8B8BFF', bg: 'rgba(139, 139, 255, 0.12)' },
+  { key: 'receive', i18nKey: 'common.receive', icon: 'download' as const, route: '/(main)/(privacy)/denominated-import', color: '#8B8BFF', bg: 'rgba(139, 139, 255, 0.12)' },
+] as const;
+
+// ─── Protection indicators (simple, no jargon) ─────────────────
+function ProtectionBadge({ icon, label, active }: { icon: string; label: string; active: boolean }) {
+  return (
+    <View style={[s.badge, active && s.badgeActive]}>
+      <Ionicons name={icon as any} size={12} color={active ? P01Colors.cyan : Colors.textTertiary} />
+      <Text style={[s.badgeLabel, active && s.badgeLabelActive]}>{label}</Text>
+    </View>
+  );
+}
 
 export default function PrivacyDashboard() {
+  const t = useT();
   const router = useRouter();
+  const [notesExpanded, setNotesExpanded] = useState(false);
 
-  const {
-    shieldedBalance,
-    isInitialized: shieldedInitialized,
-    isLoading: shieldedLoading,
-    notes,
-  } = useShieldedStore();
-
+  const { shieldedBalance, notes } = useShieldedStore();
   const {
     balances: confidentialBalances,
-    isInitialized: confidentialInitialized,
-    isLoading: confidentialLoading,
     pendingCredits,
   } = useConfidentialStore();
-
-  const { notes: denomNotes, getActiveNotes } = useDenominatedPoolStore();
-  const activeNotes = getActiveNotes();
-  const activeNoteCount = activeNotes.length;
-  const matureNoteCount = activeNotes.filter(n => n.status === 'mature').length;
-
+  const { notes: denomNotes, getActiveNotes, isLoading, refreshAllPools } = useDenominatedPoolStore();
   const {
     shieldedWalletEnabled,
     confidentialBalanceEnabled,
     initialize: initSettings,
   } = useSettingsStore();
-
-  const { isMpcActive, programAvailable } = useArcium();
-  const { } = useArciumStore(); // MPC always on
+  const { isMpcActive } = useArcium();
+  const { } = useArciumStore();
 
   useEffect(() => { initSettings(); }, []);
 
+  // ─── Computed values ──────────────────────────────────────
+  const activeNotes = getActiveNotes();
+  const matureNotes = activeNotes.filter(n => n.status === 'mature');
+  const pendingNotes = activeNotes.filter(n => n.status === 'pending');
+  const privateBalance = activeNotes.reduce((sum, n) => sum + n.denomination, 0);
+  const matureBalance = matureNotes.reduce((sum, n) => sum + n.denomination, 0);
+
+  // Legacy funds detection
   const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
   const pendingCount = pendingCredits['11111111111111111111111111111111'] || 0;
-
-  const isLoading = shieldedLoading || confidentialLoading;
-
-  // Show legacy cards if toggle enabled OR if user has funds
   const hasShieldedFunds = shieldedBalance > 0 || notes.filter(n => Number(n.amount) > 0).length > 0;
   const hasConfidentialFunds = confidentialSolBalance > 0 || pendingCount > 0;
-  const showShielded = shieldedWalletEnabled || hasShieldedFunds;
-  const showConfidential = confidentialBalanceEnabled || hasConfidentialFunds;
-
-  // Badge for settings if user has legacy funds but toggles are off
-  const hasLegacyFundsWarning = (hasShieldedFunds && !shieldedWalletEnabled) || (hasConfidentialFunds && !confidentialBalanceEnabled);
+  const hasLegacyFunds = hasShieldedFunds || hasConfidentialFunds;
 
   const onRefresh = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
+    await refreshAllPools?.().catch(() => {});
+  }, [refreshAllPools]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
-        <Text style={styles.headerTitle} accessibilityRole="header">Privacy</Text>
-        <View style={styles.headerRight}>
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() => router.push('/(main)/(settings)')}
-            accessibilityRole="button"
-            accessibilityLabel={hasLegacyFundsWarning ? 'Settings, attention needed' : 'Settings'}
-          >
-            <Ionicons name="settings-outline" size={20} color={Colors.text} />
-            {hasLegacyFundsWarning && <View style={styles.settingsBadge} />}
-          </TouchableOpacity>
-        </View>
-      </Animated.View>
+    <SafeAreaView style={s.container} edges={['top']}>
+      {/* ─── Header ──────────────────────────────────────── */}
+      <View style={s.header}>
+        <Text style={s.headerTitle} accessibilityRole="header">{t('privacy.title')}</Text>
+        <TouchableOpacity
+          style={s.headerBtn}
+          onPress={() => router.push('/(main)/(settings)')}
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+        >
+          <Ionicons name="settings-outline" size={20} color={Colors.text} />
+        </TouchableOpacity>
+      </View>
 
       <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={Colors.primary} />
         }
       >
-        {/* ═══════ HERO: Privacy Pool (Denominated Pools) ═══════ */}
-        <Animated.View entering={FadeInUp.delay(100)}>
+        {/* ─── 1. HERO: Private Balance ────────────────── */}
+        <Animated.View entering={FadeIn.duration(400)}>
+          <View style={s.heroCard}>
+            <View style={s.heroTop}>
+              <View style={s.heroIconWrap}>
+                <Ionicons name="shield-checkmark" size={22} color={P01Colors.cyan} />
+              </View>
+              <Text style={s.heroLabel}>{t('privacy.shieldedBalance')}</Text>
+            </View>
+
+            <Text style={s.heroBalance}>
+              {privateBalance < 1
+                ? privateBalance.toFixed(4)
+                : privateBalance.toFixed(2)}{' '}
+              <Text style={s.heroUnit}>SOL</Text>
+            </Text>
+
+            {activeNotes.length > 0 && (
+              <View style={s.heroMeta}>
+                {matureNotes.length > 0 && (
+                  <View style={s.heroChip}>
+                    <View style={[s.heroDot, { backgroundColor: P01Colors.cyan }]} />
+                    <Text style={s.heroChipText}>
+                      {matureNotes.length} ready
+                    </Text>
+                  </View>
+                )}
+                {pendingNotes.length > 0 && (
+                  <View style={s.heroChip}>
+                    <View style={[s.heroDot, { backgroundColor: P01Colors.yellow }]} />
+                    <Text style={s.heroChipText}>
+                      {pendingNotes.length} maturing
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {activeNotes.length === 0 && (
+              <Text style={s.heroEmpty}>
+                {t('privacy.noNotesDesc')}
+              </Text>
+            )}
+          </View>
+        </Animated.View>
+
+        {/* ─── 2. QUICK ACTIONS ────────────────────────── */}
+        <Animated.View entering={FadeInDown.delay(100).duration(300)}>
+          <View style={s.actionsGrid}>
+            {ACTION_CONFIGS.map((action) => (
+              <TouchableOpacity
+                key={action.key}
+                style={[s.actionBtn, { backgroundColor: action.bg }]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push(action.route as any);
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={t(action.i18nKey)}
+              >
+                <Ionicons name={action.icon} size={24} color={action.color} />
+                <Text style={[s.actionLabel, { color: action.color }]}>
+                  {t(action.i18nKey)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </Animated.View>
+
+        {/* ─── 3. PRIVACY ROUTER (feature card) ────────── */}
+        <Animated.View entering={FadeInDown.delay(200).duration(300)}>
           <TouchableOpacity
-            style={styles.modeCard}
-            onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
+            style={s.featureCard}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push('/(main)/(privacy)/private-send' as any);
+            }}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel={`Privacy Pool, ${activeNoteCount > 0 ? `${activeNoteCount} active notes` : 'fixed-denomination anonymous pool'}`}
-            accessibilityHint="Opens privacy pool notes"
+            accessibilityLabel="Private Send"
           >
-            <BlurView intensity={15} tint="dark" style={styles.heroGradient}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <View style={styles.modeCardHeader}>
-                <View style={[styles.modeIconContainer, { backgroundColor: P01Colors.cyanDim }]}>
-                  <Ionicons name="shield-checkmark" size={28} color={P01Colors.cyan} />
-                </View>
-                <View style={styles.modeCardInfo}>
-                  <Text style={styles.heroTitle}>Privacy Pool</Text>
-                  <Text style={styles.modeCardSubtitle}>
-                    {activeNoteCount > 0
-                      ? `${activeNoteCount} active note${activeNoteCount > 1 ? 's' : ''}`
-                      : 'Fixed-denomination anonymous pool'}
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color={P01Colors.cyan} />
+            <View style={s.featureLeft}>
+              <View style={s.featureIcon}>
+                <Ionicons name="git-branch-outline" size={20} color={P01Colors.cyan} />
               </View>
-
-              {/* Quick Stats */}
-              <View style={styles.quickStats}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>STARK</Text>
-                  <Text style={styles.statLabel}>Proof System</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>Full</Text>
-                  <Text style={styles.statLabel}>Anonymity</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statItem}>
-                  <Text style={styles.statValue}>On-device</Text>
-                  <Text style={styles.statLabel}>Proving</Text>
-                </View>
-              </View>
-
-              {/* Quick Actions — Row 1 */}
-              <View style={styles.quickActions}>
-                <TouchableOpacity
-                  style={[styles.quickAction, { backgroundColor: P01Colors.cyanDim }]}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Shield SOL"
-                  accessibilityHint="Deposit SOL into the privacy pool"
-                >
-                  <Ionicons name="arrow-down" size={16} color={P01Colors.cyan} />
-                  <Text style={[styles.quickActionText, { color: P01Colors.cyan }]}>Shield</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.quickAction, { backgroundColor: P01Colors.pinkDim }]}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-unshield' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Unshield SOL"
-                  accessibilityHint="Withdraw SOL from the privacy pool"
-                >
-                  <Ionicons name="arrow-up" size={16} color={P01Colors.pink} />
-                  <Text style={[styles.quickActionText, { color: P01Colors.pink }]}>Unshield</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.quickAction, { backgroundColor: 'rgba(57, 197, 187, 0.08)' }]}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="View notes"
-                >
-                  <Ionicons name="receipt" size={16} color={P01Colors.cyan} />
-                  <Text style={[styles.quickActionText, { color: P01Colors.cyan }]}>Notes</Text>
-                </TouchableOpacity>
-              </View>
-              {/* Quick Actions — Row 2: Private Send (prominent) */}
-              <View style={[styles.quickActions, { marginTop: Spacing.sm }]}>
-                <TouchableOpacity
-                  style={[styles.quickAction, { flex: 1, backgroundColor: 'rgba(57, 197, 187, 0.08)', borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.2)' }]}
-                  onPress={() => router.push('/(main)/(privacy)/private-send' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Private Send with Privacy Router"
-                  accessibilityHint="Send SOL through multiple wallets with time delays for maximum anonymity"
-                >
-                  <Ionicons name="git-branch-outline" size={16} color={P01Colors.cyan} />
-                  <Text style={[styles.quickActionText, { color: P01Colors.cyan }]}>Private Send</Text>
-                  <View style={{ backgroundColor: 'rgba(57, 197, 187, 0.2)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 4 }}>
-                    <Text style={{ color: P01Colors.cyan, fontSize: 9, fontWeight: '700' }}>NEW</Text>
+              <View style={s.featureInfo}>
+                <View style={s.featureTitleRow}>
+                  <Text style={s.featureTitle}>{t('privacy.privateSend')}</Text>
+                  <View style={s.newBadge}>
+                    <Text style={s.newBadgeText}>NEW</Text>
                   </View>
-                </TouchableOpacity>
+                </View>
+                <Text style={s.featureDesc}>
+                  Route through multiple wallets with time delays
+                </Text>
               </View>
-              {/* Quick Actions — Row 3: Send & Receive */}
-              <View style={[styles.quickActions, { marginTop: Spacing.sm }]}>
-                <TouchableOpacity
-                  style={[styles.quickAction, { backgroundColor: 'rgba(139, 139, 255, 0.12)' }]}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-transfer' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Send private transfer${matureNoteCount > 0 ? `, ${matureNoteCount} mature notes available` : ''}`}
-                >
-                  <Ionicons name="send" size={16} color="#8B8BFF" />
-                  <Text style={[styles.quickActionText, { color: '#8B8BFF' }]}>Send</Text>
-                  {matureNoteCount > 0 && (
-                    <View style={styles.actionBadge}>
-                      <Text style={styles.actionBadgeText}>{matureNoteCount}</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.quickAction, { backgroundColor: 'rgba(139, 139, 255, 0.12)' }]}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Receive private transfer"
-                >
-                  <Ionicons name="download" size={16} color="#8B8BFF" />
-                  <Text style={[styles.quickActionText, { color: '#8B8BFF' }]}>Receive</Text>
-                </TouchableOpacity>
-              </View>
-            </BlurView>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Explainer */}
-        <Animated.View entering={FadeInUp.delay(200)}>
-          <View style={styles.explainerCard}>
-            <Ionicons name="information-circle-outline" size={18} color={Colors.textTertiary} />
-            <Text style={styles.explainerText}>
-              Privacy Pool uses STARK proofs (quantum-resistant, hash-based) with fixed denominations for maximum anonymity. All proofs are generated on your device — no private data leaves your phone.
-            </Text>
+        {/* ─── 4. YOUR NOTES (collapsible) ─────────────── */}
+        {activeNotes.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(300).duration(300)}>
+            <TouchableOpacity
+              style={s.notesHeader}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setNotesExpanded(!notesExpanded);
+              }}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Your notes, ${activeNotes.length} total`}
+            >
+              <Text style={s.sectionTitle}>{t('privacy.myNotes')}</Text>
+              <View style={s.notesHeaderRight}>
+                <Text style={s.notesCount}>{activeNotes.length}</Text>
+                <Ionicons
+                  name={notesExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={Colors.textTertiary}
+                />
+              </View>
+            </TouchableOpacity>
+
+            {notesExpanded && (
+              <View style={s.notesList}>
+                {activeNotes.slice(0, 8).map((note, i) => (
+                  <View key={note.id} style={s.noteRow}>
+                    <View style={[
+                      s.noteStatus,
+                      { backgroundColor: note.status === 'mature' ? P01Colors.cyanDim : P01Colors.yellowDim },
+                    ]}>
+                      <Ionicons
+                        name={note.status === 'mature' ? 'checkmark-circle' : 'time'}
+                        size={14}
+                        color={note.status === 'mature' ? P01Colors.cyan : P01Colors.yellow}
+                      />
+                    </View>
+                    <View style={s.noteInfo}>
+                      <Text style={s.noteAmount}>{note.denomination} SOL</Text>
+                      <Text style={s.noteStatusText}>
+                        {note.status === 'mature' ? 'Ready to use' : 'Maturing...'}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+                {activeNotes.length > 8 && (
+                  <Text style={s.notesMore}>+{activeNotes.length - 8} more</Text>
+                )}
+                <TouchableOpacity
+                  style={s.notesViewAll}
+                  onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel="View all notes"
+                >
+                  <Text style={s.notesViewAllText}>{t('privacy.viewAllNotes')}</Text>
+                  <Ionicons name="chevron-forward" size={14} color={P01Colors.cyan} />
+                </TouchableOpacity>
+              </View>
+            )}
+          </Animated.View>
+        )}
+
+        {/* ─── 5. PROTECTION STATUS ────────────────────── */}
+        <Animated.View entering={FadeInDown.delay(400).duration(300)}>
+          <Text style={[s.sectionTitle, { marginBottom: 10 }]}>Protection</Text>
+          <View style={s.badgesRow}>
+            <ProtectionBadge icon="hardware-chip" label="On-device proofs" active />
+            <ProtectionBadge icon="lock-closed" label="Encrypted" active />
+            <ProtectionBadge icon="people" label="MPC" active={isMpcActive} />
           </View>
+          <Text style={s.protectionHint}>
+            All proofs are generated on your phone. No private data ever leaves your device.
+          </Text>
         </Animated.View>
 
-        {/* ═══════ MPC ENHANCEMENT: Arcium — always on ═══════ */}
-        <Animated.View entering={FadeInUp.delay(250)}>
-          <View style={styles.mpcCard}>
-            <View style={styles.mpcCardRow}>
-              <View style={styles.mpcIconWrap}>
-                <Ionicons name="shield-checkmark" size={16} color="#7C3AED" />
-              </View>
-              <View style={styles.mpcCardInfo}>
-                <Text style={styles.mpcCardTitle}>
-                  Multi-Party Computation
-                </Text>
-                <Text style={styles.mpcCardDesc}>
-                  {isMpcActive
-                    ? 'Arcium MPC active — threshold computation enabled'
-                    : 'Arcium MPC initializing...'}
+        {/* ─── 6. LEGACY FUNDS WARNING ─────────────────── */}
+        {hasLegacyFunds && (
+          <Animated.View entering={FadeInDown.delay(500).duration(300)}>
+            <View style={s.legacyCard}>
+              <Ionicons name="alert-circle" size={18} color={P01Colors.yellow} />
+              <View style={s.legacyInfo}>
+                <Text style={s.legacyTitle}>Legacy funds detected</Text>
+                <Text style={s.legacyDesc}>
+                  {hasShieldedFunds && `${shieldedBalance.toFixed(4)} SOL in Shielded Wallet`}
+                  {hasShieldedFunds && hasConfidentialFunds && ' · '}
+                  {hasConfidentialFunds && `${confidentialSolBalance.toFixed(4)} SOL in Confidential Balance`}
                 </Text>
               </View>
-              <View style={{ backgroundColor: '#10b98120', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
-                <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '600' }}>ON</Text>
-              </View>
+              <TouchableOpacity
+                style={s.legacyBtn}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  if (hasShieldedFunds) {
+                    router.push('/(main)/(privacy)/shielded');
+                  } else {
+                    router.push('/(main)/(privacy)/confidential');
+                  }
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Withdraw legacy funds"
+              >
+                <Text style={s.legacyBtnText}>Withdraw</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-        </Animated.View>
-
-        {/* ═══════ LEGACY: Shielded Wallet (conditional) ═══════ */}
-        {showShielded && (
-          <Animated.View entering={FadeInUp.delay(300)}>
-            {/* Funds warning if toggle is off */}
-            {hasShieldedFunds && !shieldedWalletEnabled && (
-              <View style={styles.fundsWarning}>
-                <Ionicons name="alert-circle" size={16} color={P01Colors.yellow} />
-                <Text style={styles.fundsWarningText}>
-                  You have {shieldedBalance.toFixed(4)} SOL in this pool — withdraw recommended.
-                </Text>
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.modeCard}
-              onPress={() => router.push('/(main)/(privacy)/shielded')}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Shielded Wallet, legacy, ${shieldedInitialized ? `${shieldedBalance.toFixed(4)} SOL shielded` : 'variable-amount privacy pool'}`}
-            >
-              <BlurView intensity={10} tint="dark" style={styles.modeCardGradient}>
-                <View style={styles.modeCardHeader}>
-                  <View style={[styles.modeIconContainer, { backgroundColor: 'rgba(100,100,100,0.15)' }]}>
-                    <Ionicons name="shield-half" size={24} color={Colors.textSecondary} />
-                  </View>
-                  <View style={styles.modeCardInfo}>
-                    <View style={styles.legacyTitleRow}>
-                      <Text style={styles.modeCardTitle}>Shielded Wallet</Text>
-                      <View style={styles.legacyBadge}>
-                        <Text style={styles.legacyBadgeText}>Legacy</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.modeCardSubtitle}>
-                      {shieldedInitialized
-                        ? `${shieldedBalance.toFixed(4)} SOL shielded`
-                        : 'Variable-amount privacy pool'}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color={Colors.textTertiary} />
-                </View>
-
-                <Text style={styles.migrationText}>
-                  Migrate to Privacy Pool for stronger anonymity with fixed denominations.
-                </Text>
-
-                <View style={styles.quickActions}>
-                  <TouchableOpacity
-                    style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
-                    onPress={() => router.push('/(main)/(privacy)/shielded')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Withdraw from shielded wallet"
-                  >
-                    <Ionicons name="arrow-up" size={16} color={Colors.textSecondary} />
-                    <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Withdraw</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
-                    onPress={() => router.push('/(main)/(privacy)/shielded-transfer')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Transfer from shielded wallet"
-                  >
-                    <Ionicons name="flash" size={16} color={Colors.textSecondary} />
-                    <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Transfer</Text>
-                  </TouchableOpacity>
-                </View>
-              </BlurView>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {/* ═══════ LEGACY: Confidential Balance (conditional) ═══════ */}
-        {showConfidential && (
-          <Animated.View entering={FadeInUp.delay(350)}>
-            {/* Funds warning if toggle is off */}
-            {hasConfidentialFunds && !confidentialBalanceEnabled && (
-              <View style={styles.fundsWarning}>
-                <Ionicons name="alert-circle" size={16} color={P01Colors.yellow} />
-                <Text style={styles.fundsWarningText}>
-                  You have {confidentialSolBalance.toFixed(4)} SOL in confidential balance — withdraw recommended.
-                </Text>
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.modeCard}
-              onPress={() => router.push('/(main)/(privacy)/confidential')}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Confidential Balance, legacy, ${confidentialInitialized ? `${confidentialSolBalance.toFixed(4)} SOL confidential` : 'quantum-resistant amount hiding'}`}
-            >
-              <BlurView intensity={10} tint="dark" style={styles.modeCardGradient}>
-                <View style={styles.modeCardHeader}>
-                  <View style={[styles.modeIconContainer, { backgroundColor: 'rgba(100,100,100,0.15)' }]}>
-                    <Ionicons name="lock-closed" size={24} color={Colors.textSecondary} />
-                  </View>
-                  <View style={styles.modeCardInfo}>
-                    <View style={styles.legacyTitleRow}>
-                      <Text style={styles.modeCardTitle}>Confidential Balance</Text>
-                      <View style={styles.legacyBadge}>
-                        <Text style={styles.legacyBadgeText}>Legacy</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.modeCardSubtitle}>
-                      {confidentialInitialized
-                        ? `${confidentialSolBalance.toFixed(4)} SOL confidential`
-                        : 'Quantum-resistant amount hiding'}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={20} color={Colors.textTertiary} />
-                </View>
-
-                <Text style={styles.migrationText}>
-                  Hides amounts but not sender/recipient. Use Privacy Pool for full anonymity.
-                </Text>
-
-                <View style={styles.quickActions}>
-                  <TouchableOpacity
-                    style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
-                    onPress={() => router.push('/(main)/(privacy)/confidential')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Withdraw from confidential balance"
-                  >
-                    <Ionicons name="arrow-up" size={16} color={Colors.textSecondary} />
-                    <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Withdraw</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.quickAction, { backgroundColor: 'rgba(100,100,100,0.1)' }]}
-                    onPress={() => router.push('/(main)/(privacy)/confidential')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Transfer from confidential balance"
-                  >
-                    <Ionicons name="flash" size={16} color={Colors.textSecondary} />
-                    <Text style={[styles.quickActionText, { color: Colors.textSecondary }]}>Transfer</Text>
-                  </TouchableOpacity>
-                </View>
-              </BlurView>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-
-        {/* Enable legacy features hint (shown when both are hidden) */}
-        {!showShielded && !showConfidential && (
-          <Animated.View entering={FadeInUp.delay(300)}>
-            <TouchableOpacity
-              style={styles.enableHint}
-              onPress={() => router.push('/(main)/(settings)')}
-              accessibilityRole="button"
-              accessibilityLabel="Enable legacy privacy features in Settings"
-            >
-              <Ionicons name="options-outline" size={16} color={Colors.textTertiary} />
-              <Text style={styles.enableHintText}>
-                Legacy privacy features (Shielded Wallet, Confidential Balance) can be enabled in Settings.
-              </Text>
-            </TouchableOpacity>
           </Animated.View>
         )}
       </ScrollView>
@@ -421,8 +317,11 @@ export default function PrivacyDashboard() {
   );
 }
 
-const styles = StyleSheet.create({
+// ─── Styles ───────────────────────────────────────────────────────
+const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'transparent' },
+
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -435,12 +334,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontFamily: FontFamily.bold,
   },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  headerButton: {
+  headerBtn: {
     width: 40,
     height: 40,
     borderRadius: 9999,
@@ -448,244 +342,297 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  settingsBadge: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: P01Colors.yellow,
-  },
-  scrollView: { flex: 1 },
+
+  // Scroll
+  scroll: { flex: 1 },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
     paddingBottom: 120,
   },
-  modeCard: {
-    borderRadius: 20,
-    overflow: 'hidden',
+
+  // 1. Hero
+  heroCard: {
+    backgroundColor: '#0f0f12',
+    borderRadius: 24,
+    padding: 24,
     marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
-  heroGradient: {
-    padding: Spacing.lg,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
-  },
-  modeCardGradient: {
-    padding: Spacing.lg,
-    backgroundColor: 'rgba(12, 12, 14, 0.6)',
-  },
-  modeCardHeader: {
+  heroTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    gap: 10,
+    marginBottom: 16,
   },
-  modeIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    justifyContent: 'center',
+  heroIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: P01Colors.cyanDim,
     alignItems: 'center',
-    marginRight: Spacing.md,
+    justifyContent: 'center',
   },
-  modeCardInfo: { flex: 1 },
-  heroTitle: {
-    fontSize: 18,
+  heroLabel: {
+    fontSize: 14,
+    fontFamily: FontFamily.medium,
+    color: Colors.textSecondary,
+  },
+  heroBalance: {
+    fontSize: 40,
     fontFamily: FontFamily.bold,
     color: Colors.text,
+    letterSpacing: -1,
   },
-  modeCardTitle: {
-    fontSize: 16,
+  heroUnit: {
+    fontSize: 20,
+    fontFamily: FontFamily.medium,
+    color: Colors.textSecondary,
+  },
+  heroMeta: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 12,
+  },
+  heroChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  heroDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  heroChipText: {
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+  },
+  heroEmpty: {
+    fontSize: 14,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginTop: 8,
+  },
+
+  // 2. Actions
+  actionsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: Spacing.lg,
+  },
+  actionBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 16,
+    borderRadius: 16,
+  },
+  actionLabel: {
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+  },
+
+  // 3. Feature card
+  featureCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0f0f12',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: Spacing.lg,
+  },
+  featureLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  featureIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: P01Colors.cyanDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureInfo: { flex: 1 },
+  featureTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  featureTitle: {
+    fontSize: 15,
     fontFamily: FontFamily.semibold,
     color: Colors.text,
   },
-  modeCardSubtitle: {
-    fontSize: 13,
+  featureDesc: {
+    fontSize: 12,
     fontFamily: FontFamily.regular,
     color: Colors.textSecondary,
     marginTop: 2,
   },
-  legacyTitleRow: {
+  newBadge: {
+    backgroundColor: P01Colors.cyanDim,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  newBadgeText: {
+    color: P01Colors.cyan,
+    fontSize: 9,
+    fontFamily: FontFamily.bold,
+  },
+
+  // 4. Notes
+  sectionTitle: {
+    fontSize: 15,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
+    marginBottom: 4,
+  },
+  notesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    marginBottom: 4,
+  },
+  notesHeaderRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  legacyBadge: {
-    backgroundColor: 'rgba(100,100,100,0.2)',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  legacyBadgeText: {
-    fontSize: 10,
-    fontFamily: FontFamily.mono,
-    fontWeight: '600',
-    color: Colors.textTertiary,
-  },
-  migrationText: {
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginBottom: Spacing.md,
-    lineHeight: 17,
-  },
-  quickStats: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderRadius: 14,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  statLabel: {
-    fontSize: 11,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginTop: 2,
-  },
-  statDivider: {
-    width: 1,
-    backgroundColor: Colors.border,
-    marginHorizontal: 4,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  quickAction: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    borderRadius: 12,
-  },
-  quickActionText: {
+  notesCount: {
     fontSize: 13,
     fontFamily: FontFamily.medium,
-  },
-  actionBadge: {
-    backgroundColor: '#8B8BFF',
+    color: Colors.textSecondary,
+    backgroundColor: Colors.surfaceSecondary,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     borderRadius: 8,
-    minWidth: 16,
-    height: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
+    overflow: 'hidden',
   },
-  actionBadgeText: {
-    fontSize: 10,
-    fontFamily: FontFamily.bold,
-    color: '#000',
-  },
-  explainerCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderRadius: 14,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.04)',
+  notesList: {
+    backgroundColor: '#0f0f12',
+    borderRadius: 16,
+    padding: 12,
     marginBottom: Spacing.lg,
   },
-  explainerText: {
-    flex: 1,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    lineHeight: 18,
-  },
-  fundsWarning: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: P01Colors.yellowDim,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.sm,
-    marginBottom: Spacing.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 204, 0, 0.3)',
-  },
-  fundsWarningText: {
-    flex: 1,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: P01Colors.yellow,
-    lineHeight: 16,
-  },
-  mpcCard: {
-    backgroundColor: 'rgba(124, 58, 237, 0.04)',
-    borderRadius: 14,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(124, 58, 237, 0.10)',
-    marginBottom: Spacing.lg,
-  },
-  mpcCardRow: {
+  noteRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    paddingVertical: 8,
   },
-  mpcIconWrap: {
-    width: 32,
-    height: 32,
+  noteStatus: {
+    width: 30,
+    height: 30,
     borderRadius: 10,
-    backgroundColor: 'rgba(124, 58, 237, 0.10)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  mpcCardInfo: { flex: 1 },
-  mpcCardTitle: {
-    fontSize: 12,
-    fontFamily: FontFamily.bold,
-    color: '#7C3AED',
-    letterSpacing: 0.3,
-    marginBottom: 2,
+  noteInfo: { flex: 1 },
+  noteAmount: {
+    fontSize: 14,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
   },
-  mpcCardDesc: {
+  noteStatusText: {
     fontSize: 11,
     fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  notesMore: {
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
-    lineHeight: 16,
+    textAlign: 'center',
+    paddingVertical: 6,
   },
-  mpcStatusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  mpcDotActive: {
-    backgroundColor: '#22c55e',
-  },
-  mpcDotIdle: {
-    backgroundColor: 'rgba(124, 58, 237, 0.4)',
-  },
-  enableHint: {
+  notesViewAll: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    justifyContent: 'center',
+    gap: 4,
+    paddingTop: 10,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.04)',
   },
-  enableHintText: {
-    flex: 1,
+  notesViewAllText: {
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+    color: P01Colors.cyan,
+  },
+
+  // 5. Protection
+  badgesRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#0f0f12',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  badgeActive: {
+    backgroundColor: P01Colors.cyanDim,
+  },
+  badgeLabel: {
+    fontSize: 11,
+    fontFamily: FontFamily.medium,
+    color: Colors.textTertiary,
+  },
+  badgeLabelActive: {
+    color: P01Colors.cyan,
+  },
+  protectionHint: {
     fontSize: 12,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
     lineHeight: 17,
+    marginBottom: Spacing.lg,
+  },
+
+  // 6. Legacy
+  legacyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: P01Colors.yellowDim,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: Spacing.lg,
+  },
+  legacyInfo: { flex: 1 },
+  legacyTitle: {
+    fontSize: 13,
+    fontFamily: FontFamily.semibold,
+    color: P01Colors.yellow,
+  },
+  legacyDesc: {
+    fontSize: 11,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  legacyBtn: {
+    backgroundColor: 'rgba(255, 204, 0, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  legacyBtnText: {
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+    color: P01Colors.yellow,
   },
 });

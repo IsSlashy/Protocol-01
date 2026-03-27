@@ -8,8 +8,10 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import { WordChip } from '../../components/onboarding';
+import { useT } from '@/i18n';
 
 export default function VerifyScreen() {
+  const t = useT();
   const router = useRouter();
   const [selectedWords, setSelectedWords] = useState<string[]>([]);
   const [error, setError] = useState(false);
@@ -79,12 +81,12 @@ export default function VerifyScreen() {
 
   const handleSkip = useCallback(() => {
     p01Alert(
-      'Skip Verification?',
-      'Are you sure you have backed up your recovery phrase? You cannot recover your wallet without it.',
+      t('onboarding.skipVerification'),
+      t('onboarding.skipVerificationDesc'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Skip',
+          text: t('onboarding.skip'),
           style: 'destructive',
           onPress: () => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -134,10 +136,10 @@ export default function VerifyScreen() {
             <Ionicons name="shield-checkmark" size={32} color="#39c5bb" />
           </View>
           <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-            Verify Your Backup
+            {t('onboarding.verifyBackup')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            Tap the words in the correct order to verify your backup
+            {t('onboarding.verifyBackupDesc')}
           </Text>
         </Animated.View>
 
@@ -160,7 +162,7 @@ export default function VerifyScreen() {
             </Text>
             {selectedWords.length > 0 && (
               <TouchableOpacity onPress={handleClearAll} activeOpacity={0.7}>
-                <Text style={{ color: '#39c5bb', fontSize: 13 }}>Clear All</Text>
+                <Text style={{ color: '#39c5bb', fontSize: 13 }}>{t('onboarding.clearAll')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -168,7 +170,7 @@ export default function VerifyScreen() {
           {selectedWords.length === 0 ? (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
               <Ionicons name="arrow-down" size={32} color="#2a2a30" />
-              <Text style={{ color: '#2a2a30', marginTop: 8 }}>Tap words below to add</Text>
+              <Text style={{ color: '#2a2a30', marginTop: 8 }}>{t('onboarding.tapWordsToAdd')}</Text>
             </View>
           ) : (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -201,7 +203,7 @@ export default function VerifyScreen() {
             >
               <Ionicons name="alert-circle" size={16} color="#ef4444" />
               <Text style={{ color: '#f87171', fontSize: 13, marginLeft: 8 }}>
-                Incorrect order. Please try again.
+                {t('onboarding.incorrectOrder')}
               </Text>
             </Animated.View>
           )}
@@ -209,7 +211,7 @@ export default function VerifyScreen() {
 
         {/* Word Pool */}
         <Animated.View entering={FadeInDown.delay(600).duration(600)}>
-          <Text style={{ color: '#555560', fontSize: 13, marginBottom: 12 }}>Available words:</Text>
+          <Text style={{ color: '#555560', fontSize: 13, marginBottom: 12 }}>{t('onboarding.availableWords')}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {shuffledWords.map((word, index) => {
               const isSelected = selectedWords.includes(word);
@@ -261,7 +263,7 @@ export default function VerifyScreen() {
                 color: isComplete ? '#ffffff' : '#555560',
               }}
             >
-              VERIFY
+              {t('onboarding.verify')}
             </Text>
           </TouchableOpacity>
 
@@ -270,7 +272,7 @@ export default function VerifyScreen() {
             activeOpacity={0.7}
             style={{ paddingVertical: 12, alignItems: 'center' }}
           >
-            <Text style={{ color: '#555560', fontSize: 16 }}>Skip for now</Text>
+            <Text style={{ color: '#555560', fontSize: 16 }}>{t('onboarding.skipForNow')}</Text>
           </TouchableOpacity>
         </Animated.View>
       </View>

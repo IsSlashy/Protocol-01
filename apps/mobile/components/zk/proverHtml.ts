@@ -16,7 +16,7 @@ export const PROVER_HTML = `
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' file:; style-src 'unsafe-inline'; connect-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' file: blob:; worker-src blob:; style-src 'unsafe-inline'; connect-src 'none';">
 </head>
 <body>
 <script>

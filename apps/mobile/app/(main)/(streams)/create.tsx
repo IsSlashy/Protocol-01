@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,16 +9,11 @@ import { CreateStreamForm, StreamFormData } from '../../../components/streams';
 import { useStreamStore } from '../../../stores/streamStore';
 import { StreamFrequency } from '../../../services/solana/streams';
 import { p01Alert } from '@/stores/alertStore';
-
-// Protocol 01 Color System
-const COLORS = {
-  pink: '#ff77a8',
-  pinkDim: '#cc5f86',
-  void: '#0a0a0c',
-  text: '#ffffff',
-};
+import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { useT } from '@/i18n';
 
 export default function CreatePersonalStreamScreen() {
+  const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { createNewStream, loading } = useStreamStore();
@@ -27,25 +22,17 @@ export default function CreatePersonalStreamScreen() {
   const handleCreateStream = async (data: StreamFormData) => {
     try {
       setIsSubmitting(true);
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      // Validate address
-      try {
-        new PublicKey(data.recipient);
-      } catch {
-        p01Alert('Invalid Address', 'Please enter a valid Solana wallet address.');
-        setIsSubmitting(false);
-        return;
+      try { new PublicKey(data.recipient); } catch {
+        p01Alert(t('createStream.invalidAddressShort'), t('alerts.invalidAddress'));
+        setIsSubmitting(false); return;
       }
 
-      // Calculate end date based on duration
       const now = Date.now();
-      const endDate = now + data.duration * 24 * 60 * 60 * 1000;
-
-      // Use the frequency selected by user
+      const endDate = now + data.duration * 86_400_000;
       const frequency: StreamFrequency = data.frequency;
 
-      // Create the personal payment stream
       const stream = await createNewStream({
         name: data.name || `Payment to ${data.recipient.slice(0, 8)}...`,
         recipientAddress: data.recipient,
@@ -54,81 +41,53 @@ export default function CreatePersonalStreamScreen() {
         endDate,
       });
 
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-      p01Alert(
-        'Payment Stream Created!',
-        `Your recurring payment of ${data.amount} ${data.token} has been set up.\n\nFirst payment will be processed immediately.`,
-        [
-          {
-            text: 'View Stream',
-            onPress: () => router.replace(`/(main)/(streams)/${stream.id}`),
-          },
-          {
-            text: 'Done',
-            onPress: () => router.back(),
-          },
-        ]
-      );
-    } catch (error: any) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      p01Alert('Error', error.message || 'Failed to create payment stream. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      p01Alert(t('createStream.streamCreated'),
+        t('createStream.streamCreatedDesc', { amount: data.amount, token: data.token }),
+        [{ text: t('createStream.viewStream'), onPress: () => router.replace(`/(main)/(streams)/${stream.id}`) },
+         { text: t('common.done'), onPress: () => router.back() }]);
+    } catch (e: any) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      p01Alert(t('common.error'), e.message || t('alerts.errorGeneric'));
+    } finally { setIsSubmitting(false); }
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.void }}>
-      {/* Header */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: 16,
-          paddingVertical: 12,
-          paddingTop: insets.top + 8,
-        }}
-      >
-        <TouchableOpacity
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            backgroundColor: 'rgba(255, 119, 168, 0.2)',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Ionicons name="close" size={24} color={COLORS.pink} />
+    <View style={st.container}>
+      <View style={[st.header, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
+          <Ionicons name="close" size={22} color={Colors.text} />
         </TouchableOpacity>
-
         <View style={{ alignItems: 'center' }}>
-          <Text style={{ color: COLORS.text, fontSize: 17, fontWeight: '600' }}>
-            Personal Payment
-          </Text>
-          <Text style={{ color: COLORS.pink, fontSize: 11, marginTop: 2 }}>
-            Salary, allowance, or recurring transfer
-          </Text>
+          <Text style={st.headerTitle}>{t('createStream.title')}</Text>
+          <Text style={st.headerSub}>{t('createStream.subtitle')}</Text>
         </View>
-
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Form */}
-      <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 8 }}>
+      <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 8 }}>
         <CreateStreamForm
           onSubmit={handleCreateStream}
           loading={loading || isSubmitting}
-          accentColor={COLORS.pink}
-          submitLabel="Create Payment Stream"
-          hideServiceSelector={true}
+          accentColor={P01Colors.cyan}
+          submitLabel={t('createStream.createStream')}
+          hideServiceSelector
         />
       </View>
     </View>
   );
 }
+
+const st = StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,
+  },
+  backBtn: {
+    width: 40, height: 40, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  },
+  headerTitle: { fontSize: 18, fontFamily: FontFamily.semibold, color: Colors.text },
+  headerSub: { fontSize: 12, fontFamily: FontFamily.regular, color: P01Colors.cyan, marginTop: 2 },
+});
