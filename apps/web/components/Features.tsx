@@ -8,23 +8,25 @@ import {
   Wallet, Radio, ArrowLeftRight, Bot, Shield, Layers,
   Lock, Calendar, Eye, Fingerprint, Globe, Zap,
 } from "lucide-react";
+import { useT } from "@/i18n";
 
 const features = [
-  { icon: Shield, name: "Auto-Shield", color: "#39c5bb" },
-  { icon: Wallet, name: "Stealth Transfers", color: "#ff2d7a" },
-  { icon: Layers, name: "Privacy Pools", color: "#39c5bb" },
-  { icon: Radio, name: "Private Subscriptions", color: "#00ffe5" },
-  { icon: ArrowLeftRight, name: "Token Swap", color: "#39c5bb" },
-  { icon: Bot, name: "AI Agent", color: "#ffcc00" },
-  { icon: Lock, name: "ZK Proofs", color: "#ff2d7a" },
-  { icon: Globe, name: "Tor Relay", color: "#00ffe5" },
-  { icon: Eye, name: "Confidential Balances", color: "#39c5bb" },
-  { icon: Fingerprint, name: "Stealth Meta-Addresses", color: "#ff2d7a" },
-  { icon: Calendar, name: "Subscription Vaults", color: "#ffcc00" },
-  { icon: Zap, name: "Multi-Hop Routing", color: "#00ffe5" },
+  { icon: Shield, name: "autoShield", color: "#39c5bb" },
+  { icon: Wallet, name: "stealthTransfers", color: "#ff2d7a" },
+  { icon: Layers, name: "privacyPools", color: "#39c5bb" },
+  { icon: Radio, name: "privateSubscriptions", color: "#00ffe5" },
+  { icon: ArrowLeftRight, name: "tokenSwap", color: "#39c5bb" },
+  { icon: Bot, name: "aiAgent", color: "#ffcc00" },
+  { icon: Lock, name: "zkProofs", color: "#ff2d7a" },
+  { icon: Globe, name: "torRelay", color: "#00ffe5" },
+  { icon: Eye, name: "confidentialBalances", color: "#39c5bb" },
+  { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a" },
+  { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00" },
+  { icon: Zap, name: "multiHopRouting", color: "#00ffe5" },
 ];
 
 export default function Features() {
+  const t = useT();
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
@@ -41,14 +43,14 @@ export default function Features() {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#39c5bb]/8 border border-[#39c5bb]/15 rounded-full mb-6">
             <div className="w-1 h-1 bg-[#39c5bb] rounded-full" />
             <span className="text-[10px] font-mono text-[#39c5bb] uppercase tracking-[0.25em]">
-              12 Privacy Modules
+              {t('features.badge')}
             </span>
           </div>
           <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white tracking-tight mb-4">
-            Everything you need.
+            {t('features.title1')}
             <br />
             <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
-              Nothing they can trace.
+              {t('features.title2')}
             </span>
           </h2>
         </motion.div>
@@ -85,7 +87,7 @@ export default function Features() {
 
                 {/* Name */}
                 <h3 className="text-sm font-semibold text-white/90 font-display tracking-wide">
-                  {feature.name}
+                  {t(`features.${feature.name}`)}
                 </h3>
               </div>
             </motion.div>
@@ -116,7 +118,7 @@ export default function Features() {
             href="/docs"
             className="text-[#888892] text-xs font-mono tracking-wider hover:text-[#39c5bb] transition-colors"
           >
-            EXPLORE DOCUMENTATION →
+            {t('features.exploreDocs')}
           </Link>
         </motion.div>
       </div>

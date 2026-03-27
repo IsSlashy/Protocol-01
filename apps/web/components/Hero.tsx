@@ -3,6 +3,7 @@
 import { memo } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useT } from "@/i18n";
 import GlitchLogo01 from "./GlitchLogo01";
 import PhoneMockup from "./PhoneMockup";
 
@@ -19,6 +20,7 @@ import PhoneMockup from "./PhoneMockup";
 
 // Terminal-style status text - CSS animated
 const SystemStatus = memo(function SystemStatus() {
+  const t = useT();
   return (
     <div className="mt-6 flex flex-col items-start">
       <style dangerouslySetInnerHTML={{ __html: `
@@ -67,7 +69,7 @@ const SystemStatus = memo(function SystemStatus() {
         className="text-[#ff2d7a] text-xs font-bold tracking-[6px] mb-3 font-mono"
         style={{ letterSpacing: "0.4em" }}
       >
-        [ SYSTEM STATUS ]
+        {t('hero.systemStatus')}
       </span>
 
       {/* SUBSCRIBE PRIVATELY - with chromatic glitch */}
@@ -81,7 +83,7 @@ const SystemStatus = memo(function SystemStatus() {
             willChange: "opacity, transform",
           }}
         >
-          SUBSCRIBE PRIVATELY
+          {t('hero.subscribePrivately')}
         </span>
 
         {/* Pink ghost layer - CSS animated */}
@@ -94,7 +96,7 @@ const SystemStatus = memo(function SystemStatus() {
             willChange: "opacity, transform",
           }}
         >
-          SUBSCRIBE PRIVATELY
+          {t('hero.subscribePrivately')}
         </span>
 
         {/* Main text - CSS animated */}
@@ -106,7 +108,7 @@ const SystemStatus = memo(function SystemStatus() {
             willChange: "transform",
           }}
         >
-          SUBSCRIBE PRIVATELY
+          {t('hero.subscribePrivately')}
         </span>
       </div>
 
@@ -120,7 +122,7 @@ const SystemStatus = memo(function SystemStatus() {
           className="text-[#555560] text-xs tracking-[4px] font-mono uppercase"
           style={{ letterSpacing: "0.3em" }}
         >
-          READY
+          {t('hero.ready')}
         </span>
       </div>
     </div>
@@ -158,6 +160,7 @@ const CorruptionNoise = memo(function CorruptionNoise() {
 });
 
 function Hero() {
+  const t = useT();
   return (
     <section className="relative min-h-screen flex items-center overflow-hidden">
       {/* CSS Animations for Hero elements */}
@@ -254,7 +257,7 @@ function Hero() {
             >
               <span className="w-2 h-2 bg-[#39c5bb]" />
               <span className="text-sm text-[#39c5bb] font-mono uppercase tracking-wider">
-                Protocol Active
+                {t('hero.protocolActive')}
               </span>
             </div>
 
@@ -288,10 +291,10 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <p>Denominated pools. Confidential balances.</p>
-              <p>Anonymous subscriptions. Stealth transfers.</p>
-              <p>Quantum-resistant privacy on Solana.</p>
-              <p className="text-[#39c5bb]">Your finances, your privacy.</p>
+              <p>{t('hero.desc1')}</p>
+              <p>{t('hero.desc2')}</p>
+              <p>{t('hero.desc3')}</p>
+              <p className="text-[#39c5bb]">{t('hero.desc4')}</p>
             </div>
 
             {/* CTA Buttons - sharp edges, no soft shadows */}
@@ -317,7 +320,7 @@ function Hero() {
                 >
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
-                Initialize Protocol
+                {t('hero.initProtocol')}
               </button>
               <Link href="/docs" className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
                 <svg
@@ -330,7 +333,7 @@ function Hero() {
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
                 </svg>
-                Documentation
+                {t('hero.documentation')}
               </Link>
             </div>
 
@@ -343,9 +346,9 @@ function Hero() {
               }}
             >
               {[
-                { value: "∞", label: "Recurring", color: "text-[#39c5bb]" },
-                { value: "100%", label: "Private", color: "text-[#ff2d7a]" },
-                { value: "0", label: "Traces", color: "text-[#00ffe5]" },
+                { value: "∞", label: t('hero.recurring'), color: "text-[#39c5bb]" },
+                { value: "100%", label: t('hero.private'), color: "text-[#ff2d7a]" },
+                { value: "0", label: t('hero.traces'), color: "text-[#00ffe5]" },
               ].map((stat, index) => (
                 <div key={index} className="text-left">
                   <div
@@ -410,7 +413,7 @@ TRACE::NULL`}
           style={{ animation: "scroll-bounce 1.5s ease-in-out infinite" }}
         >
           <span className="text-xs text-[#555560] font-mono uppercase tracking-widest">
-            Scroll
+            {t('hero.scroll')}
           </span>
           <div className="w-6 h-10 border-2 border-[#2a2a30] flex items-start justify-center p-2">
             <div
