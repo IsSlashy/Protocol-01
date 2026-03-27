@@ -255,6 +255,18 @@ const roadmap: RoadmapPhase[] = [
           "Full codebase audit: 56 screens, 80+ components, all using P01 design system. Zero TypeScript errors. Settings components fixed to use theme constants.",
         icon: <Code className="w-5 h-5" />,
       },
+      {
+        title: "Full Stealth Unshield (v0.9.5)",
+        description:
+          "User wallet never appears on-chain during unshield. Ephemeral stealth signer pays fees, ECDH one-time recipient receives from pool. Delayed auto-sweep with timing jitter. MPC nullifier fix (4\u00d7u64 chunks).",
+        icon: <Eye className="w-5 h-5" />,
+      },
+      {
+        title: "i18n (EN/FR/JA)",
+        description:
+          "Full internationalization across all mobile screens and web pages. English, French, and Japanese. Language auto-detected from device settings.",
+        icon: <Globe className="w-5 h-5" />,
+      },
     ],
   },
   {
