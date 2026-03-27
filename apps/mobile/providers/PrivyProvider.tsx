@@ -164,6 +164,21 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
   // Track last synced address to avoid re-initializing on every render
   const lastSyncedAddress = React.useRef<string | null>(null);
 
+  // Auto-create embedded wallet if authenticated but no wallet exists
+  // This handles the case where user logs in via Google/Apple OAuth
+  // and the embedded Solana wallet hasn't been created yet.
+  useEffect(() => {
+    if (isAuthenticated && !solanaWalletFromArray?.address && solanaWallet?.create) {
+      console.log('[Privy] Authenticated but no wallet — auto-creating embedded wallet...');
+      solanaWallet.create().then(() => {
+        console.log('[Privy] Embedded wallet created');
+      }).catch((err: any) => {
+        // Wallet may already exist — not a fatal error
+        console.warn('[Privy] Auto-create wallet:', err.message?.slice(0, 80));
+      });
+    }
+  }, [isAuthenticated, solanaWalletFromArray?.address, solanaWallet?.create]);
+
   // Sync Privy wallet with wallet store — only when address actually changes
   useEffect(() => {
     if (solanaWalletFromArray?.address) {
