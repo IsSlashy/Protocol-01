@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, createContext, useContext } fr
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { useT } from "@/i18n";
 import {
   Link2,
   FileCode,
@@ -317,6 +318,7 @@ export default function SDKDemoPage() {
 
 function SDKDemoContent() {
   const [activeTab, setActiveTab] = useState<"devnet" | "privacy" | "streams" | "widgets" | "buttons" | "cards">("devnet");
+  const t = useT();
 
   return (
     <div className="min-h-screen bg-p01-void">
@@ -328,15 +330,15 @@ function SDKDemoContent() {
               <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
             </Link>
             <span className="text-p01-text-dim">/</span>
-            <span className="text-white font-medium">SDK Demo</span>
+            <span className="text-white font-medium">{t('sdkDemo.headerTitle')}</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-p01-elevated px-3 py-1.5 rounded-lg border border-p01-border">
               <div className="w-2 h-2 bg-p01-cyan animate-pulse" />
-              <span className="text-p01-cyan text-sm font-mono">100% Serverless</span>
+              <span className="text-p01-cyan text-sm font-mono">{t('sdkDemo.serverless')}</span>
             </div>
             <div className="flex items-center gap-2 bg-p01-elevated px-3 py-1.5 rounded-lg border border-p01-pink/30">
-              <span className="text-p01-pink text-sm font-mono">On-chain verification</span>
+              <span className="text-p01-pink text-sm font-mono">{t('sdkDemo.onChainVerification')}</span>
             </div>
           </div>
         </div>
@@ -346,12 +348,12 @@ function SDKDemoContent() {
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="flex gap-2 mb-8 flex-wrap">
           {[
-            { id: "devnet" as const, label: "Devnet", icon: Cpu, color: "yellow" },
-            { id: "privacy" as const, label: "Privacy SDKs", icon: Shield, color: "cyan" },
-            { id: "streams" as const, label: "Stream SDK", icon: RefreshCw, color: "pink" },
-            { id: "widgets" as const, label: "Widgets", icon: CreditCard, color: "cyan" },
-            { id: "buttons" as const, label: "Buttons", icon: Zap, color: "cyan" },
-            { id: "cards" as const, label: "Cards", icon: FileText, color: "cyan" },
+            { id: "devnet" as const, label: t('sdkDemo.tabDevnet'), icon: Cpu, color: "yellow" },
+            { id: "privacy" as const, label: t('sdkDemo.tabPrivacy'), icon: Shield, color: "cyan" },
+            { id: "streams" as const, label: t('sdkDemo.tabStreams'), icon: RefreshCw, color: "pink" },
+            { id: "widgets" as const, label: t('sdkDemo.tabWidgets'), icon: CreditCard, color: "cyan" },
+            { id: "buttons" as const, label: t('sdkDemo.tabButtons'), icon: Zap, color: "cyan" },
+            { id: "cards" as const, label: t('sdkDemo.tabCards'), icon: FileText, color: "cyan" },
           ].map((tab) => {
             const isActive = activeTab === tab.id;
             const IconComponent = tab.icon;
@@ -393,8 +395,8 @@ function SDKDemoContent() {
         <div className="max-w-7xl mx-auto px-6 py-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3 text-sm text-p01-text-dim font-mono">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan">Beta</span>
-              <span>&copy; {new Date().getFullYear()} PROTOCOL 01. Devnet only &mdash; not audited.</span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan">{t('sdkDemo.beta')}</span>
+              <span>&copy; {new Date().getFullYear()} {t('sdkDemo.copyright')}</span>
             </div>
             <div className="flex items-center gap-6">
               <a href="https://x.com/Protocol01_" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Twitter / X</a>
@@ -410,6 +412,7 @@ function SDKDemoContent() {
 
 // ============ Privacy SDKs Section ============
 function PrivacySDKSection() {
+  const t = useT();
   return (
     <div className="space-y-8">
       {/* Section Header */}
@@ -418,9 +421,9 @@ function PrivacySDKSection() {
           <Shield size={20} className="text-p01-cyan" />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-white font-display">Privacy SDKs</h2>
+          <h2 className="text-2xl font-bold text-white font-display">{t('sdkDemo.privacySdksTitle')}</h2>
           <p className="text-p01-text-muted text-sm">
-            8 TypeScript packages for stealth addresses, ZK proofs, confidential balances, and more.
+            {t('sdkDemo.privacySdksDesc')}
           </p>
         </div>
       </div>
@@ -428,14 +431,14 @@ function PrivacySDKSection() {
       {/* SDK Overview Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { name: "@p01/specter-sdk", desc: "ECDH + ML-KEM-768 stealth addresses", color: "cyan" },
-          { name: "@p01/zk-sdk", desc: "Groth16 proofs (snarkjs)", color: "cyan" },
-          { name: "@p01/zkspl-sdk", desc: "Confidential SPL transfers", color: "pink" },
-          { name: "@p01/arcium-sdk", desc: "MPC computation (9 circuits)", color: "pink" },
-          { name: "@p01/privacy-toolkit", desc: "Poseidon, Merkle, WOTS+", color: "cyan" },
-          { name: "@p01/auth-sdk", desc: "Encrypted key management", color: "cyan" },
-          { name: "@p01/p01-js", desc: "Core SDK + wallet provider", color: "pink" },
-          { name: "@p01/rpc-config", desc: "Multi-RPC with fallback", color: "cyan" },
+          { name: "@p01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc'), color: "cyan" },
+          { name: "@p01/zk-sdk", desc: t('sdkDemo.sdkZkDesc'), color: "cyan" },
+          { name: "@p01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc'), color: "pink" },
+          { name: "@p01/arcium-sdk", desc: t('sdkDemo.sdkArciumDesc'), color: "pink" },
+          { name: "@p01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc'), color: "cyan" },
+          { name: "@p01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc'), color: "cyan" },
+          { name: "@p01/p01-js", desc: t('sdkDemo.sdkP01JsDesc'), color: "pink" },
+          { name: "@p01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc'), color: "cyan" },
         ].map((sdk) => (
           <div key={sdk.name} className="bg-p01-surface p-4 border border-p01-border hover:border-p01-cyan/50 transition-all group">
             <p className={`text-sm font-mono font-bold mb-1 ${sdk.color === "cyan" ? "text-p01-cyan" : "text-p01-pink"}`}>{sdk.name}</p>
@@ -446,12 +449,12 @@ function PrivacySDKSection() {
 
       {/* Stealth Addresses */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">Stealth Addresses (specter-sdk)</h3>
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.stealthTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          Generate unlinkable one-time addresses using ECDH + optional ML-KEM-768 post-quantum layer. Receive funds without revealing your identity.
+          {t('sdkDemo.stealthDesc')}
         </p>
         <CodeBlock
-          title="Stealth Address Generation"
+          title={t('sdkDemo.stealthCodeTitle')}
           code={`import { generateStealthAddress, scanForPayments } from '@p01/specter-sdk';
 
 // Sender generates a one-time stealth address for the recipient
@@ -474,12 +477,12 @@ const payments = await scanForPayments({
 
       {/* ZK Proofs */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">ZK Proofs (zk-sdk)</h3>
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.zkProofsTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          Generate Groth16 proofs locally for shielded transfers and balance verification. 7 circuits up to 12,222 constraints.
+          {t('sdkDemo.zkProofsDesc')}
         </p>
         <CodeBlock
-          title="Shield & Transfer with ZK Proofs"
+          title={t('sdkDemo.zkProofsCodeTitle')}
           code={`import { proveTransfer, verifyProof } from '@p01/zk-sdk';
 
 // Generate a Groth16 proof for a confidential transfer
@@ -501,12 +504,12 @@ const tx = await submitShieldedTransfer(connection, wallet, {
 
       {/* Confidential SPL */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">Confidential SPL (zkspl-sdk)</h3>
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.confSplTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          Shield SPL tokens (USDC, etc.) into denominated privacy pools with ZK proof verification.
+          {t('sdkDemo.confSplDesc')}
         </p>
         <CodeBlock
-          title="Shield USDC into Privacy Pool"
+          title={t('sdkDemo.confSplCodeTitle')}
           code={`import { shieldTokens, unshieldTokens } from '@p01/zkspl-sdk';
 
 // Shield 100 USDC into a denominated pool
@@ -529,12 +532,12 @@ const unshieldResult = await unshieldTokens({
 
       {/* Privacy Toolkit */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">Privacy Toolkit</h3>
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.privacyToolkitTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          Low-level cryptographic primitives: Poseidon hashing, Merkle trees, WOTS+ signatures, encrypted note storage.
+          {t('sdkDemo.privacyToolkitDesc')}
         </p>
         <CodeBlock
-          title="Poseidon Hash & Merkle Tree"
+          title={t('sdkDemo.privacyToolkitCodeTitle')}
           code={`import { poseidonHash, MerkleTree, WOTSKeypair } from '@p01/privacy-toolkit';
 
 // Poseidon hash for ZK-friendly commitments
@@ -554,12 +557,12 @@ const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
 
       {/* Arcium MPC */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">Arcium MPC (arcium-sdk)</h3>
+        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.arciumTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          Multi-party computation for operations that cannot be done client-side alone: confidential relaying, anonymous registry lookups, hidden nullifier checks.
+          {t('sdkDemo.arciumDesc')}
         </p>
         <CodeBlock
-          title="Confidential Relay via MPC"
+          title={t('sdkDemo.arciumCodeTitle')}
           code={`import { ArciumClient, COMP_DEFS } from '@p01/arcium-sdk';
 
 const arcium = new ArciumClient({
@@ -580,12 +583,12 @@ const result = await arcium.execute({
 
       {/* Architecture callout */}
       <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
-        <h4 className="text-white font-semibold mb-4 font-display text-center">Privacy Stack Architecture</h4>
+        <h4 className="text-white font-semibold mb-4 font-display text-center">{t('sdkDemo.archTitle')}</h4>
         <div className="flex items-center justify-center gap-4 text-center py-4 flex-wrap">
           {[
-            { label: "Client SDKs", sub: "specter · zk · zkspl", icon: Wallet },
-            { label: "Proof Layer", sub: "Groth16 · STARK · MPC", icon: Shield },
-            { label: "On-Chain", sub: "13 Anchor Programs", icon: Boxes },
+            { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl", icon: Wallet },
+            { label: t('sdkDemo.archProofLayer'), sub: "Groth16 · STARK · MPC", icon: Shield },
+            { label: t('sdkDemo.archOnChain'), sub: "13 Anchor Programs", icon: Boxes },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && (
@@ -605,15 +608,15 @@ const result = await arcium.execute({
           ))}
         </div>
         <p className="text-p01-text-dim text-xs text-center mt-4 font-mono">
-          All proving runs client-side. No secrets leave the device. 7 Groth16 circuits + 6 STARK AIRs + 9 MPC circuits.
+          {t('sdkDemo.archFooter')}
         </p>
       </div>
 
       {/* Install */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display">Install</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.installTitle')}</h3>
         <CodeBlock
-          title="pnpm (recommended)"
+          title={t('sdkDemo.installCodeTitle')}
           code={`# Core SDK
 pnpm add @p01/p01-js @p01/rpc-config
 
@@ -630,6 +633,7 @@ pnpm add @p01/arcium-sdk @p01/auth-sdk`}
 
 // ============ Devnet Section ============
 function DevnetSection() {
+  const t = useT();
   const { publicKey, connected, walletAvailable, connect } = useP01Wallet();
   const [balance, setBalance] = useState<number | null>(null);
   const [airdropLoading, setAirdropLoading] = useState(false);
@@ -756,42 +760,42 @@ function DevnetSection() {
           <Cpu size={20} className="text-yellow-500" />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-white font-display">Devnet Testing</h2>
+          <h2 className="text-2xl font-bold text-white font-display">{t('sdkDemo.devnetTitle')}</h2>
           <p className="text-p01-text-muted text-sm">
-            Test wallet connection, get devnet SOL, and simulate payments.
+            {t('sdkDemo.devnetDesc')}
           </p>
         </div>
       </div>
 
       {/* Wallet Connection Card */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display">1. Connect Wallet</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.connectWalletTitle')}</h3>
 
         {!walletAvailable ? (
           <div className="text-center py-8">
             <div className="w-16 h-16 bg-p01-surface border border-p01-border mx-auto mb-4 flex items-center justify-center">
               <Zap size={28} className="text-p01-text-dim" />
             </div>
-            <p className="text-p01-text-muted mb-2">Protocol 01 wallet not detected</p>
-            <p className="text-p01-text-dim text-sm">Make sure the extension is installed and enabled</p>
+            <p className="text-p01-text-muted mb-2">{t('sdkDemo.walletNotDetected')}</p>
+            <p className="text-p01-text-dim text-sm">{t('sdkDemo.walletNotDetectedHint')}</p>
           </div>
         ) : !connected ? (
           <div className="text-center py-8">
             <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 mx-auto mb-4 flex items-center justify-center">
               <Wallet size={28} className="text-p01-cyan" />
             </div>
-            <p className="text-p01-text-muted mb-4">Connect your wallet to get started</p>
+            <p className="text-p01-text-muted mb-4">{t('sdkDemo.connectToStart')}</p>
             <P01WalletButton variant="primary" size="lg" />
           </div>
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between p-4 bg-p01-elevated rounded-xl border border-p01-border">
               <div>
-                <p className="text-p01-text-dim text-xs mb-1">Connected Address</p>
+                <p className="text-p01-text-dim text-xs mb-1">{t('sdkDemo.connectedAddress')}</p>
                 <p className="text-white font-mono text-sm">{publicKey}</p>
               </div>
               <div className="text-right">
-                <p className="text-p01-text-dim text-xs mb-1">Devnet Balance</p>
+                <p className="text-p01-text-dim text-xs mb-1">{t('sdkDemo.devnetBalance')}</p>
                 <p className="text-p01-cyan font-bold text-xl">
                   {balance !== null ? `${balance.toFixed(4)} SOL` : '...'}
                 </p>
@@ -799,7 +803,7 @@ function DevnetSection() {
             </div>
             <div className="flex items-center gap-2 p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/30">
               <CheckIcon color={THEME.primaryColor} />
-              <span className="text-p01-cyan text-sm font-medium">Wallet connected to Devnet</span>
+              <span className="text-p01-cyan text-sm font-medium">{t('sdkDemo.walletConnectedDevnet')}</span>
             </div>
           </div>
         )}
@@ -807,14 +811,14 @@ function DevnetSection() {
 
       {/* Airdrop Card */}
       <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">2. Get Devnet SOL</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.getDevnetSolTitle')}</h3>
 
         {!connected ? (
-          <p className="text-p01-text-dim text-center py-4">Connect wallet first</p>
+          <p className="text-p01-text-dim text-center py-4">{t('sdkDemo.connectWalletFirst')}</p>
         ) : (
           <div className="space-y-4">
             <p className="text-p01-text-muted text-sm">
-              Request free SOL from the Solana devnet faucet for testing.
+              {t('sdkDemo.devnetFaucetDesc')}
             </p>
 
             <button
@@ -840,12 +844,12 @@ function DevnetSection() {
               {airdropLoading ? (
                 <>
                   <LoadingSpinner color={THEME.mutedColor} />
-                  Requesting Airdrop...
+                  {t('sdkDemo.requestingAirdrop')}
                 </>
               ) : (
                 <>
                   <RefreshCw size={18} />
-                  Request 1 SOL Airdrop
+                  {t('sdkDemo.requestAirdrop')}
                 </>
               )}
             </button>
@@ -866,14 +870,14 @@ function DevnetSection() {
 
       {/* Payment Simulation Card */}
       <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">3. Test Signing</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.testSigningTitle')}</h3>
 
         {!connected ? (
-          <p className="text-p01-text-dim text-center py-4">Connect wallet first</p>
+          <p className="text-p01-text-dim text-center py-4">{t('sdkDemo.connectWalletFirst')}</p>
         ) : (
           <div className="space-y-4">
             <p className="text-p01-text-muted text-sm">
-              Test message signing with the wallet. This will open an approval popup.
+              {t('sdkDemo.testSigningDesc')}
             </p>
 
             <button
@@ -899,12 +903,12 @@ function DevnetSection() {
               {paymentLoading ? (
                 <>
                   <LoadingSpinner color={THEME.mutedColor} />
-                  Waiting for approval...
+                  {t('sdkDemo.waitingApproval')}
                 </>
               ) : (
                 <>
                   <FileText size={18} />
-                  Sign Test Message
+                  {t('sdkDemo.signTestMessage')}
                 </>
               )}
             </button>
@@ -928,10 +932,10 @@ function DevnetSection() {
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
           <span className="text-p01-text-dim text-sm">
-            Network: <span className="text-yellow-500 font-medium">Solana Devnet</span>
+            {t('sdkDemo.networkLabel')} <span className="text-yellow-500 font-medium">{t('sdkDemo.solanaDevnet')}</span>
           </span>
           <span className="text-p01-text-dim text-sm ml-auto">
-            RPC: api.devnet.solana.com
+            {t('sdkDemo.rpcLabel')}
           </span>
         </div>
       </div>
@@ -962,6 +966,7 @@ interface AccessRequestForm {
 
 // ============ Stream SDK Section ============
 function StreamSDKSection() {
+  const t = useT();
   const { publicKey, connected, walletAvailable } = useP01Wallet();
   const [hasDevAccess, setHasDevAccess] = useState<boolean | null>(null);
   const [showRequestForm, setShowRequestForm] = useState(false);
@@ -1032,7 +1037,7 @@ function StreamSDKSection() {
       setShowRequestForm(false);
     } catch (error) {
       console.error('Failed to submit request:', error);
-      alert('Failed to submit request. Please try again or contact us on Discord.');
+      alert(t('sdkDemo.alertSubmitFailed'));
     } finally {
       setFormLoading(false);
     }
@@ -1046,9 +1051,9 @@ function StreamSDKSection() {
           <RefreshCw size={20} className="text-p01-pink" />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-white font-display">Stream Payments SDK</h2>
+          <h2 className="text-2xl font-bold text-white font-display">{t('sdkDemo.streamTitle')}</h2>
           <p className="text-p01-text-muted text-sm">
-            Create subscription payments for your app. No servers needed - everything runs directly on the blockchain.
+            {t('sdkDemo.streamDesc')}
           </p>
         </div>
       </div>
@@ -1057,33 +1062,32 @@ function StreamSDKSection() {
       <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
         <h3 className="text-lg font-semibold text-white mb-4 font-display flex items-center gap-2">
           <Eye size={18} className="text-p01-cyan" />
-          What is this in simple terms?
+          {t('sdkDemo.simpleTermsTitle')}
         </h3>
         <div className="space-y-4 text-p01-text-muted">
           <p>
-            <span className="text-white font-semibold">Think of Netflix or Spotify</span> - you pay automatically every month.
-            Our SDK lets developers create these recurring payments, but with one major difference:
+            <span className="text-white font-semibold">{t('sdkDemo.simpleTermsIntro')}</span>{t('sdkDemo.simpleTermsIntroSuffix')}
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-4 bg-p01-void/50 border border-p01-border">
-              <p className="text-p01-pink font-semibold mb-2">❌ Traditional Subscriptions</p>
+              <p className="text-p01-pink font-semibold mb-2">&#x274C; {t('sdkDemo.traditionalSubs')}</p>
               <ul className="text-sm space-y-1">
-                <li>• Netflix can raise prices whenever they want</li>
-                <li>• Your card can be charged without limits</li>
-                <li>• You have to trust the company</li>
+                <li>&#x2022; {t('sdkDemo.tradSub1')}</li>
+                <li>&#x2022; {t('sdkDemo.tradSub2')}</li>
+                <li>&#x2022; {t('sdkDemo.tradSub3')}</li>
               </ul>
             </div>
             <div className="p-4 bg-p01-void/50 border border-p01-cyan/30">
-              <p className="text-p01-cyan font-semibold mb-2">✅ With Protocol 01</p>
+              <p className="text-p01-cyan font-semibold mb-2">&#x2705; {t('sdkDemo.withProtocol01')}</p>
               <ul className="text-sm space-y-1">
-                <li>• Price is LOCKED when you subscribe</li>
-                <li>• Impossible to charge more than agreed</li>
-                <li>• You cancel from your wallet, not the website</li>
+                <li>&#x2022; {t('sdkDemo.p01Sub1')}</li>
+                <li>&#x2022; {t('sdkDemo.p01Sub2')}</li>
+                <li>&#x2022; {t('sdkDemo.p01Sub3')}</li>
               </ul>
             </div>
           </div>
           <p className="text-sm text-p01-text-dim">
-            <span className="text-p01-cyan">In short:</span> It's like Netflix signing a contract with you - they can never change the terms once you've agreed.
+            <span className="text-p01-cyan">{t('sdkDemo.simpleTermsSummaryPrefix')}</span>{t('sdkDemo.simpleTermsSummary')}
           </p>
         </div>
       </div>
@@ -1091,12 +1095,12 @@ function StreamSDKSection() {
       {/* Key Features */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {[
-          { icon: Link2, title: "100% Serverless", desc: "No centralized API", color: "cyan" },
-          { icon: FileCode, title: "Smart Contract", desc: "On-chain verification", color: "cyan" },
-          { icon: Ticket, title: "Whitelist Access", desc: "Verified developers only", color: "pink" },
-          { icon: Lock, title: "Closed Circuit", desc: "P01 wallet required", color: "pink" },
-          { icon: ShieldCheck, title: "Immutable Pricing", desc: "Prices locked on-chain", color: "cyan" },
-          { icon: Hand, title: "Cancel Anytime", desc: "User controls subscription", color: "cyan" },
+          { icon: Link2, title: t('sdkDemo.feat100Serverless'), desc: t('sdkDemo.featNoApi'), color: "cyan" },
+          { icon: FileCode, title: t('sdkDemo.featSmartContract'), desc: t('sdkDemo.featOnChainVerif'), color: "cyan" },
+          { icon: Ticket, title: t('sdkDemo.featWhitelist'), desc: t('sdkDemo.featVerifiedDevs'), color: "pink" },
+          { icon: Lock, title: t('sdkDemo.featClosedCircuit'), desc: t('sdkDemo.featP01Required'), color: "pink" },
+          { icon: ShieldCheck, title: t('sdkDemo.featImmutablePricing'), desc: t('sdkDemo.featPricesLocked'), color: "cyan" },
+          { icon: Hand, title: t('sdkDemo.featCancelAnytime'), desc: t('sdkDemo.featUserControls'), color: "cyan" },
         ].map((feature) => {
           const IconComponent = feature.icon;
           const colorClass = feature.color === "cyan" ? "text-p01-cyan" : "text-p01-pink";
@@ -1120,34 +1124,34 @@ function StreamSDKSection() {
             <ShieldCheck size={24} className="text-p01-cyan" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-p01-cyan mb-2 font-display">Customer Protection: Locked Prices</h3>
+            <h3 className="text-lg font-semibold text-p01-cyan mb-2 font-display">{t('sdkDemo.customerProtectionTitle')}</h3>
             <p className="text-p01-text-muted text-sm mb-2">
-              <span className="text-white font-semibold">What does this mean?</span> When you subscribe at $9.99/month, that price is <span className="text-p01-cyan font-semibold">permanently recorded</span> on the blockchain.
+              <span className="text-white font-semibold">{t('sdkDemo.customerProtectionIntro')}</span>{t('sdkDemo.customerProtectionDesc1')}<span className="text-p01-cyan font-semibold">{t('sdkDemo.customerProtectionLocked')}</span>{t('sdkDemo.customerProtectionDesc1Suffix')}
             </p>
             <p className="text-p01-text-muted text-sm mb-4">
-              Even if the app developer wants to raise prices, <span className="text-p01-pink font-semibold">they cannot touch your subscription</span>. It's like a signed contract - impossible to modify without your consent.
+              {t('sdkDemo.customerProtectionDesc2')}<span className="text-p01-pink font-semibold">{t('sdkDemo.customerProtectionCannotTouch')}</span>{t('sdkDemo.customerProtectionDesc2Suffix')}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="bg-p01-void/50 p-3 border border-p01-cyan/20">
                 <div className="flex items-center gap-2 mb-1">
                   <Check size={14} className="text-p01-cyan" />
-                  <p className="text-p01-cyan text-xs font-mono">YOU CAN</p>
+                  <p className="text-p01-cyan text-xs font-mono">{t('sdkDemo.youCan')}</p>
                 </div>
-                <p className="text-p01-text-muted text-sm">Cancel your subscription anytime you want</p>
+                <p className="text-p01-text-muted text-sm">{t('sdkDemo.youCanDesc')}</p>
               </div>
               <div className="bg-p01-void/50 p-3 border border-p01-cyan/20">
                 <div className="flex items-center gap-2 mb-1">
                   <Check size={14} className="text-p01-cyan" />
-                  <p className="text-p01-cyan text-xs font-mono">DEVELOPER CAN</p>
+                  <p className="text-p01-cyan text-xs font-mono">{t('sdkDemo.devCan')}</p>
                 </div>
-                <p className="text-p01-text-muted text-sm">Change prices for new customers only</p>
+                <p className="text-p01-text-muted text-sm">{t('sdkDemo.devCanDesc')}</p>
               </div>
               <div className="bg-p01-void/50 p-3 border border-p01-pink/30">
                 <div className="flex items-center gap-2 mb-1">
                   <X size={14} className="text-p01-pink" />
-                  <p className="text-p01-pink text-xs font-mono">IMPOSSIBLE</p>
+                  <p className="text-p01-pink text-xs font-mono">{t('sdkDemo.impossible')}</p>
                 </div>
-                <p className="text-p01-text-muted text-sm">Change the price of your existing subscription</p>
+                <p className="text-p01-text-muted text-sm">{t('sdkDemo.impossibleDesc')}</p>
               </div>
             </div>
           </div>
@@ -1156,9 +1160,9 @@ function StreamSDKSection() {
 
       {/* Developer Access Card */}
       <div className="bg-p01-surface p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display">1. Developer Access</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.devAccessTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
-          To use the Stream SDK, you need to be a whitelisted developer. Request access to get your wallet added to the whitelist.
+          {t('sdkDemo.devAccessDesc')}
         </p>
 
         {!walletAvailable ? (
@@ -1166,20 +1170,20 @@ function StreamSDKSection() {
             <div className="w-16 h-16 bg-p01-surface border border-p01-border mx-auto mb-4 flex items-center justify-center">
               <Zap size={28} className="text-p01-text-dim" />
             </div>
-            <p className="text-p01-text-muted mb-4">Install Protocol 01 wallet to check your access</p>
+            <p className="text-p01-text-muted mb-4">{t('sdkDemo.installWalletToCheck')}</p>
           </div>
         ) : !connected ? (
           <div className="text-center py-6">
             <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 mx-auto mb-4 flex items-center justify-center">
               <Wallet size={28} className="text-p01-cyan" />
             </div>
-            <p className="text-p01-text-muted mb-4">Connect wallet to verify developer access</p>
+            <p className="text-p01-text-muted mb-4">{t('sdkDemo.connectToVerify')}</p>
             <P01WalletButton variant="primary" size="lg" />
           </div>
         ) : hasDevAccess === null ? (
           <div className="flex items-center justify-center py-6 gap-3">
             <LoadingSpinner color={THEME.primaryColor} />
-            <span className="text-p01-text-muted">Checking developer whitelist...</span>
+            <span className="text-p01-text-muted">{t('sdkDemo.checkingWhitelist')}</span>
           </div>
         ) : hasDevAccess ? (
           <div className="space-y-4">
@@ -1188,8 +1192,8 @@ function StreamSDKSection() {
                 <Ticket size={24} className="text-p01-cyan" />
               </div>
               <div className="flex-1">
-                <p className="text-p01-cyan font-semibold font-display">Developer Access Verified</p>
-                <p className="text-p01-text-dim text-sm font-mono">You have full access to Stream SDK</p>
+                <p className="text-p01-cyan font-semibold font-display">{t('sdkDemo.devAccessVerified')}</p>
+                <p className="text-p01-text-dim text-sm font-mono">{t('sdkDemo.devAccessFullAccess')}</p>
               </div>
               <div className="w-8 h-8 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center">
                 <Check size={16} className="text-p01-cyan" />
@@ -1203,61 +1207,61 @@ function StreamSDKSection() {
                 <Ban size={24} className="text-p01-pink" />
               </div>
               <div className="flex-1">
-                <p className="text-p01-pink font-semibold font-display">Access Not Granted</p>
-                <p className="text-p01-text-dim text-sm font-mono">Your wallet is not on the developer whitelist</p>
+                <p className="text-p01-pink font-semibold font-display">{t('sdkDemo.accessNotGranted')}</p>
+                <p className="text-p01-text-dim text-sm font-mono">{t('sdkDemo.walletNotWhitelisted')}</p>
               </div>
             </div>
             {formSubmitted ? (
               <div className="p-4 bg-p01-cyan/10 border border-p01-cyan/30">
                 <div className="flex items-center gap-2 mb-2">
                   <Check size={16} className="text-p01-cyan" />
-                  <span className="text-p01-cyan font-semibold">Request Submitted!</span>
+                  <span className="text-p01-cyan font-semibold">{t('sdkDemo.requestSubmitted')}</span>
                 </div>
                 <p className="text-p01-text-muted text-sm">
-                  We'll review your application and get back to you via email.
-                  Join our <a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-p01-cyan hover:underline">Discord</a> for faster response.
+                  {t('sdkDemo.requestReviewMsg')}
+                  {' '}<a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-p01-cyan hover:underline">{t('sdkDemo.fasterResponse')}</a>
                 </p>
               </div>
             ) : showRequestForm ? (
               <form onSubmit={handleSubmitRequest} className="space-y-4">
                 <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">Email *</label>
+                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formEmail')}</label>
                   <input
                     type="email"
                     required
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="dev@example.com"
+                    placeholder={t('sdkDemo.formEmailPlaceholder')}
                     className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">Project Name *</label>
+                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formProjectName')}</label>
                   <input
                     type="text"
                     required
                     value={formData.projectName}
                     onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
-                    placeholder="My Awesome DApp"
+                    placeholder={t('sdkDemo.formProjectPlaceholder')}
                     className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">Website</label>
+                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formWebsite')}</label>
                   <input
                     type="url"
                     value={formData.website}
                     onChange={(e) => setFormData({ ...formData, website: e.target.value })}
-                    placeholder="https://myproject.com"
+                    placeholder={t('sdkDemo.formWebsitePlaceholder')}
                     className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">Project Description</label>
+                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formProjectDesc')}</label>
                   <textarea
                     value={formData.projectDescription}
                     onChange={(e) => setFormData({ ...formData, projectDescription: e.target.value })}
-                    placeholder="Tell us about your project and how you plan to use the SDK..."
+                    placeholder={t('sdkDemo.formDescPlaceholder')}
                     rows={3}
                     className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none resize-none"
                   />
@@ -1268,18 +1272,18 @@ function StreamSDKSection() {
                     onClick={() => setShowRequestForm(false)}
                     className="flex-1 py-2 bg-p01-surface border border-p01-border text-p01-text-muted hover:text-white transition-colors"
                   >
-                    Cancel
+                    {t('sdkDemo.cancelBtn')}
                   </button>
                   <button
                     type="submit"
                     disabled={formLoading}
                     className="flex-1 py-2 bg-p01-cyan text-p01-void font-semibold hover:bg-p01-cyan/90 transition-colors disabled:opacity-50"
                   >
-                    {formLoading ? 'Submitting...' : 'Submit Request'}
+                    {formLoading ? t('sdkDemo.submitting') : t('sdkDemo.submitRequest')}
                   </button>
                 </div>
                 <p className="text-p01-text-dim text-xs text-center">
-                  Your data is encrypted and stored securely. We only use your email to notify you about your access status.
+                  {t('sdkDemo.formPrivacyNote')}
                 </p>
               </form>
             ) : (
@@ -1287,11 +1291,11 @@ function StreamSDKSection() {
                 onClick={() => setShowRequestForm(true)}
                 className="w-full py-3 bg-p01-pink text-white font-semibold hover:bg-p01-pink/90 transition-colors font-display uppercase tracking-wider text-sm"
               >
-                Request Developer Access
+                {t('sdkDemo.requestDevAccess')}
               </button>
             )}
             <p className="text-p01-text-dim text-xs text-center mt-3">
-              Wallet: <span className="font-mono text-p01-text-muted">{publicKey}</span>
+              {t('sdkDemo.walletLabel')} <span className="font-mono text-p01-text-muted">{publicKey}</span>
             </p>
           </div>
         )}
@@ -1299,13 +1303,13 @@ function StreamSDKSection() {
 
       {/* SDK Integration */}
       <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">2. SDK Integration</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.sdkIntegrationTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-6">
-          The SDK connects directly to on-chain programs. No API endpoints, no server infrastructure - everything verified by smart contracts.
+          {t('sdkDemo.sdkIntegrationDesc')}
         </p>
 
         <CodeBlock
-          title="Initialize SDK (Serverless)"
+          title={t('sdkDemo.sdkIntegrationCodeTitle')}
           code={`import { P01SDK, STREAM_PROGRAM_ID } from '@p01/p01-js';
 
 // Connect with your P01 wallet - no API keys!
@@ -1326,17 +1330,17 @@ if (!isAuthorized) {
 
       {/* Create Stream */}
       <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">3. Create Payment Stream</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.createStreamTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-2">
-          Create subscription streams for your users. <span className="text-p01-pink font-semibold">Recipients must have a Protocol 01 wallet</span> - this is a closed ecosystem.
+          {t('sdkDemo.createStreamDesc')}<span className="text-p01-pink font-semibold">{t('sdkDemo.createStreamWarning')}</span>{t('sdkDemo.createStreamWarningSuffix')}
         </p>
         <div className="flex items-center gap-3 p-3 bg-p01-pink/10 border border-p01-pink/30 mb-6">
           <AlertTriangle size={18} className="text-p01-pink flex-shrink-0" />
-          <span className="text-p01-pink text-sm font-mono">Both sender and recipient must use P01 wallet (closed circuit)</span>
+          <span className="text-p01-pink text-sm font-mono">{t('sdkDemo.closedCircuitWarning')}</span>
         </div>
 
         <CodeBlock
-          title="Create Subscription Stream"
+          title={t('sdkDemo.createStreamCodeTitle')}
           code={`// Create a recurring payment stream
 // Both parties must have P01 wallet!
 const stream = await p01.streams.create({
@@ -1364,13 +1368,13 @@ await p01.streams.cancel({ streamId: stream.id });`}
 
       {/* Verify & Manage */}
       <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">4. On-Chain Verification</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.onChainVerifTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-6">
-          All subscription data is stored on-chain. Verify and manage streams without any server calls.
+          {t('sdkDemo.onChainVerifDesc')}
         </p>
 
         <CodeBlock
-          title="Query Streams (On-Chain)"
+          title={t('sdkDemo.onChainVerifCodeTitle')}
           code={`// Query streams directly from blockchain
 const activeStreams = await p01.streams.query({
   merchant: publicKey,
@@ -1397,14 +1401,14 @@ await p01.streams.cancel({
 
       {/* Architecture Diagram */}
       <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
-        <h4 className="text-white font-semibold mb-6 font-display text-center">Architecture: No Server Required</h4>
+        <h4 className="text-white font-semibold mb-6 font-display text-center">{t('sdkDemo.archNoServerTitle')}</h4>
         <div className="flex items-center justify-center gap-6 text-center py-4">
           <div className="flex flex-col items-center gap-3">
             <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center relative">
               <Wallet size={28} className="text-p01-cyan" />
               <div className="absolute -top-1 -right-1 w-3 h-3 bg-p01-cyan animate-pulse" />
             </div>
-            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">Your dApp</span>
+            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">{t('sdkDemo.archYourDapp')}</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-[2px] bg-gradient-to-r from-p01-cyan to-p01-cyan/50" />
@@ -1414,7 +1418,7 @@ await p01.streams.cancel({
             <div className="w-16 h-16 bg-p01-pink/10 border border-p01-pink/30 flex items-center justify-center">
               <FileCode size={28} className="text-p01-pink" />
             </div>
-            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">Smart Contract</span>
+            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">{t('sdkDemo.archSmartContract')}</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-8 h-[2px] bg-gradient-to-r from-p01-pink/50 to-p01-cyan" />
@@ -1424,11 +1428,11 @@ await p01.streams.cancel({
             <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
               <Boxes size={28} className="text-p01-cyan" />
             </div>
-            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">Solana</span>
+            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">{t('sdkDemo.archSolana')}</span>
           </div>
         </div>
         <p className="text-p01-text-dim text-xs text-center mt-6 font-mono">
-          Direct wallet → smart contract → blockchain. No API servers, no centralized infrastructure.
+          {t('sdkDemo.archNoServerDesc')}
         </p>
       </div>
 
@@ -1438,11 +1442,10 @@ await p01.streams.cancel({
           <div className="w-10 h-10 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
             <Lock size={20} className="text-p01-cyan" />
           </div>
-          <h4 className="text-white font-semibold font-display">Your Rights Are Protected by Code</h4>
+          <h4 className="text-white font-semibold font-display">{t('sdkDemo.securityTitle')}</h4>
         </div>
         <p className="text-p01-text-muted text-sm text-center mb-6 max-w-2xl mx-auto">
-          A smart contract is like a robot that automatically enforces the rules.
-          Nobody - not us, not the developers - can bypass it. Here's what's guaranteed:
+          {t('sdkDemo.securityDesc')}
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-3">
@@ -1450,24 +1453,24 @@ await p01.streams.cancel({
               <div className="w-6 h-6 bg-p01-cyan/20 border border-p01-cyan/30 flex items-center justify-center">
                 <Check size={12} className="text-p01-cyan" />
               </div>
-              <h5 className="text-p01-cyan font-semibold text-sm font-display uppercase tracking-wider">What YOU can do</h5>
+              <h5 className="text-p01-cyan font-semibold text-sm font-display uppercase tracking-wider">{t('sdkDemo.whatYouCanDo')}</h5>
             </div>
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>Your price stays the same, forever</span>
+                <span>{t('sdkDemo.priceSameForever')}</span>
               </li>
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>Cancel in one click, directly from your wallet</span>
+                <span>{t('sdkDemo.cancelOneClick')}</span>
               </li>
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>Nobody can modify without your permission</span>
+                <span>{t('sdkDemo.noModifyWithoutPermission')}</span>
               </li>
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>View your complete payment history</span>
+                <span>{t('sdkDemo.viewPaymentHistory')}</span>
               </li>
             </ul>
           </div>
@@ -1476,24 +1479,24 @@ await p01.streams.cancel({
               <div className="w-6 h-6 bg-p01-pink/20 border border-p01-pink/30 flex items-center justify-center">
                 <X size={12} className="text-p01-pink" />
               </div>
-              <h5 className="text-p01-pink font-semibold text-sm font-display uppercase tracking-wider">What developers CANNOT do</h5>
+              <h5 className="text-p01-pink font-semibold text-sm font-display uppercase tracking-wider">{t('sdkDemo.whatDevsCannotDo')}</h5>
             </div>
             <ul className="space-y-2 text-sm">
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>Raise your price after you subscribe</span>
+                <span>{t('sdkDemo.raisePrice')}</span>
               </li>
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>Cancel your subscription without you</span>
+                <span>{t('sdkDemo.cancelWithoutYou')}</span>
               </li>
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>Change from monthly to weekly billing</span>
+                <span>{t('sdkDemo.changeBilling')}</span>
               </li>
               <li className="flex items-center gap-3 text-p01-text-muted">
                 <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>Charge more than the agreed amount</span>
+                <span>{t('sdkDemo.chargeMore')}</span>
               </li>
             </ul>
           </div>
@@ -1505,13 +1508,14 @@ await p01.streams.cancel({
 
 // ============ Widgets Section ============
 function WidgetsSection() {
+  const t = useT();
   return (
     <div className="space-y-12">
       {/* Section Header */}
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Subscription Widget</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.widgetsTitle')}</h2>
         <p className="text-p01-text-muted">
-          A complete pricing widget for subscription payments. <span className="text-p01-pink">Requires Protocol 01 wallet.</span>
+          {t('sdkDemo.widgetsDesc')}<span className="text-p01-pink">{t('sdkDemo.widgetsDescHighlight')}</span>
         </p>
       </div>
 
@@ -1521,8 +1525,8 @@ function WidgetsSection() {
           <ShieldCheck size={20} className="text-p01-cyan" />
         </div>
         <div>
-          <p className="text-p01-cyan font-semibold text-sm font-display">Price Locked On-Chain</p>
-          <p className="text-p01-text-dim text-xs font-mono">Once subscribed, the price can never be changed. Cancel anytime from your wallet.</p>
+          <p className="text-p01-cyan font-semibold text-sm font-display">{t('sdkDemo.priceLocked')}</p>
+          <p className="text-p01-text-dim text-xs font-mono">{t('sdkDemo.priceLockedDesc')}</p>
         </div>
       </div>
 
@@ -1533,7 +1537,7 @@ function WidgetsSection() {
 
       {/* Code Example */}
       <CodeBlock
-        title="Usage (Serverless - No API Keys)"
+        title={t('sdkDemo.widgetCodeTitle')}
         code={`import { P01Provider, SubscriptionWidget } from '@p01/p01-js/react';
 
 function PricingPage() {
@@ -1573,15 +1577,16 @@ function PricingPage() {
 
 // ============ Buttons Section ============
 function ButtonsSection() {
+  const t = useT();
   return (
     <div className="space-y-12">
       {/* Wallet Button */}
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Wallet Button</h2>
-        <p className="text-p01-text-muted mb-6">Connect/disconnect wallet with various styles.</p>
+        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.walletButtonTitle')}</h2>
+        <p className="text-p01-text-muted mb-6">{t('sdkDemo.walletButtonDesc')}</p>
 
         <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
-          <p className="text-p01-text-dim text-sm mb-4">Click to connect your wallet:</p>
+          <p className="text-p01-text-dim text-sm mb-4">{t('sdkDemo.clickToConnect')}</p>
           <div className="flex flex-wrap gap-4 items-center mb-8">
             <P01WalletButton variant="primary" size="lg" />
             <P01WalletButton variant="secondary" size="md" />
@@ -1589,7 +1594,7 @@ function ButtonsSection() {
           </div>
 
           {/* Demo Connected State (static preview) */}
-          <p className="text-p01-text-dim text-sm mb-4">Preview of connected state:</p>
+          <p className="text-p01-text-dim text-sm mb-4">{t('sdkDemo.connectedPreview')}</p>
           <div className="flex flex-wrap gap-4 items-center">
             <DemoWalletButton connected address="7xK9f...8c2e" isP01Wallet />
             <DemoWalletButton connected address="3mN2p...4f1a" />
@@ -1597,7 +1602,7 @@ function ButtonsSection() {
         </div>
 
         <CodeBlock
-          title="Usage"
+          title={t('sdkDemo.walletButtonCodeTitle')}
           code={`import { WalletButton } from '@p01/p01-js/react';
 
 // P01 wallet only - closed ecosystem
@@ -1612,8 +1617,8 @@ function ButtonsSection() {
 
       {/* Payment Button */}
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Payment Button</h2>
-        <p className="text-p01-text-muted mb-6">One-time payment button with stealth address support.</p>
+        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.paymentButtonTitle')}</h2>
+        <p className="text-p01-text-muted mb-6">{t('sdkDemo.paymentButtonDesc')}</p>
 
         <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
           <div className="flex flex-wrap gap-4 items-center">
@@ -1624,7 +1629,7 @@ function ButtonsSection() {
         </div>
 
         <CodeBlock
-          title="Usage (On-Chain)"
+          title={t('sdkDemo.paymentButtonCodeTitle')}
           code={`import { PaymentButton } from '@p01/p01-js/react';
 
 // Direct on-chain payment - no server
@@ -1641,8 +1646,8 @@ function ButtonsSection() {
 
       {/* Subscription Button */}
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Subscription Button</h2>
-        <p className="text-p01-text-muted mb-6">Stream Secure subscription with on-chain limits.</p>
+        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.subscriptionButtonTitle')}</h2>
+        <p className="text-p01-text-muted mb-6">{t('sdkDemo.subscriptionButtonDesc')}</p>
 
         <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
           <div className="flex flex-wrap gap-4 items-center">
@@ -1652,7 +1657,7 @@ function ButtonsSection() {
         </div>
 
         <CodeBlock
-          title="Usage (Smart Contract)"
+          title={t('sdkDemo.subscriptionButtonCodeTitle')}
           code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@p01/p01-js/react';
 
 // On-chain subscription via smart contract
@@ -1673,11 +1678,12 @@ function ButtonsSection() {
 
 // ============ Cards Section ============
 function CardsSection() {
+  const t = useT();
   return (
     <div className="space-y-12">
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">Subscription Card</h2>
-        <p className="text-p01-text-muted mb-6">Display active subscriptions with management options.</p>
+        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.subscriptionCardTitle')}</h2>
+        <p className="text-p01-text-muted mb-6">{t('sdkDemo.subscriptionCardDesc')}</p>
 
         <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1726,7 +1732,7 @@ function CardsSection() {
         </div>
 
         <CodeBlock
-          title="Usage (On-Chain Data)"
+          title={t('sdkDemo.subscriptionCardCodeTitle')}
           code={`import { SubscriptionCard, useStreams } from '@p01/p01-js/react';
 
 // Fetch streams directly from blockchain
@@ -1751,6 +1757,7 @@ const { streams } = useStreams({ wallet: publicKey });
 
 // Demo Subscription Widget
 function DemoSubscriptionWidget() {
+  const t = useT();
   const [selectedTier, setSelectedTier] = useState<string | null>(null);
   const [enablePrivacy, setEnablePrivacy] = useState(true);
 
@@ -1785,10 +1792,10 @@ function DemoSubscriptionWidget() {
       {/* Header */}
       <div style={{ textAlign: "center", marginBottom: "32px" }}>
         <h2 style={{ color: THEME.textColor, fontSize: "28px", fontWeight: 700, margin: "0 0 8px 0" }}>
-          Choose Your Plan
+          {t('sdkDemo.choosePlan')}
         </h2>
         <p style={{ color: THEME.mutedColor, fontSize: "16px", margin: 0 }}>
-          Start with a 14-day free trial. No credit card required.
+          {t('sdkDemo.freeTrial')}
         </p>
       </div>
 
@@ -1835,7 +1842,7 @@ function DemoSubscriptionWidget() {
             fontSize: "14px",
             fontWeight: 500,
           }}>
-            Enable Privacy Features
+            {t('sdkDemo.enablePrivacy')}
           </span>
         </button>
       </div>
@@ -1873,7 +1880,7 @@ function DemoSubscriptionWidget() {
                   fontWeight: 600,
                 }}
               >
-                Most Popular
+                {t('sdkDemo.mostPopular')}
               </div>
             )}
 
@@ -1891,7 +1898,7 @@ function DemoSubscriptionWidget() {
             {/* Trial */}
             {tier.trialDays && (
               <div style={{ textAlign: "center", marginBottom: "16px", color: THEME.primaryColor, fontSize: "13px", fontWeight: 500 }}>
-                {tier.trialDays} day free trial
+                {tier.trialDays} {t('sdkDemo.dayFreeTrial')}
               </div>
             )}
 
@@ -1925,7 +1932,7 @@ function DemoSubscriptionWidget() {
       <div style={{ textAlign: "center", marginTop: "24px", color: THEME.mutedColor, fontSize: "12px" }}>
         <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
           <LockIcon color={THEME.primaryColor} />
-          100% On-chain · Smart Contract Verified · P01 Wallet Required
+          {t('sdkDemo.onChainFooter')}
         </span>
       </div>
     </div>
@@ -1946,6 +1953,7 @@ function DemoWalletButton({
   address?: string;
   isP01Wallet?: boolean;
 }) {
+  const t = useT();
   const sizeStyles = {
     sm: { padding: "8px 16px", fontSize: "14px", borderRadius: "8px" },
     md: { padding: "12px 24px", fontSize: "16px", borderRadius: "12px" },
@@ -1982,7 +1990,7 @@ function DemoWalletButton({
       ) : (
         <>
           <WalletIcon />
-          Connect Wallet
+          {t('sdkDemo.connectWallet')}
         </>
       )}
     </button>
@@ -1997,6 +2005,7 @@ function P01WalletButton({
   variant?: "primary" | "secondary" | "outline";
   size?: "sm" | "md" | "lg";
 }) {
+  const t = useT();
   const { publicKey, connected, connecting, walletAvailable, connect, disconnect } = useP01Wallet();
 
   const sizeStyles = {
@@ -2016,7 +2025,7 @@ function P01WalletButton({
   const handleClick = async () => {
     if (!walletAvailable) {
       // Redirect to extension install page or show message
-      alert("Protocol 01 wallet is not installed. Please install the P-01 extension.");
+      alert(t('sdkDemo.alertWalletNotInstalled'));
       return;
     }
 
@@ -2055,12 +2064,12 @@ function P01WalletButton({
       {!walletAvailable ? (
         <>
           <WalletIcon />
-          Install P-01 Wallet
+          {t('sdkDemo.installWallet')}
         </>
       ) : connecting ? (
         <>
           <LoadingSpinner color={variant === "primary" ? THEME.backgroundColor : THEME.primaryColor} />
-          Connecting...
+          {t('sdkDemo.connecting')}
         </>
       ) : connected && publicKey ? (
         <>
@@ -2070,7 +2079,7 @@ function P01WalletButton({
       ) : (
         <>
           <P01Icon />
-          Connect P-01
+          {t('sdkDemo.connectP01')}
         </>
       )}
     </button>
@@ -2105,6 +2114,7 @@ function intervalToSeconds(interval: string): number {
 }
 
 function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, interval = "monthly" }: { popular?: boolean; tierName?: string; price?: number; interval?: string }) {
+  const t = useT();
   const { publicKey, connected, connecting, walletAvailable, connect, subscribe } = useP01Wallet();
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
@@ -2112,7 +2122,7 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
 
   const handleClick = async () => {
     if (!walletAvailable) {
-      alert("Protocol 01 wallet is not installed. Please install the P-01 extension.");
+      alert(t('sdkDemo.alertWalletNotInstalled'));
       return;
     }
 
@@ -2126,7 +2136,7 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
     }
 
     if (!publicKey) {
-      alert("Wallet not connected properly.");
+      alert(t('sdkDemo.alertWalletNotConnected'));
       return;
     }
 
@@ -2164,7 +2174,7 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
       if (errorMessage.includes("rejected")) {
         // User rejected - no error alert needed
       } else if (errorMessage.includes("permission")) {
-        alert("Missing subscription permission. Please reconnect your wallet and approve the subscription permission.");
+        alert(t('sdkDemo.alertMissingPermission'));
       } else {
         alert(`Subscription failed: ${errorMessage}\n\nPlease try again.`);
       }
@@ -2207,32 +2217,32 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
       {!walletAvailable ? (
         <>
           <WalletIcon />
-          Install P-01 Wallet
+          {t('sdkDemo.installWallet')}
         </>
       ) : connecting ? (
         <>
           <LoadingSpinner color={buttonColor} />
-          Connecting...
+          {t('sdkDemo.connecting')}
         </>
       ) : isSubscribing ? (
         <>
           <LoadingSpinner color={buttonColor} />
-          Confirm in Wallet...
+          {t('sdkDemo.confirmInWallet')}
         </>
       ) : subscribed ? (
         <>
           <CheckIcon color="#ffffff" />
-          Subscribed ✓
+          {t('sdkDemo.subscribed')} &#x2713;
         </>
       ) : connected && publicKey ? (
         <>
           <CheckIcon color={buttonColor} />
-          Subscribe with {truncateAddress(publicKey)}
+          {t('sdkDemo.subscribeWith')} {truncateAddress(publicKey)}
         </>
       ) : (
         <>
           <P01Icon />
-          Connect P-01
+          {t('sdkDemo.connectP01')}
         </>
       )}
     </button>
@@ -2251,6 +2261,7 @@ function DemoPaymentButton({
   variant?: "primary" | "secondary" | "outline";
   size?: "sm" | "md" | "lg";
 }) {
+  const t = useT();
   const sizeStyles = {
     sm: { padding: "8px 16px", fontSize: "14px", borderRadius: "8px" },
     md: { padding: "12px 24px", fontSize: "16px", borderRadius: "12px" },
@@ -2278,7 +2289,7 @@ function DemoPaymentButton({
       }}
     >
       <PaymentIcon />
-      Pay {amount} {token}
+      {t('sdkDemo.payAmount')} {amount} {token}
     </button>
   );
 }
@@ -2293,6 +2304,7 @@ function DemoSubscriptionButton({
   interval: string;
   variant?: "primary" | "secondary";
 }) {
+  const t = useT();
   const variantStyles =
     variant === "primary"
       ? { backgroundColor: THEME.primaryColor, color: THEME.backgroundColor, border: "none" }
@@ -2314,7 +2326,7 @@ function DemoSubscriptionButton({
       }}
     >
       <SubscriptionIcon color={variant === "primary" ? THEME.backgroundColor : THEME.primaryColor} />
-      Subscribe {amount} USDC/{interval}
+      {t('sdkDemo.subscribeAmount')} {amount} USDC/{interval}
     </button>
   );
 }
@@ -2341,6 +2353,7 @@ function DemoSubscriptionCard({
   periodsPaid: number;
   privacyEnabled?: boolean;
 }) {
+  const t = useT();
   const statusColor =
     status === "active" ? THEME.successColor : status === "paused" ? "#f59e0b" : THEME.errorColor;
 
@@ -2392,18 +2405,18 @@ function DemoSubscriptionCard({
       {/* Details Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "16px" }}>
         <div>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>Amount</p>
+          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.amountLabel')}</p>
           <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{amount} USDC</p>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "2px 0 0 0" }}>per {interval}</p>
+          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "2px 0 0 0" }}>{t('sdkDemo.perInterval')} {interval}</p>
         </div>
         <div>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>Next Payment</p>
+          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.nextPaymentLabel')}</p>
           <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{nextPayment}</p>
         </div>
         <div>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>Total Paid</p>
+          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.totalPaidLabel')}</p>
           <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{totalPaid} USDC</p>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "2px 0 0 0" }}>{periodsPaid} payments</p>
+          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "2px 0 0 0" }}>{periodsPaid} {t('sdkDemo.paymentsLabel')}</p>
         </div>
       </div>
 
@@ -2421,7 +2434,7 @@ function DemoSubscriptionCard({
           }}
         >
           <ShieldIcon color={THEME.primaryColor} />
-          <span style={{ color: THEME.primaryColor, fontSize: "12px", fontWeight: 500 }}>Privacy Enabled</span>
+          <span style={{ color: THEME.primaryColor, fontSize: "12px", fontWeight: 500 }}>{t('sdkDemo.privacyEnabled')}</span>
         </div>
       )}
 
@@ -2448,7 +2461,7 @@ function DemoSubscriptionCard({
             cursor: "pointer",
           }}
         >
-          View Details
+          {t('sdkDemo.viewDetails')}
         </button>
         {status === "active" && (
           <button
@@ -2464,7 +2477,7 @@ function DemoSubscriptionCard({
               cursor: "pointer",
             }}
           >
-            Cancel
+            {t('sdkDemo.cancelBtn')}
           </button>
         )}
       </div>
@@ -2474,6 +2487,7 @@ function DemoSubscriptionCard({
 
 // ============ Code Block Component ============
 function CodeBlock({ title, code }: { title: string; code: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const copyCode = () => {
@@ -2490,7 +2504,7 @@ function CodeBlock({ title, code }: { title: string; code: string }) {
           onClick={copyCode}
           className="text-p01-text-dim hover:text-white text-sm transition-colors"
         >
-          {copied ? "Copied!" : "Copy"}
+          {copied ? t('sdkDemo.copied') : t('sdkDemo.copy')}
         </button>
       </div>
       <pre className="bg-p01-elevated border border-p01-border rounded-xl p-4 overflow-x-auto">
