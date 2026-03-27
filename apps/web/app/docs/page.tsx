@@ -320,25 +320,24 @@ await p01.createSubscription({
       "Epoch-based maturity: deposit_epoch <= min_epoch enforced in circuit and on-chain",
       "Merkle tree depth 15 = 32,768 notes per pool",
       "Circuit: denominated_pool.circom (4,273 non-linear constraints)",
-      "P2P note sharing via BLE and NFC for offline transfers",
+      "P2P note sharing via BLE and NFC for offline transfers (zero on-chain trace)",
+      "v0.9.5: Full stealth unshield — ephemeral signer (fee payer) + ECDH one-time recipient. User wallet never appears on-chain.",
     ],
-    codeExample: `// Shield into a 1 SOL denominated pool
-const commitment = poseidon([nullifierPreimage, secret, epoch, tokenMint]);
+    codeExample: `// Shield: stealth intermediary hides wallet origin
+const stealthKp = deriveStealthSigner(wallet, timestamp);
+await fundStealth(wallet, stealthKp, 0.1); // small fee fund
 await program.methods.shieldDenominated(commitment, epoch)
-  .accounts({ pool, depositor, systemProgram })
-  .rpc();
+  .accounts({ pool, depositor: stealthKp.publicKey })
+  .signers([stealthKp]).rpc();
 
-// Unshield with STARK proof (quantum-resistant, default)
-const starkProof = await starkProver.generateProof(secret);
-await program.methods.unshieldDenominatedStark(starkProof, commitment)
-  .accounts({ pool, recipient, nullifierPda, starkBuffer })
-  .rpc();
-
-// Or with Groth16 proof (classic, faster verification)
-const { proof } = await snarkjs.groth16.fullProve(inputs,
-  "denominated_pool.wasm", "denominated_pool.zkey");
-await program.methods.unshieldDenominated(proof, nullifier, root, minEpoch)
-  .rpc();`,
+// Unshield: stealth signer + stealth ECDH recipient
+// Wallet NEVER appears as signer, fee payer, or recipient
+const signer = deriveEphemeralSigner();
+const recipient = generateStealthAddress(metaAddress); // ECDH one-time
+await program.methods.unshieldDenominatedStark(starkProof)
+  .accounts({ pool, recipient: recipient.address, nullifierPda })
+  .signers([signer]).rpc();
+// Auto-sweep: recipient → wallet (delayed 3-7s for decorrelation)`,
   },
   {
     id: "zkspl",
