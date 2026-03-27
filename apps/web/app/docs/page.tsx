@@ -1017,44 +1017,44 @@ export default function DocsPage() {
               </thead>
               <tbody className="text-[#888892]">
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Amounts</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Hidden by ZK proof</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Hidden by ZK proof</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAmounts')}</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
                 </tr>
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Sender → Receiver link</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Broken by stealth addresses</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />Broken by stealth addresses</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowLink')}</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
+                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
                 </tr>
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Nullifier</td>
-                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />Posted in the clear on-chain</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />MPC nodes compute SHA3 jointly — only hash on-chain</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowNullifier')}</td>
+                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowNullifierWithout')}</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowNullifierWith')}</td>
                 </tr>
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Relay</td>
-                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />On-chain relayer sees TX content</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />TX split &amp; encrypted — no single node sees plaintext</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRelay')}</td>
+                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRelayWithout')}</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRelayWith')}</td>
                 </tr>
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Registry lookup</td>
-                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />RPC query reveals search target</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />Query goes through MPC — target stays anonymous</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRegistry')}</td>
+                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRegistryWithout')}</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRegistryWith')}</td>
                 </tr>
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Balance audit</td>
-                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> Not available</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />Prove solvency without revealing individual balances</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAudit')}</td>
+                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowAuditWithout')}</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowAuditWith')}</td>
                 </tr>
                 <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">Governance vote</td>
-                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> Not available</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />Encrypted ballots — only final tally revealed</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowVote')}</td>
+                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowVoteWithout')}</td>
+                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowVoteWith')}</td>
                 </tr>
                 <tr>
-                  <td className="py-3 px-4 font-medium text-white">Trust assumption</td>
-                  <td className="py-3 px-4 text-[#888892]">Relayer is honest (can't steal, can observe)</td>
-                  <td className="py-3 px-4 text-[#888892]">1-of-N honest node (Cerberus protocol)</td>
+                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowTrust')}</td>
+                  <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWithout')}</td>
+                  <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWith')}</td>
                 </tr>
               </tbody>
             </table>
@@ -1065,48 +1065,48 @@ export default function DocsPage() {
             <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
               <div className="flex items-center gap-3 mb-4">
                 <Shield className="w-5 h-5 text-[#39c5bb]" />
-                <h3 className="text-lg font-bold text-white">MPC Off — Already Private</h3>
+                <h3 className="text-lg font-bold text-white">{t('docs.mpcOffTitle')}</h3>
               </div>
               <ul className="space-y-2 text-sm text-[#888892]">
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>STARK &amp; Groth16 proofs hide amounts and ownership</span>
+                  <span>{t('docs.mpcOffItem1')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Stealth addresses make every payment unlinkable</span>
+                  <span>{t('docs.mpcOffItem2')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Denominated pools prevent amount-based correlation</span>
+                  <span>{t('docs.mpcOffItem3')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>Some metadata visible: nullifiers, relay content, lookup targets</span>
+                  <span>{t('docs.mpcOffItem4')}</span>
                 </li>
               </ul>
             </div>
             <div className="bg-white/[0.03] backdrop-blur-sm border border-white/[0.08] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
               <div className="flex items-center gap-3 mb-4">
                 <Network className="w-5 h-5 text-[#f59e0b]" />
-                <h3 className="text-lg font-bold text-white">MPC On — Maximum Privacy</h3>
+                <h3 className="text-lg font-bold text-white">{t('docs.mpcOnTitle')}</h3>
               </div>
               <ul className="space-y-2 text-sm text-[#888892]">
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>Everything above, plus all metadata leaks eliminated</span>
+                  <span>{t('docs.mpcOnItem1')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>Nullifiers encrypted — only SHA3 hash reaches the chain</span>
+                  <span>{t('docs.mpcOnItem2')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>Relay is threshold-decrypted — no single point of observation</span>
+                  <span>{t('docs.mpcOnItem3')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>Unlocks balance audits, private voting, threshold stealth scan</span>
+                  <span>{t('docs.mpcOnItem4')}</span>
                 </li>
               </ul>
             </div>
