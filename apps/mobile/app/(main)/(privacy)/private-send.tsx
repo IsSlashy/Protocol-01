@@ -173,16 +173,16 @@ export default function PrivateSendScreen() {
   }, [publicKey, levelConfig, feeEstimate, router, shieldNote, source, selectedNote, selectedNoteId, privacyLevel]);
 
   return (
-    <View style={st.container}>
-      <View style={[st.header, { paddingTop: insets.top + 8 }]}>
+    <View style={[st.container, { paddingTop: insets.top }]}>
+      <View style={st.header}>
         <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          <Ionicons name="arrow-back" size={20} color={Colors.text} />
         </TouchableOpacity>
         <Text style={st.headerTitle}>{t('privateSend.title')}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: 160 }}
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: insets.bottom + 120 }}
         showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
         {/* Source selector */}
@@ -324,7 +324,7 @@ export default function PrivateSendScreen() {
       </ScrollView>
 
       {/* CTA */}
-      <View style={[st.cta, { paddingBottom: 95 + insets.bottom }]}>
+      <View style={[st.cta, { bottom: insets.bottom + 90 }]}>
         <TouchableOpacity onPress={handleStartRoute} disabled={!canStart} activeOpacity={0.8}
           style={[st.ctaBtn, !canStart && { opacity: 0.4 }]}>
           {isStarting ? <ActivityIndicator size="small" color="#000" /> : (
@@ -343,7 +343,7 @@ const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
   },
   backBtn: {
     width: 40, height: 40, borderRadius: BorderRadius.full,

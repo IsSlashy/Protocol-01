@@ -356,54 +356,31 @@ export default function SendScreen() {
               </View>
             </View>
           </Animated.View>
+
+          {/* Send Button */}
+          <Animated.View entering={FadeInUp.delay(500)} style={{ marginTop: Spacing.xl }}>
+            <TouchableOpacity
+              onPress={handleSend}
+              disabled={!isFormValid}
+              accessibilityRole="button"
+              accessibilityLabel={sending ? 'Sending' : 'Send SOL'}
+              accessibilityState={{ disabled: !isFormValid }}
+              style={[
+                styles.sendButton,
+                !isFormValid ? styles.sendButtonDisabled : null,
+              ]}
+            >
+              {sending ? (
+                <Text style={styles.sendButtonText}>Sending...</Text>
+              ) : (
+                <>
+                  <Ionicons name="arrow-up" size={20} color={Colors.background} />
+                  <Text style={styles.sendButtonText}>Send SOL</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </Animated.View>
         </ScrollView>
-
-        {/* Send Buttons */}
-        <Animated.View entering={FadeInUp.delay(500)} style={styles.bottomSection}>
-          {/* Standard Send */}
-          <TouchableOpacity
-            onPress={handleSend}
-            disabled={!isFormValid}
-            accessibilityRole="button"
-            accessibilityLabel={sending ? 'Sending' : 'Send SOL'}
-            accessibilityState={{ disabled: !isFormValid }}
-            style={[
-              styles.sendButton,
-              !isFormValid ? styles.sendButtonDisabled : null,
-            ]}
-          >
-            {sending ? (
-              <Text style={styles.sendButtonText}>Sending...</Text>
-            ) : (
-              <>
-                <Ionicons name="arrow-up" size={20} color={Colors.background} />
-                <Text style={styles.sendButtonText}>Send SOL</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Private Send Option */}
-          <TouchableOpacity
-            onPress={() => router.push({
-              pathname: '/(main)/(privacy)/private-send',
-              params: { address: recipient || undefined },
-            })}
-            style={styles.splitSendButton}
-            accessibilityRole="button"
-            accessibilityLabel="Private Send, fully anonymous multi-hop transfer"
-          >
-            <View style={[styles.splitSendIcon, { backgroundColor: P01.cyanDim }]}>
-              <Ionicons name="shield-checkmark" size={18} color={P01.cyan} />
-            </View>
-            <View style={styles.splitSendContent}>
-              <Text style={styles.splitSendTitle}>Private Send</Text>
-              <Text style={styles.splitSendDesc}>
-                Stealth routing — sender and receiver hidden on-chain
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
-          </TouchableOpacity>
-        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -442,7 +419,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
-    paddingBottom: Spacing['3xl'],
+    paddingBottom: 140,
   },
   amountSection: {
     alignItems: 'center',
@@ -624,7 +601,7 @@ const styles = StyleSheet.create({
   bottomSection: {
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.md,
-    paddingBottom: 40,
+    paddingBottom: 140,
   },
   sendButton: {
     backgroundColor: Colors.primary,
@@ -643,38 +620,5 @@ const styles = StyleSheet.create({
     color: Colors.background,
     fontSize: 16,
     fontFamily: FontFamily.semibold,
-  },
-  splitSendButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
-    marginTop: Spacing.md,
-    gap: Spacing.md,
-  },
-  splitSendIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.md,
-    backgroundColor: P01.pinkDim,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  splitSendContent: {
-    flex: 1,
-  },
-  splitSendTitle: {
-    color: Colors.text,
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-  },
-  splitSendDesc: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    marginTop: 2,
   },
 });
