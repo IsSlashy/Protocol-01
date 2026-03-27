@@ -843,6 +843,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const signedFund = await walletSigner.signTransaction(fundTx);
             await connection.sendRawTransaction(signedFund.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
           } else {
+            const { getKeypair } = await import('../services/solana/wallet');
             const kp = await getKeypair();
             if (kp) {
               const fundTx = new Transaction().add(
