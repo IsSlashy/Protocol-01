@@ -81,7 +81,7 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
-    ndkVersion rootProject.ext.ndkVersion
+    ndkVersion findProperty('android.ndkVersion') ?: rootProject.ext.ndkVersion
 
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
@@ -91,13 +91,13 @@ android {
         applicationId 'com.protocol01.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 14
-        versionName "0.9.2"
+        versionCode 17
+        versionName "0.9.5"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
 
         ndk {
-            abiFilters "arm64-v8a", "x86_64"
+            abiFilters "arm64-v8a"
         }
     }
     signingConfigs {
@@ -107,15 +107,19 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            storeFile file('release.keystore')
+            storePassword findProperty('RELEASE_STORE_PASSWORD') ?: 'Protocol01Release2026'
+            keyAlias findProperty('RELEASE_KEY_ALIAS') ?: 'protocol01'
+            keyPassword findProperty('RELEASE_KEY_PASSWORD') ?: 'Protocol01Release2026'
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

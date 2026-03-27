@@ -76,9 +76,13 @@ export async function commitNullifier(
   poolId: Uint8Array,
   nullifier: Uint8Array
 ): Promise<NullifierCommitment> {
-  // Encrypt the nullifier (32 bytes → 1 field element as bigint)
-  const nullifierBigint = BigInt('0x' + Buffer.from(nullifier).toString('hex'));
-  const payload = client.encrypt([nullifierBigint]);
+  // Encrypt the nullifier as 4 × u64 chunks (each fits within the 254-bit field).
+  // A single 256-bit bigint overflows the Poseidon field (~75% of nullifiers fail).
+  const chunks: bigint[] = [];
+  for (let i = 0; i < 32; i += 8) {
+    chunks.push(BigInt('0x' + Buffer.from(nullifier.slice(i, i + 8)).reverse().toString('hex')));
+  }
+  const payload = client.encrypt(chunks);
   const computationOffset = client.newComputationOffset();
   const accounts = client.getComputationAccounts(CIRCUITS.NULLIFIER_COMMIT, computationOffset);
 
@@ -130,8 +134,11 @@ export async function checkNullifierSpent(
   poolId: Uint8Array,
   nullifier: Uint8Array
 ): Promise<NullifierCheckResult> {
-  const nullifierBigint = BigInt('0x' + Buffer.from(nullifier).toString('hex'));
-  const payload = client.encrypt([nullifierBigint]);
+  const chunks: bigint[] = [];
+  for (let i = 0; i < 32; i += 8) {
+    chunks.push(BigInt('0x' + Buffer.from(nullifier.slice(i, i + 8)).reverse().toString('hex')));
+  }
+  const payload = client.encrypt(chunks);
   const computationOffset = client.newComputationOffset();
   const accounts = client.getComputationAccounts(CIRCUITS.NULLIFIER_COMMIT, computationOffset);
   const [nullifierSetAddress] = getNullifierSetAddress(client.programId, poolId);

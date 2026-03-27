@@ -7,13 +7,10 @@ import {
   ActivityIndicator,
   TextInput,
   Switch,
-  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { useAIStore } from '@/stores/aiStore';
@@ -21,6 +18,7 @@ import { MODEL_INFO, isOnDeviceAvailable } from '@/services/ai/llamaService';
 import { DEFAULT_CONFIGS } from '@/services/ai/agent';
 import { Colors, FontSize, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import { useT } from '@/i18n';
 
 type ProviderOption = {
   id: string;
@@ -37,6 +35,7 @@ const PROVIDERS: ProviderOption[] = [
 ];
 
 export default function AISettingsScreen() {
+  const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const {
@@ -181,17 +180,13 @@ export default function AISettingsScreen() {
     <View style={{ flex: 1, backgroundColor: 'transparent', paddingTop: insets.top }}>
       {/* Header */}
       <View style={{ overflow: 'hidden' }}>
-        <BlurView
-          intensity={30}
-          tint="dark"
+        <View
           style={{
             flexDirection: 'row',
             alignItems: 'center',
             paddingHorizontal: Spacing.lg,
             paddingVertical: 12,
-            backgroundColor: 'rgba(10, 10, 12, 0.75)',
-            borderBottomWidth: 1,
-            borderBottomColor: 'rgba(57, 197, 187, 0.1)',
+            backgroundColor: 'transparent',
           }}
         >
           <TouchableOpacity
@@ -202,7 +197,7 @@ export default function AISettingsScreen() {
               borderRadius: 19,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: 'rgba(255, 255, 255, 0.06)',
+              backgroundColor: '#0f0f12',
             }}
           >
             <Ionicons name="chevron-back" size={22} color={Colors.text} />
@@ -217,7 +212,7 @@ export default function AISettingsScreen() {
           >
             Agent Settings
           </Text>
-        </BlurView>
+        </View>
       </View>
 
       <ScrollView
@@ -255,35 +250,9 @@ export default function AISettingsScreen() {
                     borderRadius: 10,
                     overflow: 'hidden',
                     width: '48.5%',
+                    backgroundColor: isActive ? 'rgba(57, 197, 187, 0.12)' : '#0f0f12',
                   }}
                 >
-                  <View style={StyleSheet.absoluteFill}>
-                    <BlurView
-                      intensity={12}
-                      tint="dark"
-                      style={[
-                        StyleSheet.absoluteFill,
-                        {
-                          backgroundColor: isActive
-                            ? 'rgba(57, 197, 187, 0.12)'
-                            : 'rgba(12, 12, 14, 0.65)',
-                        },
-                      ]}
-                    />
-                  </View>
-                  <View
-                    style={[
-                      StyleSheet.absoluteFill,
-                      {
-                        borderRadius: 10,
-                        borderWidth: 1,
-                        borderColor: isActive
-                          ? 'rgba(57, 197, 187, 0.35)'
-                          : 'rgba(57, 197, 187, 0.07)',
-                      },
-                    ]}
-                    pointerEvents="none"
-                  />
                   <Ionicons
                     name={p.icon as any}
                     size={14}
@@ -325,9 +294,7 @@ export default function AISettingsScreen() {
                           paddingVertical: 8,
                           borderRadius: 10,
                           alignItems: 'center',
-                          backgroundColor: isActive ? 'rgba(57, 197, 187, 0.15)' : 'rgba(0, 0, 0, 0.3)',
-                          borderWidth: 1,
-                          borderColor: isActive ? 'rgba(57, 197, 187, 0.35)' : 'rgba(57, 197, 187, 0.07)',
+                          backgroundColor: isActive ? 'rgba(57, 197, 187, 0.15)' : '#0f0f12',
                         }}
                       >
                         <Text style={{ color: isActive ? P01Colors.cyan : Colors.text, fontSize: 12, fontFamily: FontFamily.medium }}>
@@ -356,12 +323,10 @@ export default function AISettingsScreen() {
                         color: Colors.text,
                         fontSize: FontSize.sm,
                         fontFamily: FontFamily.mono,
-                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                        backgroundColor: 'rgba(0, 0, 0, 0.25)',
                         borderRadius: 10,
                         paddingHorizontal: 12,
                         height: 40,
-                        borderWidth: 1,
-                        borderColor: 'rgba(57, 197, 187, 0.07)',
                       }}
                     />
                   </View>
@@ -379,12 +344,10 @@ export default function AISettingsScreen() {
                         color: Colors.text,
                         fontSize: FontSize.sm,
                         fontFamily: FontFamily.mono,
-                        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                        backgroundColor: 'rgba(0, 0, 0, 0.25)',
                         borderRadius: 10,
                         paddingHorizontal: 12,
                         height: 40,
-                        borderWidth: 1,
-                        borderColor: 'rgba(57, 197, 187, 0.07)',
                       }}
                     />
                   </View>
@@ -409,11 +372,9 @@ export default function AISettingsScreen() {
                     flex: 1,
                     flexDirection: 'row',
                     alignItems: 'center',
-                    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
                     borderRadius: 10,
                     paddingHorizontal: 12,
-                    borderWidth: 1,
-                    borderColor: 'rgba(57, 197, 187, 0.07)',
                     height: 40,
                   }}
                 >
@@ -460,11 +421,9 @@ export default function AISettingsScreen() {
                     flex: 1,
                     flexDirection: 'row',
                     alignItems: 'center',
-                    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                    backgroundColor: 'rgba(0, 0, 0, 0.25)',
                     borderRadius: 10,
                     paddingHorizontal: 12,
-                    borderWidth: 1,
-                    borderColor: 'rgba(57, 197, 187, 0.07)',
                     height: 40,
                   }}
                 >
@@ -723,27 +682,10 @@ function SectionTitle({ title }: { title: string }) {
 
 function GlassCard({ children }: { children: React.ReactNode }) {
   return (
-    <View
-      style={{
-        borderRadius: 20,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: 'rgba(57, 197, 187, 0.07)',
-      }}
-    >
-      <BlurView
-        intensity={15}
-        tint="dark"
-        style={{ backgroundColor: 'rgba(12, 12, 14, 0.65)' }}
-      >
-        <LinearGradient
-          colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
+    <View style={{ borderRadius: 20, overflow: 'hidden' }}>
+      <View style={{ backgroundColor: '#0f0f12' }}>
         {children}
-      </BlurView>
+      </View>
     </View>
   );
 }
@@ -827,47 +769,16 @@ function ActionButton({
 }
 
 function GlassDivider() {
-  return <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginLeft: 62 }} />;
+  return <View style={{ height: 1, backgroundColor: 'rgba(255, 255, 255, 0.06)', marginLeft: 62 }} />;
 }
 
 function InfoBox({ text }: { text: string }) {
   return (
-    <View
-      style={{
-        borderRadius: 14,
-        overflow: 'hidden',
-        marginTop: 8,
-      }}
-    >
-      <BlurView
-        intensity={12}
-        tint="dark"
-        style={{
-          flexDirection: 'row',
-          alignItems: 'flex-start',
-          padding: 12,
-          backgroundColor: 'rgba(12, 12, 14, 0.5)',
-        }}
-      >
-        <LinearGradient
-          colors={['rgba(57, 197, 187, 0.06)', 'transparent']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
+    <View style={{ borderRadius: 14, overflow: 'hidden', marginTop: 8 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', padding: 12, backgroundColor: '#0f0f12' }}>
         <Ionicons name="shield-checkmark-outline" size={16} color={P01Colors.cyan} style={{ marginTop: 1 }} />
-        <Text
-          style={{
-            color: Colors.textTertiary,
-            fontSize: FontSize.xs,
-            lineHeight: 18,
-            marginLeft: 8,
-            flex: 1,
-          }}
-        >
-          {text}
-        </Text>
-      </BlurView>
+        <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs, lineHeight: 18, marginLeft: 8, flex: 1 }}>{text}</Text>
+      </View>
     </View>
   );
 }

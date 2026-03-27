@@ -4,6 +4,7 @@ import Animated, { FadeInUp } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { Colors, FontFamily, Spacing, P01Colors } from '@/constants/theme';
 import TokenIcon from '@/components/TokenIcon';
+import { useT } from '@/i18n';
 
 interface Token {
   mint: string;
@@ -59,6 +60,7 @@ export default function AssetsList({
   balanceHidden,
   formatAmount,
 }: AssetsListProps) {
+  const t = useT();
   const allAssets = [
     { key: 'sol', name: 'Solana', symbol: 'SOL', balance: solBalance, usd: formattedUsd, mint: '', logoUri: undefined },
     ...tokens.map(t => ({ key: t.mint, name: t.name, symbol: t.symbol, balance: String(t.uiBalance), usd: t.usdValue ? formatAmount(t.usdValue) : undefined, mint: t.mint, logoUri: t.logoUri })),
@@ -69,7 +71,7 @@ export default function AssetsList({
       {/* Section header */}
       <View style={styles.sectionHeader}>
         <View style={styles.headerDot} />
-        <Text style={styles.sectionTitle}>Assets</Text>
+        <Text style={styles.sectionTitle}>{t('wallet.assets')}</Text>
         <Text style={styles.countBadge}>{allAssets.length}</Text>
       </View>
 

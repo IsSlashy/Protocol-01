@@ -9,8 +9,10 @@ import * as Clipboard from 'expo-clipboard';
 import * as SecureStore from 'expo-secure-store';
 import * as ScreenCapture from 'expo-screen-capture';
 import { SeedPhraseGrid } from '../../components/onboarding';
+import { useT } from '@/i18n';
 
 export default function BackupScreen() {
+  const t = useT();
   const router = useRouter();
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -101,16 +103,16 @@ export default function BackupScreen() {
         <View style={{ alignItems: 'center' }}>
           <Ionicons name="warning" size={48} color="#ef4444" />
           <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginTop: 16, marginBottom: 8 }}>
-            Failed to Load Seed Phrase
+            {t('onboarding.failedToLoadSeed')}
           </Text>
           <Text style={{ color: '#a0a0a0', textAlign: 'center', marginBottom: 24 }}>
-            There was an error loading your seed phrase. Please try creating a new wallet.
+            {t('onboarding.failedToLoadSeedDesc')}
           </Text>
           <TouchableOpacity
             onPress={() => router.replace('/(onboarding)/create-wallet')}
             style={{ backgroundColor: '#39c5bb', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
           >
-            <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 16 }}>Try Again</Text>
+            <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 16 }}>{t('onboarding.tryAgain')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -143,10 +145,10 @@ export default function BackupScreen() {
             <Ionicons name="key" size={32} color="#39c5bb" />
           </View>
           <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-            Backup Your Seed Phrase
+            {t('onboarding.backupSeedPhrase')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            Write down these 12 words in order and store them safely
+            {t('onboarding.writeDownWords')}
           </Text>
         </Animated.View>
 
@@ -189,7 +191,7 @@ export default function BackupScreen() {
               color="#39c5bb"
             />
             <Text style={{ color: '#39c5bb', marginLeft: 8, fontWeight: '500' }}>
-              {copied ? 'Copied!' : 'Copy All'}
+              {copied ? t('common.copied') : t('onboarding.copyAll')}
             </Text>
           </TouchableOpacity>
         </Animated.View>
@@ -210,10 +212,10 @@ export default function BackupScreen() {
             <Ionicons name="warning" size={24} color="#ef4444" />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={{ color: '#f87171', fontWeight: '600', marginBottom: 4 }}>
-                Never share these words!
+                {t('onboarding.neverShareWords')}
               </Text>
               <Text style={{ color: 'rgba(252, 165, 165, 0.7)', fontSize: 14, lineHeight: 20 }}>
-                Anyone with these words can access your wallet. Store them offline in a secure location.
+                {t('onboarding.neverShareWordsDesc')}
               </Text>
             </View>
           </View>
@@ -247,7 +249,7 @@ export default function BackupScreen() {
               )}
             </View>
             <Text style={{ color: '#ffffff', flex: 1, fontSize: 15 }}>
-              I have written down my seed phrase and stored it securely
+              {t('onboarding.acknowledgeSeed')}
             </Text>
           </TouchableOpacity>
         </Animated.View>
@@ -283,7 +285,7 @@ export default function BackupScreen() {
                 color: hasAcknowledged ? '#ffffff' : '#555560',
               }}
             >
-              I'VE WRITTEN THEM DOWN
+              {t('onboarding.writtenThemDown')}
             </Text>
           </TouchableOpacity>
         </Animated.View>

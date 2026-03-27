@@ -24,7 +24,7 @@ import {
 import nacl from 'tweetnacl';
 import { sha256 } from '@noble/hashes/sha256';
 import { hkdf } from '@noble/hashes/hkdf';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { getConnection } from '../solana/connection';
 
 // ── Program Constants ──────────────────────────────────────────────────

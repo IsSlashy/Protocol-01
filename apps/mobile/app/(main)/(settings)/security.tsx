@@ -11,7 +11,6 @@ import { useRouter } from 'expo-router';
 import { p01Alert } from '@/stores/alertStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
@@ -23,6 +22,7 @@ import { SettingsRow, ToggleRow } from '../../../components/settings';
 import { PinInput } from '../../../components/onboarding';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
+import { useT } from '@/i18n';
 
 const STORAGE_KEYS = {
   BIOMETRICS: 'settings_biometrics',
@@ -50,16 +50,9 @@ interface GlassCardProps {
 
 const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
   <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-      <LinearGradient
-        colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+    <View style={styles.glassBlur}>
       {children}
-    </BlurView>
+    </View>
   </Animated.View>
 );
 
@@ -93,6 +86,7 @@ interface ChangePinModalProps {
 }
 
 function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSuccess }: ChangePinModalProps) {
+  const t = useT();
   const [step, setStep] = useState<PinStep>('new');
   const [pin, setPin] = useState('');
   const [newPin, setNewPin] = useState('');
@@ -152,17 +146,17 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
 
   const getTitle = () => {
     switch (step) {
-      case 'verify': return 'Enter Current PIN';
-      case 'new': return hasPinSet ? 'Enter New PIN' : 'Set PIN';
-      case 'confirm': return 'Confirm New PIN';
+      case 'verify': return t('lock.enterPin');
+      case 'new': return hasPinSet ? t('settings.changePin') : t('settings.pinCode');
+      case 'confirm': return t('onboarding.confirmPin');
     }
   };
 
   const getSubtitle = () => {
     switch (step) {
-      case 'verify': return 'Verify your identity';
-      case 'new': return 'Choose a 6-digit PIN';
-      case 'confirm': return 'Re-enter to confirm';
+      case 'verify': return t('lock.biometricPrompt');
+      case 'new': return t('onboarding.setupPinDesc');
+      case 'confirm': return t('onboarding.confirmPin');
     }
   };
 
@@ -269,7 +263,7 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
 
           {/* Cancel */}
           <TouchableOpacity style={pm.cancelBtn} onPress={onClose}>
-            <Text style={pm.cancelText}>Cancel</Text>
+            <Text style={pm.cancelText}>{t('common.cancel')}</Text>
           </TouchableOpacity>
         </Animated.View>
       </View>
@@ -280,6 +274,7 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
 /* ──────────────────────── Screen ──────────────────────── */
 
 export default function SecuritySettingsScreen() {
+  const t = useT();
   const router = useRouter();
 
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
@@ -375,8 +370,8 @@ export default function SecuritySettingsScreen() {
 
   const handleLockTimeoutSelect = () => {
     p01Alert(
-      'Auto-Lock Timer',
-      'Select how long before the app locks automatically',
+      t('settings.autoLock'),
+      t('settings.lockTimeout'),
       LOCK_TIMEOUTS.map((option) => ({
         text: option.label,
         onPress: async () => {
@@ -395,7 +390,7 @@ export default function SecuritySettingsScreen() {
   const handlePinSuccess = () => {
     setShowPinModal(false);
     setHasPinSet(true);
-    p01Alert('PIN Updated', hasPinSet ? 'Your PIN has been changed.' : 'Your PIN has been set.');
+    p01Alert(t('settings.changePin'), t('common.success'));
   };
 
   const getLockTimeoutLabel = () => {
@@ -415,7 +410,7 @@ export default function SecuritySettingsScreen() {
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Security Settings</Text>
+        <Text style={styles.headerTitle}>{t('settings.security')}</Text>
         <View style={{ width: 40 }} />
       </Animated.View>
 
@@ -428,17 +423,17 @@ export default function SecuritySettingsScreen() {
         <SectionTitle title="AUTHENTICATION" delay={80} />
         <GlassCard delay={100}>
           <SettingsRow
-            label={hasPinSet ? 'Change PIN' : 'Set PIN'}
+            label={hasPinSet ? t('settings.changePin') : t('settings.pinCode')}
             leftIcon="keypad-outline"
             onPress={handleChangePIN}
           />
           <GlassDivider />
           <ToggleRow
-            label="Biometrics"
+            label={t('settings.biometric')}
             description={
               biometricsAvailable
-                ? 'Use Face ID or fingerprint to unlock'
-                : 'Not available on this device'
+                ? t('lock.useBiometric')
+                : t('common.disabled')
             }
             value={biometricsEnabled}
             onValueChange={handleBiometricsToggle}
@@ -450,7 +445,7 @@ export default function SecuritySettingsScreen() {
         <SectionTitle title="AUTO-LOCK" delay={150} />
         <GlassCard delay={170}>
           <SettingsRow
-            label="Lock after"
+            label={t('settings.autoLock')}
             value={getLockTimeoutLabel()}
             leftIcon="time-outline"
             onPress={handleLockTimeoutSelect}
@@ -472,15 +467,15 @@ export default function SecuritySettingsScreen() {
         <SectionTitle title="ADVANCED" delay={290} />
         <GlassCard delay={310}>
           <ToggleRow
-            label="Hide balance by default"
-            description="Balance hidden until tapped"
+            label={t('settings.hideBalanceDefault')}
+            description={t('wallet.hideBalance')}
             value={hideBalance}
             onValueChange={handleHideBalanceToggle}
           />
           <GlassDivider />
           <ToggleRow
-            label="Block screenshots"
-            description="Prevent screenshots in the app"
+            label={t('settings.blockScreenshots')}
+            description={t('settings.blockScreenshots')}
             value={blockScreenshots}
             onValueChange={handleBlockScreenshotsToggle}
           />
@@ -488,21 +483,14 @@ export default function SecuritySettingsScreen() {
 
         {/* Info Card */}
         <Animated.View entering={FadeInDown.delay(380).duration(350)} style={styles.infoOuter}>
-          <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-            <LinearGradient
-              colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
+          <View style={styles.glassBlur}>
             <View style={styles.infoContent}>
               <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
               <Text style={styles.infoText}>
                 Enabling biometrics and transaction authentication adds an extra layer of security to protect your assets.
               </Text>
             </View>
-          </BlurView>
+          </View>
         </Animated.View>
       </ScrollView>
 
@@ -538,11 +526,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: BorderRadius.full,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: '#0f0f12',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   headerTitle: {
     color: Colors.text,
@@ -566,17 +552,15 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.lg,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   glassBlur: {
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    backgroundColor: '#0f0f12',
   },
 
   /* Divider */
   divider: {
     height: 1,
-    backgroundColor: 'rgba(57, 197, 187, 0.07)',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
     marginHorizontal: Spacing.lg,
   },
 
@@ -586,8 +570,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.lg,
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
   },
   infoContent: {
     flexDirection: 'row',

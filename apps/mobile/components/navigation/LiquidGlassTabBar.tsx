@@ -1,341 +1,181 @@
 import React, { useCallback, useEffect } from 'react';
-import {
-  View,
-  StyleSheet,
-  Platform,
-} from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withTiming,
-  interpolate,
-  Extrapolation,
+  useSharedValue, useAnimatedStyle, withSpring,
   runOnJS,
-  SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Colors, FontFamily } from '../../constants/theme';
 
-// Conditional native glass (safe for Android/web)
+// Native glass (iOS 26+)
 let GlassView: any = null;
 let GlassContainer: any = null;
 let isNativeLiquidGlass = false;
 try {
-  const glassEffect = require('expo-glass-effect');
-  GlassView = glassEffect.GlassView;
-  GlassContainer = glassEffect.GlassContainer;
-  isNativeLiquidGlass =
-    glassEffect.isLiquidGlassAvailable?.() &&
-    glassEffect.isGlassEffectAPIAvailable?.();
+  const g = require('expo-glass-effect');
+  GlassView = g.GlassView;
+  GlassContainer = g.GlassContainer;
+  isNativeLiquidGlass = g.isLiquidGlassAvailable?.() && g.isGlassEffectAPIAvailable?.();
 } catch {}
 
-const TAB_BAR_HEIGHT = 64;
-const HORIZONTAL_MARGIN = 16;
-const BOTTOM_MARGIN = 16;
-const PILL_VERTICAL_PADDING = 6;
-const PILL_HEIGHT = TAB_BAR_HEIGHT - PILL_VERTICAL_PADDING * 2;
-const PILL_HORIZONTAL_INSET = 8;
-const BORDER_RADIUS = 24;
-const PILL_BORDER_RADIUS = 18;
+const BAR_H = 62;
+const MARGIN_H = 20;
+const MARGIN_B = 16;
+const PILL_PAD = 5;
+const PILL_H = BAR_H - PILL_PAD * 2;
+const PILL_INSET = 6;
+const BAR_RADIUS = 22;
+const PILL_RADIUS = 17;
 
-const SPRING_CONFIG = {
-  damping: 20,
-  stiffness: 180,
-  mass: 0.8,
-};
+const SPRING = { damping: 22, stiffness: 200, mass: 0.7 };
+const SNAP = { damping: 24, stiffness: 240, mass: 0.5 };
 
-const SNAP_SPRING = {
-  damping: 22,
-  stiffness: 220,
-  mass: 0.6,
-};
+// ─── Tab ─────────────────────────────────────────────────────────────────────
 
-// ─── Animated Tab Button ───
-// Separate component so each tab has its own useAnimatedStyle hook
 function AnimatedTab({
-  route,
-  options,
-  isFocused,
-  hoverIndex,
-  isDragging,
-  tabIndex,
+  route, options, isFocused,
 }: {
-  route: any;
-  options: any;
-  isFocused: boolean;
-  hoverIndex: SharedValue<number>;
-  isDragging: SharedValue<number>;
-  tabIndex: number;
+  route: any; options: any; isFocused: boolean;
 }) {
   const color = isFocused ? Colors.primary : Colors.textTertiary;
-  const label =
-    (options.tabBarLabel as string) ??
-    options.title ??
-    route.name;
-
-  const renderIcon = () => {
-    if (options.tabBarIcon) {
-      return options.tabBarIcon({ focused: isFocused, color, size: 24 });
-    }
-    return <Ionicons name="ellipse-outline" size={24} color={color} />;
-  };
-
-  // Scale up when finger hovers over this tab during drag
-  const scaleStyle = useAnimatedStyle(() => {
-    if (isDragging.value === 0) {
-      return { transform: [{ scale: withTiming(1, { duration: 200 }) }] };
-    }
-    const distance = Math.abs(hoverIndex.value - tabIndex);
-    const scale = interpolate(
-      distance,
-      [0, 0.4, 1.2],
-      [1.2, 1.08, 1],
-      Extrapolation.CLAMP
-    );
-    return { transform: [{ scale }] };
-  });
+  const label = (options.tabBarLabel as string) ?? options.title ?? route.name;
 
   return (
-    <Animated.View style={[styles.tab, scaleStyle as any]}>
-      {renderIcon()}
-      <Animated.Text
-        style={[styles.label, { color }]}
-        numberOfLines={1}
-      >
+    <View style={st.tab}>
+      {options.tabBarIcon
+        ? options.tabBarIcon({ focused: isFocused, color, size: 22 })
+        : <Ionicons name="ellipse-outline" size={22} color={color} />}
+      <Animated.Text style={[st.label, { color }]} numberOfLines={1}>
         {label}
       </Animated.Text>
-    </Animated.View>
+    </View>
   );
 }
 
-// ─── Main Component ───
-export function LiquidGlassTabBar({
-  state,
-  descriptors,
-  navigation,
-}: BottomTabBarProps) {
+// ─── Tab Bar ─────────────────────────────────────────────────────────────────
+
+export function LiquidGlassTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
 
-  // Filter out hidden routes (settings is accessed via header gear icon)
-  const visibleRoutes = state.routes.filter((route) => {
-    const options = descriptors[route.key].options;
-    if ((options as any).href === null) return false;
-    if (route.name === '(settings)') return false;
+  const visibleRoutes = state.routes.filter(r => {
+    const opts = descriptors[r.key].options;
+    if ((opts as any).href === null) return false;
+    if (r.name === '(settings)') return false;
     return true;
   });
 
-  // Find active index within visible routes
   const activeRoute = state.routes[state.index];
-  const activeVisibleIndex = visibleRoutes.findIndex(
-    (r) => r.key === activeRoute.key
-  );
+  const activeIdx = visibleRoutes.findIndex(r => r.key === activeRoute.key);
 
-  const pillPosition = useSharedValue(activeVisibleIndex >= 0 ? activeVisibleIndex : 0);
-  const pillWidth = useSharedValue(0);
-  const isDragging = useSharedValue(0); // 0 = not dragging, 1 = dragging
-  const hoverIndex = useSharedValue(activeVisibleIndex >= 0 ? activeVisibleIndex : 0);
-  const pillScale = useSharedValue(1);
-  const lastHapticIndex = useSharedValue(-1);
+  const pillPos = useSharedValue(activeIdx >= 0 ? activeIdx : 0);
+  const pillW = useSharedValue(0);
+  const lastHaptic = useSharedValue(-1);
 
-  const [containerWidth, setContainerWidth] = React.useState(0);
+  const [cWidth, setCWidth] = React.useState(0);
   const tabCount = visibleRoutes.length;
-  const tabWidth = containerWidth > 0 ? containerWidth / tabCount : 0;
-  const computedPillWidth = tabWidth > 0 ? tabWidth - PILL_HORIZONTAL_INSET * 2 : 0;
-
-  // Sync pill to active tab on navigation
-  useEffect(() => {
-    if (activeVisibleIndex < 0) return;
-    pillPosition.value = withSpring(activeVisibleIndex, SPRING_CONFIG);
-    hoverIndex.value = activeVisibleIndex;
-  }, [activeVisibleIndex]);
+  const tabW = cWidth > 0 ? cWidth / tabCount : 0;
+  const computedPillW = tabW > 0 ? tabW - PILL_INSET * 2 : 0;
 
   useEffect(() => {
-    pillWidth.value = computedPillWidth;
-  }, [computedPillWidth]);
+    if (activeIdx < 0) return;
+    pillPos.value = withSpring(activeIdx, SPRING);
+  }, [activeIdx]);
 
-  // ─── Gesture callbacks (must be stable refs for runOnJS) ───
+  useEffect(() => { pillW.value = computedPillW; }, [computedPillW]);
 
-  const triggerHaptic = useCallback(() => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+  const twS = useSharedValue(tabW);
+  const tcS = useSharedValue(tabCount);
+  useEffect(() => { twS.value = tabW; tcS.value = tabCount; }, [tabW, tabCount]);
+
+  const hapticLight = useCallback(() => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
-
-  const triggerMediumHaptic = useCallback(() => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
+  const hapticMed = useCallback(() => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, []);
+  const navTo = useCallback((i: number) => {
+    const r = visibleRoutes[i];
+    if (r && activeIdx !== i) navigation.navigate(r.name, r.params);
+  }, [visibleRoutes, activeIdx, navigation]);
 
-  const navigateToTab = useCallback((index: number) => {
-    const route = visibleRoutes[index];
-    if (!route) return;
-    const isFocused = activeVisibleIndex === index;
-    if (!isFocused) {
-      navigation.navigate(route.name, route.params);
-    }
-  }, [visibleRoutes, activeVisibleIndex, navigation]);
+  // ── Gestures ──
 
-  // ─── Worklet: get tab index from X position ───
-  const twShared = useSharedValue(tabWidth);
-  const tcShared = useSharedValue(tabCount);
-  useEffect(() => {
-    twShared.value = tabWidth;
-    tcShared.value = tabCount;
-  }, [tabWidth, tabCount]);
-
-  // ─── Pan gesture — drag/scrub across tabs ───
-  const panGesture = Gesture.Pan()
-    .activeOffsetX([-10, 10])
-    .failOffsetY([-20, 20])
-    .onStart((e) => {
+  const pan = Gesture.Pan()
+    .activeOffsetX([-10, 10]).failOffsetY([-20, 20])
+    .onStart(e => {
       'worklet';
-      if (twShared.value <= 0) return;
-      isDragging.value = 1;
-      pillScale.value = withSpring(1.08, SNAP_SPRING);
-      const idx = Math.max(0, Math.min(tcShared.value - 1, e.x / twShared.value));
-      hoverIndex.value = idx;
-      pillPosition.value = idx;
-      lastHapticIndex.value = Math.floor(idx);
-      runOnJS(triggerMediumHaptic)();
+      if (twS.value <= 0) return;
+      const idx = Math.max(0, Math.min(tcS.value - 1, e.x / twS.value));
+      pillPos.value = idx;
+      lastHaptic.value = Math.floor(idx);
+      runOnJS(hapticMed)();
     })
-    .onUpdate((e) => {
+    .onUpdate(e => {
       'worklet';
-      if (twShared.value <= 0) return;
-      const idx = Math.max(0, Math.min(tcShared.value - 1, e.x / twShared.value));
-      hoverIndex.value = idx;
-      // Smooth follow — slight spring for liquid feel
-      pillPosition.value = idx;
-      // Haptic tick when crossing tab boundaries
-      const rounded = Math.round(idx);
-      if (rounded !== lastHapticIndex.value) {
-        lastHapticIndex.value = rounded;
-        runOnJS(triggerHaptic)();
-      }
+      if (twS.value <= 0) return;
+      const idx = Math.max(0, Math.min(tcS.value - 1, e.x / twS.value));
+      pillPos.value = idx;
+      const r = Math.round(idx);
+      if (r !== lastHaptic.value) { lastHaptic.value = r; runOnJS(hapticLight)(); }
     })
-    .onEnd((e) => {
+    .onEnd(e => {
       'worklet';
-      if (twShared.value <= 0) return;
-      const rawIdx = Math.max(0, Math.min(tcShared.value - 1, e.x / twShared.value));
-      const snapped = Math.max(0, Math.min(tcShared.value - 1, Math.floor(rawIdx)));
-      isDragging.value = 0;
-      hoverIndex.value = snapped;
-      pillPosition.value = withSpring(snapped, SNAP_SPRING);
-      pillScale.value = withSpring(1, SNAP_SPRING);
-      runOnJS(navigateToTab)(snapped);
-      runOnJS(triggerMediumHaptic)();
-    })
-    .onFinalize(() => {
-      'worklet';
-      isDragging.value = 0;
-      pillScale.value = withSpring(1, SNAP_SPRING);
+      if (twS.value <= 0) return;
+      const raw = Math.max(0, Math.min(tcS.value - 1, e.x / twS.value));
+      const snap = Math.max(0, Math.min(tcS.value - 1, Math.floor(raw)));
+      pillPos.value = withSpring(snap, SNAP);
+      runOnJS(navTo)(snap); runOnJS(hapticMed)();
     });
 
-  // ─── Tap gesture — quick tap on a tab ───
-  const tapGesture = Gesture.Tap()
-    .onEnd((e) => {
-      'worklet';
-      if (twShared.value <= 0) return;
-      const tapped = Math.max(0, Math.min(tcShared.value - 1,
-        Math.floor(e.x / twShared.value)
-      ));
-      pillPosition.value = withSpring(tapped, SPRING_CONFIG);
-      hoverIndex.value = tapped;
-      runOnJS(triggerHaptic)();
-      runOnJS(navigateToTab)(tapped);
-    });
+  const tap = Gesture.Tap().onEnd(e => {
+    'worklet';
+    if (twS.value <= 0) return;
+    const i = Math.max(0, Math.min(tcS.value - 1, Math.floor(e.x / twS.value)));
+    pillPos.value = withSpring(i, SPRING);
+    runOnJS(hapticLight)(); runOnJS(navTo)(i);
+  });
 
-  // Pan takes priority over tap (tap only fires if no horizontal movement)
-  const composedGesture = Gesture.Exclusive(panGesture, tapGesture);
+  const gesture = Gesture.Exclusive(pan, tap);
 
-  // ─── Animated styles ───
+  // ── Animated styles ──
 
-  const pillAnimatedStyle = useAnimatedStyle(() => {
-    const pw = pillWidth.value;
-    const tw = pw + PILL_HORIZONTAL_INSET * 2;
+  const pillStyle = useAnimatedStyle(() => {
+    const pw = pillW.value;
+    const tw = pw + PILL_INSET * 2;
     return {
-      transform: [
-        { translateX: pillPosition.value * tw + PILL_HORIZONTAL_INSET },
-        { scaleX: pillScale.value },
-        { scaleY: pillScale.value },
-      ],
+      transform: [{ translateX: pillPos.value * tw + PILL_INSET }],
       width: pw,
     } as any;
   });
 
-  // Pill glow intensifies during drag
-  const pillGlowStyle = useAnimatedStyle(() => {
-    const glowOpacity = interpolate(
-      isDragging.value,
-      [0, 1],
-      [0.15, 0.35],
-      Extrapolation.CLAMP
-    );
-    return {
-      shadowOpacity: glowOpacity,
-    };
-  });
+  // ── Tabs ──
 
-  // ─── Tab renderer ───
-  const renderTabs = () =>
-    visibleRoutes.map((route, index) => {
-      const { options } = descriptors[route.key];
-      const isFocused = activeVisibleIndex === index;
+  const tabs = visibleRoutes.map((route, i) => (
+    <AnimatedTab key={route.key} route={route} options={descriptors[route.key].options}
+      isFocused={activeIdx === i} />
+  ));
 
-      return (
-        <AnimatedTab
-          key={route.key}
-          route={route}
-          options={options}
-          isFocused={isFocused}
-          hoverIndex={hoverIndex}
-          isDragging={isDragging}
-          tabIndex={index}
-        />
-      );
-    });
+  // ── Native glass (iOS 26+) ──
 
-  // ─── Native Liquid Glass path (iOS 26+) ───
   if (isNativeLiquidGlass && GlassContainer && GlassView) {
     return (
-      <View
-        style={[
-          styles.outerContainer,
-          { bottom: BOTTOM_MARGIN + insets.bottom },
-        ]}
-      >
+      <View style={[st.outer, { bottom: MARGIN_B + insets.bottom }]}>
         <GlassContainer spacing={4}>
-          <GestureDetector gesture={composedGesture}>
-            <Animated.View
-              style={styles.nativeGlassBarOuter}
-              onLayout={(e: any) => setContainerWidth(e.nativeEvent.layout.width)}
-            >
-              <GlassView
-                glassEffectStyle="regular"
-                tintColor="rgba(57, 197, 187, 0.06)"
-                style={styles.nativeGlassBar}
-              >
-                {/* Native glass pill indicator */}
-                {containerWidth > 0 && (
-                  <Animated.View style={[styles.nativePillWrapper, pillAnimatedStyle as any]}>
-                    <GlassView
-                      glassEffectStyle="clear"
-                      tintColor="rgba(57, 197, 187, 0.15)"
-                      isInteractive
-                      style={styles.nativePill}
-                    />
+          <GestureDetector gesture={gesture}>
+            <Animated.View style={st.nativeOuter}
+              onLayout={(e: any) => setCWidth(e.nativeEvent.layout.width)}>
+              <GlassView glassEffectStyle="regular" tintColor="rgba(255,255,255,0.04)" style={st.nativeBar}>
+                {cWidth > 0 && (
+                  <Animated.View style={[st.nativePillWrap, pillStyle as any]}>
+                    <GlassView glassEffectStyle="clear" tintColor="rgba(255,255,255,0.1)" isInteractive style={st.nativePill} />
                   </Animated.View>
                 )}
-
-                {/* Tab buttons */}
-                {renderTabs()}
+                {tabs}
               </GlassView>
             </Animated.View>
           </GestureDetector>
@@ -344,185 +184,85 @@ export function LiquidGlassTabBar({
     );
   }
 
-  // ─── Enhanced BlurView fallback (Android + older iOS) ───
+  // ── Blur fallback ──
+
   return (
-    <View
-      style={[
-        styles.outerContainer,
-        styles.outerShadow,
-        { bottom: BOTTOM_MARGIN + insets.bottom },
-      ]}
-    >
-      <GestureDetector gesture={composedGesture}>
-        <Animated.View
-          style={styles.glassContainer}
-          onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width)}
-        >
-          {/* Layer 1: Background — blur on iOS, solid on Android */}
+    <View style={[st.outer, st.shadow, { bottom: MARGIN_B + insets.bottom }]}>
+      <GestureDetector gesture={gesture}>
+        <Animated.View style={st.bar} onLayout={e => setCWidth(e.nativeEvent.layout.width)}>
+          {/* Background — solid on Android (blur kills perf), blur on iOS */}
           {Platform.OS === 'ios' ? (
-            <BlurView
-              intensity={40}
-              tint="dark"
-              style={StyleSheet.absoluteFill}
-            />
+            <>
+              <BlurView intensity={50} tint="dark" style={StyleSheet.absoluteFill} />
+              <View style={[StyleSheet.absoluteFill, st.tint]} />
+            </>
           ) : (
-            <View style={[StyleSheet.absoluteFill, styles.androidBg]} />
+            <View style={[StyleSheet.absoluteFill, st.androidBg]} />
           )}
 
-          {/* Layer 2: Semi-transparent overlay (iOS only, Android bg already dark) */}
-          {Platform.OS === 'ios' && (
-            <View style={[StyleSheet.absoluteFill, styles.overlay]} />
-          )}
-
-          {/* Layer 3: Top edge specular highlight */}
-          <LinearGradient
-            colors={['rgba(255, 255, 255, 0.08)', 'transparent']}
-            style={styles.topHighlight}
-            pointerEvents="none"
-          />
-
-          {/* Layer 4: Bottom inner shadow for depth */}
-          <LinearGradient
-            colors={['transparent', 'rgba(0, 0, 0, 0.15)']}
-            style={styles.bottomShadow}
-            pointerEvents="none"
-          />
-
-          {/* Animated indicator pill */}
-          {containerWidth > 0 && (
-            <Animated.View
-              style={[
-                styles.pill,
-                Platform.OS === 'ios' && styles.pillShadow,
-                pillAnimatedStyle as any,
-                Platform.OS === 'ios' && (pillGlowStyle as any),
-              ]}
-            >
-              <View
-                style={[StyleSheet.absoluteFill, styles.pillOverlay]}
-              />
-              {/* Pill top highlight */}
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.12)', 'transparent']}
-                style={styles.pillHighlight}
-                pointerEvents="none"
-              />
+          {/* Pill */}
+          {cWidth > 0 && (
+            <Animated.View style={[st.pill, pillStyle as any]}>
+              <View style={[StyleSheet.absoluteFill, st.pillFill]} />
             </Animated.View>
           )}
 
-          {/* Tab buttons */}
-          {renderTabs()}
+          {/* Tabs */}
+          {tabs}
         </Animated.View>
       </GestureDetector>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  outerContainer: {
-    position: 'absolute',
-    left: HORIZONTAL_MARGIN,
-    right: HORIZONTAL_MARGIN,
+const st = StyleSheet.create({
+  outer: {
+    position: 'absolute', left: MARGIN_H, right: MARGIN_H,
   },
-  outerShadow: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 24,
-    elevation: 12,
+  shadow: {
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35, shadowRadius: 20, elevation: 10,
   },
-  glassContainer: {
-    height: TAB_BAR_HEIGHT,
-    borderRadius: BORDER_RADIUS,
-    overflow: 'hidden',
-    borderWidth: 0.5,
-    borderColor: 'rgba(57, 197, 187, 0.18)',
-    flexDirection: 'row',
-    alignItems: 'center',
+  bar: {
+    height: BAR_H, borderRadius: BAR_RADIUS, overflow: 'hidden',
+    borderWidth: 0.5, borderColor: 'rgba(57, 197, 187, 0.15)',
+    flexDirection: 'row', alignItems: 'center',
   },
-  overlay: {
-    backgroundColor: 'rgba(10, 10, 12, 0.35)',
+  tint: {
+    backgroundColor: 'rgba(10, 10, 12, 0.45)',
   },
   androidBg: {
-    backgroundColor: 'rgba(10, 10, 12, 0.92)',
+    backgroundColor: 'rgba(15, 15, 18, 0.95)',
   },
-  topHighlight: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 1.5,
-  },
-  bottomShadow: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 12,
-  },
+
+  // Pill
   pill: {
-    position: 'absolute',
-    top: PILL_VERTICAL_PADDING,
-    height: PILL_HEIGHT,
-    borderRadius: PILL_BORDER_RADIUS,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.25)',
+    position: 'absolute', top: PILL_PAD, height: PILL_H,
+    borderRadius: PILL_RADIUS, overflow: 'hidden',
   },
-  pillShadow: {
-    shadowColor: 'rgba(57, 197, 187, 1)',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  pillOverlay: {
+  pillFill: {
     backgroundColor: 'rgba(57, 197, 187, 0.12)',
-    borderRadius: PILL_BORDER_RADIUS,
+    borderRadius: PILL_RADIUS,
   },
-  pillHighlight: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 8,
-    borderTopLeftRadius: PILL_BORDER_RADIUS,
-    borderTopRightRadius: PILL_BORDER_RADIUS,
-  },
+
+  // Tab
   tab: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1,
-    height: TAB_BAR_HEIGHT,
-    gap: 3,
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    zIndex: 1, height: BAR_H, gap: 2,
   },
   label: {
-    fontFamily: FontFamily.medium,
-    fontSize: 11,
+    fontFamily: FontFamily.medium, fontSize: 10,
   },
-  // Native Liquid Glass styles
-  nativeGlassBarOuter: {
-    height: TAB_BAR_HEIGHT,
-    borderRadius: BORDER_RADIUS,
+
+  // Native glass
+  nativeOuter: { height: BAR_H, borderRadius: BAR_RADIUS },
+  nativeBar: {
+    flex: 1, borderRadius: BAR_RADIUS, flexDirection: 'row',
+    alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.06)',
   },
-  nativeGlassBar: {
-    flex: 1,
-    borderRadius: BORDER_RADIUS,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 0.5,
-    borderColor: 'rgba(57, 197, 187, 0.08)',
+  nativePillWrap: {
+    position: 'absolute', top: PILL_PAD, height: PILL_H,
+    borderRadius: PILL_RADIUS, overflow: 'hidden',
   },
-  nativePillWrapper: {
-    position: 'absolute',
-    top: PILL_VERTICAL_PADDING,
-    height: PILL_HEIGHT,
-    borderRadius: PILL_BORDER_RADIUS,
-    overflow: 'hidden',
-  },
-  nativePill: {
-    flex: 1,
-    borderRadius: PILL_BORDER_RADIUS,
-  },
+  nativePill: { flex: 1, borderRadius: PILL_RADIUS },
 });

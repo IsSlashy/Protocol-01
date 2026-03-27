@@ -5,6 +5,7 @@ import Animated, { FadeInUp } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { Colors, FontFamily, P01Colors } from '@/constants/theme';
 import { formatTxDate } from '@/services/solana/transactions';
+import { useT } from '@/i18n';
 
 interface Transaction {
   signature: string;
@@ -27,6 +28,7 @@ const TX_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: s
 };
 
 export default function RecentActivity({ transactions, onSeeAll }: RecentActivityProps) {
+  const t = useT();
   const items = transactions.slice(0, 3);
 
   return (
@@ -35,11 +37,11 @@ export default function RecentActivity({ transactions, onSeeAll }: RecentActivit
       <View style={styles.sectionHeader}>
         <View style={styles.headerLeft}>
           <View style={[styles.headerDot, { backgroundColor: P01Colors.pink }]} />
-          <Text style={styles.sectionTitle}>Activity</Text>
+          <Text style={styles.sectionTitle}>{t('wallet.recentActivity')}</Text>
         </View>
         {transactions.length > 0 && (
           <TouchableOpacity onPress={onSeeAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.seeAll}>See all</Text>
+            <Text style={styles.seeAll}>{t('common.seeAll')}</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -50,8 +52,8 @@ export default function RecentActivity({ transactions, onSeeAll }: RecentActivit
           {items.length === 0 ? (
             <View style={styles.empty}>
               <Ionicons name="time-outline" size={32} color={Colors.textTertiary} />
-              <Text style={styles.emptyText}>No transactions yet</Text>
-              <Text style={styles.emptySubtext}>Your activity will appear here</Text>
+              <Text style={styles.emptyText}>{t('wallet.noActivity')}</Text>
+              <Text style={styles.emptySubtext}>{t('activity.transactionsWillAppear')}</Text>
             </View>
           ) : (
             items.map((tx, i) => {
@@ -73,7 +75,7 @@ export default function RecentActivity({ transactions, onSeeAll }: RecentActivit
                       {tx.type === 'receive' ? '+' : '-'}{tx.amount?.toFixed(4) || '0'} {tx.token || 'SOL'}
                     </Text>
                     <Text style={styles.txStatus}>
-                      {tx.status === 'confirmed' ? 'Confirmed' : tx.status}
+                      {tx.status === 'confirmed' ? t('activity.confirmed') : tx.status}
                     </Text>
                   </View>
                 </View>

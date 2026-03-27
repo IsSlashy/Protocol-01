@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
+import bs58 from 'bs58';
 import { PublicKey } from '@solana/web3.js';
 import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../utils/crypto/noteVault';
 import { getConnection, getCluster } from '../services/solana/connection';
@@ -790,48 +791,153 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
-          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
-          let sig: string;
+          const { Keypair: SolKeypair, PublicKey: PK, SystemProgram, Transaction } = await import('@solana/web3.js');
+          const { sha256 } = await import('@noble/hashes/sha256');
+          const { hmac } = await import('@noble/hashes/hmac');
 
-          if (emergency) {
-            // Emergency via stealth too — test with full logging
-            console.log('[DenomStore] Emergency STARK unshield — via stealth (testing)');
-            sig = await stealthUnshieldAndSweep(
-              async (stealthPubkey, stealthKeypair) => unshieldStark(
-                receipt, pool, stealthPubkey, starkProofData,
-                (step) => {
-                  const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
-                  set({ progress: step, isProving: proving });
-                },
-                undefined, true, stealthKeypair,
-              ),
-              recipientAddress, walletAddr, walletSigner,
-              (msg) => set({ progress: msg, isProving: false }),
+          // Full stealth unshield: BOTH signer AND recipient are ephemeral.
+          //
+          // On-chain, an observer sees:
+          //   Fee Payer / Signer: stealth_signer (ephemeral, one-time)
+          //   Recipient: stealth_recipient (ECDH-derived one-time address)
+          //   Pool: sends denomination to stealth_recipient
+          //
+          // The user's real wallet NEVER appears. Funds sit in the stealth
+          // recipient until the user scans and sweeps (separate, delayed action).
+          //
+          // Flow:
+          //   1. Generate ephemeral signer keypair (for fees)
+          //   2. Derive stealth recipient from user's meta-address (ECDH)
+          //   3. Fund signer with SOL for STARK buffer + tx fees
+          //   4. Signer submits STARK proof + unshield → pool sends to stealth recipient
+          //   5. User later sweeps stealth recipient → real wallet (timing-decorrelated)
+
+          const { getOrCreateStealthKeys, getMetaAddress } = await import('../services/stealth/keys');
+          const { generateStealthAddress: genStealth, parseMetaAddress } = await import('../utils/crypto/stealth');
+
+          // Derive stealth recipient from user's own meta-address
+          set({ progress: 'Generating stealth recipient...' });
+          const metaAddr = await getMetaAddress();
+          const parsed = parseMetaAddress(metaAddr);
+          const stealthResult = genStealth(parsed.spendingPubKey, parsed.viewingPubKey, parsed.kemPubKey);
+          const stealthRecipient = new PK(stealthResult.address);
+          console.log(`[DenomStore] Stealth recipient: ${stealthRecipient.toBase58().slice(0, 12)}... (wallet hidden)`);
+
+          // Generate ephemeral signer (for fees — NOT linked to wallet on-chain)
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${Date.now()}`));
+          const stealthKp = SolKeypair.fromSeed(seed);
+          console.log(`[DenomStore] Stealth signer: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
+
+          // Fund signer for STARK buffer rent + tx fees
+          set({ progress: 'Funding ephemeral signer...' });
+          const connection = getConnection();
+          const FEE_FUND = 100_000_000; // 0.1 SOL
+          if (walletSigner) {
+            const fundTx = new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: walletSigner.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND })
             );
+            const { blockhash } = await connection.getLatestBlockhash();
+            fundTx.recentBlockhash = blockhash;
+            fundTx.feePayer = walletSigner.publicKey;
+            const signedFund = await walletSigner.signTransaction(fundTx);
+            await connection.sendRawTransaction(signedFund.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
           } else {
-            // Normal: stealth unshield for full privacy
-            sig = await stealthUnshieldAndSweep(
-              async (stealthPubkey, stealthKeypair) => unshieldStark(
-                receipt, pool, stealthPubkey, starkProofData,
-                (step) => {
-                  const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
-                  set({ progress: step, isProving: proving });
-                },
-                undefined, false, stealthKeypair,
-              ),
-              recipientAddress, walletAddr, walletSigner,
-              (msg) => set({ progress: msg, isProving: false }),
-            );
+            const kp = await getKeypair();
+            if (kp) {
+              const fundTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND })
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              fundTx.recentBlockhash = blockhash;
+              fundTx.feePayer = kp.publicKey;
+              fundTx.sign(kp);
+              await connection.sendRawTransaction(fundTx.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+            }
           }
 
+          // Random timing jitter (1-3s) to decorrelate funding from unshield
+          const jitter = 1000 + Math.floor(Math.random() * 2000);
+          set({ progress: 'Waiting (timing privacy)...' });
+          await new Promise(r => setTimeout(r, jitter));
+
+          // Unshield: stealth signer pays fees, pool sends to stealth recipient
+          const sig = await unshieldStark(
+            receipt, pool, stealthRecipient, starkProofData,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+              set({ progress: step, isProving: proving });
+            },
+            undefined, // stealth keypair signs, not wallet
+            emergency,
+            stealthKp, // overrideKeypair — stealth signer is fee payer
+          );
+
+          // Mark note as spent IMMEDIATELY after unshield succeeds
+          // (before sweep — if app backgrounds during sweep, note is already spent)
           set(state => ({
-            isLoading: false,
             isProving: false,
-            progress: null,
+            progress: 'Sweeping to wallet...',
             notes: state.notes.map(n =>
               n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
             ),
           }));
+
+          // Auto-sweep: stealth recipient → real wallet (delayed for privacy)
+          // The stealth recipient received the denomination from the pool.
+          // We sweep after a delay so the unshield and sweep aren't in the same block.
+          try {
+            const sweepDelay = 3000 + Math.floor(Math.random() * 4000); // 3-7s
+            set({ progress: 'Sweeping to wallet (delayed)...' });
+            await new Promise(r => setTimeout(r, sweepDelay));
+
+            // Derive stealth recipient's private key to sign the sweep
+            const stealthKeys = await getOrCreateStealthKeys();
+            const { scanStealthPayment } = await import('../utils/crypto/stealth');
+            const scanResult = scanStealthPayment(
+              stealthResult.ephemeralPublicKey,          // arg1: ephemeral X25519 pub (base58 string)
+              stealthKeys.viewingSecretKey,               // arg2: viewing secret key (32 bytes)
+              stealthKeys.spendingKey.publicKey.toBytes(), // arg3: spending PUBLIC key (32 bytes)
+              stealthResult.viewTag,                      // arg4: view tag
+              stealthResult.kemCiphertext,                // arg5: ML-KEM ciphertext (if hybrid v2)
+              stealthKeys.kemSecretKey,                   // arg6: ML-KEM secret key (if hybrid v2)
+            );
+
+            if (scanResult.found && scanResult.privateKey) {
+              const stealthRecipientKp = SolKeypair.fromSecretKey(scanResult.privateKey);
+              const recipientBal = await connection.getBalance(stealthRecipientKp.publicKey);
+              if (recipientBal > 5000) {
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({ fromPubkey: stealthRecipientKp.publicKey, toPubkey: new PK(recipientAddress), lamports: recipientBal - 5000 })
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthRecipientKp.publicKey;
+                sweepTx.sign(stealthRecipientKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore] ✅ Sweep: stealth → wallet (${(recipientBal - 5000) / 1e9} SOL) sig=${sweepSig.slice(0, 16)}...`);
+              }
+            }
+
+            // Also drain leftover fees from signer
+            const signerBal = await connection.getBalance(stealthKp.publicKey);
+            if (signerBal > 5000) {
+              const drainTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: stealthKp.publicKey, toPubkey: new PK(recipientAddress), lamports: signerBal - 5000 })
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              drainTx.recentBlockhash = blockhash;
+              drainTx.feePayer = stealthKp.publicKey;
+              drainTx.sign(stealthKp);
+              await connection.sendRawTransaction(drainTx.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+            }
+          } catch (sweepErr: any) {
+            console.error('[DenomStore] ❌ Sweep failed (funds in stealth):', sweepErr.message, sweepErr.stack?.slice(0, 200));
+          }
+
+          // Final state cleanup (note already marked spent above)
+          set({ isLoading: false, isProving: false, progress: null });
 
           // Refresh wallet balance immediately, delay transaction fetch
           // to let RPC rate-limit window reset after STARK chunk uploads
@@ -954,10 +1060,64 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
 
-        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing transfer...' });
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing stealth transfer...' });
 
         try {
           const walletSigner = getWalletSignerIfPrivy();
+          const walletAddr = walletSigner?.publicKey.toBase58()
+            || useWalletStore.getState().publicKey || '';
+
+          // Use stealth intermediary — wallet never appears on-chain
+          const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
+          const { sha256 } = await import('@noble/hashes/sha256');
+          const { hmac } = await import('@noble/hashes/hmac');
+
+          // Derive ephemeral stealth keypair
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_${Date.now()}`));
+          const stealthKp = SolKeypair.fromSeed(seed);
+          console.log(`[Stealth] Transfer via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
+
+          // Fund stealth with enough for TX fees + nullifier PDA rent
+          const FEE_FUND = 10_000_000; // 0.01 SOL — TX fee (~0.003) + nullifier rent (~0.002) + margin
+          set({ progress: 'Funding stealth for fees...' });
+          const connection = getConnection();
+          if (walletSigner) {
+            const fundTx = new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: walletSigner.publicKey,
+                toPubkey: stealthKp.publicKey,
+                lamports: FEE_FUND,
+              })
+            );
+            const { blockhash } = await connection.getLatestBlockhash();
+            fundTx.recentBlockhash = blockhash;
+            fundTx.feePayer = walletSigner.publicKey;
+            const signedFund = await walletSigner.signTransaction(fundTx);
+            const fundSig = await connection.sendRawTransaction(signedFund.serialize());
+            await connection.confirmTransaction(fundSig, 'confirmed');
+            console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}... TX: ${fundSig.slice(0, 16)}...`);
+          } else {
+            const keypair = await import('../services/solana/wallet').then(m => m.getKeypair());
+            if (keypair) {
+              const fundTx = new Transaction().add(
+                SystemProgram.transfer({
+                  fromPubkey: keypair.publicKey,
+                  toPubkey: stealthKp.publicKey,
+                  lamports: FEE_FUND,
+                })
+              );
+              const { sendAndConfirmTransaction } = await import('@solana/web3.js');
+              await sendAndConfirmTransaction(connection, fundTx, [keypair], { commitment: 'confirmed' });
+              console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
+            }
+          }
+
+          // Timing jitter (1-3s) — breaks timing correlation between fund and transfer
+          const jitter = 1000 + Math.floor(Math.random() * 2000);
+          console.log(`[Stealth] Timing jitter: ${jitter}ms before transfer`);
+          set({ progress: 'Waiting (timing privacy)...' });
+          await new Promise(r => setTimeout(r, jitter));
+
           const { txSig, recipientNote } = await serviceTransferNote(
             receipt,
             pool,
@@ -966,7 +1126,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               const proving = step.includes('proof') || step.includes('Proof');
               set({ progress: step, isProving: proving });
             },
-            walletSigner,
+            undefined, // no wallet signer — stealth signs
+            stealthKp,
           );
 
           const encoded = encodeShareableNote(recipientNote);

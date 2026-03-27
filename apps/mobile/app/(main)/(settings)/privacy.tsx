@@ -26,13 +26,13 @@ import {
 } from '../../../services/solana/decoyTransactions';
 import { useArcium } from '@/providers/ArciumProvider';
 import { useAutoShieldStore } from '@/stores/autoShieldStore';
+import { useT } from '@/i18n';
 
 const STORAGE_KEYS = {
   PRIVACY_LEVEL: 'settings_privacy_level',
   ALWAYS_STEALTH: 'settings_always_stealth',
   HIDE_AMOUNTS: 'settings_hide_amounts',
   PRIVATE_DEFAULT: 'settings_private_default',
-  EPHEMERAL_WALLETS: 'settings_ephemeral_wallets',
 };
 
 const AUTO_SCAN_OPTIONS = [
@@ -85,6 +85,7 @@ const GlassDivider: React.FC = () => (
 /* ──────────────────────── Screen ──────────────────────── */
 
 export default function PrivacySettingsScreen() {
+  const t = useT();
   const router = useRouter();
 
   const [privacyLevel, setPrivacyLevel] = useState<PrivacyLevel>('enhanced');
@@ -92,7 +93,6 @@ export default function PrivacySettingsScreen() {
   const [autoScanInterval, setAutoScanInterval] = useState(300);
   const [hideAmounts, setHideAmounts] = useState(false);
   const [privateByDefault, setPrivateByDefault] = useState(true);
-  const [ephemeralWallets, setEphemeralWallets] = useState(false);
   const { } = useArcium(); // MPC always on
   const autoShieldEnabled = useAutoShieldStore((s) => s.enabled);
   const setAutoShieldEnabled = useAutoShieldStore((s) => s.setEnabled);
@@ -103,19 +103,17 @@ export default function PrivacySettingsScreen() {
 
   const loadSettings = async () => {
     try {
-      const [level, stealth, hide, priv, ephemeral] = await Promise.all([
+      const [level, stealth, hide, priv] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.PRIVACY_LEVEL),
         AsyncStorage.getItem(STORAGE_KEYS.ALWAYS_STEALTH),
         AsyncStorage.getItem(STORAGE_KEYS.HIDE_AMOUNTS),
         AsyncStorage.getItem(STORAGE_KEYS.PRIVATE_DEFAULT),
-        AsyncStorage.getItem(STORAGE_KEYS.EPHEMERAL_WALLETS),
       ]);
 
       if (level) setPrivacyLevel(level as PrivacyLevel);
       if (stealth !== null) setAlwaysUseStealth(stealth === 'true');
       if (hide !== null) setHideAmounts(hide === 'true');
       if (priv !== null) setPrivateByDefault(priv === 'true');
-      if (ephemeral !== null) setEphemeralWallets(ephemeral === 'true');
     } catch (error) {
       console.error('Failed to load privacy settings:', error);
     }
@@ -135,8 +133,8 @@ export default function PrivacySettingsScreen() {
 
   const handleAutoScanSelect = () => {
     p01Alert(
-      'Auto-Scan Interval',
-      'How often should we scan for incoming stealth payments?',
+      t('common.refresh'),
+      t('common.refresh'),
       AUTO_SCAN_OPTIONS.map((option) => ({
         text: option.label,
         onPress: async () => {
@@ -159,19 +157,6 @@ export default function PrivacySettingsScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const handleEphemeralToggle = async (value: boolean) => {
-    setEphemeralWallets(value);
-    await AsyncStorage.setItem(STORAGE_KEYS.EPHEMERAL_WALLETS, value.toString());
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    if (value) {
-      p01Alert(
-        'Ephemeral Wallets',
-        'When enabled, the AI agent will use temporary wallets for operations, providing enhanced privacy but requiring more transactions.',
-        [{ text: 'OK' }]
-      );
-    }
-  };
 
   const getAutoScanLabel = () => {
     const option = AUTO_SCAN_OPTIONS.find((o) => o.value === autoScanInterval);
@@ -190,7 +175,7 @@ export default function PrivacySettingsScreen() {
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Privacy Settings</Text>
+        <Text style={styles.headerTitle}>{t('settings.privacy')}</Text>
         <View style={{ width: 40 }} />
       </Animated.View>
 
@@ -203,21 +188,21 @@ export default function PrivacySettingsScreen() {
         <SectionTitle title="DEFAULT PRIVACY LEVEL" delay={80} />
         <GlassCard delay={100}>
           <RadioOption
-            label="Standard"
+            label={t('privateSend.standard')}
             description="1 decoy transaction"
             selected={privacyLevel === 'standard'}
             onSelect={() => handlePrivacyLevelChange('standard')}
           />
           <GlassDivider />
           <RadioOption
-            label="Enhanced"
-            description="5 decoy transactions (Recommended)"
+            label={t('privateSend.enhanced')}
+            description="5 decoy transactions"
             selected={privacyLevel === 'enhanced'}
             onSelect={() => handlePrivacyLevelChange('enhanced')}
           />
           <GlassDivider />
           <RadioOption
-            label="Maximum"
+            label={t('privateSend.maximum')}
             description="10 decoy transactions"
             selected={privacyLevel === 'maximum'}
             onSelect={() => handlePrivacyLevelChange('maximum')}
@@ -267,7 +252,7 @@ export default function PrivacySettingsScreen() {
         <GlassCard delay={240}>
           <ToggleRow
             label="Always use stealth"
-            description="Generate new addresses for each transaction"
+            description={t('privacy.zeroWalletFootprint')}
             value={alwaysUseStealth}
             onValueChange={handleStealthToggle}
           />
@@ -331,17 +316,6 @@ export default function PrivacySettingsScreen() {
             </View>
           </BlurView>
         </Animated.View>
-
-        {/* AGENT */}
-        <SectionTitle title="AGENT" delay={420} />
-        <GlassCard delay={440}>
-          <ToggleRow
-            label="Ephemeral wallets"
-            description="Use temporary wallets for agent operations"
-            value={ephemeralWallets}
-            onValueChange={handleEphemeralToggle}
-          />
-        </GlassCard>
 
         {/* How Decoys Work */}
         <Animated.View entering={FadeInDown.delay(430).duration(350)} style={styles.infoOuter}>

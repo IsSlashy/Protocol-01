@@ -12,10 +12,12 @@ import { PinInput } from '../../components/onboarding';
 import { useWalletStore } from '../../stores/walletStore';
 import { hashPin } from '../../utils/crypto/pinHash';
 import { enableVault, unlockVault } from '../../utils/crypto/noteVault';
+import { useT } from '@/i18n';
 
 type SecurityMethod = 'none' | 'pin' | 'biometrics';
 
 export default function SecurityScreen() {
+  const t = useT();
   const router = useRouter();
   const [selectedMethod, setSelectedMethod] = useState<SecurityMethod>('none');
   const [showPinSetup, setShowPinSetup] = useState(false);
@@ -52,14 +54,14 @@ export default function SecurityScreen() {
       setShowPinSetup(true);
     } else if (method === 'biometrics') {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Authenticate to enable biometrics',
-        cancelLabel: 'Cancel',
+        promptMessage: t('onboarding.authenticateToEnable'),
+        cancelLabel: t('common.cancel'),
         disableDeviceFallback: true,
       });
 
       if (!result.success) {
         setSelectedMethod('none');
-        p01Alert('Authentication Failed', 'Please try again or choose another method.');
+        p01Alert(t('onboarding.authFailed'), t('onboarding.authFailedDesc'));
       }
     }
   }, []);
@@ -96,7 +98,7 @@ export default function SecurityScreen() {
       await unlockVault(pinHash);
       completeOnboarding();
     } catch (error) {
-      p01Alert('Error', 'Failed to save PIN. Please try again.');
+      p01Alert(t('common.error'), t('onboarding.failedToSavePin'));
     }
   };
 
@@ -138,7 +140,7 @@ export default function SecurityScreen() {
             activeOpacity={0.7}
             style={{ position: 'absolute', top: 80, left: 24, zIndex: 10 }}
             accessibilityRole="button"
-            accessibilityLabel="Go back"
+            accessibilityLabel={t('onboarding.goBack')}
           >
             <Ionicons name="arrow-back" size={24} color="#39c5bb" />
           </TouchableOpacity>
@@ -162,12 +164,12 @@ export default function SecurityScreen() {
               <Ionicons name="keypad" size={32} color="#39c5bb" />
             </View>
             <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-              {isConfirming ? 'Confirm Your PIN' : 'Create a PIN'}
+              {isConfirming ? t('onboarding.confirmYourPin') : t('onboarding.createPin')}
             </Text>
             <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
               {isConfirming
-                ? 'Enter your PIN again to confirm'
-                : 'Choose a 6-digit PIN to secure your wallet'}
+                ? t('onboarding.confirmPinDesc')
+                : t('onboarding.choosePinDesc')}
             </Text>
           </Animated.View>
 
@@ -190,7 +192,7 @@ export default function SecurityScreen() {
                 entering={FadeIn}
                 style={{ color: '#f87171', textAlign: 'center', marginTop: 16 }}
               >
-                PINs don't match. Please try again.
+                {t('onboarding.pinsDontMatch')}
               </Animated.Text>
             )}
           </Animated.View>
@@ -224,10 +226,10 @@ export default function SecurityScreen() {
             <Ionicons name="lock-closed" size={32} color="#39c5bb" />
           </View>
           <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-            Secure Your Wallet
+            {t('onboarding.secureWallet')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            Choose a security method to protect your wallet
+            {t('onboarding.secureWalletDesc')}
           </Text>
         </Animated.View>
 
@@ -239,7 +241,7 @@ export default function SecurityScreen() {
               onPress={() => handleSelectMethod('pin')}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel="PIN Code, 6-digit security code"
+              accessibilityLabel={`${t('onboarding.pinCode')}, ${t('onboarding.sixDigitCode')}`}
               accessibilityState={{ selected: selectedMethod === 'pin' }}
               style={{
                 flexDirection: 'row',
@@ -269,8 +271,8 @@ export default function SecurityScreen() {
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>PIN Code</Text>
-                <Text style={{ color: '#a0a0a0', fontSize: 14 }}>6-digit security code</Text>
+                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>{t('onboarding.pinCode')}</Text>
+                <Text style={{ color: '#a0a0a0', fontSize: 14 }}>{t('onboarding.sixDigitCode')}</Text>
               </View>
               {selectedMethod === 'pin' && (
                 <Ionicons name="checkmark-circle" size={24} color="#39c5bb" />
@@ -285,7 +287,7 @@ export default function SecurityScreen() {
               activeOpacity={0.8}
               disabled={!biometricsAvailable}
               accessibilityRole="button"
-              accessibilityLabel={`${biometricType === 'face' ? 'Face ID' : 'Fingerprint'}, ${biometricsAvailable ? 'Quick and secure authentication' : 'Not available on this device'}`}
+              accessibilityLabel={`${biometricType === 'face' ? t('onboarding.faceId') : t('onboarding.fingerprint')}, ${biometricsAvailable ? t('onboarding.quickSecureAuth') : t('onboarding.notAvailableDevice')}`}
               accessibilityState={{ selected: selectedMethod === 'biometrics', disabled: !biometricsAvailable }}
               style={{
                 flexDirection: 'row',
@@ -325,12 +327,12 @@ export default function SecurityScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>
-                  {biometricType === 'face' ? 'Face ID' : 'Fingerprint'}
+                  {biometricType === 'face' ? t('onboarding.faceId') : t('onboarding.fingerprint')}
                 </Text>
                 <Text style={{ color: '#a0a0a0', fontSize: 14 }}>
                   {biometricsAvailable
-                    ? 'Quick and secure authentication'
-                    : 'Not available on this device'}
+                    ? t('onboarding.quickSecureAuth')
+                    : t('onboarding.notAvailableDevice')}
                 </Text>
               </View>
               {selectedMethod === 'biometrics' && (
@@ -349,7 +351,7 @@ export default function SecurityScreen() {
             activeOpacity={0.8}
             disabled={!canContinue}
             accessibilityRole="button"
-            accessibilityLabel="Continue"
+            accessibilityLabel={t('onboarding.continue')}
             accessibilityState={{ disabled: !canContinue }}
             style={{
               paddingVertical: 16,
@@ -375,7 +377,7 @@ export default function SecurityScreen() {
                 color: canContinue ? '#ffffff' : '#555560',
               }}
             >
-              CONTINUE
+              {t('onboarding.continue')}
             </Text>
           </TouchableOpacity>
 

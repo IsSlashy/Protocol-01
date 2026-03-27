@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, Dimensions, FlatList } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
+import { useT } from '@/i18n';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -24,48 +25,48 @@ interface Feature {
   color: string;
 }
 
-const FEATURES: Feature[] = [
-  {
-    id: '1',
-    icon: 'eye-off',
-    title: 'Stealth Wallet',
-    subtitle: 'Invisible Transfers',
-    description: 'Send and receive funds without leaving a trace. Your transactions are completely private.',
-    color: '#39c5bb', // cyan
-  },
-  {
-    id: '2',
-    icon: 'water',
-    title: 'Private Streams',
-    subtitle: 'Streaming Payments',
-    description: 'Create continuous payment flows. Perfect for salaries, subscriptions, and recurring payments.',
-    color: '#ff77a8', // pink
-  },
-  {
-    id: '3',
-    icon: 'people',
-    title: 'Encrypted Social',
-    subtitle: 'Private Contacts',
-    description: 'End-to-end encrypted messaging and payments with your contacts. No one can see who you talk to.',
-    color: '#3b82f6', // blue
-  },
-  {
-    id: '4',
-    icon: 'hardware-chip',
-    title: 'AI Agent',
-    subtitle: 'Your Assistant',
-    description: 'Intelligent automation for DeFi. Let AI manage your portfolio while you focus on what matters.',
-    color: '#f97316', // orange
-  },
-];
-
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<Feature>);
 
 export default function FeaturesScreen() {
+  const t = useT();
   const router = useRouter();
   const scrollX = useSharedValue(0);
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef<FlatList<Feature>>(null);
+  const FEATURES = useMemo(() => [
+    {
+      id: '1',
+      icon: 'eye-off' as const,
+      title: t('onboarding.stealthWallet'),
+      subtitle: t('onboarding.invisibleTransfers'),
+      description: t('onboarding.stealthWalletDesc'),
+      color: '#39c5bb',
+    },
+    {
+      id: '2',
+      icon: 'water' as const,
+      title: t('onboarding.privateStreams'),
+      subtitle: t('onboarding.streamingPayments'),
+      description: t('onboarding.privateStreamsDesc'),
+      color: '#ff77a8',
+    },
+    {
+      id: '3',
+      icon: 'people' as const,
+      title: t('onboarding.encryptedSocial'),
+      subtitle: t('onboarding.privateContacts'),
+      description: t('onboarding.encryptedSocialDesc'),
+      color: '#3b82f6',
+    },
+    {
+      id: '4',
+      icon: 'hardware-chip' as const,
+      title: t('onboarding.aiAgent'),
+      subtitle: t('onboarding.yourAssistant'),
+      description: t('onboarding.aiAgentDesc'),
+      color: '#f97316',
+    },
+  ], [t]);
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -99,7 +100,7 @@ export default function FeaturesScreen() {
       {/* Skip Button */}
       <Animated.View entering={FadeIn.delay(300)} className="absolute top-16 right-6 z-10">
         <TouchableOpacity onPress={handleSkip} activeOpacity={0.7}>
-          <Text className="text-[#a0a0a0] text-base font-medium">Skip</Text>
+          <Text className="text-[#a0a0a0] text-base font-medium">{t('onboarding.skip')}</Text>
         </TouchableOpacity>
       </Animated.View>
 
@@ -148,7 +149,7 @@ export default function FeaturesScreen() {
           }}
         >
           <Text className="text-white text-lg font-bold">
-            {currentIndex === FEATURES.length - 1 ? 'CONTINUE' : 'NEXT'}
+            {currentIndex === FEATURES.length - 1 ? t('onboarding.continue') : t('onboarding.next')}
           </Text>
         </TouchableOpacity>
       </View>
