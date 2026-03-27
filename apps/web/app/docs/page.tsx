@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useT } from "@/i18n";
 import {
   Shield,
   Lock,
@@ -40,30 +41,18 @@ const THEME = {
 
 interface TechSection {
   id: string;
-  title: string;
+  i18nKey: string;
   icon: React.ReactNode;
-  description: string;
-  details: string[];
+  detailCount: number;
   codeExample?: string;
 }
 
 const technologies: TechSection[] = [
   {
     id: "stealth-addresses",
-    title: "Stealth Addresses (ECDH)",
+    i18nKey: "stealthAddresses",
     icon: <EyeOff className="w-6 h-6" />,
-    description:
-      "Stealth addresses allow recipients to receive funds without revealing their public address. Each payment creates a unique one-time address using Elliptic Curve Diffie-Hellman key exchange.",
-    details: [
-      "Sender generates ephemeral keypair for each transaction",
-      "Shared secret computed using ECDH between sender ephemeral key and recipient's public key",
-      "One-time address derived: P = H(shared_secret) * G + recipient_pubkey",
-      "Only the recipient can detect and spend funds using their private key",
-      "v1: X25519 (Curve25519) for efficiency on Solana",
-      "v2: X25519 + ML-KEM-768 (FIPS 203) hybrid ECDH — quantum-resistant",
-      "View tags: 1-byte filter enables O(1) scanning without full decryption",
-      "On-chain registry (EIP-5564 for Solana) via p01_registry program",
-    ],
+    detailCount: 8,
     codeExample: `// v1: Generate stealth address (X25519 ECDH)
 const ephemeral = Keypair.generate();
 const sharedSecret = x25519(ephemeral.secretKey, recipientPubkey);
@@ -76,21 +65,9 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
   },
   {
     id: "zk-proofs",
-    title: "Zero-Knowledge Proofs (Groth16 + STARK)",
+    i18nKey: "zkProofs",
     icon: <Shield className="w-6 h-6" />,
-    description:
-      "Dual proof system: Groth16 ZK-SNARKs for compact on-chain verification via BN254 pairing, and STARKs (Winterfell) for quantum-resistant proofs over the Goldilocks field. STARKs are hash-based — immune to Shor's algorithm — and are now the default for denominated pool unshielding.",
-    details: [
-      "7 Groth16 circuits: transfer (12,222c), denominated_pool (4,273c), denominated_transfer (5,628c), confidential_balance (1,382c), balance_proof (644c), subscriber_ownership (~500c), note_split (~10,000c)",
-      "6 STARK AIRs: subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer",
-      "STARK: Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR (x^7, 30 rounds)",
-      "Compact STARK proofs (9-15KB) with Blake3 Merkle trees, 16 FRI queries, 128-bit security",
-      "On-chain STARK verifier: custom FRI implementation, ~889K CU per verification",
-      "On-chain Groth16: BN254 alt_bn128 pairing precompiles, ~200K CU verification",
-      "Mobile WASM STARK prover via WebView (82KB module, all 6 circuits)",
-      "Trusted setup: Groth16 with pot20_final.ptau + beacon finalization (ceremony pending 3+ contributors)",
-      "Quantum-safe: STARKs are hash-based — immune to both Shor's and Grover's algorithms",
-    ],
+    detailCount: 9,
     codeExample: `// Groth16 proof (BN254, compact, fast verification)
 const { proof, publicSignals } = await snarkjs.groth16.fullProve(
   { inputs, merkle_path, nullifiers },
@@ -104,19 +81,9 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);`,
   },
   {
     id: "shielded-pool",
-    title: "Shielded Pool & Relayer",
+    i18nKey: "shieldedPool",
     icon: <Lock className="w-6 h-6" />,
-    description:
-      "Private transfers go through the relayer. The user generates a ZK proof client-side, funds the relayer, and the relayer executes the transfer to a stealth address. On-chain, only the relayer-to-stealth-address link is visible — the original sender is completely hidden.",
-    details: [
-      "User generates ZK proof locally — Groth16 or STARK (sender never revealed)",
-      "User funds relayer with amount + 0.5% fee + gas",
-      "Relayer verifies proof off-chain, then sends to stealth address",
-      "On-chain visibility: Relayer → Stealth Address only",
-      "Sparse Merkle tree with depth 20 for commitment tracking",
-      "Instant shield/unshield (~3s) via filledSubtrees optimization — no full tree sync",
-      "Supports SOL and any SPL token",
-    ],
+    detailCount: 7,
     codeExample: `// Private transfer flow via relayer
 // 1. User generates ZK proof client-side
 const { proof, publicSignals } = await generateProof(inputs);
@@ -130,17 +97,9 @@ const tx = await relayer.privateSend(proof, stealthAddress);`,
   },
   {
     id: "poseidon-hash",
-    title: "Poseidon Hash Function",
+    i18nKey: "poseidonHash",
     icon: <Hash className="w-6 h-6" />,
-    description:
-      "Poseidon is a ZK-friendly hash function designed specifically for use inside arithmetic circuits. It's significantly more efficient than traditional hashes like SHA-256 or Keccak in ZK contexts.",
-    details: [
-      "Operates natively over prime fields (BN254 for Groth16, Goldilocks for STARK)",
-      "~300x fewer constraints than Keccak in Circom circuits",
-      "Used for commitments, nullifiers, and Merkle tree hashing",
-      "Parameters: BN254 (x^5 S-box, 8 full rounds) + Goldilocks (x^7 S-box, 30 full rounds)",
-      "Compatible with circomlib implementation",
-    ],
+    detailCount: 5,
     codeExample: `// Poseidon commitment in circuit
 template Commitment() {
     signal input amount;
@@ -158,17 +117,9 @@ template Commitment() {
   },
   {
     id: "merkle-tree",
-    title: "Merkle Tree Proofs",
+    i18nKey: "merkleTree",
     icon: <GitBranch className="w-6 h-6" />,
-    description:
-      "A Merkle tree stores all commitments, allowing users to prove they have funds in the shielded pool without revealing which commitment they own. The root is stored on-chain and updated with each deposit.",
-    details: [
-      "Binary tree with Poseidon hash at each node",
-      "Depth 20 = 2^20 = ~1 million commitments capacity",
-      "Proof size: 20 siblings + 20 path indices",
-      "Incremental insertions for gas efficiency",
-      "Precomputed zero values for empty subtrees",
-    ],
+    detailCount: 5,
     codeExample: `// Merkle proof verification in circuit
 for (var i = 0; i < TREE_DEPTH; i++) {
     left = pathIndices[i] == 0 ? current : siblings[i];
@@ -179,17 +130,9 @@ root === computedRoot; // Must match on-chain root`,
   },
   {
     id: "nullifiers",
-    title: "Nullifier Mechanism",
+    i18nKey: "nullifiers",
     icon: <Key className="w-6 h-6" />,
-    description:
-      "Nullifiers are unique identifiers that prevent double-spending without revealing which commitment was spent. Each commitment can only produce one valid nullifier.",
-    details: [
-      "Nullifier = Poseidon(commitment, spending_key_hash)",
-      "Stored on-chain in a set (prevents reuse)",
-      "Cannot be linked back to the original commitment",
-      "Spending key proves ownership without revealing identity",
-      "Tracked by the relayer to prevent replay attacks",
-    ],
+    detailCount: 5,
     codeExample: `// Nullifier computation
 const spendingKeyHash = Poseidon([spendingKey]);
 const nullifier = Poseidon([commitment, spendingKeyHash]);
@@ -197,18 +140,9 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
   },
   {
     id: "solana-integration",
-    title: "Solana On-Chain Verification",
+    i18nKey: "solanaIntegration",
     icon: <Cpu className="w-6 h-6" />,
-    description:
-      "Protocol 01 leverages Solana's native cryptographic syscalls for efficient on-chain ZK proof verification, achieving verification in under 200K compute units.",
-    details: [
-      "alt_bn128 syscalls for BN254 Groth16 verification (~200K CU)",
-      "Custom FRI verifier for STARK proofs — Goldilocks field (~889K CU)",
-      "13 Anchor programs: zk_shielded, zkSPL, specter, subscriptions, streams, quantum_vault, STARK_verifier, registry, relayer, trustless, fee_splitter, whitelist, arcium",
-      "Quantum vault: WOTS+ signatures, hash-timelock, commit-then-reveal (SHA-256 based)",
-      "Cross-program invocations for token transfers and proof verification",
-      "370+ automated tests: stress tests, E2E flows, SDK unit tests, Rust STARK tests",
-    ],
+    detailCount: 6,
     codeExample: `// On-chain Groth16 verification (BN254)
 let pairing_result = sol_alt_bn128_pairing(&[...]);
 require!(pairing_result == 1, "Invalid Groth16 proof");
@@ -222,18 +156,9 @@ for pos in positions {
   },
   {
     id: "private-relay",
-    title: "On-Chain Relayer (Trustless)",
+    i18nKey: "privateRelay",
     icon: <Zap className="w-6 h-6" />,
-    description:
-      "Fully on-chain relayer program (p01_relayer) that verifies ZK proofs and executes private transfers to stealth addresses. No backend server — the relayer is a Solana program, eliminating trust in any third party.",
-    details: [
-      "On-chain Solana program — no backend server, fully trustless",
-      "User generates ZK proof client-side (spending key never leaves device)",
-      "Relayer PDA escrows transfer amount + fee (0.5%) + gas + rent",
-      "On-chain verification: proof checked by the program before executing transfer",
-      "Sends to stealth address — no on-chain link to the original sender",
-      "Local-only proving: snarkjs in WebView (mobile) or browser (extension)",
-    ],
+    detailCount: 6,
     codeExample: `// Trustless on-chain relay flow
 // 1. User generates ZK proof locally (spending key stays on device)
 const { proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -249,20 +174,9 @@ await program.methods.relayTransfer(proof, publicSignals, stealthAddress)
   },
   {
     id: "arcium-mpc",
-    title: "Multi-Party Computation (Arcium)",
+    i18nKey: "arciumMpc",
     icon: <Network className="w-6 h-6" />,
-    description:
-      "ZK proofs hide amounts and break the sender-receiver link. But some metadata remains: the relayer sees your transaction, nullifiers are posted in the clear, and registry lookups are observable. Arcium MPC eliminates these residual leaks by distributing every sensitive operation across a decentralized network of nodes — no single node ever sees the plaintext. It is an optional layer that users toggle on for maximum privacy.",
-    details: [
-      "Nullifier hiding: MPC nodes jointly compute SHA3(nullifier) — only the hash goes on-chain, the actual nullifier stays encrypted",
-      "Confidential relay: your transaction is encrypted and split across MPC nodes (Rescue-CTR). They reconstruct and execute it together — no single relayer sees the content",
-      "Anonymous registry lookup: query a stealth meta-address through MPC — nobody knows who you looked up",
-      "Confidential balance audit: prove solvency to an auditor without revealing individual balances",
-      "Threshold stealth scan: your viewing key is sharded across nodes — no single node can scan your payments",
-      "Private governance: encrypted ballots tallied inside MPC — only the final result is revealed",
-      "Cerberus protocol: 1-of-N honest node guarantees correctness. 9 circuits deployed on Solana devnet",
-      "Graceful fallback: every MPC operation degrades to the standard (non-MPC) path when disabled — zero overhead",
-    ],
+    detailCount: 8,
     codeExample: `// @p01/arcium-sdk — MPC confidential compute
 import { ArciumClient } from '@p01/arcium-sdk';
 
@@ -283,18 +197,9 @@ const metaAddress = await mpc.privateLookup(targetHash);`,
   },
   {
     id: "streams-privacy",
-    title: "Streams & Subscriptions Privacy",
+    i18nKey: "streamsPrivacy",
     icon: <Layers className="w-6 h-6" />,
-    description:
-      "Streams and subscriptions do NOT use ZK proofs. They are separate modules with their own privacy model based on obscurement. Users can add noise to amounts and timing to make payments harder to analyze, but they are not fully hidden like ZK transfers.",
-    details: [
-      "Streams: time-locked escrow payments (P2P or P2B) — visible on-chain",
-      "Subscriptions: delegated recurring payments via crank — visible on-chain",
-      "Amount noise: 0-20% random variation on each payment",
-      "Timing noise: 0-24 hours random delay on payment execution",
-      "Optional stealth address for recipient obscurement",
-      "Privacy level: obscurement (not full anonymity like ZK transfers)",
-    ],
+    detailCount: 6,
     codeExample: `// Subscription with privacy noise (not ZK)
 await p01.createSubscription({
   amount: 9.99,
@@ -309,20 +214,9 @@ await p01.createSubscription({
   },
   {
     id: "denominated-pools",
-    title: "Denominated Privacy Pools",
+    i18nKey: "denominatedPools",
     icon: <Layers className="w-6 h-6" />,
-    description:
-      "Tornado Cash-style fixed-denomination pools for SOL and USDC. All deposits in a pool are the same value, making them indistinguishable. Epoch-based time delays prevent timing correlation attacks.",
-    details: [
-      "Fixed denominations: 0.1/1/10/100 SOL or 1/10/100/1000 USDC",
-      "Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)",
-      "PDA-per-nullifier for atomic double-spend prevention (not Bloom filter)",
-      "Epoch-based maturity: deposit_epoch <= min_epoch enforced in circuit and on-chain",
-      "Merkle tree depth 15 = 32,768 notes per pool",
-      "Circuit: denominated_pool.circom (4,273 non-linear constraints)",
-      "P2P note sharing via BLE and NFC for offline transfers (zero on-chain trace)",
-      "v0.9.5: Full stealth unshield — ephemeral signer (fee payer) + ECDH one-time recipient. User wallet never appears on-chain.",
-    ],
+    detailCount: 8,
     codeExample: `// Shield: stealth intermediary hides wallet origin
 const stealthKp = deriveStealthSigner(wallet, timestamp);
 await fundStealth(wallet, stealthKp, 0.1); // small fee fund
@@ -341,19 +235,9 @@ await program.methods.unshieldDenominatedStark(starkProof)
   },
   {
     id: "zkspl",
-    title: "Confidential Balances (zkSPL)",
+    i18nKey: "zkspl",
     icon: <Lock className="w-6 h-6" />,
-    description:
-      "Account-model confidential tokens using Poseidon hash commitments. Unlike UTXO-based shielded pools, zkSPL maintains a single balance commitment per account that updates with each operation. Quantum-resistant by design.",
-    details: [
-      "Balance commitment = Poseidon(balance, salt, owner_pubkey, token_mint)",
-      "Amount commitment = Poseidon(amount, amount_salt) links sender and recipient",
-      "Single circuit handles deposit, withdraw, send, and receive operations",
-      "Conservation law: old_balance + credits === new_balance + debits",
-      "Balance proof: proves balance >= threshold via Num2Bits(64) range check",
-      "Circuit: confidential_balance.circom (1,382 constraints)",
-      "SDK: @p01/zkspl-sdk with ZkSplClient, ZkSplProver, LocalStateManager",
-    ],
+    detailCount: 7,
     codeExample: `// Confidential deposit — public tokens become hidden balance
 const oldCommitment = poseidon([0, salt, owner, mint]);
 const newCommitment = poseidon([amount, newSalt, owner, mint]);
@@ -370,18 +254,9 @@ const amountCommitment = poseidon([transferAmount, amountSalt]);`,
   },
   {
     id: "subscription-vaults",
-    title: "Subscription Vaults",
+    i18nKey: "subscriptionVaults",
     icon: <Zap className="w-6 h-6" />,
-    description:
-      "On-chain recurring payment vaults with configurable intervals. Retailers create vaults, subscribers deposit funds, and a crank claims payments each period. Supports both normal (public) and ZK-private subscriber modes.",
-    details: [
-      "Vault PDA stores: retailer, amount, interval, token mint, subscriber count",
-      "Normal mode: subscriber identity visible, straightforward recurring payments",
-      "Private mode: ZK proof of subscription ownership without revealing identity",
-      "Auto-pause on insufficient funds, resume when topped up",
-      "Retailer claim periods with on-chain settlement",
-      "Circuit: subscriber_ownership.circom for private subscriber proofs",
-    ],
+    detailCount: 6,
     codeExample: `// Retailer creates a subscription vault
 await program.methods.initSubscriptionVault(
   amount,       // per-period amount (lamports or token units)
@@ -401,18 +276,9 @@ await program.methods.claimPeriod()
   },
   {
     id: "p2p-sharing",
-    title: "P2P Note Sharing (BLE + NFC)",
+    i18nKey: "p2pSharing",
     icon: <Eye className="w-6 h-6" />,
-    description:
-      "Share denominated pool notes between devices offline using Bluetooth Low Energy or NFC. Notes are encrypted end-to-end and can be transferred without internet connectivity.",
-    details: [
-      "BLE: X25519 ECDH key exchange with nacl.box encryption",
-      "NFC: Host Card Emulation (HCE) with PIN-derived nacl.secretbox",
-      "Anti-MITM fingerprint verification for BLE connections",
-      "Fragmentation protocol for large payloads over BLE characteristics",
-      "Native Android modules: BluetoothGattServer + HostApduService",
-      "Works offline — no internet or blockchain access needed for transfer",
-    ],
+    detailCount: 6,
     codeExample: `// BLE: Sender (central) connects to receiver (peripheral)
 // 1. ECDH key exchange
 const sharedKey = x25519(senderPrivateKey, receiverPublicKey);
@@ -429,20 +295,9 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
   },
   {
     id: "client-sdk",
-    title: "Client SDK Architecture",
+    i18nKey: "clientSdk",
     icon: <Code className="w-6 h-6" />,
-    description:
-      "Eight TypeScript SDKs covering every use case: stealth wallets, ZK proofs, confidential tokens, MPC compute, merchant integration, Merkle trees, authentication, and RPC infrastructure. All run client-side for maximum privacy.",
-    details: [
-      "@p01/specter-sdk — Core privacy: stealth wallets, transfers, quantum vault, registry, indexer",
-      "@p01/zk-sdk — ZK primitives: ShieldedClient, Note, MerkleTree, ZkProver, viewing keys",
-      "@p01/zkspl-sdk — Confidential tokens: deposit, withdraw, transfer, balance proof",
-      "@p01/arcium-sdk — MPC compute: ArciumClient, 6 use-case modules, Rescue cipher",
-      "@p01/p01-js — Merchant SDK: Protocol01 client, subscriptions, payments, React components",
-      "@p01/privacy-toolkit — Incremental Merkle tree, Poseidon, amount hash, proof format",
-      "@p01/auth-sdk — Auth integration: P01AuthClient, P01AuthServer, session management",
-      "@p01/rpc-config — RPC infrastructure: connection manager, priority fallback chain, URL sanitization",
-    ],
+    detailCount: 8,
     codeExample: `// === @p01/specter-sdk — Core Privacy SDK ===
 import { P01Client, createWallet, sendPrivate } from '@p01/specter-sdk';
 const client = new P01Client({ cluster: 'devnet' });
@@ -478,19 +333,9 @@ const conn = RpcConnectionManager.getConnection(); // Auto-fallback chain`,
   },
   {
     id: "auto-shield",
-    title: "Auto-Shield Receive",
+    i18nKey: "autoShield",
     icon: <Shield className="w-6 h-6" />,
-    description:
-      "When receiving funds, the app generates a one-time stealth address instead of exposing the main wallet. Incoming funds are automatically detected and shielded into the privacy pool — the main wallet is never visible to senders.",
-    details: [
-      "Receive screen generates fresh stealth addresses (HMAC-derived from viewing secret key)",
-      "Autonomous runner polls every 5 minutes for incoming funds on stealth addresses",
-      "When balance detected (>0.05 SOL), auto-shields to the best matching denomination pool",
-      "Main wallet NEVER appears on-chain for incoming transfers",
-      "Stealth receive addresses tracked in SecureStore with cleanup after 7 days",
-      "Settings toggle in Privacy Settings to enable/disable auto-shielding",
-      "Compatible with any Solana wallet sender — no Protocol 01 required on sender side",
-    ],
+    detailCount: 7,
     codeExample: `// Auto-Shield flow (autonomous runner)
 // 1. User opens Receive → stealth address generated
 const seed = hmac(sha256, viewingSecretKey, "p01_auto_receive_42");
@@ -507,20 +352,9 @@ if (balance > MIN_THRESHOLD) {
   },
   {
     id: "tor-relay",
-    title: "Privacy Relay (Tor Routing)",
+    i18nKey: "torRelay",
     icon: <Network className="w-6 h-6" />,
-    description:
-      "All RPC calls from the mobile app are routed through a 3-tier privacy relay. The relay strips identifying headers, adds timing jitter, and routes through Tor — upstream RPC providers never see the user's real IP address.",
-    details: [
-      "Tier 1 (Client): fetchMiddleware strips User-Agent, Origin, Referer + adds 30-120ms jitter",
-      "Tier 2 (Relay): Express server with HMAC rate limiter (zero IP storage), security headers, metadata stripping",
-      "Tier 3 (Tor): SOCKS5 proxy with circuit rotation every 10 minutes via random authentication",
-      "Deployed on Railway — single container (Node 22 Alpine + Tor sidecar)",
-      "Supports batch JSON-RPC forwarding for getParsedTransactions",
-      "Helius RPC upstream via Tor — API key hidden, IP anonymized",
-      "Fallback: app works without relay (Tier 1 client-side protection always active)",
-      "13K+ requests tested with 100% Tor routing and 0 errors",
-    ],
+    detailCount: 8,
     codeExample: `// 3-tier privacy architecture
 // Tier 1: Client-side (always active)
 const connection = new Connection(relayUrl, {
@@ -538,19 +372,9 @@ const agent = new SocksProxyAgent("socks5h://tor:9050");
   },
   {
     id: "stealth-meta-addresses",
-    title: "Stealth Meta-Addresses (P01-to-P01)",
+    i18nKey: "stealthMetaAddresses",
     icon: <Key className="w-6 h-6" />,
-    description:
-      "For P01-to-P01 transfers, users share a persistent stealth meta-address (st:01...). The sender's Private Send auto-derives a fresh one-time stealth destination — both sender AND receiver are fully hidden on-chain.",
-    details: [
-      "Meta-address format: st:01<base58(spending_ed25519_pub + viewing_x25519_pub)>",
-      "v2 hybrid: st:02<base58(spending + viewing + ML-KEM-768 pub)> — quantum-resistant",
-      "Persistent stealth keys (Ed25519 + X25519) stored in SecureStore",
-      "Private Send detects meta-addresses and auto-derives stealth destination",
-      "QR scanner auto-detects st:01/st:02 and routes to Private Send",
-      "On-chain trail: stealth_sender → pool → stealth_receiver (no real wallet visible)",
-      "Receive screen shows compact 'Copy P01 ID' for easy sharing",
-    ],
+    detailCount: 7,
     codeExample: `// Receiver: share meta-address
 const keys = await getOrCreateStealthKeys();
 const metaAddress = createMetaAddress(keys);
@@ -565,19 +389,9 @@ if (isMetaAddress(destination)) {
   },
   {
     id: "note-splitting",
-    title: "Cross-Pool Note Splitting",
+    i18nKey: "noteSplitting",
     icon: <GitBranch className="w-6 h-6" />,
-    description:
-      "Split a high-denomination note into multiple lower-denomination notes across pools. Enables the Privacy Router to break large amounts into smaller, harder-to-trace pieces with a single ZK proof.",
-    details: [
-      "On-chain instruction: split_note in zk_shielded program (deployed on devnet)",
-      "Circuit: note_split.circom (~10K constraints, max 20 outputs)",
-      "Denomination conservation enforced: source = numOutputs × target",
-      "Same nullifier PDA pattern as unshield (atomic double-spend prevention)",
-      "Protocol fee: 0.3% of source denomination",
-      "Groth16 proof verifies ownership + output commitment correctness",
-      "Mobile SDK: splitNote() function with proofGenerator callback",
-    ],
+    detailCount: 7,
     codeExample: `// Split 1 SOL into 10 × 0.1 SOL
 const result = await splitNote(
   sourcePool,  // 1 SOL pool
@@ -591,20 +405,9 @@ const result = await splitNote(
   },
   {
     id: "privacy-router",
-    title: "Multi-Hop Privacy Router",
+    i18nKey: "privacyRouter",
     icon: <Zap className="w-6 h-6" />,
-    description:
-      "The Privacy Router plans and executes multi-hop routes through the privacy pool system. Routes include shield, unshield, reshield, and split operations with configurable timing delays to maximize anonymity.",
-    details: [
-      "5 privacy levels: Minimal (1 hop) → Paranoid (14+ hops, 20 splits)",
-      "Autonomous runner executes hops in background (60s polling, Android foreground service)",
-      "Timing jitter: random delays between hops (hours) prevent correlation",
-      "Note locking: notes in active routes are locked (cannot withdraw or re-send)",
-      "Consent popup: irreversibility warning before route starts",
-      "Route progress: locked notes show hop X/Y, progress bar, next hop ETA",
-      "Routes encrypted in SecureStore, survive app restarts",
-      "In-app notification on each hop completion",
-    ],
+    detailCount: 8,
     codeExample: `// Start a Paranoid-level private send
 const route = await startPrivateRoute({
   amount: 0.1,
@@ -618,26 +421,9 @@ const route = await startPrivateRoute({
   },
   {
     id: "ai-agent",
-    title: "AI Agent (56 Tools)",
+    i18nKey: "aiAgent",
     icon: <Cpu className="w-6 h-6" />,
-    description:
-      "On-device AI agent with 56 tools covering wallet operations, privacy actions, Solana network queries, DeFi analytics, and device features. Runs locally (Gemma 3 via llama.rn) — no data leaves the device.",
-    details: [
-      "Wallet (6): balance, address, send, history, airdrop, stealth receive",
-      "Privacy (5): shield, notes list, private send, route status, privacy level",
-      "Solana (6): slot, epoch, TPS, tx lookup, account info, rent calculator",
-      "Token/DeFi (6): token balance, swap quote, swap execute, TVL, lending rates, portfolio",
-      "Analytics (3): gas tracker, whale watch, market dominance",
-      "Staking (3): stake info, APY, validators",
-      "NFT (2): list NFTs, floor price",
-      "Social (2): protocol info, trending tokens",
-      "Conversion (3): SOL/USD, SOL/lamports, epoch/date",
-      "Device (3): share, haptic, notification",
-      "Alerts (3): set price alert, list alerts, clear alerts",
-      "Utility (4): calculate, validate address, base58 encode, generate keypair",
-      "Memory (3): save, read, list persistent agent memory",
-      "Tool-use loop: up to 3 rounds of tool execution per message",
-    ],
+    detailCount: 14,
     codeExample: `// User: "What's my balance and shield 0.1 SOL"
 // Agent calls tools:
 const balance = await executeTool("wallet_balance", {});
@@ -651,76 +437,76 @@ await executeTool("privacy_shield", { amount: 0.1 });
 
 const docsArchLayers = [
   {
-    name: "Client Layer",
+    nameKey: "docs.layerClient",
     hex: "#39c5bb",
     nodes: [
-      { label: "MOBILE APP", sub: "React Native / Expo 54" },
-      { label: "EXTENSION", sub: "Chrome MV3 (beta)" },
-      { label: "WEB APP", sub: "Next.js 16" },
-      { label: "AI AGENT", sub: "56 Tools / On-Device LLM" },
+      { labelKey: "docs.nodeMobileApp", subKey: "docs.nodeMobileSub" },
+      { labelKey: "docs.nodeExtension", subKey: "docs.nodeExtensionSub" },
+      { labelKey: "docs.nodeWebApp", subKey: "docs.nodeWebSub" },
+      { labelKey: "docs.nodeAiAgent", subKey: "docs.nodeAiSub" },
     ],
   },
   {
-    name: "Privacy Layer",
+    nameKey: "docs.layerPrivacy",
     hex: "#ff2d7a",
     nodes: [
-      { label: "TOR RELAY", sub: "3-Tier IP Anonymization" },
-      { label: "AUTO-SHIELD", sub: "Stealth Receive + Auto Pool" },
-      { label: "PRIVACY ROUTER", sub: "Multi-Hop / 5 Levels" },
-      { label: "META-ADDRESSES", sub: "st:01 / st:02 P01-to-P01" },
+      { labelKey: "docs.nodeTorRelay", subKey: "docs.nodeTorSub" },
+      { labelKey: "docs.nodeAutoShield", subKey: "docs.nodeAutoShieldSub" },
+      { labelKey: "docs.nodePrivacyRouter", subKey: "docs.nodePrivacyRouterSub" },
+      { labelKey: "docs.nodeMetaAddr", subKey: "docs.nodeMetaAddrSub" },
     ],
   },
   {
-    name: "SDK Layer",
+    nameKey: "docs.layerSdk",
     hex: "#ff77a8",
     nodes: [
-      { label: "@p01/specter-sdk", sub: "Stealth & Wallets" },
-      { label: "@p01/zk-sdk", sub: "Groth16 + STARK Prover" },
-      { label: "@p01/zkspl-sdk", sub: "Confidential Balances" },
-      { label: "@p01/arcium-sdk", sub: "MPC Compute" },
-      { label: "@p01/p01-js", sub: "Merchant SDK" },
-      { label: "@p01/privacy-toolkit", sub: "Merkle + Poseidon" },
-      { label: "@p01/auth-sdk", sub: "Auth Integration" },
-      { label: "@p01/rpc-config", sub: "RPC Fallback Chain" },
+      { labelKey: "docs.nodeSpecterSdk", subKey: "docs.nodeSpecterSub" },
+      { labelKey: "docs.nodeZkSdk", subKey: "docs.nodeZkSub" },
+      { labelKey: "docs.nodeZksplSdk", subKey: "docs.nodeZksplSub" },
+      { labelKey: "docs.nodeArciumSdk", subKey: "docs.nodeArciumSub" },
+      { labelKey: "docs.nodeP01Js", subKey: "docs.nodeP01JsSub" },
+      { labelKey: "docs.nodePrivacyToolkit", subKey: "docs.nodePrivacyToolkitSub" },
+      { labelKey: "docs.nodeAuthSdk", subKey: "docs.nodeAuthSub" },
+      { labelKey: "docs.nodeRpcConfig", subKey: "docs.nodeRpcSub" },
     ],
   },
   {
-    name: "Protocol Layer",
+    nameKey: "docs.layerProtocol",
     hex: "#00ffe5",
     nodes: [
-      { label: "STEALTH", sub: "ECDH + ML-KEM-768" },
-      { label: "SHIELDED", sub: "ZK Pool + Merkle Tree" },
-      { label: "DENOMINATED", sub: "Fixed-Denom Pools" },
-      { label: "NOTE SPLIT", sub: "Cross-Pool Splitting" },
-      { label: "zkSPL", sub: "Confidential Balances" },
-      { label: "PAYMENTS", sub: "Streams & Subscriptions" },
-      { label: "VAULTS", sub: "Subscription Vaults" },
-      { label: "MPC", sub: "Arcium Cerberus" },
+      { labelKey: "docs.nodeStealth", subKey: "docs.nodeStealthSub" },
+      { labelKey: "docs.nodeShielded", subKey: "docs.nodeShieldedSub" },
+      { labelKey: "docs.nodeDenominated", subKey: "docs.nodeDenominatedSub" },
+      { labelKey: "docs.nodeNoteSplit", subKey: "docs.nodeNoteSplitSub" },
+      { labelKey: "docs.nodeZkspl", subKey: "docs.nodeZksplProtoSub" },
+      { labelKey: "docs.nodePayments", subKey: "docs.nodePaymentsSub" },
+      { labelKey: "docs.nodeVaults", subKey: "docs.nodeVaultsSub" },
+      { labelKey: "docs.nodeMpc", subKey: "docs.nodeMpcSub" },
     ],
   },
   {
-    name: "Verification Layer",
+    nameKey: "docs.layerVerification",
     hex: "#ff77a8",
     nodes: [
-      { label: "ON-CHAIN RELAYER", sub: "Trustless ZK Relay" },
-      { label: "STARK VERIFIER", sub: "FRI + Goldilocks" },
-      { label: "QUANTUM VAULT", sub: "WOTS+ / Hash-Timelock" },
-      { label: "BUNDLER", sub: "Atomic Batch Shield" },
-      { label: "CRANK", sub: "Auto Subscription Payments" },
+      { labelKey: "docs.nodeOnChainRelayer", subKey: "docs.nodeRelayerSub" },
+      { labelKey: "docs.nodeStarkVerifier", subKey: "docs.nodeStarkSub" },
+      { labelKey: "docs.nodeQuantumVault", subKey: "docs.nodeQuantumSub" },
+      { labelKey: "docs.nodeBundler", subKey: "docs.nodeBundlerSub" },
+      { labelKey: "docs.nodeCrank", subKey: "docs.nodeCrankSub" },
     ],
   },
   {
-    name: "Solana Blockchain",
+    nameKey: "docs.layerSolana",
     hex: "#ffcc00",
     nodes: [
-      { label: "14 PROGRAMS", sub: "Anchor 0.32.1 / Rust" },
-      { label: "SPL Tokens", sub: "Token Standard" },
-      { label: "alt_bn128 + FRI", sub: "ZK Verification" },
+      { labelKey: "docs.nodePrograms", subKey: "docs.nodeProgramsSub" },
+      { labelKey: "docs.nodeSplTokens", subKey: "docs.nodeSplSub" },
+      { labelKey: "docs.nodeZkVerif", subKey: "docs.nodeZkVerifSub" },
     ],
   },
 ];
 
-const ArchitectureDiagram = () => (
+const ArchitectureDiagram = ({ t }: { t: (key: string) => string }) => (
   <div className="relative border border-[#2a2a30] bg-[#0a0a0c] p-6 sm:p-10 overflow-hidden">
     {/* Injected CSS for diagram animations */}
     <style dangerouslySetInnerHTML={{ __html: `
@@ -826,22 +612,22 @@ const ArchitectureDiagram = () => (
 
     <div className="relative z-10">
       <h3 className="text-xs font-mono text-[#555560] uppercase tracking-[0.3em] text-center mb-2">
-        System Architecture
+        {t('docs.archTitle')}
       </h3>
       <h4 className="text-xl sm:text-2xl font-bold text-white text-center mb-10 uppercase tracking-wider">
-        Protocol Stack
+        {t('docs.archSubtitle')}
       </h4>
 
       <div className="flex flex-col items-center gap-0">
         {docsArchLayers.map((layer, layerIndex) => (
-          <React.Fragment key={layer.name}>
+          <React.Fragment key={layer.nameKey}>
             {/* Layer */}
             <div className="w-full max-w-2xl">
               {/* Layer label */}
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-1.5 h-1.5" style={{ backgroundColor: layer.hex }} />
                 <span className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em]" style={{ color: layer.hex }}>
-                  {layer.name}
+                  {t(layer.nameKey)}
                 </span>
                 <div className="flex-1 h-px" style={{ backgroundColor: `${layer.hex}15` }} />
               </div>
@@ -850,7 +636,7 @@ const ArchitectureDiagram = () => (
               <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : layer.nodes.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : layer.nodes.length >= 5 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3'}`}>
                 {layer.nodes.map((node) => (
                   <div
-                    key={node.label}
+                    key={node.labelKey}
                     className="bg-[#111114] border p-3 sm:p-4 text-center transition-all duration-300 hover:bg-[#151518]"
                     style={{ borderColor: `${layer.hex}25` }}
                     onMouseEnter={(e) => {
@@ -863,10 +649,10 @@ const ArchitectureDiagram = () => (
                     }}
                   >
                     <div className="text-xs sm:text-sm font-bold font-mono tracking-wide" style={{ color: layer.hex }}>
-                      {node.label}
+                      {t(node.labelKey)}
                     </div>
                     <div className="text-[10px] sm:text-xs text-[#555560] mt-1 font-mono">
-                      {node.sub}
+                      {t(node.subKey)}
                     </div>
                   </div>
                 ))}
@@ -889,14 +675,14 @@ const ArchitectureDiagram = () => (
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 bg-[#39c5bb] animate-pulse" />
           <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
-            End-to-end encrypted
+            {t('docs.archEncrypted')}
           </span>
         </div>
         <span className="text-[#2a2a30]">|</span>
         <div className="flex items-center gap-2">
           <Zap className="w-3 h-3 text-[#39c5bb]" />
           <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
-            From client to settlement
+            {t('docs.archFlow')}
           </span>
         </div>
       </div>
@@ -904,8 +690,11 @@ const ArchitectureDiagram = () => (
   </div>
 );
 
-function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
+function TechAccordion({ tech, index, t }: { tech: TechSection; index: number; t: (key: string) => string }) {
   const [open, setOpen] = React.useState(false);
+  const title = t(`docs.sections.${tech.i18nKey}.title`);
+  const description = t(`docs.sections.${tech.i18nKey}.desc`);
+  const details = Array.from({ length: tech.detailCount }, (_, i) => t(`docs.sections.${tech.i18nKey}.detail${i + 1}`));
 
   return (
     <motion.div
@@ -925,8 +714,8 @@ function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
           {tech.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-base font-bold text-white">{tech.title}</h3>
-          <p className="text-xs text-[#888892] mt-0.5 truncate">{tech.description}</p>
+          <h3 className="text-base font-bold text-white">{title}</h3>
+          <p className="text-xs text-[#888892] mt-0.5 truncate">{description}</p>
         </div>
         <motion.div
           animate={{ rotate: open ? 180 : 0 }}
@@ -950,13 +739,13 @@ function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
         className="overflow-hidden"
       >
         <div className="px-4 sm:px-5 pb-5 pt-1 border-t border-[#2a2a30]">
-          <p className="text-[#888892] text-sm leading-relaxed mb-4">{tech.description}</p>
+          <p className="text-[#888892] text-sm leading-relaxed mb-4">{description}</p>
 
           <h4 className="text-xs font-bold text-[#39c5bb] uppercase tracking-wider mb-3">
-            Key Features
+            {t('docs.keyFeatures')}
           </h4>
           <ul className="space-y-1.5 mb-5">
-            {tech.details.map((detail, i) => (
+            {details.map((detail, i) => (
               <li key={i} className="flex items-start gap-2.5 text-sm text-[#888892]">
                 <CheckCircle className="w-3.5 h-3.5 text-[#39c5bb] flex-shrink-0 mt-0.5" />
                 <span className="break-words">{detail}</span>
@@ -967,7 +756,7 @@ function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
           {tech.codeExample && (
             <>
               <h4 className="text-xs font-bold text-[#ff77a8] uppercase tracking-wider mb-2">
-                Code Example
+                {t('docs.codeExample')}
               </h4>
               <pre className="bg-[#0a0a0c] border border-[#2a2a30] p-3 rounded-lg overflow-x-auto text-xs font-mono text-[#888892] whitespace-pre-wrap break-words">
                 {tech.codeExample}
@@ -981,6 +770,7 @@ function TechAccordion({ tech, index }: { tech: TechSection; index: number }) {
 }
 
 export default function DocsPage() {
+  const t = useT();
   return (
     <div className="min-h-screen bg-[#0a0a0c]" style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
       {/* Header — sticky nav */}
@@ -998,17 +788,17 @@ export default function DocsPage() {
             </Link>
             <div className="flex items-center gap-4">
               <Link href="/roadmap" className="hidden sm:flex text-xs font-mono text-[#555560] hover:text-[#888892] transition-colors uppercase tracking-wider">
-                Roadmap
+                {t('docs.navRoadmap')}
               </Link>
               <Link href="/#download" className="hidden sm:flex text-xs font-mono text-[#555560] hover:text-[#888892] transition-colors uppercase tracking-wider">
-                Download
+                {t('docs.navDownload')}
               </Link>
               <Link
                 href="/"
                 className="flex items-center gap-1.5 text-sm text-[#888892] hover:text-[#39c5bb] transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Home</span>
+                <span className="hidden sm:inline">{t('docs.navHome')}</span>
               </Link>
             </div>
           </div>
@@ -1029,37 +819,37 @@ export default function DocsPage() {
           >
             <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#39c5bb]/10 border border-[#39c5bb]/20 rounded-full mb-6">
               <div className="w-1.5 h-1.5 bg-[#39c5bb] rounded-full animate-pulse" />
-              <span className="text-xs font-mono text-[#39c5bb] uppercase tracking-widest">Technical Documentation</span>
+              <span className="text-xs font-mono text-[#39c5bb] uppercase tracking-widest">{t('docs.badge')}</span>
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-5 tracking-tight">
-              Privacy{" "}
+              {t('docs.heroTitle1')}{" "}
               <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
-                Technologies
+                {t('docs.heroTitle2')}
               </span>
             </h1>
 
             <p className="text-base sm:text-lg text-[#888892] max-w-2xl mx-auto leading-relaxed mb-8">
-              Zero-knowledge proofs, multi-party computation, and post-quantum cryptography — delivering true financial privacy on Solana.
+              {t('docs.heroSubtitle')}
             </p>
 
             {/* Quick stats */}
             <div className="flex flex-wrap items-center justify-center gap-6 text-sm">
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-[#39c5bb]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">7</span> ZK Circuits</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">7</span> {t('docs.statCircuits')}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-[#ff77a8]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">14</span> Programs</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statPrograms')}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Code className="w-4 h-4 text-[#00ffe5]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">8</span> SDKs</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">8</span> {t('docs.statSdks')}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-[#ffcc00]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">21</span> Modules</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">21</span> {t('docs.statModules')}</span>
               </div>
             </div>
           </motion.div>
@@ -1071,9 +861,9 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto">
           <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
             <Layers className="w-6 h-6 text-[#39c5bb]" />
-            System Architecture
+            {t('docs.archSectionTitle')}
           </h2>
-          <ArchitectureDiagram />
+          <ArchitectureDiagram t={t} />
         </div>
       </section>
 
@@ -1082,15 +872,15 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto">
           <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-3">
             <Zap className="w-6 h-6 text-[#ff77a8]" />
-            Core Technologies
+            {t('docs.coreTechTitle')}
           </h2>
           <p className="text-[#888892] mb-8 text-sm">
-            {technologies.length} modules — click to expand technical details and code examples.
+            {technologies.length} {t('docs.coreTechDesc')}
           </p>
 
           <div className="space-y-2">
             {technologies.map((tech, index) => (
-              <TechAccordion key={tech.id} tech={tech} index={index} />
+              <TechAccordion key={tech.id} tech={tech} index={index} t={t} />
             ))}
           </div>
         </div>
@@ -1101,52 +891,52 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto">
           <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
             <Shield className="w-6 h-6 text-[#ff2d7a]" />
-            Security Model
+            {t('docs.securityTitle')}
           </h2>
           <div className="grid md:grid-cols-2 gap-6">
             <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-              <h3 className="text-lg font-bold text-white mb-4">Threat Model</h3>
+              <h3 className="text-lg font-bold text-white mb-4">{t('docs.threatModel')}</h3>
               <ul className="space-y-2 text-sm text-[#888892]">
                 <li className="flex items-start gap-2">
                   <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>Blockchain observers cannot link senders and recipients</span>
+                  <span>{t('docs.threatObservers')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>Transaction amounts are hidden in shielded transfers</span>
+                  <span>{t('docs.threatAmounts')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>Spending patterns cannot be analyzed</span>
+                  <span>{t('docs.threatPatterns')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>Balance tracking is impossible for third parties</span>
+                  <span>{t('docs.threatBalance')}</span>
                 </li>
               </ul>
             </div>
             <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-              <h3 className="text-lg font-bold text-white mb-4">Guarantees</h3>
+              <h3 className="text-lg font-bold text-white mb-4">{t('docs.guarantees')}</h3>
               <ul className="space-y-2 text-sm text-[#888892]">
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Sound: Invalid proofs cannot be generated</span>
+                  <span>{t('docs.guaranteeSound')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Complete: Valid spends always produce valid proofs</span>
+                  <span>{t('docs.guaranteeComplete')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Zero-knowledge: Proofs reveal nothing beyond validity</span>
+                  <span>{t('docs.guaranteeZk')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>No double-spending: Nullifiers are unique per commitment</span>
+                  <span>{t('docs.guaranteeNoDouble')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>MPC threshold: 1-of-N honest node via Arcium Cerberus protocol</span>
+                  <span>{t('docs.guaranteeMpc')}</span>
                 </li>
               </ul>
             </div>
@@ -1154,48 +944,48 @@ export default function DocsPage() {
 
           {/* Security Hardening */}
           <div className="mt-6 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-            <h3 className="text-lg font-bold text-white mb-4">Security Hardening (Mobile)</h3>
+            <h3 className="text-lg font-bold text-white mb-4">{t('docs.securityHardening')}</h3>
             <div className="grid md:grid-cols-3 gap-4 text-sm text-[#888892]">
               <ul className="space-y-2">
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Spending key never leaves device — no remote prover fallback</span>
+                  <span>{t('docs.hardenSpendingKey')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>PIN: SHA-256 hashed with per-device salt, constant-time compare</span>
+                  <span>{t('docs.hardenPin')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Progressive lockout: 5→30s, 8→60s, 10→300s</span>
-                </li>
-              </ul>
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>All secrets in hardware-backed SecureStore (not AsyncStorage)</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Clipboard auto-clear after 60s on all sensitive copies</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>App switcher blur prevents screenshot leaks</span>
+                  <span>{t('docs.hardenLockout')}</span>
                 </li>
               </ul>
               <ul className="space-y-2">
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>android:allowBackup=&quot;false&quot; (prevents adb backup)</span>
+                  <span>{t('docs.hardenSecureStore')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Biometric auth: device fallback when hardware unavailable</span>
+                  <span>{t('docs.hardenClipboard')}</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>Lock screen enforced even when security_method=&quot;none&quot;</span>
+                  <span>{t('docs.hardenBlur')}</span>
+                </li>
+              </ul>
+              <ul className="space-y-2">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>{t('docs.hardenBackup')}</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>{t('docs.hardenBiometric')}</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>{t('docs.hardenLockScreen')}</span>
                 </li>
               </ul>
             </div>
@@ -1208,12 +998,11 @@ export default function DocsPage() {
         <div className="max-w-7xl mx-auto">
           <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
             <Network className="w-6 h-6 text-[#f59e0b]" />
-            Privacy: With &amp; Without MPC
+            {t('docs.mpcTitle')}
           </h2>
           <p className="text-[#888892] mb-8 max-w-3xl">
-            Protocol 01 is private by default — ZK proofs hide amounts and break the sender-receiver link.
-            Arcium MPC is an <strong className="text-white">optional upgrade</strong> that eliminates the remaining metadata leaks.
-            Toggle it on in the app for maximum privacy, or leave it off for fast, already-private transactions.
+            {t('docs.mpcDesc')}{' '}
+            {t('docs.mpcArciumIs')} <strong className="text-white">{t('docs.mpcDescUpgrade')}</strong> {t('docs.mpcDescRest')}
           </p>
 
           {/* Comparison table */}
@@ -1221,9 +1010,9 @@ export default function DocsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#2a2a30]">
-                  <th className="text-left py-3 px-4 text-[#555560] font-mono uppercase tracking-wider text-xs">Operation</th>
-                  <th className="text-left py-3 px-4 text-[#39c5bb] font-mono uppercase tracking-wider text-xs">Without MPC</th>
-                  <th className="text-left py-3 px-4 text-[#f59e0b] font-mono uppercase tracking-wider text-xs">With MPC (Arcium)</th>
+                  <th className="text-left py-3 px-4 text-[#555560] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableOperation')}</th>
+                  <th className="text-left py-3 px-4 text-[#39c5bb] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWithout')}</th>
+                  <th className="text-left py-3 px-4 text-[#f59e0b] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWith')}</th>
                 </tr>
               </thead>
               <tbody className="text-[#888892]">
@@ -1342,7 +1131,7 @@ export default function DocsPage() {
               >
                 <div className="flex items-center gap-3">
                   <span className="text-[#39c5bb]">{tech.icon}</span>
-                  <span className="text-sm text-white font-medium">{tech.title.split(' ')[0]}</span>
+                  <span className="text-sm text-white font-medium">{t(`docs.sections.${tech.i18nKey}.title`).split(' ')[0]}</span>
                 </div>
               </a>
             ))}
