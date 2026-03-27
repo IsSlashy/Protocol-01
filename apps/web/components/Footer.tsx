@@ -115,7 +115,7 @@ export default function Footer() {
                       rel={link.external ? "noopener noreferrer" : undefined}
                       className="text-sm text-p01-text-muted hover:text-p01-cyan transition-colors inline-flex items-center gap-1"
                     >
-                      {t(`footer.${link.name}`)}
+                      {['GitHub', 'Discord', 'Twitter / X'].includes(link.name) ? link.name : t(`footer.${link.name}`)}
                     </a>
                   </li>
                 ))}
