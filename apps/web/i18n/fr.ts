@@ -1008,9 +1008,9 @@ const fr: Translations = {
     bio: '24 ans, basé à Paris. Diplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement. J\'ai construit Protocol 01 seul en 72 jours — 12 programmes Solana, 6 circuits ZK, 6 STARKs, 3 applications client et 8 SDKs. Pas d\'équipe, pas de financement, que de l\'exécution.',
     missionBadge: 'Mission',
     missionTitle: 'Pourquoi je construis ça',
-    mission1: 'Je crois que la vie privée financière est un droit fondamental, pas une fonctionnalité. Chaque transaction blockchain aujourd\'hui crée une trace permanente — votre salaire, vos abonnements, vos dons, tout est public. Ce n\'est pas de la transparence, c\'est de la surveillance.',
-    mission2: 'Protocol 01 existe pour corriger ça. Pas avec de la privacy basée sur la confiance (mixeurs, relayers qui voient vos données) mais avec des garanties cryptographiques — preuves zero-knowledge, adresses stealth, et résistance post-quantique. Une privacy qui ne dépend de la promesse de personne.',
-    mission3: 'Mon objectif n\'est pas de construire un produit — c\'est de construire un écosystème. Application mobile, extension navigateur, SDKs développeur. Chaque couche couverte. Une personne, zéro compromis.',
+    mission1: 'Je crois que la vie privée financière est un droit fondamental, pas une fonctionnalité.\nChaque transaction blockchain aujourd\'hui crée une trace permanente, votre salaire, vos abonnements, vos dons, tout est public.\nCe n\'est pas de la transparence, c\'est de la surveillance.',
+    mission2: 'Protocol 01 existe pour corriger ça.\nPas avec de la privacy basée sur la confiance (mixeurs, relayers qui voient vos données) mais avec des garanties cryptographiques, preuves zero-knowledge, adresses stealth, et résistance post-quantique.\nUne privacy qui ne dépend de la promesse de personne.',
+    mission3: 'Mon objectif n\'est pas de construire un produit, c\'est de construire un écosystème.\nApplication mobile, extension navigateur, SDKs développeur.\nChaque couche couverte.\nUne personne, zéro compromis.',
     journeyBadge: 'Parcours',
     journeyTitle: 'De la curiosité au protocole',
     timeline: {
