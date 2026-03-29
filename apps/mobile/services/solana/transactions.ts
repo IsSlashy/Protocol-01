@@ -1,4 +1,5 @@
 import {
+  Keypair,
   PublicKey,
   Transaction,
   SystemProgram,
@@ -284,6 +285,129 @@ export async function sendSol(
       explorerUrl: '',
       success: false,
       error: error.message || 'Transaction failed',
+    };
+  }
+}
+
+/**
+ * Send SOL privately via ephemeral keypair + relay.
+ *
+ * The user's real wallet only appears in the funding tx to the ephemeral address.
+ * The actual payment is signed by the ephemeral and submitted through the
+ * confidential relay (MPC threshold decryption when available).
+ *
+ * On-chain footprint:
+ *   Tx1: UserWallet → EphemeralA  (funding, looks like any transfer)
+ *   Tx2: EphemeralA → Recipient   (relayed, no link to user wallet)
+ */
+export async function sendSolPrivate(
+  toAddress: string,
+  amount: number,
+  walletPublicKey: PublicKey,
+  signTransaction: (tx: Transaction) => Promise<Transaction>,
+): Promise<TransactionResult> {
+  try {
+    const connection = getConnection();
+    const toPubkey = new PublicKey(toAddress);
+    const totalLamports = Math.floor(amount * LAMPORTS_PER_SOL);
+    const feeAmount = calculateP01Fee(totalLamports);
+    const recipientAmount = totalLamports - feeAmount;
+
+    // 1. Generate ephemeral payer (no on-chain link to user identity)
+    const ephemeralKeypair = Keypair.generate();
+    console.log('[Private Send] Ephemeral payer:', ephemeralKeypair.publicKey.toBase58().slice(0, 12) + '...');
+
+    // 2. Fund ephemeral from user wallet (payment + platform fee + exact tx fee)
+    // Ephemeral must end at exactly 0 lamports to avoid rent-exempt violation.
+    // Solana tx fee = 5000 lamports per signature (1 signer = ephemeral).
+    const txFee = 5_000;
+    const fundAmount = totalLamports + txFee;
+
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: walletPublicKey,
+        toPubkey: ephemeralKeypair.publicKey,
+        lamports: fundAmount,
+      }),
+    );
+    fundTx.feePayer = walletPublicKey;
+    const { blockhash: fundBlockhash, lastValidBlockHeight } =
+      await connection.getLatestBlockhash('confirmed');
+    fundTx.recentBlockhash = fundBlockhash;
+
+    const signedFundTx = await signTransaction(fundTx);
+    const fundSig = await connection.sendRawTransaction(signedFundTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await connection.confirmTransaction(
+      { signature: fundSig, blockhash: fundBlockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    console.log('[Private Send] Ephemeral funded:', fundSig.slice(0, 20) + '...');
+
+    // 3. Build payment tx from ephemeral → recipient
+    const payTx = new Transaction();
+    payTx.add(
+      SystemProgram.transfer({
+        fromPubkey: ephemeralKeypair.publicKey,
+        toPubkey,
+        lamports: recipientAmount,
+      }),
+    );
+    if (feeAmount > 0) {
+      payTx.add(
+        SystemProgram.transfer({
+          fromPubkey: ephemeralKeypair.publicKey,
+          toPubkey: new PublicKey(getP01FeeWallet()),
+          lamports: feeAmount,
+        }),
+      );
+    }
+
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    payTx.feePayer = ephemeralKeypair.publicKey;
+    payTx.recentBlockhash = blockhash;
+    payTx.sign(ephemeralKeypair);
+
+    // 4. Submit: try confidential relay first, fall back to direct send
+    let finalSignature: string;
+    try {
+      const { confidentialRelay } = await import('../arcium/confidentialRelay');
+      const relayResult = await confidentialRelay(
+        payTx.serialize(),
+        walletPublicKey,
+        signTransaction,
+      );
+      finalSignature = relayResult.signature;
+      console.log(
+        '[Private Send] Relayed successfully',
+        relayResult.wasMpcProtected ? '(MPC)' : '(standard)',
+        finalSignature.slice(0, 20) + '...',
+      );
+    } catch (relayErr: any) {
+      // Relay not available — send directly (ephemeral feePayer still hides identity)
+      console.warn('[Private Send] Relay unavailable, sending directly:', relayErr.message);
+      finalSignature = await connection.sendRawTransaction(payTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
+      await connection.confirmTransaction(finalSignature, 'confirmed');
+      console.log('[Private Send] Direct send:', finalSignature.slice(0, 20) + '...');
+    }
+
+    return {
+      signature: finalSignature,
+      explorerUrl: getExplorerUrl(finalSignature, 'tx'),
+      success: true,
+    };
+  } catch (error: any) {
+    console.error('[Private Send] Failed:', error);
+    return {
+      signature: '',
+      explorerUrl: '',
+      success: false,
+      error: error.message || 'Private transaction failed',
     };
   }
 }

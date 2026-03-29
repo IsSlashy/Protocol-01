@@ -413,6 +413,49 @@ export function parseStealthMemo(memo: string): {
   return null;
 }
 
+// ============= Simple Stealth (for plain Solana addresses) =============
+
+/**
+ * Derive a unique stealth address from a plain Solana recipient address.
+ *
+ * Unlike generateStealthAddress() which requires a meta-address (viewing + spending keys),
+ * this works with any Solana wallet address. Used by Privacy Shield in subscription streams
+ * to generate a unique recipient per payment, breaking the on-chain payment pattern.
+ *
+ * Algorithm (matches extension's deriveStealthAddress):
+ *   ephemeralSeed = sha256(senderSecret || nonce_LE32 || recipientPubkey)
+ *   sharedSecret  = sha256(ephemeralSecret || recipientPubkey)
+ *   stealthKeypair = nacl.sign.keyPair.fromSeed(sharedSecret)
+ */
+export function deriveStealthAddressSimple(
+  recipientPubkey: string,
+  senderSecret: Uint8Array,
+  nonce: number,
+): { stealthAddress: string; ephemeralPubkey: string } {
+  // Deterministic ephemeral seed from sender secret + nonce + recipient
+  const nonceBytes = new Uint8Array(32);
+  new DataView(nonceBytes.buffer).setUint32(0, nonce, true);
+
+  const recipientBytes = new TextEncoder().encode(recipientPubkey);
+  const ephemeralSeed = sha256(
+    Uint8Array.from([...senderSecret.slice(0, 32), ...nonceBytes, ...recipientBytes]),
+  );
+
+  const ephemeralKeypair = nacl.sign.keyPair.fromSeed(ephemeralSeed);
+
+  // Derive shared secret → stealth keypair
+  const sharedSecret = sha256(
+    Uint8Array.from([...ephemeralKeypair.secretKey.slice(0, 32), ...recipientBytes]),
+  );
+  const stealthKeypair = nacl.sign.keyPair.fromSeed(sharedSecret);
+  const stealthPubkey = new PublicKey(stealthKeypair.publicKey);
+
+  return {
+    stealthAddress: stealthPubkey.toBase58(),
+    ephemeralPubkey: Buffer.from(ephemeralKeypair.publicKey).toString('hex'),
+  };
+}
+
 // ============= Helpers =============
 
 function createStealthError(code: StealthError['code'], message: string): StealthError {

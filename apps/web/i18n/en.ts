@@ -1001,6 +1001,48 @@ const en = {
     fr: 'FR',
     ja: 'JA',
   },
+
+  // ── Founder ─────────────────────────────────────────────
+  founder: {
+    role: 'Founder & Solo Developer — Protocol 01',
+    bio: '24 years old, based in Paris. Epitech alumni with a Master\'s in Cybersecurity and 7+ years of coding experience. I built Protocol 01 alone in 72 days — 12 Solana programs, 6 ZK circuits, 6 STARKs, 3 client apps, and 8 SDKs. No team, no funding, just execution.',
+    missionBadge: 'Mission',
+    missionTitle: 'Why I Build This',
+    mission1: 'I believe financial privacy is a fundamental right, not a feature. Every blockchain transaction today creates a permanent trail — your salary, subscriptions, donations, everything is public. That\'s not transparency, that\'s surveillance.',
+    mission2: 'Protocol 01 exists to fix this. Not with trust-based privacy (mixers, relayers that see your data) but with cryptographic guarantees — zero-knowledge proofs, stealth addresses, and post-quantum resistance. Privacy that doesn\'t depend on anyone keeping their promise.',
+    mission3: 'My goal is not to build a product — it\'s to build an ecosystem. Mobile app, browser extension, developer SDKs. Every layer covered. One person, zero compromises.',
+    journeyBadge: 'Journey',
+    journeyTitle: 'From Curiosity to Protocol',
+    timeline: {
+      origin: { title: 'First Computer', desc: 'Fascinated by computers since age 6. Started exploring how things work under the hood.' },
+      coding: { title: 'Started Coding', desc: 'Self-taught developer at 17. Fell in love with building things from scratch.' },
+      ecommerce: { title: 'E-Commerce', desc: 'First professional experience building e-commerce platforms. Learned the business side of tech.' },
+      bachelor: { title: 'Bachelor\'s — Full-Stack Dev', desc: 'Epitech Paris. Graduated as a Full-Stack Developer. Built 18+ projects across web, mobile, and backend.' },
+      captnboat: { title: 'CaptNBoat — Dev & PM', desc: 'Full-stack developer and project manager. Led cybersecurity initiatives and product development for 2 years.' },
+      master: { title: 'Master\'s — Cybersecurity', desc: 'Epitech Paris. Specialized in offensive security, cryptography, and secure architecture.' },
+      freelance: { title: 'Freelance & Hackathons', desc: 'Went independent. Started competing in Solana hackathons. Built the first version of Protocol 01.' },
+      protocol01: { title: 'Protocol 01 — Full Time', desc: '72 days of continuous development. 12 programs, 6 ZK circuits, 6 STARKs, 3 apps, 8 SDKs. Solo. Submitted to Colosseum Frontier 2026.' },
+    },
+    stats: {
+      yearsCode: 'Years Coding',
+      programs: 'Solana Programs',
+      circuits: 'ZK Circuits',
+      days: 'Days Built',
+      dev: 'Developer',
+      apps: 'Client Apps',
+    },
+    builtBadge: 'Scope',
+    builtTitle: 'What One Dev Can Build',
+    built: {
+      onchain: 'On-Chain Infrastructure',
+      clients: 'Client Applications',
+      privacy: 'Privacy Layer',
+      quantum: 'Quantum Resistance',
+    },
+    cta: 'Interested in Protocol 01? Let\'s talk.',
+    ctaTwitter: 'Reach Out on X',
+    ctaDownload: 'Try the App',
+  },
 } as const;
 
 // Recursive type that mirrors the structure but allows any string values
