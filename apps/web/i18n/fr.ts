@@ -1005,7 +1005,7 @@ const fr: Translations = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'Fondateur & Développeur Solo — Protocol 01',
-    bio: '24 ans, basé à Paris. Diplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement. J\'ai construit Protocol 01 seul en 72 jours — 12 programmes Solana, 6 circuits ZK, 6 STARKs, 3 applications client et 8 SDKs. Pas d\'équipe, pas de financement, que de l\'exécution.',
+    bio: '24 ans, basé à Paris.\nDiplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement.\nJ\'ai construit Protocol 01 seul en 72 jours, 12 programmes Solana, 6 circuits ZK, 6 STARKs, 3 applications client et 8 SDKs.\nPas d\'équipe, pas de financement, que de l\'exécution.',
     missionBadge: 'Mission',
     missionTitle: 'Pourquoi je construis ça',
     mission1: 'Je crois que la vie privée financière est un droit fondamental, pas une fonctionnalité.\nChaque transaction blockchain aujourd\'hui crée une trace permanente, votre salaire, vos abonnements, vos dons, tout est public.\nCe n\'est pas de la transparence, c\'est de la surveillance.',
