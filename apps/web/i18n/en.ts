@@ -1005,7 +1005,7 @@ const en = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'Founder & Solo Developer — Protocol 01',
-    bio: '24 years old, based in Paris. Epitech alumni with a Master\'s in Cybersecurity and 7+ years of coding experience. I built Protocol 01 alone in 72 days — 12 Solana programs, 6 ZK circuits, 6 STARKs, 3 client apps, and 8 SDKs. No team, no funding, just execution.',
+    bio: '24 years old, based in Paris.\nEpitech alumni with a Master\'s in Cybersecurity and 7+ years of coding experience.\nI built Protocol 01 alone in 72 days, 12 Solana programs, 6 ZK circuits, 6 STARKs, 3 client apps, and 8 SDKs.\nNo team, no funding, just execution.',
     missionBadge: 'Mission',
     missionTitle: 'Why I Build This',
     mission1: 'I believe financial privacy is a fundamental right, not a feature.\nEvery blockchain transaction today creates a permanent trail, your salary, subscriptions, donations, everything is public.\nThat\'s not transparency, that\'s surveillance.',

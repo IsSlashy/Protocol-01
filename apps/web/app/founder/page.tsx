@@ -8,7 +8,7 @@ import { LanguageSwitcher } from "@/i18n";
 const fadeUp = { hidden: { opacity: 0, y: 30 }, visible: { opacity: 1, y: 0 } };
 
 const timeline = [
-  { year: "2005", key: "origin", icon: "terminal" },
+  { year: "2007", key: "origin", icon: "terminal" },
   { year: "2019", key: "coding", icon: "code" },
   { year: "2022", key: "ecommerce", icon: "shopping-cart" },
   { year: "2023", key: "bachelor", icon: "graduation-cap" },
@@ -83,7 +83,7 @@ export default function FounderPage() {
               {t('founder.role')}
             </motion.p>
 
-            <motion.p variants={fadeUp} className="text-p01-text-secondary text-base max-w-2xl mx-auto leading-relaxed">
+            <motion.p variants={fadeUp} className="text-p01-text-secondary text-base max-w-2xl mx-auto leading-relaxed whitespace-pre-line">
               {t('founder.bio')}
             </motion.p>
 
