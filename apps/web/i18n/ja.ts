@@ -1001,6 +1001,48 @@ const ja: Translations = {
     fr: 'FR',
     ja: 'JA',
   },
+
+  // ── Founder ─────────────────────────────────────────────
+  founder: {
+    role: 'ファウンダー & ソロデベロッパー — Protocol 01',
+    bio: '24歳、パリ在住。Epitech卒業、サイバーセキュリティ修士号取得、7年以上の開発経験。Protocol 01を72日間で一人で構築 — Solanaプログラム12個、ZK回路6個、STARK 6個、クライアントアプリ3個、SDK 8個。チームなし、資金なし、実行あるのみ。',
+    missionBadge: 'ミッション',
+    missionTitle: 'なぜこれを作るのか',
+    mission1: '金融プライバシーは機能ではなく基本的権利です。今日のすべてのブロックチェーン取引は永続的な痕跡を残します — 給与、サブスクリプション、寄付、すべてが公開されています。これは透明性ではなく、監視です。',
+    mission2: 'Protocol 01はこれを修正するために存在します。信頼ベースのプライバシー（ミキサー、データを見るリレイヤー）ではなく、暗号学的保証 — ゼロ知識証明、ステルスアドレス、ポスト量子耐性。誰かの約束に依存しないプライバシー。',
+    mission3: '私の目標は製品を作ることではなく、エコシステムを構築することです。モバイルアプリ、ブラウザ拡張機能、開発者SDK。すべてのレイヤーをカバー。一人、妥協なし。',
+    journeyBadge: '歩み',
+    journeyTitle: '好奇心からプロトコルへ',
+    timeline: {
+      origin: { title: '最初のコンピューター', desc: '6歳からコンピューターに魅了される。物事の仕組みを探求し始めた。' },
+      coding: { title: 'コーディング開始', desc: '17歳で独学開発者に。ゼロから作ることに夢中になった。' },
+      ecommerce: { title: 'Eコマース', desc: '初のプロフェッショナル経験。Eコマースプラットフォーム構築。' },
+      bachelor: { title: '学士号 — フルスタック開発', desc: 'Epitech Paris。フルスタックデベロッパーとして卒業。Web、モバイル、バックエンドで18以上のプロジェクト。' },
+      captnboat: { title: 'CaptNBoat — 開発 & PM', desc: 'フルスタック開発者兼プロジェクトマネージャー。サイバーセキュリティイニシアチブを2年間リード。' },
+      master: { title: '修士号 — サイバーセキュリティ', desc: 'Epitech Paris。攻撃的セキュリティ、暗号学、セキュアアーキテクチャ専門。' },
+      freelance: { title: 'フリーランス & ハッカソン', desc: '独立。Solanaハッカソンに参加開始。Protocol 01の最初のバージョンを構築。' },
+      protocol01: { title: 'Protocol 01 — フルタイム', desc: '72日間の連続開発。12プログラム、6 ZK回路、6 STARK、3アプリ、8 SDK。ソロ。Colosseum Frontier 2026に提出。' },
+    },
+    stats: {
+      yearsCode: '年のコーディング',
+      programs: 'Solanaプログラム',
+      circuits: 'ZK回路',
+      days: '日で構築',
+      dev: '開発者',
+      apps: 'クライアントアプリ',
+    },
+    builtBadge: '規模',
+    builtTitle: '一人の開発者が作れるもの',
+    built: {
+      onchain: 'オンチェーンインフラ',
+      clients: 'クライアントアプリケーション',
+      privacy: 'プライバシーレイヤー',
+      quantum: '量子耐性',
+    },
+    cta: 'Protocol 01に興味がありますか？お話しましょう。',
+    ctaTwitter: 'Xで連絡する',
+    ctaDownload: 'アプリを試す',
+  },
 };
 
 export default ja;
