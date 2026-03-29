@@ -15,7 +15,8 @@ import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { StreamFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
 import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
-import { sendSolWithSigner } from '../../../services/solana/transactions';
+import { sendSolWithSigner, sendSolPrivate } from '../../../services/solana/transactions';
+import { deriveStealthAddressSimple } from '../../../utils/crypto/stealth';
 import {
   DenominatedPoolProverProvider,
   useDenominatedPoolProver,
@@ -88,6 +89,34 @@ function SubscribeContent() {
         setProgress(t('shieldUnshield.generatingProof'));
         sig = await store.unshieldNote(note.id, devAddr, generateProof);
         paid = note.denomination;
+      } else if (enablePrivacy) {
+        // Privacy Shield: stealth recipient + ephemeral feePayer via relay
+        setProgress(t('shieldUnshield.sendingTransaction'));
+        const privySigner = getPrivySigner();
+        const kp = await getKeypair();
+
+        // Derive stealth address for initial payment (nonce=0)
+        // Use stealth spending seed (available for all wallet types including Privy)
+        const { getOrCreateStealthKeys } = await import('../../../services/stealth/keys');
+        const stealthKeys = await getOrCreateStealthKeys();
+        const senderSecret = stealthKeys.spendingKey.secretKey.slice(0, 32);
+        const { stealthAddress } = deriveStealthAddressSimple(devAddr, senderSecret, 0);
+
+        let walletPub: PublicKey;
+        let signTx: (tx: Transaction) => Promise<Transaction>;
+        if (kp) {
+          walletPub = kp.publicKey;
+          signTx = async (tx: Transaction) => { tx.sign(kp); return tx; };
+        } else if (isPrivyWallet && privySigner && publicKey) {
+          walletPub = new PublicKey(publicKey);
+          signTx = privySigner;
+        } else {
+          throw new Error('No wallet signer available');
+        }
+
+        const r = await sendSolPrivate(stealthAddress, price, walletPub, signTx);
+        if (!r.success || !r.signature) throw new Error(r.error || 'Private transaction failed');
+        sig = r.signature;
       } else {
         setProgress(t('shieldUnshield.sendingTransaction'));
         const privySigner = getPrivySigner();

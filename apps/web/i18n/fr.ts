@@ -1001,6 +1001,48 @@ const fr: Translations = {
     fr: 'FR',
     ja: 'JA',
   },
+
+  // ── Founder ─────────────────────────────────────────────
+  founder: {
+    role: 'Fondateur & Développeur Solo — Protocol 01',
+    bio: '24 ans, basé à Paris. Diplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement. J\'ai construit Protocol 01 seul en 72 jours — 12 programmes Solana, 6 circuits ZK, 6 STARKs, 3 applications client et 8 SDKs. Pas d\'équipe, pas de financement, que de l\'exécution.',
+    missionBadge: 'Mission',
+    missionTitle: 'Pourquoi je construis ça',
+    mission1: 'Je crois que la vie privée financière est un droit fondamental, pas une fonctionnalité. Chaque transaction blockchain aujourd\'hui crée une trace permanente — votre salaire, vos abonnements, vos dons, tout est public. Ce n\'est pas de la transparence, c\'est de la surveillance.',
+    mission2: 'Protocol 01 existe pour corriger ça. Pas avec de la privacy basée sur la confiance (mixeurs, relayers qui voient vos données) mais avec des garanties cryptographiques — preuves zero-knowledge, adresses stealth, et résistance post-quantique. Une privacy qui ne dépend de la promesse de personne.',
+    mission3: 'Mon objectif n\'est pas de construire un produit — c\'est de construire un écosystème. Application mobile, extension navigateur, SDKs développeur. Chaque couche couverte. Une personne, zéro compromis.',
+    journeyBadge: 'Parcours',
+    journeyTitle: 'De la curiosité au protocole',
+    timeline: {
+      origin: { title: 'Premier Ordinateur', desc: 'Fasciné par l\'informatique depuis l\'âge de 6 ans. J\'ai commencé à explorer comment les choses fonctionnent.' },
+      coding: { title: 'Début du Code', desc: 'Développeur autodidacte à 17 ans. Tombé amoureux de la construction de zéro.' },
+      ecommerce: { title: 'E-Commerce', desc: 'Première expérience professionnelle en plateformes e-commerce. Apprentissage du business.' },
+      bachelor: { title: 'Bachelor — Dev Full-Stack', desc: 'Epitech Paris. Diplômé développeur Full-Stack. 18+ projets livrés en web, mobile et backend.' },
+      captnboat: { title: 'CaptNBoat — Dev & PM', desc: 'Développeur full-stack et chef de projet. Direction des initiatives cybersécurité pendant 2 ans.' },
+      master: { title: 'Master — Cybersécurité', desc: 'Epitech Paris. Spécialisé en sécurité offensive, cryptographie et architecture sécurisée.' },
+      freelance: { title: 'Freelance & Hackathons', desc: 'Indépendant. Participation aux hackathons Solana. Première version de Protocol 01.' },
+      protocol01: { title: 'Protocol 01 — Temps Plein', desc: '72 jours de développement continu. 12 programmes, 6 circuits ZK, 6 STARKs, 3 apps, 8 SDKs. Solo. Soumis au Colosseum Frontier 2026.' },
+    },
+    stats: {
+      yearsCode: 'Ans de Code',
+      programs: 'Programmes Solana',
+      circuits: 'Circuits ZK',
+      days: 'Jours de Dev',
+      dev: 'Développeur',
+      apps: 'Apps Client',
+    },
+    builtBadge: 'Envergure',
+    builtTitle: 'Ce qu\'un seul dev peut construire',
+    built: {
+      onchain: 'Infrastructure On-Chain',
+      clients: 'Applications Client',
+      privacy: 'Couche de Privacy',
+      quantum: 'Résistance Quantique',
+    },
+    cta: 'Intéressé par Protocol 01 ? Parlons-en.',
+    ctaTwitter: 'Me contacter sur X',
+    ctaDownload: 'Essayer l\'App',
+  },
 };
 
 export default fr;

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendSol } from './transactions';
 import { getConnection } from './connection';
-import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction } from '@solana/web3.js';
 import {
   applyAmountNoise,
   NoiseAdjustment,
@@ -86,6 +86,9 @@ export interface StreamPayment {
   timestamp: number;
   status: 'success' | 'failed';
   error?: string;
+  // Stealth payment metadata
+  stealthAddress?: string;      // One-time address used for this payment
+  wasStealthPayment?: boolean;  // Whether stealth routing was used
 }
 
 export interface CreateStreamParams {
@@ -640,11 +643,56 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
     // ZK pool streams require manual "Pay Now" from UI (WebView prover needed for ZK proofs)
     // Automatic processing only works for normal wallet streams
     let result: { success: boolean; signature?: string; error?: string };
+    let stealthAddressUsed: string | undefined;
+
     if (stream.useZkPool) {
       // ZK streams: skip automatic payment, user must use "Pay Now" button
       // The pre-check above already handles auto-pause on insufficient balance
       console.log(`[Streams] Skipping automatic payment for ZK stream "${stream.name}" — requires manual Pay Now`);
       return null;
+    } else if (stream.useStealthAddress) {
+      // Privacy Shield: stealth recipient + ephemeral feePayer via relay
+      const { getKeypair } = await import('./wallet');
+      const { getPrivySigner } = await import('../../stores/walletStore');
+      const { deriveStealthAddressSimple } = await import('../../utils/crypto/stealth');
+      const { sendSolPrivate } = await import('./transactions');
+
+      const keypair = await getKeypair();
+      const privySigner = getPrivySigner();
+
+      // Get sender secret for stealth derivation
+      // Use stealth spending seed (available for all wallet types including Privy)
+      const { getOrCreateStealthKeys } = await import('../../services/stealth/keys');
+      const stealthKeys = await getOrCreateStealthKeys();
+      const senderSecret = stealthKeys.spendingKey.secretKey.slice(0, 32);
+
+      // Derive unique stealth address for this payment
+      const { stealthAddress } = deriveStealthAddressSimple(
+        stream.recipientAddress,
+        senderSecret,
+        stream.paymentsCompleted,
+      );
+      stealthAddressUsed = stealthAddress;
+
+      // Resolve wallet pubkey + signTransaction for relay
+      let walletPubkey: PublicKey;
+      let signTx: (tx: Transaction) => Promise<Transaction>;
+
+      if (keypair) {
+        walletPubkey = keypair.publicKey;
+        signTx = async (tx: Transaction) => { tx.sign(keypair); return tx; };
+      } else if (privySigner) {
+        const { useWalletStore } = await import('../../stores/walletStore');
+        const pk = useWalletStore.getState().publicKey;
+        if (!pk) throw new Error('No wallet public key');
+        walletPubkey = new PublicKey(pk);
+        signTx = privySigner;
+      } else {
+        throw new Error('No wallet signer available for private stream payment');
+      }
+
+      console.log(`[Streams] Privacy Shield payment for "${stream.name}" → stealth: ${stealthAddress.slice(0, 12)}...`);
+      result = await sendSolPrivate(stealthAddress, amountToSend, walletPubkey, signTx);
     } else {
       result = await sendSol(stream.recipientAddress, amountToSend);
     }
@@ -661,6 +709,8 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
       signature: result.signature!,
       timestamp: Date.now(),
       status: 'success',
+      stealthAddress: stealthAddressUsed,
+      wasStealthPayment: !!stealthAddressUsed,
     };
 
     // Calculate next payment date (base time without noise)
