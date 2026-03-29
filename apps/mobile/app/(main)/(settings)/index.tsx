@@ -14,6 +14,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Linking from 'expo-linking';
+import Constants from 'expo-constants';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { SettingsRow, ToggleRow, CurrencyModal } from '../../../components/settings';
@@ -406,7 +407,7 @@ export default function SettingsScreen() {
         <GlassCard delay={400}>
           <SettingsRow
             label={t('settings.about')}
-            value="v0.9.5"
+            value={`v${Constants.expoConfig?.version ?? '0.0.0'}`}
             leftIcon="information-circle-outline"
             onPress={() => router.push('/(main)/(settings)/about')}
           />
@@ -471,7 +472,7 @@ export default function SettingsScreen() {
 
         {/* Version Footer */}
         <Animated.View entering={FadeInDown.delay(540).duration(300)} style={styles.footer}>
-          <Text style={styles.footerVersion}>Protocol 01 v0.9.5</Text>
+          <Text style={styles.footerVersion}>Protocol 01 v{Constants.expoConfig?.version ?? '0.0.0'}</Text>
           <Text style={styles.footerBuilt}>Built on Solana</Text>
         </Animated.View>
       </ScrollView>
