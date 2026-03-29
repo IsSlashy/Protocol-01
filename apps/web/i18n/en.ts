@@ -1008,9 +1008,9 @@ const en = {
     bio: '24 years old, based in Paris. Epitech alumni with a Master\'s in Cybersecurity and 7+ years of coding experience. I built Protocol 01 alone in 72 days — 12 Solana programs, 6 ZK circuits, 6 STARKs, 3 client apps, and 8 SDKs. No team, no funding, just execution.',
     missionBadge: 'Mission',
     missionTitle: 'Why I Build This',
-    mission1: 'I believe financial privacy is a fundamental right, not a feature. Every blockchain transaction today creates a permanent trail — your salary, subscriptions, donations, everything is public. That\'s not transparency, that\'s surveillance.',
-    mission2: 'Protocol 01 exists to fix this. Not with trust-based privacy (mixers, relayers that see your data) but with cryptographic guarantees — zero-knowledge proofs, stealth addresses, and post-quantum resistance. Privacy that doesn\'t depend on anyone keeping their promise.',
-    mission3: 'My goal is not to build a product — it\'s to build an ecosystem. Mobile app, browser extension, developer SDKs. Every layer covered. One person, zero compromises.',
+    mission1: 'I believe financial privacy is a fundamental right, not a feature.\nEvery blockchain transaction today creates a permanent trail, your salary, subscriptions, donations, everything is public.\nThat\'s not transparency, that\'s surveillance.',
+    mission2: 'Protocol 01 exists to fix this.\nNot with trust-based privacy (mixers, relayers that see your data) but with cryptographic guarantees, zero-knowledge proofs, stealth addresses, and post-quantum resistance.\nPrivacy that doesn\'t depend on anyone keeping their promise.',
+    mission3: 'My goal is not to build a product, it\'s to build an ecosystem.\nMobile app, browser extension, developer SDKs.\nEvery layer covered.\nOne person, zero compromises.',
     journeyBadge: 'Journey',
     journeyTitle: 'From Curiosity to Protocol',
     timeline: {

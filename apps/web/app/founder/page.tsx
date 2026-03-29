@@ -140,9 +140,9 @@ export default function FounderPage() {
             <motion.div variants={fadeUp}
               className="bg-p01-surface border border-p01-border rounded-2xl p-6 sm:p-8 space-y-4 text-p01-text-secondary leading-relaxed"
             >
-              <p>{t('founder.mission1')}</p>
-              <p>{t('founder.mission2')}</p>
-              <p className="text-white font-medium">{t('founder.mission3')}</p>
+              <p className="whitespace-pre-line">{t('founder.mission1')}</p>
+              <p className="whitespace-pre-line">{t('founder.mission2')}</p>
+              <p className="whitespace-pre-line text-white font-medium">{t('founder.mission3')}</p>
             </motion.div>
           </motion.section>
 
