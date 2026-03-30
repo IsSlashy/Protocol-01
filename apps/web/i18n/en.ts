@@ -9,6 +9,12 @@ const en = {
     back: 'Back',
   },
 
+  // ── Demo ───────────────────────────────────────────────────
+  demo: {
+    badge: 'DEMO',
+    title: 'See it in action',
+  },
+
   // ── Hero ───────────────────────────────────────────────────
   hero: {
     systemStatus: '[ SYSTEM STATUS ]',

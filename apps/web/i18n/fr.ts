@@ -11,6 +11,12 @@ const fr: Translations = {
     back: 'Retour',
   },
 
+  // ── Demo ───────────────────────────────────────────────────
+  demo: {
+    badge: 'DEMO',
+    title: 'Voir en action',
+  },
+
   // ── Hero ───────────────────────────────────────────────────
   hero: {
     systemStatus: '[ \u00c9TAT DU SYST\u00c8ME ]',

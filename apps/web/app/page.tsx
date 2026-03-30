@@ -46,8 +46,8 @@ export default function Home() {
       {/* Demo Video */}
       <section className="relative py-16 px-4">
         <div className="max-w-4xl mx-auto text-center">
-          <span className="text-[10px] font-mono text-p01-cyan tracking-[0.3em] uppercase">DEMO</span>
-          <h2 className="text-2xl sm:text-3xl font-bold text-white mt-2 mb-8 font-display">See it in action</h2>
+          <span className="text-[10px] font-mono text-p01-cyan tracking-[0.3em] uppercase">{t('demo.badge')}</span>
+          <h2 className="text-2xl sm:text-3xl font-bold text-white mt-2 mb-8 font-display">{t('demo.title')}</h2>
           <div className="relative rounded-2xl overflow-hidden border border-p01-border shadow-[0_0_60px_rgba(57,197,187,0.1)]">
             <video
               src="/demo.mp4"
