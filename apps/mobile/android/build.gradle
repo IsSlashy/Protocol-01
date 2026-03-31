@@ -23,9 +23,10 @@ allprojects {
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
 
-// NDK 27.2 — NDK 28 clang 19 crashes with -O2 on expo-modules-core (release build)
-// worklets/reanimated compile fine from source with 27.2's libc++
-rootProject.ext.ndkVersion = "27.2.12479018"
+// NDK 28 — required for react-native-worklets 0.8.1 (C++20 uses __cxa_init_primary_exception
+// which only exists in NDK 28's libc++_shared.so). The .so is bundled in the APK so this
+// works on all Android versions, not just Android 15+.
+rootProject.ext.ndkVersion = "28.0.13004108"
 
 // Force consistent JVM target across all subprojects (Java 17)
 subprojects { sub ->

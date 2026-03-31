@@ -155,12 +155,10 @@ export default function ShareNoteScreen() {
     console.log('[ShareNote:NFC] Starting NFC send, pin generated');
     try {
       await sendViaNfc('denominated-pool', noteData, pin);
-      console.log('[ShareNote:NFC] HCE confirms receiver read ALL data, marking transferred');
-      // Only mark transferred AFTER HCE confirms the receiver read ALL the data.
-      // Previously this was called before sendViaNfc — if the receiver crashed
-      // mid-transfer, the note would disappear from both devices.
-      markNoteTransferred();
-      console.log('[ShareNote:NFC] Note marked transferred');
+      console.log('[ShareNote:NFC] HCE reports transfer complete');
+      // NFC has no reliable ACK — do NOT auto-mark as transferred.
+      // The user keeps the note and can manually delete it after
+      // confirming the receiver imported it successfully.
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       // Transfer failed — note is NOT marked transferred, user can retry
@@ -290,30 +288,9 @@ export default function ShareNoteScreen() {
             </TouchableOpacity>
           </Animated.View>
 
+          {/* NFC — disabled, coming soon */}
           <Animated.View entering={FadeInUp.delay(260)} style={{ flex: 1 }}>
-            <TouchableOpacity
-              style={[
-                styles.transportCardOuter,
-                selectedTransport === 'nfc' && styles.transportCardOuterActive,
-                !isNfcAvailable && styles.transportCardDisabled,
-              ]}
-              onPress={() => {
-                if (!isNfcAvailable) {
-                  p01Alert('NFC Unavailable', 'NFC is not available on this device or is disabled in settings.');
-                  return;
-                }
-                p01Alert(
-                  'Experimental Feature',
-                  'NFC Tap sharing is experimental and may be unstable. Bluetooth is recommended for reliable transfers.\n\nContinue with NFC?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Use NFC', onPress: handleStartNfc },
-                  ],
-                  'warning',
-                );
-              }}
-              disabled={false}
-            >
+            <View style={[styles.transportCardOuter, styles.transportCardDisabled]}>
               <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
                 <LinearGradient
                   colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
@@ -321,13 +298,11 @@ export default function ShareNoteScreen() {
                   end={{ x: 1, y: 1 }}
                   style={StyleSheet.absoluteFill}
                 />
-                <Ionicons name="phone-portrait" size={28} color={isNfcAvailable ? P01Colors.pink : Colors.textTertiary} />
+                <Ionicons name="phone-portrait" size={28} color={Colors.textTertiary} />
                 <Text style={styles.transportTitle}>NFC Tap</Text>
-                <Text style={[styles.transportDesc, { color: P01Colors.yellow }]}>
-                  Experimental
-                </Text>
+                <Text style={styles.transportDesc}>Coming Soon</Text>
               </BlurView>
-            </TouchableOpacity>
+            </View>
           </Animated.View>
         </View>
 

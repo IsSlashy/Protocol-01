@@ -236,9 +236,17 @@ export class ShareService {
     const encrypted = encryptNote(payload, this.remotePubKey, this.ephemeralKeyPair);
 
     this.updateSession({ state: 'sending' });
+
+    // Small delay before first data write — Samsung BLE stacks need time
+    // to settle after the pubkey notification exchange on the same GATT service
+    await new Promise((r) => setTimeout(r, 300));
+
     await this.bleTransport.sendEncryptedNote(encrypted);
 
-    // Wait for ACK — the callback will transition to 'success'
+    // Native write bypasses ble-plx, so we won't receive ACK via monitor.
+    // The write completing successfully means the GATT server accepted all chunks.
+    this.updateSession({ state: 'success' });
+    this.emitShareRecord('sent');
   }
 
   // -----------------------------------------------------------------------

@@ -19,21 +19,22 @@ class NfcShareService : HostApduService() {
 
     companion object {
         private const val TAG = "NfcShareService"
+        private val lock = Any()
 
         /** The encrypted note data to serve. Set by NfcHceModule before tap. */
-        @Volatile
-        var noteData: ByteArray? = null
+        private var _noteData: ByteArray? = null
+        var noteData: ByteArray?
+            get() = synchronized(lock) { _noteData }
+            set(value) { synchronized(lock) { _noteData = value } }
 
         /** Callback invoked when receiver has read all the data. */
         @Volatile
         var onTransferComplete: (() -> Unit)? = null
 
         /** Track whether data was actually read during this session. */
-        @Volatile
         private var dataWasRead = false
 
         /** Total bytes of data that have been read by the receiver. */
-        @Volatile
         private var bytesRead = 0
 
         // Status words
@@ -41,12 +42,14 @@ class NfcShareService : HostApduService() {
         private val SW_NOT_FOUND = byteArrayOf(0x6A.toByte(), 0x82.toByte())
         private val SW_WRONG_INS = byteArrayOf(0x6D.toByte(), 0x00.toByte())
 
-        // Max chunk size per APDU response (leave room for SW)
-        private const val MAX_CHUNK = 250
+        // Max chunk size per APDU response (248 + 2 SW = 250, safe for all chipsets)
+        private const val MAX_CHUNK = 248
 
         fun resetState() {
-            dataWasRead = false
-            bytesRead = 0
+            synchronized(lock) {
+                dataWasRead = false
+                bytesRead = 0
+            }
         }
     }
 
@@ -65,46 +68,50 @@ class NfcShareService : HostApduService() {
 
             // GET LENGTH
             ins == 0xB1.toByte() -> {
-                val data = noteData
-                if (data == null) {
-                    Log.w(TAG, "GET LENGTH but no data set")
-                    return SW_NOT_FOUND
+                synchronized(lock) {
+                    val data = _noteData
+                    if (data == null) {
+                        Log.w(TAG, "GET LENGTH but no data set")
+                        return SW_NOT_FOUND
+                    }
+                    val len = data.size
+                    Log.d(TAG, "GET LENGTH: $len bytes")
+                    byteArrayOf(
+                        ((len shr 8) and 0xFF).toByte(),
+                        (len and 0xFF).toByte(),
+                    ) + SW_OK
                 }
-                val len = data.size
-                Log.d(TAG, "GET LENGTH: $len bytes")
-                byteArrayOf(
-                    ((len shr 8) and 0xFF).toByte(),
-                    (len and 0xFF).toByte(),
-                ) + SW_OK
             }
 
             // GET DATA at offset P1:P2
             ins == 0xB0.toByte() -> {
-                val data = noteData
-                if (data == null) return SW_NOT_FOUND
+                synchronized(lock) {
+                    val data = _noteData
+                    if (data == null) return SW_NOT_FOUND
 
-                val offset = ((commandApdu[2].toInt() and 0xFF) shl 8) or
-                    (commandApdu[3].toInt() and 0xFF)
+                    val offset = ((commandApdu[2].toInt() and 0xFF) shl 8) or
+                        (commandApdu[3].toInt() and 0xFF)
 
-                if (offset >= data.size) {
-                    Log.d(TAG, "GET DATA: offset $offset past end (${data.size})")
-                    return SW_NOT_FOUND
+                    if (offset >= data.size) {
+                        Log.d(TAG, "GET DATA: offset $offset past end (${data.size})")
+                        return SW_NOT_FOUND
+                    }
+
+                    val chunkSize = minOf(MAX_CHUNK, data.size - offset)
+                    val chunk = data.sliceArray(offset until offset + chunkSize)
+                    bytesRead = offset + chunkSize
+                    dataWasRead = true
+                    Log.d(TAG, "GET DATA: offset=$offset chunk=$chunkSize total_read=$bytesRead/${data.size}")
+
+                    // If we've served all the data, notify JS
+                    if (bytesRead >= data.size) {
+                        Log.d(TAG, "All data read by receiver — transfer complete")
+                        onTransferComplete?.invoke()
+                        onTransferComplete = null
+                    }
+
+                    chunk + SW_OK
                 }
-
-                val chunkSize = minOf(MAX_CHUNK, data.size - offset)
-                val chunk = data.sliceArray(offset until offset + chunkSize)
-                bytesRead = offset + chunkSize
-                dataWasRead = true
-                Log.d(TAG, "GET DATA: offset=$offset chunk=$chunkSize total_read=$bytesRead/${data.size}")
-
-                // If we've served all the data, notify JS
-                if (bytesRead >= data.size) {
-                    Log.d(TAG, "All data read by receiver — transfer complete")
-                    onTransferComplete?.invoke()
-                    onTransferComplete = null
-                }
-
-                chunk + SW_OK
             }
 
             else -> {
@@ -115,12 +122,15 @@ class NfcShareService : HostApduService() {
     }
 
     override fun onDeactivated(reason: Int) {
-        Log.d(TAG, "Deactivated: reason=$reason dataWasRead=$dataWasRead bytesRead=$bytesRead")
-        // If deactivated before all data was read, still notify if partial read happened
-        if (dataWasRead && onTransferComplete != null) {
-            onTransferComplete?.invoke()
-            onTransferComplete = null
+        synchronized(lock) {
+            Log.d(TAG, "Deactivated: reason=$reason dataWasRead=$dataWasRead bytesRead=$bytesRead totalSize=${_noteData?.size ?: 0}")
+            // Only fire success if ALL data was read — partial reads are NOT success
+            val totalSize = _noteData?.size ?: 0
+            if (dataWasRead && bytesRead >= totalSize && totalSize > 0 && onTransferComplete != null) {
+                onTransferComplete?.invoke()
+                onTransferComplete = null
+            }
+            resetState()
         }
-        resetState()
     }
 }
