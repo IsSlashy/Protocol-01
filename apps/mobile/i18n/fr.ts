@@ -141,6 +141,7 @@ export default {
     shieldedBalance: 'Solde prot\u00e9g\u00e9',
     myNotes: 'Mes notes',
     viewAllNotes: 'Voir toutes les notes',
+    importNote: 'Importer',
     noNotes: 'Aucune note',
     noNotesDesc: 'Prot\u00e9gez des fonds pour cr\u00e9er votre premi\u00e8re note.',
     shield: 'Prot\u00e9ger',
@@ -694,4 +695,5 @@ export default {
     securityAlert: 'Alerte de s\u00e9curit\u00e9',
     failedAuthAttempt: 'Tentative d\u2019authentification \u00e9chou\u00e9e d\u00e9tect\u00e9e.',
   },
+
 };

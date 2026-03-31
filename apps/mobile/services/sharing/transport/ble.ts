@@ -30,7 +30,7 @@ import {
 // Native peripheral module (Android only)
 // ---------------------------------------------------------------------------
 
-const { BlePeripheralModule } = NativeModules;
+const { BlePeripheralModule, BleCentralWriteModule } = NativeModules;
 const peripheralEmitter = BlePeripheralModule
   ? new NativeEventEmitter(BlePeripheralModule)
   : null;
@@ -244,10 +244,11 @@ export class BleTransport {
       this.callbacks.onPeerDisconnected(peerId);
     });
 
-    // Subscribe to notifications from peripheral
-    console.log('[BLE-DBG] connectToPeer: subscribing to notifications');
+    // Subscribe to PUBKEY notifications only — DATA_CHAR monitor is deferred
+    // until after the sender writes encrypted data (monitoring + writing on
+    // the same characteristic causes "Operation was rejected" on Samsung BLE stacks).
+    console.log('[BLE-DBG] connectToPeer: subscribing to PUBKEY notifications');
     this.monitorCharacteristic(device, BLE_PUBKEY_CHAR_UUID, peerId);
-    this.monitorCharacteristic(device, BLE_DATA_CHAR_UUID, peerId);
     console.log('[BLE-DBG] connectToPeer: subscribed OK');
 
     const peer = this.discoveredPeers.get(peerId);
@@ -317,15 +318,85 @@ export class BleTransport {
   async sendEncryptedNote(encrypted: EncryptedNotePayload): Promise<void> {
     if (!this.connectedDevice) throw new Error('Not connected');
 
+    const peerId = this.connectedDevice.id;
+
+    // ble-plx GATT queue is permanently broken after receiving notifications.
+    // Bypass ble-plx entirely: use native Android BluetoothGatt API for the write.
+    console.log('[BLE-DBG] sendEncryptedNote: using native BleCentralWriteModule');
+
+    // 1. Cancel ble-plx monitors and disconnect (free the GATT handle)
+    for (const sub of this.monitorSubscriptions) {
+      try { sub.remove(); } catch { /* ok */ }
+    }
+    this.monitorSubscriptions = [];
+    try {
+      await this.manager.cancelDeviceConnection(peerId);
+    } catch { /* ok */ }
+    this.connectedDevice = null;
+
+    // 2. Small gap for BLE stack to release the handle
+    await new Promise((r) => setTimeout(r, 500));
+
+    // 3. Fragment the data
     const data = Buffer.from(JSON.stringify(encrypted), 'utf-8');
     const chunks = this.fragment(MSG_TYPE_NOTE, new Uint8Array(data));
+    const chunksB64 = chunks.map((c) => Buffer.from(c).toString('base64'));
 
-    for (const chunk of chunks) {
-      await this.connectedDevice.writeCharacteristicWithResponseForService(
-        BLE_SERVICE_UUID,
-        BLE_DATA_CHAR_UUID,
-        Buffer.from(chunk).toString('base64'),
-      );
+    console.log(`[BLE-DBG] sendEncryptedNote: native write ${chunksB64.length} chunks to ${peerId}`);
+
+    // 4. Native module: connect + discover + MTU + write all chunks
+    const result = await BleCentralWriteModule.connectAndWrite(
+      peerId,
+      BLE_SERVICE_UUID,
+      BLE_PUBKEY_CHAR_UUID,
+      chunksB64,
+    );
+
+    console.log(`[BLE-DBG] sendEncryptedNote: native write OK, ${result} chunks written`);
+  }
+
+  /**
+   * Write a chunk with retry — falls back to WRITE_NO_RESPONSE if
+   * WRITE_WITH_RESPONSE is rejected (Samsung BLE stack issue).
+   */
+  private async writeWithRetry(
+    charUUID: string,
+    chunk: Uint8Array,
+    idx: number,
+    total: number,
+    maxRetries = 3,
+  ): Promise<void> {
+    const b64 = Buffer.from(chunk).toString('base64');
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (!this.connectedDevice) throw new Error('Not connected');
+        if (attempt > 0) {
+          console.log(`[BLE-DBG] writeRetry: chunk ${idx + 1}/${total} attempt ${attempt + 1} (no-response mode)`);
+          await new Promise((r) => setTimeout(r, 150));
+          // Fall back to WRITE_WITHOUT_RESPONSE — bypasses GATT ack
+          await this.connectedDevice.writeCharacteristicWithoutResponseForService(
+            BLE_SERVICE_UUID,
+            charUUID,
+            b64,
+          );
+          // Small delay between no-response writes for receiver to process
+          await new Promise((r) => setTimeout(r, 50));
+          return;
+        }
+        await this.connectedDevice.writeCharacteristicWithResponseForService(
+          BLE_SERVICE_UUID,
+          charUUID,
+          b64,
+        );
+        return;
+      } catch (err: any) {
+        const msg = err?.message || err?.reason || '';
+        console.log(`[BLE-DBG] writeRetry ERROR: msg=${msg} errorCode=${err?.errorCode} androidErrorCode=${err?.androidErrorCode} attErrorCode=${err?.attErrorCode} reason=${err?.reason}`);
+        if (msg.includes('rejected') && attempt < maxRetries) {
+          continue;
+        }
+        throw err;
+      }
     }
   }
 
@@ -335,7 +406,7 @@ export class BleTransport {
     const ack = new Uint8Array([MSG_TYPE_ACK, 0, 1, 0, 0x01]);
     await this.connectedDevice.writeCharacteristicWithResponseForService(
       BLE_SERVICE_UUID,
-      BLE_DATA_CHAR_UUID,
+      BLE_PUBKEY_CHAR_UUID,
       Buffer.from(ack).toString('base64'),
     );
   }
@@ -491,7 +562,7 @@ export class BleTransport {
   async sendAckAsPeripheral(): Promise<void> {
     const ack = new Uint8Array([MSG_TYPE_ACK, 0, 1, 0, 0x01]);
     await BlePeripheralModule.sendNotification(
-      BLE_DATA_CHAR_UUID,
+      BLE_PUBKEY_CHAR_UUID,
       Buffer.from(ack).toString('base64'),
     );
   }
@@ -505,7 +576,11 @@ export class BleTransport {
   // =======================================================================
 
   private maxPayloadPerChunk(): number {
-    return Math.max(this.negotiatedMtu - 3 - FRAGMENT_HEADER_SIZE, 16);
+    // BLE ATT max attribute value is 512 bytes. With 4-byte fragment header,
+    // max payload is 508. Also respect MTU - 3 (ATT overhead) - header.
+    const fromMtu = this.negotiatedMtu - 3 - FRAGMENT_HEADER_SIZE;
+    const maxAtt = 512 - FRAGMENT_HEADER_SIZE; // 508
+    return Math.max(Math.min(fromMtu, maxAtt), 16);
   }
 
   private fragment(type: number, data: Uint8Array): Uint8Array[] {

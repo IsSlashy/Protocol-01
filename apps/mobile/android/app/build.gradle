@@ -4,6 +4,18 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
+// Load signing passwords from gitignored signing.properties (if present)
+def signingPropsFile = rootProject.file("signing.properties")
+if (signingPropsFile.exists()) {
+    def signingProps = new Properties()
+    signingPropsFile.withInputStream { signingProps.load(it) }
+    signingProps.each { key, value ->
+        if (!project.hasProperty(key)) {
+            project.ext.set(key, value)
+        }
+    }
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -91,8 +103,8 @@ android {
         applicationId 'com.protocol01.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 17
-        versionName "0.9.5"
+        versionCode 20
+        versionName "0.9.8"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
 
@@ -109,9 +121,9 @@ android {
         }
         release {
             storeFile file('release.keystore')
-            storePassword findProperty('RELEASE_STORE_PASSWORD') ?: 'Protocol01Release2026'
+            storePassword findProperty('RELEASE_STORE_PASSWORD') ?: System.getenv('P01_RELEASE_STORE_PASSWORD')
             keyAlias findProperty('RELEASE_KEY_ALIAS') ?: 'protocol01'
-            keyPassword findProperty('RELEASE_KEY_PASSWORD') ?: 'Protocol01Release2026'
+            keyPassword findProperty('RELEASE_KEY_PASSWORD') ?: System.getenv('P01_RELEASE_KEY_PASSWORD')
         }
     }
     buildTypes {

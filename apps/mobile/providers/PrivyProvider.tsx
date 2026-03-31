@@ -260,12 +260,15 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
         await smsLogin?.sendCode?.({ phone });
       },
       google: async () => {
+        if (isAuthenticated) return; // Already logged in — redirect will handle it
         await oauthLogin?.login?.({ provider: 'google' });
       },
       apple: async () => {
+        if (isAuthenticated) return;
         await oauthLogin?.login?.({ provider: 'apple' });
       },
       twitter: async () => {
+        if (isAuthenticated) return;
         await oauthLogin?.login?.({ provider: 'twitter' });
       },
       wallet: async () => {

@@ -141,6 +141,7 @@ export default {
     shieldedBalance: 'Shielded Balance',
     myNotes: 'My Notes',
     viewAllNotes: 'View All Notes',
+    importNote: 'Import',
     noNotes: 'No Notes Yet',
     noNotesDesc: 'Shield funds to create your first private note.',
     shield: 'Shield',
@@ -701,4 +702,5 @@ export default {
     securityAlert: 'Security Alert',
     failedAuthAttempt: 'Failed authentication attempt detected.',
   },
+
 };

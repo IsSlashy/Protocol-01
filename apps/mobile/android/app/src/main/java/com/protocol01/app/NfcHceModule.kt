@@ -1,8 +1,11 @@
 package com.protocol01.app
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.util.Log
 import com.facebook.react.bridge.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * React Native bridge for controlling the NFC HCE service.
@@ -13,6 +16,7 @@ class NfcHceModule(reactContext: ReactApplicationContext) :
 
     companion object {
         private const val TAG = "NfcHceModule"
+        private const val TRANSFER_TIMEOUT_MS = 60_000L // 60 seconds
     }
 
     override fun getName(): String = "NfcHceModule"
@@ -34,14 +38,31 @@ class NfcHceModule(reactContext: ReactApplicationContext) :
 
     /**
      * Wait for the receiver to actually tap and read all the data.
-     * The promise resolves when NfcShareService detects a complete read.
+     * The promise resolves when NfcShareService detects a complete read,
+     * or rejects after TRANSFER_TIMEOUT_MS if no tap occurs.
      */
     @ReactMethod
     fun waitForTransfer(promise: Promise) {
-        Log.d(TAG, "Waiting for NFC transfer...")
+        Log.d(TAG, "Waiting for NFC transfer (timeout=${TRANSFER_TIMEOUT_MS}ms)...")
+        val resolved = AtomicBoolean(false)
+        val handler = Handler(Looper.getMainLooper())
+
+        val timeoutRunnable = Runnable {
+            if (resolved.compareAndSet(false, true)) {
+                NfcShareService.onTransferComplete = null
+                Log.w(TAG, "Transfer timeout — receiver did not tap")
+                promise.reject("NFC_TIMEOUT", "Receiver did not tap within ${TRANSFER_TIMEOUT_MS / 1000}s")
+            }
+        }
+
+        handler.postDelayed(timeoutRunnable, TRANSFER_TIMEOUT_MS)
+
         NfcShareService.onTransferComplete = {
-            Log.d(TAG, "Transfer complete callback fired")
-            promise.resolve(true)
+            handler.removeCallbacks(timeoutRunnable)
+            if (resolved.compareAndSet(false, true)) {
+                Log.d(TAG, "Transfer complete callback fired")
+                promise.resolve(true)
+            }
         }
     }
 

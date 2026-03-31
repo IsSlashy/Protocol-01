@@ -85,6 +85,15 @@ export default function LoginScreen() {
           break;
       }
     } catch (error: any) {
+      // If Privy says "already logged in", treat as success and redirect
+      if (error.message?.includes('Already logged in') || error.message?.includes('already logged in')) {
+        console.log('[Login] Already authenticated — redirecting');
+        if (!redirectedRef.current) {
+          redirectedRef.current = true;
+          router.replace('/(main)/(wallet)');
+        }
+        return;
+      }
       console.error(`[Login] Error with ${method}:`, error);
       p01Alert(
         t('auth.authFailed'),

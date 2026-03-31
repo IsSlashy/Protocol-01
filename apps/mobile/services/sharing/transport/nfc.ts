@@ -185,7 +185,16 @@ export class NfcTransport {
       // to handle the race condition where sender encrypts at xx:59 and
       // receiver decrypts at xx+1:01 (different minute-rounded timestamps)
       const payloadStr = Buffer.from(allBytes).toString('utf-8');
-      const encrypted: SymmetricEncryptedPayload = JSON.parse(payloadStr);
+      let encrypted: SymmetricEncryptedPayload;
+      try {
+        const parsed = JSON.parse(payloadStr);
+        if (!parsed.ct || !parsed.n || parsed.v !== 1) {
+          throw new Error('missing ct/n/v fields');
+        }
+        encrypted = parsed;
+      } catch (e) {
+        throw new Error(`NFC payload corrupted: ${(e as Error).message} (got ${allBytes.length} bytes)`);
+      }
       const notePayload = decryptNoteSymmetricWithRetry(encrypted, pin);
 
       this.callbacks.onNoteReceived(notePayload);
@@ -206,8 +215,11 @@ export class NfcTransport {
   private async cancelTechnology(): Promise<void> {
     try {
       await NfcManager.cancelTechnologyRequest();
-    } catch {
-      // Not in a technology session
+    } catch (error) {
+      const msg = (error as Error).message || '';
+      if (!msg.toLowerCase().includes('not in a technology session')) {
+        console.warn(`[NFC] cancelTechnology unexpected error: ${msg}`);
+      }
     }
   }
 

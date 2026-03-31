@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class BlePeripheralPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(BlePeripheralModule(reactContext), NfcHceModule(reactContext))
+        return listOf(BlePeripheralModule(reactContext), NfcHceModule(reactContext), BleCentralWriteModule(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

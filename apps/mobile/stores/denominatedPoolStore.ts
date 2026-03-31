@@ -8,6 +8,7 @@ import bs58 from 'bs58';
 import { PublicKey } from '@solana/web3.js';
 import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../utils/crypto/noteVault';
 import { getConnection, getCluster } from '../services/solana/connection';
+import { getKeypair } from '../services/solana/wallet';
 import {
   type PoolConfig,
   type ShieldReceipt,
@@ -586,7 +587,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const walletSigner = getWalletSignerIfPrivy();
           const walletPubkey = walletSigner
             ? walletSigner.publicKey
-            : (await (await import('../services/solana/wallet')).getKeypair())?.publicKey;
+            : (await getKeypair())?.publicKey;
           console.log('[DenomStore] walletSigner:', walletSigner ? `Privy(${walletSigner.publicKey.toBase58().slice(0,8)})` : 'local keypair');
 
           // ── Stealth intermediary: break wallet→pool on-chain link ──
@@ -843,7 +844,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const signedFund = await walletSigner.signTransaction(fundTx);
             await connection.sendRawTransaction(signedFund.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
           } else {
-            const { getKeypair } = await import('../services/solana/wallet');
             const kp = await getKeypair();
             if (kp) {
               const fundTx = new Transaction().add(
@@ -1098,7 +1098,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             await connection.confirmTransaction(fundSig, 'confirmed');
             console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}... TX: ${fundSig.slice(0, 16)}...`);
           } else {
-            const keypair = await import('../services/solana/wallet').then(m => m.getKeypair());
+            const keypair = await getKeypair();
             if (keypair) {
               const fundTx = new Transaction().add(
                 SystemProgram.transfer({

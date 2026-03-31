@@ -1,0 +1,18 @@
+diff --git a/android/CMakeLists.txt b/android/CMakeLists.txt
+index 120f2cebb56f4e1b2cb94f85c268f686296cfd56..b1c892b9d2d88159c6cd96c0e02d4b210bda6bb5 100644
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -68,6 +68,13 @@ endif()
+ add_library(worklets SHARED ${WORKLETS_COMMON_CPP_SOURCES}
+                             ${WORKLETS_ANDROID_CPP_SOURCES})
+ 
++# NDK 28 clang 19 ICE (internal compiler error) on JSIWorkletsModuleProxy.cpp
++# with -O2 optimization. Reduce to -O1 for this file only.
++set_source_files_properties(
++  "${COMMON_CPP_DIR}/worklets/NativeModules/JSIWorkletsModuleProxy.cpp"
++  PROPERTIES COMPILE_FLAGS "-O1"
++)
++
+ if(ReactAndroid_VERSION_MINOR GREATER_EQUAL 80)
+   include(
+     "${REACT_NATIVE_DIR}/ReactCommon/cmake-utils/react-native-flags.cmake")
