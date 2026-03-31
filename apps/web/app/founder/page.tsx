@@ -18,11 +18,15 @@ const timeline = [
   { year: "2026", key: "protocol01", icon: "lock" },
 ];
 
+// Project start: January 18, 2026
+const PROJECT_START = new Date('2026-01-18');
+const daysSinceStart = () => Math.floor((Date.now() - PROJECT_START.getTime()) / 86_400_000);
+
 const stats = [
   { value: "7+", labelKey: "yearsCode" },
-  { value: "12", labelKey: "programs" },
+  { value: "14", labelKey: "programs" },
   { value: "6", labelKey: "circuits" },
-  { value: "72", labelKey: "days" },
+  { value: String(daysSinceStart()), labelKey: "days" },
   { value: "1", labelKey: "dev" },
   { value: "3", labelKey: "apps" },
 ];

@@ -1027,7 +1027,7 @@ const en = {
       captnboat: { title: 'CaptNBoat — Dev & PM', desc: 'Full-stack developer and project manager. Led cybersecurity initiatives and product development for 2 years.' },
       master: { title: 'Master\'s — Cybersecurity', desc: 'Epitech Paris. Specialized in offensive security, cryptography, and secure architecture.' },
       freelance: { title: 'Freelance & Hackathons', desc: 'Went independent. Started competing in Solana hackathons. Built the first version of Protocol 01.' },
-      protocol01: { title: 'Protocol 01 — Full Time', desc: '72 days of continuous development. 12 programs, 6 ZK circuits, 6 STARKs, 3 apps, 8 SDKs. Solo. Submitted to Colosseum Frontier 2026.' },
+      protocol01: { title: 'Protocol 01 — Full Time', desc: 'Continuous solo development since January 2026. 14 programs, 6 ZK circuits, 6 STARKs, 9 MPC circuits, 3 apps, 8 SDKs. Submitted to Colosseum Frontier 2026.' },
     },
     stats: {
       yearsCode: 'Years Coding',
