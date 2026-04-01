@@ -15,6 +15,8 @@ const COMP_DEF_STEALTH_SCAN: u32 = comp_def_offset("stealth_scan_single");
 const COMP_DEF_THRESHOLD_DECRYPT: u32 = comp_def_offset("threshold_decrypt");
 const COMP_DEF_PRIVATE_VOTE_BINARY: u32 = comp_def_offset("private_vote_binary");
 const COMP_DEF_FINALIZE_TALLY_BINARY: u32 = comp_def_offset("finalize_tally_binary");
+const COMP_DEF_SEALED_BID_AUCTION: u32 = comp_def_offset("sealed_bid_auction");
+const COMP_DEF_FINALIZE_AUCTION: u32 = comp_def_offset("finalize_auction");
 
 // ============================================================================
 // Events
@@ -56,6 +58,14 @@ pub struct BinaryTallyResultEvent {
 #[event]
 pub struct RelayDecryptEvent {
     pub tx_chunk_hash: [u8; 32],
+}
+
+#[event]
+pub struct AuctionSettledEvent {
+    pub auction_id: [u8; 32],
+    pub winner_nullifier: [u8; 32],
+    pub winning_bid: u64,
+    pub total_bids: u64,
 }
 
 // ============================================================================
@@ -811,6 +821,220 @@ pub mod p01_arcium {
         msg!("RelayDecrypted (hashed)");
         Ok(())
     }
+
+    // ========================================================================
+    // UC7: Sealed-Bid Auction
+    // ========================================================================
+
+    pub fn init_sealed_bid_auction_comp_def(ctx: Context<InitSealedBidAuctionCompDef>) -> Result<()> {
+        init_comp_def(ctx.accounts, None, None)?;
+        Ok(())
+    }
+
+    pub fn init_finalize_auction_comp_def(ctx: Context<InitFinalizeAuctionCompDef>) -> Result<()> {
+        init_comp_def(ctx.accounts, None, None)?;
+        Ok(())
+    }
+
+    /// Create a new sealed-bid auction
+    pub fn create_auction(
+        ctx: Context<CreateAuction>,
+        auction_id: [u8; 32],
+        pool: Pubkey,
+        deadline: i64,
+    ) -> Result<()> {
+        let auction = &mut ctx.accounts.auction;
+        auction.authority = ctx.accounts.authority.key();
+        auction.auction_id = auction_id;
+        auction.pool = pool;
+        auction.deadline = deadline;
+        auction.finalized = false;
+        auction.winner_nullifier = [0u8; 32];
+        auction.winning_bid = 0;
+        auction.total_bids = 0;
+        auction.bump = ctx.bumps.auction;
+        Ok(())
+    }
+
+    /// Submit an encrypted sealed bid to the MPC accumulator
+    pub fn sealed_bid_auction(
+        ctx: Context<SealedBidAuctionQueue>,
+        computation_offset: u64,
+        encrypted_bid_amount: [u8; 32],
+        encrypted_nullifier: [u8; 32],
+        pub_key: [u8; 32],
+        nonce: u128,
+    ) -> Result<()> {
+        let args = ArgBuilder::new()
+            .x25519_pubkey(pub_key)
+            .plaintext_u128(nonce)
+            .encrypted_u64(encrypted_bid_amount)
+            .encrypted_u64(encrypted_nullifier)
+            .build();
+
+        ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
+
+        queue_computation(
+            ctx.accounts,
+            computation_offset,
+            args,
+            vec![SealedBidAuctionCallback::callback_ix(
+                computation_offset,
+                &ctx.accounts.mxe_account,
+                &[],
+            )?],
+            1,
+            0,
+        )?;
+
+        Ok(())
+    }
+
+    #[arcium_callback(encrypted_ix = "sealed_bid_auction")]
+    pub fn sealed_bid_auction_callback(
+        ctx: Context<SealedBidAuctionCallback>,
+        output: SignedComputationOutputs<SealedBidAuctionOutput>,
+    ) -> Result<()> {
+        match output.verify_output(
+            &ctx.accounts.cluster_account,
+            &ctx.accounts.computation_account,
+        ) {
+            Ok(_) => {
+                msg!("SealedBidRecorded");
+                Ok(())
+            }
+            Err(_) => Err(ErrorCode::AbortedComputation.into()),
+        }
+    }
+
+    /// Finalize the auction — reveal the winner via MPC
+    pub fn finalize_auction(
+        ctx: Context<FinalizeAuctionQueue>,
+        computation_offset: u64,
+    ) -> Result<()> {
+        // Authority + deadline check
+        let remaining = &ctx.remaining_accounts;
+        require!(!remaining.is_empty(), ErrorCode::Unauthorized);
+
+        let auction_info = &remaining[0];
+        require!(
+            auction_info.owner == &crate::ID,
+            ErrorCode::Unauthorized
+        );
+
+        let auction_data = auction_info.try_borrow_data()?;
+        // Layout: 8 + 32 (authority) + 32 (auction_id) + 32 (pool) + 8 (deadline) + 1 (finalized) + ...
+        require!(auction_data.len() >= 8 + 32 + 32 + 32 + 8 + 1, ErrorCode::Unauthorized);
+
+        let auction_authority = Pubkey::try_from(&auction_data[8..40])
+            .map_err(|_| ErrorCode::Unauthorized)?;
+        let deadline = i64::from_le_bytes(
+            auction_data[72..80].try_into().map_err(|_| ErrorCode::Unauthorized)?
+        );
+        let finalized = auction_data[80] == 1;
+
+        require!(
+            ctx.accounts.payer.key() == auction_authority,
+            ErrorCode::Unauthorized
+        );
+
+        let clock = Clock::get()?;
+        require!(
+            clock.unix_timestamp > deadline,
+            ErrorCode::AuctionNotEnded
+        );
+
+        require!(!finalized, ErrorCode::AuctionAlreadyFinalized);
+
+        drop(auction_data);
+
+        let args = ArgBuilder::new().build();
+
+        ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
+
+        queue_computation(
+            ctx.accounts,
+            computation_offset,
+            args,
+            vec![FinalizeAuctionCallback::callback_ix(
+                computation_offset,
+                &ctx.accounts.mxe_account,
+                &[],
+            )?],
+            1,
+            0,
+        )?;
+
+        Ok(())
+    }
+
+    #[arcium_callback(encrypted_ix = "finalize_auction")]
+    pub fn finalize_auction_callback(
+        ctx: Context<FinalizeAuctionCallback>,
+        output: SignedComputationOutputs<FinalizeAuctionOutput>,
+    ) -> Result<()> {
+        let o = match output.verify_output(
+            &ctx.accounts.cluster_account,
+            &ctx.accounts.computation_account,
+        ) {
+            Ok(o) => o,
+            Err(_) => return Err(ErrorCode::AbortedComputation.into()),
+        };
+
+        // Reconstruct winner nullifier from 4 u64 chunks
+        let acc = &o.field_0;
+        let mut winner_nullifier = [0u8; 32];
+        winner_nullifier[0..8].copy_from_slice(&acc.field_1.to_le_bytes());
+        winner_nullifier[8..16].copy_from_slice(&acc.field_2.to_le_bytes());
+        winner_nullifier[16..24].copy_from_slice(&acc.field_3.to_le_bytes());
+        winner_nullifier[24..32].copy_from_slice(&acc.field_4.to_le_bytes());
+
+        // Write result to the Auction PDA (passed in remaining_accounts)
+        let remaining = &ctx.remaining_accounts;
+        if !remaining.is_empty() {
+            let auction_info = &remaining[0];
+            if auction_info.owner == &crate::ID && auction_info.is_writable {
+                let mut auction_data = auction_info.try_borrow_mut_data()?;
+                if auction_data.len() >= 8 + 32 + 32 + 32 + 8 + 1 + 32 + 8 + 8 {
+                    // Set finalized = true (byte 112)
+                    auction_data[112] = 1;
+                    // Set winner_nullifier (bytes 113..145)
+                    auction_data[113..145].copy_from_slice(&winner_nullifier);
+                    // Set winning_bid (bytes 145..153)
+                    auction_data[145..153].copy_from_slice(&acc.field_0.to_le_bytes());
+                    // Set total_bids (bytes 153..161)
+                    auction_data[153..161].copy_from_slice(&acc.field_5.to_le_bytes());
+                }
+            }
+        }
+
+        let auction_id = if !remaining.is_empty() {
+            let auction_data = remaining[0].try_borrow_data()?;
+            if auction_data.len() >= 72 {
+                let mut id = [0u8; 32];
+                id.copy_from_slice(&auction_data[40..72]);
+                id
+            } else {
+                [0u8; 32]
+            }
+        } else {
+            [0u8; 32]
+        };
+
+        emit!(AuctionSettledEvent {
+            auction_id,
+            winner_nullifier,
+            winning_bid: acc.field_0,
+            total_bids: acc.field_5,
+        });
+
+        msg!(
+            "AuctionSettled: winning_bid={}, total_bids={}",
+            acc.field_0, acc.field_5
+        );
+
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -845,8 +1069,82 @@ pub struct CreateProposal<'info> {
 }
 
 // ============================================================================
+// Accounts — Auction (UC7 sealed-bid state)
+// ============================================================================
+
+#[account]
+pub struct Auction {
+    pub authority: Pubkey,          // Auction creator (seller)
+    pub auction_id: [u8; 32],       // Unique ID
+    pub pool: Pubkey,               // Which denominated pool bids come from
+    pub deadline: i64,              // Bidding deadline (unix timestamp)
+    pub finalized: bool,            // Whether MPC has revealed the winner
+    pub winner_nullifier: [u8; 32], // Set by finalize_auction_callback
+    pub winning_bid: u64,           // Set by finalize_auction_callback
+    pub total_bids: u64,            // Set by finalize_auction_callback
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+#[instruction(auction_id: [u8; 32], pool: Pubkey, deadline: i64)]
+pub struct CreateAuction<'info> {
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + 32 + 32 + 32 + 8 + 1 + 32 + 8 + 8 + 1,
+        seeds = [b"p01_auction", auction_id.as_ref()],
+        bump,
+    )]
+    pub auction: Account<'info, Auction>,
+    pub authority: Signer<'info>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+// ============================================================================
 // Arcium account macros — comp def init (7 required fields each)
 // ============================================================================
+
+#[init_computation_definition_accounts("sealed_bid_auction", payer)]
+#[derive(Accounts)]
+pub struct InitSealedBidAuctionCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Box<Account<'info, MXEAccount>>,
+    #[account(mut)]
+    /// CHECK: comp_def_account
+    pub comp_def_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_mxe_lut_pda!(mxe_account.lut_offset_slot))]
+    /// CHECK: address_lookup_table
+    pub address_lookup_table: UncheckedAccount<'info>,
+    #[account(address = LUT_PROGRAM_ID)]
+    /// CHECK: lut_program
+    pub lut_program: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
+#[init_computation_definition_accounts("finalize_auction", payer)]
+#[derive(Accounts)]
+pub struct InitFinalizeAuctionCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Box<Account<'info, MXEAccount>>,
+    #[account(mut)]
+    /// CHECK: comp_def_account
+    pub comp_def_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_mxe_lut_pda!(mxe_account.lut_offset_slot))]
+    /// CHECK: address_lookup_table
+    pub address_lookup_table: UncheckedAccount<'info>,
+    #[account(address = LUT_PROGRAM_ID)]
+    /// CHECK: lut_program
+    pub lut_program: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
 
 #[init_computation_definition_accounts("balance_audit", payer)]
 #[derive(Accounts)]
@@ -1457,9 +1755,113 @@ pub struct FinalizeTallyBinaryQueue<'info> {
     pub arcium_program: Program<'info, Arcium>,
 }
 
+#[queue_computation_accounts("sealed_bid_auction", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct SealedBidAuctionQueue<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        init_if_needed, space = 9, payer = payer,
+        seeds = [&SIGN_PDA_SEED], bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, ArciumSignerAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: mempool_account
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: executing_pool
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset, mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_SEALED_BID_AUCTION))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(mut, address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
+}
+
+#[queue_computation_accounts("finalize_auction", payer)]
+#[derive(Accounts)]
+#[instruction(computation_offset: u64)]
+pub struct FinalizeAuctionQueue<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(
+        init_if_needed, space = 9, payer = payer,
+        seeds = [&SIGN_PDA_SEED], bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, ArciumSignerAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: mempool_account
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: executing_pool
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset, mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_FINALIZE_AUCTION))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(mut, address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+    pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
+}
+
 // ============================================================================
 // Arcium account macros — callback (6 required fields each)
 // ============================================================================
+
+#[callback_accounts("sealed_bid_auction")]
+#[derive(Accounts)]
+pub struct SealedBidAuctionCallback<'info> {
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_SEALED_BID_AUCTION))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    /// CHECK: instructions_sysvar
+    pub instructions_sysvar: AccountInfo<'info>,
+}
+
+#[callback_accounts("finalize_auction")]
+#[derive(Accounts)]
+pub struct FinalizeAuctionCallback<'info> {
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_FINALIZE_AUCTION))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    /// CHECK: instructions_sysvar
+    pub instructions_sysvar: AccountInfo<'info>,
+}
 
 #[callback_accounts("balance_audit")]
 #[derive(Accounts)]
@@ -1668,4 +2070,8 @@ pub enum ErrorCode {
     ClusterNotSet,
     #[msg("Tally has already been finalized")]
     AlreadyFinalized,
+    #[msg("Auction bidding period has not ended yet")]
+    AuctionNotEnded,
+    #[msg("Auction has already been finalized")]
+    AuctionAlreadyFinalized,
 }

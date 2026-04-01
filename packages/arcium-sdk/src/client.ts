@@ -46,6 +46,8 @@ export const CIRCUITS = {
   PRIVATE_LOOKUP: 'private_lookup',
   STEALTH_SCAN: 'stealth_scan',
   THRESHOLD_DECRYPT: 'threshold_decrypt',
+  SEALED_BID_AUCTION: 'sealed_bid_auction',
+  FINALIZE_AUCTION: 'finalize_auction',
 } as const;
 
 export type CircuitName = (typeof CIRCUITS)[keyof typeof CIRCUITS];

@@ -154,6 +154,43 @@ impl Groth16Verifier {
         Self::verify(proof, &public_inputs, vk_data)
     }
 
+    /// Verify an escrow bid proof with 7 public inputs
+    ///
+    /// Circuit public inputs: [merkle_root, nullifier, min_epoch, token_mint,
+    ///                         auction_id, pay_commitment, refund_commitment]
+    /// The circuit verifies:
+    /// - Old note exists in the tree and is owned by the prover
+    /// - Nullifier is correctly derived
+    /// - Time delay is enforced (always)
+    /// - Both output commitments are correctly formed
+    /// - Proof is bound to a specific auction_id
+    pub fn verify_escrow_bid(
+        proof: &Groth16Proof,
+        merkle_root: &[u8; 32],
+        nullifier: &[u8; 32],
+        min_epoch: u64,
+        token_mint: &[u8; 32],
+        auction_id: &[u8; 32],
+        pay_commitment: &[u8; 32],
+        refund_commitment: &[u8; 32],
+        vk_data: &[u8],
+    ) -> Result<bool> {
+        let mut min_epoch_bytes = [0u8; 32];
+        min_epoch_bytes[..8].copy_from_slice(&min_epoch.to_le_bytes());
+
+        let public_inputs = [
+            Self::le_to_be(merkle_root),
+            Self::le_to_be(nullifier),
+            Self::le_to_be(&min_epoch_bytes),
+            Self::le_to_be(token_mint),
+            Self::le_to_be(auction_id),
+            Self::le_to_be(pay_commitment),
+            Self::le_to_be(refund_commitment),
+        ];
+
+        Self::verify(proof, &public_inputs, vk_data)
+    }
+
     /// Verify a subscriber ownership proof with 1 public input
     ///
     /// Circuit public inputs: [commitment]

@@ -371,6 +371,81 @@ mod circuits {
     }
 
     // =========================================================================
+    // UC7: Sealed-Bid Auction
+    // =========================================================================
+    //
+    // Encrypted bids accumulated in MXE state.
+    // Only the winning nullifier and bid amount are revealed at settlement.
+    // All losing bids remain hidden forever.
+
+    /// Bid input: encrypted bid amount + the bidder's escrow nullifier.
+    /// The nullifier (split into 4 u64 chunks) serves as the bidder's
+    /// anonymous handle — it links to their AuctionEscrow PDA without
+    /// revealing their wallet address.
+    #[derive(Copy, Clone)]
+    pub struct SealedBidInput {
+        pub bid_amount: u64,
+        pub nullifier_0: u64,
+        pub nullifier_1: u64,
+        pub nullifier_2: u64,
+        pub nullifier_3: u64,
+    }
+
+    /// Persistent auction state in MXE-encrypted storage.
+    /// Tracks the highest bid and corresponding nullifier.
+    #[derive(Copy, Clone)]
+    pub struct AuctionAccumulator {
+        pub highest_bid: u64,
+        pub winner_null_0: u64,
+        pub winner_null_1: u64,
+        pub winner_null_2: u64,
+        pub winner_null_3: u64,
+        pub bid_count: u64,
+    }
+
+    /// Submit an encrypted sealed bid.
+    /// MPC compares against current highest and updates if higher.
+    /// Both branches always execute (MPC-safe: no timing side-channel).
+    #[instruction]
+    pub fn sealed_bid_auction(
+        bid: Enc<Shared, SealedBidInput>,
+        accumulator: Enc<Mxe, AuctionAccumulator>,
+    ) -> Enc<Mxe, AuctionAccumulator> {
+        let b = bid.to_arcis();
+        let mut acc = accumulator.to_arcis();
+
+        // Constant-time conditional update: both paths always compute
+        let is_higher: u64 = if b.bid_amount > acc.highest_bid { 1 } else { 0 };
+        let is_not: u64 = 1 - is_higher;
+
+        acc.highest_bid = is_higher * b.bid_amount + is_not * acc.highest_bid;
+        acc.winner_null_0 = is_higher * b.nullifier_0 + is_not * acc.winner_null_0;
+        acc.winner_null_1 = is_higher * b.nullifier_1 + is_not * acc.winner_null_1;
+        acc.winner_null_2 = is_higher * b.nullifier_2 + is_not * acc.winner_null_2;
+        acc.winner_null_3 = is_higher * b.nullifier_3 + is_not * acc.winner_null_3;
+        acc.bid_count = acc.bid_count + 1;
+
+        Mxe::get().from_arcis(acc)
+    }
+
+    /// Reveal auction result: winning nullifier + bid amount.
+    /// Individual bid amounts stay hidden — only the winner is revealed.
+    #[instruction]
+    pub fn finalize_auction(
+        accumulator: Enc<Mxe, AuctionAccumulator>,
+    ) -> AuctionAccumulator {
+        let acc = accumulator.to_arcis();
+        AuctionAccumulator {
+            highest_bid: acc.highest_bid.reveal(),
+            winner_null_0: acc.winner_null_0.reveal(),
+            winner_null_1: acc.winner_null_1.reveal(),
+            winner_null_2: acc.winner_null_2.reveal(),
+            winner_null_3: acc.winner_null_3.reveal(),
+            bid_count: acc.bid_count.reveal(),
+        }
+    }
+
+    // =========================================================================
     // UC1: Threshold Relay Decryption
     // =========================================================================
     //

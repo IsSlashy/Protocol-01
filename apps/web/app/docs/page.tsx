@@ -196,6 +196,27 @@ await mpc.confidentialRelay(encryptedTransaction);
 const metaAddress = await mpc.privateLookup(targetHash);`,
   },
   {
+    id: "sealed-bid-auctions",
+    i18nKey: "sealedBidAuctions",
+    icon: <Lock className="w-6 h-6" />,
+    detailCount: 8,
+    codeExample: `// Sealed-Bid Auction — Arcium MPC + ZK Escrow
+import { createAuction, submitSealedBid, finalizeAuction } from '@p01/arcium-sdk';
+
+// 1. Seller creates auction
+await createAuction(client, program, { auctionId, pool, deadline });
+
+// 2. Bidder locks funds in escrow (Groth16 proof pre-authorizes both outcomes)
+await escrowShield(proof, nullifier, merkleRoot, auctionId, payCommit, refundCommit);
+
+// 3. Bidder submits encrypted bid (MPC — no one sees the amount)
+await submitSealedBid(client, program, auctionId, bidAmount, escrowNullifier);
+
+// 4. After deadline: MPC reveals winner, escrow auto-settles
+const result = await finalizeAuction(client, program, auctionId);
+// Winner's funds → seller | Losers' funds → refunded. No trust needed.`,
+  },
+  {
     id: "streams-privacy",
     i18nKey: "streamsPrivacy",
     icon: <Layers className="w-6 h-6" />,

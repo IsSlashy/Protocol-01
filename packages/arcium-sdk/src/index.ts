@@ -51,3 +51,17 @@ export {
   getBallotAddress,
 } from './governance';
 export type { ProposalConfig, VoteReceipt, TallyResult } from './governance';
+
+// UC7: Sealed-Bid Auction — encrypted bids + shielded pool escrow
+export {
+  createAuction,
+  submitSealedBid,
+  finalizeAuction,
+  writeEscrowOutcome,
+  releaseEscrow,
+  getAuctionAddress,
+  getEscrowAddress,
+  nullifierToChunks,
+  chunksToNullifier,
+} from './auction';
+export type { AuctionConfig, BidReceipt, AuctionResult } from './auction';
