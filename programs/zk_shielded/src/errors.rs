@@ -138,4 +138,20 @@ pub enum ZkShieldedError {
 
     #[msg("Unauthorized route access — not route authority")]
     UnauthorizedRoute,
+
+    // Auction Escrow errors
+    #[msg("Auction escrow has already been settled")]
+    EscrowAlreadySettled,
+
+    #[msg("Auction escrow outcome has not been determined yet")]
+    EscrowOutcomeNotSet,
+
+    #[msg("Auction escrow has already been released")]
+    EscrowAlreadyReleased,
+
+    #[msg("Invalid auction ID — does not match escrow")]
+    InvalidAuctionId,
+
+    #[msg("Auction has not been finalized by MPC")]
+    AuctionNotFinalized,
 }

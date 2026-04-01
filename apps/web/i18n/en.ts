@@ -275,6 +275,10 @@ const en = {
         title: 'Arcium MPC Integration (9 Circuits)',
         desc: 'Multi-party computation via Arcium Cerberus protocol. 6 use cases: confidential relay, anonymous registry, hidden nullifier, balance audit, stealth scan, private vote. 1-of-N honest node.',
       },
+      sealedBidAuctions: {
+        title: 'Sealed-Bid Auctions (Arcium + ZK Escrow)',
+        desc: 'Trustless blind auctions where bids are encrypted via Arcium MPC, and payment/refund is enforced through a ZK shielded pool escrow. No one can see bids, no one can cheat.',
+      },
       onChainRegistry: {
         title: 'On-Chain Registry (EIP-5564)',
         desc: 'Stealth meta-address directory on Solana. Register/update spending + viewing public keys, optional ML-KEM-768 pubkey for quantum-resistant stealth v2.',
@@ -786,6 +790,18 @@ const en = {
         detail6: 'Private governance: encrypted ballots tallied inside MPC — only the final result is revealed',
         detail7: 'Cerberus protocol: 1-of-N honest node guarantees correctness. 9 circuits deployed on Solana devnet',
         detail8: 'Graceful fallback: every MPC operation degrades to the standard (non-MPC) path when disabled — zero overhead',
+      },
+      sealedBidAuctions: {
+        title: 'Sealed-Bid Auctions (Arcium + ZK Escrow)',
+        desc: 'Trustless blind auctions combining Arcium MPC encrypted bid accumulation with a Groth16 ZK shielded pool escrow. Bids are hidden, settlement is automatic, and no party can cheat — the circuit, the MPC, and the on-chain program enforce outcomes independently.',
+        detail1: 'Escrow before auction: bidders lock funds via escrow_shield (Groth16 proof). The proof pre-authorizes two outcomes — pay the seller OR refund the bidder. Neither party chooses.',
+        detail2: 'Encrypted bid accumulation: sealed_bid_auction MPC circuit runs on Arcium ARX nodes. Constant-time comparison prevents timing side-channels. No single node sees any bid.',
+        detail3: 'MPC result revelation: finalize_auction reveals only the winning nullifier and bid amount. All losing bid amounts remain permanently hidden.',
+        detail4: 'Nullifier-based identity: bidders are identified by their escrow nullifier, not their wallet address. Nullifiers are cryptographically unlinkable to identity.',
+        detail5: 'Permissionless settlement: write_escrow_outcome reads the Auction PDA, escrow_release inserts the correct commitment into the Merkle tree. Anyone can crank — no cooperation needed.',
+        detail6: 'Anti-replay: auction_id is a public input in the ZK proof, binding each escrow to a specific auction. Proofs cannot be reused across auctions.',
+        detail7: 'Circuit: escrow_bid.circom — 4,954 constraints, 7 public inputs, Groth16 over BN254. Proves note ownership, Merkle membership, maturity, and dual commitment correctness.',
+        detail8: 'Deployed on devnet: p01_arcium (FH1Ji...) + zk_shielded (GbVM5...) with comp defs initialized and VK uploaded. Ready for integration.',
       },
       streamsPrivacy: {
         title: 'Streams & Subscriptions Privacy',

@@ -245,6 +245,11 @@ pub struct DenominatedPool {
     /// Decoupled from next_leaf_index so root history is not corrupted
     /// when next_leaf_index diverges (e.g., transfer_denominated).
     pub root_write_index: u64,
+
+    /// Hash of the verification key for escrow bid circuit validation.
+    /// Separate from vk_hash and vk_hash_transfer because escrow_bid
+    /// has 7 public inputs (adds auction_id, pay_commitment, refund_commitment).
+    pub vk_hash_escrow: [u8; 32],
 }
 
 impl DenominatedPool {
@@ -275,7 +280,8 @@ impl DenominatedPool {
         + 8   // epoch_note_start
         + 32  // vk_hash_transfer
         + 8   // vk_update_slot
-        + 8;  // root_write_index
+        + 8   // root_write_index
+        + 32; // vk_hash_escrow
 
     /// Seeds for PDA derivation: [b"denominated_pool", token_mint, denomination]
     pub const SEED_PREFIX: &'static [u8] = b"denominated_pool";

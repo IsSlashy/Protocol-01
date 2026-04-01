@@ -33,6 +33,11 @@ pub mod resume_private_stark;
 pub mod propose_authority_transfer;
 pub mod accept_authority_transfer;
 pub mod split_note;
+pub mod escrow_shield;
+pub mod escrow_release;
+pub mod write_escrow_outcome;
+pub mod update_escrow_vk;
+pub mod store_escrow_vk_data;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -68,3 +73,8 @@ pub use resume_private_stark::*;
 pub use propose_authority_transfer::*;
 pub use accept_authority_transfer::*;
 pub use split_note::*;
+pub use escrow_shield::*;
+pub use escrow_release::*;
+pub use write_escrow_outcome::*;
+pub use update_escrow_vk::*;
+pub use store_escrow_vk_data::*;

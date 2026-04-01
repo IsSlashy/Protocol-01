@@ -276,6 +276,10 @@ const fr: Translations = {
         title: 'Int\u00e9gration MPC Arcium (9 circuits)',
         desc: 'Calcul multi-parties via le protocole Arcium Cerberus. 6 cas d\u2019usage : relais confidentiel, registre anonyme, nullifieur cach\u00e9, audit de solde, scan furtif, vote priv\u00e9. 1 n\u0153ud honn\u00eate sur N.',
       },
+      sealedBidAuctions: {
+        title: 'Ench\u00e8res scell\u00e9es (Arcium + Escrow ZK)',
+        desc: 'Ench\u00e8res aveugles sans confiance o\u00f9 les offres sont chiffr\u00e9es via Arcium MPC et le paiement/remboursement est appliqu\u00e9 par un escrow ZK dans le pool blind\u00e9.',
+      },
       onChainRegistry: {
         title: 'Registre on-chain (EIP-5564)',
         desc: 'R\u00e9pertoire de m\u00e9ta-adresses furtives sur Solana. Enregistrement/mise \u00e0 jour des cl\u00e9s publiques de d\u00e9pense + visualisation, cl\u00e9 publique ML-KEM-768 optionnelle pour le stealth v2 r\u00e9sistant au quantique.',
@@ -786,6 +790,18 @@ const fr: Translations = {
         detail6: 'Gouvernance priv\u00e9e : bulletins chiffr\u00e9s d\u00e9pouill\u00e9s dans le MPC \u2014 seul le r\u00e9sultat final est r\u00e9v\u00e9l\u00e9',
         detail7: 'Protocole Cerberus : garantie de 1 n\u0153ud honn\u00eate sur N. 9 circuits d\u00e9ploy\u00e9s sur le devnet Solana',
         detail8: 'Repli gracieux : chaque op\u00e9ration MPC se d\u00e9grade vers le chemin standard (sans MPC) quand d\u00e9sactiv\u00e9 \u2014 z\u00e9ro surcharge',
+      },
+      sealedBidAuctions: {
+        title: 'Ench\u00e8res scell\u00e9es (Arcium + Escrow ZK)',
+        desc: 'Ench\u00e8res aveugles sans confiance combinant l\u2019accumulation d\u2019offres chiffr\u00e9es Arcium MPC avec un escrow ZK Groth16 dans le pool blind\u00e9. Les offres sont cach\u00e9es, le r\u00e8glement est automatique, et aucune partie ne peut tricher.',
+        detail1: 'Escrow avant ench\u00e8re : les ench\u00e9risseurs verrouillent leurs fonds via escrow_shield (preuve Groth16). La preuve pr\u00e9-autorise deux issues \u2014 payer le vendeur OU rembourser l\u2019ench\u00e9risseur.',
+        detail2: 'Accumulation d\u2019offres chiffr\u00e9es : le circuit MPC sealed_bid_auction s\u2019ex\u00e9cute sur les n\u0153uds ARX Arcium. Comparaison en temps constant. Aucun n\u0153ud ne voit aucune offre.',
+        detail3: 'R\u00e9v\u00e9lation du r\u00e9sultat MPC : finalize_auction ne r\u00e9v\u00e8le que le nullifieur gagnant et le montant. Toutes les offres perdantes restent cach\u00e9es.',
+        detail4: 'Identit\u00e9 par nullifieur : les ench\u00e9risseurs sont identifi\u00e9s par leur nullifieur d\u2019escrow, pas leur adresse wallet. Impossible \u00e0 relier.',
+        detail5: 'R\u00e8glement sans permission : write_escrow_outcome lit le PDA Auction, escrow_release ins\u00e8re le bon commitment dans l\u2019arbre de Merkle. N\u2019importe qui peut ex\u00e9cuter.',
+        detail6: 'Anti-rejeu : auction_id est une entr\u00e9e publique dans la preuve ZK, liant chaque escrow \u00e0 une ench\u00e8re sp\u00e9cifique.',
+        detail7: 'Circuit : escrow_bid.circom \u2014 4 954 contraintes, 7 entr\u00e9es publiques, Groth16 sur BN254.',
+        detail8: 'D\u00e9ploy\u00e9 sur devnet : p01_arcium + zk_shielded avec comp defs initialis\u00e9s et VK upload\u00e9.',
       },
       streamsPrivacy: {
         title: 'Confidentialit\u00e9 des flux & abonnements',

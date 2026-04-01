@@ -329,6 +329,57 @@ pub mod zk_shielded {
         instructions::split_note::handler(ctx, proof, nullifier, merkle_root, min_epoch, num_outputs, output_commitments, new_roots)
     }
 
+    // -----------------------------------------------------------------------
+    // Sealed-Bid Auction Escrow instructions
+    // -----------------------------------------------------------------------
+
+    /// Lock a denominated pool note into escrow for a sealed-bid auction.
+    /// Consumes the old note (nullifier) and stores two conditional commitments:
+    /// pay_commitment (seller wins) and refund_commitment (bidder loses).
+    pub fn escrow_shield(
+        ctx: Context<EscrowShield>,
+        proof: Groth16Proof,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        auction_id: [u8; 32],
+        pay_commitment: [u8; 32],
+        refund_commitment: [u8; 32],
+    ) -> Result<()> {
+        instructions::escrow_shield::handler(ctx, proof, nullifier, merkle_root, min_epoch, auction_id, pay_commitment, refund_commitment)
+    }
+
+    /// Release an auction escrow after the Arcium MPC settles the auction.
+    /// Inserts the correct commitment (pay or refund) into the Merkle tree.
+    /// Permissionless: anyone can crank once outcome is set.
+    pub fn escrow_release(
+        ctx: Context<EscrowRelease>,
+        new_root: [u8; 32],
+    ) -> Result<()> {
+        instructions::escrow_release::handler(ctx, new_root)
+    }
+
+    /// Write the auction outcome to an escrow PDA by reading the finalized
+    /// Auction account from p01_arcium. Permissionless cranker.
+    pub fn write_escrow_outcome(ctx: Context<WriteEscrowOutcome>) -> Result<()> {
+        instructions::write_escrow_outcome::handler(ctx)
+    }
+
+    /// Update the escrow bid verification key hash on a denominated pool (admin only).
+    pub fn update_escrow_vk(ctx: Context<UpdateEscrowVk>, new_vk_hash: [u8; 32]) -> Result<()> {
+        instructions::update_escrow_vk::handler(ctx, new_vk_hash)
+    }
+
+    /// Initialize escrow VK data account (PDA owned by this program).
+    pub fn init_escrow_vk_data(ctx: Context<InitEscrowVkData>, vk_size: u32) -> Result<()> {
+        instructions::store_escrow_vk_data::handler_init_escrow_vk(ctx, vk_size)
+    }
+
+    /// Write chunk of escrow VK data.
+    pub fn write_escrow_vk_data(ctx: Context<WriteEscrowVkData>, offset: u32, data: Vec<u8>) -> Result<()> {
+        instructions::store_escrow_vk_data::handler_write_escrow_vk(ctx, offset, data)
+    }
+
     /// Claim accrued periods from a subscription vault (retailer only)
     pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
         instructions::claim_period::handler(ctx)
