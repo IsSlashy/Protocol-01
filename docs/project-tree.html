@@ -1,0 +1,2005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol 01 — Project Architecture Tree</title>
+<style>
+  /* ══════════════════════════════════════════════════════════════
+     P-01 DESIGN SYSTEM — Cyberpunk / Miku Cyan + KAngel Pink
+     ══════════════════════════════════════════════════════════════ */
+  :root {
+    --void: #0a0a0c;
+    --dark: #0f0f12;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --surface3: #25252b;
+    --elevated: #1f1f24;
+    --border: #2a2a30;
+    --border-light: #3a3a42;
+    --cyan: #39c5bb;
+    --cyan-dim: #2a9d95;
+    --cyan-bright: #00ffe5;
+    --cyan-glow: rgba(57, 197, 187, 0.15);
+    --cyan-glow2: rgba(57, 197, 187, 0.3);
+    --cyan-glow3: rgba(57, 197, 187, 0.5);
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --pink-glow: rgba(255, 119, 168, 0.15);
+    --pink-glow2: rgba(255, 119, 168, 0.3);
+    --yellow: #ffcc00;
+    --yellow-dim: #cc9900;
+    --yellow-glow: rgba(255, 204, 0, 0.15);
+    --red: #ff3366;
+    --red-glow: rgba(255, 51, 102, 0.15);
+    --blue: #3b82f6;
+    --blue-glow: rgba(59, 130, 246, 0.15);
+    --text: #ffffff;
+    --text-secondary: #888892;
+    --text-muted: #555560;
+    --text-dim: #3a3a40;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--void);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(57, 197, 187, 0.015) 2px,
+      rgba(57, 197, 187, 0.015) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: linear-gradient(180deg, var(--surface) 0%, var(--void) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 32px 40px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(20px);
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
+  .logo {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, var(--cyan) 0%, var(--pink) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 0 40px var(--cyan-glow3);
+  }
+
+  .logo-tag {
+    font-size: 11px;
+    color: var(--cyan);
+    border: 1px solid var(--cyan-dim);
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    background: var(--cyan-glow);
+  }
+
+  .header-sub {
+    color: var(--text-secondary);
+    font-size: 12px;
+    letter-spacing: 1px;
+  }
+
+  .header-stats {
+    display: flex;
+    gap: 24px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+
+  .stat {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .stat-val {
+    color: var(--cyan);
+    font-weight: 700;
+  }
+
+  /* ── Controls ── */
+  .controls {
+    display: flex;
+    gap: 8px;
+    padding: 12px 40px;
+    border-bottom: 1px solid var(--border);
+    background: var(--dark);
+  }
+
+  .controls button {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+
+  .controls button:hover {
+    border-color: var(--cyan-dim);
+    color: var(--cyan);
+    background: var(--cyan-glow);
+    box-shadow: 0 0 12px var(--cyan-glow);
+  }
+
+  .search-box {
+    flex: 1;
+    max-width: 320px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 11px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .search-box::placeholder { color: var(--text-dim); }
+  .search-box:focus {
+    border-color: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan-glow);
+  }
+
+  /* ── Tree Container ── */
+  .tree-container {
+    padding: 24px 40px 80px;
+    max-width: 1200px;
+  }
+
+  /* ── Tree Node ── */
+  .node {
+    margin: 2px 0;
+    user-select: none;
+  }
+
+  .node-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+    position: relative;
+  }
+
+  .node-header:hover {
+    background: var(--surface2);
+    border-color: var(--border);
+  }
+
+  .node-header.active {
+    background: var(--surface3);
+    border-color: var(--border-light);
+  }
+
+  /* ── Chevron ── */
+  .chevron {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+    font-size: 10px;
+  }
+
+  .chevron.open { transform: rotate(90deg); }
+  .chevron.leaf { visibility: hidden; }
+
+  /* ── Icons ── */
+  .icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+    letter-spacing: 0;
+  }
+
+  .icon-program   { background: var(--cyan-glow2); color: var(--cyan); border: 1px solid var(--cyan-dim); }
+  .icon-circuit   { background: var(--pink-glow2); color: var(--pink); border: 1px solid var(--pink); }
+  .icon-sdk       { background: var(--yellow-glow); color: var(--yellow); border: 1px solid var(--yellow-dim); }
+  .icon-app       { background: var(--blue-glow); color: var(--blue); border: 1px solid var(--blue); }
+  .icon-service   { background: var(--red-glow); color: var(--red); border: 1px solid var(--red); }
+  .icon-folder    { background: var(--surface3); color: var(--text-secondary); border: 1px solid var(--border); }
+  .icon-stark     { background: rgba(0, 255, 229, 0.15); color: var(--cyan-bright); border: 1px solid var(--cyan-bright); }
+  .icon-quantum   { background: rgba(255, 45, 122, 0.15); color: var(--pink-hot); border: 1px solid var(--pink-hot); }
+  .icon-arcium    { background: rgba(255, 204, 0, 0.2); color: var(--yellow); border: 1px solid var(--yellow); }
+  .icon-test      { background: rgba(57, 197, 187, 0.1); color: var(--cyan-dim); border: 1px solid var(--cyan-dim); }
+  .icon-file      { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  .icon-screen    { background: rgba(59, 130, 246, 0.1); color: var(--blue); border: 1px solid rgba(59, 130, 246, 0.3); }
+  .icon-store     { background: rgba(255, 119, 168, 0.1); color: var(--pink); border: 1px solid rgba(255, 119, 168, 0.3); }
+
+  /* ── Node label ── */
+  .node-label {
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .node-desc {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 400;
+    margin-left: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .node-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  .badge-deployed  { background: var(--cyan-glow2); color: var(--cyan); border: 1px solid var(--cyan-dim); }
+  .badge-groth16   { background: var(--pink-glow); color: var(--pink); }
+  .badge-stark     { background: rgba(0, 255, 229, 0.15); color: var(--cyan-bright); }
+  .badge-quantum   { background: rgba(255, 45, 122, 0.1); color: var(--pink-hot); }
+  .badge-wasm      { background: var(--yellow-glow); color: var(--yellow); }
+  .badge-count     { background: var(--surface3); color: var(--text-secondary); }
+  .badge-new       { background: rgba(255, 204, 0, 0.15); color: var(--yellow); }
+  .badge-mpc       { background: rgba(255, 204, 0, 0.2); color: var(--yellow); }
+
+  /* ── Children ── */
+  .node-children {
+    display: none;
+    margin-left: 24px;
+    border-left: 1px solid var(--border);
+    padding-left: 4px;
+  }
+
+  .node-children.open { display: block; }
+
+  /* ── Detail panel ── */
+  .detail {
+    display: none;
+    margin: 4px 0 8px 48px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 800px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .detail.open { display: block; }
+
+  .detail::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px;
+    height: 100%;
+    border-radius: 3px 0 0 3px;
+  }
+
+  .detail.detail-program::before  { background: var(--cyan); box-shadow: 0 0 8px var(--cyan-glow2); }
+  .detail.detail-circuit::before  { background: var(--pink); box-shadow: 0 0 8px var(--pink-glow2); }
+  .detail.detail-sdk::before      { background: var(--yellow); }
+  .detail.detail-app::before      { background: var(--blue); }
+  .detail.detail-service::before  { background: var(--red); }
+  .detail.detail-stark::before    { background: var(--cyan-bright); }
+  .detail.detail-quantum::before  { background: var(--pink-hot); }
+  .detail.detail-arcium::before   { background: var(--yellow); }
+
+  .detail h4 {
+    color: var(--text);
+    font-size: 12px;
+    margin: 10px 0 4px;
+    letter-spacing: 0.5px;
+  }
+
+  .detail h4:first-child { margin-top: 0; }
+
+  .detail code {
+    background: var(--surface2);
+    color: var(--cyan);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+  }
+
+  .detail .sig {
+    color: var(--pink);
+    font-weight: 600;
+  }
+
+  .detail .pub-input {
+    color: var(--cyan);
+  }
+
+  .detail .priv-input {
+    color: var(--pink);
+  }
+
+  .detail ul {
+    list-style: none;
+    padding-left: 12px;
+  }
+
+  .detail ul li::before {
+    content: '>';
+    color: var(--cyan-dim);
+    margin-right: 6px;
+    font-weight: 700;
+  }
+
+  .detail .constraint-count {
+    display: inline-block;
+    background: var(--pink-glow);
+    color: var(--pink);
+    padding: 0 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    margin-left: 4px;
+  }
+
+  .detail .program-id {
+    font-family: inherit;
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--surface2);
+    padding: 2px 8px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    word-break: break-all;
+  }
+
+  .detail table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0;
+    font-size: 11px;
+  }
+
+  .detail th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .detail td {
+    padding: 3px 8px;
+    border-bottom: 1px solid rgba(42,42,48,0.5);
+    color: var(--text-secondary);
+  }
+
+  .detail td:first-child { color: var(--text); font-weight: 500; }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 32px;
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 1px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Glow pulse animation ── */
+  @keyframes pulse-cyan {
+    0%, 100% { box-shadow: 0 0 4px var(--cyan-glow); }
+    50% { box-shadow: 0 0 12px var(--cyan-glow2); }
+  }
+
+  .node-header:hover .icon-program,
+  .node-header:hover .icon-stark {
+    animation: pulse-cyan 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-pink {
+    0%, 100% { box-shadow: 0 0 4px var(--pink-glow); }
+    50% { box-shadow: 0 0 12px var(--pink-glow2); }
+  }
+
+  .node-header:hover .icon-circuit {
+    animation: pulse-pink 1.5s ease-in-out infinite;
+  }
+
+  /* ── Search highlight ── */
+  .search-match .node-label { color: var(--yellow); }
+  .search-hidden { display: none !important; }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .header, .controls, .tree-container { padding-left: 16px; padding-right: 16px; }
+    .node-desc { display: none; }
+    .detail { margin-left: 28px; }
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--void); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- HEADER                                                         -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="header">
+  <div class="header-top">
+    <div class="logo">PROTOCOL-01</div>
+    <span class="logo-tag">Architecture Tree</span>
+  </div>
+  <div class="header-sub">Privacy Layer for Solana &mdash; ZK-SNARKs &bull; Stealth Addresses &bull; Confidential Balances &bull; Post-Quantum</div>
+  <div class="header-stats">
+    <div class="stat"><span class="stat-val">15</span> On-chain Programs</div>
+    <div class="stat"><span class="stat-val">10</span> Circom Circuits</div>
+    <div class="stat"><span class="stat-val">6</span> STARK AIRs</div>
+    <div class="stat"><span class="stat-val">17</span> SDK Packages</div>
+    <div class="stat"><span class="stat-val">3</span> Client Apps</div>
+    <div class="stat"><span class="stat-val">2</span> Backend Services</div>
+    <div class="stat"><span class="stat-val">45+</span> Mobile Screens</div>
+    <div class="stat"><span class="stat-val">38</span> Extension Pages</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- CONTROLS                                                       -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="controls">
+  <button onclick="expandAll()">Expand All</button>
+  <button onclick="collapseAll()">Collapse All</button>
+  <button onclick="expandLevel(1)">Level 1</button>
+  <button onclick="expandLevel(2)">Level 2</button>
+  <input type="text" class="search-box" placeholder="Search... (program, circuit, SDK, screen)" oninput="searchTree(this.value)">
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- TREE                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="tree-container" id="tree">
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  1. SOLANA PROGRAMS (15)                                     ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">P</span>
+    <span class="node-label">programs/</span>
+    <span class="node-desc">&mdash; 15 Solana on-chain programs (Anchor 0.32.1)</span>
+    <span class="node-badge badge-count">15</span>
+  </div>
+  <div class="node-children">
+
+    <!-- ── zk_shielded ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">ZK</span>
+        <span class="node-label">zk_shielded</span>
+        <span class="node-desc">&mdash; Core privacy pool (Groth16 + STARK)</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>ZK Shielded Pool</h4>
+          The core privacy engine of Protocol-01. Manages shielded pools where users deposit (shield) tokens and withdraw (unshield) them using Groth16 zero-knowledge proofs. Supports standard pools, fixed-denomination pools (Tornado Cash model), private subscriptions, sealed-bid auctions, and quantum-resistant STARK unshielding.
+          <div class="program-id">GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c</div>
+
+          <h4>Instructions (40)</h4>
+          <table>
+            <tr><th>Category</th><th>Instructions</th></tr>
+            <tr><td>Pool Init</td><td><code>initialize_pool</code>, <code>init_denominated_pool</code></td></tr>
+            <tr><td>Shield/Unshield</td><td><code>shield</code>, <code>unshield</code>, <code>shield_denominated</code>, <code>unshield_denominated</code>, <code>unshield_denominated_stark</code>, <code>emergency_unshield_denominated</code></td></tr>
+            <tr><td>Transfer</td><td><code>transfer</code>, <code>transfer_denominated</code>, <code>split_note</code></td></tr>
+            <tr><td>Subscriptions</td><td><code>subscribe_normal</code>, <code>subscribe_private</code>, <code>subscribe_private_stark</code>, <code>pause_normal</code>, <code>pause_private</code>, <code>pause_private_stark</code>, <code>resume_normal</code>, <code>resume_private</code>, <code>resume_private_stark</code>, <code>cancel_normal</code>, <code>cancel_private</code>, <code>claim_period</code></td></tr>
+            <tr><td>Escrow/Auction</td><td><code>escrow_shield</code>, <code>escrow_release</code>, <code>write_escrow_outcome</code></td></tr>
+            <tr><td>VK Management</td><td><code>update_verification_key</code>, <code>init_vk_data</code>, <code>write_vk_data</code>, <code>update_denominated_vk</code>, <code>update_transfer_vk</code>, <code>init_transfer_vk_data</code>, <code>write_transfer_vk_data</code>, <code>update_escrow_vk</code>, <code>init_escrow_vk_data</code>, <code>write_escrow_vk_data</code>, <code>init_subscriber_vk_data</code>, <code>write_subscriber_vk_data</code></td></tr>
+            <tr><td>Authority</td><td><code>propose_authority_transfer</code>, <code>accept_authority_transfer</code></td></tr>
+          </table>
+
+          <h4>Key Accounts</h4>
+          <ul>
+            <li><code>ShieldedPool</code> &mdash; Merkle tree root, nullifier set, pool stats</li>
+            <li><code>DenominatedPool</code> &mdash; Fixed denomination, epoch delays</li>
+            <li><code>MerkleTreeState</code> &mdash; Incremental tree with compressed nodes</li>
+            <li><code>NullifierSet</code> &mdash; Spent note tracking (double-spend prevention)</li>
+            <li><code>SubscriptionVault</code> &mdash; Recurring payment state</li>
+            <li><code>AuctionEscrow</code> &mdash; Sealed-bid auction state</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_zkspl ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">ZS</span>
+        <span class="node-label">p01_zkspl</span>
+        <span class="node-desc">&mdash; Confidential SPL token balances</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>zkSPL &mdash; Confidential Token Balances</h4>
+          Enables hidden balances for SPL tokens. Balances are stored as Poseidon commitments. Deposits/withdrawals/transfers use ZK proofs to prove conservation without revealing amounts. Supports viewer permissions for auditing.
+          <div class="program-id">AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT</div>
+
+          <h4>Instructions (12)</h4>
+          <ul>
+            <li><code>initialize_mint</code> &mdash; Create confidential mint config</li>
+            <li><code>create_account</code> &mdash; Create confidential account with initial commitment</li>
+            <li><code>deposit</code> &mdash; Public &rarr; confidential (shield)</li>
+            <li><code>withdraw</code> &mdash; Confidential &rarr; public (unshield)</li>
+            <li><code>confidential_transfer</code> &mdash; Private transfer between accounts</li>
+            <li><code>apply_pending</code> &mdash; Apply pending credits to balance</li>
+            <li><code>prove_balance</code> &mdash; Prove balance &ge; threshold</li>
+            <li><code>add_viewer</code> / <code>remove_viewer</code> &mdash; Audit access control</li>
+            <li><code>init_vk_data</code> / <code>write_vk_data</code> &mdash; Verification key setup</li>
+          </ul>
+
+          <h4>Key Accounts</h4>
+          <ul>
+            <li><code>MintConfig</code> &mdash; Token-level config</li>
+            <li><code>ConfidentialAccount</code> &mdash; Balance commitment + pending credits</li>
+            <li><code>ViewerPermission</code> &mdash; Authorized auditors</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── specter ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">SP</span>
+        <span class="node-label">specter</span>
+        <span class="node-desc">&mdash; Stealth payments + streaming (X25519 + ML-KEM-768)</span>
+        <span class="node-badge badge-quantum">Quantum-Hybrid</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>Specter &mdash; Stealth Payments &amp; Streaming</h4>
+          Implements EIP-5564-style stealth addresses on Solana. V1 uses classical X25519 ECDH. V2 adds post-quantum ML-KEM-768 hybrid key encapsulation. Also supports token streaming with escrow.
+          <div class="program-id">8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh</div>
+
+          <h4>Instructions (7)</h4>
+          <ul>
+            <li><code>init_wallet</code> &mdash; Register stealth meta-address</li>
+            <li><code>send_private</code> / <code>claim_stealth</code> &mdash; V1 classical stealth payment</li>
+            <li><code>send_private_v2</code> / <code>claim_stealth_v2</code> &mdash; V2 quantum-hybrid stealth</li>
+            <li><code>create_stream</code> / <code>withdraw_stream</code> / <code>cancel_stream</code> &mdash; Token streaming</li>
+          </ul>
+
+          <h4>Stealth Flow</h4>
+          Sender generates ephemeral keypair &rarr; ECDH shared secret with recipient's viewing key &rarr; derives one-time stealth address &rarr; funds are sent to the stealth address &rarr; recipient scans chain for payments using viewing key &rarr; claims with spending key.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_trustless ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">TL</span>
+        <span class="node-label">p01_trustless</span>
+        <span class="node-desc">&mdash; Permissionless shielded pools (proof = permission)</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>Trustless ZK Operations</h4>
+          Fully permissionless shielded pools where a valid ZK proof is the only authorization required. No relayer, no admin, no trusted third party. Shield without proof, unshield only with valid Groth16 proof.
+          <div class="program-id">5x8qr9UwF6BTN4ySb4gPwL4TYgZiiLCzg4mKDmQrnjyJ</div>
+
+          <h4>Instructions (8)</h4>
+          <ul>
+            <li><code>initialize_pool</code> &mdash; Create trustless pool</li>
+            <li><code>shield_trustless</code> &mdash; Deposit without proof</li>
+            <li><code>unshield_trustless</code> &mdash; Withdraw with Groth16 proof only</li>
+            <li><code>create_confidential_account</code> / <code>zkspl_trustless</code> &mdash; Unified zkSPL operations</li>
+            <li>VK management instructions (4)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_relayer ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">RL</span>
+        <span class="node-label">p01_relayer</span>
+        <span class="node-desc">&mdash; Decentralized encrypted relay network</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>On-chain Relayer Network</h4>
+          Decentralized job queue for privacy-preserving transaction relay. Relayers stake SOL, register X25519 + ML-KEM-768 encryption keys. Jobs are submitted encrypted, completed by relayers with tx signatures, and relayers can be slashed for misbehavior.
+          <div class="program-id">Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw</div>
+
+          <h4>Instructions (8)</h4>
+          <ul>
+            <li><code>initialize_config</code> / <code>update_config</code> &mdash; Admin setup</li>
+            <li><code>register_relayer</code> &mdash; Stake + register encryption keys</li>
+            <li><code>deactivate_relayer</code> / <code>unstake_relayer</code> / <code>update_relayer_key</code></li>
+            <li><code>submit_job</code> &mdash; Submit encrypted transaction</li>
+            <li><code>complete_job</code> / <code>expire_job</code> / <code>cancel_job</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_stark_verifier ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">ST</span>
+        <span class="node-label">p01_stark_verifier</span>
+        <span class="node-desc">&mdash; On-chain STARK proof verification (quantum-resistant)</span>
+        <span class="node-badge badge-stark">STARK</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>STARK Proof Verifier (Quantum-Resistant)</h4>
+          On-chain verifier for compact STARK proofs (~9KB). Uses custom FRI implementation (no Winterfell dependency on-chain). Supports 6 circuit types. Blake3 Merkle tree, Goldilocks field (2^64 - 2^32 + 1), 16 FRI queries.
+          <div class="program-id">DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs</div>
+
+          <h4>Supported Circuits</h4>
+          <table>
+            <tr><th>ID</th><th>Circuit</th><th>Width</th><th>Length</th></tr>
+            <tr><td>0</td><td>subscriber_ownership</td><td>3</td><td>32</td></tr>
+            <tr><td>1</td><td>pool_commitment</td><td>3</td><td>128</td></tr>
+            <tr><td>2</td><td>balance_proof</td><td>4</td><td>128</td></tr>
+            <tr><td>3</td><td>merkle_path</td><td>6</td><td>pow2(depth*32)</td></tr>
+            <tr><td>4</td><td>confidential_balance</td><td>4</td><td>256</td></tr>
+            <tr><td>5</td><td>transfer</td><td>6</td><td>512</td></tr>
+          </table>
+
+          <h4>Instructions (5)</h4>
+          <ul>
+            <li><code>init_proof_buffer</code> &mdash; Allocate buffer (max 10KB)</li>
+            <li><code>write_proof_chunk</code> &mdash; Stream proof data</li>
+            <li><code>verify_stark_proof</code> &mdash; Single public input</li>
+            <li><code>verify_stark_proof_v2</code> &mdash; Multiple public inputs</li>
+            <li><code>resize_proof_buffer</code> / <code>close_proof_buffer</code></li>
+          </ul>
+
+          <h4>On-chain Verification</h4>
+          Goldilocks field arithmetic &rarr; Blake3 Merkle path verification &rarr; Poseidon transition constraints (MDS * sbox(state + RC), 30 rounds, full S-box x^7) &rarr; Fiat-Shamir challenge (Blake3(trace_root || commitment) &rarr; 16 query positions). ~889K CU per verification.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_quantum_vault ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-quantum">QV</span>
+        <span class="node-label">p01_quantum_vault</span>
+        <span class="node-desc">&mdash; Post-quantum vault (WOTS+, hash-timelock, commit-reveal)</span>
+        <span class="node-badge badge-quantum">Post-Quantum</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-quantum open">
+          <h4>Quantum-Safe Vault &mdash; 3 Defense Layers</h4>
+          Protects against quantum attacks on Ed25519 signing. Ed25519 is still used (Solana platform requirement) but is NOT the security boundary &mdash; SHA-256 preimage is.
+          <div class="program-id">9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv</div>
+
+          <h4>Layer 1: Winternitz OTS (WOTS+)</h4>
+          32 hash chains, w=16, SHA-256. One-time signature that rotates the public key after each withdrawal. ~100-150K CU. Quantum-secure because security reduces to hash preimage resistance.
+          <ul>
+            <li><code>init_winternitz_vault</code> / <code>deposit_winternitz</code> / <code>withdraw_winternitz</code></li>
+          </ul>
+
+          <h4>Layer 2: Hash-Timelock Vault</h4>
+          SHA-256 preimage lock + optional timelock. &lt;5K CU. Ideal for cold storage.
+          <ul>
+            <li><code>init_hash_vault</code> / <code>deposit_hash_vault</code> / <code>withdraw_hash_vault</code></li>
+          </ul>
+
+          <h4>Layer 3: Commit-Then-Reveal</h4>
+          2-phase TX authorization. Commitment posted on-chain first &rarr; reveal within slot window. Prevents quantum front-running of transactions.
+          <ul>
+            <li><code>create_commitment</code> / <code>reveal_commitment</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_arcium ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-arcium">AR</span>
+        <span class="node-label">p01_arcium</span>
+        <span class="node-desc">&mdash; MPC-powered confidential computation (Arcium)</span>
+        <span class="node-badge badge-mpc">MPC</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-arcium open">
+          <h4>Arcium MPC Integration &mdash; 7 Use Cases</h4>
+          Orchestrates multi-party computation via Arcium network. Computation definitions are initialized on-chain, data is encrypted and sent to MPC nodes, results are returned via callbacks.
+          <div class="program-id">FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT</div>
+
+          <h4>Use Cases</h4>
+          <table>
+            <tr><th>UC</th><th>Name</th><th>Description</th></tr>
+            <tr><td>UC1</td><td>Confidential Relay</td><td>Encrypted transaction relay via MPC</td></tr>
+            <tr><td>UC2</td><td>Anonymous Registry</td><td>Private meta-address lookup</td></tr>
+            <tr><td>UC3</td><td>Hidden Nullifier</td><td>Nullifier commitment without revealing preimage</td></tr>
+            <tr><td>UC4</td><td>Balance Audit</td><td>Prove aggregate balance without individual disclosure</td></tr>
+            <tr><td>UC5</td><td>Stealth Scan</td><td>Threshold decryption of stealth announcements</td></tr>
+            <tr><td>UC6</td><td>Private Voting</td><td>Governance with hidden votes (standard + binary)</td></tr>
+            <tr><td>UC7</td><td>Sealed-Bid Auction</td><td>Hidden bids with MPC winner determination</td></tr>
+          </table>
+
+          <h4>Instructions (20+)</h4>
+          13 computation definition initializers + per-UC operations (submit, callback, finalize) + auction lifecycle (<code>create_auction</code>, <code>sealed_bid_auction</code>, <code>finalize_auction</code>)
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_registry ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">RG</span>
+        <span class="node-label">p01_registry</span>
+        <span class="node-desc">&mdash; Stealth meta-address directory</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>On-chain Registry</h4>
+          Public directory for stealth meta-addresses (EIP-5564 style). Users register spending + viewing public keys. V2 adds ML-KEM-768 post-quantum public key (1184 bytes).
+          <div class="program-id">ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr</div>
+          <h4>Instructions (6)</h4>
+          <ul>
+            <li><code>register_v1</code> / <code>update_keys_v1</code> &mdash; Classical X25519</li>
+            <li><code>register_v2</code> / <code>update_keys_v2</code> &mdash; Hybrid X25519 + ML-KEM-768</li>
+            <li><code>update_name</code> / <code>deregister</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── subscription ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">SB</span>
+        <span class="node-label">subscription</span>
+        <span class="node-desc">&mdash; Delegated recurring payments</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>Subscription Program</h4>
+          Recurring payments with privacy options: amount noise, timing noise, stealth addresses. Payments are crank-permissionless (anyone can trigger).
+          <div class="program-id">3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW</div>
+          <h4>Instructions (9)</h4>
+          <ul>
+            <li><code>create_subscription</code> &mdash; Setup with privacy options</li>
+            <li><code>process_payment</code> &mdash; Permissionless payment execution</li>
+            <li><code>pause_subscription</code> / <code>resume_subscription</code> / <code>cancel_subscription</code></li>
+            <li><code>renew_delegation</code> / <code>update_privacy_settings</code> / <code>close_subscription</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── stream ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">SM</span>
+        <span class="node-label">stream</span>
+        <span class="node-desc">&mdash; Token streaming with escrow</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>Stream Secure</h4>
+          Time-locked token streaming. Sender escrows tokens, recipient withdraws accrued intervals. Supports cancellation with pro-rata refund.
+          <div class="program-id">C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx</div>
+          <h4>Instructions (3)</h4>
+          <ul>
+            <li><code>create_stream</code> &mdash; Initialize escrow with intervals</li>
+            <li><code>withdraw_from_stream</code> &mdash; Claim accrued intervals</li>
+            <li><code>cancel_stream</code> &mdash; Cancel, pay accrued, refund rest</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── whitelist ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">WL</span>
+        <span class="node-label">whitelist</span>
+        <span class="node-desc">&mdash; Developer access control + IPFS metadata</span>
+        <span class="node-badge badge-deployed">Devnet</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>Whitelist</h4>
+          Developer access control with IPFS-based encrypted metadata. Admin approves/rejects/revokes access.
+          <div class="program-id">5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33</div>
+          <h4>Instructions (6)</h4>
+          <ul><li><code>initialize</code>, <code>request_access</code>, <code>approve_request</code>, <code>reject_request</code>, <code>revoke_access</code>, <code>check_access</code></li></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01-fee-splitter ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">FE</span>
+        <span class="node-label">p01-fee-splitter</span>
+        <span class="node-desc">&mdash; Protocol fee extraction (0.5% default)</span>
+        <span class="node-badge badge-new">New</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>Fee Splitter</h4>
+          Automatic protocol fee extraction for SOL and SPL token transfers. Default 0.5% (50 bps), max 5% (500 bps). Hardcoded protocol fee wallet.
+          <div class="program-id">UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM</div>
+          <h4>Instructions (4)</h4>
+          <ul><li><code>initialize</code>, <code>update_config</code>, <code>split_sol</code>, <code>split_token</code>, <code>split_sol_direct</code></li></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── p01_bundler ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-program">BN</span>
+        <span class="node-label">p01_bundler</span>
+        <span class="node-desc">&mdash; Atomic batch shielding</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-program open">
+          <h4>On-chain Bundler</h4>
+          Atomic batch shielding via CPI to zk_shielded. Batches N deposits into a single transaction for gas efficiency and privacy (herd effect).
+          <h4>Instructions</h4>
+          <ul><li><code>batch_shield</code> &mdash; CPI to zk_shielded for N deposits</li></ul>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  2. CIRCOM CIRCUITS (10)                                     ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">C</span>
+    <span class="node-label">circuits/</span>
+    <span class="node-desc">&mdash; 10 Circom ZK circuits (Groth16, BN254)</span>
+    <span class="node-badge badge-groth16">Groth16</span>
+  </div>
+  <div class="node-children">
+
+    <!-- ── transfer ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">TX</span>
+        <span class="node-label">transfer.circom</span>
+        <span class="node-desc">&mdash; 2-in-2-out shielded transfer (Zcash-style)</span>
+        <span class="node-badge badge-groth16">~12K constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Transfer Circuit <span class="constraint-count">~12,222 constraints</span></h4>
+          Proves a valid 2-input 2-output shielded transfer. The most complex Circom circuit in the project.
+
+          <h4>Public Inputs</h4>
+          <ul>
+            <li><span class="pub-input">merkle_root</span> &mdash; Current pool root</li>
+            <li><span class="pub-input">nullifier_1, nullifier_2</span> &mdash; Spent note nullifiers</li>
+            <li><span class="pub-input">output_commitment_1, output_commitment_2</span> &mdash; New note commitments</li>
+            <li><span class="pub-input">public_amount</span> &mdash; Fee (0 for private-only)</li>
+            <li><span class="pub-input">token_mint</span> &mdash; Token identifier</li>
+          </ul>
+
+          <h4>Private Inputs</h4>
+          <ul>
+            <li><span class="priv-input">spending_key</span> &mdash; Owner's secret key</li>
+            <li><span class="priv-input">in_amount_1/2, in_rand_1/2</span> &mdash; Input note values</li>
+            <li><span class="priv-input">out_amount_1/2, out_rand_1/2, out_recipient_1/2</span> &mdash; Output notes</li>
+            <li><span class="priv-input">path_elements, path_indices</span> &mdash; Merkle proofs for both inputs</li>
+          </ul>
+
+          <h4>Components</h4>
+          Poseidon (hash), MerkleTreeChecker(15), Num2Bits(64) for range proofs
+
+          <h4>What It Proves</h4>
+          Sender owns both input notes (via spending_key) &rarr; input notes exist in Merkle tree &rarr; output commitments are well-formed &rarr; input sum = output sum + public_amount (conservation) &rarr; nullifiers are deterministic (prevent double-spend).
+        </div>
+      </div>
+    </div>
+
+    <!-- ── confidential_balance ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">CB</span>
+        <span class="node-label">confidential_balance.circom</span>
+        <span class="node-desc">&mdash; Hidden balance updates (deposit/withdraw/send/receive)</span>
+        <span class="node-badge badge-groth16">~1,382 constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Confidential Balance Circuit <span class="constraint-count">~1,382 constraints</span></h4>
+          Proves a valid balance state transition without revealing amounts. Used by zkSPL.
+
+          <h4>Public Inputs</h4>
+          <ul>
+            <li><span class="pub-input">old_commitment, new_commitment</span> &mdash; Balance commitments</li>
+            <li><span class="pub-input">amount_hash</span> &mdash; Poseidon(amount, amount_salt)</li>
+            <li><span class="pub-input">public_credit, public_debit</span> &mdash; Deposit/withdrawal amounts</li>
+            <li><span class="pub-input">token_mint, nonce</span></li>
+          </ul>
+
+          <h4>Private Inputs</h4>
+          <ul>
+            <li><span class="priv-input">old_balance, old_salt, new_balance, new_salt</span></li>
+            <li><span class="priv-input">amount, amount_salt, spending_key, is_debit</span></li>
+          </ul>
+
+          <h4>Key Constraint: Conservation Law</h4>
+          <code>old_balance + private_credit + public_credit = new_balance + private_debit + public_debit</code><br>
+          Also enforces: <code>public_credit * public_debit === 0</code> (no simultaneous deposit+withdraw)
+        </div>
+      </div>
+    </div>
+
+    <!-- ── balance_proof ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">BP</span>
+        <span class="node-label">balance_proof.circom</span>
+        <span class="node-desc">&mdash; Prove balance &ge; threshold without revealing amount</span>
+        <span class="node-badge badge-groth16">~644 constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Balance Proof Circuit <span class="constraint-count">~644 constraints</span></h4>
+          Proves "I have at least X tokens" without revealing the actual balance. Uses 64-bit range checks to ensure (balance - threshold) is non-negative.
+
+          <h4>Public Inputs</h4>
+          <ul>
+            <li><span class="pub-input">balance_commitment</span>, <span class="pub-input">threshold</span>, <span class="pub-input">token_mint</span></li>
+          </ul>
+
+          <h4>Private Inputs</h4>
+          <ul>
+            <li><span class="priv-input">balance</span>, <span class="priv-input">salt</span>, <span class="priv-input">nonce</span>, <span class="priv-input">spending_key</span></li>
+          </ul>
+
+          <h4>How It Works</h4>
+          Compute owner = Poseidon(spending_key) &rarr; verify commitment = Poseidon(balance, salt, nonce, owner, token_mint) &rarr; compute difference = balance - threshold &rarr; range-check difference to 64 bits (if negative, wraps to huge number, fails check).
+        </div>
+      </div>
+    </div>
+
+    <!-- ── denominated_pool ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">DP</span>
+        <span class="node-label">denominated_pool.circom</span>
+        <span class="node-desc">&mdash; Tornado Cash-style anonymous withdrawal</span>
+        <span class="node-badge badge-groth16">~4,273 constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Denominated Pool Circuit <span class="constraint-count">~4,273 constraints</span></h4>
+          Fixed-denomination anonymous withdrawal. All deposits are the same amount, so withdrawals are perfectly unlinkable.
+
+          <h4>Public Inputs</h4>
+          <ul>
+            <li><span class="pub-input">merkle_root</span>, <span class="pub-input">nullifier</span>, <span class="pub-input">min_epoch</span>, <span class="pub-input">token_mint</span>, <span class="pub-input">enforce_maturity</span></li>
+          </ul>
+
+          <h4>Private Inputs</h4>
+          <ul>
+            <li><span class="priv-input">secret</span>, <span class="priv-input">nullifier_preimage</span>, <span class="priv-input">deposit_epoch</span></li>
+            <li><span class="priv-input">path_elements[15]</span>, <span class="priv-input">path_indices[15]</span></li>
+          </ul>
+
+          <h4>What It Proves</h4>
+          commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint) &rarr; commitment exists in Merkle tree (depth 15) &rarr; nullifier = Poseidon(nullifier_preimage, secret) is deterministic &rarr; deposit_epoch &le; min_epoch (maturity enforced).
+        </div>
+      </div>
+    </div>
+
+    <!-- ── denominated_transfer ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">DT</span>
+        <span class="node-label">denominated_transfer.circom</span>
+        <span class="node-desc">&mdash; Peer-to-peer note transfer within pool</span>
+        <span class="node-badge badge-groth16">~4,000 constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Denominated Transfer <span class="constraint-count">~4,000 constraints</span></h4>
+          Transfers a note within a denominated pool to a new recipient. Old note is nullified, new commitment is created with recipient's secrets. Always enforces maturity (no emergency bypass).
+        </div>
+      </div>
+    </div>
+
+    <!-- ── escrow_bid ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">EB</span>
+        <span class="node-label">escrow_bid.circom</span>
+        <span class="node-desc">&mdash; Sealed-bid auction escrow (Arcium MPC)</span>
+        <span class="node-badge badge-mpc">MPC</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Escrow Bid Circuit</h4>
+          Proves valid auction escrow. Bidder's note is locked with two possible outcomes: pay_commitment (bidder loses, funds go to seller) or refund_commitment (bidder wins, funds returned). MPC determines winner, only one outcome commitment is inserted on-chain.
+
+          <h4>Public Inputs (7)</h4>
+          <ul>
+            <li><span class="pub-input">merkle_root</span>, <span class="pub-input">nullifier</span>, <span class="pub-input">min_epoch</span>, <span class="pub-input">token_mint</span></li>
+            <li><span class="pub-input">auction_id</span> &mdash; Anti-replay binding</li>
+            <li><span class="pub-input">pay_commitment</span>, <span class="pub-input">refund_commitment</span></li>
+          </ul>
+
+          <h4>Private Inputs (11)</h4>
+          Bidder's input note (3) + Merkle proof (2*15) + pay output (3) + refund output (3)
+        </div>
+      </div>
+    </div>
+
+    <!-- ── subscriber_ownership ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">SO</span>
+        <span class="node-label">subscriber_ownership.circom</span>
+        <span class="node-desc">&mdash; Prove subscription ownership</span>
+        <span class="node-badge badge-groth16">~41 constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Subscriber Ownership <span class="constraint-count">~41 constraints</span></h4>
+          Simplest circuit. Proves the prover knows the subscriber_secret that hashes to a public commitment. Used for private subscription authentication.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── note_split ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">NS</span>
+        <span class="node-label">note_split.circom</span>
+        <span class="node-desc">&mdash; UTXO consolidation/splitting</span>
+        <span class="node-badge badge-groth16">~10K constraints</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Note Split <span class="constraint-count">~10,000 constraints</span></h4>
+          Advanced UTXO management. Splits one input note into multiple output notes, or consolidates multiple inputs into fewer outputs. Used for change management in shielded transfers.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── merkle (library) ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">MK</span>
+        <span class="node-label">merkle.circom</span>
+        <span class="node-desc">&mdash; Merkle tree path verification (library)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Merkle Tree Checker (Library Template)</h4>
+          Generic depth-parameterized Merkle membership proof. Used by transfer, denominated_pool, denominated_transfer, and escrow_bid circuits. Uses Poseidon hashing at each level with MultiMux1 for path direction.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── poseidon (library) ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-circuit">PH</span>
+        <span class="node-label">poseidon.circom</span>
+        <span class="node-desc">&mdash; Poseidon hash template (library)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-circuit open">
+          <h4>Poseidon Hash (Library Template)</h4>
+          Custom N-ary Poseidon hash implementation. Algebraically efficient over BN254 scalar field. Used as the universal hash function across all circuits. Parameters: t=3 (2 inputs + 1 capacity), full S-box rounds.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  3. STARK AIRs (6)                                          ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">S</span>
+    <span class="node-label">stark/</span>
+    <span class="node-desc">&mdash; 6 STARK AIRs (Winterfell, quantum-resistant, no trusted setup)</span>
+    <span class="node-badge badge-stark">Post-Quantum</span>
+  </div>
+  <div class="node-children">
+
+    <div class="detail detail-stark open" style="margin-left:12px;">
+      <h4>STARK Proof System</h4>
+      Quantum-resistant proof system based on Winterfell v0.10. Uses Goldilocks field (p = 2^64 - 2^32 + 1), Poseidon hash with full S-box (x^7, 30 rounds), Blake3 Merkle trees. Compact proofs (~9KB). No trusted setup required (unlike Groth16).
+      <br><br>
+      <strong>Why STARK?</strong> Groth16 uses BN254 elliptic curve pairing, which is vulnerable to Shor's algorithm on quantum computers. STARKs are hash-based &mdash; security reduces to collision resistance of hash functions, which is quantum-resistant.
+    </div>
+
+    <!-- ── subscriber_ownership AIR ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">0</span>
+        <span class="node-label">subscriber_ownership</span>
+        <span class="node-desc">&mdash; Width=3, Length=32 (simplest AIR)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>AIR #0: Subscriber Ownership</h4>
+          <table>
+            <tr><th>Trace Width</th><th>Trace Length</th><th>Constraints</th><th>Degree</th></tr>
+            <tr><td>3 columns</td><td>32 rows</td><td>3 transition + 3 boundary</td><td>max 7</td></tr>
+          </table>
+          <h4>Computation</h4>
+          Single Poseidon hash: <code>commitment = Poseidon(subscriber_secret, 0)</code>
+          <br>Rows 0-29: Poseidon rounds (MDS * sbox(state + RC))
+          <br>Row 30: Output
+          <br>Row 31: Padding (copy of row 30)
+          <h4>What It Proves</h4>
+          Prover knows the subscriber_secret that hashes to the on-chain commitment. Quantum-resistant replacement for the Circom subscriber_ownership circuit.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── pool_commitment AIR ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">1</span>
+        <span class="node-label">pool_commitment</span>
+        <span class="node-desc">&mdash; Width=3, Length=128 (3 chained hashes)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>AIR #1: Pool Commitment (Denominated Pool)</h4>
+          <table>
+            <tr><th>Trace Width</th><th>Trace Length</th><th>Cycles</th><th>Constraints</th></tr>
+            <tr><td>3</td><td>128</td><td>3 &times; 32 + padding</td><td>4 transition + 6 boundary</td></tr>
+          </table>
+          <h4>Computation (3 chained Poseidon hashes)</h4>
+          <ul>
+            <li>Cycle 0: <code>nullifier = Poseidon(nullifier_preimage, secret)</code></li>
+            <li>Cycle 1: <code>epoch_hash = Poseidon(deposit_epoch, token_mint)</code></li>
+            <li>Cycle 2: <code>commitment = Poseidon(nullifier, epoch_hash)</code></li>
+          </ul>
+          <h4>What It Proves</h4>
+          Nullifier and commitment are correctly derived from the secret inputs. Combined with merkle_path AIR for full pool withdrawal proof.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── balance_proof AIR ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">2</span>
+        <span class="node-label">balance_proof</span>
+        <span class="node-desc">&mdash; Width=4, Length=128 (4 cycles + carry column)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>AIR #2: Balance Proof</h4>
+          <table>
+            <tr><th>Trace Width</th><th>Trace Length</th><th>Cycles</th><th>Constraints</th></tr>
+            <tr><td>4 (3 state + 1 carry)</td><td>128</td><td>4 &times; 32</td><td>7 transition + 7 boundary</td></tr>
+          </table>
+          <h4>Computation (4 chained hashes with carry)</h4>
+          <ul>
+            <li>Cycle 0: <code>owner = Poseidon(spending_key, 0)</code></li>
+            <li>Cycle 1: <code>owner_mint = Poseidon(owner, token_mint)</code> &rarr; captured in carry column</li>
+            <li>Cycle 2: <code>bal_salt = Poseidon(balance, salt)</code></li>
+            <li>Cycle 3: <code>commitment = Poseidon(bal_salt, owner_mint)</code> &mdash; owner_mint routed from carry</li>
+          </ul>
+          <h4>Carry Column</h4>
+          Column 3 holds intermediate values (owner_mint) across cycle boundaries, enabling non-linear chaining of hash outputs.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── merkle_path AIR ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">3</span>
+        <span class="node-label">merkle_path</span>
+        <span class="node-desc">&mdash; Width=6, Length=pow2(depth*32), depth-parameterized</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>AIR #3: Merkle Path Verification</h4>
+          <table>
+            <tr><th>Trace Width</th><th>Trace Length</th><th>Constraints</th></tr>
+            <tr><td>6 (3 state + sibling + direction + carry)</td><td>next_pow2(DEPTH &times; 32)</td><td>11 transition + 2 boundary</td></tr>
+          </table>
+          <h4>Columns</h4>
+          <ul>
+            <li>Cols 0-2: Poseidon state</li>
+            <li>Col 3: Sibling (path element at this level)</li>
+            <li>Col 4: Direction (0 = left, 1 = right)</li>
+            <li>Col 5: Carry (previous hash output; leaf for cycle 0)</li>
+          </ul>
+          <h4>What It Proves</h4>
+          A leaf exists in a Merkle tree of given depth with given root. Direction-based muxing ensures correct left/right ordering at each level. Tested at depth 15 (matching Circom circuits).
+        </div>
+      </div>
+    </div>
+
+    <!-- ── confidential_balance AIR ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">4</span>
+        <span class="node-label">confidential_balance</span>
+        <span class="node-desc">&mdash; Width=4, Length=256 (8 cycles, cascaded commitments)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>AIR #4: Confidential Balance</h4>
+          <table>
+            <tr><th>Trace Width</th><th>Trace Length</th><th>Cycles</th><th>Constraints</th></tr>
+            <tr><td>4 (3 state + 1 carry)</td><td>256</td><td>8 &times; 32</td><td>10 transition + 12 boundary</td></tr>
+          </table>
+          <h4>Computation (8 hashes)</h4>
+          <ul>
+            <li>Cycle 0: <code>owner = Poseidon(spending_key, 0)</code></li>
+            <li>Cycle 1: <code>owner_mint = Poseidon(owner, token_mint)</code> &rarr; carry</li>
+            <li>Cycle 2: <code>amount_hash = Poseidon(amount, amount_salt)</code></li>
+            <li>Cycle 3: <code>old_bal_salt = Poseidon(old_balance, old_salt)</code></li>
+            <li>Cycle 4: <code>old_commitment = Poseidon(old_bal_salt, owner_mint)</code> &larr; carry</li>
+            <li>Cycle 5: <code>new_bal_salt = Poseidon(new_balance, new_salt)</code></li>
+            <li>Cycle 6: <code>new_commitment = Poseidon(new_bal_salt, owner_mint)</code> &larr; carry</li>
+            <li>Cycle 7: padding (power-of-2)</li>
+          </ul>
+          <h4>Note</h4>
+          Conservation law (old_balance + credits = new_balance + debits) is verified <strong>off-chain</strong>, not in the AIR constraints. The AIR only proves correct commitment construction.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── transfer AIR ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-stark">5</span>
+        <span class="node-label">transfer</span>
+        <span class="node-desc">&mdash; Width=6, Length=512 (16 cycles, most complex AIR)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-stark open">
+          <h4>AIR #5: Transfer (Most Complex)</h4>
+          <table>
+            <tr><th>Trace Width</th><th>Trace Length</th><th>Cycles</th><th>Constraints</th></tr>
+            <tr><td>6 (3 state + 3 carry)</td><td>512</td><td>16 &times; 32</td><td>23 transition + 24 boundary</td></tr>
+          </table>
+          <h4>Columns</h4>
+          <ul>
+            <li>Cols 0-2: Poseidon state</li>
+            <li>Col 3: carry_owner (spending key hash)</li>
+            <li>Col 4: carry_owner_mint (owner+token hash)</li>
+            <li>Col 5: carry_out_rm (output recipient &times; mint hashes)</li>
+          </ul>
+          <h4>Computation (16 hashes)</h4>
+          <ul>
+            <li>Cycles 0-1: Owner derivation (spending_key &rarr; owner &rarr; owner_mint)</li>
+            <li>Cycles 2-4: Input 1 (commitment + nullifier)</li>
+            <li>Cycles 5-7: Input 2 (commitment + nullifier)</li>
+            <li>Cycles 8-10: Output 1 (recipient_mint + amount + commitment)</li>
+            <li>Cycles 11-13: Output 2 (same pattern)</li>
+            <li>Cycles 14-15: Padding</li>
+          </ul>
+          <h4>Public Inputs (6)</h4>
+          nullifier_1, nullifier_2, output_commitment_1, output_commitment_2, public_amount, token_mint
+          <h4>Note</h4>
+          Merkle membership for both inputs is verified separately via the merkle_path AIR (circuit #3).
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  4. SDK PACKAGES (17)                                       ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">K</span>
+    <span class="node-label">packages/</span>
+    <span class="node-desc">&mdash; 17 TypeScript/Rust SDK packages</span>
+    <span class="node-badge badge-count">17</span>
+  </div>
+  <div class="node-children">
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">ZK</span>
+        <span class="node-label">zk-sdk</span>
+        <span class="node-desc">&mdash; @p01/zk-sdk &mdash; Core ZK infrastructure</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>@p01/zk-sdk</h4>
+        Core ZK infrastructure. Exports: <code>ShieldedClient</code>, <code>Note</code>, <code>EncryptedNote</code>, <code>createNote</code>, <code>encryptNote</code>, <code>decryptNote</code>, <code>MerkleTree</code>, <code>generateMerkleProof</code>, <code>ZkProver</code>, <code>generateProof</code>, <code>poseidonHash</code>, <code>computeCommitment</code>, <code>computeNullifier</code>, <code>deriveOwnerPubkey</code>.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">ZS</span>
+        <span class="node-label">zkspl-sdk</span>
+        <span class="node-desc">&mdash; @p01/zkspl-sdk &mdash; Confidential token operations</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>@p01/zkspl-sdk</h4>
+        SDK for zkSPL program. Exports: <code>ZkSplClient</code>, <code>createBalanceCommitment</code>, <code>createAmountCommitment</code>, <code>ZkSplProver</code>, <code>LocalStateManager</code>. Handles Poseidon commitments, proof generation, and local state tracking.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">SP</span>
+        <span class="node-label">specter-sdk</span>
+        <span class="node-desc">&mdash; @p01/specter-sdk &mdash; Main P01 client SDK</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>@p01/specter-sdk (Main SDK)</h4>
+        The most comprehensive SDK. Exports: <code>P01Client</code>, wallet module (create/import/derive), stealth module (generate/scan/claim), transfer module, streams module, indexing module (<code>CommitmentIndexer</code>, <code>StealthIndexer</code>), subscription module, proving module (<code>ClientProver</code>), relay module, quantum-safe vault (WOTS+, hash vault), registry module.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">AR</span>
+        <span class="node-label">arcium-sdk</span>
+        <span class="node-desc">&mdash; @p01/arcium-sdk &mdash; MPC integration (7 use cases)</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>@p01/arcium-sdk</h4>
+        Arcium MPC integration. Exports: <code>ArciumClient</code>, UC1 confidential relay, UC2 anonymous registry, UC3 hidden nullifier, UC4 confidential audit, UC5 threshold stealth scan, UC6 private voting, UC7 sealed-bid auction.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">AU</span>
+        <span class="node-label">auth-sdk</span>
+        <span class="node-desc">&mdash; @p01/auth-sdk &mdash; "Login with Protocol 01"</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>@p01/auth-sdk</h4>
+        Authentication SDK. Exports: <code>P01AuthClient</code> (frontend), <code>P01AuthServer</code> (backend verification). Enables "Login with Protocol 01" for third-party apps.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">P1</span>
+        <span class="node-label">p01-js</span>
+        <span class="node-desc">&mdash; p-01 &mdash; Merchant payments &amp; subscriptions</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>p-01 (p01-js)</h4>
+        Merchant-facing SDK. Exports: <code>Protocol01</code> class, payment requests, <code>PrivateSubscription</code>, <code>PrivateStream</code>, shielded pool operations, <code>RelayerClient</code>, ZK proof generator, receipt management, subscription vault helpers.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">UI</span>
+        <span class="node-label">ui</span>
+        <span class="node-desc">&mdash; @p01/ui &mdash; Design system (ultra-dark + neon)</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        <h4>@p01/ui &mdash; Design System</h4>
+        Cyberpunk-inspired theme (Miku cyan #39c5bb + KAngel pink #ff77a8). Exports: colors, typography, spacing, shadows, glows, glass effects, animations, transitions. Components: <code>Button</code>, <code>Card</code>, <code>Input</code>, <code>TextArea</code>, <code>Badge</code>, <code>Avatar</code>, <code>Modal</code>, <code>Toast</code>, <code>Loader</code>, <code>Skeleton</code>. Supports both Web (React) and Mobile (React Native).
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">PT</span>
+        <span class="node-label">privacy-toolkit</span>
+        <span class="node-desc">&mdash; @p01/privacy-toolkit &mdash; Merkle tree + Poseidon</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Merkle tree utilities (<code>incrementalTree</code>), Poseidon commitment, amount hashing, proof format conversion.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">RN</span>
+        <span class="node-label">react-native-zk</span>
+        <span class="node-desc">&mdash; @p01/react-native-zk &mdash; Mobile ZK prover (WebView)</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Hidden WebView-based ZK proof generation for React Native. Exports: <code>ZKProver</code>, <code>ZKProverProvider</code>, <code>useZKProver</code> hook, circuit loading/caching.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">WL</span>
+        <span class="node-label">whitelist-sdk</span>
+        <span class="node-desc">&mdash; @p01/whitelist-sdk &mdash; Developer access control</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Whitelist operations, IPFS upload/fetch, admin keypair generation, PDA derivation, encrypted metadata.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">RC</span>
+        <span class="node-label">rpc-config</span>
+        <span class="node-desc">&mdash; @p01/rpc-config &mdash; RPC endpoint management</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Priority-based RPC endpoint resolution with automatic fallback. Exports: <code>getEndpoints</code>, <code>RpcConnectionManager</code>, explorer URL builders.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">SV</span>
+        <span class="node-label">solana-verifier</span>
+        <span class="node-desc">&mdash; Rust crate &mdash; On-chain Groth16 verification (BN254)</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Rust crate for on-chain Groth16 proof verification using Solana BN254 syscalls.
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">SD</span>
+        <span class="node-label">sdk / specter-js</span>
+        <span class="node-desc">&mdash; @p01/sdk + @p01/js &mdash; Stream payments + UI buttons</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Stream payment utilities and pre-built UI components (<code>createPayButton</code>, <code>createSubscribeButton</code>).
+      </div></div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span><span class="icon icon-sdk">ZP</span>
+        <span class="node-label">zk-pipeline</span>
+        <span class="node-desc">&mdash; Circuit compilation pipeline (build tool)</span>
+      </div>
+      <div class="node-children"><div class="detail detail-sdk open">
+        Build pipeline for compiling Circom circuits: circom2 &rarr; WASM + R1CS &rarr; snarkjs trusted setup (pot20_final.ptau + beacon) &rarr; verification keys.
+      </div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  5. APPS (3)                                                 ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">A</span>
+    <span class="node-label">apps/</span>
+    <span class="node-desc">&mdash; 3 client applications</span>
+    <span class="node-badge badge-count">3</span>
+  </div>
+  <div class="node-children">
+
+    <!-- ── Mobile ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-app">M</span>
+        <span class="node-label">mobile/</span>
+        <span class="node-desc">&mdash; Expo 54 / React Native 0.81 (Android)</span>
+      </div>
+      <div class="node-children">
+
+        <!-- Screens -->
+        <div class="node" data-level="2">
+          <div class="node-header" onclick="toggle(this)">
+            <span class="chevron">&#9654;</span><span class="icon icon-screen">SC</span>
+            <span class="node-label">Screens</span>
+            <span class="node-desc">&mdash; 45+ screens across 7 route groups</span>
+          </div>
+          <div class="node-children">
+            <div class="detail detail-app open">
+              <h4>(auth) &mdash; Authentication</h4>
+              <code>login.tsx</code>, <code>import.tsx</code>, <code>lock.tsx</code>
+              <h4>(onboarding) &mdash; First Launch</h4>
+              <code>index.tsx</code>, <code>create-wallet.tsx</code>, <code>backup.tsx</code>, <code>verify.tsx</code>, <code>security.tsx</code>, <code>features.tsx</code>
+              <h4>(wallet) &mdash; 14 screens</h4>
+              <code>index</code>, <code>activity</code>, <code>send</code>, <code>send-confirm</code>, <code>send-split</code>, <code>send-success</code>, <code>receive</code>, <code>buy</code>, <code>swap</code>, <code>scan</code>, <code>auth-confirm</code>, <code>view-keys</code>
+              <h4>(privacy) &mdash; 15 screens</h4>
+              <code>index</code>, <code>confidential</code>, <code>shielded</code>, <code>shielded-transfer</code>, <code>private-send</code>, <code>receive-note</code>, <code>share-note</code>, <code>denominated-shield</code>, <code>denominated-unshield</code>, <code>denominated-transfer</code>, <code>denominated-notes</code>, <code>denominated-import</code>, <code>subscribe-normal</code>, <code>subscribe-private</code>, <code>subscription-vaults</code>, <code>vault-detail</code>
+              <h4>(streams) &mdash; 4 screens</h4>
+              <code>index</code>, <code>create</code>, <code>subscribe</code>, <code>[id]</code>
+              <h4>(agent) &mdash; AI Agent, 4 screens</h4>
+              <code>index</code>, <code>chat</code>, <code>history</code>, <code>settings</code>
+              <h4>(settings) &mdash; 8 screens</h4>
+              <code>index</code>, <code>backup</code>, <code>security</code>, <code>privacy</code>, <code>privacy-test</code>, <code>network</code>, <code>network-privacy</code>, <code>about</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- Services -->
+        <div class="node" data-level="2">
+          <div class="node-header" onclick="toggle(this)">
+            <span class="chevron">&#9654;</span><span class="icon icon-service">SV</span>
+            <span class="node-label">Services</span>
+            <span class="node-desc">&mdash; 25+ service modules</span>
+          </div>
+          <div class="node-children">
+            <div class="detail detail-app open">
+              <table>
+                <tr><th>Service</th><th>Purpose</th></tr>
+                <tr><td>ai/</td><td>AI agent (Gemma, Llama, tools, voice, stream analyzer)</td></tr>
+                <tr><td>arcium/</td><td>MPC client, confidential relay, nullifier commit, private lookup</td></tr>
+                <tr><td>solana/</td><td>Balance, connection, transactions, wallet, agentKit, streams, websocket</td></tr>
+                <tr><td>zk/ + zkProver/</td><td>WebView prover, circuit loading</td></tr>
+                <tr><td>stark/</td><td>WASM STARK prover (82KB base64 module)</td></tr>
+                <tr><td>stealth/</td><td>Key derivation for stealth addresses</td></tr>
+                <tr><td>denominatedPool/</td><td>Denominated pool circuit loader</td></tr>
+                <tr><td>privacyRouter/</td><td>Autonomous privacy routing (planner, scheduler, cipher)</td></tr>
+                <tr><td>privacy/</td><td>Tor proxy, transaction splitter</td></tr>
+                <tr><td>jupiter/</td><td>Jupiter DEX integration</td></tr>
+                <tr><td>jito/</td><td>Jito MEV integration</td></tr>
+                <tr><td>sharing/</td><td>BLE P2P address sharing</td></tr>
+                <tr><td>sync/</td><td>Real-time sync service</td></tr>
+                <tr><td>payments/</td><td>P01 payments integration</td></tr>
+                <tr><td>notifications/</td><td>Push notification wrapper</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stores -->
+        <div class="node" data-level="2">
+          <div class="node-header" onclick="toggle(this)">
+            <span class="chevron">&#9654;</span><span class="icon icon-store">ST</span>
+            <span class="node-label">Stores (Zustand)</span>
+            <span class="node-desc">&mdash; 15 state stores</span>
+          </div>
+          <div class="node-children">
+            <div class="detail detail-app open">
+              <code>walletStore</code>, <code>confidentialStore</code>, <code>shieldedStore</code>, <code>denominatedPoolStore</code>, <code>subscriptionVaultStore</code>, <code>streamStore</code>, <code>aiStore</code>, <code>settingsStore</code>, <code>alertStore</code>, <code>arciumStore</code>, <code>autoShieldStore</code>, <code>sharingStore</code>, <code>splitTransactionStore</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- Providers -->
+        <div class="node" data-level="2">
+          <div class="node-header" onclick="toggle(this)">
+            <span class="chevron">&#9654;</span><span class="icon icon-app">PR</span>
+            <span class="node-label">Providers</span>
+            <span class="node-desc">&mdash; 5 React context providers</span>
+          </div>
+          <div class="node-children">
+            <div class="detail detail-app open">
+              <code>PrivyProvider</code> (auth), <code>ZkProverProvider</code> (Groth16), <code>StarkProverProvider</code> (STARK WASM), <code>ArciumProvider</code> (MPC), <code>AlertProvider</code> (notifications)
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Extension ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-app">E</span>
+        <span class="node-label">extension/</span>
+        <span class="node-desc">&mdash; Chrome/Firefox WebExtension (Vite, MV3)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-app open">
+          <h4>Architecture</h4>
+          <ul>
+            <li><code>src/background/</code> &mdash; Service worker</li>
+            <li><code>src/content/</code> &mdash; Content script</li>
+            <li><code>src/inject/</code> &mdash; Page-context injection</li>
+            <li><code>src/popup/</code> &mdash; Extension popup UI</li>
+            <li><code>src/shared/</code> &mdash; Config, hooks, providers, stores, workers</li>
+          </ul>
+
+          <h4>Pages (38)</h4>
+          <table>
+            <tr><th>Category</th><th>Pages</th></tr>
+            <tr><td>Auth</td><td>Welcome, CreateWallet, ImportWallet, Unlock</td></tr>
+            <tr><td>Wallet</td><td>Home, Send, SendConfirm, Receive, Activity, Buy, Swap, ConfidentialWallet, ShieldedWallet</td></tr>
+            <tr><td>Privacy</td><td>ShieldedTransfer, StealthPayments, DenominatedPools, DenominatedShield, DenominatedUnshield</td></tr>
+            <tr><td>Subscriptions</td><td>CreateSubscription, Subscriptions, SubscriptionDetails, ApproveSubscription, SubscriptionVaults</td></tr>
+            <tr><td>Transactions</td><td>ApproveTransaction, ConnectDapp</td></tr>
+            <tr><td>Settings</td><td>Settings, ConnectedSites</td></tr>
+            <tr><td>AI</td><td>Agent</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Web ── -->
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-app">W</span>
+        <span class="node-label">web/</span>
+        <span class="node-desc">&mdash; Next.js 16, Tailwind v4, Framer Motion</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-app open">
+          <h4>Routes (11)</h4>
+          <code>/</code> (landing), <code>/admin</code>, <code>/docs</code>, <code>/founder</code>, <code>/roadmap</code>, <code>/licenses</code>, <code>/privacy</code>, <code>/terms</code>, <code>/sdk-demo</code>, <code>/demo</code>, <code>/api/*</code>
+
+          <h4>Components (18)</h4>
+          <code>Hero</code>, <code>Problem</code>, <code>Features</code>, <code>HowItWorks</code>, <code>TechStack</code>, <code>Ecosystem</code>, <code>Showcase</code>, <code>CTA</code>, <code>Footer</code>, <code>GlitchLogo01</code>, <code>GlitchText01</code>, <code>DepthBackground</code>, <code>GridBackground</code>, <code>PhoneMockup</code>, <code>TerminalAnimation</code>, <code>WalletProvider</code>
+
+          <h4>i18n</h4>
+          English, French, Japanese
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  6. BACKEND SERVICES (2)                                     ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">S</span>
+    <span class="node-label">services/</span>
+    <span class="node-desc">&mdash; 2 backend services</span>
+    <span class="node-badge badge-count">2</span>
+  </div>
+  <div class="node-children">
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-service">PR</span>
+        <span class="node-label">prover/</span>
+        <span class="node-desc">&mdash; Rust Groth16 prover (arkworks + axum)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-service open">
+          <h4>Native Groth16 Prover</h4>
+          Rust HTTP service using arkworks (ark-bn254, ark-groth16, ark-circom) and axum. Semaphore-based slot management (1 concurrent proof).
+
+          <h4>Endpoints</h4>
+          <table>
+            <tr><th>Route</th><th>Circuit</th></tr>
+            <tr><td>POST /prove</td><td>Transfer</td></tr>
+            <tr><td>POST /prove/zkspl</td><td>Confidential Balance</td></tr>
+            <tr><td>POST /prove/balance-proof</td><td>Balance Proof</td></tr>
+            <tr><td>POST /prove/subscriber-ownership</td><td>Subscriber Ownership</td></tr>
+            <tr><td>GET /health</td><td>Circuit availability</td></tr>
+          </table>
+          Each /prove endpoint has a corresponding /verify endpoint.
+        </div>
+      </div>
+    </div>
+
+    <div class="node" data-level="1">
+      <div class="node-header" onclick="toggle(this)">
+        <span class="chevron">&#9654;</span>
+        <span class="icon icon-service">BN</span>
+        <span class="node-label">p01-bundler/</span>
+        <span class="node-desc">&mdash; Privacy TX bundling (Express + SOCKS5)</span>
+      </div>
+      <div class="node-children">
+        <div class="detail detail-service open">
+          <h4>Privacy Bundler</h4>
+          Transaction bundling service for privacy-preserving batch submissions. Exports: <code>PrivacyMempool</code>, <code>P01BundleClient</code>. Features: mempool management, SOCKS5 proxy support, security validation.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  7. TESTS                                                    ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">T</span>
+    <span class="node-label">tests/</span>
+    <span class="node-desc">&mdash; Integration &amp; E2E test suite</span>
+    <span class="node-badge badge-count">15+</span>
+  </div>
+  <div class="node-children">
+    <div class="detail detail-program open" style="margin-left:12px;">
+      <h4>Test Files</h4>
+      <table>
+        <tr><th>Test</th><th>Coverage</th></tr>
+        <tr><td>zk-shielded.test.ts</td><td>ZK shielded pool operations</td></tr>
+        <tr><td>zk-transfer.test.ts</td><td>Transfer circuit proofs</td></tr>
+        <tr><td>zk-e2e.test.ts</td><td>End-to-end ZK flow</td></tr>
+        <tr><td>e2e-stealth-payments.test.ts</td><td>Stealth payment lifecycle</td></tr>
+        <tr><td>e2e-stream-secure.test.ts</td><td>Stream subscription lifecycle</td></tr>
+        <tr><td>e2e-auth-flow.test.ts</td><td>Authentication flow</td></tr>
+        <tr><td>e2e-privacy-modes.test.ts</td><td>Privacy mode switching</td></tr>
+        <tr><td>e2e-stark-flow.test.ts</td><td>STARK proof flow</td></tr>
+        <tr><td>e2e-cross-program.test.ts</td><td>Cross-program CPI</td></tr>
+        <tr><td>e2e-quantum-vault.test.ts</td><td>Quantum vault (WOTS+, hash-timelock)</td></tr>
+        <tr><td>e2e-full-shield-unshield.test.ts</td><td>Full privacy cycle</td></tr>
+        <tr><td>p01-stark-verifier.test.ts</td><td>STARK verifier (6 circuits)</td></tr>
+        <tr><td>stress-crypto-sdk.test.ts</td><td>Crypto performance</td></tr>
+        <tr><td>stress-programs.test.ts</td><td>Program stress testing</td></tr>
+        <tr><td>stress-mobile-services.test.ts</td><td>Mobile service perf</td></tr>
+      </table>
+      Runner: ts-mocha &mdash; Timeouts: 120K-600K ms
+    </div>
+  </div>
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════════════╗
+     ║  8. CONFIG FILES                                             ║
+     ╚══════════════════════════════════════════════════════════════╝ -->
+<div class="node" data-level="0">
+  <div class="node-header" onclick="toggle(this)">
+    <span class="chevron">&#9654;</span>
+    <span class="icon icon-folder">CF</span>
+    <span class="node-label">Config &amp; Build</span>
+    <span class="node-desc">&mdash; Root configuration files</span>
+  </div>
+  <div class="node-children">
+    <div class="detail detail-program open" style="margin-left:12px;">
+      <table>
+        <tr><th>File</th><th>Purpose</th></tr>
+        <tr><td>Cargo.toml</td><td>Rust workspace (15 programs + stark)</td></tr>
+        <tr><td>Anchor.toml</td><td>Anchor config + all program IDs (devnet/localnet/mainnet)</td></tr>
+        <tr><td>package.json</td><td>Node.js root (pnpm monorepo)</td></tr>
+        <tr><td>pnpm-workspace.yaml</td><td>Workspace: apps/*, packages/*, services/*</td></tr>
+        <tr><td>turbo.json</td><td>Turborepo pipeline (build, dev, test)</td></tr>
+        <tr><td>tsconfig.json</td><td>TypeScript strict mode</td></tr>
+      </table>
+
+      <h4>Tech Stack</h4>
+      <table>
+        <tr><th>Layer</th><th>Stack</th></tr>
+        <tr><td>Blockchain</td><td>Solana (Agave 2.2.14), Anchor 0.32.1, Rust 1.94</td></tr>
+        <tr><td>ZK (Classical)</td><td>circom2 v2.2.2, snarkjs v0.7.5, Groth16/BN254</td></tr>
+        <tr><td>ZK (Quantum)</td><td>Winterfell v0.10, Goldilocks field, FRI/STARK</td></tr>
+        <tr><td>Post-Quantum</td><td>ML-KEM-768 (@noble/post-quantum), WOTS+ (SHA-256)</td></tr>
+        <tr><td>MPC</td><td>Arcium network (9 computation definitions)</td></tr>
+        <tr><td>Frontend</td><td>React 19, Next.js 16, Tailwind v4, Framer Motion</td></tr>
+        <tr><td>Mobile</td><td>Expo 54, React Native 0.81, NativeWind</td></tr>
+        <tr><td>Extension</td><td>Vite, CRXJS, Chrome MV3</td></tr>
+        <tr><td>Auth</td><td>Privy (@privy-io/expo)</td></tr>
+        <tr><td>Crypto</td><td>@noble/curves, @noble/hashes, poseidon-lite</td></tr>
+        <tr><td>Build</td><td>pnpm 8.15, Turborepo, tsup, vitest</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+</div> <!-- /tree-container -->
+
+<div class="footer">
+  PROTOCOL-01 &mdash; Privacy Layer for Solana &mdash; Built by Volta Team &mdash; Generated 2026-04-01
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- JAVASCRIPT                                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<script>
+function toggle(header) {
+  const node = header.parentElement;
+  const children = node.querySelector('.node-children');
+  const chevron = header.querySelector('.chevron');
+
+  if (!children) return;
+
+  const isOpen = children.classList.contains('open');
+  children.classList.toggle('open');
+  chevron.classList.toggle('open');
+  header.classList.toggle('active');
+}
+
+function expandAll() {
+  document.querySelectorAll('.node-children').forEach(el => el.classList.add('open'));
+  document.querySelectorAll('.chevron').forEach(el => el.classList.add('open'));
+  document.querySelectorAll('.node-header').forEach(el => el.classList.add('active'));
+  document.querySelectorAll('.detail').forEach(el => el.classList.add('open'));
+}
+
+function collapseAll() {
+  document.querySelectorAll('.node-children').forEach(el => el.classList.remove('open'));
+  document.querySelectorAll('.chevron').forEach(el => el.classList.remove('open'));
+  document.querySelectorAll('.node-header').forEach(el => el.classList.remove('active'));
+}
+
+function expandLevel(level) {
+  collapseAll();
+  document.querySelectorAll('.node').forEach(node => {
+    const nodeLevel = parseInt(node.dataset.level || '99');
+    if (nodeLevel < level) {
+      const children = node.querySelector('.node-children');
+      const chevron = node.querySelector(':scope > .node-header .chevron');
+      const header = node.querySelector(':scope > .node-header');
+      if (children) {
+        children.classList.add('open');
+        if (chevron) chevron.classList.add('open');
+        if (header) header.classList.add('active');
+      }
+    }
+  });
+}
+
+function searchTree(query) {
+  const q = query.toLowerCase().trim();
+  const allNodes = document.querySelectorAll('.node');
+
+  if (!q) {
+    allNodes.forEach(n => {
+      n.classList.remove('search-hidden', 'search-match');
+      n.style.display = '';
+    });
+    return;
+  }
+
+  allNodes.forEach(node => {
+    const label = node.querySelector('.node-label');
+    const desc = node.querySelector('.node-desc');
+    const detail = node.querySelector('.detail');
+    const text = [
+      label?.textContent || '',
+      desc?.textContent || '',
+      detail?.textContent || ''
+    ].join(' ').toLowerCase();
+
+    if (text.includes(q)) {
+      node.style.display = '';
+      node.classList.add('search-match');
+      node.classList.remove('search-hidden');
+      // Expand parents
+      let parent = node.parentElement;
+      while (parent) {
+        if (parent.classList.contains('node-children')) {
+          parent.classList.add('open');
+          const ph = parent.previousElementSibling;
+          if (ph) {
+            ph.classList.add('active');
+            const c = ph.querySelector('.chevron');
+            if (c) c.classList.add('open');
+          }
+        }
+        parent = parent.parentElement;
+      }
+    } else {
+      node.classList.remove('search-match');
+      // Only hide leaf nodes
+      const hasVisibleChild = node.querySelector('.node:not(.search-hidden)');
+      if (!hasVisibleChild) {
+        node.style.display = 'none';
+        node.classList.add('search-hidden');
+      }
+    }
+  });
+}
+
+// Auto-expand level 0 on load
+document.addEventListener('DOMContentLoaded', () => {
+  expandLevel(1);
+});
+</script>
+
+</body>
+</html>
