@@ -86,7 +86,7 @@ const en = {
 
   // ── Features ───────────────────────────────────────────────
   features: {
-    badge: '12 Privacy Modules',
+    badge: '14 Privacy Modules',
     title1: 'Everything you need.',
     title2: 'Nothing they can trace.',
     autoShield: 'Auto-Shield',
@@ -341,11 +341,11 @@ const en = {
       },
       securityAudit: {
         title: 'External Security Audit',
-        desc: 'Comprehensive audit of all 14 programs, 7 Groth16 circuits, 6 STARK AIRs, and 8 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.',
+        desc: 'Comprehensive audit of all 14 programs, 10 Groth16 circuits, 6 STARK AIRs, and 17 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.',
       },
       trustedSetup: {
         title: 'Trusted Setup Ceremony',
-        desc: 'Multi-party Groth16 trusted setup with 3+ contributors (currently 1). Powers of Tau + beacon finalization for all 7 circuits.',
+        desc: 'Multi-party Groth16 trusted setup with 3+ contributors (currently 1). Powers of Tau + beacon finalization for all 10 circuits.',
       },
       iosBuild: {
         title: 'iOS Build & Testing',
@@ -858,7 +858,7 @@ const en = {
       },
       clientSdk: {
         title: 'Client SDK Architecture',
-        desc: 'Eight TypeScript SDKs covering every use case: stealth wallets, ZK proofs, confidential tokens, MPC compute, merchant integration, Merkle trees, authentication, and RPC infrastructure. All run client-side for maximum privacy.',
+        desc: 'Seventeen TypeScript SDKs covering every use case: stealth wallets, ZK proofs, confidential tokens, MPC compute, merchant integration, Merkle trees, authentication, RPC infrastructure, privacy toolkit, and unified privacy SDK. All run client-side for maximum privacy.',
         detail1: '@p01/specter-sdk — Core privacy: stealth wallets, transfers, quantum vault, registry, indexer',
         detail2: '@p01/zk-sdk — ZK primitives: ShieldedClient, Note, MerkleTree, ZkProver, viewing keys',
         detail3: '@p01/zkspl-sdk — Confidential tokens: deposit, withdraw, transfer, balance proof',
@@ -1027,7 +1027,7 @@ const en = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'Founder & Solo Developer — Protocol 01',
-    bio: '24 years old, based in Paris.\nEpitech alumni with a Master\'s in Cybersecurity and 7+ years of coding experience.\nI built Protocol 01 alone in 72 days, 12 Solana programs, 6 ZK circuits, 6 STARKs, 3 client apps, and 8 SDKs.\nNo team, no funding, just execution.',
+    bio: '24 years old, based in Paris.\nEpitech alumni with a Master\'s in Cybersecurity and 7+ years of coding experience.\nI built Protocol 01 alone in 90 days, 14 Solana programs, 10 ZK circuits, 6 STARKs, 3 client apps, and 17 SDKs.\nNo team, no funding, just execution.',
     missionBadge: 'Mission',
     missionTitle: 'Why I Build This',
     mission1: 'I believe financial privacy is a fundamental right, not a feature.\nEvery blockchain transaction today creates a permanent trail, your salary, subscriptions, donations, everything is public.\nThat\'s not transparency, that\'s surveillance.',
@@ -1043,7 +1043,7 @@ const en = {
       captnboat: { title: 'CaptNBoat — Dev & PM', desc: 'Full-stack developer and project manager. Led cybersecurity initiatives and product development for 2 years.' },
       master: { title: 'Master\'s — Cybersecurity', desc: 'Epitech Paris. Specialized in offensive security, cryptography, and secure architecture.' },
       freelance: { title: 'Freelance & Hackathons', desc: 'Went independent. Started competing in Solana hackathons. Built the first version of Protocol 01.' },
-      protocol01: { title: 'Protocol 01 — Full Time', desc: 'Continuous solo development since January 2026. 14 programs, 6 ZK circuits, 6 STARKs, 9 MPC circuits, 3 apps, 8 SDKs. Submitted to Colosseum Frontier 2026.' },
+      protocol01: { title: 'Protocol 01 — Full Time', desc: 'Continuous solo development since January 2026. 14 programs, 10 ZK circuits, 6 STARKs, 9 MPC circuits, 3 apps, 17 SDKs. Submitted to Colosseum Frontier 2026.' },
     },
     stats: {
       yearsCode: 'Years Coding',

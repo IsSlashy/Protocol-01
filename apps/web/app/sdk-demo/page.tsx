@@ -588,7 +588,7 @@ const result = await arcium.execute({
           {[
             { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl", icon: Wallet },
             { label: t('sdkDemo.archProofLayer'), sub: "Groth16 · STARK · MPC", icon: Shield },
-            { label: t('sdkDemo.archOnChain'), sub: "13 Anchor Programs", icon: Boxes },
+            { label: t('sdkDemo.archOnChain'), sub: "14 Anchor Programs", icon: Boxes },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && (

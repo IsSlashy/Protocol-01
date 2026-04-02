@@ -88,7 +88,7 @@ const fr: Translations = {
 
   // ── Features ───────────────────────────────────────────────
   features: {
-    badge: '12 modules de confidentialit\u00e9',
+    badge: '14 modules de confidentialité',
     title1: 'Tout ce dont vous avez besoin.',
     title2: 'Rien qu\u2019ils ne peuvent tracer.',
     autoShield: 'Auto-blindage',
@@ -342,11 +342,11 @@ const fr: Translations = {
       },
       securityAudit: {
         title: 'Audit de s\u00e9curit\u00e9 externe',
-        desc: 'Audit complet des 14 programmes, 7 circuits Groth16, 6 AIRs STARK et 8 SDKs par OtterSec, Neodyme ou Trail of Bits avant le d\u00e9ploiement mainnet.',
+        desc: 'Audit complet des 14 programmes, 10 circuits Groth16, 6 AIRs STARK et 17 SDKs par OtterSec, Neodyme ou Trail of Bits avant le déploiement mainnet.',
       },
       trustedSetup: {
         title: 'C\u00e9r\u00e9monie de setup de confiance',
-        desc: 'Setup de confiance Groth16 multi-parties avec 3+ contributeurs (actuellement 1). Powers of Tau + finalisation par balise pour les 7 circuits.',
+        desc: 'Setup de confiance Groth16 multi-parties avec 3+ contributeurs (actuellement 1). Powers of Tau + finalisation par balise pour les 10 circuits.',
       },
       iosBuild: {
         title: 'Build & Tests iOS',
@@ -858,7 +858,7 @@ const fr: Translations = {
       },
       clientSdk: {
         title: 'Architecture SDK client',
-        desc: 'Huit SDKs TypeScript couvrant chaque cas d\u2019usage : portefeuilles furtifs, preuves ZK, tokens confidentiels, calcul MPC, int\u00e9gration marchands, arbres de Merkle, authentification et infrastructure RPC. Tous s\u2019ex\u00e9cutent c\u00f4t\u00e9 client pour une confidentialit\u00e9 maximale.',
+        desc: 'Dix-sept SDKs TypeScript couvrant chaque cas d\u2019usage : portefeuilles furtifs, preuves ZK, tokens confidentiels, calcul MPC, intégration marchands, arbres de Merkle, authentification, infrastructure RPC, privacy toolkit et SDK privacy unifié. Tous s\u2019exécutent côté client pour une confidentialité maximale.',
         detail1: '@p01/specter-sdk \u2014 Confidentialit\u00e9 principale : portefeuilles furtifs, transferts, coffre quantique, registre, indexeur',
         detail2: '@p01/zk-sdk \u2014 Primitives ZK : ShieldedClient, Note, MerkleTree, ZkProver, cl\u00e9s de visualisation',
         detail3: '@p01/zkspl-sdk \u2014 Tokens confidentiels : d\u00e9p\u00f4t, retrait, transfert, preuve de solde',
@@ -1027,7 +1027,7 @@ const fr: Translations = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'Fondateur & Développeur Solo — Protocol 01',
-    bio: '24 ans, basé à Paris.\nDiplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement.\nJ\'ai construit Protocol 01 seul en 72 jours, 12 programmes Solana, 6 circuits ZK, 6 STARKs, 3 applications client et 8 SDKs.\nPas d\'équipe, pas de financement, que de l\'exécution.',
+    bio: '24 ans, basé à Paris.\nDiplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement.\nJ\'ai construit Protocol 01 seul en 90 jours, 14 programmes Solana, 10 circuits ZK, 6 STARKs, 3 applications client et 17 SDKs.\nPas d\'équipe, pas de financement, que de l\'exécution.',
     missionBadge: 'Mission',
     missionTitle: 'Pourquoi je construis ça',
     mission1: 'Je crois que la vie privée financière est un droit fondamental, pas une fonctionnalité.\nChaque transaction blockchain aujourd\'hui crée une trace permanente, votre salaire, vos abonnements, vos dons, tout est public.\nCe n\'est pas de la transparence, c\'est de la surveillance.',
@@ -1043,7 +1043,7 @@ const fr: Translations = {
       captnboat: { title: 'CaptNBoat — Dev & PM', desc: 'Développeur full-stack et chef de projet. Direction des initiatives cybersécurité pendant 2 ans.' },
       master: { title: 'Master — Cybersécurité', desc: 'Epitech Paris. Spécialisé en sécurité offensive, cryptographie et architecture sécurisée.' },
       freelance: { title: 'Freelance & Hackathons', desc: 'Indépendant. Participation aux hackathons Solana. Première version de Protocol 01.' },
-      protocol01: { title: 'Protocol 01 — Temps Plein', desc: '72 jours de développement continu. 12 programmes, 6 circuits ZK, 6 STARKs, 3 apps, 8 SDKs. Solo. Soumis au Colosseum Frontier 2026.' },
+      protocol01: { title: 'Protocol 01 — Temps Plein', desc: 'Développement solo continu depuis janvier 2026. 14 programmes, 10 circuits ZK, 6 STARKs, 9 circuits MPC, 3 apps, 17 SDKs. Soumis au Colosseum Frontier 2026.' },
     },
     stats: {
       yearsCode: 'Ans de Code',

@@ -858,7 +858,7 @@ export default function DocsPage() {
             <div className="flex flex-wrap items-center justify-center gap-6 text-sm">
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-[#39c5bb]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">7</span> {t('docs.statCircuits')}</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">10</span> {t('docs.statCircuits')}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-[#ff77a8]" />
@@ -866,11 +866,11 @@ export default function DocsPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Code className="w-4 h-4 text-[#00ffe5]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">8</span> {t('docs.statSdks')}</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">17</span> {t('docs.statSdks')}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-[#ffcc00]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">21</span> {t('docs.statModules')}</span>
+                <span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statModules')}</span>
               </div>
             </div>
           </motion.div>
