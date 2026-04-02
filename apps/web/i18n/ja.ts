@@ -330,7 +330,19 @@ const ja: Translations = {
       },
       i18n: {
         title: 'i18n (EN/FR/JA)',
-        desc: '\u5168\u30e2\u30d0\u30a4\u30eb\u753b\u9762\u3068Web\u30da\u30fc\u30b8\u306b\u308f\u305f\u308b\u5b8c\u5168\u306a\u56fd\u969b\u5316\u3002\u82f1\u8a9e\u3001\u30d5\u30e9\u30f3\u30b9\u8a9e\u3001\u65e5\u672c\u8a9e\u3002\u30c7\u30d0\u30a4\u30b9\u8a2d\u5b9a\u304b\u3089\u8a00\u8a9e\u3092\u81ea\u52d5\u691c\u51fa\u3002',
+        desc: '全モバイル画面とWebページにわたる完全な国際化。英語、フランス語、日本語。デバイス設定から言語を自動検出。',
+      },
+      stealthAirdrops: {
+        title: 'ステルスエアドロップ',
+        desc: 'マークルベースのプライベートトークン配布。SPLトークンをエスクローしたキャンペーン作成、受取人はSHA-256マークル証明でクレーム。受取人データはオンチェーンに保存されません。',
+      },
+      complianceZk: {
+        title: 'ZKコンプライアンスモジュール',
+        desc: 'Groth16検証のコンプライアンス証明。レンジプルーフ（min <= 残高 <= max）と制裁無罪証明（ブロックリストのマークルに不在）。有効期限と失効付きオンチェーン証明。',
+      },
+      privacySdkNpm: {
+        title: 'Privacy SDK (npm)',
+        desc: '@protocol-01/privacy-sdkをnpmに公開。14モジュール：shield、stealth、confidential、streams、subscriptions、vault、registry、relay、MPC、compliance、airdrop、OTC、payroll、treasury。Reactフック付き。',
       },
       networkMapping: {
         title: 'P-01\u5185\u90e8\u30cd\u30c3\u30c8\u30ef\u30fc\u30af\u30de\u30c3\u30d4\u30f3\u30b0',
@@ -385,7 +397,7 @@ const ja: Translations = {
     copyright: 'PROTOCOL 01. Devnet\u306e\u307f \u2014 \u76e3\u67fb\u672a\u5b9f\u65bd\u3002',
     // Privacy SDKs Section
     privacySdksTitle: '\u30d7\u30e9\u30a4\u30d0\u30b7\u30fcSDK',
-    privacySdksDesc: '\u30b9\u30c6\u30eb\u30b9\u30a2\u30c9\u30ec\u30b9\u3001ZK\u8a3c\u660e\u3001\u6a5f\u5bc6\u6b8b\u9ad8\u306a\u3069\u306e8\u3064\u306eTypeScript\u30d1\u30c3\u30b1\u30fc\u30b8\u3002',
+    privacySdksDesc: '17のTypeScriptパッケージ。ステルスアドレス、ZK証明、機密残高、コンプライアンス、エアドロップなど。',
     stealthTitle: '\u30b9\u30c6\u30eb\u30b9\u30a2\u30c9\u30ec\u30b9 (specter-sdk)',
     stealthDesc: 'ECDH + \u30aa\u30d7\u30b7\u30e7\u30f3\u306eML-KEM-768\u30dd\u30b9\u30c8\u91cf\u5b50\u30ec\u30a4\u30e4\u30fc\u3092\u4f7f\u7528\u3057\u3066\u3001\u30ea\u30f3\u30af\u4e0d\u53ef\u80fd\u306a\u30ef\u30f3\u30bf\u30a4\u30e0\u30a2\u30c9\u30ec\u30b9\u3092\u751f\u6210\u3002\u8eab\u5143\u3092\u660e\u304b\u3055\u305a\u306b\u8cc7\u91d1\u3092\u53d7\u3051\u53d6\u308c\u307e\u3059\u3002',
     stealthCodeTitle: '\u30b9\u30c6\u30eb\u30b9\u30a2\u30c9\u30ec\u30b9\u751f\u6210',

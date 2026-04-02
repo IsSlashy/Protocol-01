@@ -238,6 +238,21 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.i18n.desc",
         icon: <Globe className="w-5 h-5" />,
       },
+      {
+        title: "roadmap.items.stealthAirdrops.title",
+        description: "roadmap.items.stealthAirdrops.desc",
+        icon: <Zap className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.complianceZk.title",
+        description: "roadmap.items.complianceZk.desc",
+        icon: <Shield className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.privacySdkNpm.title",
+        description: "roadmap.items.privacySdkNpm.desc",
+        icon: <Code className="w-5 h-5" />,
+      },
     ],
   },
   {
