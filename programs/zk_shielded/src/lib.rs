@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+pub mod compliance;
 pub mod errors;
 pub mod fee;
 pub mod instructions;
@@ -435,6 +436,47 @@ pub mod zk_shielded {
         data: Vec<u8>,
     ) -> Result<()> {
         instructions::store_subscriber_vk_data::handler_write_subscriber(ctx, offset, data)
+    }
+
+    // -----------------------------------------------------------------------
+    // Compliance instructions (ZK-attested range proofs + sanctions innocence)
+    // -----------------------------------------------------------------------
+
+    /// Verify a Groth16 range proof and create a ComplianceAttestation.
+    /// Proves: min_bound <= secret_balance <= max_bound
+    pub fn verify_compliance_range(
+        ctx: Context<compliance::VerifyComplianceRange>,
+        proof: Groth16Proof,
+        min_bound: u64,
+        max_bound: u64,
+        attestation_nonce: [u8; 32],
+        expires_in_seconds: i64,
+    ) -> Result<()> {
+        compliance::verify_compliance_range(ctx, proof, min_bound, max_bound, attestation_nonce, expires_in_seconds)
+    }
+
+    /// Verify a Groth16 innocence proof and create a ComplianceAttestation.
+    /// Proves: user identity is NOT in the sanctions Merkle tree.
+    pub fn verify_compliance_innocence(
+        ctx: Context<compliance::VerifyComplianceInnocence>,
+        proof: Groth16Proof,
+        sanctions_root: [u8; 32],
+        user_commitment: [u8; 32],
+        attestation_nonce: [u8; 32],
+        expires_in_seconds: i64,
+    ) -> Result<()> {
+        compliance::verify_compliance_innocence(ctx, proof, sanctions_root, user_commitment, attestation_nonce, expires_in_seconds)
+    }
+
+    /// Revoke a previously issued compliance attestation (authority only).
+    pub fn revoke_attestation(ctx: Context<compliance::RevokeAttestation>) -> Result<()> {
+        compliance::revoke_attestation(ctx)
+    }
+
+    /// Check whether a compliance attestation is currently valid.
+    /// Returns Ok(true) if valid, or an error if expired/revoked/unverified.
+    pub fn check_compliance(ctx: Context<compliance::CheckCompliance>) -> Result<bool> {
+        compliance::check_compliance(ctx)
     }
 }
 

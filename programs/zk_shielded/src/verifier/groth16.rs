@@ -208,7 +208,7 @@ impl Groth16Verifier {
     }
 
     /// Convert 32-byte array from little-endian to big-endian
-    fn le_to_be(bytes: &[u8; 32]) -> [u8; 32] {
+    pub fn le_to_be(bytes: &[u8; 32]) -> [u8; 32] {
         let mut result = [0u8; 32];
         for i in 0..32 {
             result[i] = bytes[31 - i];
