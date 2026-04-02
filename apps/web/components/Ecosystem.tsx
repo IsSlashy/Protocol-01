@@ -311,9 +311,9 @@ function Ecosystem() {
           className="flex items-center justify-center gap-6 mt-10 px-6"
         >
           {[
-            { value: "28+", label: "technologies" },
-            { value: "13", label: "onChainPrograms" },
-            { value: "8", label: "clientSDKs" },
+            { value: "26+", label: "technologies" },
+            { value: "14", label: "onChainPrograms" },
+            { value: "17", label: "clientSDKs" },
             { value: "100%", label: "selfCustody" },
           ].map((s) => (
             <div key={s.label} className="text-center">

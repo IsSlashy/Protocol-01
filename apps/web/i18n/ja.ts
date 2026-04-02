@@ -88,7 +88,7 @@ const ja: Translations = {
 
   // ── Features ───────────────────────────────────────────────
   features: {
-    badge: '12\u306e\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u30e2\u30b8\u30e5\u30fc\u30eb',
+    badge: '14のプライバシーモジュール',
     title1: '\u5fc5\u8981\u306a\u3082\u306e\u304c\u3059\u3079\u3066\u63c3\u3063\u3066\u3044\u307e\u3059\u3002',
     title2: '\u8ffd\u8de1\u3067\u304d\u308b\u3082\u306e\u306f\u4f55\u3082\u3042\u308a\u307e\u305b\u3093\u3002',
     autoShield: '\u81ea\u52d5\u30b7\u30fc\u30eb\u30c9',
@@ -342,7 +342,7 @@ const ja: Translations = {
       },
       securityAudit: {
         title: '\u5916\u90e8\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u76e3\u67fb',
-        desc: '\u30e1\u30a4\u30f3\u30cd\u30c3\u30c8\u30c7\u30d7\u30ed\u30a4\u524d\u306bOtterSec\u3001Neodyme\u3001\u307e\u305f\u306fTrail of Bits\u306b\u3088\u308b\u516814\u30d7\u30ed\u30b0\u30e9\u30e0\u30017\u3064\u306eGroth16\u56de\u8def\u30016\u3064\u306eSTARK AIR\u30018\u3064\u306eSDK\u306e\u5305\u62ec\u7684\u76e3\u67fb\u3002',
+        desc: 'メインネットデプロイ前にOtterSec、Neodyme、またはTrail of Bitsによる全14プログラム、10つのGroth16回路、6つのSTARK AIR、17つのSDKの包括的監査。',
       },
       trustedSetup: {
         title: '\u4fe1\u983c\u306e\u7f6e\u3051\u308b\u30bb\u30c3\u30c8\u30a2\u30c3\u30d7\u30bb\u30ec\u30e2\u30cb\u30fc',
@@ -858,7 +858,7 @@ const ja: Translations = {
       },
       clientSdk: {
         title: '\u30af\u30e9\u30a4\u30a2\u30f3\u30c8SDK\u30a2\u30fc\u30ad\u30c6\u30af\u30c1\u30e3',
-        desc: '\u30b9\u30c6\u30eb\u30b9\u30a6\u30a9\u30ec\u30c3\u30c8\u3001ZK\u8a3c\u660e\u3001\u6a5f\u5bc6\u30c8\u30fc\u30af\u30f3\u3001MPC\u8a08\u7b97\u3001\u30de\u30fc\u30c1\u30e3\u30f3\u30c8\u7d71\u5408\u3001\u30de\u30fc\u30af\u30eb\u30c4\u30ea\u30fc\u3001\u8a8d\u8a3c\u3001RPC\u30a4\u30f3\u30d5\u30e9\u3092\u30ab\u30d0\u30fc\u3059\u308b8\u3064\u306eTypeScript SDK\u3002\u6700\u5927\u306e\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u306e\u305f\u3081\u5168\u3066\u30af\u30e9\u30a4\u30a2\u30f3\u30c8\u5074\u3067\u5b9f\u884c\u3002',
+        desc: 'ステルスウォレット、ZK証明、機密トークン、MPC計算、マーチャント統合、マークルツリー、認証、RPCインフラ、プライバシーツールキット、統合プライバシーSDKをカバーする17のTypeScript SDK。最大のプライバシーのため全てクライアント側で実行。',
         detail1: '@p01/specter-sdk \u2014 \u30b3\u30a2\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc: \u30b9\u30c6\u30eb\u30b9\u30a6\u30a9\u30ec\u30c3\u30c8\u3001\u8ee2\u9001\u3001\u91cf\u5b50\u30dc\u30fc\u30eb\u30c8\u3001\u30ec\u30b8\u30b9\u30c8\u30ea\u3001\u30a4\u30f3\u30c7\u30af\u30b5\u30fc',
         detail2: '@p01/zk-sdk \u2014 ZK\u30d7\u30ea\u30df\u30c6\u30a3\u30d6: ShieldedClient, Note, MerkleTree, ZkProver, \u30d3\u30e5\u30fc\u30a4\u30f3\u30b0\u30ad\u30fc',
         detail3: '@p01/zkspl-sdk \u2014 \u6a5f\u5bc6\u30c8\u30fc\u30af\u30f3: \u30c7\u30dd\u30b8\u30c3\u30c8\u3001\u5f15\u304d\u51fa\u3057\u3001\u8ee2\u9001\u3001\u6b8b\u9ad8\u8a3c\u660e',
@@ -1027,7 +1027,7 @@ const ja: Translations = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'ファウンダー & ソロデベロッパー — Protocol 01',
-    bio: '24歳、パリ在住。\nEpitech卒業、サイバーセキュリティ修士号取得、7年以上の開発経験。\nProtocol 01を72日間で一人で構築、Solanaプログラム12個、ZK回路6個、STARK 6個、クライアントアプリ3個、SDK 8個。\nチームなし、資金なし、実行あるのみ。',
+    bio: '24歳、パリ在住。\nEpitech卒業、サイバーセキュリティ修士号取得、7年以上の開発経験。\nProtocol 01を90日間で一人で構築、Solanaプログラム14個、ZK回路10個、STARK 6個、クライアントアプリ3個、SDK 17個。\nチームなし、資金なし、実行あるのみ。',
     missionBadge: 'ミッション',
     missionTitle: 'なぜこれを作るのか',
     mission1: '金融プライバシーは機能ではなく基本的権利です。\n今日のすべてのブロックチェーン取引は永続的な痕跡を残します、給与、サブスクリプション、寄付、すべてが公開されています。\nこれは透明性ではなく、監視です。',
@@ -1043,7 +1043,7 @@ const ja: Translations = {
       captnboat: { title: 'CaptNBoat — 開発 & PM', desc: 'フルスタック開発者兼プロジェクトマネージャー。サイバーセキュリティイニシアチブを2年間リード。' },
       master: { title: '修士号 — サイバーセキュリティ', desc: 'Epitech Paris。攻撃的セキュリティ、暗号学、セキュアアーキテクチャ専門。' },
       freelance: { title: 'フリーランス & ハッカソン', desc: '独立。Solanaハッカソンに参加開始。Protocol 01の最初のバージョンを構築。' },
-      protocol01: { title: 'Protocol 01 — フルタイム', desc: '72日間の連続開発。12プログラム、6 ZK回路、6 STARK、3アプリ、8 SDK。ソロ。Colosseum Frontier 2026に提出。' },
+      protocol01: { title: 'Protocol 01 — フルタイム', desc: '2026年1月からの継続的ソロ開発。14プログラム、10 ZK回路、6 STARK、9 MPC回路、3アプリ、17 SDK。Colosseum Frontier 2026に提出。' },
     },
     stats: {
       yearsCode: '年のコーディング',
