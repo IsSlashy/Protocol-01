@@ -330,7 +330,19 @@ const fr: Translations = {
       },
       i18n: {
         title: 'i18n (EN/FR/JA)',
-        desc: 'Internationalisation compl\u00e8te sur tous les \u00e9crans mobiles et pages web. Anglais, fran\u00e7ais et japonais. Langue d\u00e9tect\u00e9e automatiquement depuis les param\u00e8tres de l\u2019appareil.',
+        desc: 'Internationalisation complète sur tous les écrans mobiles et pages web. Anglais, français et japonais. Langue détectée automatiquement depuis les paramètres de l\u2019appareil.',
+      },
+      stealthAirdrops: {
+        title: 'Airdrops furtifs',
+        desc: 'Distribution privée de tokens basée sur Merkle. Création de campagnes avec tokens SPL en escrow, les destinataires claim via preuves Merkle SHA-256. Aucune donnée de destinataire stockée on-chain.',
+      },
+      complianceZk: {
+        title: 'Module de conformité ZK',
+        desc: 'Attestations de conformité vérifiées par Groth16. Preuves de plage (min <= solde <= max) et preuves d\u2019innocence sanctions (absence dans un Merkle de blocklist). Attestations on-chain avec expiration et révocation.',
+      },
+      privacySdkNpm: {
+        title: 'Privacy SDK (npm)',
+        desc: '@protocol-01/privacy-sdk publié sur npm. 14 modules : shield, stealth, confidential, streams, subscriptions, vault, registry, relay, MPC, compliance, airdrop, OTC, payroll, treasury. Hooks React inclus.',
       },
       networkMapping: {
         title: 'Cartographie du r\u00e9seau interne P-01',
@@ -385,7 +397,7 @@ const fr: Translations = {
     copyright: 'PROTOCOL 01. Devnet uniquement \u2014 non audit\u00e9.',
     // Privacy SDKs Section
     privacySdksTitle: 'SDKs de confidentialit\u00e9',
-    privacySdksDesc: '8 packages TypeScript pour les adresses furtives, preuves ZK, soldes confidentiels et plus encore.',
+    privacySdksDesc: '17 packages TypeScript pour les adresses furtives, preuves ZK, soldes confidentiels, conformité, airdrops et plus encore.',
     stealthTitle: 'Adresses furtives (specter-sdk)',
     stealthDesc: "G\u00e9n\u00e9rez des adresses \u00e0 usage unique non tra\u00e7ables via ECDH + couche post-quantique ML-KEM-768 optionnelle. Recevez des fonds sans r\u00e9v\u00e9ler votre identit\u00e9.",
     stealthCodeTitle: "G\u00e9n\u00e9ration d'adresse furtive",

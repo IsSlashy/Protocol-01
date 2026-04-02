@@ -331,6 +331,18 @@ const en = {
         title: 'i18n (EN/FR/JA)',
         desc: 'Full internationalization across all mobile screens and web pages. English, French, and Japanese. Language auto-detected from device settings.',
       },
+      stealthAirdrops: {
+        title: 'Stealth Airdrops',
+        desc: 'Merkle-based private token distribution. Create campaigns with escrowed SPL tokens, recipients claim with SHA-256 Merkle proofs. No recipient data stored on-chain. Expired campaigns reclaimable.',
+      },
+      complianceZk: {
+        title: 'ZK Compliance Module',
+        desc: 'Groth16-verified compliance attestations. Range proofs (min <= balance <= max) and sanctions innocence proofs (not in Merkle blocklist). On-chain attestations with expiry and revocation.',
+      },
+      privacySdkNpm: {
+        title: 'Privacy SDK (npm)',
+        desc: '@protocol-01/privacy-sdk published on npm. 14 modules: shield, stealth, confidential, streams, subscriptions, vault, registry, relay, MPC, compliance, airdrop, OTC, payroll, treasury. React hooks included.',
+      },
       networkMapping: {
         title: 'P-01 Internal Network Mapping',
         desc: 'Map internal transaction flows to optimize privacy routing and reduce on-chain fingerprinting across the P-01 network.',
@@ -384,7 +396,7 @@ const en = {
     copyright: 'PROTOCOL 01. Devnet only \u2014 not audited.',
     // Privacy SDKs Section
     privacySdksTitle: 'Privacy SDKs',
-    privacySdksDesc: '8 TypeScript packages for stealth addresses, ZK proofs, confidential balances, and more.',
+    privacySdksDesc: '17 TypeScript packages for stealth addresses, ZK proofs, confidential balances, compliance, airdrops, and more.',
     stealthTitle: 'Stealth Addresses (specter-sdk)',
     stealthDesc: 'Generate unlinkable one-time addresses using ECDH + optional ML-KEM-768 post-quantum layer. Receive funds without revealing your identity.',
     stealthCodeTitle: 'Stealth Address Generation',
