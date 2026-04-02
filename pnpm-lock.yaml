@@ -829,6 +829,58 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/node@22.19.7)(jsdom@26.1.0)
 
+  packages/privacy-sdk:
+    dependencies:
+      '@coral-xyz/anchor':
+        specifier: ^0.32.1
+        version: 0.32.1(typescript@5.9.3)
+      '@noble/curves':
+        specifier: ^1.9.0
+        version: 1.9.7
+      '@noble/hashes':
+        specifier: ^1.7.1
+        version: 1.8.0
+      '@noble/post-quantum':
+        specifier: ^0.5.4
+        version: 0.5.4
+      '@solana/spl-token':
+        specifier: ^0.4.14
+        version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
+      '@solana/web3.js':
+        specifier: ^1.98.4
+        version: 1.98.4(encoding@0.1.13)(typescript@5.9.3)
+      bs58:
+        specifier: ^6.0.0
+        version: 6.0.0
+      poseidon-lite:
+        specifier: ^0.3.0
+        version: 0.3.0
+      react:
+        specifier: '>=18.0.0'
+        version: 19.2.4
+      snarkjs:
+        specifier: ^0.7.5
+        version: 0.7.6
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.19.7
+      '@types/snarkjs':
+        specifier: ^0.7.8
+        version: 0.7.9
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/node@22.19.7)(jsdom@26.1.0)
+
   packages/privacy-toolkit:
     dependencies:
       poseidon-lite:
@@ -2356,7 +2408,7 @@ packages:
     dependencies:
       '@noble/hashes': 1.8.0
       clsx: 1.2.1
-      eventemitter3: 5.0.1
+      eventemitter3: 5.0.4
       preact: 10.28.2
     dev: false
 
@@ -2372,7 +2424,7 @@ packages:
       '@coral-xyz/borsh': 0.31.1(@solana/web3.js@1.98.4)
       '@noble/hashes': 1.8.0
       '@solana/web3.js': 1.98.4(encoding@0.1.13)(typescript@5.9.3)
-      bn.js: 5.2.2
+      bn.js: 5.2.3
       bs58: 4.0.1
       buffer-layout: 1.2.2
       camelcase: 6.3.0
@@ -3074,7 +3126,7 @@ packages:
     resolution: {integrity: sha512-zIHCy0i2LFmMDp+QkENyoPGxcoD3QzeNVhx6/vE4nJk4uWGNXzO8xJ2UC4gtGW4UJTAOXja8Z1yZMVeRc2/+Ew==}
     dependencies:
       '@ethereumjs/util': 10.1.0
-      eventemitter3: 5.0.1
+      eventemitter3: 5.0.4
     dev: false
 
   /@ethereumjs/common@3.2.0:
@@ -5911,7 +5963,7 @@ packages:
       '@privy-io/chains': 0.0.2
       '@privy-io/public-api': 2.45.0(typescript@5.9.3)
       canonicalize: 2.1.0
-      eventemitter3: 5.0.1
+      eventemitter3: 5.0.4
       fetch-retry: 6.0.0
       jose: 4.15.9
       js-cookie: 3.0.5
@@ -6608,7 +6660,7 @@ packages:
       '@react-aria/interactions': 3.26.0(react-dom@18.3.1)(react@18.3.1)
       '@react-aria/utils': 3.32.0(react-dom@18.3.1)(react@18.3.1)
       '@react-types/shared': 3.32.1(react@18.3.1)
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       clsx: 2.1.1
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
@@ -6623,7 +6675,7 @@ packages:
       '@react-aria/interactions': 3.26.0(react-dom@19.1.0)(react@19.1.0)
       '@react-aria/utils': 3.32.0(react-dom@19.1.0)(react@19.1.0)
       '@react-types/shared': 3.32.1(react@19.1.0)
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       clsx: 2.1.1
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
@@ -6639,7 +6691,7 @@ packages:
       '@react-aria/utils': 3.32.0(react-dom@18.3.1)(react@18.3.1)
       '@react-stately/flags': 3.1.2
       '@react-types/shared': 3.32.1(react@18.3.1)
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
     dev: false
@@ -6654,7 +6706,7 @@ packages:
       '@react-aria/utils': 3.32.0(react-dom@19.1.0)(react@19.1.0)
       '@react-stately/flags': 3.1.2
       '@react-types/shared': 3.32.1(react@19.1.0)
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
     dev: false
@@ -6665,7 +6717,7 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1
     dependencies:
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       react: 18.3.1
     dev: false
 
@@ -6675,7 +6727,7 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1
     dependencies:
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       react: 19.1.0
     dev: false
 
@@ -6689,7 +6741,7 @@ packages:
       '@react-stately/flags': 3.1.2
       '@react-stately/utils': 3.11.0(react@18.3.1)
       '@react-types/shared': 3.32.1(react@18.3.1)
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       clsx: 2.1.1
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
@@ -6705,7 +6757,7 @@ packages:
       '@react-stately/flags': 3.1.2
       '@react-stately/utils': 3.11.0(react@19.1.0)
       '@react-types/shared': 3.32.1(react@19.1.0)
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       clsx: 2.1.1
       react: 19.1.0
       react-dom: 19.1.0(react@19.1.0)
@@ -7222,7 +7274,7 @@ packages:
   /@react-stately/flags@3.1.2:
     resolution: {integrity: sha512-2HjFcZx1MyQXoPqcBGALwWWmgFVUk2TuKVIQxCbRq7fPyWXIl6VHcakCLurdtYC2Iks7zizvz0Idv48MQ38DWg==}
     dependencies:
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
     dev: false
 
   /@react-stately/utils@3.11.0(react@18.3.1):
@@ -7230,7 +7282,7 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1
     dependencies:
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       react: 18.3.1
     dev: false
 
@@ -7239,7 +7291,7 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1
     dependencies:
-      '@swc/helpers': 0.5.18
+      '@swc/helpers': 0.5.19
       react: 19.1.0
     dev: false
 
@@ -11331,7 +11383,7 @@ packages:
       '@solana/buffer-layout': 4.0.1
       '@solana/codecs-numbers': 2.3.0(typescript@5.9.3)
       agentkeepalive: 4.6.0
-      bn.js: 5.2.2
+      bn.js: 5.2.3
       borsh: 0.7.0
       bs58: 4.0.1
       buffer: 6.0.3
@@ -11582,12 +11634,6 @@ packages:
 
   /@swc/helpers@0.5.15:
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
-    dependencies:
-      tslib: 2.8.1
-    dev: false
-
-  /@swc/helpers@0.5.18:
-    resolution: {integrity: sha512-TXTnIcNJQEKwThMMqBXsZ4VGAza6bvN4pa41Rkqoio6QBKMvo+5lexeTMScGCIxtzgQJzElcvIltani+adC5PQ==}
     dependencies:
       tslib: 2.8.1
     dev: false
@@ -12308,7 +12354,7 @@ packages:
       bitcoin-ops: 1.4.1
       blake-hash: 2.0.0
       blakejs: 1.2.1
-      bn.js: 5.2.2
+      bn.js: 5.2.3
       bs58: 6.0.0
       bs58check: 4.0.0
       cashaddrjs: 0.4.4
@@ -28200,7 +28246,7 @@ packages:
       '@xrplf/isomorphic': 1.0.1
       '@xrplf/secret-numbers': 2.0.0
       bignumber.js: 9.3.1
-      eventemitter3: 5.0.1
+      eventemitter3: 5.0.4
       fast-json-stable-stringify: 2.1.0
       ripple-address-codec: 5.0.0
       ripple-binary-codec: 2.6.0

@@ -1,0 +1,153 @@
+{
+  "name": "@protocol-01/privacy-sdk",
+  "version": "1.0.0",
+  "description": "Unified privacy SDK for Solana — shield, stealth, confidential balances, streams, MPC in one import",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./shield": {
+      "types": "./dist/modules/shield.d.ts",
+      "import": "./dist/modules/shield.mjs",
+      "require": "./dist/modules/shield.js"
+    },
+    "./stealth": {
+      "types": "./dist/modules/stealth.d.ts",
+      "import": "./dist/modules/stealth.mjs",
+      "require": "./dist/modules/stealth.js"
+    },
+    "./confidential": {
+      "types": "./dist/modules/confidential.d.ts",
+      "import": "./dist/modules/confidential.mjs",
+      "require": "./dist/modules/confidential.js"
+    },
+    "./streams": {
+      "types": "./dist/modules/streams.d.ts",
+      "import": "./dist/modules/streams.mjs",
+      "require": "./dist/modules/streams.js"
+    },
+    "./subscriptions": {
+      "types": "./dist/modules/subscriptions.d.ts",
+      "import": "./dist/modules/subscriptions.mjs",
+      "require": "./dist/modules/subscriptions.js"
+    },
+    "./vault": {
+      "types": "./dist/modules/vault.d.ts",
+      "import": "./dist/modules/vault.mjs",
+      "require": "./dist/modules/vault.js"
+    },
+    "./registry": {
+      "types": "./dist/modules/registry.d.ts",
+      "import": "./dist/modules/registry.mjs",
+      "require": "./dist/modules/registry.js"
+    },
+    "./relay": {
+      "types": "./dist/modules/relay.d.ts",
+      "import": "./dist/modules/relay.mjs",
+      "require": "./dist/modules/relay.js"
+    },
+    "./mpc": {
+      "types": "./dist/modules/mpc.d.ts",
+      "import": "./dist/modules/mpc.mjs",
+      "require": "./dist/modules/mpc.js"
+    },
+    "./compliance": {
+      "types": "./dist/modules/compliance.d.ts",
+      "import": "./dist/modules/compliance.mjs",
+      "require": "./dist/modules/compliance.js"
+    },
+    "./airdrop": {
+      "types": "./dist/modules/airdrop.d.ts",
+      "import": "./dist/modules/airdrop.mjs",
+      "require": "./dist/modules/airdrop.js"
+    },
+    "./otc": {
+      "types": "./dist/modules/otc.d.ts",
+      "import": "./dist/modules/otc.mjs",
+      "require": "./dist/modules/otc.js"
+    },
+    "./payroll": {
+      "types": "./dist/modules/payroll.d.ts",
+      "import": "./dist/modules/payroll.mjs",
+      "require": "./dist/modules/payroll.js"
+    },
+    "./treasury": {
+      "types": "./dist/modules/treasury.d.ts",
+      "import": "./dist/modules/treasury.mjs",
+      "require": "./dist/modules/treasury.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.mjs",
+      "require": "./dist/react/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "solana",
+    "privacy",
+    "zk-snark",
+    "stealth-address",
+    "confidential",
+    "mpc",
+    "arcium",
+    "stark",
+    "quantum-resistant",
+    "protocol-01",
+    "web3",
+    "sdk"
+  ],
+  "author": "Protocol 01 Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/protocol-01/privacy-sdk"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@noble/curves": "^1.9.0",
+    "@noble/hashes": "^1.7.1",
+    "@noble/post-quantum": "^0.5.4",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "poseidon-lite": "^0.3.0",
+    "snarkjs": "^0.7.5",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/snarkjs": "^0.7.8",
+    "tsup": "^8.4.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "peerDependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

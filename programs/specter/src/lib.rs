@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+pub mod airdrop;
 pub mod errors;
 pub mod instructions;
 pub mod state;
@@ -119,5 +120,40 @@ pub mod p01 {
     /// Cancel an active stream and return remaining funds to sender
     pub fn cancel_stream(ctx: Context<CancelStream>) -> Result<()> {
         instructions::cancel_stream::handler(ctx)
+    }
+
+    // =========================================================================
+    // Stealth Airdrops (Merkle-based private distribution)
+    // =========================================================================
+
+    /// Create a new Merkle-based private airdrop campaign.
+    /// Escrows SPL tokens into a PDA; no recipient data stored on-chain.
+    pub fn create_airdrop(
+        ctx: Context<airdrop::CreateAirdrop>,
+        merkle_root: [u8; 32],
+        total_amount: u64,
+        total_recipients: u32,
+        name: [u8; 32],
+        expires_in_seconds: i64,
+        campaign_nonce: [u8; 16],
+    ) -> Result<()> {
+        airdrop::handler_create_airdrop(ctx, merkle_root, total_amount, total_recipients, name, expires_in_seconds, campaign_nonce)
+    }
+
+    /// Claim tokens from a private airdrop using a SHA-256 Merkle proof.
+    pub fn claim_airdrop(
+        ctx: Context<airdrop::ClaimAirdrop>,
+        amount: u64,
+        salt: [u8; 32],
+        leaf_index: u32,
+        proof_elements: Vec<[u8; 32]>,
+        proof_indices: Vec<u8>,
+    ) -> Result<()> {
+        airdrop::handler_claim_airdrop(ctx, amount, salt, leaf_index, proof_elements, proof_indices)
+    }
+
+    /// Close an expired airdrop campaign and reclaim remaining tokens.
+    pub fn close_airdrop(ctx: Context<airdrop::CloseAirdrop>) -> Result<()> {
+        airdrop::handler_close_airdrop(ctx)
     }
 }
