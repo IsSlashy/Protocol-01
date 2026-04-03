@@ -1,15 +1,21 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Download, Mail, ChevronDown, ChevronUp, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Plus, Download, Mail, ChevronDown, ChevronUp, ArrowLeft, Loader2, AlertCircle, Smartphone, QrCode } from 'lucide-react';
 import GlitchLogo from '../components/GlitchLogo';
 import { useLoginWithEmail, usePrivy } from '../../shared/providers/PrivyProvider';
 import { cn } from '@/shared/utils';
+import { useWalletStore } from '@/shared/store/wallet';
 
 // Check if Privy is available (has valid app ID)
 const PRIVY_ENABLED = Boolean(import.meta.env.VITE_PRIVY_APP_ID);
 
-type LoginStep = 'welcome' | 'email' | 'otp';
+type LoginStep = 'welcome' | 'email' | 'otp' | 'qr';
+
+// QR code URL generator
+function qrCodeUrl(data: string, size: number = 180): string {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}&bgcolor=0a0a0c&color=39c5bb&format=png&margin=8`;
+}
 
 export default function Welcome() {
   const navigate = useNavigate();
@@ -20,8 +26,75 @@ export default function Welcome() {
   const [error, setError] = useState('');
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const { authenticated } = usePrivy();
+  const { authenticated, login } = usePrivy();
   const { sendCode, loginWithCode, state: emailState } = useLoginWithEmail();
+
+  // QR connection state
+  const [qrSessionId, setQrSessionId] = useState('');
+  const [qrDeepLink, setQrDeepLink] = useState('');
+  const [qrPolling, setQrPolling] = useState(false);
+  const [qrConnected, setQrConnected] = useState(false);
+
+  // Generate QR session
+  const generateQrSession = () => {
+    const sid = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+    const challenge = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const payload = {
+      v: 1,
+      protocol: 'p01-auth',
+      service: 'p01-extension',
+      session: sid,
+      challenge,
+      callback: 'https://mugen-exchange.vercel.app/api/auth/callback',
+      exp: Date.now() + 5 * 60 * 1000,
+      name: 'P01 Extension',
+    };
+
+    const encoded = btoa(JSON.stringify(payload));
+    setQrSessionId(sid);
+    setQrDeepLink(`p01://auth?payload=${encoded}`);
+
+    // Register session on Mugen API
+    fetch('https://mugen-exchange.vercel.app/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sid, challenge, expiresAt: payload.exp }),
+    }).catch(() => {});
+
+    setStep('qr');
+    setQrPolling(true);
+  };
+
+  // Poll for QR auth completion
+  useEffect(() => {
+    if (!qrPolling || !qrSessionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`https://mugen-exchange.vercel.app/api/auth/session?id=${qrSessionId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.status === 'completed' && data.walletAddress) {
+          setQrPolling(false);
+          setQrConnected(true);
+
+          // Initialize wallet with the received address
+          const { initializeWithPrivy } = useWalletStore.getState();
+          initializeWithPrivy(data.walletAddress);
+
+          // Wait for Zustand persist to flush to chrome.storage, then notify background
+          setTimeout(() => {
+            chrome.runtime.sendMessage({ type: 'WALLET_SETUP_COMPLETE' }).catch(() => {});
+          }, 500);
+
+          setTimeout(() => navigate('/', { replace: true }), 1500);
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [qrPolling, qrSessionId, navigate]);
 
   const isSending = emailState.status === 'sending-code';
   const isVerifying = emailState.status === 'submitting-code';
@@ -180,6 +253,97 @@ export default function Welcome() {
           </motion.div>
         )}
 
+        {/* ── STEP: QR CODE CONNECTION ── */}
+        {step === 'qr' && (
+          <motion.div
+            key="qr"
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -30 }}
+            className="flex-1 flex flex-col items-center p-6"
+          >
+            <button
+              onClick={() => { setStep('welcome'); setQrPolling(false); }}
+              className="self-start p-2 text-p01-chrome hover:text-white transition-colors mb-4"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-4">
+              <h2 className="text-white font-display font-bold text-base tracking-wider mb-1">
+                SCAN WITH P01 APP
+              </h2>
+              <p className="text-[#555560] text-[10px] font-mono tracking-wider">
+                Open your P01 mobile app → Scan QR
+              </p>
+            </div>
+
+            {/* QR Code */}
+            <div className="relative p-3 rounded-2xl border border-p01-cyan/20 bg-p01-surface mb-4">
+              {qrConnected ? (
+                <div className="w-[180px] h-[180px] flex flex-col items-center justify-center gap-2">
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center"
+                  >
+                    <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </motion.div>
+                  <p className="text-green-400 text-xs font-mono">Connected!</p>
+                </div>
+              ) : (
+                <>
+                  <img
+                    src={qrCodeUrl(qrDeepLink)}
+                    alt="Scan with P01 App"
+                    width={180}
+                    height={180}
+                    className="rounded-xl"
+                  />
+                  {/* P01 icon overlay */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-lg bg-p01-void border border-p01-cyan/30 flex items-center justify-center">
+                    <img src="/01-miku.png" className="w-5 h-5 rounded" alt="" />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {!qrConnected && (
+              <>
+                {/* Status */}
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-2 h-2 rounded-full bg-p01-cyan animate-pulse" />
+                  <p className="text-p01-chrome text-[10px] font-mono tracking-wider">
+                    WAITING FOR SCAN...
+                  </p>
+                </div>
+
+                {/* Steps */}
+                <div className="w-full space-y-2">
+                  {['Open P01 app on your phone', 'Go to Wallet → Scan', 'Scan this QR code'].map((text, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-p01-dark border border-p01-border">
+                      <span className="w-5 h-5 rounded-full bg-p01-cyan/10 border border-p01-cyan/20 flex items-center justify-center text-[9px] text-p01-cyan font-mono font-bold">
+                        {i + 1}
+                      </span>
+                      <span className="text-p01-chrome text-[11px]">{text}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Refresh */}
+                <button
+                  onClick={generateQrSession}
+                  className="mt-4 text-[10px] text-p01-chrome/50 font-mono hover:text-p01-chrome transition-colors"
+                >
+                  QR expired? Click to refresh
+                </button>
+              </>
+            )}
+          </motion.div>
+        )}
+
         {/* ── STEP: OTP VERIFICATION ── */}
         {step === 'otp' && PRIVY_ENABLED && (
           <motion.div
@@ -293,14 +457,27 @@ export default function Welcome() {
               {/* Quick Login with Privy (if enabled) */}
               {PRIVY_ENABLED && (
                 <>
+                  {/* Connect with Mobile — QR code scan */}
+                  <motion.button
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.35 }}
+                    onClick={generateQrSession}
+                    className="w-full py-4 bg-p01-cyan text-p01-void font-display font-bold text-sm tracking-wider flex items-center justify-center gap-2 hover:bg-p01-cyan-dim transition-colors"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                    CONNECT WITH P01 MOBILE
+                  </motion.button>
+
+                  {/* Email OTP */}
                   <motion.button
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.4 }}
                     onClick={() => setStep('email')}
-                    className="w-full py-4 bg-p01-cyan text-p01-void font-display font-bold text-sm tracking-wider flex items-center justify-center gap-2 hover:bg-p01-cyan-dim transition-colors"
+                    className="w-full py-3 bg-p01-surface text-p01-chrome font-display font-bold text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-p01-elevated border border-p01-border transition-colors"
                   >
-                    <Mail className="w-4 h-4" />
+                    <Mail className="w-3.5 h-3.5" />
                     CONTINUE WITH EMAIL
                   </motion.button>
 

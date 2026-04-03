@@ -35,11 +35,12 @@ import SubscriptionVaults from './pages/SubscriptionVaults';
 import DenominatedPools from './pages/DenominatedPools';
 import DenominatedShield from './pages/DenominatedShield';
 import DenominatedUnshield from './pages/DenominatedUnshield';
+import MugenExchange from './pages/MugenExchange';
 
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const { isInitialized, isUnlocked, isPrivyWallet, reset, tryAutoUnlock } = useWalletStore();
+  const { isInitialized, isUnlocked, isPrivyWallet, encryptedSeedPhrase, reset, tryAutoUnlock } = useWalletStore();
   const { ready: privyReady, authenticated: privyAuthenticated } = usePrivy();
   const navigate = useNavigate();
   const location = useLocation();
@@ -105,49 +106,60 @@ function App() {
   useEffect(() => {
     const verifyAndHydrate = async () => {
       try {
-        // Check storage state
-        const result = await chrome.storage.local.get('p01-wallet');
-        const storedData = result['p01-wallet'];
+        const STORE_KEY = 'p01-wallet';
+        const result = await chrome.storage.local.get(STORE_KEY);
+        const storedData = result[STORE_KEY];
         const parsed = storedData ? JSON.parse(storedData) : null;
         const hasEncryptedSeed = parsed?.state?.encryptedSeedPhrase;
         const storedIsPrivy = parsed?.state?.isPrivyWallet;
         const storedIsInit = parsed?.state?.isInitialized;
 
-        // Case 1: Privy wallet but not authenticated → reset
-        if (storedIsPrivy && !privyAuthenticated) {
-          await reset();
-        }
-        // Case 2: Not Privy, claims initialized but no seed phrase → reset
-        else if (!storedIsPrivy && storedIsInit && !hasEncryptedSeed) {
-          await reset();
-        }
-        // Case 3: No storage at all but store thinks initialized → reset
-        else if (!storedData && isInitialized) {
+        console.log('[Popup] Storage check:', {
+          hasData: !!storedData,
+          isInit: storedIsInit,
+          hasSeed: !!hasEncryptedSeed,
+          isPrivy: storedIsPrivy,
+        });
+
+        // Only reset if wallet claims initialized but has NO seed phrase AND is NOT a Privy wallet
+        // This catches genuinely corrupted state without nuking valid wallets
+        if (storedIsInit && !hasEncryptedSeed && !storedIsPrivy) {
+          console.log('[Popup] Reset: Corrupted state — initialized without seed');
           await reset();
         }
       } catch (e) {
         console.error('[Popup] Error verifying storage:', e);
       }
 
+      // Re-check after potential reset
+      const currentState = useWalletStore.getState();
+
+      // Privy wallets don't have a password — auto-unlock on hydration
+      if (currentState.isInitialized && !currentState.isUnlocked && currentState.isPrivyWallet) {
+        useWalletStore.setState({ isUnlocked: true });
+      }
+
       // Try auto-unlock from session (10 minute timeout) — legacy wallets only
-      if (isInitialized && !isUnlocked && !isPrivyWallet) {
+      if (currentState.isInitialized && !currentState.isUnlocked && !currentState.isPrivyWallet) {
         await tryAutoUnlock();
       }
 
-      // Give a bit more time for proper hydration
-      setTimeout(() => {
-        setIsHydrated(true);
-      }, 50);
+      setIsHydrated(true);
     };
 
-    // Wait for Privy to be ready before verifying
-    if (privyReady) {
-      verifyAndHydrate();
-    }
+    // Start verification — proceed even if Privy isn't ready
+    verifyAndHydrate();
   }, [privyReady]);
 
-  // Show loading state while hydrating or while Privy SDK is initializing
-  if (!isHydrated || !privyReady) {
+  // Show loading state while hydrating (max 3s then force show)
+  useEffect(() => {
+    const forceTimeout = setTimeout(() => {
+      if (!isHydrated) setIsHydrated(true);
+    }, 3000);
+    return () => clearTimeout(forceTimeout);
+  }, [isHydrated]);
+
+  if (!isHydrated) {
     return (
       <div className="w-[360px] h-[600px] bg-p01-void flex items-center justify-center">
         <div className="text-center">
@@ -179,7 +191,11 @@ function App() {
         {/* Main app routes - protected, require unlock */}
         <Route element={<MainLayout />}>
           <Route path="/" element={
-            isInitialized && !isUnlocked && !isPrivyWallet && !privyAuthenticated ? <Navigate to="/unlock" replace /> : <Home />
+            !isInitialized && !privyAuthenticated ? <Navigate to="/welcome" replace /> :
+            isPrivyWallet || privyAuthenticated ? <Home /> :
+            !encryptedSeedPhrase ? <Navigate to="/welcome" replace /> :
+            !isUnlocked ? <Navigate to="/unlock" replace /> :
+            <Home />
           } />
           <Route path="/send" element={<Send />} />
           <Route path="/send/confirm" element={<SendConfirm />} />
@@ -191,6 +207,7 @@ function App() {
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/buy" element={<Buy />} />
+          <Route path="/mugen-exchange" element={<MugenExchange />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/stealth-payments" element={<StealthPayments />} />
           <Route path="/shielded" element={<ShieldedWallet />} />
@@ -209,7 +226,11 @@ function App() {
         <Route path="/approve-subscription" element={<ApproveSubscription />} />
 
         {/* Fallback */}
-        <Route path="*" element={<Navigate to={isInitialized ? ((isUnlocked || isPrivyWallet || privyAuthenticated) ? "/" : "/unlock") : "/welcome"} replace />} />
+        <Route path="*" element={<Navigate to={
+          isPrivyWallet || privyAuthenticated ? "/" :
+          !isInitialized || !encryptedSeedPhrase ? "/welcome" :
+          isUnlocked ? "/" : "/unlock"
+        } replace />} />
       </Routes>
     </div>
   );

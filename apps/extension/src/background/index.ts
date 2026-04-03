@@ -411,6 +411,14 @@ type MessagePayload = {
 
 // ============ Content Script Message Handlers ============
 
+// Trusted P01 domains — auto-connect without approval popup
+const TRUSTED_ORIGINS = [
+  'https://mugen-exchange.vercel.app',
+  'https://protocol-01.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+
 async function handleConnect(
   payload: MessagePayload,
   sender: chrome.runtime.MessageSender
@@ -418,18 +426,60 @@ async function handleConnect(
   const origin = payload._origin || payload.origin || '';
   const tabId = sender.tab?.id;
 
-  // Check if wallet is initialized
+  // Check if wallet is initialized (native OR Privy)
   const walletResult = await chrome.storage.local.get('p01-wallet');
   const walletState = walletResult['p01-wallet']
     ? JSON.parse(walletResult['p01-wallet'])
     : null;
 
-  const isWalletInitialized = !!walletState?.state?.encryptedSeedPhrase;
+  const isWalletInitialized = !!walletState?.state?.encryptedSeedPhrase ||
+    (!!walletState?.state?.isPrivyWallet && !!walletState?.state?.publicKey);
 
   if (!isWalletInitialized) {
-    // Wallet not created - user needs to create one first
-    await openApprovalPopup('connect'); // This will show welcome/create wallet flow
-    return { error: 'Wallet not initialized. Please create a wallet first.' };
+    // Don't error immediately — wait for wallet setup via popup
+    const requestId = await createApprovalRequest(
+      {
+        type: 'connect',
+        origin,
+        originName: payload.title || (origin ? new URL(origin).hostname : 'Unknown'),
+        originIcon: payload.icon,
+        payload: {},
+      },
+      tabId
+    );
+
+    await openApprovalPopup('connect');
+
+    return new Promise((resolve) => {
+      const approval = state.pendingApprovals.get(requestId);
+      if (approval) {
+        approval.resolve = async () => {
+          const publicKey = await getWalletPublicKey();
+          if (publicKey) {
+            await addConnectedSite({
+              origin,
+              name: payload.title || (origin ? new URL(origin).hostname : 'Unknown'),
+              icon: payload.icon,
+              connectedAt: Date.now(),
+              permissions: ['viewBalance', 'requestTransaction', 'requestSubscription'],
+            });
+            resolve({ publicKey });
+          } else {
+            resolve({ error: 'Wallet not initialized' });
+          }
+        };
+        approval.reject = (error: Error) => {
+          resolve({ error: error.message });
+        };
+      }
+
+      setTimeout(() => {
+        if (state.pendingApprovals.has(requestId)) {
+          state.pendingApprovals.delete(requestId);
+          resolve({ error: 'Connection request timeout' });
+        }
+      }, 300000);
+    });
   }
 
   // Check if already connected
@@ -439,8 +489,24 @@ async function handleConnect(
     if (publicKey) {
       return { publicKey };
     }
-    // Wallet is locked - need to unlock
-    // Store the pending connection request and open popup
+  }
+
+  // Auto-connect trusted P01 domains without approval popup
+  const isTrusted = TRUSTED_ORIGINS.some(t => origin === t || origin.startsWith(t));
+  if (isTrusted) {
+    const publicKey = await getWalletPublicKey();
+    if (publicKey) {
+      // Auto-add as connected site
+      await addConnectedSite({
+        origin,
+        name: payload.title || 'Protocol 01',
+        icon: payload.icon,
+        connectedAt: Date.now(),
+        permissions: ['viewBalance', 'requestTransaction'],
+      });
+      return { publicKey };
+    }
+    // Wallet locked — need to open popup to unlock
   }
 
   // Create approval request
@@ -902,6 +968,20 @@ registerHandler('WALLET_UNLOCKED', async () => {
   return { success: true };
 });
 
+// Resolve pending connect approvals after wallet setup (QR flow in Welcome)
+registerHandler('WALLET_SETUP_COMPLETE', async () => {
+  const publicKey = await getWalletPublicKey();
+  if (!publicKey) return { success: false };
+
+  for (const [id, approval] of state.pendingApprovals) {
+    if (approval.type === 'connect') {
+      if (approval.resolve) approval.resolve();
+      await resolveApproval(id, true, { publicKey });
+    }
+  }
+  return { success: true };
+});
+
 registerHandler('WALLET_LOCKED', async () => {
   await chrome.storage.session.remove('p01-wallet-unlocked');
   return { success: true };
@@ -950,66 +1030,10 @@ registerHandler('CANCEL_SUBSCRIPTION', async (payload, sender) => {
   return await handleCancelSubscription(payload as MessagePayload, sender);
 });
 
-// ============ Content Script Message Router (Legacy) ============
-
-chrome.runtime.onMessage.addListener(
-  (
-    message: {
-      source?: string;
-      type: string;
-      payload?: MessagePayload;
-      requestId?: string;
-    },
-    sender: chrome.runtime.MessageSender,
-    sendResponse: (response: unknown) => void
-  ) => {
-    // Handle messages from content script
-    if (message.source === 'p01-content') {
-      const handler = async () => {
-        try {
-          const payload = message.payload || {};
-
-          switch (message.type) {
-            case 'CONNECT':
-              return await handleConnect(payload, sender);
-            case 'CONNECT_SILENT':
-              return await handleConnectSilent(payload, sender);
-            case 'DISCONNECT':
-              return await handleDisconnect(payload, sender);
-            case 'IS_CONNECTED':
-              return await handleIsConnected(payload, sender);
-            case 'GET_ACCOUNTS':
-              return await handleGetAccounts(payload, sender);
-            case 'SIGN_MESSAGE':
-              return await handleSignMessage(payload, sender);
-            case 'SIGN_TRANSACTION':
-              return await handleSignTransaction(payload, sender);
-            case 'SIGN_ALL_TRANSACTIONS':
-              return await handleSignAllTransactions(payload, sender);
-            case 'SIGN_AND_SEND_TRANSACTION':
-              return await handleSignAndSendTransaction(payload, sender);
-            case 'CREATE_SUBSCRIPTION':
-              return await handleCreateSubscription(payload, sender);
-            case 'GET_SUBSCRIPTIONS':
-              return await handleGetSubscriptions(payload, sender);
-            case 'CANCEL_SUBSCRIPTION':
-              return await handleCancelSubscription(payload, sender);
-            default:
-              return { error: `Unknown message type: ${message.type}` };
-          }
-        } catch (error) {
-          console.error(`[Background] Error handling ${message.type}:`, error);
-          return { error: error instanceof Error ? error.message : 'Unknown error' };
-        }
-      };
-
-      handler().then(sendResponse);
-      return true; // Async response
-    }
-
-    return false;
-  }
-);
+// Content script GET_ACCOUNTS (not covered by popup handler)
+registerHandler('GET_ACCOUNTS', async (payload, sender) => {
+  return await handleGetAccounts(payload as MessagePayload, sender);
+});
 
 // ============ Alarm Handler ============
 
