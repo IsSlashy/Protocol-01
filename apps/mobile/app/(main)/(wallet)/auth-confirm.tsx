@@ -20,6 +20,7 @@ import {
   SubscriptionStatus,
 } from '@/services/auth/p01Auth';
 import { getPublicKey } from '@/services/solana/wallet';
+import { useWalletStore } from '@/stores/walletStore';
 
 type AuthState = 'loading' | 'ready' | 'authenticating' | 'success' | 'error';
 
@@ -47,15 +48,13 @@ export default function AuthConfirmScreen() {
   const requiresSubscription = params.requiresSubscription === '1';
   const isExpired = params.isExpired === '1';
 
-  // Load initial data
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Get wallet address from store (works for both native and Privy wallets)
+  const storePublicKey = useWalletStore((s) => s.publicKey);
 
   const loadData = async () => {
     try {
-      // Get wallet address
-      const wallet = await getPublicKey();
+      // Get wallet address — try store first (Privy), then SecureStore (native)
+      const wallet = storePublicKey || (await getPublicKey());
       setWalletAddress(wallet);
 
       // Check subscription if required
@@ -71,6 +70,11 @@ export default function AuthConfirmScreen() {
       setError('Loading error');
     }
   };
+
+  // Re-run loadData when storePublicKey becomes available (Privy wallet hydration)
+  useEffect(() => {
+    loadData();
+  }, [storePublicKey]);
 
   const handleConfirm = async () => {
     if (!payload) {
@@ -88,7 +92,7 @@ export default function AuthConfirmScreen() {
         requiresSubscription,
         serviceName,
         serviceLogo,
-      });
+      }, walletAddress || storePublicKey || undefined);
 
       if (result.success) {
         setState('success');
