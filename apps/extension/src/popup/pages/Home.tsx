@@ -17,6 +17,7 @@ import {
   Clock,
   ExternalLink,
   ShieldCheck,
+  Infinity as InfinityIcon,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
@@ -41,6 +42,7 @@ export default function Home() {
     network,
     isRefreshing,
     isUnlocked,
+    isPrivyWallet,
     refreshBalance,
     requestFaucet,
     transactions,
@@ -62,12 +64,12 @@ export default function Home() {
   const [faucetError, setFaucetError] = useState<string | null>(null);
   const [solPrice, setSolPrice] = useState<number>(0);
 
-  // Redirect to unlock if wallet is locked
+  // Redirect to unlock if wallet is locked (skip for Privy wallets — no password)
   useEffect(() => {
-    if (!isUnlocked) {
+    if (!isUnlocked && !isPrivyWallet) {
       navigate('/unlock');
     }
-  }, [isUnlocked, navigate]);
+  }, [isUnlocked, isPrivyWallet, navigate]);
 
   // Fetch SOL price
   useEffect(() => {
@@ -233,6 +235,7 @@ export default function Home() {
             onClick={() => navigate('/buy')}
           />
         </div>
+
 
         {/* Faucet Card (Devnet only) */}
         {network === 'devnet' && (
