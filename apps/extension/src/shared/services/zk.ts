@@ -1737,19 +1737,31 @@ export class ZkServiceExtension {
 
     const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
+    // Compute individual nullifier record PDAs (one per nullifier)
+    const [nullifierRecord1PDA] = PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('nullifier'), poolPDA.toBytes(), bigintToLeBytes(nullifier1)],
+      this.programId
+    );
+    const [nullifierRecord2PDA] = PublicKey.findProgramAddressSync(
+      [new TextEncoder().encode('nullifier'), poolPDA.toBytes(), bigintToLeBytes(nullifier2)],
+      this.programId
+    );
+
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: walletPublicKey, isSigner: true, isWritable: true },
-        { pubkey: recipient, isSigner: false, isWritable: true },
-        { pubkey: poolPDA, isSigner: false, isWritable: true },
-        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
-        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: this.programId, isSigner: false, isWritable: false },
-        { pubkey: this.programId, isSigner: false, isWritable: false },
+        { pubkey: walletPublicKey, isSigner: true, isWritable: true },      // payer
+        { pubkey: recipient, isSigner: false, isWritable: true },            // recipient
+        { pubkey: poolPDA, isSigner: false, isWritable: true },              // shielded_pool
+        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },        // merkle_tree
+        { pubkey: nullifierRecord1PDA, isSigner: false, isWritable: true },  // nullifier_record_1
+        { pubkey: nullifierRecord2PDA, isSigner: false, isWritable: true },  // nullifier_record_2
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },           // verification_key_data
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+        // Optional accounts — for native SOL, pass program ID as None placeholder
+        { pubkey: this.programId, isSigner: false, isWritable: false },      // token_program (None)
+        { pubkey: this.programId, isSigner: false, isWritable: false },      // pool_vault (None)
+        { pubkey: this.programId, isSigner: false, isWritable: false },      // recipient_token_account (None)
       ],
       data: Buffer.from(data),
     });
@@ -1897,6 +1909,36 @@ export class ZkServiceExtension {
       // Spending key
       spending_key: inputs.spendingKey.toString(),
     };
+
+    // DEBUG: Log ALL circuit inputs for debugging
+    const derivedOwner = poseidonHash(inputs.spendingKey, 0n);
+    const recomputedCommitment = poseidonHash(
+      inputs.inputNotes[0]?.amount ?? 0n,
+      inputs.inputNotes[0]?.ownerPubkey ?? 0n,
+      inputs.inputNotes[0]?.randomness ?? 0n,
+      leBytesToBigint(this.tokenMint.toBytes())
+    );
+    console.log('[ZK DEBUG] === FULL CIRCUIT INPUT DUMP ===');
+    console.log('[ZK DEBUG] spending_key:', inputs.spendingKey.toString().slice(0, 20) + '...');
+    console.log('[ZK DEBUG] derived ownerPubkey:', derivedOwner.toString());
+    console.log('[ZK DEBUG] note1 ownerPubkey:', inputs.inputNotes[0]?.ownerPubkey?.toString() ?? 'UNDEFINED');
+    console.log('[ZK DEBUG] note1 amount:', inputs.inputNotes[0]?.amount?.toString() ?? 'UNDEFINED');
+    console.log('[ZK DEBUG] note1 randomness:', inputs.inputNotes[0]?.randomness?.toString()?.slice(0, 20) ?? 'UNDEFINED');
+    console.log('[ZK DEBUG] note1 tokenMint:', inputs.inputNotes[0]?.tokenMint?.toString()?.slice(0, 20) ?? 'UNDEFINED');
+    console.log('[ZK DEBUG] note1 commitment (stored):', inputs.inputNotes[0]?.commitment?.toString()?.slice(0, 20) ?? 'UNDEFINED');
+    console.log('[ZK DEBUG] note1 commitment (recomputed):', recomputedCommitment.toString().slice(0, 20));
+    console.log('[ZK DEBUG] commitment match:', recomputedCommitment === inputs.inputNotes[0]?.commitment);
+    console.log('[ZK DEBUG] ownerPubkey match:', derivedOwner === inputs.inputNotes[0]?.ownerPubkey);
+    console.log('[ZK DEBUG] tokenMint (from wallet):', tokenMintField.toString());
+    console.log('[ZK DEBUG] tokenMint (from note):', inputs.inputNotes[0]?.tokenMint?.toString() ?? 'UNDEFINED');
+    console.log('[ZK DEBUG] merkleRoot:', inputs.merkleRoot.toString().slice(0, 20));
+    console.log('[ZK DEBUG] publicAmount:', publicAmountField.toString());
+    console.log('[ZK DEBUG] pathElements[0]:', inputs.proofs[0]?.pathElements?.[0]?.toString()?.slice(0, 20) ?? 'NONE');
+    console.log('[ZK DEBUG] pathIndices:', JSON.stringify(inputs.proofs[0]?.pathIndices?.slice(0, 5)));
+    console.log('[ZK DEBUG] === ACTUAL circuitInputs sent ===');
+    console.log('[ZK DEBUG] in_owner_pubkey_1:', circuitInputs.in_owner_pubkey_1);
+    console.log('[ZK DEBUG] spending_key:', (circuitInputs.spending_key as string).slice(0, 20) + '...');
+    console.log('[ZK DEBUG] token_mint:', circuitInputs.token_mint);
 
     const startTime = performance.now();
 

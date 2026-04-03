@@ -342,6 +342,7 @@ pub fn verify_compliance_range(
     require!(is_valid, ComplianceError::ProofVerificationFailed);
 
     // --- Populate attestation account ---
+    let att_key = ctx.accounts.attestation.key();
     let att = &mut ctx.accounts.attestation;
     att.authority = ctx.accounts.authority.key();
     att.user = ctx.accounts.user.key();
@@ -366,7 +367,7 @@ pub fn verify_compliance_range(
         min_bound,
         max_bound,
         token_mint: ctx.accounts.token_mint.key(),
-        attestation: ctx.accounts.attestation.key(),
+        attestation: att_key,
         issued_at: att.issued_at,
         expires_at: att.expires_at,
     });
@@ -430,6 +431,7 @@ pub fn verify_compliance_innocence(
     require!(is_valid, ComplianceError::ProofVerificationFailed);
 
     // --- Populate attestation account ---
+    let att_key = ctx.accounts.attestation.key();
     let att = &mut ctx.accounts.attestation;
     att.authority = ctx.accounts.authority.key();
     att.user = ctx.accounts.user.key();
@@ -452,7 +454,7 @@ pub fn verify_compliance_innocence(
         user: att.user,
         authority: att.authority,
         sanctions_root,
-        attestation: ctx.accounts.attestation.key(),
+        attestation: att_key,
         issued_at: att.issued_at,
         expires_at: att.expires_at,
     });

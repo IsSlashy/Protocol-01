@@ -475,17 +475,9 @@ impl Groth16Verifier {
         bytes
     }
 
-    /// Hash verification key for storage comparison
+    /// Hash verification key for storage comparison (SHA-256)
     pub fn hash_verification_key(vk_data: &[u8]) -> [u8; 32] {
-        use sha3::{Digest, Keccak256};
-
-        let mut hasher = Keccak256::new();
-        hasher.update(vk_data);
-        let result = hasher.finalize();
-
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&result);
-        hash
+        anchor_lang::solana_program::hash::hash(vk_data).to_bytes()
     }
 }
 
