@@ -66,7 +66,7 @@ pub fn handler(ctx: Context<ResizeDenominatedPool>) -> Result<()> {
         )?;
     }
 
-    pool_info.realloc(new_len, true)?; // zero-fill new bytes
+    pool_info.resize(new_len)?; // zero-fill new bytes
 
     msg!(
         "Resized denominated pool from {} to {} bytes",

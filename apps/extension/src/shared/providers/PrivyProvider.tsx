@@ -30,10 +30,16 @@ const solanaConnectors = toSolanaWalletConnectors({
  * When the user logs out of Privy:
  *   1. Clears the privySigner
  *   2. Calls walletStore.logout() to reset persisted state
+ *
+ * IMPORTANT: We track whether the user was ever authenticated in this session
+ * to avoid a race condition where Privy hasn't finished hydrating yet and
+ * `authenticated` is momentarily false — which would incorrectly trigger logout
+ * and wipe the persisted wallet state on popup reopen.
  */
 function PrivyBridge({ children }: { children: React.ReactNode }) {
   const { authenticated, ready } = usePrivy();
   const { wallets } = useSolanaWallets();
+  const wasAuthenticatedRef = React.useRef(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -41,6 +47,7 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
     const store = useWalletStore.getState();
 
     if (authenticated) {
+      wasAuthenticatedRef.current = true;
       if (wallets.length > 0) {
         // Prefer the Privy embedded wallet, fall back to first available
         const wallet = wallets.find(w => w.walletClientType === 'privy') || wallets[0];
@@ -51,10 +58,11 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
       }
       // If wallets haven't loaded yet, this effect re-runs when they do
     } else {
-      // Not authenticated — clean up
+      // Not authenticated — only logout if user was previously authenticated
+      // in THIS session. This prevents wiping state on popup reopen when
+      // Privy hasn't finished hydrating yet.
       setPrivySigner(null);
-      if (store.isPrivyWallet) {
-        // Fire and forget - the state change is synchronous, storage clearing is async
+      if (store.isPrivyWallet && wasAuthenticatedRef.current) {
         store.logout();
       }
     }
