@@ -41,6 +41,7 @@ export interface ProgramIds {
   arcium: PublicKey;
   bundler: PublicKey;
   whitelist: PublicKey;
+  mugenExchange: PublicKey;
 }
 
 // ─── Token ────────────────────────────────────────────────────────────────────

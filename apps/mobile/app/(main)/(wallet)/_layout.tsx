@@ -17,6 +17,7 @@ export default function WalletLayout() {
       <Stack.Screen name="receive" />
       <Stack.Screen name="swap" />
       <Stack.Screen name="buy" />
+      <Stack.Screen name="buy-p2p" />
       <Stack.Screen name="scan" />
       <Stack.Screen name="activity" />
       <Stack.Screen name="view-keys" />

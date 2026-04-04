@@ -5,14 +5,23 @@ import { resolve } from 'path';
 import { build } from 'esbuild';
 import manifest from './manifest.json';
 
-// Build inject script to public folder before vite runs
-const buildInjectScript = () => ({
-  name: 'build-inject-script',
+// Build inject script + polyfills to public folder before vite runs
+const buildPreScripts = () => ({
+  name: 'build-pre-scripts',
   async config() {
-    // Build inject script to public folder so crxjs can find it
+    // Build inject script
     await build({
       entryPoints: [resolve(__dirname, 'src/inject/index.ts')],
       outfile: resolve(__dirname, 'public/inject.js'),
+      bundle: true,
+      format: 'iife',
+      target: 'es2020',
+      minify: false,
+    });
+    // Build polyfills (Buffer, process, global) — loaded as classic script before modules
+    await build({
+      entryPoints: [resolve(__dirname, 'src/polyfills.ts')],
+      outfile: resolve(__dirname, 'public/polyfills.js'),
       bundle: true,
       format: 'iife',
       target: 'es2020',
@@ -23,7 +32,7 @@ const buildInjectScript = () => ({
 
 export default defineConfig({
   plugins: [
-    buildInjectScript(), // Must run first
+    buildPreScripts(), // Must run first
     react(),
     crx({ manifest }),
   ],
@@ -34,6 +43,8 @@ export default defineConfig({
       buffer: 'buffer/',
       stream: 'stream-browserify',
       crypto: 'crypto-browserify',
+      // Fix @noble/post-quantum subpath resolution
+      '@noble/post-quantum/ml-kem': resolve(__dirname, '../../node_modules/@noble/post-quantum/ml-kem.js'),
     },
   },
   define: {

@@ -55,6 +55,20 @@ export type {
   TreasurySpendResult,
   TreasurySolvencyProof,
 } from './modules/treasury';
+export { MugenExchangeModule } from './modules/exchange';
+export type {
+  MugenOrderParams,
+  MugenOrder,
+  MugenEscrowInfo,
+  MugenReputation,
+  MugenCreateOrderResult,
+  MugenTakeOrderResult,
+  MugenListOrdersFilter,
+  MugenOrderType,
+  MugenOrderStatus,
+  MugenEscrowStatus,
+  PaymentMethod,
+} from './modules/exchange';
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
 export { PrivacyError, PrivacyErrorCode } from './errors';

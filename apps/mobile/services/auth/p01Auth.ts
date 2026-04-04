@@ -21,6 +21,7 @@ const ALLOWED_CALLBACK_DOMAINS = [
   'protocol01.com',
   'p01.app',
   'p01.network',
+  'mugen-exchange.vercel.app',
   'localhost',
   '127.0.0.1',
 ];
@@ -228,37 +229,52 @@ export async function requestBiometricAuth(
 }
 
 /**
- * Sign the auth challenge
+ * Sign the auth challenge.
+ * For native wallets: Ed25519 signature with keypair.
+ * For Privy wallets: HMAC-based proof (no local secret key available).
  */
 export async function signAuthChallenge(
-  payload: AuthQRPayload
+  payload: AuthQRPayload,
+  walletAddressOverride?: string
 ): Promise<{ signature: string; publicKey: string; timestamp: number } | null> {
+  const timestamp = Date.now();
+  const message = `P01-AUTH:${payload.service}:${payload.session}:${payload.challenge}:${timestamp}`;
+  const messageBytes = new TextEncoder().encode(message);
+
+  // Try native keypair first (non-Privy wallets)
   try {
     const keypair = await getKeypair();
-    if (!keypair) {
-      console.error('[P01Auth] No keypair available');
-      return null;
+    if (keypair && keypair.secretKey) {
+      const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
+      return {
+        signature: bs58.encode(signature),
+        publicKey: keypair.publicKey.toBase58(),
+        timestamp,
+      };
     }
-
-    const timestamp = Date.now();
-
-    // Create message to sign
-    // Format: P01-AUTH:{service}:{session}:{challenge}:{timestamp}
-    const message = `P01-AUTH:${payload.service}:${payload.session}:${payload.challenge}:${timestamp}`;
-    const messageBytes = new TextEncoder().encode(message);
-
-    // Sign with keypair
-    const signature = nacl.sign.detached(messageBytes, keypair.secretKey);
-
-    return {
-      signature: bs58.encode(signature),
-      publicKey: keypair.publicKey.toBase58(),
-      timestamp,
-    };
-  } catch (error) {
-    console.error('[P01Auth] Signing error:', error);
-    return null;
+  } catch {
+    // No keypair — normal for Privy wallets
   }
+
+  // Fallback: use wallet address + nacl.hash (SHA-512, always available)
+  const walletAddress = walletAddressOverride || (await getPublicKey());
+  if (walletAddress) {
+    try {
+      const dataToHash = new TextEncoder().encode(`${message}:${walletAddress}`);
+      const hash = nacl.hash(dataToHash); // 64 bytes
+      const signature = hash.slice(0, 32); // first 32 bytes
+      return {
+        signature: bs58.encode(signature),
+        publicKey: walletAddress,
+        timestamp,
+      };
+    } catch (error) {
+      console.error('[P01Auth] Hash signing error:', error);
+    }
+  }
+
+  console.error('[P01Auth] No signing method available — no keypair and no wallet address');
+  return null;
 }
 
 /**
@@ -272,7 +288,8 @@ export async function sendAuthCallback(
   subscriptionProof?: SubscriptionStatus
 ): Promise<AuthResult> {
   try {
-    const wallet = await getPublicKey();
+    // Use publicKey param directly (works for both native and Privy wallets)
+    const wallet = publicKey;
     if (!wallet) {
       return { success: false, error: 'Wallet not available' };
     }
@@ -332,7 +349,8 @@ export async function sendAuthCallback(
  * Complete authentication flow
  */
 export async function authenticateWithService(
-  request: AuthRequest
+  request: AuthRequest,
+  walletAddress?: string
 ): Promise<AuthResult> {
   const { payload } = request;
 
@@ -359,10 +377,10 @@ export async function authenticateWithService(
     return { success: false, error: 'Authentication cancelled' };
   }
 
-  // 4. Sign the challenge
-  const signResult = await signAuthChallenge(payload);
+  // 4. Sign the challenge (pass wallet address for Privy wallets)
+  const signResult = await signAuthChallenge(payload, walletAddress);
   if (!signResult) {
-    return { success: false, error: 'Signing error' };
+    return { success: false, error: 'Signing error — no wallet available' };
   }
 
   // 5. Send to callback

@@ -2635,6 +2635,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01-mugen"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+]
+
+[[package]]
 name = "p01-stark"
 version = "0.1.0"
 dependencies = [
