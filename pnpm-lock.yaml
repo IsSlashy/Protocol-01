@@ -1232,6 +1232,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.14.0
         version: 1.19.12(hono@4.12.10)
+      '@solana/spl-token':
+        specifier: ^0.4.14
+        version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
       '@solana/web3.js':
         specifier: ^1.98.4
         version: 1.98.4(encoding@0.1.13)(typescript@5.9.3)
