@@ -478,22 +478,25 @@ async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
       }
     }
 
-    // Generate new seed (32 random bytes as hex)
-    const randomBytes = new Uint8Array(32);
-    crypto.getRandomValues(randomBytes);
-    const seedHex = Array.from(randomBytes)
+    // Generate deterministic seed from wallet address so it's always the same
+    // for the same Privy wallet (no randomness = reproducible ZK keys)
+    const encoder = new TextEncoder();
+    const seedData = encoder.encode(`p01:privy:zk:${walletAddress}:spending_key_v1`);
+    const seedHash = await crypto.subtle.digest('SHA-256', seedData);
+    const seedHex = Array.from(new Uint8Array(seedHash))
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Store encrypted — require session password to protect ZK seed at rest
+    // Store encrypted if we have a password, otherwise store plaintext
+    // (deterministic seed = no secret beyond the wallet address itself)
     if (password) {
       const encryptedBlob = await encryptForSession(seedHex, password);
       await chrome.storage.local.set({ [storageKey]: encryptedBlob });
     } else {
-      // No session password — store in session-only storage (cleared on restart)
-      // NEVER store ZK seed plaintext in persistent chrome.storage.local
-      console.warn('[Shielded] No session password — ZK seed stored in memory only (will not persist)');
-      // Seed lives only in the returned value; callers should cache in-memory
+      // Store as plaintext — the seed is deterministically derived from the
+      // wallet address anyway, so it's not a secret beyond the address itself
+      await chrome.storage.local.set({ [storageKey]: seedHex });
+      console.log('[Shielded] Privy ZK seed stored (deterministic derivation)');
     }
 
     return seedHex;

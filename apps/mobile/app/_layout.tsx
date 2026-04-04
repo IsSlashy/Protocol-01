@@ -7,11 +7,13 @@ import '../polyfills/pda-fix';
 
 import '../global.css';
 
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect } from 'react';
 import { Text, TextInput, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Linking from 'expo-linking';
+import { isP01AuthRequest, parseAuthQR } from '../services/auth/p01Auth';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { P01PrivyProvider } from '../providers/PrivyProvider';
@@ -33,6 +35,7 @@ if ((TextInput as any).defaultProps == null) (TextInput as any).defaultProps = {
 
 export default function RootLayout() {
   const { fontsLoaded, fontError } = useLoadFonts();
+  const router = useRouter();
 
   const onLayoutReady = useCallback(async () => {
     if (fontsLoaded || fontError) {
@@ -43,6 +46,40 @@ export default function RootLayout() {
   useEffect(() => {
     onLayoutReady();
   }, [onLayoutReady]);
+
+  // ── Deep link handler for p01://auth (Mugen QR connect) ──────────────
+  useEffect(() => {
+    const handleDeepLink = (event: Linking.EventType) => {
+      const url = event.url;
+      if (url && isP01AuthRequest(url)) {
+        const authRequest = parseAuthQR(url);
+        if (authRequest) {
+          router.push({
+            pathname: '/(main)/(wallet)/auth-confirm',
+            params: {
+              payload: JSON.stringify(authRequest.payload),
+              serviceName: authRequest.serviceName,
+              serviceLogo: authRequest.serviceLogo || '',
+              requiresSubscription: authRequest.requiresSubscription ? '1' : '0',
+              isExpired: authRequest.isExpired ? '1' : '0',
+            },
+          });
+        }
+      }
+    };
+
+    // Handle deep links when app is already open
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    // Handle deep link that opened the app
+    Linking.getInitialURL().then((url) => {
+      if (url && url.startsWith('p01://auth')) {
+        handleDeepLink({ url });
+      }
+    });
+
+    return () => subscription.remove();
+  }, [router]);
 
   if (!fontsLoaded && !fontError) {
     return null;

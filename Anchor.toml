@@ -20,6 +20,7 @@ p01_whitelist = "5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33"
 p01_zkspl = "AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT"
 specter = "8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh"
 zk_shielded = "2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms"
+p01_mugen = "EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN"
 
 [programs.localnet]
 p01_arcium = "FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT"

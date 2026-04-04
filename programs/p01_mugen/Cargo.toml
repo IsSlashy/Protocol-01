@@ -1,0 +1,20 @@
+[package]
+name = "p01-mugen"
+version = "0.1.0"
+description = "Mugen Exchange — P2P fiat-to-crypto escrow with ZK compliance, no KYC"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "p01_mugen"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.32.1"
+anchor-spl = "0.32.1"

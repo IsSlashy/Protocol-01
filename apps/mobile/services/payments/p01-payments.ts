@@ -1,19 +1,10 @@
 /**
  * P-01 Network Payments Service
- * Native fiat-to-crypto payment solution powered by Helio
+ * Native fiat-to-crypto via Mugen Exchange (P2P, no KYC)
  *
- * Features:
- * - Real-time crypto price feeds
- * - P-01 Network fee collection
- * - Multiple payment methods (card, bank, Apple Pay)
- * - Webhook handling for payment confirmation
+ * Users see "P01 Network" — Mugen is the invisible backend.
+ * Spread baked into exchange rate (not shown as fee).
  */
-
-// Configuration
-const HELIO_API_KEY = process.env.EXPO_PUBLIC_HELIO_API_KEY || '';
-// SECURITY (M18): HELIO_SECRET_KEY removed from client-side code.
-// Webhook HMAC verification MUST be done server-side via a backend proxy.
-const HELIO_API_URL = 'https://api.hel.io/v1';
 
 // P-01 Network Fee (your commission)
 export const P01_NETWORK_FEE_BPS = 50; // 0.5% = 50 basis points
@@ -83,7 +74,7 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     name: 'Credit / Debit Card',
     icon: 'card',
     processingTime: 'Instant',
-    feeBps: 290, // 2.9%
+    feeBps: 190, // 1.9% (visible) + 1.0% spread = 2.9% effective
     minAmount: 10,
     maxAmount: 10000,
   },
@@ -92,7 +83,7 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     name: 'Bank Transfer (SEPA/ACH)',
     icon: 'business',
     processingTime: '1-3 business days',
-    feeBps: 100, // 1%
+    feeBps: 50, // 0.5% (visible) + 0.8% spread = 1.3% effective
     minAmount: 50,
     maxAmount: 50000,
   },
@@ -101,7 +92,7 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
     name: 'Apple Pay',
     icon: 'logo-apple',
     processingTime: 'Instant',
-    feeBps: 290, // 2.9%
+    feeBps: 190, // 1.9% (visible) + 1.0% spread = 2.9% effective
     minAmount: 10,
     maxAmount: 10000,
   },
@@ -242,15 +233,21 @@ export async function getPaymentQuote(params: {
     throw new Error('Invalid payment method');
   }
 
-  // Calculate fees
+  // Apply spread to exchange rate (hidden from user)
+  const SPREAD_BPS: Record<string, number> = {
+    card: 100, bank: 80, apple_pay: 100,
+  };
+  const spreadBps = SPREAD_BPS[paymentMethodId] || 80;
+  const effectivePrice = cryptoPrice * (1 + spreadBps / 10000);
+
+  // Calculate visible fees
   const paymentMethodFee = fiatAmount * (paymentMethod.feeBps / 10000);
   const p01NetworkFee = fiatAmount * (P01_NETWORK_FEE_BPS / 10000);
   const totalFees = paymentMethodFee + p01NetworkFee;
   const netAmount = fiatAmount - totalFees;
 
-  // Calculate crypto amount
-  // Note: For non-USD currencies, we'd need FX rates here
-  const cryptoAmount = cryptoPrice > 0 ? netAmount / cryptoPrice : 0;
+  // Calculate crypto amount using effective price (with spread)
+  const cryptoAmount = effectivePrice > 0 ? netAmount / effectivePrice : 0;
 
   return {
     fiatAmount,
@@ -310,8 +307,8 @@ export async function createPaymentSession(params: {
 }
 
 /**
- * Build payment URL - uses multiple providers
- * Priority: 1. MoonPay (best for cards), 2. Ramp (Europe), 3. Direct deposit
+ * Build payment URL — uses P01 Network (Mugen Exchange backend)
+ * No KYC required, P2P matching with on-chain escrow
  */
 function buildPaymentUrl(params: {
   sessionId: string;
@@ -321,46 +318,16 @@ function buildPaymentUrl(params: {
   walletAddress: string;
   paymentMethod: string;
 }): string {
-  // Validate MoonPay API key is configured (L8)
-  const moonpayApiKey = process.env.EXPO_PUBLIC_MOONPAY_API_KEY || '';
-  if (!moonpayApiKey) {
-    console.error('[P01Payments] EXPO_PUBLIC_MOONPAY_API_KEY is not configured');
-  }
-
-  // Use MoonPay widget for card payments (most reliable)
-  // MoonPay widget URL with pre-filled parameters
-  const moonpayParams = new URLSearchParams({
-    apiKey: moonpayApiKey,
-    currencyCode: params.cryptoCurrency.toLowerCase(),
-    baseCurrencyCode: params.currency.toLowerCase(),
-    baseCurrencyAmount: params.amount.toString(),
-    walletAddress: params.walletAddress,
-    externalTransactionId: params.sessionId,
-    colorCode: '39c5bb', // P-01 cyan
-    theme: 'dark',
+  const mugenParams = new URLSearchParams({
+    amount: params.amount.toString(),
+    token: params.cryptoCurrency,
+    method: params.paymentMethod,
+    wallet: params.walletAddress,
+    session: params.sessionId,
+    currency: params.currency,
   });
 
-  // Try MoonPay first (most reliable for cards)
-  if (params.paymentMethod === 'card' || params.paymentMethod === 'apple_pay') {
-    return `https://buy.moonpay.com?${moonpayParams.toString()}`;
-  }
-
-  // For bank transfers, use Ramp Network (better for SEPA/ACH)
-  if (params.paymentMethod === 'bank') {
-    const rampParams = new URLSearchParams({
-      hostAppName: 'P-01 Wallet',
-      hostLogoUrl: 'https://p01.network/logo.png',
-      swapAsset: `SOLANA_${params.cryptoCurrency}`,
-      fiatValue: params.amount.toString(),
-      fiatCurrency: params.currency,
-      userAddress: params.walletAddress,
-      webhookStatusUrl: 'https://api.p01.network/webhooks/ramp', // Backend webhook
-    });
-    return `https://app.ramp.network?${rampParams.toString()}`;
-  }
-
-  // Fallback to MoonPay
-  return `https://buy.moonpay.com?${moonpayParams.toString()}`;
+  return `https://mugen-exchange.vercel.app/pay?${mugenParams.toString()}`;
 }
 
 /**

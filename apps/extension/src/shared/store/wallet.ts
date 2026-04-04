@@ -482,7 +482,7 @@ export const useWalletStore = create<WalletState>()(
         clearSessionPassword();
         // Clear chrome storage directly to ensure clean state
         try {
-          await chrome.storage.local.remove('p01-wallet');
+          await chrome.storage.local.remove(['p01-wallet', 'p01-wallet-v2']);
         } catch (e) {
           console.error('[WalletStore] Failed to clear chrome storage:', e);
         }
@@ -665,6 +665,25 @@ export const useWalletStore = create<WalletState>()(
         hideBalance: state.hideBalance,
         isPrivyWallet: state.isPrivyWallet,
       }),
+      // TODO: Remove this migrate block after first successful reset
+      // Forces a clean slate by clearing old wallet data
+      version: 1,
+      migrate: (persistedState: any, version: number) => {
+        if (version === 0) {
+          // Old data — nuke it
+          return {
+            isInitialized: false,
+            isUnlocked: false,
+            publicKey: null,
+            encryptedSeedPhrase: null,
+            passwordHash: null,
+            network: 'devnet',
+            hideBalance: false,
+            isPrivyWallet: false,
+          };
+        }
+        return persistedState;
+      },
     }
   )
 );
