@@ -213,14 +213,17 @@ export default function VoidPage() {
       if (t < 1) {
         rafId = requestAnimationFrame(fade);
       } else {
-        // Fully white — play crash sound, hold 2s, then close
+        // Fully white — crash sound + kill the page
         setPlayCrash(true);
         setTimeout(() => {
-          window.close();
-          setTimeout(() => {
-            window.history.replaceState(null, '', '/');
-            router.push('/');
-          }, 500);
+          // Nuke the entire page — replace DOM with white void
+          document.title = '';
+          document.body.innerHTML = '';
+          document.body.style.background = '#fff';
+          document.documentElement.style.background = '#fff';
+          // Try to close (works if opened by JS)
+          try { window.close(); } catch { /* blocked by browser */ }
+          // Page is now a blank white tab — user must close manually
         }, 2000);
       }
     };
