@@ -23,12 +23,10 @@ function glitchFrame(base: string, intensity: number): string {
 }
 
 const PHASES = [
-  { base: "dont",                                     intensity: 0.8, interval: 100, color: 'text-red-500/20 hover:text-red-500/40' },
-  { base: "why are you doing this",                   intensity: 0.9, interval: 75,  color: 'text-red-400/35 hover:text-red-400/55' },
-  { base: "why are you trying to get inside my head", intensity: 1.1, interval: 55,  color: 'text-pink-400/50 hover:text-pink-400/70' },
-  { base: "stop please stop",                         intensity: 1.4, interval: 40,  color: 'text-pink-300/65 hover:text-pink-300/85' },
-  { base: "why ?",                                    intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200/100' },
-  { base: "...",                                      intensity: 2.5, interval: 20,  color: 'text-white/90' },
+  { base: "\u306A\u305C",         intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },  // なぜ (naze - why)
+  { base: "\u3084\u3081\u3066",   intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' }, // やめて (yamete - stop)
+  { base: "\u306A\u305C\uFF1F",   intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },   // なぜ？ (naze? - why?)
+  { base: "...",                   intensity: 2.8, interval: 18,  color: 'text-white/90' },
 ];
 
 interface FooterLink {
@@ -104,13 +102,13 @@ export default function Footer() {
     return () => clearInterval(id);
   }, [eggState]);
 
-  // Shake for phases 2+
+  // Shake — starts at phase 1, gets violent fast
   useEffect(() => {
-    if (eggState < 2) { setShake({ x: 0, y: 0 }); return; }
-    const mag = [0, 0, 2, 4, 7, 12][Math.min(eggState, 5)];
+    if (eggState < 1) { setShake({ x: 0, y: 0 }); return; }
+    const mag = [0, 3, 8, 15][Math.min(eggState, 3)];
     const id = setInterval(() => {
       setShake({ x: (Math.random() - 0.5) * mag, y: (Math.random() - 0.5) * mag });
-    }, 30);
+    }, 25);
     return () => clearInterval(id);
   }, [eggState]);
   return (
@@ -174,9 +172,10 @@ export default function Footer() {
                 {section.title === 'community' && (
                   <li className="mt-2">
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.preventDefault();
                         if (eggState >= PHASES.length - 1) {
-                          window.history.pushState(null, '', '/????');
+                          window.history.pushState(null, '', '/\uFF1F\uFF1F\uFF1F\uFF1F');
                           router.push('/void');
                         } else {
                           setEggState(s => s + 1);
