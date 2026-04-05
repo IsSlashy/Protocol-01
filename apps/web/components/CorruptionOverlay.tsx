@@ -96,6 +96,29 @@ export default function CorruptionOverlay() {
   const prevPathRef = useRef(pathname);
   const rafRef = useRef<number>(0);
 
+  // ── Block ALL clicks/interactions while corrupted ──
+  useEffect(() => {
+    if (!active) return;
+    const block = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+    // Capture phase = intercept before any handler
+    document.addEventListener('click', block, true);
+    document.addEventListener('mousedown', block, true);
+    document.addEventListener('pointerdown', block, true);
+    document.addEventListener('touchstart', block, true);
+    document.addEventListener('keydown', block, true);
+    return () => {
+      document.removeEventListener('click', block, true);
+      document.removeEventListener('mousedown', block, true);
+      document.removeEventListener('pointerdown', block, true);
+      document.removeEventListener('touchstart', block, true);
+      document.removeEventListener('keydown', block, true);
+    };
+  }, [active]);
+
   // ── Detect activation — sessionStorage survives full reloads, F5 clears it ──
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -301,9 +324,11 @@ export default function CorruptionOverlay() {
   const c = Math.min(level / 8, 1);
 
   return (
-    <div data-corruption-overlay className="fixed inset-0 z-[9998] pointer-events-none" style={{
+    <div data-corruption-overlay className="fixed inset-0 z-[9998]" style={{
       mixBlendMode: 'screen',
-    }}>
+      pointerEvents: 'all',
+      cursor: 'none',
+    }} onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.preventDefault()}>
       {/* ── Scanlines — subtle at first ── */}
       <div className="absolute inset-0" style={{
         backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.2) 2px, rgba(0,0,0,0.2) 4px)',
