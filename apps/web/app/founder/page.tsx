@@ -103,7 +103,7 @@ export default function FounderPage() {
                 <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                 @Slashy_fx
               </a>
-              <a href="https://protocol-01.vercel.app" target="_blank" rel="noopener noreferrer"
+              <a href="https://protocol-01.dev" target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-p01-text-muted hover:text-white hover:border-p01-cyan/40 transition-all">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
                 Website

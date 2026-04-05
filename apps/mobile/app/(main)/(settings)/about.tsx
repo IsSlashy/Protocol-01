@@ -86,7 +86,7 @@ export default function AboutScreen() {
     {
       icon: 'globe-outline' as const,
       label: 'Website',
-      url: 'https://protocol-01.vercel.app',
+      url: 'https://protocol-01.dev',
       color: P01Colors.cyan,
     },
     {
@@ -192,17 +192,17 @@ export default function AboutScreen() {
             <View>
               <LinkRow
                 label={t('settings.privacyPolicy')}
-                onPress={() => Linking.openURL('https://protocol-01.vercel.app/privacy')}
+                onPress={() => Linking.openURL('https://protocol-01.dev/privacy')}
               />
               <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: 16 }} />
               <LinkRow
                 label={t('settings.termsOfService')}
-                onPress={() => Linking.openURL('https://protocol-01.vercel.app/terms')}
+                onPress={() => Linking.openURL('https://protocol-01.dev/terms')}
               />
               <View style={{ height: 1, backgroundColor: 'rgba(57, 197, 187, 0.07)', marginHorizontal: 16 }} />
               <LinkRow
                 label={t('settings.openSource')}
-                onPress={() => Linking.openURL('https://protocol-01.vercel.app/licenses')}
+                onPress={() => Linking.openURL('https://protocol-01.dev/licenses')}
               />
             </View>
           </GlassCard>

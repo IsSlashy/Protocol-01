@@ -212,7 +212,7 @@ Protocol 01 provides foundational privacy infrastructure for Solana:
 ## Demo
 
 - **Live APK**: [Download v0.9.4](https://github.com/IsSlashy/Protocol-01-releases/releases/tag/v0.9.4) (191 MB, Android)
-- **Website**: https://protocol-01.vercel.app
+- **Website**: https://protocol-01.dev
 - **Video demo**: [link]
 - **All 15 programs deployed on Solana devnet** — fully verifiable on-chain
 

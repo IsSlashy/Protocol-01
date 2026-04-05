@@ -59,7 +59,7 @@ export default function MugenNavbar() {
             How it works
           </Link>
           <a
-            href="https://protocol-01.vercel.app"
+            href="https://protocol-01.dev"
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -105,7 +105,7 @@ export default function MugenNavbar() {
               How it works
             </Link>
             <a
-              href="https://protocol-01.vercel.app"
+              href="https://protocol-01.dev"
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setMobileOpen(false)}

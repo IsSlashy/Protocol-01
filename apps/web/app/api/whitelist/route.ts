@@ -55,7 +55,7 @@ async function sendApprovalEmail(email: string, wallet: string, projectName?: st
           </div>
 
           <div style="text-align: center;">
-            <a href="https://protocol-01.vercel.app/sdk-demo" style="display: inline-block; background: #39c5bb; color: #0a0a0c; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+            <a href="https://protocol-01.dev/sdk-demo" style="display: inline-block; background: #39c5bb; color: #0a0a0c; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600;">
               Access SDK Documentation
             </a>
           </div>

@@ -8,7 +8,7 @@ Shield funds, send privately, manage stealth addresses, create payment streams, 
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Built by [Protocol 01](https://protocol-01.vercel.app) -- The Privacy Layer for Solana
+Built by [Protocol 01](https://protocol-01.dev) -- The Privacy Layer for Solana
 
 </div>
 
@@ -337,4 +337,4 @@ MIT
 
 ---
 
-[Website](https://protocol-01.vercel.app) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH) · [GitHub](https://github.com/IsSlashy/Protocol-01)
+[Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH) · [GitHub](https://github.com/IsSlashy/Protocol-01)
