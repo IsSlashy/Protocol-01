@@ -179,7 +179,6 @@ export default function VoidPage() {
   const [bloodDrips, setBloodDrips] = useState<{ x: number; h: number; delay: number }[]>([]);
   const [skewY, setSkewY] = useState(0);
   const [pixelate, setPixelate] = useState(0);
-
   // ── Init ────────────────────────────────────────────────────────────
   useEffect(() => {
     window.history.replaceState(null, '', '/????');
@@ -204,26 +203,29 @@ export default function VoidPage() {
     return () => v.removeEventListener('ended', onEnd);
   }, []);
 
+  // ── 16s after WHY starts (= when music is playing) → crash ──────────
+  useEffect(() => {
+    if (phase !== 'why') return;
+    const id = setTimeout(() => {
+      setPhase('fadeout');
+    }, 16000);
+    return () => clearTimeout(id);
+  }, [phase]);
+
   // ── WHY master loop — everything driven from one RAF ────────────────
   useEffect(() => {
     if (phase !== 'why') return;
 
     let frame = 0;
-    let startTime = Date.now();
+    let whyStart = Date.now();
     let rafId: number;
 
     const loop = () => {
       frame++;
-      const elapsed = (Date.now() - startTime) / 1000;
-      const c = Math.min(elapsed / 10, 1); // corruption: 0→1 over 10s
+      const whyElapsed = (Date.now() - whyStart) / 1000;
+      const c = Math.min(whyElapsed / 14, 1); // corruption: 0→1 over 14s
       setCorruption(c);
       setTick(frame);
-
-      // ── At max corruption → trigger fadeout ──
-      if (elapsed >= 12) {
-        setPhase('fadeout');
-        return;
-      }
 
       // ── Text glitch — faster at high corruption ──
       if (frame % Math.max(1, Math.floor(3 - c * 2.5)) === 0) {
