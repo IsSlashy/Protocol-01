@@ -727,14 +727,13 @@ export default function VoidPage() {
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/kangel.gif"
             alt=""
-            className="relative z-10"
+            className="absolute inset-0 w-full h-full z-10"
             style={{
-              maxHeight: '80vh',
-              maxWidth: '80vw',
-              objectFit: 'contain',
+              objectFit: 'cover',
               mixBlendMode: 'multiply',
               filter: 'contrast(1.2) saturate(1.3)',
             }}
