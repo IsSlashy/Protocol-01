@@ -22,9 +22,8 @@ const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u
 const ZB = '\u0316\u0317\u0318\u0319\u031C\u031D\u031E\u031F\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329\u032A\u032B\u032C\u032D\u032E\u032F';
 const rc = (s: string) => s[Math.floor(Math.random() * s.length)];
 
-// ナゼ (naze - WHY in katakana) with random kanji corruption
-const WHY_BASES = ['\u30CA\u30BC', '\u306A\u305C', '\u4F55\u6545', 'WHY', '\uFF1F\uFF1F'];
-//                  ナゼ            なぜ            何故           WHY    ？？
+// WHY in Japanese — multiple writing systems for visual chaos
+const WHY_BASES = ['WHY', 'WHY', 'W H Y', 'WHY?', '?WHY?'];
 
 function corruptWhy(intensity: number): string {
   const base = WHY_BASES[Math.floor(Math.random() * (intensity > 2 ? WHY_BASES.length : 2))];
@@ -43,11 +42,11 @@ export default function VoidPage() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const router = useRouter();
 
-  const [phase, setPhase] = useState<'video' | 'why'>('video');
+  const [phase, setPhase] = useState<'video' | 'why' | 'fadeout'>('video');
   const [whyText, setWhyText] = useState('WHY');
-  const [tick, setTick] = useState(0);        // global frame counter
+  const [tick, setTick] = useState(0);
   const [shake, setShake] = useState({ x: 0, y: 0 });
-  const [corruption, setCorruption] = useState(0); // 0→1 over time, increases forever
+  const [corruption, setCorruption] = useState(0);
   const [colorIdx, setColorIdx] = useState(0);
   const [glitchBars, setGlitchBars] = useState<{ top: number; h: number; color: string; offset: number }[]>([]);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -55,11 +54,12 @@ export default function VoidPage() {
   const [splitOffset, setSplitOffset] = useState(0);
   const [rotation, setRotation] = useState(0);
   const [scaleX, setScaleX] = useState(1);
+  const [whiteOverlay, setWhiteOverlay] = useState(0); // 0→1 for fadeout
 
   // ── Init ────────────────────────────────────────────────────────────
   useEffect(() => {
-    window.history.replaceState(null, '', '/\uFF1F\uFF1F\uFF1F\uFF1F');
-    document.title = '\uFF1F\uFF1F\uFF1F\uFF1F';
+    window.history.replaceState(null, '', '/????');
+    document.title = '????';
     document.body.style.overflow = 'hidden';
     document.body.style.background = '#000';
     document.body.style.cursor = 'none';
@@ -91,32 +91,34 @@ export default function VoidPage() {
     const loop = () => {
       frame++;
       const elapsed = (Date.now() - startTime) / 1000;
-      const c = Math.min(elapsed / 10, 1); // corruption: 0→1 over 10 SECONDS (violent)
+      const c = Math.min(elapsed / 10, 1); // corruption: 0→1 over 10s
       setCorruption(c);
       setTick(frame);
 
-      // ── Text glitch: faster and more corrupt over time ──
+      // ── At max corruption → trigger fadeout ──
+      if (elapsed >= 12) {
+        setPhase('fadeout');
+        return;
+      }
+
+      // ── Text glitch ──
       if (frame % Math.max(1, Math.floor(4 - c * 3)) === 0) {
         setWhyText(corruptWhy(1 + c * 3));
       }
 
-      // ── Shake: starts mild, becomes seizure ──
+      // ── Shake ──
       const mag = 5 + c * 40;
-      setShake({
-        x: (Math.random() - 0.5) * mag,
-        y: (Math.random() - 0.5) * mag,
-      });
+      setShake({ x: (Math.random() - 0.5) * mag, y: (Math.random() - 0.5) * mag });
 
-      // ── Color cycling: faster as corruption grows ──
+      // ── Colors ──
       if (frame % Math.max(2, Math.floor(8 - c * 6)) === 0) {
         setColorIdx(i => (i + 1) % PALETTE.length);
       }
 
-      // ── VHS glitch bars: more frequent and taller ──
+      // ── VHS bars ──
       if (frame % Math.max(3, Math.floor(12 - c * 10)) === 0) {
-        const count = 2 + Math.floor(c * 8);
         setGlitchBars(
-          Array.from({ length: count }, () => ({
+          Array.from({ length: 2 + Math.floor(c * 8) }, () => ({
             top: Math.random() * 100,
             h: 1 + Math.random() * (3 + c * 15),
             color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
@@ -125,34 +127,27 @@ export default function VoidPage() {
         );
       }
 
-      // ── Music slowdown: VIOLENT — 1.0 → 0.1 in 10s with stutters ──
+      // ── Music slowdown ──
       const baseRate = Math.max(0.08, 1 - c * 0.92);
-      // Frequent brutal stutters: sudden freeze then resume
       const isStutter = Math.random() < 0.08 + c * 0.25;
-      const isSpeedup = Math.random() < c * 0.05; // rare sudden 2x burst
-      const glitchRate = isStutter
-        ? 0.05 + Math.random() * 0.1  // near-freeze
-        : isSpeedup
-          ? Math.min(2, baseRate * (2 + Math.random() * 3)) // violent speedup
-          : baseRate;
-      setPlaybackRate(glitchRate);
-
-      // ── Random inversion (negative flash) ──
-      setInverted(Math.random() < 0.02 + c * 0.06);
-
-      // ── Chromatic split: gets worse ──
-      setSplitOffset(Math.random() < 0.15 + c * 0.3
-        ? (Math.random() - 0.5) * (5 + c * 30)
-        : 0
+      const isSpeedup = Math.random() < c * 0.05;
+      setPlaybackRate(
+        isStutter ? 0.05 + Math.random() * 0.1
+        : isSpeedup ? Math.min(2, baseRate * (2 + Math.random() * 3))
+        : baseRate
       );
 
-      // ── Text rotation: starts tilting, eventually flips ──
-      const baseRot = (Math.random() - 0.5) * (2 + c * 25);
-      // Occasional full inversion
-      const flip = Math.random() < c * 0.04 ? 180 : 0;
-      setRotation(baseRot + flip);
+      // ── Inversion ──
+      setInverted(Math.random() < 0.02 + c * 0.06);
 
-      // ── Scale X: mirror/stretch glitch ──
+      // ── Chromatic split ──
+      setSplitOffset(Math.random() < 0.15 + c * 0.3 ? (Math.random() - 0.5) * (5 + c * 30) : 0);
+
+      // ── Rotation ──
+      const flip = Math.random() < c * 0.04 ? 180 : 0;
+      setRotation((Math.random() - 0.5) * (2 + c * 25) + flip);
+
+      // ── Scale ──
       setScaleX(Math.random() < 0.04 + c * 0.06
         ? (Math.random() < 0.5 ? -1 : 1) * (0.8 + Math.random() * 0.5)
         : 1
@@ -165,6 +160,49 @@ export default function VoidPage() {
     return () => cancelAnimationFrame(rafId);
   }, [phase]);
 
+  // ── FADEOUT PHASE: everything stops, white takes over, tab closes ──
+  useEffect(() => {
+    if (phase !== 'fadeout') return;
+
+    // Immediately kill all glitch state
+    setShake({ x: 0, y: 0 });
+    setGlitchBars([]);
+    setInverted(false);
+    setSplitOffset(0);
+    setRotation(0);
+    setScaleX(1);
+    setPlaybackRate(0.05); // music crawls to near-stop
+    setWhyText('WHY'); // clean, no corruption — calm before the white
+
+    // White overlay fades in over 4 seconds
+    let start = Date.now();
+    let rafId: number;
+    const fade = () => {
+      const t = Math.min((Date.now() - start) / 4000, 1); // 0→1 over 4s
+      setWhiteOverlay(t);
+
+      // Music volume implied by overlay (iframe can't control volume, but rate → 0)
+      setPlaybackRate(Math.max(0.01, 0.05 * (1 - t)));
+
+      if (t < 1) {
+        rafId = requestAnimationFrame(fade);
+      } else {
+        // Fully white — hold 1.5s then close
+        setTimeout(() => {
+          // Try to close the tab (works if opened by script)
+          window.close();
+          // Fallback: navigate home if close doesn't work
+          setTimeout(() => {
+            window.history.replaceState(null, '', '/');
+            router.push('/');
+          }, 500);
+        }, 1500);
+      }
+    };
+    rafId = requestAnimationFrame(fade);
+    return () => cancelAnimationFrame(rafId);
+  }, [phase, router]);
+
   // ── Audio playback rate sync ───────────────────────────────────────
   useEffect(() => {
     const a = audioRef.current;
@@ -173,7 +211,7 @@ export default function VoidPage() {
   }, [playbackRate]);
 
   const handleClick = useCallback(() => {
-    if (phase === 'video') return;
+    if (phase === 'video' || phase === 'fadeout') return;
     window.history.replaceState(null, '', '/');
     router.push('/');
   }, [phase, router]);
@@ -344,6 +382,16 @@ export default function VoidPage() {
             }} />
           )}
         </>
+      )}
+      {/* ── White fadeout overlay — above everything ── */}
+      {whiteOverlay > 0 && (
+        <div
+          className="absolute inset-0 z-[100] pointer-events-none"
+          style={{
+            backgroundColor: `rgba(255, 255, 255, ${whiteOverlay})`,
+            transition: 'none',
+          }}
+        />
       )}
     </div>
   );
