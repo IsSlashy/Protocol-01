@@ -82,11 +82,36 @@ export default function CorruptionOverlay() {
   const prevPathRef = useRef(pathname);
   const rafRef = useRef<number>(0);
 
-  // ── Detect activation — poll window flag until found ──
+  // ── Detect activation — sessionStorage survives full reloads, F5 clears it ──
   useEffect(() => {
-    if (active) return;
+    if (typeof window === 'undefined') return;
+
+    // F5 / manual refresh → clear corruption
+    const navEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (navEntry?.type === 'reload') {
+      sessionStorage.removeItem('p01_corrupted');
+      sessionStorage.removeItem('p01_corruption_level');
+      window.__p01_corrupted = false;
+      window.__p01_corruption_level = 0;
+      return;
+    }
+
+    // Check sessionStorage (persists across <a> navigations)
+    const stored = sessionStorage.getItem('p01_corrupted');
+    if (stored === '1') {
+      const lvl = parseInt(sessionStorage.getItem('p01_corruption_level') ?? '1', 10);
+      window.__p01_corrupted = true;
+      window.__p01_corruption_level = lvl;
+      setActive(true);
+      setLevel(lvl);
+      return;
+    }
+
+    // Poll for window flag (set by void page during SPA navigation)
     const id = setInterval(() => {
-      if (typeof window !== 'undefined' && window.__p01_corrupted) {
+      if (window.__p01_corrupted) {
+        sessionStorage.setItem('p01_corrupted', '1');
+        sessionStorage.setItem('p01_corruption_level', String(window.__p01_corruption_level ?? 1));
         setActive(true);
         setLevel(window.__p01_corruption_level ?? 1);
         clearInterval(id);
@@ -105,6 +130,7 @@ export default function CorruptionOverlay() {
       setLevel(prev => {
         const next = prev + 1;
         window.__p01_corruption_level = next;
+        sessionStorage.setItem('p01_corruption_level', String(next));
         return next;
       });
     }
