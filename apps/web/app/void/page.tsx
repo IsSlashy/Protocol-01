@@ -217,6 +217,31 @@ export default function VoidPage() {
     if (!v) return;
     const onEnd = () => setPhase('why');
     v.addEventListener('ended', onEnd);
+
+    // Force play if autoplay is blocked (direct URL navigation)
+    const tryPlay = () => {
+      if (v.paused) {
+        v.muted = true;
+        v.play().then(() => {
+          setTimeout(() => { try { v.muted = false; } catch {} }, 200);
+        }).catch(() => {
+          // Still blocked — wait for user interaction
+          const forcePlay = () => {
+            v.muted = true;
+            v.play().then(() => {
+              setTimeout(() => { try { v.muted = false; } catch {} }, 200);
+            }).catch(() => {});
+            document.removeEventListener('click', forcePlay);
+            document.removeEventListener('touchstart', forcePlay);
+          };
+          document.addEventListener('click', forcePlay, { once: true });
+          document.addEventListener('touchstart', forcePlay, { once: true });
+        });
+      }
+    };
+    // Try after a short delay (DOM fully ready)
+    setTimeout(tryPlay, 300);
+
     return () => v.removeEventListener('ended', onEnd);
   }, []);
 
