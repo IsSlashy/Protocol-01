@@ -382,9 +382,11 @@ export default function VoidPage() {
       } else {
         // Crash sound
         setPlayCrash(true);
-        // Activate persistent corruption
+        // Activate persistent corruption — sessionStorage survives full reloads
         window.__p01_corrupted = true;
         window.__p01_corruption_level = 1;
+        sessionStorage.setItem('p01_corrupted', '1');
+        sessionStorage.setItem('p01_corruption_level', '1');
         setTimeout(() => {
           // Clear the white overlay BEFORE navigating so it doesn't stay stuck
           setWhiteOverlay(0);
