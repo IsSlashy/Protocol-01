@@ -23,10 +23,10 @@ function glitchFrame(base: string, intensity: number): string {
 }
 
 const PHASES = [
-  { base: "\u306A\u305C",         intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },  // なぜ (naze - why)
-  { base: "\u3084\u3081\u3066",   intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' }, // やめて (yamete - stop)
-  { base: "\u306A\u305C\uFF1F",   intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },   // なぜ？ (naze? - why?)
-  { base: "...",                   intensity: 2.8, interval: 18,  color: 'text-white/90' },
+  { base: "dont",       intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },
+  { base: "stop",       intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' },
+  { base: "why?",       intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },
+  { base: "...",         intensity: 2.8, interval: 18,  color: 'text-white/90' },
 ];
 
 interface FooterLink {
@@ -175,7 +175,7 @@ export default function Footer() {
                       onClick={(e) => {
                         e.preventDefault();
                         if (eggState >= PHASES.length - 1) {
-                          window.history.pushState(null, '', '/\uFF1F\uFF1F\uFF1F\uFF1F');
+                          window.history.pushState(null, '', '/????');
                           router.push('/void');
                         } else {
                           setEggState(s => s + 1);
