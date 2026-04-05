@@ -4,6 +4,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import DepthBackground from "@/components/DepthBackground";
+import CorruptionOverlay from "@/components/CorruptionOverlay";
 import { I18nProvider } from "@/i18n";
 
 const spaceGrotesk = Space_Grotesk({
@@ -87,6 +88,7 @@ export default function RootLayout({
             <main className="relative z-10">{children}</main>
           </I18nProvider>
         </div>
+        <CorruptionOverlay />
         <Analytics />
         <SpeedInsights />
       </body>
