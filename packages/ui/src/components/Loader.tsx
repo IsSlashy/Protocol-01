@@ -1,6 +1,21 @@
 /**
- * Specter Protocol Loader Component
- * Ghost-themed loading animations
+ * Protocol 01 Loader Components
+ *
+ * Loading indicators with ghost-themed animations.
+ * Variants: spinner (circular), ghost (floating mascot), dots (bouncing),
+ * pulse (ripple), typing (cursor blink).
+ * Includes FullPageLoader overlay and Skeleton shimmer placeholders.
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Loader, FullPageLoader, Skeleton } from '@protocol-01/ui';
+ *
+ * <Loader variant="ghost" size="lg" label="Generating proof..." />
+ * <FullPageLoader isVisible={isLoading} label="Initializing..." />
+ * <Skeleton width="100%" height={20} />
+ * ```
  */
 
 import React from 'react';

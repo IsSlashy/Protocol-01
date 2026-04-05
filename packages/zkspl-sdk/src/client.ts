@@ -26,7 +26,9 @@ import {
   VK_TYPE_BALANCE,
   VK_TYPE_PROOF,
   TOKEN_PROGRAM_ID,
+  getProgramId,
 } from './constants';
+import type { NetworkId } from './constants';
 import {
   createBalanceCommitment,
   createAmountCommitment,
@@ -67,8 +69,24 @@ export interface ZkSplClientConfig {
   connection: Connection;
   /** Wallet (signer) */
   wallet: Wallet;
-  /** Program ID override (default: deployed ZKSPL_PROGRAM_ID) */
+  /** Program ID override for the zkspl program (default: resolved from `network` or devnet) */
   programId?: PublicKey;
+  /**
+   * Program ID override for the zk_shielded program (denominated pools).
+   * Only needed if you interact with shielded pool features.
+   */
+  zkShieldedProgramId?: string;
+  /**
+   * Network to resolve program IDs from. Defaults to `'devnet'`.
+   * When set, program IDs are looked up from the built-in PROGRAM_IDS map
+   * unless explicitly overridden by `programId` / `zkShieldedProgramId`.
+   */
+  network?: NetworkId;
+  /**
+   * Base URL for circuit files (WASM + zkey).
+   * Passed through to the prover. Example: `"https://cdn.example.com/circuits/"`.
+   */
+  circuitBaseUrl?: string;
   /** Prover configuration */
   prover?: ProverConfig;
   /** State persistence store */
@@ -107,8 +125,22 @@ export class ZkSplClient {
       const cfg = connectionOrConfig;
       this.connection = cfg.connection;
       this.wallet = cfg.wallet;
-      this.programId = cfg.programId ?? new PublicKey(ZKSPL_PROGRAM_ID);
-      this.prover = new ZkSplProver(cfg.prover);
+
+      // Resolve program ID: explicit override > network lookup > devnet default
+      if (cfg.programId) {
+        this.programId = cfg.programId;
+      } else {
+        const network = cfg.network ?? 'devnet';
+        this.programId = new PublicKey(getProgramId(network, 'zkspl'));
+      }
+
+      // Merge circuitBaseUrl into prover config
+      const proverConfig: ProverConfig = {
+        ...cfg.prover,
+        circuitBaseUrl: cfg.prover?.circuitBaseUrl ?? cfg.circuitBaseUrl,
+      };
+
+      this.prover = new ZkSplProver(proverConfig);
       this.stateManager = new LocalStateManager(cfg.stateStore);
       this._spendingKey = cfg.spendingKey ?? null;
     }
@@ -131,7 +163,9 @@ export class ZkSplClient {
   private requireSpendingKey(): FieldElement {
     if (this._spendingKey === null) {
       throw new Error(
-        'Spending key not set. Call setSpendingKey() or pass it in the config.'
+        'Spending key not set. Call client.setSpendingKey(key) or pass ' +
+          'spendingKey in ZkSplClientConfig before calling operations that ' +
+          'require proofs (deposit, withdraw, transfer, proveBalance).'
       );
     }
     return this._spendingKey;
@@ -351,7 +385,11 @@ export class ZkSplClient {
     // Load current local state
     const state = await this.stateManager.getState(ownerBase58, mintBase58);
     if (!state) {
-      throw new Error('No local state. Call createAccount() first.');
+      throw new Error(
+        `No local state found for mint ${mintBase58}. ` +
+          'Call createAccount(tokenMint) first to initialize the confidential account, ' +
+          'or restore state from a backup if you have one.'
+      );
     }
 
     const oldBalance = state.balance;
@@ -467,10 +505,17 @@ export class ZkSplClient {
     const mintBase58 = tokenMint.toBase58();
 
     const state = await this.stateManager.getState(ownerBase58, mintBase58);
-    if (!state) throw new Error('No local state. Call createAccount() first.');
+    if (!state) {
+      throw new Error(
+        `No local state found for mint ${mintBase58} during withdraw. ` +
+          'Call createAccount(tokenMint) first to initialize the confidential account.'
+      );
+    }
     if (state.balance < amount) {
       throw new Error(
-        `Insufficient balance: have ${state.balance}, need ${amount}`
+        `Insufficient confidential balance for withdraw: ` +
+          `have ${state.balance}, need ${amount}. ` +
+          'Deposit more tokens or reduce the withdrawal amount.'
       );
     }
 
@@ -567,11 +612,30 @@ export class ZkSplClient {
    * The amount is hidden on-chain as an amount_hash.
    * The recipient receives a pending credit they must later apply.
    *
+   * **Out-of-band communication required:** After this method returns,
+   * the recipient needs `amountHash` and `amountSaltUsed` to apply the
+   * pending credit on their side via `applyPending()`. Use a secure
+   * channel (encrypted messaging, DM, QR code, etc.) to communicate
+   * these values. Without them, the recipient cannot credit their
+   * confidential balance.
+   *
    * @param tokenMint - The SPL token mint
    * @param recipientPubkey - Recipient's Solana wallet pubkey
-   * @param amount - Amount to transfer
+   * @param amount - Amount to transfer (in atomic units)
    * @param amountSalt - Optional salt for the amount commitment (auto-generated if omitted)
-   * @returns Result including the amountHash the recipient needs to know
+   * @returns Result including `amountHash` and `amountSaltUsed` that the recipient needs.
+   *
+   * @example
+   * ```ts
+   * const result = await client.confidentialTransfer(mint, recipient, 1_000_000n);
+   *
+   * // Send these to the recipient via a secure channel:
+   * console.log('amountHash:', result.amountHash.toString());
+   * console.log('amountSalt:', result.amountSaltUsed.toString());
+   *
+   * // Recipient side:
+   * await recipientClient.applyPending(mint, 1_000_000n, amountSaltFromSender);
+   * ```
    */
   async confidentialTransfer(
     tokenMint: PublicKey,
@@ -586,10 +650,17 @@ export class ZkSplClient {
     const mintBase58 = tokenMint.toBase58();
 
     const state = await this.stateManager.getState(ownerBase58, mintBase58);
-    if (!state) throw new Error('No local state. Call createAccount() first.');
+    if (!state) {
+      throw new Error(
+        `No local state found for mint ${mintBase58} during confidentialTransfer. ` +
+          'Call createAccount(tokenMint) first to initialize the confidential account.'
+      );
+    }
     if (state.balance < amount) {
       throw new Error(
-        `Insufficient balance: have ${state.balance}, need ${amount}`
+        `Insufficient confidential balance for transfer: ` +
+          `have ${state.balance}, need ${amount}. ` +
+          'Deposit more tokens or reduce the transfer amount.'
       );
     }
 
@@ -704,7 +775,12 @@ export class ZkSplClient {
     const mintBase58 = tokenMint.toBase58();
 
     const state = await this.stateManager.getState(ownerBase58, mintBase58);
-    if (!state) throw new Error('No local state. Call createAccount() first.');
+    if (!state) {
+      throw new Error(
+        `No local state found for mint ${mintBase58} during applyPending. ` +
+          'Call createAccount(tokenMint) first to initialize the confidential account.'
+      );
+    }
 
     const oldBalance = state.balance;
     const oldSalt = state.salt;
@@ -807,10 +883,17 @@ export class ZkSplClient {
     const mintBase58 = tokenMint.toBase58();
 
     const state = await this.stateManager.getState(ownerBase58, mintBase58);
-    if (!state) throw new Error('No local state. Call createAccount() first.');
+    if (!state) {
+      throw new Error(
+        `No local state found for mint ${mintBase58} during proveBalance. ` +
+          'Call createAccount(tokenMint) first to initialize the confidential account.'
+      );
+    }
     if (state.balance < threshold) {
       throw new Error(
-        `Balance ${state.balance} is below threshold ${threshold}. Cannot prove.`
+        `Cannot prove balance sufficiency: balance ${state.balance} ` +
+          `is below the requested threshold ${threshold}. ` +
+          'The proof would fail on-chain. Deposit more tokens first.'
       );
     }
 
@@ -1130,16 +1213,54 @@ export class ZkSplClient {
   // -----------------------------------------------------------------------
 
   private async sendAndConfirm(tx: Transaction): Promise<string> {
-    tx.feePayer = this.wallet.publicKey;
-    tx.recentBlockhash = (
-      await this.connection.getLatestBlockhash()
-    ).blockhash;
+    try {
+      tx.feePayer = this.wallet.publicKey;
+      tx.recentBlockhash = (
+        await this.connection.getLatestBlockhash()
+      ).blockhash;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to prepare transaction (getLatestBlockhash): ${message}. ` +
+          'Check your RPC connection URL and network status.'
+      );
+    }
 
-    const signed = await this.wallet.signTransaction(tx);
-    const signature = await this.connection.sendRawTransaction(
-      signed.serialize()
-    );
-    await this.connection.confirmTransaction(signature);
+    let signed: Transaction;
+    try {
+      signed = await this.wallet.signTransaction(tx);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Wallet failed to sign transaction: ${message}. ` +
+          'Ensure the wallet is connected and the correct account is selected.'
+      );
+    }
+
+    let signature: string;
+    try {
+      signature = await this.connection.sendRawTransaction(
+        signed.serialize()
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Failed to send transaction: ${message}. ` +
+          'This may indicate an on-chain error (insufficient SOL for fees, ' +
+          'account already exists, proof verification failed, etc.).'
+      );
+    }
+
+    try {
+      await this.connection.confirmTransaction(signature);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Transaction sent (${signature}) but confirmation failed: ${message}. ` +
+          'The transaction may still land. Check the signature on a block explorer.'
+      );
+    }
+
     return signature;
   }
 }

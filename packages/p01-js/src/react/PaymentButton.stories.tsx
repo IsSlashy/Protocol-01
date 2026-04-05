@@ -132,7 +132,7 @@ A button component for one-time payments.
 
 ### Usage
 \`\`\`tsx
-import { PaymentButton } from 'p-01/react';
+import { PaymentButton } from '@protocol-01/p01-js/react';
 
 <PaymentButton
   amount={9.99}

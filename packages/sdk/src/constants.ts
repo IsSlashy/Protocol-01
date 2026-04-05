@@ -15,6 +15,13 @@ export const STREAM_PROGRAM_ID_MAINNET = new PublicKey(
 );
 
 /**
+ * Whether the stream program has been deployed to mainnet-beta.
+ * Set to `true` once the program is live on mainnet and
+ * `STREAM_PROGRAM_ID_MAINNET` has been updated to the real address.
+ */
+export const MAINNET_DEPLOYED = false;
+
+/**
  * Native SOL mint address
  */
 export const NATIVE_SOL_MINT = new PublicKey(
@@ -106,3 +113,53 @@ export const STREAM_SEED = 'stream';
  * Escrow account seed prefix
  */
 export const ESCROW_SEED = 'escrow';
+
+// ============================================================================
+// Anchor instruction discriminators
+//
+// These 8-byte prefixes identify each instruction in the on-chain stream
+// program. They are the first 8 bytes of SHA-256("global:<ix_name>") as per
+// the Anchor framework convention. Every transaction instruction sent to the
+// program must start with the matching discriminator.
+// ============================================================================
+
+/**
+ * Anchor instruction discriminator for `create_stream`.
+ * SHA-256("global:create_stream")[0..8]
+ */
+export const IX_DISCRIMINATOR_CREATE_STREAM = Buffer.from([0x2e, 0x83, 0x64, 0x35, 0x9e, 0x1b, 0x4c, 0x5b]);
+
+/**
+ * Anchor instruction discriminator for `cancel_stream`.
+ * SHA-256("global:cancel_stream")[0..8]
+ */
+export const IX_DISCRIMINATOR_CANCEL_STREAM = Buffer.from([0x24, 0x9b, 0x9b, 0x88, 0x45, 0x3e, 0x8a, 0x2c]);
+
+/**
+ * Anchor instruction discriminator for `withdraw`.
+ * SHA-256("global:withdraw")[0..8]
+ */
+export const IX_DISCRIMINATOR_WITHDRAW = Buffer.from([0xb7, 0x12, 0x46, 0x9c, 0x94, 0x6d, 0xa1, 0x22]);
+
+/**
+ * Size in bytes of a stream account (used in `getProgramAccounts` filters).
+ * Layout: 8 (discriminator) + 32 (sender) + 32 (recipient) + 32 (mint)
+ *       + 8 (amountPerInterval) + 8 (intervalSeconds) + 8 (totalIntervals)
+ *       + 8 (intervalsPaid) + 8 (createdAt) + 8 (lastWithdrawalAt)
+ *       + 1 (status) + 4 (name length prefix) + up to ~32 (name)
+ *
+ * The filter uses an approximate fixed size (200) since stream names vary.
+ */
+export const STREAM_ACCOUNT_SIZE = 200;
+
+/**
+ * Byte offset of the `sender` public key within a stream account buffer.
+ * Immediately after the 8-byte Anchor discriminator.
+ */
+export const STREAM_SENDER_OFFSET = 8;
+
+/**
+ * Byte offset of the `recipient` public key within a stream account buffer.
+ * After discriminator (8) + sender (32).
+ */
+export const STREAM_RECIPIENT_OFFSET = 40;

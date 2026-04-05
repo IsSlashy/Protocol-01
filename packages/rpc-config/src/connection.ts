@@ -16,6 +16,8 @@ export interface ConnectionConfig extends GetEndpointsOptions {
   commitment?: Commitment;
   confirmTimeout?: number;
   maxRetries?: number;
+  /** Timeout in milliseconds for health checks (default: 5000) */
+  healthCheckTimeout?: number;
   onEndpointSwitch?: (from: RpcEndpoint, to: RpcEndpoint) => void;
 }
 
@@ -101,16 +103,59 @@ export class RpcConnectionManager {
   // ---------------------------------------------------------------------------
 
   /**
-   * Quick health probe — calls `getSlot()` and measures latency.
+   * Quick health probe -- calls `getSlot()` and measures latency.
+   *
+   * @param timeoutMs - Maximum time to wait for a response (default: `healthCheckTimeout` config or 5000ms).
+   *   If the RPC does not respond within this window the endpoint is marked unhealthy.
    */
-  async checkHealth(): Promise<{ healthy: boolean; latencyMs: number }> {
+  async checkHealth(timeoutMs?: number): Promise<{ healthy: boolean; latencyMs: number; endpoint: RpcEndpoint }> {
+    const timeout = timeoutMs ?? this.config.healthCheckTimeout ?? 5000;
     const start = Date.now();
+    const ep = this.getCurrentEndpoint();
+
     try {
-      await this.getConnection().getSlot();
-      return { healthy: true, latencyMs: Date.now() - start };
+      await Promise.race([
+        this.getConnection().getSlot(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Health check timed out')), timeout),
+        ),
+      ]);
+      return { healthy: true, latencyMs: Date.now() - start, endpoint: ep };
     } catch {
-      return { healthy: false, latencyMs: Date.now() - start };
+      return { healthy: false, latencyMs: Date.now() - start, endpoint: ep };
     }
+  }
+
+  /**
+   * Check health of the current endpoint and automatically fail over to the
+   * next one if it is unhealthy. Cycles through all endpoints once.
+   *
+   * @returns The first healthy Connection, or throws if all endpoints fail.
+   */
+  async checkHealthWithFailover(timeoutMs?: number): Promise<Connection> {
+    const tried: string[] = [];
+    const startIndex = this.currentIndex;
+
+    for (let i = 0; i < this.endpoints.length; i++) {
+      const { healthy, endpoint } = await this.checkHealth(timeoutMs);
+      if (healthy) {
+        return this.getConnection();
+      }
+      tried.push(`${endpoint.provider}(${endpoint.http})`);
+      // Don't switch past the last endpoint
+      if (i < this.endpoints.length - 1) {
+        this.switchEndpoint();
+      }
+    }
+
+    // Reset to original index so the caller can retry later
+    this.currentIndex = startIndex;
+    this.connection = null;
+
+    throw new Error(
+      `All RPC endpoints failed health checks. Endpoints tried: ${tried.join(', ')}. ` +
+      'Check your network connection or provide a custom endpoint.',
+    );
   }
 
   /**

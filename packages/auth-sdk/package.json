@@ -1,5 +1,5 @@
 {
-  "name": "@p01/auth-sdk",
+  "name": "@protocol-01/auth-sdk",
   "version": "0.1.0",
   "description": "Protocol 01 Authentication SDK - Login with blockchain subscriptions",
   "main": "dist/index.js",

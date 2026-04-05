@@ -23,7 +23,7 @@ import {
   VersionedTransaction,
   Keypair,
 } from '@solana/web3.js';
-import { RpcConnectionManager } from '@p01/rpc-config';
+import { RpcConnectionManager } from '@protocol-01/rpc-config';
 
 interface TransactionPayload {
   transaction?: string;

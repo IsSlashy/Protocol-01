@@ -1,5 +1,5 @@
 {
-  "name": "@p01/ui",
+  "name": "@protocol-01/ui",
   "version": "0.1.0",
   "description": "Protocol 01 Design System - Ultra dark theme with neon accents",
   "main": "dist/index.js",

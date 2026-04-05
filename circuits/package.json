@@ -1,5 +1,5 @@
 {
-  "name": "@p01/circuits",
+  "name": "@protocol-01/circuits",
   "version": "0.2.0",
   "description": "Zero-knowledge circuits for Protocol 01 — shielded pool + zkSPL confidential balances",
   "scripts": {

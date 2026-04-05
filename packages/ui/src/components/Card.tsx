@@ -1,6 +1,22 @@
 /**
- * Specter Protocol Card Component
- * Glass morphism effect with optional glow
+ * Protocol 01 Card Component
+ *
+ * Glass-morphism card container with optional neon glow border.
+ * Supports hoverable/pressable interactions and multiple glass variants.
+ * Compose with CardHeader, CardBody, and CardFooter for structured layouts.
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Card, CardHeader, CardBody, CardFooter, Button } from '@protocol-01/ui';
+ *
+ * <Card variant="elevated" glow="green" isHoverable>
+ *   <CardHeader title="Privacy Pool" subtitle="0.1 SOL" />
+ *   <CardBody><p>Pool balance: 42.5 SOL</p></CardBody>
+ *   <CardFooter><Button>Shield</Button></CardFooter>
+ * </Card>
+ * ```
  */
 
 import React from 'react';
@@ -88,6 +104,12 @@ const variantStyles: Record<CardVariant, React.CSSProperties> = {
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
+/**
+ * Card container with glass-morphism backdrop, optional glow, and interaction states.
+ *
+ * @param props - Card props including variant, glow color, padding, and interaction flags
+ * @param ref - Forwarded ref to the underlying `<div>` element
+ */
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
   (
     {

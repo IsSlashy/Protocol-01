@@ -12,9 +12,20 @@
 
 /**
  * Registered services that can use P01 Auth
+ *
+ * @example
+ * ```typescript
+ * const config: ServiceConfig = {
+ *   serviceId: 'my-streaming-service',
+ *   serviceName: 'My Streaming Service',
+ *   callbackUrl: 'https://myservice.com/auth/callback',
+ *   subscriptionMint: 'SUBSxxxx...', // optional
+ *   allowedOrigins: ['https://myservice.com'],
+ * };
+ * ```
  */
 export interface ServiceConfig {
-  /** Unique service identifier */
+  /** Unique service identifier (must be non-empty) */
   serviceId: string;
   /** Human-readable service name */
   serviceName: string;

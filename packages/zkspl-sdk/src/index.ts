@@ -1,5 +1,5 @@
 // ==========================================================================
-// @p01/zkspl-sdk — SDK for Protocol 01 zkSPL Confidential Token Balances
+// @protocol-01/zkspl-sdk — SDK for Protocol 01 zkSPL Confidential Token Balances
 // ==========================================================================
 
 // Core client
@@ -91,4 +91,8 @@ export {
   MAX_VIEWER_KEYS,
   PROOF_GENERATION_TIMEOUT,
   CIRCUIT_FILES,
+  PROGRAM_IDS,
+  getProgramId,
+  registerTokenDecimals,
 } from './constants';
+export type { NetworkId, ProgramName } from './constants';

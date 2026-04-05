@@ -177,8 +177,8 @@ await program.methods.relayTransfer(proof, publicSignals, stealthAddress)
     i18nKey: "arciumMpc",
     icon: <Network className="w-6 h-6" />,
     detailCount: 8,
-    codeExample: `// @p01/arcium-sdk — MPC confidential compute
-import { ArciumClient } from '@p01/arcium-sdk';
+    codeExample: `// @protocol-01/arcium-sdk — MPC confidential compute
+import { ArciumClient } from '@protocol-01/arcium-sdk';
 
 const mpc = new ArciumClient({ connection, wallet, programId });
 await mpc.initialize(); // X25519 key exchange + Rescue cipher setup
@@ -201,7 +201,7 @@ const metaAddress = await mpc.privateLookup(targetHash);`,
     icon: <Lock className="w-6 h-6" />,
     detailCount: 8,
     codeExample: `// Sealed-Bid Auction — Arcium MPC + ZK Escrow
-import { createAuction, submitSealedBid, finalizeAuction } from '@p01/arcium-sdk';
+import { createAuction, submitSealedBid, finalizeAuction } from '@protocol-01/arcium-sdk';
 
 // 1. Seller creates auction
 await createAuction(client, program, { auctionId, pool, deadline });
@@ -319,37 +319,37 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
     i18nKey: "clientSdk",
     icon: <Code className="w-6 h-6" />,
     detailCount: 8,
-    codeExample: `// === @p01/specter-sdk — Core Privacy SDK ===
-import { P01Client, createWallet, sendPrivate } from '@p01/specter-sdk';
+    codeExample: `// === @protocol-01/specter-sdk — Core Privacy SDK ===
+import { P01Client, createWallet, sendPrivate } from '@protocol-01/specter-sdk';
 const client = new P01Client({ cluster: 'devnet' });
 await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 
-// === @p01/zk-sdk — ZK Shielded Pool ===
-import { ShieldedClient } from '@p01/zk-sdk';
+// === @protocol-01/zk-sdk — ZK Shielded Pool ===
+import { ShieldedClient } from '@protocol-01/zk-sdk';
 const zkClient = new ShieldedClient({ rpcUrl, programId });
 await zkClient.shield(1_000_000_000n, notes);
 
-// === @p01/zkspl-sdk — Confidential Balances ===
-import { ZkSplClient } from '@p01/zkspl-sdk';
+// === @protocol-01/zkspl-sdk — Confidential Balances ===
+import { ZkSplClient } from '@protocol-01/zkspl-sdk';
 await zkspl.deposit(amount, proof);   // Public → confidential
 await zkspl.send(amount, recipient);  // Confidential transfer
 
-// === @p01/arcium-sdk — MPC Compute ===
-import { ArciumClient } from '@p01/arcium-sdk';
+// === @protocol-01/arcium-sdk — MPC Compute ===
+import { ArciumClient } from '@protocol-01/arcium-sdk';
 await mpc.commitNullifier(preimage);  // SHA3 via MPC nodes
 
-// === @p01/p01-js — Merchant Integration ===
-import { Protocol01 } from '@p01/p01-js';
+// === @protocol-01/p01-js — Merchant Integration ===
+import { Protocol01 } from '@protocol-01/p01-js';
 await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 
-// === @p01/privacy-toolkit — Merkle + Poseidon ===
-import { IncrementalMerkleTree, poseidon2 } from '@p01/privacy-toolkit';
+// === @protocol-01/privacy-toolkit — Merkle + Poseidon ===
+import { IncrementalMerkleTree, poseidon2 } from '@protocol-01/privacy-toolkit';
 
-// === @p01/auth-sdk — Auth Integration ===
-import { P01AuthClient } from '@p01/auth-sdk';
+// === @protocol-01/auth-sdk — Auth Integration ===
+import { P01AuthClient } from '@protocol-01/auth-sdk';
 
-// === @p01/rpc-config — RPC Infrastructure ===
-import { RpcConnectionManager } from '@p01/rpc-config';
+// === @protocol-01/rpc-config — RPC Infrastructure ===
+import { RpcConnectionManager } from '@protocol-01/rpc-config';
 const conn = RpcConnectionManager.getConnection(); // Auto-fallback chain`,
   },
   {

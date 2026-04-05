@@ -70,8 +70,14 @@ export function getWhitelistEntryPDA(wallet: PublicKey): [PublicKey, number] {
 // ============ Encryption ============
 
 /**
- * Encrypt data using nacl box (asymmetric encryption)
- * Only the admin can decrypt this data
+ * Encrypt an access request so only the admin can read it.
+ *
+ * Uses NaCl box (X25519 + XSalsa20-Poly1305) with an ephemeral keypair.
+ * The ephemeral public key is prepended to the ciphertext so the admin
+ * can decrypt without any out-of-band key exchange.
+ *
+ * @param data - The access request to encrypt (email, projectName, etc.)
+ * @returns `{ nonce, encrypted }` both base64-encoded, ready for IPFS upload
  */
 export function encryptForAdmin(data: AccessRequest): EncryptedData {
   if (ADMIN_ENCRYPTION_PUBKEY.every(b => b === 0)) {
@@ -108,7 +114,14 @@ export function encryptForAdmin(data: AccessRequest): EncryptedData {
 }
 
 /**
- * Decrypt data (admin only - requires secret key)
+ * Decrypt an access request (admin only).
+ *
+ * Requires the X25519 secret key corresponding to `ADMIN_ENCRYPTION_PUBKEY`.
+ *
+ * @param encryptedData - The `{ nonce, encrypted }` object from IPFS
+ * @param adminSecretKey - The 32-byte admin X25519 secret key
+ * @returns The decrypted access request
+ * @throws If the key is wrong or data is corrupted
  */
 export function decryptAsAdmin(
   encryptedData: EncryptedData,
@@ -144,21 +157,47 @@ const IPFS_GATEWAYS = [
 ];
 
 /**
- * Upload encrypted data to IPFS via web3.storage
+ * Upload encrypted data to IPFS via web3.storage.
+ *
+ * Requires a web3.storage API token. Get one at https://web3.storage.
+ * Set via `WEB3_STORAGE_TOKEN` env var (Node.js) or `window.P01_WEB3_STORAGE_TOKEN` (browser).
+ *
+ * @param data - Encrypted data to upload (from `encryptForAdmin()`)
+ * @returns The IPFS CID string
+ * @throws If the IPFS token is missing or the upload fails
  */
 export async function uploadToIPFS(data: EncryptedData): Promise<string> {
-  // Using web3.storage API
-  const response = await fetch('https://api.web3.storage/upload', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${getWeb3StorageToken()}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-  });
+  const token = getWeb3StorageToken();
+  if (!token) {
+    throw new Error(
+      'IPFS upload requires a web3.storage API token. ' +
+      'Get one at https://web3.storage. ' +
+      'Set via WEB3_STORAGE_TOKEN env var (Node.js) or window.P01_WEB3_STORAGE_TOKEN (browser).',
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch('https://api.web3.storage/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+  } catch (err: any) {
+    throw new Error(
+      `Failed to upload to IPFS. Check your IPFS_TOKEN configuration and network connectivity. ` +
+      `Details: ${err?.message ?? 'unknown network error'}`,
+    );
+  }
 
   if (!response.ok) {
-    throw new Error(`IPFS upload failed: ${response.statusText}`);
+    throw new Error(
+      `Failed to upload to IPFS. Check your IPFS_TOKEN configuration and network connectivity. ` +
+      `HTTP ${response.status}: ${response.statusText}`,
+    );
   }
 
   const result = await response.json();
@@ -166,33 +205,69 @@ export async function uploadToIPFS(data: EncryptedData): Promise<string> {
 }
 
 /**
- * Fetch encrypted data from IPFS
+ * Fetch encrypted data from IPFS.
+ *
+ * Tries multiple gateways (w3s.link, ipfs.io, cloudflare-ipfs.com) in order.
+ * No API token is needed for reads.
+ *
+ * @param cid - The IPFS CID to fetch
+ * @returns The encrypted data stored at that CID
+ * @throws If all gateways fail
  */
 export async function fetchFromIPFS(cid: string): Promise<EncryptedData> {
+  const errors: string[] = [];
   for (const gateway of IPFS_GATEWAYS) {
     try {
       const response = await fetch(`${gateway}${cid}`);
       if (response.ok) {
         return await response.json();
       }
-    } catch {
+      errors.push(`${gateway}: HTTP ${response.status}`);
+    } catch (err: any) {
+      errors.push(`${gateway}: ${err?.message ?? 'fetch failed'}`);
       continue;
     }
   }
-  throw new Error(`Failed to fetch from IPFS: ${cid}`);
+  throw new Error(
+    `Failed to fetch from IPFS gateway. The content may not be pinned. Try again or check the CID. ` +
+    `CID: ${cid}. Gateways tried: ${errors.join('; ')}`,
+  );
 }
 
+/**
+ * Resolve the web3.storage API token from the environment.
+ *
+ * Checks in order:
+ * 1. `window.P01_WEB3_STORAGE_TOKEN` (browser)
+ * 2. `process.env.WEB3_STORAGE_TOKEN` (Node.js)
+ * 3. `process.env.IPFS_TOKEN` (alias)
+ *
+ * @returns The token string, or empty string if not configured.
+ */
 function getWeb3StorageToken(): string {
-  // In production, this should come from environment variables
-  // For hackathon, we'll use a demo approach
   if (typeof window !== 'undefined') {
     return (window as unknown as { P01_WEB3_STORAGE_TOKEN?: string }).P01_WEB3_STORAGE_TOKEN || '';
   }
-  return process.env.WEB3_STORAGE_TOKEN || '';
+  return process.env.WEB3_STORAGE_TOKEN || process.env.IPFS_TOKEN || '';
 }
 
 // ============ SDK Client ============
 
+/**
+ * SDK for interacting with the Protocol 01 developer whitelist program.
+ *
+ * Most external developers only need {@link checkAccess} and {@link getEntry}.
+ * Admin operations like {@link getPendingRequests} require program authority.
+ *
+ * @example
+ * ```typescript
+ * import { WhitelistSDK } from '@protocol-01/whitelist-sdk';
+ * import { Connection, PublicKey } from '@solana/web3.js';
+ *
+ * const sdk = new WhitelistSDK(new Connection('https://api.devnet.solana.com'));
+ * const { hasAccess } = await sdk.checkAccess(new PublicKey('...'));
+ * ```
+ */
 export class WhitelistSDK {
   private connection: Connection;
   private programId: PublicKey;
@@ -203,7 +278,13 @@ export class WhitelistSDK {
   }
 
   /**
-   * Check if a wallet has developer access
+   * Check if a wallet has approved developer access.
+   *
+   * This is the primary method for external developers -- call this to gate
+   * features behind whitelist approval.
+   *
+   * @param wallet - The wallet public key to check
+   * @returns `{ hasAccess: true, entry }` if approved, `{ hasAccess: false }` otherwise
    */
   async checkAccess(wallet: PublicKey): Promise<{ hasAccess: boolean; entry?: WhitelistEntry }> {
     try {
@@ -225,7 +306,12 @@ export class WhitelistSDK {
   }
 
   /**
-   * Get whitelist entry for a wallet
+   * Get the full whitelist entry for a wallet.
+   *
+   * Returns `null` if the wallet has never applied. Unlike `checkAccess`,
+   * this returns entries in any status (Pending, Rejected, Revoked, etc.).
+   *
+   * @param wallet - The wallet public key to look up
    */
   async getEntry(wallet: PublicKey): Promise<WhitelistEntry | null> {
     try {
@@ -243,7 +329,10 @@ export class WhitelistSDK {
   }
 
   /**
-   * Get all pending requests (admin only)
+   * Get all pending whitelist requests (admin only).
+   *
+   * Fetches all program accounts and filters for `WhitelistStatus.Pending`.
+   * Use with `fetchFromIPFS` + `decryptAsAdmin` to review applications.
    */
   async getPendingRequests(): Promise<WhitelistEntry[]> {
     const accounts = await this.connection.getProgramAccounts(this.programId, {

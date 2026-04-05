@@ -5,7 +5,7 @@
  *
  * @example Basic Setup
  * ```typescript
- * import { Protocol01 } from 'p-01';
+ * import { Protocol01 } from '@protocol-01/p01-js';
  *
  * const p01 = new Protocol01({
  *   merchantId: 'your-merchant-id',
@@ -31,7 +31,7 @@
  *
  * @example React Integration
  * ```tsx
- * import { P01Provider, SubscriptionWidget, WalletButton } from 'p-01/react';
+ * import { P01Provider, SubscriptionWidget, WalletButton } from '@protocol-01/p01-js/react';
  *
  * function App() {
  *   return (
@@ -52,7 +52,7 @@
  */
 
 // Main SDK
-export { Protocol01 } from './protocol01';
+export { Protocol01, type Protocol01UrlConfig } from './protocol01';
 
 // Types
 export {
@@ -140,12 +140,14 @@ export {
   SUBSCRIPTION_LIMITS,
   PRIVACY_LIMITS,
   DEFAULT_CONFIG,
+  URLS,
 } from './constants';
 
 // Registry (for service detection)
 export {
   ServiceRegistry,
   type RegisteredService,
+  type ServiceEntry,
   type ServiceLookupResult,
 } from './registry';
 

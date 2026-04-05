@@ -102,18 +102,18 @@ importers:
       '@noble/post-quantum':
         specifier: ^0.2.1
         version: 0.2.1
-      '@p01/rpc-config':
-        specifier: workspace:*
-        version: link:../../packages/rpc-config
-      '@p01/specter-sdk':
-        specifier: workspace:*
-        version: link:../../packages/specter-sdk
-      '@p01/zkspl-sdk':
-        specifier: workspace:*
-        version: link:../../packages/zkspl-sdk
       '@privy-io/react-auth':
         specifier: ^2.0.0
         version: 2.25.0(@solana/kit@5.4.0)(@solana/spl-token@0.4.14)(@solana/web3.js@1.98.4)(@types/react@18.3.27)(bs58@5.0.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@18.3.1)(react@18.3.1)(typescript@5.9.3)
+      '@protocol-01/rpc-config':
+        specifier: workspace:*
+        version: link:../../packages/rpc-config
+      '@protocol-01/specter-sdk':
+        specifier: workspace:*
+        version: link:../../packages/specter-sdk
+      '@protocol-01/zkspl-sdk':
+        specifier: workspace:*
+        version: link:../../packages/zkspl-sdk
       '@solana/spl-token':
         specifier: ^0.4.14
         version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
@@ -256,15 +256,15 @@ importers:
       '@noble/post-quantum':
         specifier: ^0.5.4
         version: 0.5.4
-      '@p01/arcium-sdk':
-        specifier: workspace:*
-        version: link:../../packages/arcium-sdk
       '@privy-io/expo':
         specifier: ^0.63.3
         version: 0.63.10(@expo-google-fonts/inter@0.4.2)(@privy-io/expo-native-extensions@0.0.7)(@types/react@19.2.14)(expo-apple-authentication@55.0.9)(expo-application@55.0.10)(expo-clipboard@8.0.8)(expo-crypto@15.0.8)(expo-font@14.0.11)(expo-linking@8.0.11)(expo-secure-store@15.0.8)(expo-web-browser@15.0.10)(react-native-passkeys@0.3.3)(react-native-safe-area-context@5.7.0)(react-native-svg@15.15.4)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)(viem@2.47.4)
       '@privy-io/react-auth':
         specifier: ^2.0.0
         version: 2.25.0(@react-native-async-storage/async-storage@2.2.0)(@solana/kit@5.4.0)(@solana/spl-token@0.4.14)(@solana/web3.js@1.98.4)(@types/react@19.2.14)(bs58@6.0.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@19.1.0)(react@19.1.0)(typescript@5.9.3)
+      '@protocol-01/arcium-sdk':
+        specifier: workspace:*
+        version: link:../../packages/arcium-sdk
       '@react-native-async-storage/async-storage':
         specifier: 2.2.0
         version: 2.2.0(react-native@0.81.5)
@@ -663,7 +663,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@p01/rpc-config':
+      '@protocol-01/rpc-config':
         specifier: workspace:*
         version: link:../../packages/rpc-config
       '@solana/wallet-adapter-base':
@@ -898,6 +898,9 @@ importers:
       '@noble/post-quantum':
         specifier: ^0.5.4
         version: 0.5.4
+      '@protocol-01/privacy-toolkit':
+        specifier: workspace:*
+        version: link:../privacy-toolkit
       '@solana/spl-token':
         specifier: ^0.4.14
         version: 0.4.14(@solana/web3.js@1.98.4)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
@@ -3973,7 +3976,7 @@ packages:
     dependencies:
       chalk: 4.1.2
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@react-native/metro-config@0.84.1)(@types/react@19.2.14)(react@19.1.0)
 
   /@expo/devtools@0.1.8(react-native@0.81.5)(react@19.2.4):
     resolution: {integrity: sha512-SVLxbuanDjJPgc0sy3EfXUMLb/tXzp6XIHkhtPVmTWJAp+FOr6+5SeiCfJrCzZFet0Ifyke2vX3sFcKwEvCXwQ==}
@@ -7254,6 +7257,7 @@ packages:
       nullthrows: 1.1.1
       react: 19.1.0
       react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+    dev: false
 
   /@react-native/virtualized-lists@0.83.1(@types/react@19.2.14)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-MdmoAbQUTOdicCocm5XAFDJWsswxk7hxa6ALnm6Y88p01HFML0W593hAn6qOt9q6IM1KbAcebtH6oOd4gcQy8w==}
@@ -18868,7 +18872,7 @@ packages:
     dependencies:
       invariant: 2.2.4
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@react-native/metro-config@0.84.1)(@types/react@19.2.14)(react@19.1.0)
 
   /expo-modules-core@3.0.29(react-native@0.81.5)(react@19.2.4):
     resolution: {integrity: sha512-LzipcjGqk8gvkrOUf7O2mejNWugPkf3lmd9GkqL9WuNyeN2fRwU0Dn77e3ZUKI3k6sI+DNwjkq4Nu9fNN9WS7Q==}
@@ -24770,6 +24774,7 @@ packages:
       - bufferutil
       - supports-color
       - utf-8-validate
+    dev: false
 
   /react-qr-code@2.0.18(react@19.2.4):
     resolution: {integrity: sha512-v1Jqz7urLMhkO6jkgJuBYhnqvXagzceg3qJUWayuCK/c6LTIonpWbwxR1f1APGd4xrW/QcQEovNrAojbUz65Tg==}

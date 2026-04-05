@@ -32,7 +32,7 @@ import {
 } from '../circuits';
 import { sha256 } from '@noble/hashes/sha256';
 import nacl from 'tweetnacl';
-import { ZK_SHIELDED_PROGRAM_ID, PDA_SEEDS, MERKLE_TREE_DEPTH } from '../constants';
+import { ZK_SHIELDED_PROGRAM_ID, PDA_SEEDS, MERKLE_TREE_DEPTH, IX_DISCRIMINATORS, getProgramId } from '../constants';
 import type {
   PoolState,
   ShieldedTxResult,
@@ -42,12 +42,13 @@ import type {
   NoteData,
   TransferPublicInputs,
   TransferPrivateInputs,
+  NetworkConfig,
 } from '../types';
 
 /**
  * Configuration for ShieldedClient
  */
-export interface ShieldedClientConfig {
+export interface ShieldedClientConfig extends NetworkConfig {
   /** Solana RPC connection */
   connection: Connection;
   /** User's wallet */
@@ -80,11 +81,16 @@ export class ShieldedClient {
   constructor(config: ShieldedClientConfig) {
     this.connection = config.connection;
     this.wallet = config.wallet;
-    this.prover = new ZkProver(config.wasmPath, config.zkeyPath);
+    this.prover = new ZkProver(config.wasmPath, config.zkeyPath, {
+      circuitBaseUrl: config.circuitBaseUrl,
+    });
     this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
     this.tokenMint = config.tokenMint || SystemProgram.programId;
     this.viewingKey = new Uint8Array(32);
-    this.programId = new PublicKey(ZK_SHIELDED_PROGRAM_ID);
+
+    // Resolve program ID: explicit programId > network lookup > devnet default
+    const resolvedProgramId = config.programId ?? getProgramId(config.network ?? 'devnet');
+    this.programId = new PublicKey(resolvedProgramId);
   }
 
   /**
@@ -193,13 +199,18 @@ export class ShieldedClient {
       this.programId
     );
 
-    // Build shield instruction
+    // Insert into local Merkle tree first to compute new_root
     const commitment = fieldToBytes(note.commitment);
+    const leafIndex = this.merkleTree.insert(note.commitment);
+    const newRoot = fieldToBytes(this.merkleTree.root);
+
+    // Build shield instruction with new_root
     const ix = await this.buildShieldInstruction(
       poolPDA,
       merkleTreePDA,
       amount,
-      commitment
+      commitment,
+      newRoot
     );
 
     // Send transaction
@@ -207,7 +218,6 @@ export class ShieldedClient {
     const signature = await this.sendTransaction(tx);
 
     // Update local state
-    const leafIndex = this.merkleTree.insert(note.commitment);
     note.leafIndex = leafIndex;
     this.notes.push(note);
 
@@ -303,6 +313,15 @@ export class ShieldedClient {
       this.programId
     );
 
+    // Capture current root before inserting new commitments
+    const currentRoot = fieldToBytes(this.merkleTree.root);
+
+    // Insert output commitments into local tree to compute new_root
+    this.removeSpentNotes(notesToSpend);
+    this.merkleTree.insert(recipientNote.commitment);
+    const changeLeafIndex = this.merkleTree.insert(changeNote.commitment);
+    const newRoot = fieldToBytes(this.merkleTree.root);
+
     // Build and send transaction
     const ix = await this.buildTransferInstruction(
       poolPDA,
@@ -311,16 +330,14 @@ export class ShieldedClient {
       fieldToBytes(nullifier2),
       fieldToBytes(recipientNote.commitment),
       fieldToBytes(changeNote.commitment),
-      fieldToBytes(this.merkleTree.root)
+      currentRoot,
+      newRoot
     );
 
     const tx = new Transaction().add(ix);
     const signature = await this.sendTransaction(tx);
 
     // Update local state
-    this.removeSpentNotes(notesToSpend);
-    this.merkleTree.insert(recipientNote.commitment);
-    const changeLeafIndex = this.merkleTree.insert(changeNote.commitment);
     changeNote.leafIndex = changeLeafIndex;
     if (changeAmount > 0) {
       this.notes.push(changeNote);
@@ -418,6 +435,16 @@ export class ShieldedClient {
       this.programId
     );
 
+    // Capture current root, then insert change note to compute new_root
+    const currentRoot = fieldToBytes(this.merkleTree.root);
+
+    this.removeSpentNotes(notesToSpend);
+    if (changeNote) {
+      const changeLeafIndex = this.merkleTree.insert(changeNote.commitment);
+      changeNote.leafIndex = changeLeafIndex;
+    }
+    const newRoot = fieldToBytes(this.merkleTree.root);
+
     // Build and send transaction
     const ix = await this.buildUnshieldInstruction(
       poolPDA,
@@ -426,18 +453,17 @@ export class ShieldedClient {
       fieldToBytes(nullifier1),
       fieldToBytes(nullifier2),
       fieldToBytes(changeNote?.commitment ?? BigInt(0)),
-      fieldToBytes(this.merkleTree.root),
-      amount
+      fieldToBytes(BigInt(0)), // output_commitment_2 (empty for unshield)
+      currentRoot,
+      amount,
+      newRoot
     );
 
     const tx = new Transaction().add(ix);
     const signature = await this.sendTransaction(tx);
 
     // Update local state
-    this.removeSpentNotes(notesToSpend);
     if (changeNote) {
-      const changeLeafIndex = this.merkleTree.insert(changeNote.commitment);
-      changeNote.leafIndex = changeLeafIndex;
       this.notes.push(changeNote);
     }
 
@@ -457,11 +483,19 @@ export class ShieldedClient {
   }
 
   /**
-   * Scan for incoming notes
+   * Scan for incoming notes.
+   *
+   * Currently returns notes from local cache only. Chain scanning requires an
+   * indexer setup — see https://docs.protocol01.dev for integration examples.
+   *
+   * @param fromIndex - Leaf index to start scanning from (default: 0)
    */
   async scanForNotes(fromIndex: number = 0): Promise<NoteScanResult> {
-    // TODO: Implement actual chain scanning
-    // For now, return local notes
+    console.warn(
+      'scanForNotes: returning local cache only. ' +
+      'Chain scanning requires an indexer setup — see https://docs.protocol01.dev'
+    );
+
     const totalBalance = await this.getShieldedBalance();
 
     return {
@@ -472,11 +506,17 @@ export class ShieldedClient {
   }
 
   /**
-   * Sync local state with on-chain state
+   * Sync local state with on-chain state.
+   *
+   * @throws Always throws — on-chain sync is not yet implemented in the SDK.
+   * Use {@link scanForNotes} with a custom indexer, or see
+   * https://docs.protocol01.dev for chain sync examples.
    */
   async sync(): Promise<void> {
-    // TODO: Fetch on-chain Merkle root and sync
-    // This would involve fetching commitment events and updating local tree
+    throw new Error(
+      'sync() is not yet implemented. Use scanForNotes() with a custom indexer, ' +
+      'or check https://docs.protocol01.dev for chain sync examples.'
+    );
   }
 
   /**
@@ -534,15 +574,36 @@ export class ShieldedClient {
     pool: PublicKey,
     merkleTree: PublicKey,
     amount: bigint,
-    commitment: Uint8Array
+    commitment: Uint8Array,
+    newRoot: Uint8Array
   ): Promise<TransactionInstruction> {
-    // Build instruction data
-    const data = Buffer.alloc(8 + 32);
-    data.writeBigUInt64LE(amount, 0);
-    data.set(commitment, 8);
+    // Anchor discriminator (8) + amount (8) + commitment (32) + new_root (32) = 80 bytes
+    const data = Buffer.alloc(8 + 8 + 32 + 32);
+    let offset = 0;
 
-    // Get token accounts
-    // TODO: Get actual token accounts
+    // Anchor instruction discriminator
+    data.set(IX_DISCRIMINATORS.SHIELD, offset);
+    offset += 8;
+
+    // amount (u64 LE)
+    data.writeBigUInt64LE(amount, offset);
+    offset += 8;
+
+    // commitment ([u8; 32])
+    data.set(commitment, offset);
+    offset += 32;
+
+    // new_root ([u8; 32])
+    data.set(newRoot, offset);
+
+    // For SPL tokens, additional accounts are needed
+    if (!this.tokenMint.equals(SystemProgram.programId)) {
+      throw new Error(
+        'buildShieldInstruction: SPL token shielding requires token account resolution. ' +
+        'Currently only native SOL is supported. For SPL token support, use the ' +
+        '@protocol-01/zkspl-sdk package.'
+      );
+    }
 
     return new TransactionInstruction({
       programId: this.programId,
@@ -550,7 +611,7 @@ export class ShieldedClient {
         { pubkey: this.wallet.publicKey, isSigner: true, isWritable: true },
         { pubkey: pool, isSigner: false, isWritable: true },
         { pubkey: merkleTree, isSigner: false, isWritable: true },
-        // Add token accounts
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data,
     });
@@ -566,11 +627,16 @@ export class ShieldedClient {
     nullifier2: Uint8Array,
     outputCommitment1: Uint8Array,
     outputCommitment2: Uint8Array,
-    merkleRoot: Uint8Array
+    merkleRoot: Uint8Array,
+    newRoot: Uint8Array
   ): Promise<TransactionInstruction> {
-    // Serialize proof and inputs
-    const data = Buffer.alloc(256 + 32 * 5);
+    // Anchor discriminator (8) + proof (256) + 6x [u8;32] = 456 bytes
+    const data = Buffer.alloc(8 + 256 + 32 * 6);
     let offset = 0;
+
+    // Anchor instruction discriminator
+    data.set(IX_DISCRIMINATORS.TRANSFER, offset);
+    offset += 8;
 
     // Proof (pi_a: 64, pi_b: 128, pi_c: 64)
     data.set(proof.pi_a, offset);
@@ -580,24 +646,32 @@ export class ShieldedClient {
     data.set(proof.pi_c, offset);
     offset += 64;
 
-    // Nullifiers and commitments
-    data.set(nullifier1, offset);
-    offset += 32;
-    data.set(nullifier2, offset);
-    offset += 32;
-    data.set(outputCommitment1, offset);
-    offset += 32;
-    data.set(outputCommitment2, offset);
-    offset += 32;
-    data.set(merkleRoot, offset);
+    // Nullifiers, commitments, roots
+    data.set(nullifier1, offset); offset += 32;
+    data.set(nullifier2, offset); offset += 32;
+    data.set(outputCommitment1, offset); offset += 32;
+    data.set(outputCommitment2, offset); offset += 32;
+    data.set(merkleRoot, offset); offset += 32;
+    data.set(newRoot, offset);
 
+    // Derive PDAs
     const [merkleTreePDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.MERKLE_TREE, pool.toBytes()],
       this.programId
     );
 
-    const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.NULLIFIER_SET, pool.toBytes()],
+    const [nullifierRecord1PDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.NULLIFIER, pool.toBytes(), nullifier1],
+      this.programId
+    );
+
+    const [nullifierRecord2PDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.NULLIFIER, pool.toBytes(), nullifier2],
+      this.programId
+    );
+
+    const [vkDataPDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.VK_DATA, pool.toBytes()],
       this.programId
     );
 
@@ -607,8 +681,10 @@ export class ShieldedClient {
         { pubkey: this.wallet.publicKey, isSigner: true, isWritable: true },
         { pubkey: pool, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
-        // Add VK data account
+        { pubkey: nullifierRecord1PDA, isSigner: false, isWritable: true },
+        { pubkey: nullifierRecord2PDA, isSigner: false, isWritable: true },
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data,
     });
@@ -623,54 +699,79 @@ export class ShieldedClient {
     proof: Groth16Proof,
     nullifier1: Uint8Array,
     nullifier2: Uint8Array,
-    changeCommitment: Uint8Array,
+    outputCommitment1: Uint8Array,
+    outputCommitment2: Uint8Array,
     merkleRoot: Uint8Array,
-    amount: bigint
+    amount: bigint,
+    newRoot: Uint8Array
   ): Promise<TransactionInstruction> {
-    // Similar to transfer but with amount
-    const data = Buffer.alloc(256 + 32 * 4 + 8);
+    // Anchor discriminator (8) + proof (256) + 5x [u8;32] + amount (8) + new_root (32) = 464 bytes
+    const data = Buffer.alloc(8 + 256 + 32 * 5 + 8 + 32);
     let offset = 0;
 
-    // Proof
-    data.set(proof.pi_a, offset);
-    offset += 64;
-    data.set(proof.pi_b, offset);
-    offset += 128;
-    data.set(proof.pi_c, offset);
-    offset += 64;
+    // Anchor instruction discriminator
+    data.set(IX_DISCRIMINATORS.UNSHIELD, offset);
+    offset += 8;
 
-    // Nullifiers and commitment
-    data.set(nullifier1, offset);
-    offset += 32;
-    data.set(nullifier2, offset);
-    offset += 32;
-    data.set(changeCommitment, offset);
-    offset += 32;
-    data.set(merkleRoot, offset);
-    offset += 32;
+    // Proof (pi_a: 64, pi_b: 128, pi_c: 64)
+    data.set(proof.pi_a, offset); offset += 64;
+    data.set(proof.pi_b, offset); offset += 128;
+    data.set(proof.pi_c, offset); offset += 64;
 
-    // Amount
+    // Nullifiers, commitments, root
+    data.set(nullifier1, offset); offset += 32;
+    data.set(nullifier2, offset); offset += 32;
+    data.set(outputCommitment1, offset); offset += 32;
+    data.set(outputCommitment2, offset); offset += 32;
+    data.set(merkleRoot, offset); offset += 32;
+
+    // Amount (u64 LE)
     data.writeBigUInt64LE(amount, offset);
+    offset += 8;
 
+    // New root
+    data.set(newRoot, offset);
+
+    // Derive PDAs
     const [merkleTreePDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.MERKLE_TREE, pool.toBytes()],
       this.programId
     );
 
-    const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.NULLIFIER_SET, pool.toBytes()],
+    const [nullifierRecord1PDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.NULLIFIER, pool.toBytes(), nullifier1],
       this.programId
     );
+
+    const [nullifierRecord2PDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.NULLIFIER, pool.toBytes(), nullifier2],
+      this.programId
+    );
+
+    const [vkDataPDA] = PublicKey.findProgramAddressSync(
+      [PDA_SEEDS.VK_DATA, pool.toBytes()],
+      this.programId
+    );
+
+    // For SPL tokens, additional accounts are needed
+    if (!this.tokenMint.equals(SystemProgram.programId)) {
+      throw new Error(
+        'buildUnshieldInstruction: SPL token unshielding requires token account resolution. ' +
+        'Currently only native SOL is supported.'
+      );
+    }
 
     return new TransactionInstruction({
       programId: this.programId,
       keys: [
         { pubkey: this.wallet.publicKey, isSigner: true, isWritable: true },
-        { pubkey: recipient, isSigner: false, isWritable: false },
+        { pubkey: recipient, isSigner: false, isWritable: true },
         { pubkey: pool, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
-        // Add token accounts and VK data
+        { pubkey: nullifierRecord1PDA, isSigner: false, isWritable: true },
+        { pubkey: nullifierRecord2PDA, isSigner: false, isWritable: true },
+        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data,
     });

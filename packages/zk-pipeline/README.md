@@ -1,6 +1,6 @@
 <div align="center">
 
-# @p01/zk-pipeline
+# @protocol-01/zk-pipeline
 
 **Built by [Protocol 01](https://github.com/IsSlashy/Protocol-01) — The Privacy Layer for Solana**
 
@@ -122,10 +122,10 @@ module.exports = config;
 
 ### Step 5: Load Circuit in the App
 
-Use `@p01/react-native-zk` to load the circuit files in your React Native app:
+Use `@protocol-01/react-native-zk` to load the circuit files in your React Native app:
 
 ```typescript
-import { SnarkjsProver } from '@p01/react-native-zk';
+import { SnarkjsProver } from '@protocol-01/react-native-zk';
 
 const prover = new SnarkjsProver();
 
@@ -136,7 +136,7 @@ await prover.loadCircuit({
 });
 ```
 
-The `@p01/react-native-zk` package runs snarkjs inside a hidden WebView, avoiding native module dependencies. It handles the Expo asset naming gotcha (see `gotchas/expo-asset-naming.md`) automatically.
+The `@protocol-01/react-native-zk` package runs snarkjs inside a hidden WebView, avoiding native module dependencies. It handles the Expo asset naming gotcha (see `gotchas/expo-asset-naming.md`) automatically.
 
 ### Step 6: Generate a Proof
 
@@ -161,7 +161,7 @@ For faster proving, consider using a Rust-based prover service (see `gotchas/cir
 Convert the snarkjs proof format to the on-chain format and submit:
 
 ```typescript
-import { proofToOnChainBytes, publicInputsToLE } from '@p01/privacy-toolkit';
+import { proofToOnChainBytes, publicInputsToLE } from '@protocol-01/privacy-toolkit';
 import { ComputeBudgetProgram, Transaction } from '@solana/web3.js';
 
 // Convert proof format (handles G2 point swap -- see gotchas/g2-point-format.md)
@@ -218,9 +218,9 @@ adb install -r aligned.apk
 
 | Package | Purpose |
 |---------|---------|
-| [@p01/react-native-zk](../react-native-zk/) | Run snarkjs in React Native via hidden WebView |
-| [@p01/solana-verifier](../solana-verifier/) | On-chain Groth16 verification using alt_bn128 precompile |
-| [@p01/privacy-toolkit](../privacy-toolkit/) | Proof format conversion, public input encoding, utilities |
+| [@protocol-01/react-native-zk](../react-native-zk/) | Run snarkjs in React Native via hidden WebView |
+| [@protocol-01/solana-verifier](../solana-verifier/) | On-chain Groth16 verification using alt_bn128 precompile |
+| [@protocol-01/privacy-toolkit](../privacy-toolkit/) | Proof format conversion, public input encoding, utilities |
 
 ## Gotcha Index
 
@@ -274,9 +274,9 @@ This library is extracted from [Protocol 01](https://github.com/IsSlashy/Protoco
 
 | Library | Purpose |
 |---------|---------|
-| **@p01/react-native-zk** | Client-side ZK proving on mobile |
-| **@p01/solana-verifier** | On-chain Groth16 verification |
-| **@p01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
-| **@p01/zk-pipeline** | End-to-end guide: circuit → mobile → on-chain |
+| **@protocol-01/react-native-zk** | Client-side ZK proving on mobile |
+| **@protocol-01/solana-verifier** | On-chain Groth16 verification |
+| **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
+| **@protocol-01/zk-pipeline** | End-to-end guide: circuit → mobile → on-chain |
 
 [Website](https://protocol-01.vercel.app) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH)

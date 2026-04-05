@@ -672,6 +672,15 @@ export const KNOWN_SERVICES: Record<string, ServiceInfo> = {
 /** Alias for ServiceInfo */
 export type RegisteredService = ServiceInfo;
 
+/**
+ * Entry for registering a custom service. The `domain` field is required
+ * so the registry knows how to look it up.
+ */
+export interface ServiceEntry extends ServiceInfo {
+  /** Domain key for registry lookup (e.g., "myapp.com") */
+  domain: string;
+}
+
 /** Result of a service lookup */
 export interface ServiceLookupResult {
   service: ServiceInfo | null;
@@ -679,11 +688,18 @@ export interface ServiceLookupResult {
   verified: boolean;
 }
 
+/**
+ * Custom services registered at runtime via `ServiceRegistry.register()`.
+ * Kept separate from the built-in `KNOWN_SERVICES` to make the separation
+ * clear, but lookups check both maps.
+ */
+const CUSTOM_SERVICES: Record<string, ServiceInfo> = {};
+
 /** Service registry class for looking up known services */
 export class ServiceRegistry {
   static detect(origin: string): ServiceLookupResult {
     const domain = extractDomain(origin);
-    const service = KNOWN_SERVICES[domain] ?? null;
+    const service = CUSTOM_SERVICES[domain] ?? KNOWN_SERVICES[domain] ?? null;
     return { service, domain, verified: service?.verified === true };
   }
 
@@ -697,6 +713,70 @@ export class ServiceRegistry {
 
   static search(query: string): Array<[string, ServiceInfo]> {
     return searchServices(query);
+  }
+
+  /**
+   * Register a custom service in the registry.
+   *
+   * This allows merchants to add their own service branding so that
+   * wallet UIs can recognize and display it. Custom entries take
+   * precedence over built-in entries for the same domain.
+   *
+   * @param entry - Service entry including the domain key
+   *
+   * @example
+   * ```typescript
+   * import { ServiceRegistry } from '@protocol-01/p01-js/registry';
+   *
+   * ServiceRegistry.register({
+   *   domain: 'mystreaming.com',
+   *   name: 'My Streaming Service',
+   *   logo: 'https://mystreaming.com/logo.png',
+   *   category: 'streaming',
+   *   description: 'Watch movies and TV shows',
+   *   website: 'https://mystreaming.com',
+   *   verified: false,
+   *   commonAmounts: [9.99, 14.99],
+   *   defaultToken: 'USDC',
+   * });
+   *
+   * // Now detectable:
+   * const result = ServiceRegistry.detect('https://mystreaming.com');
+   * // => { service: { name: 'My Streaming Service', ... }, domain: 'mystreaming.com', verified: false }
+   * ```
+   */
+  static register(entry: ServiceEntry): void {
+    const { domain, ...serviceInfo } = entry;
+    if (!domain || typeof domain !== 'string') {
+      throw new Error('ServiceRegistry.register: domain is required and must be a non-empty string');
+    }
+    const normalizedDomain = extractDomain(domain);
+    CUSTOM_SERVICES[normalizedDomain] = serviceInfo;
+  }
+
+  /**
+   * Unregister a previously registered custom service.
+   *
+   * @param domain - Domain to remove from custom registry
+   * @returns true if the entry was found and removed, false otherwise
+   */
+  static unregister(domain: string): boolean {
+    const normalizedDomain = extractDomain(domain);
+    if (normalizedDomain in CUSTOM_SERVICES) {
+      delete CUSTOM_SERVICES[normalizedDomain];
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Get all registered services (built-in + custom).
+   * Custom entries override built-in entries with the same domain.
+   *
+   * @returns Record of domain to ServiceInfo
+   */
+  static getAll(): Record<string, ServiceInfo> {
+    return { ...KNOWN_SERVICES, ...CUSTOM_SERVICES };
   }
 }
 
@@ -738,12 +818,13 @@ export function extractDomain(input: string): string {
 
 /**
  * Detect service info from origin/URL
+ * Checks custom-registered services first, then built-in services.
  * @param origin - Window origin, URL, or domain
  * @returns ServiceInfo if found, null otherwise
  */
 export function detectService(origin: string): ServiceInfo | null {
   const domain = extractDomain(origin);
-  return KNOWN_SERVICES[domain] ?? null;
+  return CUSTOM_SERVICES[domain] ?? KNOWN_SERVICES[domain] ?? null;
 }
 
 /**
@@ -757,6 +838,14 @@ export function isVerifiedService(origin: string): boolean {
 }
 
 /**
+ * Get all services merged (custom overrides built-in for same domain)
+ * @returns Record of domain to ServiceInfo
+ */
+function getAllServices(): Record<string, ServiceInfo> {
+  return { ...KNOWN_SERVICES, ...CUSTOM_SERVICES };
+}
+
+/**
  * Get services by category
  * @param category - Service category to filter by
  * @returns Array of [domain, ServiceInfo] pairs
@@ -764,7 +853,7 @@ export function isVerifiedService(origin: string): boolean {
 export function getServicesByCategory(
   category: MerchantCategory
 ): Array<[string, ServiceInfo]> {
-  return Object.entries(KNOWN_SERVICES).filter(
+  return Object.entries(getAllServices()).filter(
     ([, info]) => info.category === category
   );
 }
@@ -778,7 +867,7 @@ export function searchServices(
   query: string
 ): Array<[string, ServiceInfo]> {
   const lowerQuery = query.toLowerCase();
-  return Object.entries(KNOWN_SERVICES).filter(
+  return Object.entries(getAllServices()).filter(
     ([domain, info]) =>
       domain.includes(lowerQuery) ||
       info.name.toLowerCase().includes(lowerQuery) ||
@@ -792,7 +881,7 @@ export function searchServices(
  */
 export function getCategories(): MerchantCategory[] {
   const categories = new Set<MerchantCategory>();
-  for (const service of Object.values(KNOWN_SERVICES)) {
+  for (const service of Object.values(getAllServices())) {
     categories.add(service.category);
   }
   return Array.from(categories).sort();
@@ -804,7 +893,7 @@ export function getCategories(): MerchantCategory[] {
  */
 export function getCategoryCounts(): Map<MerchantCategory, number> {
   const counts = new Map<MerchantCategory, number>();
-  for (const service of Object.values(KNOWN_SERVICES)) {
+  for (const service of Object.values(getAllServices())) {
     counts.set(service.category, (counts.get(service.category) ?? 0) + 1);
   }
   return counts;

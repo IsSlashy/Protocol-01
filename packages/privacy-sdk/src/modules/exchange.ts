@@ -690,7 +690,7 @@ export class MugenExchangeModule {
 
       let reputationCommitment = 0n;
       for (let i = 31; i >= 0; i--) {
-        reputationCommitment = (reputationCommitment << 8n) | BigInt(repCommitmentBytes[i]);
+        reputationCommitment = (reputationCommitment << 8n) | BigInt(repCommitmentBytes[i] ?? 0);
       }
 
       return {
@@ -765,7 +765,7 @@ export class MugenExchangeModule {
       const commitmentBytes = data.subarray(offset, offset + 32); offset += 32;
       let commitment = 0n;
       for (let i = 31; i >= 0; i--) {
-        commitment = (commitment << 8n) | BigInt(commitmentBytes[i]);
+        commitment = (commitment << 8n) | BigInt(commitmentBytes[i] ?? 0);
       }
 
       const tradesCompleted = data.readUInt32LE(offset); offset += 4;

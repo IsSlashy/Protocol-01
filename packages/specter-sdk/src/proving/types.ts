@@ -251,6 +251,23 @@ export interface ClientProverConfig {
   sufficiencyCircuit: CircuitFileConfig;
 
   /**
+   * Base URL or directory path for circuit files.
+   * When set, circuit file URLs in balanceCircuit/sufficiencyCircuit can be
+   * specified as relative paths (e.g. 'confidential_balance.wasm') and they
+   * will be resolved against this base.
+   *
+   * @example
+   * ```ts
+   * const prover = new ClientProver({
+   *   circuitBaseUrl: 'https://cdn.example.com/circuits/',
+   *   balanceCircuit: { wasmUrl: 'confidential_balance.wasm', zkeyUrl: 'confidential_balance_final.zkey' },
+   *   sufficiencyCircuit: { wasmUrl: 'balance_proof.wasm', zkeyUrl: 'balance_proof_final.zkey' },
+   * });
+   * ```
+   */
+  circuitBaseUrl?: string;
+
+  /**
    * Timeout for proof generation in milliseconds.
    * Default: 60000 (60 seconds — the circuit is small, ~1382 constraints).
    */

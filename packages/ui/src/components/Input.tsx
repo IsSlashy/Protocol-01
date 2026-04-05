@@ -1,6 +1,18 @@
 /**
- * Specter Protocol Input Component
- * Dark themed input with glow focus effects
+ * Protocol 01 Input Components
+ *
+ * Dark-themed text input and textarea with neon glow focus effects.
+ * Supports labels, hints, error states, icons, and addon slots.
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Input, TextArea } from '@protocol-01/ui';
+ *
+ * <Input label="Recipient" placeholder="Solana address" error={error} isFullWidth />
+ * <TextArea label="Memo" hint="Optional encrypted note" resize="vertical" />
+ * ```
  */
 
 import React from 'react';
@@ -105,6 +117,12 @@ const variantStyles: Record<InputVariant, {
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
+/**
+ * Text input with variant styling, focus glow, label, error, and icon support.
+ *
+ * @param props - Input props including size, variant, label, error, and icons
+ * @param ref - Forwarded ref to the underlying `<input>` element
+ */
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   (
     {
@@ -300,6 +318,12 @@ export interface TextAreaProps extends Omit<React.TextareaHTMLAttributes<HTMLTex
   resize?: 'none' | 'vertical' | 'horizontal' | 'both';
 }
 
+/**
+ * Multi-line textarea with focus glow, label, and error support.
+ *
+ * @param props - TextArea props including label, error, resize mode, and fullWidth
+ * @param ref - Forwarded ref to the underlying `<textarea>` element
+ */
 export const TextArea = React.forwardRef<HTMLTextAreaElement, TextAreaProps>(
   (
     {

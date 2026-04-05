@@ -1,5 +1,5 @@
 {
-  "name": "@p01/react-native-zk",
+  "name": "@protocol-01/react-native-zk",
   "version": "1.0.0",
   "description": "Client-side Groth16 ZK proof generation for React Native apps using a hidden WebView. No backend required.",
   "main": "src/index.ts",

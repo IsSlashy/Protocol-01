@@ -3,9 +3,16 @@
  * Implements a sparse Merkle tree with Poseidon hashing
  */
 
-import { getPoseidon, poseidonHashSync } from '../circuits';
+import { poseidonHashLite } from '../circuits';
 import { MERKLE_TREE_DEPTH, ZERO_VALUE, MAX_TREE_LEAVES } from '../constants';
 import type { MerkleProofData } from '../types';
+
+/**
+ * Hash two Merkle tree nodes using poseidon-lite (synchronous, no init needed)
+ */
+function hashNodes(left: bigint, right: bigint): bigint {
+  return poseidonHashLite([left, right]);
+}
 
 /**
  * Sparse Merkle tree implementation
@@ -15,33 +22,30 @@ export class MerkleTree {
   private leaves: Map<number, bigint>;
   private nodes: Map<string, bigint>;
   private zeroValues: bigint[];
-  private poseidon: any;
-  private _root: bigint | null = null;
+  private _root: bigint;
 
   constructor(depth: number = MERKLE_TREE_DEPTH) {
     this.depth = depth;
     this.leaves = new Map();
     this.nodes = new Map();
-    this.zeroValues = [];
-    this.poseidon = null;
-  }
 
-  /**
-   * Initialize the tree (must be called before use)
-   */
-  async initialize(): Promise<void> {
-    this.poseidon = await getPoseidon();
-
-    // Pre-compute zero values for each level
+    // Pre-compute zero values for each level (sync, no init needed)
     let current = ZERO_VALUE;
     this.zeroValues = [current];
 
     for (let i = 0; i < this.depth; i++) {
-      current = poseidonHashSync(this.poseidon, [current, current]);
+      current = hashNodes(current, current);
       this.zeroValues.push(current);
     }
 
     this._root = this.zeroValues[this.depth];
+  }
+
+  /**
+   * Initialize the tree (kept for backward compat, now a no-op)
+   */
+  async initialize(): Promise<void> {
+    // No-op: tree is ready at construction time via poseidon-lite
   }
 
   /**
@@ -117,7 +121,7 @@ export class MerkleTree {
 
       // Compute parent hash
       const [left, right] = isLeft ? [currentHash, sibling] : [sibling, currentHash];
-      currentHash = poseidonHashSync(this.poseidon, [left, right]);
+      currentHash = hashNodes(left, right);
 
       // Store in nodes map
       const parentIndex = Math.floor(currentIndex / 2);
@@ -176,7 +180,7 @@ export class MerkleTree {
         ? [currentHash, proof.pathElements[i]]
         : [proof.pathElements[i], currentHash];
 
-      currentHash = poseidonHashSync(this.poseidon, [left, right]);
+      currentHash = hashNodes(left, right);
     }
 
     return currentHash === root;

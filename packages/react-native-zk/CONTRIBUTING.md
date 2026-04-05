@@ -1,4 +1,4 @@
-# Contributing to @p01/react-native-zk
+# Contributing to @protocol-01/react-native-zk
 
 Thank you for your interest in contributing! This library enables client-side ZK proof generation in React Native apps.
 

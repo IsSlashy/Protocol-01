@@ -1,6 +1,27 @@
 /**
- * Specter Protocol Toast Component
- * Notification toasts with glow effects
+ * Protocol 01 Toast Components
+ *
+ * Notification toasts with variant-colored accents, auto-dismiss, and action buttons.
+ * Use the `useToast()` hook for convenient toast management.
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { useToast, ToastContainer, Toast } from '@protocol-01/ui';
+ *
+ * function App() {
+ *   const { toasts, removeToast, success, error } = useToast();
+ *   success('Transaction confirmed!');
+ *   error('Proof generation failed');
+ *
+ *   return (
+ *     <ToastContainer position="top-right">
+ *       {toasts.map((t) => <Toast key={t.id} {...t} onClose={removeToast} />)}
+ *     </ToastContainer>
+ *   );
+ * }
+ * ```
  */
 
 import React, { useEffect, useCallback } from 'react';
@@ -305,6 +326,19 @@ export interface ToastState {
   };
 }
 
+/**
+ * Hook for managing toast notification state.
+ * Returns methods to add, remove, and create typed toasts.
+ *
+ * @returns Object with `toasts`, `addToast`, `removeToast`, `success`, `error`, `warning`, `info`
+ *
+ * @example
+ * ```tsx
+ * const { success, error, toasts, removeToast } = useToast();
+ * success('Shielded 1.0 SOL');
+ * error('Failed to generate proof', 'ZK Error');
+ * ```
+ */
 export const useToast = () => {
   const [toasts, setToasts] = React.useState<ToastState[]>([]);
 

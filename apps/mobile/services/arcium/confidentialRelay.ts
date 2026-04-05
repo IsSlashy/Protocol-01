@@ -67,7 +67,7 @@ async function mpcRelay(
   const program = await getArciumProgram();
   if (!client || !program) throw new Error('MPC client not ready');
 
-  const { relayTransaction: sdkRelay } = await import('@p01/arcium-sdk');
+  const { relayTransaction: sdkRelay } = await import('@protocol-01/arcium-sdk');
 
   // Get a deadline ~100 slots from now (~40 seconds)
   const connection = getConnection();

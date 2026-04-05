@@ -4,6 +4,7 @@ import { PublicKey } from '@solana/web3.js';
 import {
   STREAM_PROGRAM_ID_DEVNET,
   STREAM_PROGRAM_ID_MAINNET,
+  MAINNET_DEPLOYED,
   NATIVE_SOL_MINT,
   USDC_MINT_DEVNET,
   USDC_MINT_MAINNET,
@@ -12,6 +13,12 @@ import {
   P01_TIERS,
   STREAM_SEED,
   ESCROW_SEED,
+  IX_DISCRIMINATOR_CREATE_STREAM,
+  IX_DISCRIMINATOR_CANCEL_STREAM,
+  IX_DISCRIMINATOR_WITHDRAW,
+  STREAM_ACCOUNT_SIZE,
+  STREAM_SENDER_OFFSET,
+  STREAM_RECIPIENT_OFFSET,
 } from './constants';
 
 // ============================================================
@@ -157,5 +164,57 @@ describe('Seeds', () => {
 
   it('ESCROW_SEED should be "escrow"', () => {
     expect(ESCROW_SEED).toBe('escrow');
+  });
+});
+
+// ============================================================
+// Instruction Discriminators
+// ============================================================
+describe('Instruction discriminators', () => {
+  it('IX_DISCRIMINATOR_CREATE_STREAM should be 8 bytes', () => {
+    expect(IX_DISCRIMINATOR_CREATE_STREAM).toBeInstanceOf(Buffer);
+    expect(IX_DISCRIMINATOR_CREATE_STREAM.length).toBe(8);
+  });
+
+  it('IX_DISCRIMINATOR_CANCEL_STREAM should be 8 bytes', () => {
+    expect(IX_DISCRIMINATOR_CANCEL_STREAM).toBeInstanceOf(Buffer);
+    expect(IX_DISCRIMINATOR_CANCEL_STREAM.length).toBe(8);
+  });
+
+  it('IX_DISCRIMINATOR_WITHDRAW should be 8 bytes', () => {
+    expect(IX_DISCRIMINATOR_WITHDRAW).toBeInstanceOf(Buffer);
+    expect(IX_DISCRIMINATOR_WITHDRAW.length).toBe(8);
+  });
+
+  it('all discriminators should be distinct', () => {
+    expect(IX_DISCRIMINATOR_CREATE_STREAM.equals(IX_DISCRIMINATOR_CANCEL_STREAM)).toBe(false);
+    expect(IX_DISCRIMINATOR_CREATE_STREAM.equals(IX_DISCRIMINATOR_WITHDRAW)).toBe(false);
+    expect(IX_DISCRIMINATOR_CANCEL_STREAM.equals(IX_DISCRIMINATOR_WITHDRAW)).toBe(false);
+  });
+});
+
+// ============================================================
+// Account layout constants
+// ============================================================
+describe('Account layout constants', () => {
+  it('STREAM_ACCOUNT_SIZE should be 200', () => {
+    expect(STREAM_ACCOUNT_SIZE).toBe(200);
+  });
+
+  it('STREAM_SENDER_OFFSET should be 8 (after discriminator)', () => {
+    expect(STREAM_SENDER_OFFSET).toBe(8);
+  });
+
+  it('STREAM_RECIPIENT_OFFSET should be 40 (after discriminator + sender)', () => {
+    expect(STREAM_RECIPIENT_OFFSET).toBe(40);
+  });
+});
+
+// ============================================================
+// MAINNET_DEPLOYED flag
+// ============================================================
+describe('MAINNET_DEPLOYED', () => {
+  it('should be a boolean', () => {
+    expect(typeof MAINNET_DEPLOYED).toBe('boolean');
   });
 });

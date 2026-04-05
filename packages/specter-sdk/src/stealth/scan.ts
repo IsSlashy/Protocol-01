@@ -77,7 +77,9 @@ export class StealthScanner {
     } catch (error) {
       throw new SpecterError(
         SpecterErrorCode.SCAN_FAILED,
-        'Failed to scan for stealth payments',
+        'Failed to scan for stealth payments: RPC error or invalid slot range. ' +
+        'Check your rpcEndpoint configuration and ensure the Specter program is deployed on your target network. ' +
+        `Scanned from slot ${fromSlot}${toSlot ? ` to ${toSlot}` : ''}.`,
         error as Error
       );
     }
@@ -97,7 +99,8 @@ export class StealthScanner {
     } catch (error) {
       throw new SpecterError(
         SpecterErrorCode.SCAN_FAILED,
-        `Failed to check transaction: ${signature}`,
+        `Failed to check transaction ${signature}: RPC error. ` +
+        'Verify the transaction signature is correct and the RPC endpoint is reachable.',
         error as Error
       );
     }

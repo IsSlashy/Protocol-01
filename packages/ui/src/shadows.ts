@@ -1,6 +1,21 @@
 /**
- * Specter Protocol Shadow & Glow System
- * Neon glow effects for the ultra dark theme
+ * Protocol 01 Shadow and Glow System
+ *
+ * Elevation shadows, neon glow effects, text glows, border glows,
+ * and glass-morphism presets for the ultra-dark cyberpunk theme.
+ *
+ * Platform: web only (CSS box-shadow / backdrop-filter values)
+ *
+ * @example
+ * ```ts
+ * import { shadows, glows, textGlows, glass, getModuleGlow } from '@protocol-01/ui';
+ *
+ * shadows.lg;                    // '0 8px 16px rgba(0,0,0,0.6)'
+ * glows.green;                   // '0 0 20px ..., 0 0 40px ...'
+ * textGlows.green;               // '0 0 10px ..., 0 0 20px ...'
+ * glass.card;                    // { background, backdropFilter, border }
+ * getModuleGlow('wallet');       // { sm, md, lg }
+ * ```
  */
 
 import { colors } from './colors';

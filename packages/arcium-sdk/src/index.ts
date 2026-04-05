@@ -1,10 +1,19 @@
-// Protocol 01 × Arcium MPC Integration SDK
-// Confidential computation layer for privacy-preserving operations
+/**
+ * @protocol-01/arcium-sdk -- Multi-party computation (MPC) privacy layer for Protocol 01.
+ *
+ * Powered by the Arcium Network, this SDK provides encrypted computation
+ * across 8 privacy modules. All sensitive data is encrypted client-side
+ * with x25519 + RescueCipher before submission; MPC nodes operate on
+ * secret shares and never see plaintext inputs.
+ *
+ * @packageDocumentation
+ */
 
+// ── Core Client ────────────────────────────────────────────────────────────
 export { ArciumClient, P01_ARCIUM_PROGRAM_ID, ARCIUM_CLUSTER_OFFSET, CIRCUITS } from './client';
 export type { ArciumClientConfig, EncryptedPayload, ComputationResult, CircuitName } from './client';
 
-// UC1: Confidential Relay — threshold TX decryption
+// ── UC1: Confidential Relay -- threshold TX decryption ─────────────────────
 export {
   submitConfidentialRelayJob,
   awaitRelayCompletion,
@@ -13,11 +22,11 @@ export {
 } from './relay';
 export type { ConfidentialRelayJob, RelayResult } from './relay';
 
-// UC2: Anonymous Registry Lookup — private meta-address query
+// ── UC2: Anonymous Registry Lookup -- private meta-address query ───────────
 export { privateLookup, getRegistryAddress } from './registry';
 export type { PrivateLookupResult } from './registry';
 
-// UC3: Hidden Nullifier Commitment — unlinkable spent-note tracking
+// ── UC3: Hidden Nullifier Commitment -- unlinkable spent-note tracking ─────
 export {
   commitNullifier,
   checkNullifierSpent,
@@ -26,7 +35,7 @@ export {
 } from './nullifier';
 export type { NullifierCommitment, NullifierCheckResult } from './nullifier';
 
-// UC4: Confidential Balance Audit — solvency proof without individual exposure
+// ── UC4: Confidential Balance Audit -- solvency proof ──────────────────────
 export {
   submitBalanceForAudit,
   finalizeAudit,
@@ -34,7 +43,7 @@ export {
 } from './audit';
 export type { AuditSubmission, AuditResult } from './audit';
 
-// UC5: Threshold Stealth Scanning — distributed viewing key protection
+// ── UC5: Threshold Stealth Scanning -- protected viewing key ───────────────
 export {
   registerViewingKey,
   scanAnnouncements,
@@ -42,7 +51,7 @@ export {
 } from './stealth';
 export type { StealthScanRequest, StealthScanResult, ViewingKeySetup } from './stealth';
 
-// UC6: Private Governance Voting — encrypted ballot tallying
+// ── UC6: Private Governance Voting -- encrypted ballot tallying ────────────
 export {
   createProposal,
   castVote,
@@ -52,7 +61,7 @@ export {
 } from './governance';
 export type { ProposalConfig, VoteReceipt, TallyResult } from './governance';
 
-// UC7: Sealed-Bid Auction — encrypted bids + shielded pool escrow
+// ── UC7: Sealed-Bid Auction -- encrypted bids + shielded pool escrow ──────
 export {
   createAuction,
   submitSealedBid,
@@ -66,7 +75,7 @@ export {
 } from './auction';
 export type { AuctionConfig, BidReceipt, AuctionResult } from './auction';
 
-// UC8: Mugen P2P — Encrypted order matching (Privacy Layer 8)
+// ── UC8: Mugen P2P -- Encrypted order matching (Privacy Layer 8) ──────────
 export {
   submitEncryptedOffer,
   blindTakeOrder,

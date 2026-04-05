@@ -1,5 +1,5 @@
 /**
- * @p01/rpc-config — shared RPC configuration for Protocol-01
+ * @protocol-01/rpc-config — shared RPC configuration for Protocol-01
  *
  * Provides priority-based endpoint resolution, connection management with
  * automatic fallback, URL sanitization, and explorer URL builders.

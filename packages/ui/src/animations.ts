@@ -1,6 +1,22 @@
 /**
- * Specter Protocol Animation System
- * Smooth, performant animations for the ghostly aesthetic
+ * Protocol 01 Animation System
+ *
+ * Durations, easings, CSS keyframes, animation presets, transition presets,
+ * and React Native Reanimated-compatible spring/timing configs.
+ *
+ * Platform: web (CSS keyframes/transitions) + mobile (rnAnimationConfig)
+ *
+ * @example
+ * ```ts
+ * import { durations, easings, animations, transitions, rnAnimationConfig } from '@protocol-01/ui';
+ *
+ * // Web CSS
+ * animations.fadeIn;           // 'fadeIn 200ms cubic-bezier(...)'
+ * transitions.button;         // 'all 150ms ..., box-shadow 200ms ...'
+ *
+ * // React Native Reanimated
+ * rnAnimationConfig.spring.bouncy;  // { damping: 10, stiffness: 200, mass: 0.8 }
+ * ```
  */
 
 // ═══════════════════════════════════════════════════════════════

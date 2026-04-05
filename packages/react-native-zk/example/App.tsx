@@ -1,11 +1,11 @@
 /**
- * Example: @p01/react-native-zk
+ * Example: @protocol-01/react-native-zk
  *
  * Minimal Expo app demonstrating client-side ZK proof generation.
  */
 import React, { useRef, useState } from 'react';
 import { View, Text, Button, StyleSheet, ScrollView } from 'react-native';
-import { ZKProver, type ZKProverRef } from '@p01/react-native-zk';
+import { ZKProver, type ZKProverRef } from '@protocol-01/react-native-zk';
 
 export default function App() {
   const proverRef = useRef<ZKProverRef>(null);
@@ -44,7 +44,7 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>@p01/react-native-zk Demo</Text>
+      <Text style={styles.title}>@protocol-01/react-native-zk Demo</Text>
       <Text style={styles.status}>{status}</Text>
 
       <Button title="Load Circuit" onPress={handleLoadCircuit} />

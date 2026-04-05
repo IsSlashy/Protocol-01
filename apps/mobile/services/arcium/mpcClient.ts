@@ -7,7 +7,7 @@
  *
  * Supports both Privy embedded wallets and local Keypair wallets.
  *
- * Uses @p01/arcium-sdk which depends on @arcium-hq/client for
+ * Uses @protocol-01/arcium-sdk which depends on @arcium-hq/client for
  * Rescue-CTR encryption (required by the Arcium MXE).
  */
 
@@ -88,8 +88,8 @@ export async function getMpcClient(): Promise<any | null> {
   initPromise = (async () => {
     try {
       // Dynamic import to isolate polyfill issues
-      if (__DEV__) console.log('[MPC] Step 1: importing @p01/arcium-sdk...');
-      const sdk = await import('@p01/arcium-sdk');
+      if (__DEV__) console.log('[MPC] Step 1: importing @protocol-01/arcium-sdk...');
+      const sdk = await import('@protocol-01/arcium-sdk');
       ArciumClientClass = sdk.ArciumClient;
       if (__DEV__) console.log('[MPC] Step 2: SDK imported, ArciumClient:', !!ArciumClientClass);
 

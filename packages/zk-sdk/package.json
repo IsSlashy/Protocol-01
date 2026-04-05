@@ -1,6 +1,6 @@
 {
-  "name": "@p01/zk-sdk",
-  "version": "0.1.0",
+  "name": "@protocol-01/zk-sdk",
+  "version": "0.2.1",
   "description": "Zero-knowledge SDK for Protocol 01 shielded transactions",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -37,12 +37,17 @@
       "types": "./dist/client/index.d.ts"
     }
   },
+  "bin": {
+    "p01-setup": "./scripts/setup-circuits.js"
+  },
   "files": [
     "dist",
     "src",
-    "wasm"
+    "wasm",
+    "scripts"
   ],
   "scripts": {
+    "setup": "node scripts/setup-circuits.js",
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",

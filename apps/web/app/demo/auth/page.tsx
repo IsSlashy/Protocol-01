@@ -443,7 +443,7 @@ export default function AuthDemoPage() {
           <h2 className="text-xl font-bold mb-4 font-display tracking-wider">SDK Integration</h2>
           <div className="bg-[#0a0a0c] p-4 overflow-x-auto border border-[#2a2a30]/50">
             <pre>
-              <code className="text-sm text-[#888892] font-mono whitespace-pre">{`import { P01AuthClient } from '@p01/auth-sdk';
+              <code className="text-sm text-[#888892] font-mono whitespace-pre">{`import { P01AuthClient } from '@protocol-01/auth-sdk';
 
 const auth = new P01AuthClient({
   serviceId: 'my-service',

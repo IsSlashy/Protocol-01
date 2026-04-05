@@ -124,6 +124,20 @@ export interface WalletInfo {
 
 // ============ Event Types ============
 
+/**
+ * All event types emitted by the P01 client.
+ *
+ * | Event | Payload | Description |
+ * |---|---|---|
+ * | `connect` | `ConnectResult` | Wallet connected successfully |
+ * | `disconnect` | `{}` | Wallet disconnected |
+ * | `accountChanged` | `{ publicKey: string }` | Active account changed in wallet |
+ * | `paymentSent` | `PaymentOptions & { signature: string }` | Payment sent (private or public) |
+ * | `paymentReceived` | `{ signature: string; amount: number; from: string }` | Incoming payment detected |
+ * | `subscriptionCreated` | `SubscriptionOptions & SubscriptionResult` | New subscription created |
+ * | `subscriptionCancelled` | `{ subscriptionId: string }` | Subscription cancelled |
+ * | `subscriptionPayment` | `{ subscriptionId: string; signature: string; periodsPaid: number }` | Recurring payment executed |
+ */
 export type P01EventType =
   | 'connect'
   | 'disconnect'
@@ -133,6 +147,30 @@ export type P01EventType =
   | 'subscriptionCreated'
   | 'subscriptionCancelled'
   | 'subscriptionPayment';
+
+/**
+ * Type-safe event payload map.
+ * Use with `on<E extends P01EventType>(event: E, cb: (event: P01TypedEvent<E>) => void)`.
+ */
+export interface P01EventMap {
+  connect: ConnectResult;
+  disconnect: Record<string, never>;
+  accountChanged: { publicKey: string };
+  paymentSent: PaymentOptions & { signature: string };
+  paymentReceived: { signature: string; amount: number; from: string };
+  subscriptionCreated: SubscriptionOptions & SubscriptionResult;
+  subscriptionCancelled: { subscriptionId: string };
+  subscriptionPayment: { subscriptionId: string; signature: string; periodsPaid: number };
+}
+
+/**
+ * Typed event payload for a specific event type.
+ */
+export interface P01TypedEvent<E extends P01EventType = P01EventType> {
+  type: E;
+  data: P01EventMap[E];
+  timestamp: number;
+}
 
 export interface P01Event {
   type: P01EventType;
@@ -152,6 +190,25 @@ export class P01Error extends Error {
     this.code = code;
     this.details = details;
   }
+
+  /**
+   * Check if error is of a specific code
+   */
+  is(code: P01ErrorCode): boolean {
+    return this.code === code;
+  }
+
+  /**
+   * Convert to JSON for logging
+   */
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      code: this.code,
+      message: this.message,
+      details: this.details,
+    };
+  }
 }
 
 export enum P01ErrorCode {
@@ -164,6 +221,74 @@ export enum P01ErrorCode {
   TRANSACTION_FAILED = 'TRANSACTION_FAILED',
   TIMEOUT = 'TIMEOUT',
   UNKNOWN = 'UNKNOWN',
+}
+
+/**
+ * Check whether an error represents a user rejection (the user explicitly
+ * declined the transaction in their wallet popup).
+ *
+ * Works with both `P01Error` instances and generic `Error` objects from
+ * wallet providers that include "rejected" or "cancelled" in their message.
+ *
+ * @param error - Any caught error
+ * @returns true if the error indicates user rejection
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await p01.pay({ ... });
+ * } catch (error) {
+ *   if (isUserRejection(error)) {
+ *     showMessage('You declined the payment.');
+ *   } else {
+ *     showMessage('Something went wrong.');
+ *   }
+ * }
+ * ```
+ */
+export function isUserRejection(error: unknown): boolean {
+  if (error instanceof P01Error) {
+    return error.code === P01ErrorCode.USER_REJECTED;
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('rejected') || msg.includes('cancelled') || msg.includes('user denied');
+  }
+  return false;
+}
+
+/**
+ * Check whether an error represents a network/RPC failure.
+ *
+ * @param error - Any caught error
+ * @returns true if the error indicates a network issue
+ */
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof P01Error) {
+    return error.code === P01ErrorCode.NETWORK_ERROR;
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('network') || msg.includes('fetch') || msg.includes('econnrefused') || msg.includes('503');
+  }
+  return false;
+}
+
+/**
+ * Check whether an error represents a timeout.
+ *
+ * @param error - Any caught error
+ * @returns true if the error indicates a timeout
+ */
+export function isTimeoutError(error: unknown): boolean {
+  if (error instanceof P01Error) {
+    return error.code === P01ErrorCode.TIMEOUT;
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return msg.includes('timeout') || msg.includes('timed out');
+  }
+  return false;
 }
 
 // Aliases for backward compatibility

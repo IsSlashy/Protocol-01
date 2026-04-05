@@ -3,44 +3,43 @@ import * as anchor from '@coral-xyz/anchor';
 import { ArciumClient, CIRCUITS } from '../client';
 
 /**
- * UC5: Threshold Stealth Scanning
+ * UC5: Threshold Stealth Scanning -- Protected Viewing Key Scanning
  *
- * Problem: Stealth payment scanning requires the viewing private key.
- * If this key is on a single device and that device is compromised,
- * the attacker can enumerate ALL incoming payments (transaction graph leak).
+ * Scans for incoming stealth payments using MPC-protected viewing keys.
+ * The viewing private key is sharded across Arcium MPC nodes via Shamir
+ * secret sharing -- no single node ever holds the full key.
  *
- * Solution: Viewing key is sharded across MPC nodes via Shamir secret sharing.
- * MPC nodes jointly compute the X25519 shared secret and view-tag
- * without ever reconstructing the full viewing key.
+ * MPC nodes jointly compute X25519 shared secrets and view-tags for
+ * each announcement, returning only the indices of matching payments.
  *
- * Flow:
- * 1. User registers viewing key shares with Arcium MXE (one-time setup)
- * 2. To scan: user submits encrypted list of ephemeral pubkeys from announcements
- * 3. MPC computes: sharedSecret = X25519(viewingKey_shares, ephemeralPubKey)
- * 4. MPC computes: viewTag = SHA3(sharedSecret)[0]
- * 5. MPC compares viewTag with announcement's viewTag
- * 6. Returns encrypted list of matching announcement indices
- * 7. User decrypts → knows which announcements are for them
+ * **Inputs**: Encrypted viewing key (one-time setup), batched ephemeral
+ * public keys + view tags from on-chain announcements.
+ * **Output**: Indices of announcements that belong to this user.
+ *
+ * @module stealth
  */
 
+/** Batch of on-chain announcements to scan for matching payments. */
 export interface StealthScanRequest {
-  /** Ephemeral public keys from on-chain announcements */
+  /** Ephemeral public keys from stealth announcements (32 bytes each). */
   ephemeralPubKeys: Uint8Array[];
-  /** View tags from on-chain announcements (1 byte each) */
+  /** View tags from stealth announcements (1 byte each). Must match `ephemeralPubKeys` length. */
   viewTags: number[];
 }
 
+/** Result of a stealth scan batch. */
 export interface StealthScanResult {
-  /** Indices of matching announcements (these are for you) */
+  /** Indices of announcements that match (belong to this user). */
   matchingIndices: number[];
-  /** Computation signature */
+  /** Finalization callback transaction signature (of the last batch). */
   signature: string;
 }
 
+/** Result of registering a viewing key with the MPC network. */
 export interface ViewingKeySetup {
-  /** MXE-encrypted viewing key (stored on-chain, only MPC can decrypt) */
+  /** First ciphertext block of the MXE-encrypted viewing key. */
   encryptedViewingKey: number[];
-  /** Setup transaction signature */
+  /** Registration transaction signature. */
   signature: string;
 }
 
@@ -59,11 +58,17 @@ export function getViewingKeyAddress(
 }
 
 /**
- * Register viewing key with Arcium MXE (one-time setup).
+ * Register a viewing key with the Arcium MXE (one-time setup).
  *
- * The viewing key is encrypted and stored in MXE state.
- * Only MPC nodes can access it (threshold decryption).
+ * The viewing private key is encrypted and stored in MXE state.
+ * Only MPC nodes can access it via threshold decryption.
  * Even if one node is compromised, the key remains safe.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param viewingPrivateKey - 32-byte viewing private key (X25519).
+ * @returns The encrypted key ciphertext and registration signature.
+ * @throws {Error} "Stealth MPC computation failed: ..." if registration fails.
  */
 export async function registerViewingKey(
   client: ArciumClient,
@@ -88,24 +93,32 @@ export async function registerViewingKey(
   const accounts = client.getComputationAccounts(CIRCUITS.STEALTH_SCAN, computationOffset);
   const [viewingKeyAddress] = getViewingKeyAddress(client.programId, client.wallet.publicKey);
 
-  const sig = await program.methods
-    .registerViewingKey(
-      computationOffset,
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.ciphertexts[1]),
-      Array.from(payload.ciphertexts[2]),
-      Array.from(payload.ciphertexts[3]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce)
-    )
-    .accountsPartial({
-      ...accounts,
-      viewingKeyAccount: viewingKeyAddress,
-      owner: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  let sig: string;
+  try {
+    sig = await program.methods
+      .registerViewingKey(
+        computationOffset,
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.ciphertexts[1]),
+        Array.from(payload.ciphertexts[2]),
+        Array.from(payload.ciphertexts[3]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce)
+      )
+      .accountsPartial({
+        ...accounts,
+        viewingKeyAccount: viewingKeyAddress,
+        owner: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
 
-  await client.awaitFinalization(computationOffset);
+    await client.awaitFinalization(computationOffset);
+  } catch (err) {
+    throw new Error(
+      `Stealth MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   return {
     encryptedViewingKey: payload.ciphertexts[0],
@@ -114,10 +127,16 @@ export async function registerViewingKey(
 }
 
 /**
- * Scan announcements using MPC-protected viewing key.
+ * Scan stealth announcements using the MPC-protected viewing key.
  *
- * Processes in batches of SCAN_BATCH_SIZE announcements.
- * Returns indices of announcements that match (belong to this user).
+ * Processes in batches of 32 announcements per MPC computation.
+ * Returns indices of announcements that belong to this user.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param request - Batch of ephemeral public keys and view tags to scan.
+ * @returns Matching announcement indices and the last finalization signature.
+ * @throws {Error} "Stealth MPC computation failed: ..." if any batch fails.
  */
 export async function scanAnnouncements(
   client: ArciumClient,

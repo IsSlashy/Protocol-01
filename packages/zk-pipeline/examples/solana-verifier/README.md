@@ -6,10 +6,10 @@ This example shows how to build a minimal Solana program that verifies a Groth16
 
 ```
 Client (mobile/web)
-  |-- Generate proof with @p01/react-native-zk
-  |-- Convert proof format with @p01/privacy-toolkit
+  |-- Generate proof with @protocol-01/react-native-zk
+  |-- Convert proof format with @protocol-01/privacy-toolkit
   |-- Send transaction to Solana
-       |-- Program verifies with @p01/solana-verifier
+       |-- Program verifies with @protocol-01/solana-verifier
 ```
 
 ## Program Structure
@@ -45,7 +45,7 @@ pub mod my_verifier {
 ## Client Side
 
 ```typescript
-import { proofToOnChainBytes, publicInputsToLE } from '@p01/privacy-toolkit';
+import { proofToOnChainBytes, publicInputsToLE } from '@protocol-01/privacy-toolkit';
 
 // Convert snarkjs proof to on-chain format
 const proofBytes = proofToOnChainBytes(snarkjsProof);

@@ -32,6 +32,7 @@ const MOCK_FIELD_MODULUS = BigInt(
 
 vi.mock('../circuits', () => ({
   poseidonHash: vi.fn((inputs: (bigint | number)[]) => mockPoseidonHashImpl(inputs)),
+  poseidonHashLite: vi.fn((inputs: (bigint | number)[]) => mockPoseidonHashImpl(inputs)),
 }));
 
 // ----- Imports (after mocks) -----

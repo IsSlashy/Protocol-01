@@ -65,14 +65,14 @@ export async function lookupMetaAddress(
 
 /**
  * MPC-protected registry lookup.
- * Uses @p01/arcium-sdk privateLookup under the hood.
+ * Uses @protocol-01/arcium-sdk privateLookup under the hood.
  */
 async function mpcLookup(targetWallet: PublicKey): Promise<StealthMetaAddress> {
   const client = await getMpcClient();
   const program = await getArciumProgram();
   if (!client || !program) throw new Error('MPC client not ready');
 
-  const { privateLookup: sdkLookup } = await import('@p01/arcium-sdk');
+  const { privateLookup: sdkLookup } = await import('@protocol-01/arcium-sdk');
   const result = await sdkLookup(client, program, targetWallet);
 
   return {

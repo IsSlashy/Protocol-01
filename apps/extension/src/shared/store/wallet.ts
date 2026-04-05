@@ -33,7 +33,7 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { RpcConnectionManager } from '@p01/rpc-config';
+import { RpcConnectionManager } from '@protocol-01/rpc-config';
 import type { TransactionRecord } from '../types';
 
 // Session timeout in milliseconds (10 minutes)

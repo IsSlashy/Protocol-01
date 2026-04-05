@@ -79,17 +79,23 @@ describe('Mugen Exchange — Devnet Init', () => {
       return;
     }
 
-    // InitConfigParams: fee_bps(u16) + fee_wallet(32) + min_trade(u64) + max_trade(u64) + escrow_timeout(i64) + dispute_timeout(i64)
+    // InitConfigParams: fee_bps(u16) + p01_fee_wallet(32) + mugen_fee_wallet(32) + treasury_wallet(32) +
+    //                   p01_fee_share(u16) + mugen_fee_share(u16) + min_trade(u64) + max_trade(u64) +
+    //                   escrow_timeout(i64) + dispute_timeout(i64)
     const disc = anchorDisc('initialize_config');
-    const data = Buffer.alloc(8 + 2 + 32 + 8 + 8 + 8 + 8);
+    const data = Buffer.alloc(8 + 2 + 32 + 32 + 32 + 2 + 2 + 8 + 8 + 8 + 8);
     let offset = 0;
     disc.copy(data, offset); offset += 8;
-    data.writeUInt16LE(50, offset); offset += 2; // 0.5% fee
-    feeWallet.toBuffer().copy(data, offset); offset += 32;
-    data.writeBigUInt64LE(1000000n, offset); offset += 8;        // min: 0.001 SOL
-    data.writeBigUInt64LE(1000000000000n, offset); offset += 8;  // max: 1000 SOL
-    data.writeBigInt64LE(3600n, offset); offset += 8;            // escrow timeout: 1h
-    data.writeBigInt64LE(86400n, offset); offset += 8;           // dispute timeout: 24h
+    data.writeUInt16LE(50, offset); offset += 2;                  // 0.5% fee
+    feeWallet.toBuffer().copy(data, offset); offset += 32;        // p01_fee_wallet
+    feeWallet.toBuffer().copy(data, offset); offset += 32;        // mugen_fee_wallet (same for devnet)
+    feeWallet.toBuffer().copy(data, offset); offset += 32;        // treasury_wallet (same for devnet)
+    data.writeUInt16LE(2000, offset); offset += 2;                // p01_fee_share: 20%
+    data.writeUInt16LE(6500, offset); offset += 2;                // mugen_fee_share: 65% (treasury gets 15%)
+    data.writeBigUInt64LE(1000000n, offset); offset += 8;         // min: 0.001 SOL
+    data.writeBigUInt64LE(1000000000000n, offset); offset += 8;   // max: 1000 SOL
+    data.writeBigInt64LE(3600n, offset); offset += 8;             // escrow timeout: 1h
+    data.writeBigInt64LE(86400n, offset); offset += 8;            // dispute timeout: 24h
 
     const ix = new TransactionInstruction({
       keys: [

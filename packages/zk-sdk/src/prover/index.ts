@@ -14,6 +14,18 @@ import type {
 } from '../types';
 
 /**
+ * Optional configuration for the ZK prover
+ */
+export interface ZkProverConfig {
+  /**
+   * Base URL for circuit files (.wasm and .zkey).
+   * When set, circuit files are resolved as `${circuitBaseUrl}/${filename}`.
+   * @example 'https://cdn.example.com/circuits/v1'
+   */
+  circuitBaseUrl?: string;
+}
+
+/**
  * Groth16 proof structure
  */
 export interface Groth16Proof {
@@ -70,9 +82,15 @@ export class ZkProver {
   private zkeyPath: string;
   private isInitialized: boolean = false;
 
-  constructor(wasmPath?: string, zkeyPath?: string) {
-    this.wasmPath = wasmPath || CIRCUIT_FILES.WASM;
-    this.zkeyPath = zkeyPath || CIRCUIT_FILES.ZKEY;
+  constructor(wasmPath?: string, zkeyPath?: string, config?: ZkProverConfig) {
+    if (config?.circuitBaseUrl) {
+      const base = config.circuitBaseUrl.replace(/\/+$/, '');
+      this.wasmPath = wasmPath || `${base}/${CIRCUIT_FILES.WASM}`;
+      this.zkeyPath = zkeyPath || `${base}/${CIRCUIT_FILES.ZKEY}`;
+    } else {
+      this.wasmPath = wasmPath || CIRCUIT_FILES.WASM;
+      this.zkeyPath = zkeyPath || CIRCUIT_FILES.ZKEY;
+    }
   }
 
   /**
@@ -177,7 +195,30 @@ export class ZkProver {
         publicSignals,
       };
     } catch (error) {
-      throw new Error(`Proof generation failed: ${error}`);
+      const msg = String(error);
+
+      // Detect missing circuit files and provide actionable guidance
+      if (
+        msg.includes('ENOENT') ||
+        msg.includes('not found') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('404') ||
+        msg.includes('Cannot read')
+      ) {
+        throw new Error(
+          `Circuit file not found. The prover tried to load:\n` +
+          `  WASM: ${this.wasmPath}\n` +
+          `  zkey: ${this.zkeyPath}\n\n` +
+          `To fix this, either:\n` +
+          `  1. Set circuitBaseUrl in your config to point to a hosted directory containing the circuit files.\n` +
+          `  2. Pass explicit wasmPath and zkeyPath to the ZkProver constructor.\n` +
+          `  3. Place circuit files at the default paths (${CIRCUIT_FILES.WASM}, ${CIRCUIT_FILES.ZKEY}).\n\n` +
+          `Download circuits from: https://github.com/protocol-01/circuits\n\n` +
+          `Original error: ${msg}`
+        );
+      }
+
+      throw new Error(`Proof generation failed: ${msg}`);
     }
   }
 
@@ -250,13 +291,19 @@ export class ZkProver {
 
 /**
  * Generate a transfer proof (convenience function)
+ *
+ * @param inputs - Public and private proof inputs
+ * @param wasmPath - Path or URL to the circuit WASM file
+ * @param zkeyPath - Path or URL to the circuit zkey file
+ * @param config - Optional prover configuration (e.g. circuitBaseUrl)
  */
 export async function generateProof(
   inputs: FullProofInputs,
   wasmPath?: string,
-  zkeyPath?: string
+  zkeyPath?: string,
+  config?: ZkProverConfig
 ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-  const prover = new ZkProver(wasmPath, zkeyPath);
+  const prover = new ZkProver(wasmPath, zkeyPath, config);
   return prover.generateTransferProof(inputs.public, inputs.private);
 }
 

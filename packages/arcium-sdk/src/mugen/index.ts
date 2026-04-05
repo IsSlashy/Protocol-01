@@ -1,16 +1,17 @@
 /**
- * UC8: Mugen P2P Exchange — Encrypted Order Matching via Arcium MPC.
+ * UC8: Mugen P2P Exchange -- Encrypted Order Matching via Arcium MPC
  *
  * Privacy Layer 8: Even the Solana program cannot see trade terms.
  * Orders are encrypted in MPC persistent state. Matching is blind.
  * Only the match result (amounts + anonymous nonces) is revealed
  * on-chain for escrow creation.
  *
- * Flow:
- *   1. Seller: submitEncryptedOffer() → offer stored in MPC state
- *   2. Buyer: blindTakeOrder() → MPC checks compatibility in the dark
- *   3. If match: MugenMatchFound event emitted → escrow created
- *   4. If no match: "MugenNoMatch" logged, nothing leaked
+ * **Inputs**: Encrypted offer/take parameters (crypto amount, fiat price,
+ * currency hash, payment methods bitmask, anonymous nonce).
+ * **Output**: Match result with revealed trade terms, or "no match" with
+ * nothing leaked.
+ *
+ * @module mugen
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -20,53 +21,71 @@ import type { ArciumClient } from '../client';
 
 // ─── Circuit names (must match encrypted-ixs function names) ────────────────
 
+/** Circuit names for the Mugen P2P exchange MPC operations. */
 export const MUGEN_CIRCUITS = {
+  /** Encrypted sell offer submission into MPC persistent state. */
   SUBMIT_OFFER: 'mugen_submit_offer',
+  /** Blind buy-side match attempt against encrypted offers. */
   BLIND_TAKE: 'mugen_blind_take',
+  /** Cancel an existing encrypted offer (requires maker nonce proof). */
   CANCEL_OFFER: 'mugen_cancel_offer',
 } as const;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/** Parameters for submitting an encrypted sell offer. */
 export interface EncryptedOfferParams {
   /** Crypto amount in lamports (e.g., 100_000_000n for 0.1 SOL). */
   cryptoAmount: bigint;
   /** Fiat amount in cents (e.g., 1500n for $15.00). */
   fiatAmount: bigint;
-  /** Fiat currency code ("USD", "EUR", "GBP"). */
+  /** ISO 4217 fiat currency code ("USD", "EUR", "GBP"). Hashed to u64 for MPC. */
   currency: string;
-  /** Accepted payment methods bitmask. */
+  /** Bitmask of accepted payment methods (app-defined bit positions). */
   paymentMethods: number;
-  /** Anonymous maker nonce — random per offer, used to link to escrow. */
+  /** Random anonymous nonce linking this offer to its escrow (use {@link generateNonce}). */
   makerNonce: bigint;
 }
 
+/** Parameters for a blind buy-side match attempt. */
 export interface BlindTakeParams {
   /** Desired crypto amount in lamports. */
   desiredCrypto: bigint;
-  /** Maximum fiat willing to pay (cents). */
+  /** Maximum fiat willing to pay (in cents). */
   maxFiat: bigint;
-  /** Required currency code. */
+  /** Required ISO 4217 currency code. */
   currency: string;
-  /** Buyer's accepted payment methods bitmask. */
+  /** Bitmask of buyer's accepted payment methods. */
   paymentMethods: number;
-  /** Anonymous taker nonce — random, used to link to escrow. */
+  /** Random anonymous taker nonce for escrow linkage (use {@link generateNonce}). */
   takerNonce: bigint;
 }
 
+/** Receipt returned after submitting an encrypted offer. */
 export interface OfferReceipt {
+  /** Computation offset for tracking this MPC job. */
   computationOffset: anchor.BN;
+  /** The maker nonce used (for later cancellation or escrow lookup). */
   makerNonce: bigint;
+  /** Transaction signature of the offer submission. */
   signature: string;
 }
 
+/** Result of a blind take attempt -- either a match or no match. */
 export interface MatchResult {
+  /** Whether the buyer's query matched an existing offer. */
   matched: boolean;
+  /** Matched crypto amount (0n if no match). */
   cryptoAmount: bigint;
+  /** Matched fiat amount (0n if no match). */
   fiatAmount: bigint;
+  /** Maker's anonymous nonce (0n if no match). */
   makerNonce: bigint;
+  /** Taker's anonymous nonce (0n if no match). */
   takerNonce: bigint;
+  /** Currency hash used for matching (0n if no match). */
   currencyHash: bigint;
+  /** Finalization callback transaction signature. */
   signature: string;
 }
 
@@ -125,16 +144,24 @@ export async function submitEncryptedOffer(
     computationOffset,
   );
 
-  const sig = await program.methods
-    .mugenSubmitOffer(
-      computationOffset,
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.ciphertexts[1]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce),
-    )
-    .accountsPartial({ ...accounts })
-    .rpc({ commitment: 'confirmed' });
+  let sig: string;
+  try {
+    sig = await program.methods
+      .mugenSubmitOffer(
+        computationOffset,
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.ciphertexts[1]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce),
+      )
+      .accountsPartial({ ...accounts })
+      .rpc({ commitment: 'confirmed' });
+  } catch (err) {
+    throw new Error(
+      `Mugen MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   return {
     computationOffset,
@@ -178,19 +205,27 @@ export async function blindTakeOrder(
     computationOffset,
   );
 
-  const sig = await program.methods
-    .mugenBlindTake(
-      computationOffset,
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.ciphertexts[1]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce),
-    )
-    .accountsPartial({ ...accounts })
-    .rpc({ commitment: 'confirmed' });
+  let finalizeSig: string;
+  try {
+    await program.methods
+      .mugenBlindTake(
+        computationOffset,
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.ciphertexts[1]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce),
+      )
+      .accountsPartial({ ...accounts })
+      .rpc({ commitment: 'confirmed' });
 
-  // Wait for MPC callback
-  const finalizeSig = await client.awaitFinalization(computationOffset);
+    // Wait for MPC callback
+    finalizeSig = await client.awaitFinalization(computationOffset);
+  } catch (err) {
+    throw new Error(
+      `Mugen MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   // Parse result from callback logs
   const tx = await client.connection.getTransaction(finalizeSig, {
@@ -247,15 +282,22 @@ export async function cancelEncryptedOffer(
     computationOffset,
   );
 
-  const sig = await program.methods
-    .mugenCancelOffer(
-      computationOffset,
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce),
-    )
-    .accountsPartial({ ...accounts })
-    .rpc({ commitment: 'confirmed' });
+  try {
+    const sig = await program.methods
+      .mugenCancelOffer(
+        computationOffset,
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce),
+      )
+      .accountsPartial({ ...accounts })
+      .rpc({ commitment: 'confirmed' });
 
-  return sig;
+    return sig;
+  } catch (err) {
+    throw new Error(
+      `Mugen MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 }

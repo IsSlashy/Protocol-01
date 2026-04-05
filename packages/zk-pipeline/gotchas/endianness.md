@@ -46,5 +46,5 @@ function bigintToLeBytes32(n: bigint): number[] {
 }
 ```
 
-The `@p01/privacy-toolkit` package provides `publicInputsToLE()` and
+The `@protocol-01/privacy-toolkit` package provides `publicInputsToLE()` and
 `publicInputsToBE()` for this conversion.

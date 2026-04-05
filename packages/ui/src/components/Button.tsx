@@ -1,7 +1,21 @@
 /**
- * Specter Protocol Button Component
- * Variants: primary, secondary, ghost, danger
- * With neon glow effects
+ * Protocol 01 Button Component
+ *
+ * Interactive button with neon glow effects, loading states, and icon support.
+ * Variants: primary (cyan glow), secondary (outlined), ghost (transparent), danger (red glow).
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Button } from '@protocol-01/ui';
+ *
+ * <Button variant="primary" size="lg" isLoading={isPending}>
+ *   Shield SOL
+ * </Button>
+ * <Button variant="secondary" leftIcon={<WalletIcon />}>Connect</Button>
+ * <Button variant="danger" size="sm">Disconnect</Button>
+ * ```
  */
 
 import React from 'react';
@@ -158,6 +172,18 @@ const variantStyles: Record<ButtonVariant, {
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
+/**
+ * Button component with variant-based styling, loading spinner, and icon slots.
+ *
+ * @param props - Button props including variant, size, loading state, and icons
+ * @param ref - Forwarded ref to the underlying `<button>` element
+ *
+ * @example
+ * ```tsx
+ * <Button variant="primary" onClick={handleShield}>Shield</Button>
+ * <Button variant="ghost" isFullWidth>Cancel</Button>
+ * ```
+ */
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   (
     {

@@ -1,7 +1,7 @@
 /**
  * zkSPL Confidential Balance Service for Chrome Extension
  *
- * Wraps the @p01/zkspl-sdk client for use in the extension.
+ * Wraps the @protocol-01/zkspl-sdk client for use in the extension.
  * Handles wallet signing (Privy + legacy), spending key derivation,
  * and Chrome storage persistence for local state.
  */
@@ -22,7 +22,7 @@ import {
   bytesToField,
   poseidonHash,
   ZKSPL_PROGRAM_ID,
-} from '@p01/zkspl-sdk';
+} from '@protocol-01/zkspl-sdk';
 import { useWalletStore, getPrivySigner } from '../store/wallet';
 import { getConnection } from './wallet';
 import {

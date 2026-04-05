@@ -1,5 +1,5 @@
 {
-  "name": "@p01/js",
+  "name": "@protocol-01/specter-js",
   "version": "0.1.0",
   "description": "Protocol 01 SDK for integrating privacy-first payments and Stream Secure subscriptions",
   "main": "dist/index.js",

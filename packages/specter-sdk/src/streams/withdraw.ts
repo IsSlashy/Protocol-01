@@ -63,7 +63,8 @@ export async function withdrawStream(options: WithdrawOptions): Promise<{
   if (!stream) {
     throw new SpecterError(
       SpecterErrorCode.STREAM_NOT_FOUND,
-      'Stream not found'
+      `Stream not found at PDA ${streamId.toBase58()}. Verify the stream ID is correct ` +
+      'and that the stream program is deployed on your target network (devnet for testing).'
     );
   }
 
@@ -71,14 +72,14 @@ export async function withdrawStream(options: WithdrawOptions): Promise<{
   if (stream.status === 'cancelled') {
     throw new SpecterError(
       SpecterErrorCode.STREAM_ALREADY_CANCELLED,
-      'Stream has been cancelled'
+      `Stream ${streamId.toBase58()} has been cancelled. No further withdrawals are possible.`
     );
   }
 
   if (stream.status === 'completed') {
     throw new SpecterError(
       SpecterErrorCode.NOTHING_TO_WITHDRAW,
-      'Stream has been fully withdrawn'
+      `Stream ${streamId.toBase58()} has been fully withdrawn. All funds have already been claimed.`
     );
   }
 
@@ -90,7 +91,8 @@ export async function withdrawStream(options: WithdrawOptions): Promise<{
   if (!recipientPubKey.equals(stream.recipient)) {
     throw new SpecterError(
       SpecterErrorCode.UNAUTHORIZED_STREAM_ACTION,
-      'Only the stream recipient can withdraw'
+      `Only the stream recipient (${stream.recipient.toBase58()}) can withdraw. ` +
+      `Your wallet (${recipientPubKey.toBase58()}) is not authorized.`
     );
   }
 
