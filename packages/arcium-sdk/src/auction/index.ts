@@ -222,7 +222,7 @@ export async function finalizeAuction(
   }
 
   // Read the auction account to get the winner nullifier
-  const auctionData = await program.account.auction.fetch(auctionAddress);
+  const auctionData = await (program.account as any).auction.fetch(auctionAddress);
   const winnerNullifier = new Uint8Array(auctionData.winnerNullifier as number[]);
 
   return {
