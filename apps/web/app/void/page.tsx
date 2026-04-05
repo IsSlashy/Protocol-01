@@ -22,8 +22,12 @@ const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u
 const ZB = '\u0316\u0317\u0318\u0319\u031C\u031D\u031E\u031F\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329\u032A\u032B\u032C\u032D\u032E\u032F';
 const rc = (s: string) => s[Math.floor(Math.random() * s.length)];
 
+// ナゼ (naze - WHY in katakana) with random kanji corruption
+const WHY_BASES = ['\u30CA\u30BC', '\u306A\u305C', '\u4F55\u6545', 'WHY', '\uFF1F\uFF1F'];
+//                  ナゼ            なぜ            何故           WHY    ？？
+
 function corruptWhy(intensity: number): string {
-  const base = Math.random() < 0.08 * intensity ? 'W?Y' : Math.random() < 0.05 * intensity ? '???' : 'WHY';
+  const base = WHY_BASES[Math.floor(Math.random() * (intensity > 2 ? WHY_BASES.length : 2))];
   return base.split('').map(c => {
     if (Math.random() < 0.1 * intensity) c = '!@#$%&?'[Math.floor(Math.random() * 7)];
     let o = c;
@@ -54,8 +58,8 @@ export default function VoidPage() {
 
   // ── Init ────────────────────────────────────────────────────────────
   useEffect(() => {
-    window.history.replaceState(null, '', '/????');
-    document.title = '????';
+    window.history.replaceState(null, '', '/\uFF1F\uFF1F\uFF1F\uFF1F');
+    document.title = '\uFF1F\uFF1F\uFF1F\uFF1F';
     document.body.style.overflow = 'hidden';
     document.body.style.background = '#000';
     document.body.style.cursor = 'none';
@@ -86,8 +90,8 @@ export default function VoidPage() {
 
     const loop = () => {
       frame++;
-      const elapsed = (Date.now() - startTime) / 1000; // seconds in WHY phase
-      const c = Math.min(elapsed / 60, 1); // corruption: 0→1 over 60 seconds
+      const elapsed = (Date.now() - startTime) / 1000;
+      const c = Math.min(elapsed / 10, 1); // corruption: 0→1 over 10 SECONDS (violent)
       setCorruption(c);
       setTick(frame);
 
@@ -121,12 +125,16 @@ export default function VoidPage() {
         );
       }
 
-      // ── Music slowdown: playback rate decreases over time ──
-      // 1.0 → 0.3 over 60s, with random momentary speed glitches
-      const baseRate = Math.max(0.25, 1 - c * 0.75);
-      const glitchRate = Math.random() < 0.03 + c * 0.08
-        ? baseRate * (0.1 + Math.random() * 0.5) // sudden stutter/slowdown
-        : baseRate;
+      // ── Music slowdown: VIOLENT — 1.0 → 0.1 in 10s with stutters ──
+      const baseRate = Math.max(0.08, 1 - c * 0.92);
+      // Frequent brutal stutters: sudden freeze then resume
+      const isStutter = Math.random() < 0.08 + c * 0.25;
+      const isSpeedup = Math.random() < c * 0.05; // rare sudden 2x burst
+      const glitchRate = isStutter
+        ? 0.05 + Math.random() * 0.1  // near-freeze
+        : isSpeedup
+          ? Math.min(2, baseRate * (2 + Math.random() * 3)) // violent speedup
+          : baseRate;
       setPlaybackRate(glitchRate);
 
       // ── Random inversion (negative flash) ──
