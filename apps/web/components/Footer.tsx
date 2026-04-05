@@ -185,6 +185,7 @@ export default function Footer() {
                       className={`
                         text-[10px] font-mono select-none bg-transparent border-none
                         cursor-pointer transition-all duration-500 text-left
+                        min-h-[44px] min-w-[44px] flex items-center
                         ${PHASES[Math.min(eggState, PHASES.length - 1)].color}
                       `}
                       style={{
