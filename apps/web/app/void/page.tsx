@@ -717,15 +717,29 @@ export default function VoidPage() {
         />
       )}
 
-      {/* ── White fadeout overlay ── */}
+      {/* ── KAngel crash overlay ── */}
       {whiteOverlay > 0 && (
         <div
-          className="absolute inset-0 z-[100] pointer-events-none"
+          className="absolute inset-0 z-[100] pointer-events-none flex items-center justify-center"
           style={{
             backgroundColor: `rgba(255, 255, 255, ${whiteOverlay})`,
             transition: 'none',
           }}
-        />
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/kangel.gif"
+            alt=""
+            className="relative z-10"
+            style={{
+              maxHeight: '80vh',
+              maxWidth: '80vw',
+              objectFit: 'contain',
+              mixBlendMode: 'multiply',
+              filter: 'contrast(1.2) saturate(1.3)',
+            }}
+          />
+        </div>
       )}
 
       {/* ── Drip animation keyframes ── */}
