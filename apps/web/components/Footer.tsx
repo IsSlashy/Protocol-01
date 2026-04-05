@@ -22,11 +22,12 @@ function glitchFrame(base: string, intensity: number): string {
   }).join('');
 }
 
+const W = (...c: number[]) => String.fromCharCode(...c);
 const PHASES = [
-  { base: "dont",   intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },
-  { base: "stop",   intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' },
-  { base: "why?",   intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },
-  { base: "...",     intensity: 2.8, interval: 18,  color: 'text-white/90' },
+  { base: W(0x898B, 0x3066),                                     intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },    // 見て (look at me)
+  { base: W(0x304B, 0x307E, 0x3063, 0x3066),                     intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' },  // かまって (pay attention to me)
+  { base: W(0x5ACC, 0x308F, 0x306A, 0x3044, 0x3067),             intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },    // 嫌わないで (don't hate me)
+  { base: W(0x52A9, 0x3051, 0x3066),                             intensity: 2.8, interval: 18,  color: 'text-white/90' },                            // 助けて (help me)
 ];
 
 interface FooterLink {
