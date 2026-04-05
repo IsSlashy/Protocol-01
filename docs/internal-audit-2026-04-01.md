@@ -209,7 +209,7 @@ Protocol 01
 |   |-- Core: zk-sdk, zkspl-sdk, specter-sdk, arcium-sdk
 |   |-- Auth: auth-sdk, p01-js
 |   |-- Infra: rpc-config, privacy-toolkit, whitelist-sdk
-|   +-- UI: @p01/ui design system
+|   +-- UI: @protocol-01/ui design system
 |
 +-- DEVOPS
     |-- 14 devnet programs deployed

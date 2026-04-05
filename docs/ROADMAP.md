@@ -41,7 +41,7 @@ Command-line interface for power users and developers.
 
 ```bash
 # Installation
-npm install -g @p01/cli
+npm install -g @protocol-01/cli
 
 # Usage
 p01 init                    # Initialize new wallet

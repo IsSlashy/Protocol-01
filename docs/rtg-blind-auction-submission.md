@@ -104,7 +104,7 @@ POST-SETTLEMENT:
 - `zk_shielded` (Anchor): `escrow_shield`, `escrow_release`, `write_escrow_outcome`
 - `p01_arcium` (Anchor + Arcium macros): `create_auction`, `sealed_bid_auction`, `finalize_auction` + callbacks
 
-**SDK — `@protocol01/arcium-sdk`**
+**SDK — `@protocol-01/arcium-sdk`**
 - `createAuction()`, `submitSealedBid()`, `finalizeAuction()`
 - `writeEscrowOutcome()`, `releaseEscrow()`
 - `nullifierToChunks()` / `chunksToNullifier()` for MPC encoding
