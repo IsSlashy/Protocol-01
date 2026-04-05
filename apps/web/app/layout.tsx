@@ -26,10 +26,11 @@ const inter = Inter({
 });
 
 const notoSansJP = Noto_Sans_JP({
-  subsets: ["latin"],
+  subsets: ["latin", "japanese"],
   weight: ["900"],
   variable: "--font-noto-jp",
   display: "swap",
+  preload: false, // JP subset is large — load on demand, not blocking
 });
 
 export const metadata: Metadata = {
