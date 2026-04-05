@@ -67,6 +67,8 @@ export default function VoidPage() {
   const [rotation, setRotation] = useState(0);
   const [scaleX, setScaleX] = useState(1);
   const [whiteOverlay, setWhiteOverlay] = useState(0); // 0→1 for fadeout
+  const [musicVolume, setMusicVolume] = useState(0);   // 0→1 fade in during video
+  const [playCrash, setPlayCrash] = useState(false);   // triggers crash sound
 
   // ── Init ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -83,13 +85,31 @@ export default function VoidPage() {
     };
   }, []);
 
-  // ── Video end → WHY phase ──────────────────────────────────────────
+  // ── Video: start music fade-in before end, then switch to WHY ──────
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+
     const onEnd = () => setPhase('why');
     v.addEventListener('ended', onEnd);
-    return () => v.removeEventListener('ended', onEnd);
+
+    // Fade music in during last 5s of video + lower video volume
+    const checkTime = () => {
+      if (!v.duration || v.duration === Infinity) return;
+      const remaining = v.duration - v.currentTime;
+      if (remaining <= 5) {
+        const t = Math.min(1, (5 - remaining) / 5); // 0→1
+        setMusicVolume(t);
+        // Cross-fade: video audio goes down as music comes up
+        try { v.volume = Math.max(0, 1 - t * 0.8); } catch { /* */ }
+      }
+    };
+    v.addEventListener('timeupdate', checkTime);
+
+    return () => {
+      v.removeEventListener('ended', onEnd);
+      v.removeEventListener('timeupdate', checkTime);
+    };
   }, []);
 
   // ── WHY master loop — everything driven from one RAF ────────────────
@@ -199,16 +219,15 @@ export default function VoidPage() {
       if (t < 1) {
         rafId = requestAnimationFrame(fade);
       } else {
-        // Fully white — hold 1.5s then close
+        // Fully white — play crash sound, hold 2s, then close
+        setPlayCrash(true);
         setTimeout(() => {
-          // Try to close the tab (works if opened by script)
           window.close();
-          // Fallback: navigate home if close doesn't work
           setTimeout(() => {
             window.history.replaceState(null, '', '/');
             router.push('/');
           }, 500);
-        }, 1500);
+        }, 2000);
       }
     };
     rafId = requestAnimationFrame(fade);
@@ -248,6 +267,19 @@ export default function VoidPage() {
         opacity: 0.2 + corruption * 0.3,
       }} />
 
+      {/* ── Music iframe — loads early, fades in during last 5s of video ── */}
+      {musicVolume > 0 && (
+        <iframe
+          src="https://www.youtube.com/embed/Ub5Wy8IFRWM?autoplay=1&loop=1&playlist=Ub5Wy8IFRWM&controls=0&showinfo=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&start=0"
+          allow="autoplay; encrypted-media"
+          className="absolute pointer-events-none"
+          style={{ width: 1, height: 1, opacity: 0 }}
+          tabIndex={-1}
+        />
+      )}
+      {/* Hidden audio ref for playbackRate control in WHY phase */}
+      <audio ref={audioRef} style={{ display: 'none' }} />
+
       {phase === 'video' ? (
         <>
           <div className="absolute inset-0 z-10 pointer-events-none" style={{
@@ -260,26 +292,15 @@ export default function VoidPage() {
             playsInline
             muted={false}
             className="w-full h-full object-contain relative z-0"
-            style={{ filter: 'contrast(1.1) saturate(1.2) brightness(0.95)' }}
+            style={{
+              filter: 'contrast(1.1) saturate(1.2) brightness(0.95)',
+              // Lower video audio as music fades in
+              opacity: 1,
+            }}
           />
         </>
-      ) : (
+      ) : phase !== 'fadeout' ? (
         <>
-          {/* ── Music: real <audio> element for playbackRate control ── */}
-          <audio
-            ref={audioRef}
-            src="https://www.youtube.com/embed/Ub5Wy8IFRWM"
-            crossOrigin="anonymous"
-            style={{ display: 'none' }}
-          />
-          {/* Fallback: YouTube iframe for actual playback */}
-          <iframe
-            src="https://www.youtube.com/embed/Ub5Wy8IFRWM?autoplay=1&loop=1&playlist=Ub5Wy8IFRWM&controls=0&showinfo=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&start=0"
-            allow="autoplay; encrypted-media"
-            className="absolute opacity-0 pointer-events-none"
-            style={{ width: 1, height: 1 }}
-            tabIndex={-1}
-          />
 
           {/* ── Radial background pulse ── */}
           <div className="absolute inset-0 z-0" style={{
@@ -394,6 +415,29 @@ export default function VoidPage() {
             }} />
           )}
         </>
+      ) : (
+        /* fadeout phase: just the clean ナゼ fading into white */
+        <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <div style={{
+            fontSize: 'clamp(80px, 22vw, 350px)',
+            fontFamily: 'monospace',
+            fontWeight: 900,
+            color: `rgba(255,255,255,${Math.max(0, 1 - whiteOverlay * 1.5)})`,
+            lineHeight: 1,
+          }}>
+            {whyText}
+          </div>
+        </div>
+      )}
+      {/* ── Crash sound — Windows error, plays at white screen ── */}
+      {playCrash && (
+        <iframe
+          src="https://www.youtube.com/embed/1POE8JVBe0w?autoplay=1&controls=0&showinfo=0&modestbranding=1&start=0&end=2"
+          allow="autoplay; encrypted-media"
+          className="absolute pointer-events-none"
+          style={{ width: 1, height: 1, opacity: 0 }}
+          tabIndex={-1}
+        />
       )}
       {/* ── White fadeout overlay — above everything ── */}
       {whiteOverlay > 0 && (
