@@ -203,19 +203,15 @@ export default function VoidPage() {
     return () => v.removeEventListener('ended', onEnd);
   }, []);
 
-  // ── Hard crash at exactly 15s → 1s white → redirect = 16s ──────────
+  // ── Hard crash 15s after PAGE LOAD (music start) ───────────────────
   useEffect(() => {
-    if (phase !== 'why') return;
     const id = setTimeout(() => {
-      // Instant white
       setWhiteOverlay(1);
       setPlayCrash(true);
-      // Activate corruption
       window.__p01_corrupted = true;
       window.__p01_corruption_level = 1;
       sessionStorage.setItem('p01_corrupted', '1');
       sessionStorage.setItem('p01_corruption_level', '1');
-      // 1s of white + crash sound → redirect
       setTimeout(() => {
         setWhiteOverlay(0);
         setPhase('video');
@@ -223,7 +219,7 @@ export default function VoidPage() {
       }, 1000);
     }, 15000);
     return () => clearTimeout(id);
-  }, [phase, router]);
+  }, [router]);
 
   // ── WHY master loop — everything driven from one RAF ────────────────
   useEffect(() => {
