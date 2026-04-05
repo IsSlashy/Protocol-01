@@ -87,15 +87,17 @@ export default function VoidPage() {
     const onEnd = () => setPhase('why');
     v.addEventListener('ended', onEnd);
 
-    // Fade music in during last 5s of video + lower video volume
+    // Gentle fade: music creeps in during last 10s, barely audible at first
     const checkTime = () => {
       if (!v.duration || v.duration === Infinity) return;
       const remaining = v.duration - v.currentTime;
-      if (remaining <= 5) {
-        const t = Math.min(1, (5 - remaining) / 5); // 0→1
-        setMusicVolume(t);
-        // Cross-fade: video audio goes down as music comes up
-        try { v.volume = Math.max(0, 1 - t * 0.8); } catch { /* */ }
+      if (remaining <= 10) {
+        // Ease-in curve: starts extremely slow, accelerates at the end
+        const linear = Math.min(1, (10 - remaining) / 10); // 0→1 over 10s
+        const eased = linear * linear * linear; // cubic ease-in — barely there until last 3s
+        setMusicVolume(eased * 0.4); // cap at 40% during video, ramps to 100% in WHY phase
+        // Video audio: gentle decrease
+        try { v.volume = Math.max(0.2, 1 - eased * 0.6); } catch { /* */ }
       }
     };
     v.addEventListener('timeupdate', checkTime);
