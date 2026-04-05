@@ -22,11 +22,18 @@ function glitchFrame(base: string, intensity: number): string {
   }).join('');
 }
 
+// Phases use fromCharCode to guarantee Japanese renders correctly
+const JP = {
+  naze:   () => String.fromCharCode(0x306A, 0x305C),         // なぜ
+  yamete: () => String.fromCharCode(0x3084, 0x3081, 0x3066), // やめて
+  nazeQ:  () => String.fromCharCode(0x306A, 0x305C, 0xFF1F), // なぜ？
+};
+
 const PHASES = [
-  { base: "dont",       intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },
-  { base: "stop",       intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' },
-  { base: "why?",       intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },
-  { base: "...",         intensity: 2.8, interval: 18,  color: 'text-white/90' },
+  { base: JP.naze(),   intensity: 0.8, interval: 90,  color: 'text-red-500/20 hover:text-red-500/40' },
+  { base: JP.yamete(), intensity: 1.2, interval: 50,  color: 'text-pink-400/50 hover:text-pink-400/70' },
+  { base: JP.nazeQ(),  intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200' },
+  { base: "...",        intensity: 2.8, interval: 18,  color: 'text-white/90' },
 ];
 
 interface FooterLink {
