@@ -196,15 +196,9 @@ export default function VoidPage() {
   useEffect(() => {
     if (phase !== 'fadeout') return;
 
-    // Immediately kill all glitch state
-    setShake({ x: 0, y: 0 });
-    setGlitchBars([]);
-    setInverted(false);
-    setSplitOffset(0);
-    setRotation(0);
-    setScaleX(1);
-    setPlaybackRate(0.05); // music crawls to near-stop
-    setWhyText(String.fromCharCode(0x30CA, 0x30BC)); // clean ナゼ — calm before the white
+    // Don't kill glitch — let it keep running under the white
+    // The WHY phase RAF already stopped (elapsed >= 12 exits loop)
+    // But we keep the last corrupted state frozen as the white rises
 
     // White overlay fades in over 4 seconds
     let start = Date.now();
@@ -299,7 +293,7 @@ export default function VoidPage() {
             }}
           />
         </>
-      ) : phase !== 'fadeout' ? (
+      ) : (phase === 'why' || phase === 'fadeout') ? (
         <>
 
           {/* ── Radial background pulse ── */}
@@ -415,20 +409,7 @@ export default function VoidPage() {
             }} />
           )}
         </>
-      ) : (
-        /* fadeout phase: just the clean ナゼ fading into white */
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <div style={{
-            fontSize: 'clamp(80px, 22vw, 350px)',
-            fontFamily: 'monospace',
-            fontWeight: 900,
-            color: `rgba(255,255,255,${Math.max(0, 1 - whiteOverlay * 1.5)})`,
-            lineHeight: 1,
-          }}>
-            {whyText}
-          </div>
-        </div>
-      )}
+      ) : null}
       {/* ── Crash sound — Windows error, plays at white screen ── */}
       {playCrash && (
         <iframe
