@@ -48,6 +48,9 @@ export const CIRCUITS = {
   THRESHOLD_DECRYPT: 'threshold_decrypt',
   SEALED_BID_AUCTION: 'sealed_bid_auction',
   FINALIZE_AUCTION: 'finalize_auction',
+  MUGEN_SUBMIT_OFFER: 'mugen_submit_offer',
+  MUGEN_BLIND_TAKE: 'mugen_blind_take',
+  MUGEN_CANCEL_OFFER: 'mugen_cancel_offer',
 } as const;
 
 export type CircuitName = (typeof CIRCUITS)[keyof typeof CIRCUITS];

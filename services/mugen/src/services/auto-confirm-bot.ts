@@ -463,12 +463,17 @@ export class AutoConfirmBot {
     const mugenFeeWallet = new PublicKey(configData.subarray(cfgOffset, cfgOffset + 32));
     cfgOffset += 32;
     const treasuryWallet = new PublicKey(configData.subarray(cfgOffset, cfgOffset + 32));
+    cfgOffset += 32;
+    cfgOffset += 2; // skip p01_fee_share
+    cfgOffset += 2; // skip mugen_fee_share
+    const noiseFundWallet = new PublicKey(configData.subarray(cfgOffset, cfgOffset + 32));
 
     // Derive fee ATAs
     const buyerTokenAccount = getAssociatedTokenAddressSync(tokenMint, takerPubkey);
     const p01FeeAccount = getAssociatedTokenAddressSync(tokenMint, p01FeeWallet);
     const mugenFeeAccount = getAssociatedTokenAddressSync(tokenMint, mugenFeeWallet);
     const treasuryFeeAccount = getAssociatedTokenAddressSync(tokenMint, treasuryWallet);
+    const noiseFundAccount = getAssociatedTokenAddressSync(tokenMint, noiseFundWallet);
 
     // Parse maker reputation commitment from order
     const orderAccount = await this.connection.getAccountInfo(orderPubkey);
@@ -492,6 +497,7 @@ export class AutoConfirmBot {
       { pubkey: p01FeeAccount, isSigner: false, isWritable: true },
       { pubkey: mugenFeeAccount, isSigner: false, isWritable: true },
       { pubkey: treasuryFeeAccount, isSigner: false, isWritable: true },
+      { pubkey: noiseFundAccount, isSigner: false, isWritable: true },
       { pubkey: makerRepPda, isSigner: false, isWritable: true },
       { pubkey: takerRepPda, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },

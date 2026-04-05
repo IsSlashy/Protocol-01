@@ -1,4 +1,5 @@
 pub mod initialize_config;
+pub mod close_config;
 pub mod create_order;
 pub mod cancel_order;
 pub mod take_order;
@@ -7,8 +8,10 @@ pub mod release_escrow;
 pub mod dispute_escrow;
 pub mod resolve_dispute;
 pub mod expire_escrow;
+pub mod init_reputation;
 
 pub use initialize_config::*;
+pub use close_config::*;
 pub use create_order::*;
 pub use cancel_order::*;
 pub use take_order::*;
@@ -17,3 +20,4 @@ pub use release_escrow::*;
 pub use dispute_escrow::*;
 pub use resolve_dispute::*;
 pub use expire_escrow::*;
+pub use init_reputation::*;

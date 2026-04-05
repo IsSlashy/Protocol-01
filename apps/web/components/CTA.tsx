@@ -2,7 +2,8 @@
 
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
-import { useRef } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Github, Smartphone, Chrome, Download } from "lucide-react";
 import { useT } from "@/i18n";
 
@@ -26,10 +27,69 @@ const downloadOptions = [
   },
 ];
 
+// ─── Easter egg: permanently glitching corrupted text ────────────────────
+
+const ZALGO_ABOVE = [
+  '\u0300','\u0301','\u0302','\u0303','\u0304','\u0305','\u0306','\u0307',
+  '\u0308','\u0309','\u030A','\u030B','\u030C','\u030D','\u030E','\u030F',
+  '\u0310','\u0311','\u0312','\u0313','\u0314','\u0315','\u031A','\u033D',
+  '\u034A','\u034B','\u034C','\u0350','\u0351','\u0352','\u0357','\u035B',
+];
+const ZALGO_MID = [
+  '\u0334','\u0335','\u0336','\u0337','\u0338','\u0339','\u033A','\u033B',
+  '\u033C','\u0347','\u0348','\u0349',
+];
+const ZALGO_BELOW = [
+  '\u0316','\u0317','\u0318','\u0319','\u031C','\u031D','\u031E','\u031F',
+  '\u0320','\u0321','\u0322','\u0323','\u0324','\u0325','\u0326','\u0327',
+  '\u0328','\u0329','\u032A','\u032B','\u032C','\u032D','\u032E','\u032F',
+];
+const GLITCH_BASES = ['d','0','n','t','d','o','n','\'','t','!','?','.','_','x','#'];
+const SWAP_CHARS = '!@#$%&*?/\\|~^<>{}[]()_=+';
+
+function randPick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+
+/** Generate a new corrupted frame — different every call */
+function glitchFrame(base: string, intensity: number): string {
+  return base.split('').map((ch) => {
+    // Randomly swap the base character itself
+    let c = Math.random() < 0.15 * intensity
+      ? SWAP_CHARS[Math.floor(Math.random() * SWAP_CHARS.length)]
+      : ch;
+    // Zalgo above (0-2 diacritics)
+    const aboveCount = Math.floor(Math.random() * intensity * 3);
+    for (let i = 0; i < aboveCount; i++) c += randPick(ZALGO_ABOVE);
+    // Zalgo middle (0-2 strikethroughs)
+    const midCount = Math.floor(Math.random() * intensity * 2);
+    for (let i = 0; i < midCount; i++) c += randPick(ZALGO_MID);
+    // Zalgo below (0-1)
+    if (Math.random() < 0.4 * intensity) c += randPick(ZALGO_BELOW);
+    return c;
+  }).join('');
+}
+
+/** Hook: returns a continuously glitching string */
+function useGlitchText(base: string, intensity: number, intervalMs: number) {
+  const [text, setText] = useState(() => glitchFrame(base, intensity));
+  useEffect(() => {
+    // Randomize interval slightly each tick for organic feel
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      setText(glitchFrame(base, intensity));
+      timer = setTimeout(tick, intervalMs + Math.random() * intervalMs * 0.6);
+    };
+    timer = setTimeout(tick, intervalMs);
+    return () => clearTimeout(timer);
+  }, [base, intensity, intervalMs]);
+  return text;
+}
+
 export default function CTA() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
   const t = useT();
+  const router = useRouter();
+  const [easterState, setEasterState] = useState(0);
 
   return (
     <section className="section relative overflow-hidden" ref={ref}>
@@ -171,6 +231,23 @@ export default function CTA() {
                 <span>{t('cta.joinDiscord')}</span>
               </a>
             </motion.div>
+
+            {/* Easter egg — permanently glitching corrupted button */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={isInView ? { opacity: 1 } : {}}
+              transition={{ duration: 3, delay: 4 }}
+              className="mt-8 flex justify-center"
+            >
+              <EasterEggButton state={easterState} onAdvance={() => {
+                if (easterState >= PHASES.length - 1) {
+                  window.history.pushState(null, '', '/????');
+                  router.push("/void");
+                } else {
+                  setEasterState(easterState + 1);
+                }
+              }} />
+            </motion.div>
           </div>
         </motion.div>
 
@@ -196,5 +273,91 @@ export default function CTA() {
         </motion.div>
       </div>
     </section>
+  );
+}
+
+// ─── Easter egg component with live glitching + screen shake ─────────────────
+
+const PHASES = [
+  // 0: barely visible corrupted whisper — something feels wrong
+  { base: "dont",                                        intensity: 0.8, interval: 100, size: 'text-[10px]', opacity: 'opacity-20 hover:opacity-40', shake: 0,   glow: 0,   color: 'text-red-500'    },
+  // 1: it noticed you
+  { base: "why are you doing this",                      intensity: 0.9, interval: 75,  size: 'text-[11px]', opacity: 'opacity-35 hover:opacity-55', shake: 1,   glow: 0.2, color: 'text-red-400'    },
+  // 2: it's getting upset — NGO pink starts bleeding in
+  { base: "why are you trying to get inside my head",    intensity: 1.1, interval: 60,  size: 'text-xs',     opacity: 'opacity-50 hover:opacity-70', shake: 2.5, glow: 0.4, color: 'text-pink-400'   },
+  // 3: pleading — text gets bigger, shake picks up
+  { base: "stop please stop",                            intensity: 1.4, interval: 45,  size: 'text-sm',     opacity: 'opacity-65 hover:opacity-85', shake: 5,   glow: 0.6, color: 'text-pink-300'   },
+  // 4: breaking — single word, loud
+  { base: "why ?",                                       intensity: 1.8, interval: 30,  size: 'text-lg',     opacity: 'opacity-80 hover:opacity-100',shake: 8,   glow: 0.85,color: 'text-pink-200'   },
+  // 5: total breakdown — maximum corruption, screen shakes violently
+  { base: "...",                                         intensity: 2.8, interval: 20,  size: 'text-xl',     opacity: 'opacity-95',                  shake: 14,  glow: 1.0, color: 'text-white'      },
+];
+
+function EasterEggButton({ state, onAdvance }: { state: number; onAdvance: () => void }) {
+  const phase = PHASES[Math.min(state, PHASES.length - 1)];
+  const glitched = useGlitchText(phase.base, phase.intensity, phase.interval);
+  const [shakeOffset, setShakeOffset] = useState({ x: 0, y: 0 });
+  const [flashOpacity, setFlashOpacity] = useState(0);
+
+  // Permanent tremble — increases each phase
+  useEffect(() => {
+    if (phase.shake === 0) return;
+    const tick = () => {
+      const mag = phase.shake;
+      setShakeOffset({
+        x: (Math.random() - 0.5) * mag * 2,
+        y: (Math.random() - 0.5) * mag * 2,
+      });
+    };
+    const id = setInterval(tick, 25);
+    return () => clearInterval(id);
+  }, [phase.shake]);
+
+  // Flash on click (NGO style — brief white/pink flash)
+  const handleClick = () => {
+    setFlashOpacity(1);
+    setTimeout(() => setFlashOpacity(0), 80);
+    onAdvance();
+  };
+
+  return (
+    <div className="relative">
+      {/* Click flash — NGO style screen flash */}
+      {flashOpacity > 0 && state >= 2 && (
+        <div
+          className="fixed inset-0 z-[9998] pointer-events-none"
+          style={{
+            background: state >= 4
+              ? 'rgba(255,255,255,0.15)'
+              : 'rgba(255,100,150,0.08)',
+            opacity: flashOpacity,
+            transition: 'opacity 80ms',
+          }}
+        />
+      )}
+      <button
+        onClick={handleClick}
+        className={`
+          font-mono select-none border-none bg-transparent
+          cursor-pointer transition-all duration-300
+          ${phase.color} ${phase.opacity} ${phase.size}
+          leading-relaxed max-w-lg relative
+        `}
+        style={{
+          transform: `translate(${shakeOffset.x}px, ${shakeOffset.y}px)`,
+          // NGO chromatic aberration: red/cyan split shadows
+          textShadow: phase.glow > 0
+            ? `${-1 - phase.glow * 3}px 0 rgba(255,50,100,${phase.glow * 0.7}), ${1 + phase.glow * 3}px 0 rgba(0,255,200,${phase.glow * 0.5}), 0 0 ${phase.glow * 20}px rgba(255,100,150,${phase.glow * 0.4})`
+            : 'none',
+          letterSpacing: `${0.12 + state * 0.04}em`,
+          textAlign: 'center',
+          // Slight skew in later phases (broken feeling)
+          ...(state >= 3 ? { fontStyle: 'italic' } : {}),
+          ...(state >= 4 ? { transform: `translate(${shakeOffset.x}px, ${shakeOffset.y}px) skewX(${(Math.random() - 0.5) * 2}deg)` } : {}),
+        }}
+      >
+        {glitched}
+      </button>
+    </div>
   );
 }

@@ -7,9 +7,13 @@ import { PriceFeed } from './services/price-feed.js';
 import { ChatRelay } from './services/chat-relay.js';
 import { AutoConfirmBot, loadBotWallet } from './services/auto-confirm-bot.js';
 import { RevolutClient } from './services/revolut-client.js';
+import { NoiseEngine, deriveMasterSeed } from './services/noise-engine.js';
+import { Mixer } from './services/mixer.js';
+import { MpcMatcher } from './services/mpc-matcher.js';
 import { ordersRouter } from './routes/orders.js';
 import { pricesRouter } from './routes/prices.js';
 import { botRouter } from './routes/bot.js';
+import { privacyRouter } from './routes/privacy.js';
 
 // ─── Initialize services ────────────────────────────────────────────────────
 
@@ -17,6 +21,9 @@ const indexer = new OrderIndexer();
 const priceFeed = new PriceFeed();
 const chatRelay = new ChatRelay();
 let bot: AutoConfirmBot | null = null;
+let noiseEngine: NoiseEngine | null = null;
+let mixer: Mixer | null = null;
+let mpcMatcher: MpcMatcher | null = null;
 
 // ─── Hono app ───────────────────────────────────────────────────────────────
 
@@ -54,7 +61,7 @@ app.get('/health', (c) => {
   });
 });
 
-// Routes
+// Routes (static services — available immediately)
 app.route('/api/orders', ordersRouter(indexer));
 app.route('/api/prices', pricesRouter(priceFeed));
 app.route('/api/bot', botRouter(indexer));
@@ -82,6 +89,46 @@ async function main() {
     await bot.start();
   }
 
+  // Start noise engine if configured
+  if (CONFIG.noiseEnabled && CONFIG.noiseSeed) {
+    noiseEngine = new NoiseEngine({
+      masterSeed: deriveMasterSeed(CONFIG.noiseSeed),
+      priceFeed,
+      walletCount: CONFIG.noiseWalletCount,
+      meanIntervalMs: CONFIG.noiseMeanIntervalMs,
+      minStepDelayMs: CONFIG.noiseMinStepDelayMs,
+      maxStepDelayMs: CONFIG.noiseMaxStepDelayMs,
+    });
+    await noiseEngine.start();
+  }
+
+  // Start mixer if configured
+  if (CONFIG.mixerEnabled && CONFIG.mixerSeed) {
+    mixer = new Mixer({
+      masterSeed: deriveMasterSeed(CONFIG.mixerSeed),
+      hops: CONFIG.mixerHops,
+      minHopDelayMs: CONFIG.mixerMinHopDelayMs,
+      maxHopDelayMs: CONFIG.mixerMaxHopDelayMs,
+    });
+    mixer.start();
+  }
+
+  // Start MPC matcher (listens for Arcium blind match results)
+  mpcMatcher = new MpcMatcher();
+  mpcMatcher.onMatch = async (match) => {
+    console.log(
+      `[mugen] MPC match → creating escrow: ` +
+      `${Number(match.cryptoAmount) / 1e9} SOL for ${Number(match.fiatAmount)} cents`,
+    );
+    // TODO: Wire to p01_mugen.take_order() using match.makerNonce/takerNonce
+    // The escrow is created from the MPC-revealed trade terms.
+    // This link (MPC event → escrow) is invisible to on-chain observers.
+  };
+  await mpcMatcher.start();
+
+  // Register privacy routes (after services are initialized)
+  app.route('/api/privacy', privacyRouter(noiseEngine, mixer));
+
   // Start HTTP server
   const server = serve({
     fetch: app.fetch,
@@ -92,15 +139,18 @@ async function main() {
   chatRelay.attach(server as any);
 
   const botStatus = bot ? '● ACTIVE' : '○ disabled';
+  const noiseStatus = noiseEngine ? '● ACTIVE' : '○ disabled';
+  const mixerStatus = mixer ? '● ACTIVE' : '○ disabled';
   console.log(`
   ┌─────────────────────────────────────────┐
   │  MUGEN EXCHANGE SERVICE  無限            │
   │                                         │
-  │  HTTP:  http://localhost:${CONFIG.port}          │
-  │  WS:    ws://localhost:${CONFIG.port}/ws/chat    │
-  │  Bot:   ${botStatus.padEnd(30)}│
-  │  RPC:   ${CONFIG.rpcUrl.slice(0, 35)}...│
-  │  Program: ${CONFIG.programId.toBase58().slice(0, 20)}... │
+  │  HTTP:   http://localhost:${CONFIG.port}         │
+  │  WS:     ws://localhost:${CONFIG.port}/ws/chat   │
+  │  Bot:    ${botStatus.padEnd(29)}│
+  │  Noise:  ${noiseStatus.padEnd(29)}│
+  │  Mixer:  ${mixerStatus.padEnd(29)}│
+  │  RPC:    ${CONFIG.rpcUrl.slice(0, 28)}...│
   └─────────────────────────────────────────┘
   `);
 }
@@ -110,6 +160,9 @@ main().catch(console.error);
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n[mugen] Shutting down...');
+  mpcMatcher?.stop();
+  noiseEngine?.stop();
+  mixer?.stop();
   bot?.stop();
   indexer.stop();
   priceFeed.stop();
