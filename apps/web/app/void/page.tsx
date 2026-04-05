@@ -208,7 +208,7 @@ export default function VoidPage() {
     if (phase !== 'why') return;
     const id = setTimeout(() => {
       setPhase('fadeout');
-    }, 16000);
+    }, 10000);
     return () => clearTimeout(id);
   }, [phase]);
 
