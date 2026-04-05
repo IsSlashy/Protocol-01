@@ -448,9 +448,14 @@ export default function VoidPage() {
             src="/void.mp4"
             autoPlay
             playsInline
-            muted={false}
+            muted
             className="w-full h-full object-contain relative z-0"
             style={{ filter: 'contrast(1.1) saturate(1.2) brightness(0.95)' }}
+            onPlay={(e) => {
+              // Unmute after autoplay starts — works on mobile after user interaction (footer click)
+              const v = e.currentTarget;
+              setTimeout(() => { try { v.muted = false; } catch {} }, 100);
+            }}
           />
         </>
       ) : (phase === 'why' || phase === 'fadeout') ? (
