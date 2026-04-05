@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, JetBrains_Mono, Inter } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono, Inter, Noto_Sans_JP } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
@@ -22,6 +22,13 @@ const jetbrainsMono = JetBrains_Mono({
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+  display: "swap",
+});
+
+const notoSansJP = Noto_Sans_JP({
+  subsets: ["latin"],
+  weight: ["900"],
+  variable: "--font-noto-jp",
   display: "swap",
 });
 
@@ -77,7 +84,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} ${inter.variable} font-sans antialiased bg-p01-void text-white`}
+        className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} ${inter.variable} ${notoSansJP.variable} font-sans antialiased bg-p01-void text-white`}
       >
         <div className="relative min-h-screen overflow-hidden">
           {/* Deep background with layers */}
