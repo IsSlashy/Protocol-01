@@ -217,7 +217,7 @@ export default function VoidPage() {
         setPhase('video');
         router.replace('/');
       }, 1000);
-    }, 15000);
+    }, 16000);
     return () => clearTimeout(id);
   }, [router]);
 
