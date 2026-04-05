@@ -203,14 +203,27 @@ export default function VoidPage() {
     return () => v.removeEventListener('ended', onEnd);
   }, []);
 
-  // ── 16s after WHY starts (= when music is playing) → crash ──────────
+  // ── Hard crash at exactly 15s → 1s white → redirect = 16s ──────────
   useEffect(() => {
     if (phase !== 'why') return;
     const id = setTimeout(() => {
-      setPhase('fadeout');
-    }, 13500);
+      // Instant white
+      setWhiteOverlay(1);
+      setPlayCrash(true);
+      // Activate corruption
+      window.__p01_corrupted = true;
+      window.__p01_corruption_level = 1;
+      sessionStorage.setItem('p01_corrupted', '1');
+      sessionStorage.setItem('p01_corruption_level', '1');
+      // 1s of white + crash sound → redirect
+      setTimeout(() => {
+        setWhiteOverlay(0);
+        setPhase('video');
+        router.replace('/');
+      }, 1000);
+    }, 15000);
     return () => clearTimeout(id);
-  }, [phase]);
+  }, [phase, router]);
 
   // ── WHY master loop — everything driven from one RAF ────────────────
   useEffect(() => {
@@ -362,36 +375,8 @@ export default function VoidPage() {
     return () => cancelAnimationFrame(rafId);
   }, [phase]);
 
-  // ── FADEOUT PHASE: everything stops, white takes over, tab closes ──
-  useEffect(() => {
-    if (phase !== 'fadeout') return;
-
-    let start = Date.now();
-    let rafId: number;
-    const fade = () => {
-      const t = Math.min((Date.now() - start) / 1000, 1); // 1s white flash
-      setWhiteOverlay(t);
-      setPlaybackRate(Math.max(0.01, 0.05 * (1 - t)));
-
-      if (t < 1) {
-        rafId = requestAnimationFrame(fade);
-      } else {
-        // Crash sound + redirect immediately
-        setPlayCrash(true);
-        window.__p01_corrupted = true;
-        window.__p01_corruption_level = 1;
-        sessionStorage.setItem('p01_corrupted', '1');
-        sessionStorage.setItem('p01_corruption_level', '1');
-        setTimeout(() => {
-          setWhiteOverlay(0);
-          setPhase('video');
-          router.replace('/');
-        }, 1500);
-      }
-    };
-    rafId = requestAnimationFrame(fade);
-    return () => cancelAnimationFrame(rafId);
-  }, [phase, router]);
+  // ── FADEOUT — no longer drives the crash, just used if phase is set ──
+  // (crash is now handled by the hard 15s timer above)
 
   // ── Audio playback rate sync ───────────────────────────────────────
   useEffect(() => {
