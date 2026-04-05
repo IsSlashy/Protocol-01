@@ -7,17 +7,17 @@ The P-01 SDK allows developers to integrate Protocol 01 wallet functionality int
 ## Installation
 
 ```bash
-npm install @p01/sdk
+npm install @protocol-01/streams
 # or
-yarn add @p01/sdk
+yarn add @protocol-01/streams
 # or
-pnpm add @p01/sdk
+pnpm add @protocol-01/streams
 ```
 
 ## Quick Start
 
 ```typescript
-import { P01SDK } from '@p01/sdk';
+import { P01SDK } from '@protocol-01/streams';
 
 // Initialize SDK
 const p01 = new P01SDK();
@@ -273,7 +273,7 @@ p01.off('connect', myCallback);
 ## Error Handling
 
 ```typescript
-import { P01Error, ErrorCodes } from '@p01/sdk';
+import { P01Error, ErrorCodes } from '@protocol-01/streams';
 
 try {
   await p01.connect();
@@ -307,14 +307,14 @@ import {
   StreamInfo,
   PaymentParams,
   StreamParams
-} from '@p01/sdk';
+} from '@protocol-01/streams';
 ```
 
 ## React Integration
 
 ```tsx
 import { useEffect, useState } from 'react';
-import { P01SDK } from '@p01/sdk';
+import { P01SDK } from '@protocol-01/streams';
 
 const p01 = new P01SDK();
 

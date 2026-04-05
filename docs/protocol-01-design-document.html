@@ -1278,7 +1278,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
         <li>Background service worker for wallet state</li>
         <li>Popup UI for quick actions</li>
         <li>Content script for dApp injection</li>
-        <li>RPC fallback via @p01/rpc-config</li>
+        <li>RPC fallback via @protocol-01/rpc-config</li>
         <li>Seed-based key derivation (BIP44)</li>
       </ul>
     </div>
@@ -1301,42 +1301,42 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     </thead>
     <tbody>
       <tr>
-        <td class="bold pink">@p01/specter-sdk</td>
+        <td class="bold pink">@protocol-01/specter-sdk</td>
         <td>Core privacy SDK</td>
         <td>Stealth, wallet, transfer, relay, quantum, registry, indexer, prover</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/zk-sdk</td>
+        <td class="bold pink">@protocol-01/zk-sdk</td>
         <td>ZK primitives</td>
         <td>ShieldedClient, Note, MerkleTree, ZkProver, viewing keys</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/zkspl-sdk</td>
+        <td class="bold pink">@protocol-01/zkspl-sdk</td>
         <td>Confidential tokens</td>
         <td>Confidential deposit, withdraw, transfer, balance proof</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/arcium-sdk</td>
+        <td class="bold pink">@protocol-01/arcium-sdk</td>
         <td>MPC compute</td>
         <td>ArciumClient, 6 use-case modules, Rescue cipher</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/p01-js</td>
+        <td class="bold pink">@protocol-01/p01-js</td>
         <td>Merchant SDK</td>
         <td>Protocol01 client, subscriptions, payments, React components</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/privacy-toolkit</td>
+        <td class="bold pink">@protocol-01/privacy-toolkit</td>
         <td>Merkle + commit</td>
         <td>Incremental tree, Poseidon, amount hash, proof format</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/auth-sdk</td>
+        <td class="bold pink">@protocol-01/auth-sdk</td>
         <td>Auth integration</td>
         <td>P01AuthClient, P01AuthServer, session management</td>
       </tr>
       <tr>
-        <td class="bold pink">@p01/rpc-config</td>
+        <td class="bold pink">@protocol-01/rpc-config</td>
         <td>RPC infrastructure</td>
         <td>RpcConnectionManager, fallback chain, URL sanitization</td>
       </tr>
@@ -1344,8 +1344,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
   </table>
 
   <h3 style="margin-top: 20px;">Integration Example</h3>
-  <div class="code-block" style="font-size: 9pt;"><span class="pink">import</span> { StealthWallet } <span class="pink">from</span> <span class="cyan">'@p01/specter-sdk'</span>;
-<span class="pink">import</span> { ShieldedClient } <span class="pink">from</span> <span class="cyan">'@p01/zk-sdk'</span>;
+  <div class="code-block" style="font-size: 9pt;"><span class="pink">import</span> { StealthWallet } <span class="pink">from</span> <span class="cyan">'@protocol-01/specter-sdk'</span>;
+<span class="pink">import</span> { ShieldedClient } <span class="pink">from</span> <span class="cyan">'@protocol-01/zk-sdk'</span>;
 
 <span class="dim">// Create stealth address for recipient</span>
 <span class="pink">const</span> stealth = <span class="pink">await</span> StealthWallet.generateStealthAddress(recipientMeta);
