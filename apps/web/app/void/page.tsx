@@ -208,7 +208,7 @@ export default function VoidPage() {
     if (phase !== 'why') return;
     const id = setTimeout(() => {
       setPhase('fadeout');
-    }, 10000);
+    }, 13500);
     return () => clearTimeout(id);
   }, [phase]);
 
@@ -369,33 +369,24 @@ export default function VoidPage() {
     let start = Date.now();
     let rafId: number;
     const fade = () => {
-      const t = Math.min((Date.now() - start) / 4000, 1);
+      const t = Math.min((Date.now() - start) / 1000, 1); // 1s white flash
       setWhiteOverlay(t);
       setPlaybackRate(Math.max(0.01, 0.05 * (1 - t)));
-
-      // Glitch keeps going under white — last spasms
-      if (t < 0.8) {
-        setShake({ x: (Math.random() - 0.5) * 30 * (1 - t), y: (Math.random() - 0.5) * 30 * (1 - t) });
-        setStrobe(Math.random() < 0.1 * (1 - t));
-      }
 
       if (t < 1) {
         rafId = requestAnimationFrame(fade);
       } else {
-        // Crash sound
+        // Crash sound + redirect immediately
         setPlayCrash(true);
-        // Activate persistent corruption — sessionStorage survives full reloads
         window.__p01_corrupted = true;
         window.__p01_corruption_level = 1;
         sessionStorage.setItem('p01_corrupted', '1');
         sessionStorage.setItem('p01_corruption_level', '1');
         setTimeout(() => {
-          // Clear the white overlay BEFORE navigating so it doesn't stay stuck
           setWhiteOverlay(0);
-          setPhase('video'); // reset phase to unmount all WHY/fadeout DOM
-          // Navigate home — site is now haunted
+          setPhase('video');
           router.replace('/');
-        }, 2000);
+        }, 1500);
       }
     };
     rafId = requestAnimationFrame(fade);
