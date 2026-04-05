@@ -32,83 +32,99 @@ const ZB = '\u0316\u0317\u0318\u0319\u031C\u031D\u031E\u031F\u0320\u0321\u0322\u
 const rc = (s: string) => s[Math.floor(Math.random() * s.length)];
 const SWAP = '!@#$%^&*?/|~<>_=+{}[]();:"\u2588\u2591\u2592\u2593\u2580\u2584\u258C\u2590';
 
-// ─── Distress lexicon — JP only ─────────────────────────────────────────────
+// ─── Ame-chan / NGO distress lexicon ─────────────────────────────────────────
 const W = (...codes: number[]) => String.fromCharCode(...codes);
 const WHY_BASES = [
-  // ── Why / Questions ──
-  W(0x30CA, 0x30BC),                               // ナゼ
-  W(0x306A, 0x305C),                               // なぜ
-  W(0x4F55, 0x6545),                               // 何故
-  W(0x30CA, 0x30BC, 0xFF1F),                       // ナゼ？
-  W(0x3069, 0x3046, 0x3057, 0x3066),               // どうして
+  // ── Ame-chan persona / streaming ──
+  W(0x304B, 0x307E, 0x3063, 0x3066),               // かまって (pay attention to me)
+  W(0x898B, 0x3066),                               // 見て (look at me)
+  W(0x898B, 0x3066, 0x898B, 0x3066, 0x898B, 0x3066), // 見て見て見て
+  W(0x304B, 0x308F, 0x3044, 0x3044, 0x3063, 0x3066, 0x8A00, 0x3063, 0x3066), // かわいいって言って (say I'm cute)
+  W(0x8AB0, 0x304B, 0x898B, 0x3066, 0x308B, 0xFF1F), // 誰か見てる？ (is anyone watching?)
+  W(0x306A, 0x3093, 0x3067, 0x8AB0, 0x3082, 0x3044, 0x306A, 0x3044, 0x306E), // なんで誰もいないの (why is nobody here)
+  W(0x914D, 0x4FE1, 0x5207, 0x308A, 0x305F, 0x304F, 0x306A, 0x3044), // 配信切りたくない (don't want to end the stream)
+  W(0x30D5, 0x30A9, 0x30ED, 0x30EF, 0x30FC),       // フォロワー (followers)
+  W(0x3044, 0x3044, 0x306D),                       // いいね (likes)
+  W(0x627F, 0x8A8D, 0x6B32, 0x6C42),               // 承認欲求 (need for approval)
+  W(0x30B9, 0x30D1, 0x30C1, 0x30E3),               // スパチャ (super chat)
+  W(0x30CD, 0x30C3, 0x30C8, 0x5929, 0x4F7F),       // ネット天使 (internet angel)
+  W(0x5168, 0x90E8, 0x5618),                       // 全部嘘 (everything is a lie)
+  W(0x30A8, 0x30F3, 0x30B8, 0x30A7, 0x30EB),       // エンジェル (angel)
+  // ── Menhera / yami ──
+  W(0x30E1, 0x30F3, 0x30D8, 0x30E9),               // メンヘラ (menhera)
+  W(0x75C5, 0x307F),                               // 病み (yami/sick)
+  W(0x95C7, 0x843D, 0x3061),                       // 闇落ち (falling into darkness)
+  W(0x5730, 0x96F7, 0x7CFB),                       // 地雷系 (landmine type)
+  W(0x30E4, 0x30F3, 0x30C7, 0x30EC),               // ヤンデレ (yandere)
+  W(0x4F9D, 0x5B58),                               // 依存 (dependency)
+  W(0x904E, 0x5270, 0x6442, 0x53D6),               // 過剰摂取 (overdose)
+  W(0x304A, 0x304F, 0x3059, 0x308A),               // おくすり (medicine, cute)
+  W(0x85AC, 0x98F2, 0x3093, 0x3060),               // 薬飲んだ (took my meds)
+  W(0x3074, 0x3048, 0x3093),                       // ぴえん (crying)
+  W(0x3057, 0x3093, 0x3069, 0x3044),               // しんどい (exhausted)
   // ── Death / Kill ──
   W(0x6BBA, 0x3059),                               // 殺す
-  W(0x6B7B, 0x306C),                               // 死ぬ
   W(0x6B7B, 0x306D),                               // 死ね
-  W(0x6B7B, 0x3093, 0x3067),                       // 死んで
   W(0x6B7B, 0x306B, 0x305F, 0x3044),               // 死にたい
   W(0x81EA, 0x6BBA),                               // 自殺
-  W(0x7D5E, 0x9996),                               // 絞首 (strangulation)
-  // ── Pain / Suffering ──
+  W(0x6B7B, 0x306B, 0x305F, 0x3044, 0x3051, 0x3069, 0x6B7B, 0x306B, 0x305F, 0x304F, 0x306A, 0x3044), // 死にたいけど死にたくない
+  // ── Pain / Crying ──
   W(0x75DB, 0x3044),                               // 痛い
   W(0x82E6, 0x3057, 0x3044),                       // 苦しい
-  W(0x8F9B, 0x3044),                               // 辛い
-  W(0x60B2, 0x9E23),                               // 悲鳴 (scream)
-  W(0x53EB, 0x3073),                               // 叫び (cry out)
-  W(0x6D99),                                       // 涙 (tears)
-  W(0x6CE3, 0x304F),                               // 泣く (to cry)
-  W(0x58F0, 0x304C, 0x51FA, 0x306A, 0x3044),       // 声が出ない (can't speak)
+  W(0x6D99),                                       // 涙
+  W(0x6CE3, 0x3044, 0x3066, 0x3044, 0x3044, 0xFF1F), // 泣いていい？ (can I cry?)
+  W(0x7B11, 0x3063, 0x3066),                       // 笑って (smile)
   // ── Help / Desperation ──
-  W(0x52A9, 0x3051, 0x3066),                       // 助けて (help me)
-  W(0x8AB0, 0x304B),                               // 誰か (someone)
-  W(0x8AB0, 0x3082, 0x3044, 0x306A, 0x3044),       // 誰もいない (nobody)
-  W(0x3084, 0x3081, 0x3066),                       // やめて (stop it)
-  W(0x9003, 0x3052, 0x305F, 0x3044),               // 逃げたい (want to escape)
-  W(0x9003, 0x3052, 0x3089, 0x308C, 0x306A, 0x3044), // 逃げられない (can't escape)
-  W(0x58CA, 0x308C, 0x305F, 0x3044),               // 壊れたい (want to break)
-  W(0x6D88, 0x3048, 0x305F, 0x3044),               // 消えたい (want to disappear)
+  W(0x52A9, 0x3051, 0x3066),                       // 助けて
+  W(0x3084, 0x3081, 0x3066),                       // やめて
+  W(0x9003, 0x3052, 0x3089, 0x308C, 0x306A, 0x3044), // 逃げられない
+  W(0x58CA, 0x308C, 0x3061, 0x3083, 0x3063, 0x305F), // 壊れちゃった (I broke)
+  W(0x6D88, 0x3048, 0x305F, 0x3044),               // 消えたい
+  W(0x3082, 0x3046, 0x7121, 0x7406),               // もう無理
+  W(0x3082, 0x3046, 0x3044, 0x3044),               // もういい
+  // ── Love / Dependency ──
+  W(0x611B, 0x3057, 0x3066),                       // 愛して (love me)
+  W(0x611B, 0x3055, 0x308C, 0x305F, 0x304B, 0x3063, 0x305F), // 愛されたかった
+  W(0x597D, 0x304D, 0x3059, 0x304E, 0x3066, 0x6016, 0x3044), // 好きすぎて怖い (like you so much it's scary)
+  W(0x305A, 0x3063, 0x3068, 0x4E00, 0x7DD2, 0x306B, 0x3044, 0x3066), // ずっと一緒にいて (stay with me forever)
+  W(0x7F6E, 0x3044, 0x3066, 0x3044, 0x304B, 0x306A, 0x3044, 0x3067), // 置いていかないで (don't leave me)
+  W(0x79C1, 0x306E, 0x3053, 0x3068, 0x597D, 0x304D, 0xFF1F), // 私のこと好き？ (do you like me?)
+  W(0x5ACC, 0x308F, 0x308C, 0x305F, 0x304F, 0x306A, 0x3044), // 嫌われたくない (don't want to be hated)
+  W(0x30AC, 0x30C1, 0x604B),                       // ガチ恋 (serious love)
   // ── Abuse / Family ──
-  W(0x6BCD, 0x89AA),                               // 母親 (mother)
-  W(0x7236, 0x89AA),                               // 父親 (father)
-  W(0x8650, 0x5F85),                               // 虐待 (abuse)
-  W(0x6B96, 0x3089, 0x306A, 0x3044, 0x3067),       // 殴らないで (don't hit me)
-  W(0x8A31, 0x3057, 0x3066),                       // 許して (forgive me)
-  W(0x3054, 0x3081, 0x3093, 0x306A, 0x3055, 0x3044), // ごめんなさい (I'm sorry)
-  W(0x611B, 0x3055, 0x308C, 0x305F, 0x304B, 0x3063, 0x305F), // 愛されたかった (wanted to be loved)
+  W(0x6BCD, 0x89AA),                               // 母親
+  W(0x8650, 0x5F85),                               // 虐待
+  W(0x6B96, 0x3089, 0x306A, 0x3044, 0x3067),       // 殴らないで
+  W(0x8A31, 0x3057, 0x3066),                       // 許して
+  W(0x3054, 0x3081, 0x3093, 0x306A, 0x3055, 0x3044), // ごめんなさい
   // ── Self-harm / Cutting ──
-  W(0x5207, 0x308B),                               // 切る (to cut)
-  W(0x5207, 0x308A, 0x50B7),                       // 切り傷 (cut wound)
-  W(0x50B7),                                       // 傷 (wound/scar)
-  W(0x8840),                                       // 血 (blood)
-  W(0x8840, 0x304C, 0x6B62, 0x307E, 0x3089, 0x306A, 0x3044), // 血が止まらない (blood won't stop)
-  W(0x30EA, 0x30B9, 0x30C8, 0x30AB, 0x30C3, 0x30C8), // リストカット (wrist cut)
-  W(0x5257),                                       // 刃 (blade)
-  W(0x5200),                                       // 刀 (knife)
-  // ── Loneliness / Despair ──
-  W(0x5B64, 0x72EC),                               // 孤独 (solitude)
-  W(0x7D76, 0x671B),                               // 絶望 (despair)
-  W(0x865A, 0x7121),                               // 虚無 (void/emptiness)
-  W(0x95C7),                                       // 闇 (darkness)
-  W(0x4E00, 0x4EBA, 0x307C, 0x3063, 0x3061),       // 一人ぼっち (all alone)
-  W(0x5BC2, 0x3057, 0x3044),                       // 寂しい (lonely)
-  W(0x3082, 0x3046, 0x3044, 0x3044),               // もういい (enough already)
-  W(0x3082, 0x3046, 0x7121, 0x7406),               // もう無理 (can't anymore)
-  W(0x58CA, 0x308C, 0x305F),                       // 壊れた (broken)
+  W(0x30EA, 0x30B9, 0x30AB),                       // リスカ (wrist cut, slang)
+  W(0x8840),                                       // 血
+  W(0x8840, 0x304C, 0x6B62, 0x307E, 0x3089, 0x306A, 0x3044), // 血が止まらない
+  W(0x50B7),                                       // 傷
+  W(0x5257),                                       // 刃
+  // ── Loneliness ──
+  W(0x5B64, 0x72EC),                               // 孤独
+  W(0x7D76, 0x671B),                               // 絶望
+  W(0x865A, 0x7121),                               // 虚無
+  W(0x95C7),                                       // 闇
+  W(0x4E00, 0x4EBA, 0x307C, 0x3063, 0x3061),       // 一人ぼっち
+  W(0x5BC2, 0x3057, 0x3044),                       // 寂しい
   // ── Hanging / Rope ──
-  W(0x7E04),                                       // 縄 (rope)
-  W(0x9996, 0x540A, 0x308A),                       // 首吊り (hanging)
-  W(0x7E1B, 0x308B),                               // 縛る (to bind)
-  // ── Erasure / Disappearing ──
-  W(0x6D88, 0x3048, 0x308D),                       // 消えろ (disappear)
-  W(0x5FD8, 0x308C, 0x3066),                       // 忘れて (forget me)
-  W(0x8981, 0x3089, 0x306A, 0x3044),               // 要らない (not needed)
-  W(0x5B58, 0x5728, 0x304C, 0x6D88, 0x3048, 0x305F, 0x3044), // 存在が消えたい (want my existence to vanish)
-  // ── Sentences ──
-  W(0x5F7C, 0x5973, 0x306F, 0x79C1, 0x3092, 0x6905, 0x5B50, 0x306B, 0x7E1B, 0x308A, 0x4ED8, 0x3051, 0x305F), // 彼女は私を椅子に縛り付けた
-  W(0x8AB0, 0x3082, 0x52A9, 0x3051, 0x3066, 0x304F, 0x308C, 0x306A, 0x3044), // 誰も助けてくれない (nobody helps me)
-  W(0x751F, 0x304D, 0x3066, 0x3044, 0x3066, 0x3054, 0x3081, 0x3093), // 生きていてごめん (sorry for being alive)
-  W(0x79C1, 0x306F, 0x3082, 0x3046, 0x3044, 0x306A, 0x3044), // 私はもういない (I'm already gone)
-  W(0x604B, 0x3057, 0x304F, 0x3066, 0x6B7B, 0x306B, 0x305F, 0x3044), // 恋しくて死にたい (miss you so much I want to die)
+  W(0x9996, 0x540A, 0x308A),                       // 首吊り
+  W(0x7E04),                                       // 縄
+  // ── Erasure ──
+  W(0x6D88, 0x3048, 0x308D),                       // 消えろ
+  W(0x5FD8, 0x308C, 0x3066),                       // 忘れて
+  W(0x8981, 0x3089, 0x306A, 0x3044),               // 要らない
+  W(0x5168, 0x90E8, 0x58CA, 0x3057, 0x305F, 0x3044), // 全部壊したい (want to destroy everything)
+  // ── Ame-chan sentences ──
+  W(0x30A4, 0x30F3, 0x30BF, 0x30FC, 0x30CD, 0x30C3, 0x30C8, 0x306F, 0x79C1, 0x306E, 0x5C45, 0x5834, 0x6240), // インターネットは私の居場所 (internet is my place)
+  W(0x753B, 0x9762, 0x306E, 0x5411, 0x3053, 0x3046), // 画面の向こう (beyond the screen)
+  W(0x8AB0, 0x3082, 0x52A9, 0x3051, 0x3066, 0x304F, 0x308C, 0x306A, 0x3044), // 誰も助けてくれない
+  W(0x751F, 0x304D, 0x3066, 0x3044, 0x3066, 0x3054, 0x3081, 0x3093), // 生きていてごめん
+  W(0x79C1, 0x306F, 0x3082, 0x3046, 0x3044, 0x306A, 0x3044), // 私はもういない
+  W(0x88CF, 0x30A2, 0x30AB),                       // 裏アカ (secret account)
 ];
 
 function corruptWhy(intensity: number): string {
@@ -217,7 +233,7 @@ export default function VoidPage() {
         setPhase('video');
         router.replace('/');
       }, 1000);
-    }, 16000);
+    }, 17000);
     return () => clearTimeout(id);
   }, [router]);
 
