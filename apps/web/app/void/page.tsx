@@ -30,7 +30,7 @@ const ZA = '\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308\u030A\u030B\u
 const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u0349\u034D\u034E';
 const ZB = '\u0316\u0317\u0318\u0319\u031C\u031D\u031E\u031F\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329\u032A\u032B\u032C\u032D\u032E\u032F\u0330\u0331\u0332\u0333';
 const rc = (s: string) => s[Math.floor(Math.random() * s.length)];
-const SWAP = '!@#$%^&*?/|~<>_=+{}[]();:"\u2588\u2591\u2592\u2593\u2580\u2584\u258C\u2590';
+const SWAP = '!@#$%^&*?/|~<>_=+';
 
 // ─── Ame-chan / NGO distress lexicon ─────────────────────────────────────────
 const W = (...codes: number[]) => String.fromCharCode(...codes);
@@ -531,7 +531,7 @@ export default function VoidPage() {
             }}>
               <span style={{
                 fontSize: `${g.size}vw`,
-                fontFamily: "'Noto Sans JP', monospace",
+                fontFamily: "var(--font-noto-jp), monospace",
                 fontWeight: 900,
                 color: g.color,
                 opacity: g.opacity,
@@ -551,7 +551,7 @@ export default function VoidPage() {
             }}>
               <span style={{
                 fontSize: `clamp(80px, ${fontSize}vw, 400px)`,
-                fontFamily: "'Noto Sans JP', monospace",
+                fontFamily: "var(--font-noto-jp), monospace",
                 fontWeight: 900,
                 color: col3,
                 lineHeight: 1,
@@ -575,7 +575,7 @@ export default function VoidPage() {
                 }}>
                   <span style={{
                     fontSize: `clamp(80px, ${fontSize}vw, 400px)`,
-                    fontFamily: "'Noto Sans JP', monospace",
+                    fontFamily: "var(--font-noto-jp), monospace",
                     fontWeight: 900,
                     color: K.cyan,
                     lineHeight: 1,
@@ -590,7 +590,7 @@ export default function VoidPage() {
                 }}>
                   <span style={{
                     fontSize: `clamp(80px, ${fontSize}vw, 400px)`,
-                    fontFamily: "'Noto Sans JP', monospace",
+                    fontFamily: "var(--font-noto-jp), monospace",
                     fontWeight: 900,
                     color: K.hotPink,
                     lineHeight: 1,
@@ -605,7 +605,7 @@ export default function VoidPage() {
                 }}>
                   <span style={{
                     fontSize: `clamp(80px, ${fontSize}vw, 400px)`,
-                    fontFamily: "'Noto Sans JP', monospace",
+                    fontFamily: "var(--font-noto-jp), monospace",
                     fontWeight: 900,
                     color: K.glitchGreen,
                     lineHeight: 1,
@@ -618,7 +618,7 @@ export default function VoidPage() {
             {/* Main text */}
             <div className="select-none" style={{
               fontSize: `clamp(80px, ${fontSize}vw, 400px)`,
-              fontFamily: "'Noto Sans JP', monospace",
+              fontFamily: "var(--font-noto-jp), monospace",
               fontWeight: 900,
               color: col,
               textShadow: `
@@ -634,7 +634,6 @@ export default function VoidPage() {
               transform: `rotate(${rotation}deg) scaleX(${scaleX}) skewY(${skewY}deg)`,
               transition: 'color 0.03s',
             }}>
-              <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@900&display=swap" rel="stylesheet" />
               <span>{whyText}</span>
             </div>
           </div>
@@ -645,7 +644,7 @@ export default function VoidPage() {
               left: `${Math.random() * 90}%`,
               top: `${Math.random() * 90}%`,
               fontSize: `${8 + Math.random() * 20}px`,
-              fontFamily: "'Noto Sans JP', monospace",
+              fontFamily: "var(--font-noto-jp), monospace",
               fontWeight: 900,
               color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
               opacity: 0.1 + Math.random() * 0.4,

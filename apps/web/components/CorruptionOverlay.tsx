@@ -367,7 +367,7 @@ export default function CorruptionOverlay() {
           left: `${g.x}%`,
           top: `${g.y}%`,
           fontSize: `${g.size}px`,
-          fontFamily: "'Noto Sans JP', monospace",
+          fontFamily: "var(--font-noto-jp), monospace",
           fontWeight: 900,
           color: g.color,
           opacity: g.opacity,
@@ -376,7 +376,6 @@ export default function CorruptionOverlay() {
           whiteSpace: 'nowrap',
           lineHeight: 1,
         }}>
-          <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@900&display=swap" rel="stylesheet" />
           {g.text}
         </div>
       ))}
