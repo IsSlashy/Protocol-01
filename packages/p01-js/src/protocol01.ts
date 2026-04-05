@@ -5,7 +5,7 @@
  *
  * @example Basic Usage
  * ```typescript
- * import { Protocol01 } from '@protocol01/sdk';
+ * import { Protocol01 } from '@protocol-01/sdk';
  *
  * const p01 = new Protocol01({
  *   merchantId: 'netflix-001',
@@ -66,6 +66,7 @@ import {
   SOLANA_PROVIDER_KEY,
   PROVIDER_INITIALIZED_EVENT,
   SOLANA_INITIALIZED_EVENT,
+  URLS,
 } from './constants';
 import {
   resolveTokenMint,
@@ -101,6 +102,21 @@ interface ResolvedConfig {
   autoConnect: boolean;
 }
 
+/**
+ * Global URL configuration for Protocol 01 endpoints.
+ * Override these to point the SDK at custom or self-hosted infrastructure.
+ */
+export interface Protocol01UrlConfig {
+  /** Protocol 01 website URL (default: https://protocol01.com) */
+  walletUrl?: string;
+  /** API endpoint for mainnet (default: https://api.protocol01.com) */
+  apiUrl?: string;
+  /** API endpoint for devnet (default: https://api-devnet.protocol01.com) */
+  apiDevnetUrl?: string;
+  /** Documentation URL (default: https://docs.protocol01.com) */
+  docsUrl?: string;
+}
+
 // ============ Main Class ============
 
 /**
@@ -114,6 +130,12 @@ export class Protocol01 {
   private publicKey: string | null = null;
   private eventListeners = new Map<Protocol01EventType, Set<EventCallback>>();
   private initPromise: Promise<void> | null = null;
+
+  /**
+   * Custom URL overrides for Protocol 01 endpoints.
+   * Set via `Protocol01.configure()`.
+   */
+  private static urlConfig: Protocol01UrlConfig = {};
 
   /**
    * Create a new Protocol01 instance
@@ -153,8 +175,9 @@ export class Protocol01 {
     const available = await this.waitForProvider(3000);
 
     if (!available) {
+      const installUrl = Protocol01.getInstallUrl();
       console.warn(
-        'Protocol 01 wallet not detected. Some features may be limited.'
+        `[Protocol01] Protocol 01 wallet extension not detected. Install at ${installUrl} or use Protocol01.createMockProvider() for testing.`
       );
     }
 
@@ -283,7 +306,88 @@ export class Protocol01 {
    * Get the URL to install Protocol 01 wallet
    */
   static getInstallUrl(): string {
-    return 'https://protocol01.com/wallet';
+    return Protocol01.urlConfig.walletUrl ?? URLS.walletInstall;
+  }
+
+  /**
+   * Configure global SDK settings such as custom URLs.
+   * Call this before creating Protocol01 instances if you need to override defaults.
+   *
+   * @param config - URL configuration overrides
+   *
+   * @example
+   * ```typescript
+   * // Point the SDK at a custom API server
+   * Protocol01.configure({
+   *   walletUrl: 'https://my-domain.com/wallet',
+   *   apiUrl: 'https://api.my-domain.com',
+   *   docsUrl: 'https://docs.my-domain.com',
+   * });
+   * ```
+   */
+  static configure(config: Protocol01UrlConfig): void {
+    Protocol01.urlConfig = { ...Protocol01.urlConfig, ...config };
+  }
+
+  /**
+   * Get the current URL configuration (defaults merged with overrides).
+   */
+  static getUrlConfig(): Readonly<Required<Protocol01UrlConfig>> {
+    return {
+      walletUrl: Protocol01.urlConfig.walletUrl ?? URLS.walletInstall,
+      apiUrl: Protocol01.urlConfig.apiUrl ?? URLS.api,
+      apiDevnetUrl: Protocol01.urlConfig.apiDevnetUrl ?? URLS.apiDevnet,
+      docsUrl: Protocol01.urlConfig.docsUrl ?? URLS.docs,
+    };
+  }
+
+  /**
+   * Create a mock provider for testing and development without the wallet extension.
+   *
+   * Each method on the mock provider throws an error explaining that a real wallet
+   * is required. This lets you develop and test your integration flow (UI, event
+   * wiring, error handling) without installing the extension.
+   *
+   * @returns A mock Protocol01Provider object
+   *
+   * @example
+   * ```typescript
+   * // In your test setup or dev environment:
+   * if (!Protocol01.isInstalled()) {
+   *   const mock = Protocol01.createMockProvider();
+   *   // Use mock to test your UI error-handling paths
+   *   try {
+   *     await mock.connect();
+   *   } catch (e) {
+   *     // Expected: "Mock provider: connect not available..."
+   *   }
+   * }
+   * ```
+   */
+  static createMockProvider(): Protocol01Provider {
+    const installUrl = Protocol01.getInstallUrl();
+
+    function mockMethod(method: string): never {
+      throw new Protocol01Error(
+        Protocol01ErrorCode.WALLET_NOT_INSTALLED,
+        `Mock provider: ${method} not available. Install Protocol 01 wallet extension at ${installUrl} for real transactions.`
+      );
+    }
+
+    return {
+      isProtocol01: true,
+      version: '0.0.0-mock',
+      connect: () => mockMethod('connect'),
+      disconnect: () => mockMethod('disconnect'),
+      isConnected: () => mockMethod('isConnected'),
+      getPublicKey: () => mockMethod('getPublicKey'),
+      requestPayment: () => mockMethod('requestPayment'),
+      createSubscription: () => mockMethod('createSubscription'),
+      getSubscriptions: () => mockMethod('getSubscriptions'),
+      cancelSubscription: () => mockMethod('cancelSubscription'),
+      on: () => {},
+      off: () => {},
+    };
   }
 
   // ============ Connection Methods ============
@@ -313,9 +417,10 @@ export class Protocol01 {
 
     // Check for provider
     if (!this.provider && !this.solanaProvider) {
+      const installUrl = Protocol01.getInstallUrl();
       throw new Protocol01Error(
         Protocol01ErrorCode.WALLET_NOT_INSTALLED,
-        'No compatible wallet found. Please install Protocol 01 wallet.',
+        `No compatible wallet found. Install Protocol 01 wallet at ${installUrl}`,
         { recoverable: true }
       );
     }
@@ -558,12 +663,13 @@ export class Protocol01 {
       );
     }
 
-    // This would build and send a standard Solana transaction
-    // For full implementation, would need to integrate with @solana/web3.js
-    // This is a placeholder showing the structure
+    // Standard Solana wallet payments (Phantom, Solflare, etc.) are not yet
+    // supported through this SDK. The Protocol 01 wallet extension is required
+    // for the full feature set (stealth addresses, privacy options, webhooks).
+    const docsUrl = Protocol01.getUrlConfig().docsUrl;
     throw new Protocol01Error(
-      Protocol01ErrorCode.UNKNOWN,
-      'Standard Solana payments require Protocol 01 wallet for full features. Please install Protocol 01 wallet.',
+      Protocol01ErrorCode.WALLET_NOT_INSTALLED,
+      `Standard Solana wallet payments are not yet supported. Use Protocol 01 wallet extension or check ${docsUrl} for updates on Phantom/Solflare support.`,
       { recoverable: true }
     );
   }

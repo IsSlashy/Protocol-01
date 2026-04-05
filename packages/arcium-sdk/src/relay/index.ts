@@ -3,45 +3,41 @@ import * as anchor from '@coral-xyz/anchor';
 import { ArciumClient, CIRCUITS } from '../client';
 
 /**
- * UC1: Confidential Relay — Threshold Decryption
+ * UC1: Confidential Relay -- Threshold TX Decryption
  *
- * Problem: In the current p01_relayer model, a single relayer node decrypts
- * the user's encrypted transaction to submit it on-chain. During decryption,
- * the relayer sees the plaintext TX (amounts, recipients, instructions).
+ * Submits a transaction for threshold decryption by N Arcium MPC nodes.
+ * No single relayer ever sees the plaintext transaction. The MPC cluster
+ * jointly decrypts (Cerberus protocol -- 1 honest node = secure), signs
+ * with threshold EdDSA, and submits the TX on-chain. The user's wallet
+ * never appears as fee payer or signer.
  *
- * Solution: Instead of one relayer decrypting, N Arcium MPC nodes jointly
- * decrypt via threshold decryption. The plaintext TX never exists on any
- * single machine. MPC nodes then jointly sign and submit the TX.
+ * **Inputs**: Serialized Solana transaction (encrypted), fee, deadline slot.
+ * **Output**: The relayed transaction signature and fee paid.
  *
- * Flow:
- * 1. User encrypts TX with Arcium MXE key (not single relayer key)
- * 2. Submits encrypted TX to P01 Arcium program
- * 3. Program queues MPC computation
- * 4. N ARX nodes jointly decrypt (Cerberus protocol — 1 honest = secure)
- * 5. MPC signs TX with threshold EdDSA
- * 6. Callback submits signed TX on-chain
- * 7. User's wallet never appears as fee payer or signer
+ * @module relay
  */
 
+/** A submitted confidential relay job waiting for MPC processing. */
 export interface ConfidentialRelayJob {
-  /** Encrypted transaction payload (max ~1KB for Arcium output limit) */
+  /** First ciphertext block of the encrypted transaction payload. */
   encryptedTx: number[];
-  /** Fee offered to relayer network (lamports) */
+  /** Fee offered to the relayer network (in lamports). */
   fee: bigint;
-  /** Deadline slot (after which job expires) */
+  /** Slot deadline after which the job expires and can be reclaimed. */
   deadlineSlot: bigint;
-  /** Computation offset */
+  /** Unique computation offset identifying this MPC job. */
   computationOffset: anchor.BN;
-  /** Submission signature */
+  /** Transaction signature of the submission. */
   signature: string;
 }
 
+/** Result returned after the MPC cluster decrypts and relays the transaction. */
 export interface RelayResult {
-  /** The on-chain signature of the relayed transaction */
+  /** The on-chain signature of the relayed (decrypted) transaction. */
   relayedTxSignature: string;
-  /** Fee actually paid */
+  /** Actual fee paid to the relayer network (in lamports). */
   feePaid: bigint;
-  /** Finalization signature */
+  /** Finalization callback transaction signature. */
   signature: string;
 }
 
@@ -66,7 +62,15 @@ export function getRelayJobAddress(
  * Submit an encrypted transaction for confidential relay.
  *
  * The transaction is encrypted with the MXE's public key.
- * No single relayer can decrypt it — only the MPC cluster jointly.
+ * No single relayer can decrypt it -- only the MPC cluster jointly.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param serializedTx - The raw serialized Solana transaction bytes.
+ * @param feeLamports - Fee to offer the relayer network (in lamports).
+ * @param deadlineSlot - Slot after which the job expires.
+ * @returns The submitted relay job with computation offset for tracking.
+ * @throws {Error} "Relay MPC computation failed: ..." if the on-chain submission fails.
  */
 export async function submitConfidentialRelayJob(
   client: ArciumClient,
@@ -100,22 +104,30 @@ export async function submitConfidentialRelayJob(
   const jobId = Buffer.from(computationOffset.toArray('le', 8));
   const [relayJobAddress] = getRelayJobAddress(client.programId, jobId);
 
-  const sig = await program.methods
-    .submitConfidentialRelay(
-      computationOffset,
-      payload.ciphertexts.map((ct) => Array.from(ct)),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce),
-      new anchor.BN(feeLamports.toString()),
-      new anchor.BN(deadlineSlot.toString()),
-      serializedTx.length // original TX length (for unpadding)
-    )
-    .accountsPartial({
-      ...accounts,
-      relayJob: relayJobAddress,
-      payer: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  let sig: string;
+  try {
+    sig = await program.methods
+      .submitConfidentialRelay(
+        computationOffset,
+        payload.ciphertexts.map((ct) => Array.from(ct)),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce),
+        new anchor.BN(feeLamports.toString()),
+        new anchor.BN(deadlineSlot.toString()),
+        serializedTx.length // original TX length (for unpadding)
+      )
+      .accountsPartial({
+        ...accounts,
+        relayJob: relayJobAddress,
+        payer: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
+  } catch (err) {
+    throw new Error(
+      `Relay MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   return {
     encryptedTx: payload.ciphertexts[0],

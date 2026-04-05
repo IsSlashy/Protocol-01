@@ -22,7 +22,7 @@
  * └─────────────────────────────────────────────────────────────┘
  */
 
-import { poseidonHash } from '../circuits';
+import { poseidonHashLite as poseidonHash } from '../circuits';
 
 // Domain separators for key derivation
 const DOMAIN_FVK = BigInt('0x01'); // Full Viewing Key

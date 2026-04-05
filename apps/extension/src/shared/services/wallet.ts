@@ -13,7 +13,7 @@ import {
   sendAndConfirmTransaction,
   TransactionInstruction,
 } from '@solana/web3.js';
-import { RpcConnectionManager, type SolanaCluster } from '@p01/rpc-config';
+import { RpcConnectionManager, type SolanaCluster } from '@protocol-01/rpc-config';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import nacl from 'tweetnacl';

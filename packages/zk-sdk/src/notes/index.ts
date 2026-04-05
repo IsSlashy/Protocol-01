@@ -136,6 +136,16 @@ export class EncryptedNote {
 
 /**
  * Create a new note
+ *
+ * @param amount - Note amount in lamports/atomic units (must be >= 0)
+ * @param ownerPubkey - Owner's derived public key (field element)
+ * @param tokenMint - Token mint as a field element
+ * @param randomness - Optional blinding factor (generated randomly if omitted)
+ * @returns A new Note with computed Poseidon commitment
+ *
+ * @throws If amount is negative
+ * @throws If ownerPubkey is not defined
+ * @throws If tokenMint is not defined
  */
 export async function createNote(
   amount: bigint,
@@ -143,6 +153,17 @@ export async function createNote(
   tokenMint: bigint,
   randomness?: bigint
 ): Promise<Note> {
+  // Input validation
+  if (amount < BigInt(0)) {
+    throw new Error('createNote: amount must be non-negative.');
+  }
+  if (ownerPubkey === undefined || ownerPubkey === null) {
+    throw new Error('createNote: ownerPubkey is required and must be a valid field element.');
+  }
+  if (tokenMint === undefined || tokenMint === null) {
+    throw new Error('createNote: tokenMint is required and must be a valid field element.');
+  }
+
   const rand = randomness ?? randomFieldElement();
   const commitment = await computeCommitment(amount, ownerPubkey, rand, tokenMint);
 

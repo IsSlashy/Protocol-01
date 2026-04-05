@@ -161,6 +161,12 @@ export interface ProverConfig {
   proofWasmPath?: string;
   /** Path / URL of the balance_proof circuit zkey */
   proofZkeyPath?: string;
+  /**
+   * Base URL for circuit files. When set, circuit file paths are resolved
+   * relative to this URL (e.g. `"https://cdn.example.com/circuits/"`).
+   * Individual path overrides (`balanceWasmPath`, etc.) take precedence.
+   */
+  circuitBaseUrl?: string;
   /** Timeout for proof generation in ms (default 120000) */
   timeout?: number;
   /** If true, all proofs are generated locally (no remote prover fallback) */

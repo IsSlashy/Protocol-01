@@ -125,7 +125,9 @@ export async function createPrivateSubscription(
   if (!isStealthMeta && !isPlainKey) {
     throw new SpecterError(
       SpecterErrorCode.INVALID_STEALTH_ADDRESS,
-      'Invalid merchant address: must be a stealth meta-address or Solana public key'
+      'Invalid merchant address: must be a stealth meta-address (starting with "st:") or a valid ' +
+      'Solana public key (base58-encoded). For full privacy, the merchant should publish a stealth ' +
+      'meta-address via the on-chain registry (see lookupMetaAddress).'
     );
   }
 

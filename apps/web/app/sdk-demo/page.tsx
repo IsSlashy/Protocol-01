@@ -431,14 +431,14 @@ function PrivacySDKSection() {
       {/* SDK Overview Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { name: "@p01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc'), color: "cyan" },
-          { name: "@p01/zk-sdk", desc: t('sdkDemo.sdkZkDesc'), color: "cyan" },
-          { name: "@p01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc'), color: "pink" },
-          { name: "@p01/arcium-sdk", desc: t('sdkDemo.sdkArciumDesc'), color: "pink" },
-          { name: "@p01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc'), color: "cyan" },
-          { name: "@p01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc'), color: "cyan" },
-          { name: "@p01/p01-js", desc: t('sdkDemo.sdkP01JsDesc'), color: "pink" },
-          { name: "@p01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc'), color: "cyan" },
+          { name: "@protocol-01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc'), color: "cyan" },
+          { name: "@protocol-01/zk-sdk", desc: t('sdkDemo.sdkZkDesc'), color: "cyan" },
+          { name: "@protocol-01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc'), color: "pink" },
+          { name: "@protocol-01/arcium-sdk", desc: t('sdkDemo.sdkArciumDesc'), color: "pink" },
+          { name: "@protocol-01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc'), color: "cyan" },
+          { name: "@protocol-01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc'), color: "cyan" },
+          { name: "@protocol-01/p01-js", desc: t('sdkDemo.sdkP01JsDesc'), color: "pink" },
+          { name: "@protocol-01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc'), color: "cyan" },
         ].map((sdk) => (
           <div key={sdk.name} className="bg-p01-surface p-4 border border-p01-border hover:border-p01-cyan/50 transition-all group">
             <p className={`text-sm font-mono font-bold mb-1 ${sdk.color === "cyan" ? "text-p01-cyan" : "text-p01-pink"}`}>{sdk.name}</p>
@@ -455,7 +455,7 @@ function PrivacySDKSection() {
         </p>
         <CodeBlock
           title={t('sdkDemo.stealthCodeTitle')}
-          code={`import { generateStealthAddress, scanForPayments } from '@p01/specter-sdk';
+          code={`import { generateStealthAddress, scanForPayments } from '@protocol-01/specter-sdk';
 
 // Sender generates a one-time stealth address for the recipient
 const { stealthAddress, ephemeralPubKey } = generateStealthAddress({
@@ -483,7 +483,7 @@ const payments = await scanForPayments({
         </p>
         <CodeBlock
           title={t('sdkDemo.zkProofsCodeTitle')}
-          code={`import { proveTransfer, verifyProof } from '@p01/zk-sdk';
+          code={`import { proveTransfer, verifyProof } from '@protocol-01/zk-sdk';
 
 // Generate a Groth16 proof for a confidential transfer
 const { proof, publicSignals } = await proveTransfer({
@@ -510,7 +510,7 @@ const tx = await submitShieldedTransfer(connection, wallet, {
         </p>
         <CodeBlock
           title={t('sdkDemo.confSplCodeTitle')}
-          code={`import { shieldTokens, unshieldTokens } from '@p01/zkspl-sdk';
+          code={`import { shieldTokens, unshieldTokens } from '@protocol-01/zkspl-sdk';
 
 // Shield 100 USDC into a denominated pool
 const shieldResult = await shieldTokens({
@@ -538,7 +538,7 @@ const unshieldResult = await unshieldTokens({
         </p>
         <CodeBlock
           title={t('sdkDemo.privacyToolkitCodeTitle')}
-          code={`import { poseidonHash, MerkleTree, WOTSKeypair } from '@p01/privacy-toolkit';
+          code={`import { poseidonHash, MerkleTree, WOTSKeypair } from '@protocol-01/privacy-toolkit';
 
 // Poseidon hash for ZK-friendly commitments
 const commitment = poseidonHash([amount, owner, randomness, tokenId]);
@@ -563,7 +563,7 @@ const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
         </p>
         <CodeBlock
           title={t('sdkDemo.arciumCodeTitle')}
-          code={`import { ArciumClient, COMP_DEFS } from '@p01/arcium-sdk';
+          code={`import { ArciumClient, COMP_DEFS } from '@protocol-01/arcium-sdk';
 
 const arcium = new ArciumClient({
   connection,
@@ -618,13 +618,13 @@ const result = await arcium.execute({
         <CodeBlock
           title={t('sdkDemo.installCodeTitle')}
           code={`# Core SDK
-pnpm add @p01/p01-js @p01/rpc-config
+pnpm add @protocol-01/p01-js @protocol-01/rpc-config
 
 # Privacy layer
-pnpm add @p01/specter-sdk @p01/zk-sdk @p01/zkspl-sdk @p01/privacy-toolkit
+pnpm add @protocol-01/specter-sdk @protocol-01/zk-sdk @protocol-01/zkspl-sdk @protocol-01/privacy-toolkit
 
 # Optional: MPC + Auth
-pnpm add @p01/arcium-sdk @p01/auth-sdk`}
+pnpm add @protocol-01/arcium-sdk @protocol-01/auth-sdk`}
         />
       </div>
     </div>
@@ -1310,7 +1310,7 @@ function StreamSDKSection() {
 
         <CodeBlock
           title={t('sdkDemo.sdkIntegrationCodeTitle')}
-          code={`import { P01SDK, STREAM_PROGRAM_ID } from '@p01/p01-js';
+          code={`import { P01SDK, STREAM_PROGRAM_ID } from '@protocol-01/p01-js';
 
 // Connect with your P01 wallet - no API keys!
 const p01 = new P01SDK({
@@ -1538,7 +1538,7 @@ function WidgetsSection() {
       {/* Code Example */}
       <CodeBlock
         title={t('sdkDemo.widgetCodeTitle')}
-        code={`import { P01Provider, SubscriptionWidget } from '@p01/p01-js/react';
+        code={`import { P01Provider, SubscriptionWidget } from '@protocol-01/p01-js/react';
 
 function PricingPage() {
   return (
@@ -1603,7 +1603,7 @@ function ButtonsSection() {
 
         <CodeBlock
           title={t('sdkDemo.walletButtonCodeTitle')}
-          code={`import { WalletButton } from '@p01/p01-js/react';
+          code={`import { WalletButton } from '@protocol-01/p01-js/react';
 
 // P01 wallet only - closed ecosystem
 <WalletButton
@@ -1630,7 +1630,7 @@ function ButtonsSection() {
 
         <CodeBlock
           title={t('sdkDemo.paymentButtonCodeTitle')}
-          code={`import { PaymentButton } from '@p01/p01-js/react';
+          code={`import { PaymentButton } from '@protocol-01/p01-js/react';
 
 // Direct on-chain payment - no server
 <PaymentButton
@@ -1658,7 +1658,7 @@ function ButtonsSection() {
 
         <CodeBlock
           title={t('sdkDemo.subscriptionButtonCodeTitle')}
-          code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@p01/p01-js/react';
+          code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@protocol-01/p01-js/react';
 
 // On-chain subscription via smart contract
 <SubscriptionButton
@@ -1733,7 +1733,7 @@ function CardsSection() {
 
         <CodeBlock
           title={t('sdkDemo.subscriptionCardCodeTitle')}
-          code={`import { SubscriptionCard, useStreams } from '@p01/p01-js/react';
+          code={`import { SubscriptionCard, useStreams } from '@protocol-01/p01-js/react';
 
 // Fetch streams directly from blockchain
 const { streams } = useStreams({ wallet: publicKey });

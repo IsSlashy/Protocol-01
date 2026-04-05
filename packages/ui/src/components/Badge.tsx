@@ -1,6 +1,19 @@
 /**
- * Specter Protocol Badge Component
- * Status badges with glow effects
+ * Protocol 01 Badge Components
+ *
+ * Labels for status indicators, categories, and module identification.
+ * Includes base Badge, StatusBadge (with colored dot), and ModuleBadge (module identity).
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Badge, StatusBadge, ModuleBadge } from '@protocol-01/ui';
+ *
+ * <Badge variant="glow" color="green">Shielded</Badge>
+ * <StatusBadge status="success" />
+ * <ModuleBadge module="streams" />
+ * ```
  */
 
 import React from 'react';
@@ -139,6 +152,12 @@ const getVariantStyles = (color: BadgeColor, variant: BadgeVariant): React.CSSPr
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
+/**
+ * Base badge component with variant, size, and color options.
+ *
+ * @param props - Badge props including variant, size, color, and optional icons
+ * @param ref - Forwarded ref to the underlying `<span>` element
+ */
 export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
   (
     {

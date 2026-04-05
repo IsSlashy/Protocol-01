@@ -55,4 +55,4 @@ Then load via XHR in the WebView:
 var response = await fetch('my_circuit.wasm');  // relative to baseUrl
 ```
 
-The `@p01/react-native-zk` package handles both strategies automatically.
+The `@protocol-01/react-native-zk` package handles both strategies automatically.

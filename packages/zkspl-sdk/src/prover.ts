@@ -121,11 +121,16 @@ export class ZkSplProver {
   private config: Required<ProverConfig>;
 
   constructor(config: ProverConfig = {}) {
+    const base = config.circuitBaseUrl
+      ? config.circuitBaseUrl.replace(/\/+$/, '') + '/'
+      : '';
+
     this.config = {
-      balanceWasmPath: config.balanceWasmPath ?? CIRCUIT_FILES.BALANCE_WASM,
-      balanceZkeyPath: config.balanceZkeyPath ?? CIRCUIT_FILES.BALANCE_ZKEY,
-      proofWasmPath: config.proofWasmPath ?? CIRCUIT_FILES.PROOF_WASM,
-      proofZkeyPath: config.proofZkeyPath ?? CIRCUIT_FILES.PROOF_ZKEY,
+      balanceWasmPath: config.balanceWasmPath ?? (base + CIRCUIT_FILES.BALANCE_WASM),
+      balanceZkeyPath: config.balanceZkeyPath ?? (base + CIRCUIT_FILES.BALANCE_ZKEY),
+      proofWasmPath: config.proofWasmPath ?? (base + CIRCUIT_FILES.PROOF_WASM),
+      proofZkeyPath: config.proofZkeyPath ?? (base + CIRCUIT_FILES.PROOF_ZKEY),
+      circuitBaseUrl: config.circuitBaseUrl ?? '',
       timeout: config.timeout ?? PROOF_GENERATION_TIMEOUT,
       localOnly: config.localOnly ?? true,
     };
@@ -177,21 +182,60 @@ export class ZkSplProver {
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(
-        () => reject(new Error('Local proof generation timed out')),
+        () => reject(new Error(
+          `Local proof generation timed out after ${this.config.timeout}ms. ` +
+            'If running on a slow device, increase the timeout in ProverConfig.timeout.'
+        )),
         this.config.timeout
       );
     });
 
     const provePromise = (async () => {
-      const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-        inputs,
-        wasmPath,
-        zkeyPath
-      );
-      return {
-        proof: snarkjsProofToBytes(proof),
-        publicSignals: publicSignals as string[],
-      };
+      try {
+        const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+          inputs,
+          wasmPath,
+          zkeyPath
+        );
+        return {
+          proof: snarkjsProofToBytes(proof),
+          publicSignals: publicSignals as string[],
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+
+        // Detect file-not-found errors from snarkjs / fs / fetch
+        const isFileError =
+          message.includes('ENOENT') ||
+          message.includes('not found') ||
+          message.includes('Failed to fetch') ||
+          message.includes('NetworkError') ||
+          message.includes('Could not load') ||
+          message.includes('no such file');
+
+        if (isFileError) {
+          const requiredFiles = [
+            CIRCUIT_FILES.BALANCE_WASM,
+            CIRCUIT_FILES.BALANCE_ZKEY,
+            CIRCUIT_FILES.PROOF_WASM,
+            CIRCUIT_FILES.PROOF_ZKEY,
+          ].join(', ');
+
+          throw new Error(
+            `Circuit file not found. Failed to load "${wasmPath}" or "${zkeyPath}". ` +
+              `Required files: ${requiredFiles}. ` +
+              'Set circuitBaseUrl in ProverConfig (or ZkSplClientConfig.prover.circuitBaseUrl) ' +
+              'to point to the directory/URL containing these files, or set individual paths ' +
+              'via balanceWasmPath / balanceZkeyPath / proofWasmPath / proofZkeyPath.'
+          );
+        }
+
+        throw new Error(
+          `Proof generation failed: ${message}. ` +
+            `WASM: "${wasmPath}", zkey: "${zkeyPath}". ` +
+            'Ensure the circuit files match the expected version and are not corrupted.'
+        );
+      }
     })();
 
     return Promise.race([provePromise, timeoutPromise]);

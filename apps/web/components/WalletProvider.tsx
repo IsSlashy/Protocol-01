@@ -13,7 +13,7 @@ import {
   LedgerWalletAdapter,
   TorusWalletAdapter,
 } from "@solana/wallet-adapter-wallets";
-import { RpcConnectionManager, type SolanaCluster } from "@p01/rpc-config";
+import { RpcConnectionManager, type SolanaCluster } from "@protocol-01/rpc-config";
 
 // Import wallet adapter styles
 import "@solana/wallet-adapter-react-ui/styles.css";

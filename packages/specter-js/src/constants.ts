@@ -36,3 +36,7 @@ export const DEFAULT_CONFIG = {
 // Protocol 01 extension detection
 export const P01_PROVIDER_KEY = 'protocol01';
 export const P01_INITIALIZED_EVENT = 'protocol01#initialized';
+
+// Protocol 01 URLs
+export const INSTALL_URL = 'https://protocol01.com/wallet';
+export const DOCS_URL = 'https://docs.protocol01.com';

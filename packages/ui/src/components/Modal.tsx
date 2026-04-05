@@ -1,6 +1,29 @@
 /**
- * Specter Protocol Modal Component
- * Dark glass modal with animations
+ * Protocol 01 Modal Components
+ *
+ * Dialog overlays with glass-morphism backdrop, scale/fade animations,
+ * Escape key support, and overlay click dismissal.
+ * Includes a pre-built ConfirmModal for confirmation dialogs.
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Modal, ConfirmModal } from '@protocol-01/ui';
+ *
+ * <Modal isOpen={show} onClose={() => setShow(false)} title="Shield SOL">
+ *   <p>Confirm your transaction.</p>
+ * </Modal>
+ *
+ * <ConfirmModal
+ *   isOpen={showConfirm}
+ *   onClose={() => setShowConfirm(false)}
+ *   onConfirm={handleAction}
+ *   title="Confirm"
+ *   message="Are you sure?"
+ *   variant="danger"
+ * />
+ * ```
  */
 
 import React, { useEffect, useCallback } from 'react';

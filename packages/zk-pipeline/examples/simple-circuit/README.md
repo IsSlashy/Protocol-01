@@ -50,7 +50,7 @@ Public signals: [42675337744882959008...]
 --- Step 2: Off-chain verification ---
 Off-chain verification: PASS
 
---- Step 3: On-chain format conversion (@p01/privacy-toolkit) ---
+--- Step 3: On-chain format conversion (@protocol-01/privacy-toolkit) ---
 Proof bytes length: 256 (expected: 256)
 Input count: 1 (expected: 1 — the hash)
 Each input length: 32 (expected: 32)
@@ -79,6 +79,6 @@ All checks passed!
 
 ## Next Steps
 
-- For mobile proving: bundle `.wasm` and `.zkey` using `@p01/react-native-zk`
-- For on-chain verification: convert the VK to binary and upload using `@p01/solana-verifier`
-- For proof format conversion: use `@p01/privacy-toolkit`
+- For mobile proving: bundle `.wasm` and `.zkey` using `@protocol-01/react-native-zk`
+- For on-chain verification: convert the VK to binary and upload using `@protocol-01/solana-verifier`
+- For proof format conversion: use `@protocol-01/privacy-toolkit`

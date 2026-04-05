@@ -287,7 +287,7 @@ Unlike traditional crypto subscriptions, Stream Secure enforces limits on-chain:
 
 ### Usage
 \`\`\`tsx
-import { P01Provider, SubscriptionWidget } from 'p-01/react';
+import { P01Provider, SubscriptionWidget } from '@protocol-01/p01-js/react';
 
 <P01Provider config={{ merchantId: 'your-id', merchantName: 'Your App' }}>
   <SubscriptionWidget

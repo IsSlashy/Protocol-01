@@ -1,5 +1,5 @@
 {
-  "name": "@p01/bundler",
+  "name": "@protocol-01/bundler",
   "version": "0.1.0",
   "description": "P01 Bundle Engine — privacy-first transaction bundling for Solana (any cluster)",
   "main": "dist/index.js",

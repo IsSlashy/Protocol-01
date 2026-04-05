@@ -1,7 +1,6 @@
 {
-  "name": "@p01/rpc-config",
+  "name": "@protocol-01/rpc-config",
   "version": "0.1.0",
-  "private": true,
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",

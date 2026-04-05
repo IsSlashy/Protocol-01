@@ -11,6 +11,7 @@ import {
 } from '@solana/web3.js';
 import { poseidon2, poseidon3 } from 'poseidon-lite';
 import { sha256 } from '@noble/hashes/sha256';
+import { randomFieldElement } from '@protocol-01/privacy-toolkit';
 import type {
   Network,
   ProgramIds,
@@ -28,13 +29,12 @@ import { PrivacyError, PrivacyErrorCode } from '../errors';
 import { SEEDS, COMPUTE_UNITS } from '../constants';
 
 /**
- * Generate a cryptographically secure random field element (31 bytes to stay
- * within the BN254 scalar field). Replaces the insecure Date.now() usage.
+ * Generate a cryptographically secure random field element.
+ * Delegates to @protocol-01/privacy-toolkit which uses rejection sampling
+ * to avoid modular bias.
  */
 function cryptoRandomSalt(): bigint {
-  const randomBytes = new Uint8Array(31);
-  crypto.getRandomValues(randomBytes);
-  return randomBytes.reduce((acc, b, i) => acc | (BigInt(b) << BigInt(i * 8)), 0n);
+  return randomFieldElement();
 }
 
 /**

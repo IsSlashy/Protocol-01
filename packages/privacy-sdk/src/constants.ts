@@ -5,40 +5,75 @@ import type { Network, ProgramIds, TokenInfo } from './types';
 
 export const PROGRAM_IDS: Record<Network, ProgramIds> = {
   devnet: {
-    zkShielded: new PublicKey('2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms'),
-    specter: new PublicKey('8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh'),
-    trustless: new PublicKey('5x8qr9UwF6BTN4ySb4gPwL4TYgZiiLCzg4mKDmQrnjyJ'),
-    zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'),
-    relayer: new PublicKey('Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw'),
-    registry: new PublicKey('ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr'),
-    feeSplitter: new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM'),
-    stream: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),
-    subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),
-    quantumVault: new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv'),
-    starkVerifier: new PublicKey('EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z'),
-    arcium: new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT'),
-    bundler: new PublicKey('FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX'),
-    whitelist: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),
-    mugenExchange: new PublicKey('EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN'),
+    zkShielded: new PublicKey('2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms'),     // deployed
+    specter: new PublicKey('8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh'),        // deployed
+    trustless: new PublicKey('5x8qr9UwF6BTN4ySb4gPwL4TYgZiiLCzg4mKDmQrnjyJ'),     // deployed
+    zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'),          // deployed
+    relayer: new PublicKey('Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw'),         // deployed
+    registry: new PublicKey('ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr'),       // deployed
+    feeSplitter: new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM'),      // deployed
+    stream: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),          // deployed
+    subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),   // deployed
+    quantumVault: new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv'),    // deployed
+    starkVerifier: new PublicKey('EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z'),  // deployed
+    arcium: new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT'),         // deployed
+    bundler: new PublicKey('FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX'),        // deployed
+    whitelist: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),       // deployed
+    mugenExchange: new PublicKey('EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN'),   // deployed
   },
   mainnet: {
-    zkShielded: new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY'),
-    specter: new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
-    trustless: new PublicKey('11111111111111111111111111111111'), // TBD
-    zkspl: new PublicKey('EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah'),
-    relayer: new PublicKey('11111111111111111111111111111111'), // TBD
-    registry: new PublicKey('11111111111111111111111111111111'), // TBD
-    feeSplitter: new PublicKey('7xwX64ZxMVyw7xWJPaPuy8WFcvvhJrDDWEkc64nUMDCu'),
-    stream: new PublicKey('2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs'),
-    subscription: new PublicKey('Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS'),
-    quantumVault: new PublicKey('11111111111111111111111111111111'), // TBD
-    starkVerifier: new PublicKey('11111111111111111111111111111111'), // TBD
-    arcium: new PublicKey('11111111111111111111111111111111'), // TBD
-    bundler: new PublicKey('11111111111111111111111111111111'), // TBD
-    whitelist: new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE'),
-    mugenExchange: new PublicKey('11111111111111111111111111111111'), // TBD
+    zkShielded: new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY'),     // deployed
+    specter: new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),        // deployed
+    trustless: new PublicKey('11111111111111111111111111111111'),                     // not yet deployed
+    zkspl: new PublicKey('EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah'),          // deployed
+    relayer: new PublicKey('11111111111111111111111111111111'),                       // not yet deployed
+    registry: new PublicKey('11111111111111111111111111111111'),                      // not yet deployed
+    feeSplitter: new PublicKey('7xwX64ZxMVyw7xWJPaPuy8WFcvvhJrDDWEkc64nUMDCu'),    // deployed
+    stream: new PublicKey('2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs'),          // deployed
+    subscription: new PublicKey('Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS'),   // deployed
+    quantumVault: new PublicKey('11111111111111111111111111111111'),                  // not yet deployed
+    starkVerifier: new PublicKey('11111111111111111111111111111111'),                 // not yet deployed
+    arcium: new PublicKey('11111111111111111111111111111111'),                        // not yet deployed
+    bundler: new PublicKey('11111111111111111111111111111111'),                       // not yet deployed
+    whitelist: new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE'),       // deployed
+    mugenExchange: new PublicKey('11111111111111111111111111111111'),                 // not yet deployed
   },
 };
+
+/**
+ * Get only the deployed program IDs for a given network.
+ * Programs with placeholder IDs (System Program) are excluded and a warning is logged for each.
+ *
+ * @param network - The target network ('devnet' or 'mainnet')
+ * @returns A partial ProgramIds object containing only deployed programs
+ */
+export function getDeployedProgramIds(network: Network): Partial<ProgramIds> {
+  const PLACEHOLDER = '11111111111111111111111111111111';
+  const all = PROGRAM_IDS[network];
+  if (!all) {
+    throw new Error(`getDeployedProgramIds: unknown network "${network}". Expected "devnet" or "mainnet".`);
+  }
+
+  const deployed: Partial<ProgramIds> = {};
+  const undeployed: string[] = [];
+
+  for (const [name, pubkey] of Object.entries(all)) {
+    if ((pubkey as PublicKey).toBase58() === PLACEHOLDER) {
+      undeployed.push(name);
+    } else {
+      (deployed as any)[name] = pubkey;
+    }
+  }
+
+  if (undeployed.length > 0) {
+    console.warn(
+      `[Protocol01] The following programs are not yet deployed on ${network}: ${undeployed.join(', ')}. ` +
+      `These modules will not be available.`,
+    );
+  }
+
+  return deployed;
+}
 
 // ─── Token Registry ───────────────────────────────────────────────────────────
 

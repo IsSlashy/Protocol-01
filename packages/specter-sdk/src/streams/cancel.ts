@@ -60,7 +60,8 @@ export async function cancelStream(options: CancelOptions): Promise<{
   if (!stream) {
     throw new SpecterError(
       SpecterErrorCode.STREAM_NOT_FOUND,
-      'Stream not found'
+      `Stream not found at PDA ${streamId.toBase58()}. Verify the stream ID is correct ` +
+      'and that the stream program is deployed on your target network (devnet for testing).'
     );
   }
 
@@ -68,14 +69,15 @@ export async function cancelStream(options: CancelOptions): Promise<{
   if (stream.status === 'cancelled') {
     throw new SpecterError(
       SpecterErrorCode.STREAM_ALREADY_CANCELLED,
-      'Stream has already been cancelled'
+      `Stream ${streamId.toBase58()} has already been cancelled.`
     );
   }
 
   if (stream.status === 'completed') {
     throw new SpecterError(
       SpecterErrorCode.STREAM_ALREADY_CANCELLED,
-      'Cannot cancel a completed stream'
+      `Stream ${streamId.toBase58()} has fully completed and cannot be cancelled. ` +
+      'All funds have been streamed to the recipient.'
     );
   }
 

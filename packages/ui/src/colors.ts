@@ -1,6 +1,10 @@
 /**
- * Protocol 01 (P-01) Design System
- * Cyberpunk-inspired theme with cyan/pink accent colors
+ * Protocol 01 (P-01) Color System
+ *
+ * Cyberpunk-inspired palette with cyan primary and pink secondary.
+ * Ultra-dark backgrounds, neon accents, and semantic status colors.
+ *
+ * Platform: web + mobile (plain values, no CSS required)
  *
  * Inspired by:
  * - Hatsune Miku (cyan turquoise)
@@ -11,6 +15,16 @@
  * - NO purple colors anywhere
  * - NO black text (use white/muted/dim)
  * - NO green #00ff88 (old Specter green)
+ *
+ * @example
+ * ```ts
+ * import { colors, getModuleColor, getStatusColor } from '@protocol-01/ui';
+ *
+ * colors.cyan;                    // '#39c5bb'
+ * colors.pink;                    // '#ff77a8'
+ * getModuleColor('wallet');       // { primary: '#39c5bb', glow: 'rgba(57,197,187,0.2)' }
+ * getStatusColor('error');        // { primary: '#ff3366', dim: '#cc2952', glow: '...' }
+ * ```
  */
 
 export const colors = {

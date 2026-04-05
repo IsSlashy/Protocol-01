@@ -2,7 +2,7 @@
  * P01 Bundle Client — SDK for submitting bundles to the P01 Bundle Engine.
  *
  * Usage:
- *   import { P01BundleClient } from '@p01/bundler/client';
+ *   import { P01BundleClient } from '@protocol-01/bundler/client';
  *
  *   const client = new P01BundleClient('https://bundler.protocol-01.xyz');
  *   const result = await client.submitBundle([signedTx1, signedTx2]);

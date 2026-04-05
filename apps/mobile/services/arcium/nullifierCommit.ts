@@ -93,7 +93,7 @@ async function mpcCommitNullifier(
   if (!client || !program) throw new Error('MPC client not ready');
 
   const { commitNullifier: sdkCommit, getNullifierCommitmentAddress } = await import(
-    '@p01/arcium-sdk'
+    '@protocol-01/arcium-sdk'
   );
 
   const poolId = poolPDA.toBuffer();
@@ -123,7 +123,7 @@ async function mpcCheckNullifier(
   const program = await getArciumProgram();
   if (!client || !program) throw new Error('MPC client not ready');
 
-  const { checkNullifierSpent: sdkCheck } = await import('@p01/arcium-sdk');
+  const { checkNullifierSpent: sdkCheck } = await import('@protocol-01/arcium-sdk');
   const poolId = poolPDA.toBuffer();
   const result = await sdkCheck(client, program, poolId, nullifierBytes);
 

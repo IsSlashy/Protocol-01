@@ -222,7 +222,7 @@ A card component for displaying active subscription details.
 
 ### Usage
 \`\`\`tsx
-import { SubscriptionCard } from 'p-01/react';
+import { SubscriptionCard } from '@protocol-01/p01-js/react';
 
 <SubscriptionCard
   subscription={subscription}

@@ -1,5 +1,5 @@
 {
-  "name": "@p01/zkspl-sdk",
+  "name": "@protocol-01/zkspl-sdk",
   "version": "0.1.0",
   "description": "SDK for Protocol 01 zkSPL confidential token balances",
   "main": "dist/index.js",

@@ -1,6 +1,8 @@
 /**
- * Specter Protocol UI Components
- * Export all components from a single entry point
+ * Protocol 01 UI Components
+ *
+ * All components are web-only (React DOM) using inline styles.
+ * Design tokens (colors, spacing, etc.) work on both web and React Native.
  */
 
 // Button

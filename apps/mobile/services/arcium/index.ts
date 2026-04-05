@@ -1,7 +1,7 @@
 /**
  * Arcium MPC Service — Confidential compute layer for Protocol 01.
  *
- * This service wraps @p01/arcium-sdk for mobile use. It provides:
+ * This service wraps @protocol-01/arcium-sdk for mobile use. It provides:
  * - Anonymous stealth address lookup (private_lookup)
  * - MPC-hidden nullifier commitment (nullifier_commit)
  * - Confidential relay job submission (threshold_decrypt)
@@ -23,8 +23,8 @@ export const ARCIUM_CLUSTER_OFFSET = 456;
 /** MPC readiness status */
 export type ArciumStatus = 'idle' | 'initializing' | 'ready' | 'error' | 'disabled';
 
-/** ArciumClient type (lazy-imported from @p01/arcium-sdk) */
-export type { ArciumClientConfig } from '@p01/arcium-sdk';
+/** ArciumClient type (lazy-imported from @protocol-01/arcium-sdk) */
+export type { ArciumClientConfig } from '@protocol-01/arcium-sdk';
 
 /**
  * Lightweight check: can the current RPC reach the Arcium program?

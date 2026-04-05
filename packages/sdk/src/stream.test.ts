@@ -126,6 +126,77 @@ describe('P01StreamClient', () => {
     });
   });
 
+  describe('createStream (input validation)', () => {
+    let client: P01StreamClient;
+
+    beforeEach(() => {
+      client = new P01StreamClient({
+        network: 'devnet',
+        rpcUrl: RPC_ENDPOINTS.devnet,
+      });
+      const mockWallet = {
+        publicKey: PublicKey.unique(),
+        connected: true,
+        signTransaction: vi.fn(),
+        signAllTransactions: vi.fn(),
+        signMessage: vi.fn(),
+      };
+      client.connect(mockWallet);
+    });
+
+    it('should throw when amount is zero', async () => {
+      await expect(
+        client.createStream({
+          recipient: PublicKey.unique(),
+          mint: PublicKey.unique(),
+          amountPerInterval: 0,
+          intervalSeconds: 3600,
+          totalIntervals: 10,
+          streamName: 'test',
+        })
+      ).rejects.toThrow('createStream: amount must be positive');
+    });
+
+    it('should throw when amount is negative', async () => {
+      await expect(
+        client.createStream({
+          recipient: PublicKey.unique(),
+          mint: PublicKey.unique(),
+          amountPerInterval: -100,
+          intervalSeconds: 3600,
+          totalIntervals: 10,
+          streamName: 'test',
+        })
+      ).rejects.toThrow('createStream: amount must be positive');
+    });
+
+    it('should throw when intervalSeconds is zero', async () => {
+      await expect(
+        client.createStream({
+          recipient: PublicKey.unique(),
+          mint: PublicKey.unique(),
+          amountPerInterval: 1000,
+          intervalSeconds: 0,
+          totalIntervals: 10,
+          streamName: 'test',
+        })
+      ).rejects.toThrow('createStream: intervalSeconds must be positive');
+    });
+
+    it('should throw when totalIntervals is zero', async () => {
+      await expect(
+        client.createStream({
+          recipient: PublicKey.unique(),
+          mint: PublicKey.unique(),
+          amountPerInterval: 1000,
+          intervalSeconds: 3600,
+          totalIntervals: 0,
+          streamName: 'test',
+        })
+      ).rejects.toThrow('createStream: totalIntervals must be positive');
+    });
+  });
+
   describe('cancelStream (wallet guard)', () => {
     it('should throw "Wallet not connected" when no wallet is connected', async () => {
       const client = new P01StreamClient({
@@ -326,10 +397,27 @@ describe('createDevnetClient', () => {
 });
 
 describe('createMainnetClient', () => {
-  it('should return a P01StreamClient configured for mainnet', () => {
-    const client = createMainnetClient();
+  it('should throw when mainnet is not deployed and no programId override', () => {
+    expect(() => createMainnetClient()).toThrow(
+      'Stream program is not yet deployed on mainnet-beta. Use createDevnetClient() for testing.'
+    );
+  });
+
+  it('should allow override with a custom programId', () => {
+    const customId = PublicKey.unique();
+    const client = createMainnetClient({ programId: customId });
     expect(client).toBeInstanceOf(P01StreamClient);
-    expect(client.getProgramId().equals(STREAM_PROGRAM_ID_MAINNET)).toBe(true);
+    expect(client.getProgramId().equals(customId)).toBe(true);
+  });
+
+  it('should allow override with a custom rpcUrl', () => {
+    const customId = PublicKey.unique();
+    const client = createMainnetClient({
+      programId: customId,
+      rpcUrl: 'https://custom-rpc.example.com',
+    });
+    expect(client).toBeInstanceOf(P01StreamClient);
+    expect(client.getConnection()).toBeInstanceOf(Connection);
   });
 });
 

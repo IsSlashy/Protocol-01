@@ -201,7 +201,8 @@ function parseRegistryEntry(
       createdAt,
       updatedAt,
     };
-  } catch {
+  } catch (error) {
+    // Return null for parse failures — the account data may be corrupted or from a different program version
     return null;
   }
 }

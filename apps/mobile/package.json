@@ -1,5 +1,5 @@
 {
-  "name": "@p01/mobile",
+  "name": "@protocol-01/mobile",
   "version": "0.9.5",
   "private": true,
   "packageManager": "pnpm@8.15.0",
@@ -25,7 +25,7 @@
     "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.0.1",
     "@noble/post-quantum": "^0.5.4",
-    "@p01/arcium-sdk": "workspace:*",
+    "@protocol-01/arcium-sdk": "workspace:*",
     "@privy-io/expo": "^0.63.3",
     "@privy-io/react-auth": "^2.0.0",
     "@react-native-async-storage/async-storage": "2.2.0",

@@ -1,12 +1,12 @@
 /**
- * @p01/ui - Protocol 01 Design System
+ * @protocol-01/ui - Protocol 01 Design System
  *
  * Ultra dark theme with neon accents
  * Supports both Web (React) and Mobile (React Native)
  *
  * @example
  * ```tsx
- * import { Button, Card, colors, spacing } from '@p01/ui';
+ * import { Button, Card, colors, spacing } from '@protocol-01/ui';
  *
  * function MyComponent() {
  *   return (
@@ -234,5 +234,41 @@ export const theme = {
 } as const;
 
 export type Theme = typeof theme;
+
+/**
+ * Create a custom theme by deep-merging overrides with the default theme.
+ * Useful for white-labeling or adjusting colors/spacing without replacing
+ * the entire theme object.
+ *
+ * @param overrides - Partial theme object with values to override
+ * @returns A new theme object with defaults + overrides merged
+ *
+ * @example
+ * ```tsx
+ * import { createTheme } from '@protocol-01/ui';
+ *
+ * const customTheme = createTheme({
+ *   colors: { cyan: '#00ffcc', pink: '#ff00aa' },
+ *   spacing: { 4: 20 },
+ * });
+ *
+ * // Use with any theme provider
+ * <ThemeProvider theme={customTheme}>
+ *   <App />
+ * </ThemeProvider>
+ * ```
+ */
+export function createTheme(overrides: Partial<{ [K in keyof Theme]: Partial<Theme[K]> }>): Theme {
+  const merged = { ...theme } as Record<string, any>;
+  for (const key of Object.keys(overrides) as Array<keyof typeof overrides>) {
+    const overrideValue = overrides[key];
+    if (overrideValue && typeof overrideValue === 'object' && !Array.isArray(overrideValue)) {
+      merged[key] = { ...(theme as any)[key], ...overrideValue };
+    } else if (overrideValue !== undefined) {
+      merged[key] = overrideValue;
+    }
+  }
+  return merged as Theme;
+}
 
 export default theme;

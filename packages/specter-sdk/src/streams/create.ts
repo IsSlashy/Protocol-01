@@ -122,7 +122,8 @@ export async function createStream(params: CreateStreamOptions): Promise<Stream>
   } else {
     throw new SpecterError(
       SpecterErrorCode.INVALID_RECIPIENT,
-      'Invalid recipient address format'
+      'Invalid recipient address format. Expected a stealth meta-address (starting with "st:") ' +
+      'or a valid Solana public key (base58-encoded, 32-44 characters).'
     );
   }
 
@@ -241,7 +242,9 @@ export async function createStream(params: CreateStreamOptions): Promise<Stream>
     }
     throw new SpecterError(
       SpecterErrorCode.STREAM_CREATION_FAILED,
-      'Failed to create payment stream',
+      'Failed to create payment stream. This may be caused by an RPC error, insufficient SOL for fees + rent, ' +
+      'or the stream program not being deployed on your target network. ' +
+      'Ensure you are using the correct cluster (devnet for testing).',
       error as Error
     );
   }

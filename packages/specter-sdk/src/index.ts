@@ -67,10 +67,16 @@ export { P01Error, P01ErrorCode } from './types';
 export {
   // Program IDs
   PROGRAM_IDS,
+  REGISTRY_PROGRAM_IDS,
+  RELAYER_PROGRAM_IDS,
   DEFAULT_PROGRAM_ID,
+  getCheckedProgramId,
 
   // RPC endpoints
   RPC_ENDPOINTS,
+  setCustomRpcEndpoint,
+  getEffectiveRpcEndpoint,
+  isPublicRpcEndpoint,
 
   // Wallet constants
   DEFAULT_DERIVATION_PATH,
@@ -101,6 +107,9 @@ export {
 
   // Feature flags
   FEATURES,
+  setFeature,
+  getFeature,
+  type FeatureName,
 } from './constants';
 
 // ============================================================================

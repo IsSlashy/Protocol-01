@@ -1,5 +1,5 @@
 {
-  "name": "@p01/sdk",
+  "name": "@protocol-01/streams",
   "version": "0.1.0",
   "description": "Protocol 01 SDK for stream payments and wallet integration",
   "main": "dist/index.js",

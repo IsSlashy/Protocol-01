@@ -248,7 +248,8 @@ export async function claimStealth(options: ClaimOptions): Promise<ClaimResult> 
     }
     throw new SpecterError(
       SpecterErrorCode.CLAIM_FAILED,
-      'Failed to claim stealth payment',
+      'Failed to claim stealth payment. This may be caused by an RPC error, insufficient SOL for fees, ' +
+      'or the stealth account already being closed. Check your network connection and account balance.',
       error as Error
     );
   }

@@ -16,9 +16,59 @@ export const PROGRAM_IDS: Record<Cluster, PublicKey> = {
 };
 
 /**
+ * Registry program IDs per cluster
+ */
+export const REGISTRY_PROGRAM_IDS: Record<Cluster, PublicKey> = {
+  'mainnet-beta': PublicKey.default, // not deployed yet
+  'testnet': PublicKey.default, // not deployed yet
+  'devnet': new PublicKey('Hz4ZULacefgJzq94YJTSq3WmQAySyYuzCRiEzNXCA2sZ'),
+  'localnet': new PublicKey('Hz4ZULacefgJzq94YJTSq3WmQAySyYuzCRiEzNXCA2sZ'),
+};
+
+/**
+ * Relayer program IDs per cluster
+ */
+export const RELAYER_PROGRAM_IDS: Record<Cluster, PublicKey> = {
+  'mainnet-beta': PublicKey.default, // not deployed yet
+  'testnet': PublicKey.default, // not deployed yet
+  'devnet': new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
+  'localnet': new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
+};
+
+/**
  * Default program ID (devnet)
  */
 export const DEFAULT_PROGRAM_ID = PROGRAM_IDS['devnet'];
+
+/**
+ * Get a program ID for the given cluster, with a safety check for mainnet-beta.
+ *
+ * Throws a clear error if the caller requests a program ID that hasn't been
+ * deployed yet (i.e. still set to PublicKey.default).
+ *
+ * @param ids - The program ID map to look up
+ * @param cluster - The target cluster
+ * @param programName - Human-readable program name for the error message
+ * @returns The program ID for the requested cluster
+ */
+export function getCheckedProgramId(
+  ids: Record<Cluster, PublicKey>,
+  cluster: Cluster,
+  programName: string = 'Protocol 01',
+): PublicKey {
+  const id = ids[cluster];
+  if (id.equals(PublicKey.default)) {
+    if (cluster === 'mainnet-beta') {
+      throw new Error(
+        `${programName} is not yet deployed on mainnet-beta. Use 'devnet' for testing.`
+      );
+    }
+    throw new Error(
+      `${programName} is not yet deployed on ${cluster}. Use 'devnet' for testing.`
+    );
+  }
+  return id;
+}
 
 // ============================================================================
 // RPC Endpoints
@@ -28,7 +78,7 @@ export const DEFAULT_PROGRAM_ID = PROGRAM_IDS['devnet'];
  * Default RPC endpoints for different clusters.
  *
  * For richer endpoint resolution with Helius/QuickNode fallback, use
- * `getEndpoints()` or `RpcConnectionManager` from `@p01/rpc-config`.
+ * `getEndpoints()` or `RpcConnectionManager` from `@protocol-01/rpc-config`.
  */
 export const RPC_ENDPOINTS: Record<Cluster, string> = {
   'mainnet-beta': 'https://api.mainnet-beta.solana.com',
@@ -36,6 +86,58 @@ export const RPC_ENDPOINTS: Record<Cluster, string> = {
   'devnet': 'https://api.devnet.solana.com',
   'localnet': 'http://127.0.0.1:8899',
 };
+
+/** Custom RPC endpoint overrides set at runtime */
+const _customRpcEndpoints: Partial<Record<Cluster, string>> = {};
+
+/**
+ * Override the RPC endpoint for a given cluster at runtime.
+ *
+ * This is useful for switching to a premium provider (Helius, QuickNode, etc.)
+ * without changing code. The override persists for the lifetime of the process.
+ *
+ * @param cluster - The cluster to override
+ * @param url - The custom RPC endpoint URL
+ *
+ * @example
+ * ```ts
+ * import { setCustomRpcEndpoint } from '@protocol-01/specter-sdk';
+ * setCustomRpcEndpoint('devnet', 'https://devnet.helius-rpc.com/?api-key=YOUR_KEY');
+ * ```
+ */
+export function setCustomRpcEndpoint(cluster: Cluster, url: string): void {
+  _customRpcEndpoints[cluster] = url;
+}
+
+/**
+ * Get the effective RPC endpoint for a cluster.
+ * Returns the custom override if set, otherwise the default.
+ */
+export function getEffectiveRpcEndpoint(cluster: Cluster): string {
+  return _customRpcEndpoints[cluster] ?? RPC_ENDPOINTS[cluster];
+}
+
+/**
+ * Known public RPC endpoints (rate-limited, not suitable for production).
+ * Used to detect when a user hasn't configured a custom endpoint.
+ */
+const PUBLIC_RPC_HOSTS = [
+  'api.mainnet-beta.solana.com',
+  'api.testnet.solana.com',
+  'api.devnet.solana.com',
+];
+
+/**
+ * Returns true if the given endpoint is a public Solana RPC (rate-limited).
+ */
+export function isPublicRpcEndpoint(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return PUBLIC_RPC_HOSTS.includes(host);
+  } catch {
+    return false;
+  }
+}
 
 // ============================================================================
 // Wallet Constants
@@ -267,9 +369,62 @@ export const REGISTRY_PROGRAM_ID = new PublicKey(
 // Feature Flags
 // ============================================================================
 
+/**
+ * Default feature flag values. These are the compile-time defaults.
+ * Use `setFeature()` to override at runtime without changing these.
+ */
 export const FEATURES = {
   ENABLE_RELAYER: false, // Enable when relayer is deployed
   ENABLE_MULTI_HOP: false, // Enable when multi-hop is implemented
   ENABLE_TOKEN_STREAMS: true, // SPL token streams
   ENABLE_NFT_TRANSFERS: false, // NFT stealth transfers
 } as const;
+
+/**
+ * Feature flag type — the set of known feature names.
+ */
+export type FeatureName = keyof typeof FEATURES;
+
+/** Runtime overrides for feature flags */
+const _featureOverrides: Partial<Record<string, boolean>> = {};
+
+/**
+ * Enable or disable a feature flag at runtime.
+ *
+ * @param name - Feature flag name (e.g. 'ENABLE_RELAYER')
+ * @param enabled - Whether the feature should be enabled
+ *
+ * @example
+ * ```ts
+ * import { setFeature } from '@protocol-01/specter-sdk';
+ * setFeature('ENABLE_RELAYER', true);
+ * ```
+ */
+export function setFeature(name: string, enabled: boolean): void {
+  _featureOverrides[name] = enabled;
+}
+
+/**
+ * Get the effective value of a feature flag.
+ * Returns the runtime override if set, otherwise the compile-time default.
+ *
+ * @param name - Feature flag name
+ * @returns Whether the feature is enabled
+ *
+ * @example
+ * ```ts
+ * import { getFeature } from '@protocol-01/specter-sdk';
+ * if (getFeature('ENABLE_RELAYER')) {
+ *   // relay is enabled
+ * }
+ * ```
+ */
+export function getFeature(name: string): boolean {
+  if (name in _featureOverrides) {
+    return _featureOverrides[name]!;
+  }
+  if (name in FEATURES) {
+    return FEATURES[name as FeatureName];
+  }
+  return false;
+}

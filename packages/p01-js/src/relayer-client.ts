@@ -2,12 +2,12 @@
  * Relayer Client Module for Protocol 01
  *
  * DEPRECATED: This module uses a centralized HTTP relayer which has been replaced
- * by the on-chain p01_relayer program. Use @p01/specter-sdk relay module for
+ * by the on-chain p01_relayer program. Use @protocol-01/specter-sdk relay module for
  * on-chain relay via the p01_relayer program instead.
  *
  * This file is retained for backward compatibility with external consumers.
  *
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  * @module relayer-client
  */
 
@@ -15,7 +15,7 @@
 
 /**
  * Configuration for the relayer client.
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  */
 export interface RelayerConfig {
   /** Base URL of the relayer service */
@@ -28,7 +28,7 @@ export interface RelayerConfig {
 
 /**
  * Status information from the relayer service.
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  */
 export interface RelayerStatus {
   /** Whether the relayer is online and processing transactions */
@@ -43,7 +43,7 @@ export interface RelayerStatus {
 
 /**
  * Parameters for submitting an unshield request to the relayer.
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  */
 export interface UnshieldRequest {
   /** Groth16 proof (pi_a, pi_b, pi_c) */
@@ -62,7 +62,7 @@ export interface UnshieldRequest {
 
 /**
  * Response from a successful unshield submission.
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  */
 export interface UnshieldResponse {
   /** Base58-encoded transaction signature */
@@ -77,7 +77,7 @@ export interface UnshieldResponse {
 
 /**
  * Error response from the relayer.
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  */
 export interface RelayerError {
   /** Error code */
@@ -107,7 +107,7 @@ const BASE_BACKOFF_MS = 1_000;
 /**
  * Client for communicating with Protocol 01 relayer services.
  *
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program.
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program.
  * This HTTP-based relayer client is no longer the recommended approach.
  *
  * @example
@@ -146,7 +146,7 @@ export class RelayerClient {
   /**
    * Get the relayer service status.
    *
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    * @returns RelayerStatus with online state, supported tokens, fee, and version
    * @throws Error if the relayer is unreachable
    */
@@ -161,7 +161,7 @@ export class RelayerClient {
   /**
    * Submit an unshield (withdrawal) request to the relayer.
    *
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    *
    * The relayer will:
    * 1. Verify the ZK proof locally
@@ -202,7 +202,7 @@ export class RelayerClient {
   /**
    * Estimate the relayer fee for a given denomination.
    *
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    * @param denomination - Pool denomination (1, 10, 100, or 1000)
    * @returns Estimated fee in token base units
    * @throws Error if the relayer is unreachable
@@ -220,7 +220,7 @@ export class RelayerClient {
   /**
    * Check if a specific nullifier has already been spent.
    *
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program.
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program.
    * Nullifier checks are now performed on-chain via p01_trustless nullifier PDAs.
    * @param nullifier - Hex-encoded nullifier to check
    * @param pool - Base58-encoded pool PDA address
@@ -242,7 +242,7 @@ export class RelayerClient {
 
   /**
    * Get the relayer's base URL.
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   getUrl(): string {
     return this.url;

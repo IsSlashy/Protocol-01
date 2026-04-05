@@ -75,7 +75,8 @@ export function deriveStealthPublicKey(
     if (error instanceof SpecterError) throw error;
     throw new SpecterError(
       SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
-      'Failed to derive stealth public key',
+      'Failed to derive stealth public key. This may be caused by an invalid meta-address format or ' +
+      'corrupted key material. Ensure the recipient meta-address starts with "st:" and contains valid keys.',
       error as Error
     );
   }

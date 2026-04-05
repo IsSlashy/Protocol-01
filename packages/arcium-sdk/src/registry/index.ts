@@ -3,34 +3,33 @@ import * as anchor from '@coral-xyz/anchor';
 import { ArciumClient, CIRCUITS } from '../client';
 
 /**
- * UC2: Anonymous Registry Lookup
+ * UC2: Anonymous Registry Lookup -- Private Meta-Address Query
  *
- * Problem: When looking up a stealth meta-address in the on-chain registry,
- * the RPC node sees which wallet address you're querying — leaking the
- * sender→recipient relationship before any payment is even made.
+ * Queries a stealth meta-address from the on-chain registry without
+ * revealing the target wallet to RPC nodes. The target address is
+ * encrypted before submission; MPC decrypts, reads the registry PDA,
+ * and returns the meta-address re-encrypted for the sender.
  *
- * Solution: User submits encrypted wallet address → MPC queries the registry →
- * returns encrypted meta-address. RPC node never sees the target wallet.
+ * **Inputs**: Target wallet address (encrypted).
+ * **Output**: Spending public key + viewing public key (encrypted for sender),
+ * plus optional ML-KEM-768 key for quantum resistance.
  *
- * Flow:
- * 1. Sender encrypts target wallet address with Arcium shared secret
- * 2. Submits to P01 Arcium program
- * 3. MPC reads registry PDA for that wallet (via account reference)
- * 4. If registered: returns encrypted meta-address (spending_pub + viewing_pub)
- * 5. If not registered: returns encrypted zero/sentinel
- * 6. Sender decrypts client-side → has meta-address without RPC knowledge
+ * @module registry
  */
 
+/** Result of a private meta-address lookup. */
 export interface PrivateLookupResult {
-  /** Whether the target wallet is registered */
+  /** Whether the target wallet has a registered meta-address. */
   isRegistered: boolean;
-  /** Encrypted meta-address (only sender can decrypt) */
+  /** Spending public key (32 bytes), or `null` if not registered. */
   spendingPubKey: Uint8Array | null;
+  /** Viewing public key (32 bytes), or `null` if not registered. */
   viewingPubKey: Uint8Array | null;
-  /** Whether v2 (ML-KEM) key is available */
+  /** Whether the registry entry includes a post-quantum ML-KEM-768 key. */
   hasKemKey: boolean;
+  /** ML-KEM-768 public key (1184 bytes), or `null` if not available. */
   kemPubKey: Uint8Array | null;
-  /** Computation signature */
+  /** Finalization callback transaction signature. */
   signature: string;
 }
 
@@ -50,7 +49,14 @@ export function getRegistryAddress(wallet: PublicKey): [PublicKey, number] {
  * Look up a stealth meta-address without revealing the target to RPC.
  *
  * The target wallet address is encrypted before submission.
- * MPC decrypts, queries registry, re-encrypts result for sender.
+ * MPC decrypts, queries the registry PDA, and re-encrypts the result
+ * for the sender.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param targetWallet - The wallet whose meta-address you want to look up.
+ * @returns Lookup result with decrypted meta-address keys (if registered).
+ * @throws {Error} "Registry MPC computation failed: ..." if submission or finalization fails.
  */
 export async function privateLookup(
   client: ArciumClient,
@@ -79,24 +85,33 @@ export async function privateLookup(
   // MPC reads from this account to check registration
   const [registryAddress] = getRegistryAddress(targetWallet);
 
-  const sig = await program.methods
-    .privateLookup(
-      computationOffset,
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.ciphertexts[1]),
-      Array.from(payload.ciphertexts[2]),
-      Array.from(payload.ciphertexts[3]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce)
-    )
-    .accountsPartial({
-      ...accounts,
-      registryAccount: registryAddress,
-      payer: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  let sig: string;
+  let finalizeSig: string;
+  try {
+    sig = await program.methods
+      .privateLookup(
+        computationOffset,
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.ciphertexts[1]),
+        Array.from(payload.ciphertexts[2]),
+        Array.from(payload.ciphertexts[3]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce)
+      )
+      .accountsPartial({
+        ...accounts,
+        registryAccount: registryAddress,
+        payer: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
 
-  const finalizeSig = await client.awaitFinalization(computationOffset);
+    finalizeSig = await client.awaitFinalization(computationOffset);
+  } catch (err) {
+    throw new Error(
+      `Registry MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   // Parse result from callback
   const tx = await client.connection.getTransaction(finalizeSig, {

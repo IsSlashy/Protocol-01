@@ -151,7 +151,7 @@ A button component for connecting/disconnecting the user's wallet.
 
 ### Usage
 \`\`\`tsx
-import { WalletButton } from 'p-01/react';
+import { WalletButton } from '@protocol-01/p01-js/react';
 
 <WalletButton
   variant="primary"

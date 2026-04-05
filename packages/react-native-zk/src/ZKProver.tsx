@@ -194,6 +194,41 @@ interface ZKProverProviderProps {
   snarkjsCdnUrl?: string;
 }
 
+/**
+ * Context provider that renders a hidden WebView and exposes ZK proving functions
+ * to all child components via the `useZKProver` hook.
+ *
+ * The WebView loads snarkjs from CDN, then circuits can be loaded and proofs
+ * generated entirely on-device. Private inputs never leave the phone.
+ *
+ * @param props - Provider props including children and optional baseUrl
+ *
+ * @example
+ * ```tsx
+ * import { ZKProverProvider, useZKProver } from '@protocol-01/react-native-zk';
+ *
+ * function App() {
+ *   return (
+ *     <ZKProverProvider>
+ *       <MyScreen />
+ *     </ZKProverProvider>
+ *   );
+ * }
+ *
+ * function MyScreen() {
+ *   const { loadCircuit, prove, isProving } = useZKProver();
+ *
+ *   const handleProve = async () => {
+ *     await loadCircuit('myCircuit', {
+ *       wasmUri: 'my_circuit.wasm',
+ *       zkeyUri: 'my_circuit_final.zkey',
+ *     });
+ *     const result = await prove('myCircuit', { secret: '12345' });
+ *     console.log(result.proof);
+ *   };
+ * }
+ * ```
+ */
 export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' }: ZKProverProviderProps) {
   const webViewRef = useRef<WebView | null>(null);
   const [webViewEnabled, setWebViewEnabled] = useState(false);
@@ -266,6 +301,7 @@ export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' 
       }
     } catch (err: any) {
       console.error('[ZKProver] Message parse error:', err);
+      setError('ZK Prover WebView failed to initialize. Ensure react-native-webview >= 13.0.0 is installed.');
     }
   }, []);
 
@@ -274,7 +310,7 @@ export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' 
     return new Promise((resolve, reject) => {
       readyPromise.current = { resolve, reject };
       setTimeout(() => {
-        if (!readyRef.current) reject(new Error('WebView init timed out (15s)'));
+        if (!readyRef.current) reject(new Error('ZK Prover WebView failed to initialize. Ensure react-native-webview >= 13.0.0 is installed.'));
       }, 15000);
     });
   };
@@ -333,7 +369,7 @@ export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' 
       const ready = loadedCircuits.current[name];
       if (!ready) {
         const loaded = await preload(name);
-        if (!loaded) throw new Error(`Circuit "${name}" not loaded. Call loadCircuit() first.`);
+        if (!loaded) throw new Error(`Circuit '${name}' not found. Expected circuit to be loaded via loadCircuit(). See README for circuit file setup instructions.`);
       }
 
       if (!webViewRef.current) throw new Error('WebView not available');
@@ -360,7 +396,7 @@ export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' 
           if (pendingRequests.has(id)) {
             pendingRequests.delete(id);
             setIsProving(false);
-            reject(new Error(`Proof generation timed out (${timeout / 1000}s)`));
+            reject(new Error(`Proof generation timed out after ${timeout}ms. Circuit '${name}' may be too complex for this device. Try increasing timeout or using a simpler circuit.`));
           }
         }, timeout);
       });
@@ -385,7 +421,7 @@ export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' 
             allowFileAccessFromFileURLs
             allowUniversalAccessFromFileURLs
             onError={(e: any) => {
-              setError('WebView error: ' + e.nativeEvent.description);
+              setError('ZK Prover WebView failed to initialize. Ensure react-native-webview >= 13.0.0 is installed. Details: ' + e.nativeEvent.description);
             }}
           />
         </View>
@@ -399,6 +435,30 @@ export function ZKProverProvider({ children, baseUrl = 'file:///android_asset/' 
 // Ref-based component (alternative API)
 // ---------------------------------------------------------------------------
 
+/**
+ * Ref-based ZK prover component. Alternative to `ZKProverProvider` for cases
+ * where you prefer direct ref access over React context.
+ *
+ * Renders a hidden 1x1 WebView that runs snarkjs for proof generation.
+ *
+ * @example
+ * ```tsx
+ * import { useRef } from 'react';
+ * import { ZKProver, type ZKProverRef } from '@protocol-01/react-native-zk';
+ *
+ * function MyScreen() {
+ *   const proverRef = useRef<ZKProverRef>(null);
+ *   const handleProve = async () => {
+ *     await proverRef.current?.loadCircuit('myCircuit', {
+ *       wasmUri: 'circuit.wasm',
+ *       zkeyUri: 'circuit_final.zkey',
+ *     });
+ *     const result = await proverRef.current?.prove('myCircuit', { secret: '123' });
+ *   };
+ *   return <ZKProver ref={proverRef} />;
+ * }
+ * ```
+ */
 export const ZKProver = forwardRef<ZKProverRef, { baseUrl?: string }>(
   function ZKProver({ baseUrl = 'file:///android_asset/' }: { baseUrl?: string }, ref: any) {
     const webViewRef = useRef<WebView | null>(null);
@@ -468,7 +528,7 @@ export const ZKProver = forwardRef<ZKProverRef, { baseUrl?: string }>(
         return !!loadedCircuits.current[name];
       },
       prove: async (name: string, inputs: Record<string, string | string[]>, options?: ProverOptions) => {
-        if (!loadedCircuits.current[name]) throw new Error(`Circuit "${name}" not loaded`);
+        if (!loadedCircuits.current[name]) throw new Error(`Circuit '${name}' not found. Expected circuit to be loaded via loadCircuit(). See README for circuit file setup instructions.`);
         const id = Math.random().toString(36).slice(2);
         const timeout = options?.timeout ?? 180_000;
         return new Promise((resolve, reject) => {
@@ -483,7 +543,7 @@ export const ZKProver = forwardRef<ZKProverRef, { baseUrl?: string }>(
           setTimeout(() => {
             if (pendingRequests.has(id)) {
               pendingRequests.delete(id);
-              reject(new Error('Proof timed out'));
+              reject(new Error(`Proof generation timed out after ${timeout}ms. Circuit '${name}' may be too complex for this device. Try increasing timeout or using a simpler circuit.`));
             }
           }, timeout);
         });
@@ -514,6 +574,27 @@ export const ZKProver = forwardRef<ZKProverRef, { baseUrl?: string }>(
 // Hook
 // ---------------------------------------------------------------------------
 
+/**
+ * Hook that returns the ZK prover context for loading circuits and generating proofs.
+ * Must be used within a `<ZKProverProvider>`.
+ *
+ * @returns Object with `isReady`, `isProving`, `error`, `loadCircuit`, `prove`, `preload`, and `isLoaded`
+ * @throws Error if used outside of a `<ZKProverProvider>`
+ *
+ * @example
+ * ```tsx
+ * function ProveButton() {
+ *   const { prove, isProving, error } = useZKProver();
+ *
+ *   return (
+ *     <>
+ *       <Button onPress={() => prove('transfer', inputs)} disabled={isProving} />
+ *       {error && <Text>{error}</Text>}
+ *     </>
+ *   );
+ * }
+ * ```
+ */
 export function useZKProver(): ZKProverContextType {
   const ctx = useContext(ProverContext);
   if (!ctx) {

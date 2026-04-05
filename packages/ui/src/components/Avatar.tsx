@@ -1,6 +1,21 @@
 /**
- * Specter Protocol Avatar Component
- * User avatars with glow effects and fallback initials
+ * Protocol 01 Avatar Components
+ *
+ * User avatars with glow effects, online status indicator, and fallback initials.
+ * AvatarGroup displays overlapping avatars with a "+N" overflow indicator.
+ *
+ * Platform: web only
+ *
+ * @example
+ * ```tsx
+ * import { Avatar, AvatarGroup } from '@protocol-01/ui';
+ *
+ * <Avatar name="Satoshi" size="lg" glow="green" isOnline />
+ * <AvatarGroup max={3}>
+ *   <Avatar name="Alice" src="/alice.png" />
+ *   <Avatar name="Bob" />
+ * </AvatarGroup>
+ * ```
  */
 
 import React from 'react';
@@ -113,6 +128,12 @@ const stringToColor = (str: string): string => {
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════
+/**
+ * Avatar component with image, initials fallback, glow border, and online status.
+ *
+ * @param props - Avatar props including src, name, size, variant, glow, and online status
+ * @param ref - Forwarded ref to the underlying `<div>` element
+ */
 export const Avatar = React.forwardRef<HTMLDivElement, AvatarProps>(
   (
     {

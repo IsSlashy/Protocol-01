@@ -375,6 +375,12 @@ export interface P01ClientConfig {
   debug?: boolean;
   /** Custom program ID (for testing) */
   programId?: PublicKey;
+  /** Custom registry program ID override */
+  registryProgramId?: PublicKey;
+  /** Custom relayer program ID override */
+  relayerProgramId?: PublicKey;
+  /** Feature flag overrides — keys are feature names, values are enabled/disabled */
+  features?: Partial<Record<string, boolean>>;
   /** Request timeout in milliseconds */
   timeout?: number;
 }

@@ -86,6 +86,7 @@ export {
   FEE_WALLET,
   STARK_CIRCUITS,
   COMPUTE_UNITS,
+  getDeployedProgramIds,
 } from './constants';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

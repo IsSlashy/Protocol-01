@@ -3,30 +3,38 @@ import * as anchor from '@coral-xyz/anchor';
 import { ArciumClient, CIRCUITS, type EncryptedPayload } from '../client';
 
 /**
- * UC4: Confidential Balance Audit
+ * UC4: Confidential Balance Audit -- Solvency Proofs
  *
- * Users submit encrypted balances → MPC sums them → returns total
- * without revealing individual amounts. Useful for:
- * - Compliance/solvency proofs
- * - Pool TVL calculation without leaking depositor amounts
- * - Aggregate analytics with individual privacy
+ * Users submit encrypted balances via MPC, which sums them without
+ * revealing individual amounts. The aggregate total is revealed only
+ * when the audit authority finalizes.
+ *
+ * Use cases: compliance/solvency proofs, pool TVL calculation without
+ * leaking depositor amounts, aggregate analytics with individual privacy.
+ *
+ * **Inputs**: Encrypted balance (u64 lamports), audit ID.
+ * **Output**: Aggregate total balance across all submissions.
+ *
+ * @module audit
  */
 
+/** A single encrypted balance submission for an audit round. */
 export interface AuditSubmission {
-  /** Encrypted balance (lamports as u64) */
+  /** First ciphertext block of the encrypted balance. */
   encryptedBalance: number[];
-  /** Submitter's public key (for attribution) */
+  /** Wallet that submitted this balance. */
   submitter: PublicKey;
-  /** Encryption public key + nonce */
+  /** Full encryption payload (ciphertexts, ephemeral key, nonce). */
   payload: EncryptedPayload;
 }
 
+/** Finalized audit result with the revealed aggregate total. */
 export interface AuditResult {
-  /** Total balance across all submissions (plaintext — auditor can see) */
+  /** Aggregate balance across all submissions (plaintext -- auditor can see). */
   totalBalance: bigint;
-  /** Number of accounts included */
+  /** Number of individual accounts included in the audit. */
   accountCount: number;
-  /** Computation signature for on-chain verification */
+  /** Finalization callback transaction signature. */
   signature: string;
 }
 
@@ -50,12 +58,16 @@ export function getAuditAccumulatorAddress(
 /**
  * Submit an encrypted balance for confidential audit.
  *
- * Flow:
- * 1. User encrypts their balance with Arcium shared secret
- * 2. Submits to P01 Arcium program
- * 3. Program CPIs to Arcium → queues MPC computation
- * 4. MPC adds encrypted balance to running total (never decrypts individual)
- * 5. When audit finalizes, total is revealed via threshold decryption
+ * The balance is encrypted with the Arcium shared secret and added to
+ * the MPC accumulator. Individual balances are never decrypted; only the
+ * aggregate total is revealed when the audit authority calls {@link finalizeAudit}.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param auditId - Unique identifier for this audit round.
+ * @param balanceLamports - The balance to submit (in lamports).
+ * @returns Computation offset and submission details for tracking.
+ * @throws {Error} "Audit MPC computation failed: ..." if submission fails.
  */
 export async function submitBalanceForAudit(
   client: ArciumClient,
@@ -69,20 +81,27 @@ export async function submitBalanceForAudit(
 
   const [accumulatorAddress] = getAuditAccumulatorAddress(client.programId, auditId);
 
-  await program.methods
-    .submitBalanceAudit(
-      computationOffset,
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce),
-      Array.from(auditId)
-    )
-    .accountsPartial({
-      ...accounts,
-      auditAccumulator: accumulatorAddress,
-      payer: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  try {
+    await program.methods
+      .submitBalanceAudit(
+        computationOffset,
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce),
+        Array.from(auditId)
+      )
+      .accountsPartial({
+        ...accounts,
+        auditAccumulator: accumulatorAddress,
+        payer: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
+  } catch (err) {
+    throw new Error(
+      `Audit MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   return {
     computationOffset,
@@ -95,8 +114,16 @@ export async function submitBalanceForAudit(
 }
 
 /**
- * Finalize the audit — triggers threshold reveal of total.
- * Only the audit authority can call this.
+ * Finalize the audit and reveal the aggregate total.
+ *
+ * Only callable by the audit authority. Triggers threshold decryption
+ * of the MPC accumulator, revealing the sum of all submitted balances.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param auditId - The audit round to finalize.
+ * @returns The revealed aggregate total and finalization signature.
+ * @throws {Error} "Audit MPC computation failed: ..." if finalization fails.
  */
 export async function finalizeAudit(
   client: ArciumClient,
@@ -107,17 +134,25 @@ export async function finalizeAudit(
   const accounts = client.getComputationAccounts(CIRCUITS.BALANCE_AUDIT, computationOffset);
   const [accumulatorAddress] = getAuditAccumulatorAddress(client.programId, auditId);
 
-  await program.methods
-    .finalizeAudit(computationOffset, Array.from(auditId))
-    .accountsPartial({
-      ...accounts,
-      auditAccumulator: accumulatorAddress,
-      authority: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  let sig: string;
+  try {
+    await program.methods
+      .finalizeAudit(computationOffset, Array.from(auditId))
+      .accountsPartial({
+        ...accounts,
+        auditAccumulator: accumulatorAddress,
+        authority: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
 
-  // Wait for MPC to return the result
-  const sig = await client.awaitFinalization(computationOffset);
+    // Wait for MPC to return the result
+    sig = await client.awaitFinalization(computationOffset);
+  } catch (err) {
+    throw new Error(
+      `Audit MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   // The callback emits an event with the revealed total
   // Parse from transaction logs

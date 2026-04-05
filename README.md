@@ -193,17 +193,17 @@ protocol-01/
 │   ├── mobile/             # React Native (Expo) mobile wallet
 │   └── web/                # Next.js marketing site & SDK demo
 ├── packages/
-│   ├── p01-js/             # @p01/sdk — Merchant integration (Protocol01 client)
-│   ├── specter-sdk/        # @p01/specter-sdk — Stealth wallets & transfers (P01Client)
-│   ├── zk-sdk/             # @p01/zk-sdk — ZK proof generation (ShieldedClient)
-│   ├── zkspl-sdk/          # @p01/zkspl-sdk — Confidential balances (ZkSplClient)
-│   ├── arcium-sdk/         # @p01/arcium-sdk — MPC confidential compute (6 use cases)
-│   ├── auth-sdk/           # @p01/auth-sdk — "Login with P-01" authentication
-│   ├── whitelist-sdk/      # @p01/whitelist-sdk — On-chain developer whitelist
-│   ├── specter-js/         # @p01/js — Pay button & browser SDK
-│   ├── rpc-config/          # @p01/rpc-config — Shared RPC connection manager
-│   ├── ui/                 # @p01/ui — Shared design system & components
-│   └── sdk/                # @p01/stream — Payment stream utilities
+│   ├── p01-js/             # @protocol-01/streams — Merchant integration (Protocol01 client)
+│   ├── specter-sdk/        # @protocol-01/specter-sdk — Stealth wallets & transfers (P01Client)
+│   ├── zk-sdk/             # @protocol-01/zk-sdk — ZK proof generation (ShieldedClient)
+│   ├── zkspl-sdk/          # @protocol-01/zkspl-sdk — Confidential balances (ZkSplClient)
+│   ├── arcium-sdk/         # @protocol-01/arcium-sdk — MPC confidential compute (6 use cases)
+│   ├── auth-sdk/           # @protocol-01/auth-sdk — "Login with P-01" authentication
+│   ├── whitelist-sdk/      # @protocol-01/whitelist-sdk — On-chain developer whitelist
+│   ├── specter-js/         # @protocol-01/specter-js — Pay button & browser SDK
+│   ├── rpc-config/          # @protocol-01/rpc-config — Shared RPC connection manager
+│   ├── ui/                 # @protocol-01/ui — Shared design system & components
+│   └── sdk/                # @protocol-01/streams — Payment stream utilities
 ├── circuits/
 │   ├── transfer.circom              # Main ZK circuit (2-in-2-out, Merkle depth 20)
 │   ├── confidential_balance.circom  # zkSPL balance commitment circuit (1,382 constraints)
@@ -402,8 +402,8 @@ Built with Next.js 16 and Framer Motion.
 ### SDK
 
 ```typescript
-// @p01/specter-sdk — Stealth wallets & private transfers
-import { P01Client, createWallet, sendPrivate } from '@p01/specter-sdk';
+// @protocol-01/specter-sdk — Stealth wallets & private transfers
+import { P01Client, createWallet, sendPrivate } from '@protocol-01/specter-sdk';
 
 const client = new P01Client({ cluster: 'devnet' });
 const wallet = await createWallet();
@@ -417,8 +417,8 @@ await client.createStream({ recipient, amount: 10, duration: 30 * 86400 });
 ```
 
 ```typescript
-// @p01/zk-sdk — Shielded pool with Groth16 ZK proofs
-import { ShieldedClient } from '@p01/zk-sdk';
+// @protocol-01/zk-sdk — Shielded pool with Groth16 ZK proofs
+import { ShieldedClient } from '@protocol-01/zk-sdk';
 
 const zkClient = new ShieldedClient({ rpcUrl, programId });
 
@@ -428,8 +428,8 @@ await zkClient.unshield(outputNotes, 500_000_000n); // Withdraw to public addres
 ```
 
 ```typescript
-// @p01/zkspl-sdk — Confidential balances with quantum-resistant commitments
-import { ZkSplClient } from '@p01/zkspl-sdk';
+// @protocol-01/zkspl-sdk — Confidential balances with quantum-resistant commitments
+import { ZkSplClient } from '@protocol-01/zkspl-sdk';
 
 const client = new ZkSplClient({ connection, wallet, spendingKey });
 
@@ -440,8 +440,8 @@ await client.proveBalance(tokenMint, 500_000_000n);            // Prove balance 
 ```
 
 ```typescript
-// @p01/arcium-sdk — MPC confidential compute via Arcium
-import { ArciumClient } from '@p01/arcium-sdk';
+// @protocol-01/arcium-sdk — MPC confidential compute via Arcium
+import { ArciumClient } from '@protocol-01/arcium-sdk';
 
 const mpc = new ArciumClient({ connection, wallet, programId });
 await mpc.initialize();
@@ -457,8 +457,8 @@ await mpc.commitNullifier(nullifierPreimage);
 ```
 
 ```typescript
-// @p01/sdk — Merchant integration & subscriptions
-import { Protocol01 } from '@p01/sdk';
+// @protocol-01/streams — Merchant integration & subscriptions
+import { Protocol01 } from '@protocol-01/streams';
 
 const p01 = new Protocol01({ merchantId: 'my-saas', merchantName: 'My App' });
 await p01.requestPayment({ amount: 29.99, description: 'Pro Plan' });
@@ -619,11 +619,11 @@ P01 contributes reusable ZK tooling to the Solana ecosystem:
 
 | Library | Description | Install |
 |---------|-------------|---------|
-| [@p01/react-native-zk](packages/react-native-zk/) | Client-side Groth16 proving on React Native | `npm i @p01/react-native-zk` |
-| [@p01/solana-verifier](packages/solana-verifier/) | On-chain Groth16 verification for Solana | `cargo add p01-solana-verifier` |
-| [@p01/privacy-toolkit](packages/privacy-toolkit/) | Merkle trees, Poseidon commitments, proof formatting | `npm i @p01/privacy-toolkit` |
-| [@p01/zk-pipeline](packages/zk-pipeline/) | Complete guide: circuit → mobile → Solana | [Read the guide](packages/zk-pipeline/) |
-| [@p01/arcium-sdk](packages/arcium-sdk/) | MPC confidential compute via Arcium (6 use cases) | `npm i @p01/arcium-sdk` |
+| [@protocol-01/react-native-zk](packages/react-native-zk/) | Client-side Groth16 proving on React Native | `npm i @protocol-01/react-native-zk` |
+| [@protocol-01/solana-verifier](packages/solana-verifier/) | On-chain Groth16 verification for Solana | `cargo add p01-solana-verifier` |
+| [@protocol-01/privacy-toolkit](packages/privacy-toolkit/) | Merkle trees, Poseidon commitments, proof formatting | `npm i @protocol-01/privacy-toolkit` |
+| [@protocol-01/zk-pipeline](packages/zk-pipeline/) | Complete guide: circuit → mobile → Solana | [Read the guide](packages/zk-pipeline/) |
+| [@protocol-01/arcium-sdk](packages/arcium-sdk/) | MPC confidential compute via Arcium (6 use cases) | `npm i @protocol-01/arcium-sdk` |
 
 These libraries are used in production by Protocol 01. Separate permissive licenses may be granted at Volta Team's discretion — see each package for details.
 
@@ -641,10 +641,10 @@ These libraries are used in production by Protocol 01. Separate permissive licen
 - [x] Payment streams (SPL)
 - [x] Jupiter swap integration
 - [x] Fiat on-ramp (MoonPay, Ramp)
-- [x] SDK v1 (@p01/sdk, @p01/zk-sdk)
+- [x] SDK v1 (@protocol-01/streams, @protocol-01/zk-sdk)
 - [x] zkSPL confidential balances (quantum-resistant Poseidon commitments)
 - [x] Rust native Groth16 prover (~50ms proofs vs ~3min in JS)
-- [x] zkSPL SDK (@p01/zkspl-sdk)
+- [x] zkSPL SDK (@protocol-01/zkspl-sdk)
 - [x] Denominated privacy pools (fixed-amount Tornado Cash model, SOL + SPL tokens)
 - [x] Private ZK transfers (2-in-2-out UTXO within shielded pool)
 - [x] Private ZK subscriptions (recurring payments with ZK proofs)

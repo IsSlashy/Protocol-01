@@ -44,6 +44,17 @@ const DEFAULT_TIMEOUT = 60_000;
 const BALANCE_CIRCUIT = 'balance';
 const SUFFICIENCY_CIRCUIT = 'sufficiency';
 
+/**
+ * Resolve a potentially relative URL against a base.
+ * If the url is already absolute (starts with http:// or https:// or /), return it as-is.
+ */
+function resolveUrl(base: string, url: string): string {
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/')) {
+    return url;
+  }
+  return base + url;
+}
+
 // ---------------------------------------------------------------------------
 // Input builders — convert typed inputs to snarkjs flat string map
 // ---------------------------------------------------------------------------
@@ -298,6 +309,23 @@ export class ClientProver {
   private readonly timeout: number;
 
   constructor(config: ClientProverConfig) {
+    // Resolve relative circuit URLs against circuitBaseUrl if provided
+    if (config.circuitBaseUrl) {
+      const base = config.circuitBaseUrl.endsWith('/')
+        ? config.circuitBaseUrl
+        : config.circuitBaseUrl + '/';
+      config = {
+        ...config,
+        balanceCircuit: {
+          wasmUrl: resolveUrl(base, config.balanceCircuit.wasmUrl),
+          zkeyUrl: resolveUrl(base, config.balanceCircuit.zkeyUrl),
+        },
+        sufficiencyCircuit: {
+          wasmUrl: resolveUrl(base, config.sufficiencyCircuit.wasmUrl),
+          zkeyUrl: resolveUrl(base, config.sufficiencyCircuit.zkeyUrl),
+        },
+      };
+    }
     this.config = config;
     this.loader = new CircuitLoader();
     this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
@@ -570,7 +598,7 @@ export interface Groth16ProofBytes {
  * The on-chain verifier expects raw bytes in alt_bn128 format.
  *
  * This matches the exact same conversion used by the relayer and
- * the existing @p01/zkspl-sdk prover, ensuring proof format compatibility.
+ * the existing @protocol-01/zkspl-sdk prover, ensuring proof format compatibility.
  */
 export function snarkjsProofToBytes(proof: SnarkjsProof): Groth16ProofBytes {
   return {

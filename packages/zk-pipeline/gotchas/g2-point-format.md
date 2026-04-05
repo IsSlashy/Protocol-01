@@ -43,5 +43,5 @@ bytes.push(...fieldToBytes(proof.pi_b[1][1])); // y_imag (was index [1][1])
 bytes.push(...fieldToBytes(proof.pi_b[1][0])); // y_real (was index [1][0])
 ```
 
-The `@p01/privacy-toolkit` package provides `proofToOnChainBytes()` which
+The `@protocol-01/privacy-toolkit` package provides `proofToOnChainBytes()` which
 handles this swap automatically.

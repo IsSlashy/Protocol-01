@@ -1,5 +1,5 @@
 {
-  "name": "p-01",
+  "name": "@protocol-01/p01-js",
   "version": "0.1.0",
   "description": "Protocol 01 SDK for integrating privacy-first crypto payments and Stream Secure subscriptions",
   "main": "dist/index.js",

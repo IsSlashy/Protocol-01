@@ -4,6 +4,7 @@
  */
 
 import { buildPoseidon, type Poseidon } from 'circomlibjs';
+import { poseidon1, poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
 import { FIELD_MODULUS } from '../constants';
 
 let poseidonInstance: Poseidon | null = null;
@@ -25,10 +26,18 @@ export { FIELD_MODULUS };
 
 /**
  * Compute Poseidon hash of inputs
- * @param inputs Array of field elements (bigint or number)
+ * @param inputs Array of field elements (bigint or number). Must be non-empty.
  * @returns Hash as bigint
+ * @throws If inputs array is empty or not provided
  */
 export async function poseidonHash(inputs: (bigint | number)[]): Promise<bigint> {
+  if (!inputs || inputs.length === 0) {
+    throw new Error(
+      'poseidonHash: inputs array must be non-empty. ' +
+      'Provide at least one field element to hash.'
+    );
+  }
+
   const poseidon = await initPoseidon();
   const hash = poseidon(inputs.map(x => BigInt(x)));
   return poseidon.F.toObject(hash);
@@ -43,8 +52,38 @@ export function poseidonHashSync(poseidon: Poseidon, inputs: (bigint | number)[]
 }
 
 /**
+ * Synchronous Poseidon hash using poseidon-lite (no async init needed).
+ * Supports 1-4 inputs. Use this when async initialization is not desirable.
+ * Produces identical output to the async poseidonHash for the same inputs.
+ */
+export function poseidonHashLite(inputs: (bigint | number)[]): bigint {
+  if (!inputs || inputs.length === 0) {
+    throw new Error(
+      'poseidonHashLite: inputs array must be non-empty. ' +
+      'Provide at least one field element to hash.'
+    );
+  }
+
+  const bigInputs = inputs.map(x => BigInt(x));
+
+  switch (bigInputs.length) {
+    case 1: return poseidon1(bigInputs);
+    case 2: return poseidon2(bigInputs);
+    case 3: return poseidon3(bigInputs);
+    case 4: return poseidon4(bigInputs);
+    default:
+      throw new Error(
+        `poseidonHashLite: unsupported input length ${bigInputs.length}. ` +
+        'poseidon-lite supports 1-4 inputs. Use poseidonHash for more.'
+      );
+  }
+}
+
+/**
  * Compute note commitment
  * Commitment = Poseidon(amount, owner_pubkey, randomness, token_mint)
+ *
+ * @throws If any parameter is undefined or null
  */
 export async function computeCommitment(
   amount: bigint,
@@ -52,17 +91,39 @@ export async function computeCommitment(
   randomness: bigint,
   tokenMint: bigint
 ): Promise<bigint> {
+  if (amount === undefined || amount === null) {
+    throw new Error('computeCommitment: amount is required.');
+  }
+  if (ownerPubkey === undefined || ownerPubkey === null) {
+    throw new Error('computeCommitment: ownerPubkey is required.');
+  }
+  if (randomness === undefined || randomness === null) {
+    throw new Error('computeCommitment: randomness is required.');
+  }
+  if (tokenMint === undefined || tokenMint === null) {
+    throw new Error('computeCommitment: tokenMint is required.');
+  }
+
   return poseidonHash([amount, ownerPubkey, randomness, tokenMint]);
 }
 
 /**
  * Compute nullifier for a note
  * Nullifier = Poseidon(commitment, spending_key_hash)
+ *
+ * @throws If commitment or spendingKeyHash is undefined or null
  */
 export async function computeNullifier(
   commitment: bigint,
   spendingKeyHash: bigint
 ): Promise<bigint> {
+  if (commitment === undefined || commitment === null) {
+    throw new Error('computeNullifier: commitment is required.');
+  }
+  if (spendingKeyHash === undefined || spendingKeyHash === null) {
+    throw new Error('computeNullifier: spendingKeyHash is required.');
+  }
+
   return poseidonHash([commitment, spendingKeyHash]);
 }
 

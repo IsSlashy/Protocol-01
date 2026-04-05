@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { P01AuthClient } from '@p01/auth-sdk/client';
+ * import { P01AuthClient } from '@protocol-01/auth-sdk/client';
  *
  * const auth = new P01AuthClient({
  *   serviceId: 'my-service',
@@ -65,6 +65,38 @@ export interface P01AuthClientConfig {
   sessionStorage?: SessionStorage;
 }
 
+/**
+ * Pluggable session storage interface.
+ *
+ * The default in-memory storage works for single-server development.
+ * For production, provide a persistent implementation.
+ *
+ * @example Redis session store:
+ * ```typescript
+ * import { createClient } from 'redis';
+ *
+ * const redis = createClient();
+ * const sessionStorage: SessionStorage = {
+ *   async get(sessionId) {
+ *     const data = await redis.get(`p01:session:${sessionId}`);
+ *     return data ? JSON.parse(data) : null;
+ *   },
+ *   async set(session) {
+ *     const ttl = Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
+ *     await redis.set(`p01:session:${session.sessionId}`, JSON.stringify(session), { EX: ttl });
+ *   },
+ *   async delete(sessionId) {
+ *     await redis.del(`p01:session:${sessionId}`);
+ *   },
+ * };
+ * ```
+ *
+ * @example In-memory (built-in default -- no config needed):
+ * ```typescript
+ * const auth = new P01AuthClient({ ...config });
+ * // Uses InMemorySessionStorage automatically
+ * ```
+ */
 export interface SessionStorage {
   get(sessionId: string): Promise<AuthSession | null>;
   set(session: AuthSession): Promise<void>;
@@ -115,6 +147,16 @@ export class P01AuthClient {
   private ws: WebSocket | null = null;
 
   constructor(config: P01AuthClientConfig) {
+    if (!config.serviceId) {
+      throw new Error('[P01Auth] serviceId is required and must be non-empty');
+    }
+    if (!config.serviceName) {
+      throw new Error('[P01Auth] serviceName is required and must be non-empty');
+    }
+    if (!config.callbackUrl) {
+      throw new Error('[P01Auth] callbackUrl is required and must be non-empty');
+    }
+
     this.config = {
       sessionTtl: DEFAULT_SESSION_TTL,
       ...config,

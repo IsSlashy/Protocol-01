@@ -1,7 +1,21 @@
 /**
- * Specter Protocol Spacing System
- * Consistent spacing scale for layouts and components
- * Base unit: 4px
+ * Protocol 01 Spacing System
+ *
+ * Consistent spacing scale based on a 4px grid. Includes spacing values,
+ * semantic spacing aliases, border radii, z-index scale, breakpoints,
+ * and common component sizes.
+ *
+ * Platform: web + mobile (numeric values in pixels)
+ *
+ * @example
+ * ```ts
+ * import { spacing, radii, breakpoints, sizes } from '@protocol-01/ui';
+ *
+ * spacing[4];          // 16
+ * radii.xl;            // 16
+ * breakpoints.lg;      // 1024
+ * sizes.buttonMd;      // 40
+ * ```
  */
 
 // ═══════════════════════════════════════════════════════════════

@@ -18,6 +18,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { hmac } from '@noble/hashes/hmac';
 import { poseidon2, poseidon3 } from 'poseidon-lite';
 import { groth16 } from 'snarkjs';
+import { randomFieldElement as toolkitRandomFieldElement } from '@protocol-01/privacy-toolkit';
 
 import type {
   ShieldParams,
@@ -1439,18 +1440,12 @@ export class ShieldModule {
   // ─── Private: Cryptographic Helpers ──────────────────────────────────────
 
   /**
-   * Generate a random 31-byte field element suitable for BN254 scalar field.
-   * The BN254 scalar field order is ~2^254, so 31 random bytes (248 bits)
-   * is safely within range.
+   * Generate a random field element suitable for BN254 scalar field.
+   * Delegates to @protocol-01/privacy-toolkit which uses rejection sampling
+   * to avoid modular bias.
    */
   private randomFieldElement(): bigint {
-    const bytes = new Uint8Array(31);
-    crypto.getRandomValues(bytes);
-    let result = 0n;
-    for (let i = bytes.length - 1; i >= 0; i--) {
-      result = (result << 8n) | BigInt(bytes[i]!);
-    }
-    return result;
+    return toolkitRandomFieldElement();
   }
 
   /**

@@ -1,5 +1,5 @@
 {
-  "name": "@p01/whitelist-sdk",
+  "name": "@protocol-01/whitelist-sdk",
   "version": "0.1.0",
   "description": "Protocol 01 Developer Whitelist SDK",
   "main": "dist/index.js",

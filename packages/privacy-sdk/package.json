@@ -126,6 +126,7 @@
     "@noble/post-quantum": "^0.5.4",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
+    "@protocol-01/privacy-toolkit": "workspace:*",
     "bs58": "^6.0.0",
     "poseidon-lite": "^0.3.0",
     "snarkjs": "^0.7.5",

@@ -96,7 +96,8 @@ export async function sendPrivate(options: SendOptions): Promise<TransferResult>
   } else {
     throw new SpecterError(
       SpecterErrorCode.INVALID_RECIPIENT,
-      'Invalid recipient address format'
+      'Invalid recipient address format. Expected a stealth meta-address (starting with "st:") ' +
+      'or a valid Solana public key (base58-encoded, 32-44 characters).'
     );
   }
 
@@ -311,7 +312,7 @@ export async function sendPublic(
   if (!isValidPublicKey(recipient)) {
     throw new SpecterError(
       SpecterErrorCode.INVALID_RECIPIENT,
-      'Invalid recipient public key'
+      'Invalid recipient public key. Expected a valid Solana public key (base58-encoded, 32-44 characters).'
     );
   }
 

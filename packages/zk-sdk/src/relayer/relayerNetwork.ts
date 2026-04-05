@@ -2,18 +2,18 @@
  * Decentralized Relayer Network
  *
  * DEPRECATED: This module uses HTTP-based relayer endpoints which have been replaced
- * by the on-chain p01_relayer program. Use @p01/specter-sdk relay module for
+ * by the on-chain p01_relayer program. Use @protocol-01/specter-sdk relay module for
  * on-chain relay via the p01_relayer program instead.
  *
  * This file is retained for backward compatibility with external consumers.
  *
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
 
 // Types
-/** @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program */
+/** @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program */
 export interface RelayerInfo {
   id: string;
   name: string;
@@ -27,7 +27,7 @@ export interface RelayerInfo {
   region?: string;
 }
 
-/** @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program */
+/** @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program */
 export interface RelayerHealth {
   relayerId: string;
   isOnline: boolean;
@@ -38,7 +38,7 @@ export interface RelayerHealth {
   balance: number;          // Relayer's SOL balance
 }
 
-/** @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program */
+/** @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program */
 export interface RelayerStats {
   relayerId: string;
   totalTransactions: number;
@@ -47,7 +47,7 @@ export interface RelayerStats {
   uptime: number;           // 0-100
 }
 
-/** @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program */
+/** @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program */
 export interface RelayRequest {
   proof: any;
   publicInputs: string[];
@@ -57,7 +57,7 @@ export interface RelayRequest {
   relayerFeeCommitment?: string;
 }
 
-/** @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program */
+/** @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program */
 export interface RelayResponse {
   success: boolean;
   txId?: string;
@@ -70,14 +70,14 @@ export interface RelayResponse {
 /**
  * Default relayers list.
  * @deprecated HTTP relayers are no longer used. Relay is now handled on-chain via p01_relayer program.
- * Use @p01/specter-sdk relay module instead.
+ * Use @protocol-01/specter-sdk relay module instead.
  */
 const DEFAULT_RELAYERS: RelayerInfo[] = [];
 
 /**
  * Relayer Network Manager
  *
- * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program.
+ * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program.
  * This HTTP-based relayer network is no longer the recommended approach.
  */
 export class RelayerNetwork {
@@ -87,6 +87,11 @@ export class RelayerNetwork {
   private healthCheckInterval: NodeJS.Timeout | null = null;
 
   constructor(customRelayers?: RelayerInfo[]) {
+    console.warn(
+      'RelayerNetwork is deprecated. The HTTP-based relayer network has been replaced by ' +
+      'the on-chain p01_relayer program. Use @protocol-01/specter-sdk relay module instead.'
+    );
+
     // Initialize with default or custom relayers
     const relayersToUse = customRelayers || DEFAULT_RELAYERS;
     for (const relayer of relayersToUse) {
@@ -96,7 +101,7 @@ export class RelayerNetwork {
 
   /**
    * Start periodic health checks
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   startHealthChecks(intervalMs: number = 30000): void {
     this.checkAllRelayers();
@@ -107,7 +112,7 @@ export class RelayerNetwork {
 
   /**
    * Stop health checks
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   stopHealthChecks(): void {
     if (this.healthCheckInterval) {
@@ -118,7 +123,7 @@ export class RelayerNetwork {
 
   /**
    * Check health of all relayers
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   async checkAllRelayers(): Promise<void> {
     const checks = Array.from(this.relayers.values()).map(r =>
@@ -129,7 +134,7 @@ export class RelayerNetwork {
 
   /**
    * Check health of a single relayer
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   async checkRelayerHealth(relayer: RelayerInfo): Promise<RelayerHealth> {
     const startTime = Date.now();
@@ -180,7 +185,7 @@ export class RelayerNetwork {
 
   /**
    * Get all available relayers
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   getRelayers(): RelayerInfo[] {
     return Array.from(this.relayers.values());
@@ -188,7 +193,7 @@ export class RelayerNetwork {
 
   /**
    * Get online relayers only
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   getOnlineRelayers(): RelayerInfo[] {
     return this.getRelayers().filter(r => {
@@ -199,7 +204,7 @@ export class RelayerNetwork {
 
   /**
    * Get relayer by ID
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   getRelayer(id: string): RelayerInfo | undefined {
     return this.relayers.get(id);
@@ -207,7 +212,7 @@ export class RelayerNetwork {
 
   /**
    * Get health for a relayer
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   getHealth(relayerId: string): RelayerHealth | undefined {
     return this.healthCache.get(relayerId);
@@ -215,7 +220,7 @@ export class RelayerNetwork {
 
   /**
    * Select best relayer based on criteria
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   selectBestRelayer(options?: {
     token?: string;
@@ -286,7 +291,7 @@ export class RelayerNetwork {
 
   /**
    * Select random relayer (for privacy)
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   selectRandomRelayer(options?: {
     token?: string;
@@ -323,7 +328,7 @@ export class RelayerNetwork {
 
   /**
    * Submit transaction through a relayer
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   async submitTransaction(
     request: RelayRequest,
@@ -440,7 +445,7 @@ export class RelayerNetwork {
 
   /**
    * Add a custom relayer
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   addRelayer(relayer: RelayerInfo): void {
     this.relayers.set(relayer.id, relayer);
@@ -448,7 +453,7 @@ export class RelayerNetwork {
 
   /**
    * Remove a relayer
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   removeRelayer(relayerId: string): void {
     this.relayers.delete(relayerId);
@@ -458,7 +463,7 @@ export class RelayerNetwork {
 
   /**
    * Get network status summary
-   * @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program
+   * @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program
    */
   getNetworkStatus(): {
     totalRelayers: number;
@@ -494,7 +499,7 @@ export class RelayerNetwork {
 // Singleton instance
 let networkInstance: RelayerNetwork | null = null;
 
-/** @deprecated Use @p01/specter-sdk relay module for on-chain relay via p01_relayer program */
+/** @deprecated Use @protocol-01/specter-sdk relay module for on-chain relay via p01_relayer program */
 export function getRelayerNetwork(): RelayerNetwork {
   if (!networkInstance) {
     networkInstance = new RelayerNetwork();

@@ -14,7 +14,7 @@ export interface PrivacyProviderProps {
  *
  * @example
  * ```tsx
- * import { PrivacyProvider } from '@p01/privacy-sdk/react';
+ * import { PrivacyProvider } from '@protocol-01/privacy-sdk/react';
  *
  * function App() {
  *   return (

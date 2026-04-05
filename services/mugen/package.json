@@ -1,5 +1,5 @@
 {
-  "name": "@p01/mugen-service",
+  "name": "@protocol-01/mugen-service",
   "version": "0.1.0",
   "private": true,
   "type": "module",

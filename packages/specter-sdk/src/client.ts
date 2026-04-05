@@ -20,7 +20,14 @@ import {
   RPC_ENDPOINTS,
   DEFAULT_PROGRAM_ID,
   PROGRAM_IDS,
+  REGISTRY_PROGRAM_IDS,
+  RELAYER_PROGRAM_IDS,
   LAMPORTS_PER_SOL,
+  FEATURES,
+  getEffectiveRpcEndpoint,
+  getCheckedProgramId,
+  isPublicRpcEndpoint,
+  setFeature,
 } from './constants';
 import { createConnection, formatSol, solToLamports } from './utils/helpers';
 
@@ -71,7 +78,7 @@ import { cancelStream, pauseStream, resumeStream } from './streams/cancel';
  */
 export class P01Client {
   private connection: Connection;
-  private config: Required<P01ClientConfig>;
+  private config: Required<Omit<P01ClientConfig, 'features'>>;
   private walletState: WalletState | null = null;
   private externalWallet: WalletAdapter | null = null;
   private scanner: StealthScanner | null = null;
@@ -81,19 +88,47 @@ export class P01Client {
   constructor(config: P01ClientConfig = {}) {
     const cluster = config.cluster || 'devnet';
 
+    // Resolve RPC endpoint: explicit override > custom global > default
+    const rpcEndpoint = config.rpcEndpoint || getEffectiveRpcEndpoint(cluster);
+
+    // Resolve program IDs: explicit override > cluster-based lookup
+    const programId = config.programId || PROGRAM_IDS[cluster];
+    const registryProgramId = config.registryProgramId || REGISTRY_PROGRAM_IDS[cluster];
+    const relayerProgramId = config.relayerProgramId || RELAYER_PROGRAM_IDS[cluster];
+
     this.config = {
       cluster,
-      rpcEndpoint: config.rpcEndpoint || RPC_ENDPOINTS[cluster],
+      rpcEndpoint,
       commitment: config.commitment || 'confirmed',
       debug: config.debug || false,
-      programId: config.programId || PROGRAM_IDS[cluster],
+      programId,
+      registryProgramId,
+      relayerProgramId,
       timeout: config.timeout || 60000,
     };
+
+    // Apply feature flag overrides
+    if (config.features) {
+      for (const [name, enabled] of Object.entries(config.features)) {
+        if (enabled !== undefined) {
+          setFeature(name, enabled);
+        }
+      }
+    }
 
     this.connection = createConnection(
       this.config.rpcEndpoint,
       this.config.commitment
     );
+
+    // Warn when using a public RPC endpoint (rate-limited, not production-ready)
+    if (isPublicRpcEndpoint(this.config.rpcEndpoint)) {
+      console.warn(
+        '[P01 SDK] Using public Solana RPC. For production, provide a custom ' +
+        'rpcEndpoint (Helius, QuickNode, etc.) to avoid rate limits. ' +
+        'Example: new P01Client({ rpcEndpoint: "https://devnet.helius-rpc.com/?api-key=..." })'
+      );
+    }
 
     if (this.config.debug) {
     }
@@ -140,8 +175,16 @@ export class P01Client {
       // Store keypair for basic operations
       (this as any)._keypair = wallet;
     } else {
-      // External wallet adapter
-      this.externalWallet = wallet as WalletAdapter;
+      // External wallet adapter — validate before accepting
+      const adapter = wallet as WalletAdapter;
+      if (!adapter.publicKey || typeof adapter.signTransaction !== 'function') {
+        throw new P01Error(
+          P01ErrorCode.WALLET_NOT_CONNECTED,
+          'Invalid wallet adapter. Must implement { publicKey: PublicKey, signTransaction: (tx) => Promise<Transaction> }. ' +
+          'If using @solana/wallet-adapter, ensure the wallet is connected before passing it to P01Client.connect().'
+        );
+      }
+      this.externalWallet = adapter;
       this.walletState = null;
     }
 
@@ -247,7 +290,8 @@ export class P01Client {
     } catch (error) {
       throw new P01Error(
         P01ErrorCode.RPC_ERROR,
-        'Failed to fetch balance',
+        'Failed to fetch balance: RPC error. Check your rpcEndpoint configuration and network connectivity. ' +
+        `Current endpoint: ${this.config.rpcEndpoint}`,
         error as Error
       );
     }
@@ -607,12 +651,35 @@ export class P01Client {
    */
   setCluster(cluster: Cluster): void {
     this.config.cluster = cluster;
-    this.config.rpcEndpoint = RPC_ENDPOINTS[cluster];
+    this.config.rpcEndpoint = getEffectiveRpcEndpoint(cluster);
     this.config.programId = PROGRAM_IDS[cluster];
+    this.config.registryProgramId = REGISTRY_PROGRAM_IDS[cluster];
+    this.config.relayerProgramId = RELAYER_PROGRAM_IDS[cluster];
     this.connection = createConnection(
       this.config.rpcEndpoint,
       this.config.commitment
     );
+
+    if (isPublicRpcEndpoint(this.config.rpcEndpoint)) {
+      console.warn(
+        '[P01 SDK] Using public Solana RPC. For production, provide a custom ' +
+        'rpcEndpoint (Helius, QuickNode, etc.) to avoid rate limits.'
+      );
+    }
+  }
+
+  /**
+   * Get the registry program ID
+   */
+  getRegistryProgramId(): PublicKey {
+    return this.config.registryProgramId;
+  }
+
+  /**
+   * Get the relayer program ID
+   */
+  getRelayerProgramId(): PublicKey {
+    return this.config.relayerProgramId;
   }
 
   // ============================================================================

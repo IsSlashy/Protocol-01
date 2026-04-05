@@ -1,6 +1,6 @@
 <div align="center">
 
-# @p01/react-native-zk
+# @protocol-01/react-native-zk
 
 **Built by [Protocol 01](https://github.com/IsSlashy/Protocol-01) — The Privacy Layer for Solana**
 
@@ -34,16 +34,47 @@ This approach gives you:
 - **APK injection tool** -- Python script for fast dev cycles without full EAS rebuilds
 - **Expo + bare RN compatible** -- Works with both Expo Asset system and direct file access
 
+## Compatibility
+
+Compatible with **React 18 and React 19**. For React 19, use the hook-based API (`useZKProver` via `ZKProverProvider`) which avoids ref forwarding changes. The ref-based `ZKProver` component also works but the Provider pattern is recommended for new projects.
+
 ## Installation
 
 ```bash
-npm install @p01/react-native-zk react-native-webview
+npm install @protocol-01/react-native-zk react-native-webview
 ```
 
 If using Expo:
 ```bash
 npx expo install react-native-webview expo-asset expo-file-system
 ```
+
+## Expo Managed vs Bare Workflow
+
+| Feature | Expo Managed | Bare Workflow |
+|---------|-------------|---------------|
+| Circuit loading | `expo-asset` + `expo-file-system` | APK assets + `FileReader` |
+| Setup complexity | Low | Medium |
+| Build size impact | Same | Same |
+| Asset registration | `metro.config.js` assetExts | `android/app/src/main/assets/` |
+| Dev cycle | `npx expo run:android` | `npx react-native run-android` |
+| Hot reload | Supported (code only, not circuits) | Supported (code only, not circuits) |
+
+## Circuit Files Quick Start
+
+1. Download your `.wasm` and `.zkey` files (output of `circom` compilation and `snarkjs` trusted setup)
+2. Place in `assets/` (Expo) or `android/app/src/main/assets/` (bare workflow)
+3. Configure `metro.config.js` for `.wasm` and `.zkey` extensions:
+   ```js
+   const config = getDefaultConfig(__dirname);
+   config.resolver.assetExts.push('wasm', 'zkey');
+   module.exports = config;
+   ```
+4. Test:
+   ```ts
+   await loadCircuit('myCircuit', { wasmUri: 'my_circuit.wasm', zkeyUri: 'my_circuit_final.zkey' });
+   const result = await prove('myCircuit', inputs);
+   ```
 
 ## Quick Start
 
@@ -52,7 +83,7 @@ npx expo install react-native-webview expo-asset expo-file-system
 Wrap your app or screen with `ZKProverProvider`, then use the `useZKProver` hook anywhere in the tree.
 
 ```tsx
-import { ZKProverProvider, useZKProver } from '@p01/react-native-zk';
+import { ZKProverProvider, useZKProver } from '@protocol-01/react-native-zk';
 
 // In your app root or screen
 function App() {
@@ -97,7 +128,7 @@ Use the `ZKProver` component directly with a ref, without needing a Provider.
 
 ```tsx
 import { useRef } from 'react';
-import { ZKProver, type ZKProverRef } from '@p01/react-native-zk';
+import { ZKProver, type ZKProverRef } from '@protocol-01/react-native-zk';
 
 function MyScreen() {
   const proverRef = useRef<ZKProverRef>(null);
@@ -152,7 +183,7 @@ module.exports = config;
 ```
 
 ```ts
-import { loadFromExpoAsset } from '@p01/react-native-zk';
+import { loadFromExpoAsset } from '@protocol-01/react-native-zk';
 
 const wasmModule = require('./assets/my_circuit.wasm');
 const zkeyModule = require('./assets/my_circuit_final.zkey');
@@ -178,9 +209,20 @@ adb install -r aligned.apk
 
 This reduces the deploy cycle from 30+ minutes (full EAS build) to 2-3 minutes.
 
-## Performance
+## Performance Benchmarks
 
-Proof generation times on real devices (Groth16, BN128 curve):
+Proof generation times for Protocol 01 circuits (Groth16, BN128 curve):
+
+| Circuit | Constraints | Proof Time (avg) | Memory |
+|---------|------------|-----------------|--------|
+| balance_proof | ~644 | ~2s | ~50MB |
+| confidential_balance | ~1,382 | ~4s | ~80MB |
+| denominated_pool | ~4,273 | ~5s | ~100MB |
+| transfer | ~12,222 | ~8s | ~150MB |
+
+> Approximate values on Pixel 6, Android 14. Times include witness computation and proof generation. Circuit loading (first time) adds 1-3 seconds depending on file size.
+
+### General benchmarks across device classes
 
 | Circuit Size | Device | Time |
 |---|---|---|
@@ -190,8 +232,6 @@ Proof generation times on real devices (Groth16, BN128 curve):
 | ~15,000 constraints | Mid-range Android | ~3.0s |
 | ~15,000 constraints | iPhone 13+ | ~2.0s |
 | ~50,000 constraints | Mid-range Android | ~8.0s |
-
-Times include witness computation and proof generation. Circuit loading (first time) adds 1-3 seconds depending on file size.
 
 ## How It Works
 
@@ -313,11 +353,17 @@ clearCircuitCache(name?: string): void
 
 ## Troubleshooting
 
+**"WebView not loading"** -- Ensure `react-native-webview` version >= 13.0.0 is installed and linked. On Expo, run `npx expo install react-native-webview`. On bare RN, run `cd android && ./gradlew clean` after installing.
+
 **"snarkjs not loaded"** -- The CDN request for snarkjs failed. Check internet connectivity. The WebView needs to fetch `https://cdn.jsdelivr.net/npm/snarkjs@0.7.0/build/snarkjs.min.js` once.
 
 **"Circuit not loaded"** -- Call `loadCircuit()` before `prove()`. Check that your `.wasm` and `.zkey` files are accessible at the specified URIs.
 
-**Proof timeout** -- Large circuits (50k+ constraints) may take longer than the default 3-minute timeout. Increase via `options.timeout`.
+**"Proof takes too long" / Proof timeout** -- Large circuits (50k+ constraints) may take longer than the default 3-minute timeout. Increase via `options.timeout`. For circuits > 15,000 constraints, consider setting `timeout: 300000` (5 minutes).
+
+**"Out of memory"** -- Large circuits may fail on devices with less than 4GB RAM. The transfer circuit (~12,222 constraints) requires approximately 150MB of heap. If your device is memory-constrained, try closing background apps or using a simpler circuit.
+
+**"Circuit file not found"** -- Verify the file exists at the expected path. For Expo, ensure `.wasm` and `.zkey` are listed in `metro.config.js` `assetExts`. For bare RN, check that files exist in `android/app/src/main/assets/`. See the "Circuit Files Quick Start" section above.
 
 **Android file access** -- Ensure `allowFileAccess`, `allowFileAccessFromFileURLs`, and `allowUniversalAccessFromFileURLs` are enabled on the WebView (the library sets these by default).
 
@@ -333,9 +379,9 @@ This library is extracted from [Protocol 01](https://github.com/IsSlashy/Protoco
 
 | Library | Purpose |
 |---------|---------|
-| **@p01/react-native-zk** | Client-side ZK proving on mobile |
-| **@p01/solana-verifier** | On-chain Groth16 verification |
-| **@p01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
-| **@p01/zk-pipeline** | End-to-end guide: circuit -> mobile -> on-chain |
+| **@protocol-01/react-native-zk** | Client-side ZK proving on mobile |
+| **@protocol-01/solana-verifier** | On-chain Groth16 verification |
+| **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
+| **@protocol-01/zk-pipeline** | End-to-end guide: circuit -> mobile -> on-chain |
 
 [Website](https://protocol-01.vercel.app) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH)

@@ -3518,8 +3518,8 @@ export class ZkService {
         return { found: 0, amount: 0, payments: [] };
       }
 
-      // @ts-expect-error -- @p01/specter-sdk is a workspace package not yet linked in mobile
-      const { scanForPayments: sdkScanForPayments } = await import('@p01/specter-sdk');
+      // @ts-expect-error -- @protocol-01/specter-sdk is a workspace package not yet linked in mobile
+      const { scanForPayments: sdkScanForPayments } = await import('@protocol-01/specter-sdk');
 
       const viewingKeyBytes = this.viewingKey!;
       const spendingKeyBytes = bigintToLeBytes(this.spendingKey!);

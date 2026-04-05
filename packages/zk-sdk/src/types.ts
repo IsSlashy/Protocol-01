@@ -189,3 +189,29 @@ export interface NoteScanResult {
   /** Total balance */
   totalBalance: bigint;
 }
+
+/**
+ * Network configuration options for SDK clients.
+ * These can be passed into ShieldedClientConfig or used standalone.
+ */
+export interface NetworkConfig {
+  /**
+   * Solana network to connect to.
+   * Determines which program ID is used by default.
+   * @default 'devnet'
+   */
+  network?: 'devnet' | 'mainnet-beta' | 'localnet';
+
+  /**
+   * Override the program ID directly. Takes precedence over the `network` field.
+   * Use this when deploying a custom instance of the ZK shielded program.
+   */
+  programId?: string;
+
+  /**
+   * Base URL for circuit files (.wasm and .zkey).
+   * When set, the prover will load circuit files from `${circuitBaseUrl}/${filename}`.
+   * @example 'https://cdn.example.com/circuits/v1'
+   */
+  circuitBaseUrl?: string;
+}

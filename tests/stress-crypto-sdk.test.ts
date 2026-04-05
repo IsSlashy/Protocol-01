@@ -1216,9 +1216,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 18. RPC Config (@p01/rpc-config)
+  // 18. RPC Config (@protocol-01/rpc-config)
   // ─────────────────────────────────────────────────────────────
-  describe('18. RPC Config (@p01/rpc-config)', () => {
+  describe('18. RPC Config (@protocol-01/rpc-config)', () => {
     it('getEndpoints returns sorted by priority', () => {
       const eps = getEndpoints('devnet');
       expect(eps.length).to.be.greaterThanOrEqual(1);

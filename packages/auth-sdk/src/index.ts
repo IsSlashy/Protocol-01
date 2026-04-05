@@ -18,5 +18,5 @@ export * from './protocol';
 export { P01AuthClient, type P01AuthClientConfig, type CreateSessionResult } from './client';
 
 // Server SDK (for backend verification)
-export { P01AuthServer, type P01AuthServerConfig } from './server';
+export { P01AuthServer, type P01AuthServerConfig, type SolanaNetwork, type ServerSessionStore } from './server';
 

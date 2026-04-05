@@ -3,47 +3,53 @@ import * as anchor from '@coral-xyz/anchor';
 import { ArciumClient, CIRCUITS, type EncryptedPayload } from '../client';
 
 /**
- * UC6: Private Governance Voting
+ * UC6: Private Governance Voting -- Encrypted Ballot Tallying
  *
- * Encrypted votes → MPC tallies → reveal result only.
- * Individual votes never disclosed.
+ * Encrypted votes are accumulated by MPC; only the final tally is revealed.
+ * Individual votes are never disclosed to any party.
  *
- * Supports:
- * - Binary votes (yes/no)
- * - Multi-option votes (1-of-N)
- * - Weighted votes (token-weighted governance)
+ * Supports binary (yes/no), multi-option (1-of-N), and weighted (token-weighted)
+ * voting. A ballot receipt PDA prevents double-voting.
+ *
+ * **Inputs**: Encrypted vote (option index + weight).
+ * **Output**: Per-option tallies and winner (revealed after deadline).
+ *
+ * @module governance
  */
 
+/** Configuration for creating a new governance proposal. */
 export interface ProposalConfig {
-  /** Unique proposal identifier */
+  /** Unique proposal identifier (arbitrary bytes, typically a hash). */
   proposalId: Uint8Array;
-  /** Number of options (2 for yes/no, N for multi-choice) */
+  /** Number of voting options (2 for yes/no, N for multi-choice). */
   optionCount: number;
-  /** Voting deadline (Unix timestamp) */
+  /** Voting deadline as a Unix timestamp (seconds). */
   deadline: number;
-  /** Authority who can finalize */
+  /** Authority wallet that can finalize the tally. */
   authority: PublicKey;
 }
 
+/** Receipt returned after casting an encrypted vote. */
 export interface VoteReceipt {
-  /** Computation offset (for tracking) */
+  /** Computation offset for tracking this MPC job. */
   computationOffset: anchor.BN;
-  /** Voter's public key */
+  /** Public key of the voter. */
   voter: PublicKey;
-  /** Encrypted vote (opaque to everyone including voter after submission) */
+  /** First ciphertext block of the encrypted vote (opaque after submission). */
   encryptedVote: number[];
-  /** Signature of the vote transaction */
+  /** Transaction signature of the vote submission. */
   signature: string;
 }
 
+/** Finalized tally result with per-option vote counts. */
 export interface TallyResult {
-  /** Vote count per option (revealed after deadline) */
+  /** Vote count per option (index-aligned with proposal options). */
   tallies: bigint[];
-  /** Total votes cast */
+  /** Total votes cast across all options. */
   totalVotes: bigint;
-  /** Winning option index */
+  /** Index of the winning option (highest vote count). */
   winner: number;
-  /** Finalization signature */
+  /** Finalization callback transaction signature. */
   signature: string;
 }
 
@@ -75,7 +81,15 @@ export function getBallotAddress(
 
 /**
  * Create a new governance proposal.
- * Initializes encrypted accumulator in MXE state (all zeros).
+ *
+ * Initializes the encrypted accumulator in MXE state (all zeros).
+ * The proposal PDA tracks metadata; the MPC accumulator holds encrypted tallies.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param config - Proposal configuration (ID, options, deadline, authority).
+ * @returns Transaction signature of the proposal creation.
+ * @throws {Error} "Governance MPC computation failed: ..." if creation fails.
  */
 export async function createProposal(
   client: ArciumClient,
@@ -84,32 +98,43 @@ export async function createProposal(
 ): Promise<string> {
   const [proposalAddress] = getProposalAddress(client.programId, config.proposalId);
 
-  const sig = await program.methods
-    .createProposal(
-      Array.from(config.proposalId),
-      config.optionCount,
-      new anchor.BN(config.deadline)
-    )
-    .accountsPartial({
-      proposal: proposalAddress,
-      authority: config.authority,
-      payer: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  try {
+    const sig = await program.methods
+      .createProposal(
+        Array.from(config.proposalId),
+        config.optionCount,
+        new anchor.BN(config.deadline)
+      )
+      .accountsPartial({
+        proposal: proposalAddress,
+        authority: config.authority,
+        payer: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
 
-  return sig;
+    return sig;
+  } catch (err) {
+    throw new Error(
+      `Governance MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 }
 
 /**
- * Cast an encrypted vote.
+ * Cast an encrypted vote on a proposal.
  *
- * Flow:
- * 1. Voter encrypts their choice (option index) with Arcium shared secret
- * 2. Submits to P01 Arcium program
- * 3. Program checks: no double-vote (ballot PDA), deadline not passed
- * 4. CPIs to Arcium → MPC adds encrypted vote to accumulator
- * 5. Accumulator state updated (Enc<Mxe, T>) — only MPC nodes can read
- * 6. Receipt PDA created to prevent re-voting
+ * The voter encrypts their choice (option index + weight) with the
+ * Arcium shared secret. MPC adds it to the accumulator without
+ * decrypting any individual vote. A ballot PDA prevents double-voting.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param proposalId - The proposal to vote on.
+ * @param optionIndex - Which option to vote for (0-indexed).
+ * @param weight - Vote weight (default 1n for unweighted voting).
+ * @returns Vote receipt with encrypted vote and signature.
+ * @throws {Error} "Governance MPC computation failed: ..." if the vote fails.
  */
 export async function castVote(
   client: ArciumClient,
@@ -126,22 +151,30 @@ export async function castVote(
   const [proposalAddress] = getProposalAddress(client.programId, proposalId);
   const [ballotAddress] = getBallotAddress(client.programId, proposalId, client.wallet.publicKey);
 
-  const sig = await program.methods
-    .castVote(
-      computationOffset,
-      Array.from(proposalId),
-      Array.from(payload.ciphertexts[0]),
-      Array.from(payload.ciphertexts[1]),
-      Array.from(payload.publicKey),
-      client.nonceToU128(payload.nonce)
-    )
-    .accountsPartial({
-      ...accounts,
-      proposal: proposalAddress,
-      ballot: ballotAddress,
-      voter: client.wallet.publicKey,
-    })
-    .rpc({ commitment: 'confirmed' });
+  let sig: string;
+  try {
+    sig = await program.methods
+      .castVote(
+        computationOffset,
+        Array.from(proposalId),
+        Array.from(payload.ciphertexts[0]),
+        Array.from(payload.ciphertexts[1]),
+        Array.from(payload.publicKey),
+        client.nonceToU128(payload.nonce)
+      )
+      .accountsPartial({
+        ...accounts,
+        proposal: proposalAddress,
+        ballot: ballotAddress,
+        voter: client.wallet.publicKey,
+      })
+      .rpc({ commitment: 'confirmed' });
+  } catch (err) {
+    throw new Error(
+      `Governance MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+    );
+  }
 
   return {
     computationOffset,
@@ -152,9 +185,16 @@ export async function castVote(
 }
 
 /**
- * Finalize voting and reveal tally.
- * Only callable by authority after deadline.
- * MPC reveals accumulated totals per option.
+ * Finalize voting and reveal the tally.
+ *
+ * Only callable by the proposal authority after the deadline.
+ * MPC reveals the accumulated totals per option via threshold decryption.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param proposalId - The proposal to finalize.
+ * @returns Per-option tallies, total votes, winner index, and signature.
+ * @throws {Error} "Governance MPC computation failed: ..." if finalization fails.
  */
 export async function finalizeTally(
   client: ArciumClient,
@@ -200,20 +240,31 @@ export async function finalizeTally(
 // UC6b: Binary Voting (optimized — 2 MPC comparisons instead of 8)
 // ============================================================================
 
+/** Finalized binary (yes/no) tally result. */
 export interface BinaryTallyResult {
-  /** Votes for option 0 (no) */
+  /** Votes for option 0 ("no"). */
   no: bigint;
-  /** Votes for option 1 (yes) */
+  /** Votes for option 1 ("yes"). */
   yes: bigint;
-  /** Total votes cast */
+  /** Total votes cast (no + yes). */
   totalVotes: bigint;
-  /** Finalization signature */
+  /** Finalization callback transaction signature. */
   signature: string;
 }
 
 /**
  * Cast an encrypted binary vote (yes/no).
- * Uses private_vote_binary circuit — 75% fewer MPC comparisons.
+ *
+ * Uses the `private_vote_binary` circuit for 75% fewer MPC comparisons
+ * compared to the general multi-option circuit.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param proposalId - The proposal to vote on.
+ * @param vote - `true` for yes, `false` for no.
+ * @param weight - Vote weight (default 1n).
+ * @returns Vote receipt.
+ * @throws {Error} "Governance MPC computation failed: ..." if the vote fails.
  */
 export async function castBinaryVote(
   client: ArciumClient,
@@ -255,8 +306,15 @@ export async function castBinaryVote(
 }
 
 /**
- * Finalize binary voting and reveal tally.
- * Only callable by authority after deadline.
+ * Finalize binary voting and reveal the yes/no tally.
+ *
+ * Only callable by the proposal authority after the deadline.
+ *
+ * @param client - Initialized {@link ArciumClient}.
+ * @param program - Anchor program instance for `p01_arcium`.
+ * @param proposalId - The proposal to finalize.
+ * @returns Binary tally (yes, no, total) and finalization signature.
+ * @throws {Error} "Governance MPC computation failed: ..." if finalization fails.
  */
 export async function finalizeBinaryTally(
   client: ArciumClient,

@@ -1,6 +1,20 @@
 /**
- * Specter Protocol Typography System
- * Clean, modern type scale for dark interfaces
+ * Protocol 01 Typography System
+ *
+ * Clean, modern type scale for dark interfaces. Includes font families,
+ * sizes (modular 1.25 scale), weights, line heights, letter spacings,
+ * and pre-composed text styles for common use cases.
+ *
+ * Platform: web + mobile (numeric values, no CSS units)
+ *
+ * @example
+ * ```ts
+ * import { fontFamilies, fontSizes, textStyles } from '@protocol-01/ui';
+ *
+ * fontFamilies.mono;        // '"SF Mono", "Fira Code", ...'
+ * fontSizes.lg;             // 18
+ * textStyles.h1;            // { fontFamily, fontSize, fontWeight, lineHeight, letterSpacing }
+ * ```
  */
 
 // ═══════════════════════════════════════════════════════════════

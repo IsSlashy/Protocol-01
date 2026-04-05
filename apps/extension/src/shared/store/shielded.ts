@@ -17,7 +17,7 @@ import {
   deriveSharedSecret,
   computeViewTag,
   generateEphemeralKeypair,
-} from '@p01/specter-sdk';
+} from '@protocol-01/specter-sdk';
 import { sha256 } from '@noble/hashes/sha256';
 
 // ============= STEALTH ADDRESS UTILITIES (Unified SDK v2 + Legacy v1) =============
@@ -1032,7 +1032,7 @@ export const useShieldedStore = create<ShieldedState>()(
           // Scan on-chain transactions directly — no relayer dependency.
           // Uses the SDK's StealthIndexer for batched signature fetching,
           // view-tag quick-rejection, and instruction data parsing.
-          const { scanForPayments } = await import('@p01/specter-sdk');
+          const { scanForPayments } = await import('@protocol-01/specter-sdk');
           const { network: net } = getWalletData();
           const conn = getConnection(net);
 

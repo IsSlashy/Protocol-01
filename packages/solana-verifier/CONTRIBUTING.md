@@ -1,4 +1,4 @@
-# Contributing to @p01/solana-verifier
+# Contributing to @protocol-01/solana-verifier
 
 Thanks for your interest in contributing.
 

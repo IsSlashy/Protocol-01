@@ -56,9 +56,18 @@ export async function submitRelayJob(
     fetchActiveRelayers(connection, programId),
   ]);
 
-  if (!config) throw new Error('Relayer config not initialized');
-  if (!config.isActive) throw new Error('Relayer protocol is paused');
-  if (relayers.length === 0) throw new Error('No active relayers available');
+  if (!config) throw new Error(
+    'Relayer config not initialized. The relayer program may not be deployed on this network. ' +
+    'Ensure ENABLE_RELAYER feature flag is enabled and you are on devnet.'
+  );
+  if (!config.isActive) throw new Error(
+    'Relayer protocol is currently paused by the protocol authority. ' +
+    'Try again later or use direct transactions instead.'
+  );
+  if (relayers.length === 0) throw new Error(
+    'No active relayers available on this network. The relay feature requires at least one ' +
+    'staked relayer node. Ensure ENABLE_RELAYER feature flag is enabled and you are on devnet.'
+  );
 
   // 2. Generate job ID
   const jobId = generateJobId();
@@ -69,7 +78,10 @@ export async function submitRelayJob(
     selectedRelayer = relayers.find(
       (r) => r.address.equals(relayerOverride),
     );
-    if (!selectedRelayer) throw new Error('Specified relayer not found or inactive');
+    if (!selectedRelayer) throw new Error(
+      `Specified relayer ${relayerOverride.toBase58()} not found or inactive. ` +
+      'Use fetchActiveRelayers() to list available relayers, or omit relayerOverride for automatic selection.'
+    );
   } else {
     const { blockhash } = await connection.getLatestBlockhash();
     const result = selectRelayer(relayers, blockhash, jobId);

@@ -129,6 +129,30 @@ export class CircuitLoader {
     return this.cache.get(label);
   }
 
+  /**
+   * List all circuit files required by the SDK.
+   *
+   * Use this to verify you have all necessary files before initializing
+   * the prover.
+   *
+   * @returns Array of required circuit filenames
+   *
+   * @example
+   * ```ts
+   * const files = CircuitLoader.listRequiredCircuits();
+   * // ['confidential_balance.wasm', 'confidential_balance_final.zkey',
+   * //  'balance_proof.wasm', 'balance_proof_final.zkey']
+   * ```
+   */
+  static listRequiredCircuits(): string[] {
+    return [
+      'confidential_balance.wasm',
+      'confidential_balance_final.zkey',
+      'balance_proof.wasm',
+      'balance_proof_final.zkey',
+    ];
+  }
+
   // -------------------------------------------------------------------------
   // Internal loading logic
   // -------------------------------------------------------------------------
@@ -171,11 +195,21 @@ export class CircuitLoader {
     file: 'wasm' | 'zkey',
     onProgress?: ProgressCallback,
   ): Promise<Uint8Array> {
-    const response = await fetch(url);
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch (err) {
+      throw new Error(
+        `Circuit files not found at '${url}'. Set circuitBaseUrl in ClientProver config ` +
+        `or download from https://github.com/protocol-01/circuits. ` +
+        `Network error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
     if (!response.ok) {
       throw new Error(
-        `Failed to load circuit file from ${url}: HTTP ${response.status} ${response.statusText}`
+        `Circuit files not found at '${url}'. HTTP ${response.status} ${response.statusText}. ` +
+        `Set circuitBaseUrl in ClientProver config or download from https://github.com/protocol-01/circuits`
       );
     }
 
@@ -235,9 +269,18 @@ export class CircuitLoader {
       onProgress?.({ circuit, file, loaded: data.length, total: data.length, done: true });
       return data;
     } catch {
-      // If fs read fails (e.g., path doesn't exist yet), return path string.
-      // snarkjs will handle the path natively in Node.
-      return filePath;
+      // Check if file exists before falling back
+      try {
+        const fs = await import('fs');
+        fs.accessSync(filePath);
+        // File exists but couldn't be read — return path string for snarkjs
+        return filePath;
+      } catch {
+        throw new Error(
+          `Circuit files not found at '${filePath}'. Set circuitBaseUrl in ClientProver config ` +
+          `or download from https://github.com/protocol-01/circuits`
+        );
+      }
     }
   }
 }

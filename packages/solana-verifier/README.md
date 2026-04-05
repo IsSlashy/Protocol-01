@@ -1,6 +1,6 @@
 <div align="center">
 
-# @p01/solana-verifier
+# @protocol-01/solana-verifier
 
 **Built by [Protocol 01](https://github.com/IsSlashy/Protocol-01) — The Privacy Layer for Solana**
 
@@ -152,9 +152,9 @@ This library is extracted from [Protocol 01](https://github.com/IsSlashy/Protoco
 
 | Library | Purpose |
 |---------|---------|
-| **@p01/react-native-zk** | Client-side ZK proving on mobile |
-| **@p01/solana-verifier** | On-chain Groth16 verification |
-| **@p01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
-| **@p01/zk-pipeline** | End-to-end guide: circuit → mobile → on-chain |
+| **@protocol-01/react-native-zk** | Client-side ZK proving on mobile |
+| **@protocol-01/solana-verifier** | On-chain Groth16 verification |
+| **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
+| **@protocol-01/zk-pipeline** | End-to-end guide: circuit → mobile → on-chain |
 
 [Website](https://protocol-01.vercel.app) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH)

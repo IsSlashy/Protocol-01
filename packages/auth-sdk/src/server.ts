@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { P01AuthServer } from '@p01/auth-sdk/server';
+ * import { P01AuthServer } from '@protocol-01/auth-sdk/server';
  *
  * const auth = new P01AuthServer({
  *   serviceId: 'my-service',
@@ -35,19 +35,97 @@ import {
 } from './types';
 import { createSignMessage, isTimestampValid } from './protocol';
 
+export type SolanaNetwork = 'mainnet-beta' | 'devnet' | 'testnet' | 'localnet';
+
+const NETWORK_RPC_URLS: Record<SolanaNetwork, string> = {
+  'mainnet-beta': 'https://api.mainnet-beta.solana.com',
+  devnet: 'https://api.devnet.solana.com',
+  testnet: 'https://api.testnet.solana.com',
+  localnet: 'http://127.0.0.1:8899',
+};
+
 export interface P01AuthServerConfig {
-  /** Your service ID */
+  /** Your service ID (must be non-empty) */
   serviceId: string;
   /** SPL token mint for subscription (optional) */
   subscriptionMint?: string;
-  /** Solana RPC URL */
+  /**
+   * Solana RPC URL. Defaults to mainnet-beta.
+   * For devnet testing, pass `rpcUrl: 'https://api.devnet.solana.com'`
+   * or use the `network` option instead.
+   */
   rpcUrl?: string;
+  /**
+   * Solana network to connect to. Auto-selects the right public RPC URL.
+   * Ignored if `rpcUrl` is explicitly provided.
+   *
+   * @example
+   * ```typescript
+   * // Quick devnet setup:
+   * const auth = new P01AuthServer({
+   *   serviceId: 'my-service',
+   *   network: 'devnet',
+   * });
+   * ```
+   */
+  network?: SolanaNetwork;
   /** Maximum age of auth timestamp (default: 60s) */
   maxTimestampAge?: number;
   /** Session store for multi-server setups */
   sessionStore?: ServerSessionStore;
 }
 
+/**
+ * Session store interface for multi-server setups.
+ *
+ * The default in-memory store works for single-server deployments.
+ * For production, implement this interface with a persistent store.
+ *
+ * @example Redis implementation:
+ * ```typescript
+ * import { createClient } from 'redis';
+ *
+ * const redis = createClient();
+ * const sessionStore: ServerSessionStore = {
+ *   async get(sessionId) {
+ *     const data = await redis.get(`p01:session:${sessionId}`);
+ *     return data ? JSON.parse(data) : null;
+ *   },
+ *   async set(session) {
+ *     const ttl = Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
+ *     await redis.set(`p01:session:${session.sessionId}`, JSON.stringify(session), { EX: ttl });
+ *   },
+ *   async delete(sessionId) {
+ *     await redis.del(`p01:session:${sessionId}`);
+ *   },
+ * };
+ * ```
+ *
+ * @example PostgreSQL implementation:
+ * ```typescript
+ * import { Pool } from 'pg';
+ *
+ * const pool = new Pool();
+ * const sessionStore: ServerSessionStore = {
+ *   async get(sessionId) {
+ *     const { rows } = await pool.query(
+ *       'SELECT data FROM p01_sessions WHERE id = $1 AND expires_at > NOW()',
+ *       [sessionId]
+ *     );
+ *     return rows[0]?.data ?? null;
+ *   },
+ *   async set(session) {
+ *     await pool.query(
+ *       'INSERT INTO p01_sessions (id, data, expires_at) VALUES ($1, $2, $3) ON CONFLICT (id) DO UPDATE SET data = $2',
+ *       [session.sessionId, session, new Date(session.expiresAt)]
+ *     );
+ *   },
+ *   async delete(sessionId) {
+ *     await pool.query('DELETE FROM p01_sessions WHERE id = $1', [sessionId]);
+ *   },
+ * };
+ * ```
+ */
 export interface ServerSessionStore {
   get(sessionId: string): Promise<AuthSession | null>;
   set(session: AuthSession): Promise<void>;
@@ -62,10 +140,19 @@ export class P01AuthServer {
   private connection: Connection | null = null;
 
   constructor(config: P01AuthServerConfig) {
+    if (!config.serviceId) {
+      throw new Error('[P01Auth] serviceId is required and must be non-empty');
+    }
+
+    // Resolve RPC URL: explicit rpcUrl > network shorthand > mainnet default
+    const resolvedRpcUrl =
+      config.rpcUrl ??
+      (config.network ? NETWORK_RPC_URLS[config.network] : NETWORK_RPC_URLS['mainnet-beta']);
+
     this.config = {
       maxTimestampAge: 60000,
-      rpcUrl: 'https://api.mainnet-beta.solana.com',
       ...config,
+      rpcUrl: resolvedRpcUrl,
     };
 
     if (this.config.subscriptionMint) {
@@ -74,13 +161,38 @@ export class P01AuthServer {
   }
 
   /**
-   * Verify an authentication callback
+   * Verify an authentication callback from the mobile app.
+   *
+   * @param response - The auth response received at your callback URL
+   * @param session - Optional session object (if not using sessionStore)
+   * @returns Verification result with wallet address on success
+   *
+   * @throws Never throws -- returns `{ success: false, error }` on failure.
+   * Common errors:
+   * - `"Timestamp expired or invalid"` -- the auth response is too old (> maxTimestampAge)
+   * - `"Invalid signature"` -- the Ed25519 signature does not match
+   * - `"Subscription not active"` -- the wallet does not hold the required token
    */
   async verifyCallback(
     response: AuthResponse,
     session?: AuthSession
   ): Promise<VerificationResult> {
     try {
+      // Validate required callback fields
+      if (!response || !response.sessionId || !response.wallet || !response.signature || !response.publicKey) {
+        return {
+          success: false,
+          error: 'Invalid callback: missing required fields (sessionId, wallet, signature, publicKey)',
+        };
+      }
+
+      if (typeof response.timestamp !== 'number' || response.timestamp <= 0) {
+        return {
+          success: false,
+          error: 'Invalid callback: timestamp must be a positive number',
+        };
+      }
+
       // Verify timestamp is recent
       if (!isTimestampValid(response.timestamp, this.config.maxTimestampAge)) {
         return { success: false, error: 'Timestamp expired or invalid' };

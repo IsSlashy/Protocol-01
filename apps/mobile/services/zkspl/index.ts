@@ -1,7 +1,7 @@
 /**
  * ZkSPL Service for Mobile
  *
- * Wraps the @p01/zkspl-sdk client for use in the React Native mobile app.
+ * Wraps the @protocol-01/zkspl-sdk client for use in the React Native mobile app.
  * Handles wallet integration, spending key derivation, and state persistence
  * via AsyncStorage.
  */

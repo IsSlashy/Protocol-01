@@ -1,6 +1,14 @@
 import { poseidon2, poseidon4 } from 'poseidon-lite';
 import type { FieldElement } from './types';
 
+function validateBigint(value: unknown, name: string, fnName: string): asserts value is bigint {
+  if (typeof value !== 'bigint') {
+    throw new TypeError(
+      `${fnName}: ${name} must be a bigint, got ${typeof value}`,
+    );
+  }
+}
+
 /**
  * Create a note commitment using Poseidon hash.
  * commitment = Poseidon(nullifierPreimage, secret, epoch, tokenIdentifier)
@@ -17,6 +25,10 @@ export function createCommitment(
   epoch: FieldElement,
   tokenIdentifier: FieldElement,
 ): FieldElement {
+  validateBigint(nullifierPreimage, 'nullifierPreimage', 'createCommitment');
+  validateBigint(secret, 'secret', 'createCommitment');
+  validateBigint(epoch, 'epoch', 'createCommitment');
+  validateBigint(tokenIdentifier, 'tokenIdentifier', 'createCommitment');
   return poseidon4([nullifierPreimage, secret, epoch, tokenIdentifier]);
 }
 
@@ -31,6 +43,8 @@ export function computeNullifier(
   nullifierPreimage: FieldElement,
   secret: FieldElement,
 ): FieldElement {
+  validateBigint(nullifierPreimage, 'nullifierPreimage', 'computeNullifier');
+  validateBigint(secret, 'secret', 'computeNullifier');
   return poseidon2([nullifierPreimage, secret]);
 }
 
@@ -48,6 +62,11 @@ export function createBalanceCommitment(
   ownerPubkey: FieldElement,
   tokenMint: FieldElement,
 ): FieldElement {
+  validateBigint(balance, 'balance', 'createBalanceCommitment');
+  validateBigint(salt, 'salt', 'createBalanceCommitment');
+  validateBigint(nonce, 'nonce', 'createBalanceCommitment');
+  validateBigint(ownerPubkey, 'ownerPubkey', 'createBalanceCommitment');
+  validateBigint(tokenMint, 'tokenMint', 'createBalanceCommitment');
   const augmentedSalt = poseidon2([salt, nonce]);
   return poseidon4([balance, augmentedSalt, ownerPubkey, tokenMint]);
 }

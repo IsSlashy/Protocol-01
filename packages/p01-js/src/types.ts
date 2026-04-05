@@ -44,7 +44,7 @@ export interface MerchantConfig {
   defaultToken?: SupportedToken;
   /** Network to use */
   network?: 'devnet' | 'mainnet-beta';
-  /** Custom RPC endpoint. Consider using @p01/rpc-config for managed fallback. */
+  /** Custom RPC endpoint. Consider using @protocol-01/rpc-config for managed fallback. */
   rpcEndpoint?: string;
   /** Request timeout in milliseconds */
   timeout?: number;

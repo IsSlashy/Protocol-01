@@ -1,15 +1,15 @@
 {
-  "name": "@p01/web",
+  "name": "@protocol-01/web",
   "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "pnpm --filter @p01/rpc-config build && next build",
+    "build": "pnpm --filter @protocol-01/rpc-config build && next build",
     "start": "next start",
     "test": "vitest run"
   },
   "dependencies": {
-    "@p01/rpc-config": "workspace:*",
+    "@protocol-01/rpc-config": "workspace:*",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-adapter-react-ui": "^0.9.39",

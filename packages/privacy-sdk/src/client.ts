@@ -34,7 +34,7 @@ import { MugenExchangeModule } from './modules/exchange';
  *
  * @example
  * ```typescript
- * import { PrivacySDK } from '@p01/privacy-sdk';
+ * import { PrivacySDK } from '@protocol-01/privacy-sdk';
  *
  * const sdk = new PrivacySDK({
  *   connection: new Connection('https://api.devnet.solana.com'),
@@ -102,11 +102,36 @@ export class PrivacySDK {
 
     this.connection = config.connection;
     this.wallet = config.wallet;
+
+    if (!config.network) {
+      console.warn(
+        '[Protocol01] No network specified. Defaulting to devnet. Set network explicitly for production: new PrivacySDK({ network: "mainnet-beta" })',
+      );
+    }
     this.network = config.network ?? 'devnet';
+
     this.programIds = {
       ...PROGRAM_IDS[this.network],
       ...config.programIds,
     };
+
+    // Validate that mainnet does not use placeholder program IDs
+    if (this.network === 'mainnet') {
+      const PLACEHOLDER = '11111111111111111111111111111111';
+      const undeployed: string[] = [];
+      for (const [name, id] of Object.entries(this.programIds)) {
+        if ((id as PublicKey).toBase58() === PLACEHOLDER) {
+          undeployed.push(name);
+        }
+      }
+      if (undeployed.length > 0) {
+        throw new PrivacyError(
+          PrivacyErrorCode.INVALID_CONFIG,
+          `Cannot use mainnet with undeployed programs. The following modules are not yet deployed on mainnet: ${undeployed.join(', ')}. ` +
+          `Either switch to devnet, or provide custom programIds for these modules.`,
+        );
+      }
+    }
 
     const resolveToken = this.resolveToken.bind(this);
 
