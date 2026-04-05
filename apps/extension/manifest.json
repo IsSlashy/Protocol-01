@@ -24,7 +24,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://protocol-01.vercel.app/*", "https://mugen-exchange.vercel.app/*", "https://*.mugen-exchange.vercel.app/*", "http://localhost:*/*"],
+      "matches": ["https://protocol-01.dev/*", "https://mugen-exchange.vercel.app/*", "https://*.mugen-exchange.vercel.app/*", "http://localhost:*/*"],
       "js": ["src/content/index.ts"],
       "run_at": "document_start"
     }
@@ -32,7 +32,7 @@
   "web_accessible_resources": [
     {
       "resources": ["inject.js", "polyfills.js", "circuits/*"],
-      "matches": ["https://protocol-01.vercel.app/*", "https://mugen-exchange.vercel.app/*", "https://*.mugen-exchange.vercel.app/*", "http://localhost:*/*"]
+      "matches": ["https://protocol-01.dev/*", "https://mugen-exchange.vercel.app/*", "https://*.mugen-exchange.vercel.app/*", "http://localhost:*/*"]
     }
   ],
   "permissions": [

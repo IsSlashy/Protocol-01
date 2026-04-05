@@ -428,15 +428,29 @@ export default function VoidPage() {
         opacity: 0.2 + corruption * 0.4,
       }} />
 
-      {/* ── Music iframe — plays from the start alongside video ── */}
-      <iframe
-        src="https://www.youtube.com/embed/Ub5Wy8IFRWM?autoplay=1&loop=1&playlist=Ub5Wy8IFRWM&controls=0&showinfo=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&start=0"
-        allow="autoplay; encrypted-media"
-        className="absolute pointer-events-none"
-        style={{ width: 1, height: 1, opacity: 0 }}
-        tabIndex={-1}
+      {/* ── Music — local mp3, starts on first interaction ── */}
+      <audio
+        ref={(el) => {
+          if (!el) return;
+          (audioRef as any).current = el;
+          el.loop = true;
+          el.volume = 0.5;
+          // Try autoplay immediately
+          el.play().catch(() => {
+            // Autoplay blocked — wait for first interaction
+            const startMusic = () => {
+              el.play().catch(() => {});
+              document.removeEventListener('click', startMusic);
+              document.removeEventListener('touchstart', startMusic);
+            };
+            document.addEventListener('click', startMusic, { once: true });
+            document.addEventListener('touchstart', startMusic, { once: true });
+          });
+        }}
+        src="/void-music.mp3"
+        preload="auto"
+        style={{ display: 'none' }}
       />
-      <audio ref={audioRef} style={{ display: 'none' }} />
 
       {phase === 'video' ? (
         <>

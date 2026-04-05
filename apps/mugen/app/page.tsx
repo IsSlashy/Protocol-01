@@ -263,7 +263,7 @@ export default function LandingPage() {
                 animation: 'fade-in-up-hero 0.6s ease-out 0.2s both',
               }}>
                 The zero-knowledge payment system behind{' '}
-                <a href="https://protocol-01.vercel.app" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontWeight: 600, textDecoration: 'none' }}>Protocol 01</a>.
+                <a href="https://protocol-01.dev" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', fontWeight: 600, textDecoration: 'none' }}>Protocol 01</a>.
                 Peer-to-peer. No KYC. No identity stored. Crypto arrives at an address only you control.
               </p>
 
@@ -286,7 +286,7 @@ export default function LandingPage() {
                   <ArrowRight size={16} />
                 </Link>
                 <a
-                  href="https://protocol-01.vercel.app"
+                  href="https://protocol-01.dev"
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
@@ -432,7 +432,7 @@ export default function LandingPage() {
                 Mugen is integrated directly into the Protocol 01 mobile app and browser extension. Buy crypto privately, right where you manage your wallet.
               </p>
               <a
-                href="https://protocol-01.vercel.app"
+                href="https://protocol-01.dev"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{

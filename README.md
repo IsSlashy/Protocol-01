@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://protocol-01.vercel.app">Website</a> &middot;
-  <a href="https://protocol-01.vercel.app/docs">Documentation</a> &middot;
+  <a href="https://protocol-01.dev">Website</a> &middot;
+  <a href="https://protocol-01.dev/docs">Documentation</a> &middot;
   <a href="https://x.com/Protocol01_">Twitter/X</a> &middot;
   <a href="https://discord.gg/KfmhPFAHNH">Discord</a>
 </p>
@@ -675,10 +675,10 @@ These libraries are used in production by Protocol 01. Separate permissive licen
 
 | | |
 |---|---|
-| Website | [protocol-01.vercel.app](https://protocol-01.vercel.app) |
-| Design Document | [protocol-01.vercel.app/docs](https://protocol-01.vercel.app/docs) |
-| SDK Demo | [protocol-01.vercel.app/sdk-demo](https://protocol-01.vercel.app/sdk-demo) |
-| Roadmap | [protocol-01.vercel.app/roadmap](https://protocol-01.vercel.app/roadmap) |
+| Website | [protocol-01.dev](https://protocol-01.dev) |
+| Design Document | [protocol-01.dev/docs](https://protocol-01.dev/docs) |
+| SDK Demo | [protocol-01.dev/sdk-demo](https://protocol-01.dev/sdk-demo) |
+| Roadmap | [protocol-01.dev/roadmap](https://protocol-01.dev/roadmap) |
 | Twitter/X | [@Protocol01_](https://x.com/Protocol01_) |
 | Discord | [discord.gg/KfmhPFAHNH](https://discord.gg/KfmhPFAHNH) |
 | GitHub | [IsSlashy/Protocol-01](https://github.com/IsSlashy/Protocol-01) |

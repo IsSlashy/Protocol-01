@@ -414,7 +414,7 @@ type MessagePayload = {
 // Trusted P01 domains — auto-connect without approval popup
 const TRUSTED_ORIGINS = [
   'https://mugen-exchange.vercel.app',
-  'https://protocol-01.vercel.app',
+  'https://protocol-01.dev',
   'http://localhost:3000',
   'http://localhost:3001',
 ];
