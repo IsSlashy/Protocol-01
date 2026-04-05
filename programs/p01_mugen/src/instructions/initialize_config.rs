@@ -16,6 +16,10 @@ pub struct InitConfigParams {
     pub p01_fee_share: u16,
     /// Mugen share in bps out of 10000 (e.g. 6500 = 65%).
     pub mugen_fee_share: u16,
+    /// Noise fund wallet (auto-feeds noise wallets from trade fees).
+    pub noise_fund_wallet: Pubkey,
+    /// Noise fund share in bps out of 10000 (e.g. 1500 = 15%).
+    pub noise_fee_share: u16,
     pub min_trade_amount: u64,
     pub max_trade_amount: u64,
     pub escrow_timeout: i64,
@@ -45,9 +49,9 @@ pub fn handler(ctx: Context<InitializeConfig>, params: InitConfigParams) -> Resu
         params.min_trade_amount < params.max_trade_amount,
         MugenError::InvalidTradeLimits,
     );
-    // Shares must sum to <= 10000
+    // Shares must sum to <= 10000 (remainder goes to treasury)
     require!(
-        params.p01_fee_share + params.mugen_fee_share <= 10000,
+        params.p01_fee_share + params.mugen_fee_share + params.noise_fee_share <= 10000,
         MugenError::InvalidFeeBps,
     );
 
@@ -59,6 +63,8 @@ pub fn handler(ctx: Context<InitializeConfig>, params: InitConfigParams) -> Resu
     config.treasury_wallet = params.treasury_wallet;
     config.p01_fee_share = params.p01_fee_share;
     config.mugen_fee_share = params.mugen_fee_share;
+    config.noise_fund_wallet = params.noise_fund_wallet;
+    config.noise_fee_share = params.noise_fee_share;
     config.min_trade_amount = params.min_trade_amount;
     config.max_trade_amount = params.max_trade_amount;
     config.escrow_timeout = params.escrow_timeout;
@@ -69,12 +75,14 @@ pub fn handler(ctx: Context<InitializeConfig>, params: InitConfigParams) -> Resu
     config.is_active = true;
     config.bump = ctx.bumps.config;
 
+    let treasury_share = 10000 - params.p01_fee_share - params.mugen_fee_share - params.noise_fee_share;
     msg!(
-        "Mugen Exchange initialized — fee: {} bps, split: P01 {}% / Mugen {}% / Treasury {}%",
+        "Mugen Exchange initialized — fee: {} bps, split: P01 {}% / Mugen {}% / Noise {}% / Treasury {}%",
         params.fee_bps,
         params.p01_fee_share / 100,
         params.mugen_fee_share / 100,
-        (10000 - params.p01_fee_share - params.mugen_fee_share) / 100,
+        params.noise_fee_share / 100,
+        treasury_share / 100,
     );
     Ok(())
 }

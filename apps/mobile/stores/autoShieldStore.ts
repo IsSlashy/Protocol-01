@@ -58,6 +58,10 @@ export interface PendingReceiveAddress {
   status: 'pending' | 'funded' | 'shielding' | 'shielded';
   /** Detected balance in lamports (set when funded) */
   balanceLamports?: number;
+  /** Source of funds — 'receive' (manual), 'mugen' (P-01 Network buy), 'moonpay' */
+  source?: 'receive' | 'mugen' | 'moonpay';
+  /** Expected amount in lamports (for buy tracking) */
+  expectedLamports?: number;
 }
 
 interface AutoShieldState {

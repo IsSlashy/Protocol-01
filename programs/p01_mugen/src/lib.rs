@@ -70,4 +70,15 @@ pub mod p01_mugen {
     pub fn expire_escrow(ctx: Context<ExpireEscrow>) -> Result<()> {
         instructions::expire_escrow::handler(ctx)
     }
+
+    /// Close the config account (authority only, devnet migration).
+    pub fn close_config(ctx: Context<CloseConfig>) -> Result<()> {
+        instructions::close_config::handler(ctx)
+    }
+
+    /// Initialize an anonymous reputation PDA (permissionless).
+    /// Anyone can create a reputation for a given Poseidon commitment.
+    pub fn init_reputation(ctx: Context<InitReputation>, commitment: [u8; 32]) -> Result<()> {
+        instructions::init_reputation::handler(ctx, commitment)
+    }
 }

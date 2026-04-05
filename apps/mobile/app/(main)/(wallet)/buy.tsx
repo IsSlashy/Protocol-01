@@ -1,28 +1,24 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  TextInput,
   Platform,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
-import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useWalletStore } from '@/stores/walletStore';
+import { useAutoShieldStore } from '@/stores/autoShieldStore';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { isMainnet } from '@/services/solana/connection';
@@ -30,161 +26,187 @@ import {
   getCryptoPrices,
   getPaymentQuote,
   createPaymentSession,
-  SUPPORTED_ASSETS,
-  SUPPORTED_FIAT,
-  PAYMENT_METHODS,
   P01_NETWORK_FEE_BPS,
-  type PaymentQuote,
 } from '@/services/payments/p01-payments';
 
-// P-01 Design System Colors
+// ─── Design Tokens ──────────────────────────────────────────────────────────
+
 const P01 = {
   cyan: '#39c5bb',
   cyanDim: 'rgba(57, 197, 187, 0.15)',
+  cyanBright: '#00ffe5',
   pink: '#ff77a8',
   pinkDim: 'rgba(255, 119, 168, 0.15)',
-  blue: '#3b82f6',
-  blueDim: 'rgba(59, 130, 246, 0.15)',
   green: '#22c55e',
   greenDim: 'rgba(34, 197, 94, 0.15)',
+  purple: '#7c3aed',
+  purpleDim: 'rgba(124, 58, 237, 0.15)',
 };
 
-// Asset display config
-const ASSET_CONFIG: Record<string, { color: string; icon: string }> = {
-  SOL: { color: P01.cyan, icon: '◎' },
-  USDC: { color: '#2775CA', icon: '$' },
-  USDT: { color: '#26A17B', icon: '₮' },
+// ─── SOL Denominations (fixed — maps to shielded pool tiers) ────────────────
+
+const SOL_TIERS = [
+  { sol: 0.1, lamports: '100000000', label: '0.1 SOL' },
+  { sol: 1, lamports: '1000000000', label: '1 SOL' },
+  { sol: 10, lamports: '10000000000', label: '10 SOL' },
+];
+
+// ─── Fiat rounding ladder ───────────────────────────────────────────────────
+
+const FIAT_LADDER = [
+  5, 10, 15, 20, 25, 30, 40, 50, 75, 100,
+  150, 200, 250, 300, 400, 500, 750, 1000,
+  1500, 2000, 2500, 3000, 4000, 5000, 7500, 10000,
+];
+
+function roundUpFiat(raw: number): number {
+  for (const step of FIAT_LADDER) {
+    if (step >= raw) return step;
+  }
+  return Math.ceil(raw / 1000) * 1000;
+}
+
+// ─── Payment Rails ──────────────────────────────────────────────────────────
+
+type Rail = 'p01' | 'moonpay';
+
+const RAILS = {
+  p01: {
+    name: 'P-01 Network',
+    feePct: 0.5,
+    delay: '1-2h',
+    methods: 'IBAN \u00b7 Revolut \u00b7 Wise',
+    kyc: 'Aucun KYC',
+    privacy: '8 couches',
+    icon: 'shield-checkmark' as const,
+    color: P01.cyan,
+    colorDim: P01.cyanDim,
+    tag: 'RECOMMAND\u00c9',
+    tagColor: P01.cyan,
+  },
+  moonpay: {
+    name: 'MoonPay',
+    feePct: 4.5,
+    delay: '~5 min',
+    methods: 'Carte \u00b7 Apple Pay \u00b7 Google Pay',
+    kyc: 'KYC chez MoonPay',
+    privacy: 'Auto-shield',
+    icon: 'card' as const,
+    color: P01.purple,
+    colorDim: P01.purpleDim,
+    tag: 'RAPIDE',
+    tagColor: P01.purple,
+  },
 };
+
+// ─── MoonPay config (replace with real API key) ─────────────────────────────
+
+const MOONPAY_API_KEY = 'pk_test_key'; // TODO: Replace with real MoonPay API key
+
+function buildMoonPayUrl(solAmount: number, walletAddress: string): string {
+  const params = new URLSearchParams({
+    apiKey: MOONPAY_API_KEY,
+    currencyCode: 'sol',
+    baseCurrencyAmount: solAmount.toString(),
+    walletAddress,
+    colorCode: '39c5bb',
+    language: 'fr',
+  });
+  return `https://buy.moonpay.com?${params.toString()}`;
+}
+
+// ─── Component ──────────────────────────────────────────────────────────────
 
 export default function BuyScreen() {
   const router = useRouter();
   const { publicKey } = useWalletStore();
-
-  const [selectedAsset, setSelectedAsset] = useState(SUPPORTED_ASSETS[0]);
-  const [selectedFiat, setSelectedFiat] = useState(SUPPORTED_FIAT[0]);
-  const [selectedPayment, setSelectedPayment] = useState(PAYMENT_METHODS[0]);
-  const [amount, setAmount] = useState('100');
-  const [isLoading, setIsLoading] = useState(false);
-  const [quote, setQuote] = useState<PaymentQuote | null>(null);
-  const [prices, setPrices] = useState<Record<string, number>>({});
-  const [priceLoading, setPriceLoading] = useState(true);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentUrl, setPaymentUrl] = useState('');
-  const [showDepositModal, setShowDepositModal] = useState(false);
-  const webViewRef = useRef<WebView>(null);
-
-  // Only allow buying on mainnet
   const isOnMainnet = isMainnet();
 
-  // Redirect to wallet if not on mainnet
-  useEffect(() => {
-    if (!isOnMainnet) {
-      p01Alert(
-        'Mainnet Only',
-        'Buying crypto is only available on mainnet. Switch to mainnet in settings to access this feature.',
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
-    }
-  }, [isOnMainnet]);
+  // State
+  const [selectedTier, setSelectedTier] = useState(0); // index into SOL_TIERS
+  const [selectedRail, setSelectedRail] = useState<Rail>('p01');
+  const [solPrice, setSolPrice] = useState(0);
+  const [priceLoading, setPriceLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentUrl, setPaymentUrl] = useState('');
 
-  // Fetch prices on mount and periodically
+  // Derived values
+  const tier = SOL_TIERS[selectedTier];
+  const rail = RAILS[selectedRail];
+  const fiatRaw = tier.sol * solPrice * (1 + rail.feePct / 100);
+  const fiatRounded = solPrice > 0 ? roundUpFiat(Math.ceil(fiatRaw)) : 0;
+  const feeAmount = fiatRounded > 0 ? (fiatRounded * rail.feePct / 100) : 0;
+  const solAfterFee = tier.sol * (1 - P01_NETWORK_FEE_BPS / 10000);
+
+  // Network info (devnet allowed for testing, badge shown)
+  const isDevnet = !isOnMainnet;
+
+  // Fetch SOL price
   useEffect(() => {
-    const fetchPrices = async () => {
+    const fetch = async () => {
       try {
-        const newPrices = await getCryptoPrices();
-        setPrices(newPrices);
-      } catch (error) {
-        console.error('Failed to fetch prices:', error);
-      } finally {
-        setPriceLoading(false);
-      }
+        const prices = await getCryptoPrices();
+        if (prices.SOL) setSolPrice(prices.SOL);
+      } catch { /* fallback */ }
+      setPriceLoading(false);
     };
-
-    fetchPrices();
-    const interval = setInterval(fetchPrices, 30000); // Refresh every 30s
+    fetch();
+    const interval = setInterval(fetch, 30_000);
     return () => clearInterval(interval);
   }, []);
 
-  // Update quote when inputs change
-  useEffect(() => {
-    const updateQuote = async () => {
-      const numAmount = parseFloat(amount) || 0;
-      if (numAmount > 0 && prices[selectedAsset.symbol]) {
-        try {
-          const newQuote = await getPaymentQuote({
-            fiatAmount: numAmount,
-            fiatCurrency: selectedFiat.code,
-            cryptoSymbol: selectedAsset.symbol,
-            paymentMethodId: selectedPayment.id,
-          });
-          setQuote(newQuote);
-        } catch (error) {
-          console.error('Failed to get quote:', error);
-        }
-      } else {
-        setQuote(null);
-      }
-    };
-
-    updateQuote();
-  }, [amount, selectedAsset, selectedFiat, selectedPayment, prices]);
-
-  const handleAmountChange = (text: string) => {
-    // Only allow numbers and decimal point
-    const cleaned = text.replace(/[^0-9.]/g, '');
-    // Prevent multiple decimal points
-    const parts = cleaned.split('.');
-    if (parts.length > 2) return;
-    if (parts[1]?.length > 2) return;
-    setAmount(cleaned);
+  const haptic = () => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const handleQuickAmount = (value: number) => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    setAmount(value.toString());
-  };
+  // ── Buy handler ───────────────────────────────────────────────────
 
   const handleBuy = async () => {
     if (!publicKey) {
-      p01Alert('No Wallet', 'Please create or import a wallet first');
+      p01Alert('No Wallet', 'Please create or import a wallet first.');
       return;
     }
 
-    if (!quote) {
-      p01Alert('Error', 'Unable to get quote. Please try again.');
-      return;
-    }
-
-    const numAmount = parseFloat(amount) || 0;
-    if (numAmount < selectedPayment.minAmount) {
-      p01Alert('Minimum Amount', `Minimum purchase is ${selectedFiat.symbol}${selectedPayment.minAmount}`);
-      return;
-    }
-
-    if (numAmount > selectedPayment.maxAmount) {
-      p01Alert('Maximum Amount', `Maximum purchase is ${selectedFiat.symbol}${selectedPayment.maxAmount.toLocaleString()}`);
-      return;
-    }
-
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-
+    haptic();
     setIsLoading(true);
 
     try {
-      // Create payment session
-      const session = await createPaymentSession({
-        quote,
-        walletAddress: publicKey,
-        paymentMethodId: selectedPayment.id,
-      });
+      // Generate a one-time stealth address for delivery.
+      // The main wallet is NEVER exposed to the payment provider.
+      // The autonomousRunner will detect funds arriving here and
+      // auto-shield into the denominated pool.
+      const autoShield = useAutoShieldStore.getState();
+      const receiveAddress = await autoShield.generateReceiveAddress();
 
-      // Open in-app WebView modal for native experience
-      setPaymentUrl(session.paymentUrl);
-      setShowPaymentModal(true);
+      // Tag this address with purchase metadata
+      const addresses = autoShield.addresses;
+      const lastAddr = addresses[addresses.length - 1];
+      if (lastAddr && lastAddr.address === receiveAddress) {
+        lastAddr.source = selectedRail === 'moonpay' ? 'moonpay' : 'mugen';
+        lastAddr.expectedLamports = Number(tier.lamports);
+      }
+
+      if (selectedRail === 'moonpay') {
+        const url = buildMoonPayUrl(tier.sol, receiveAddress);
+        setPaymentUrl(url);
+        setShowPaymentModal(true);
+      } else {
+        // P-01 Network (Mugen) — get quote first, then create session
+        const quote = await getPaymentQuote({
+          fiatAmount: fiatRounded / 100,
+          fiatCurrency: 'USD',
+          cryptoSymbol: 'SOL',
+          paymentMethodId: 'bank',
+        });
+        const session = await createPaymentSession({
+          quote,
+          walletAddress: receiveAddress, // stealth address, not main wallet
+          paymentMethodId: 'bank',
+        });
+        setPaymentUrl(session.paymentUrl);
+        setShowPaymentModal(true);
+      }
     } catch (error) {
       console.error('Payment error:', error);
       p01Alert('Error', 'Failed to initiate payment. Please try again.');
@@ -193,844 +215,427 @@ export default function BuyScreen() {
     }
   };
 
-  // Handle direct deposit
-  const handleDirectDeposit = () => {
-    if (!publicKey) {
-      p01Alert('No Wallet', 'Please create or import a wallet first');
-      return;
-    }
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-    setShowDepositModal(true);
-  };
-
-  // Copy address to clipboard
-  const copyAddress = async () => {
-    if (publicKey) {
-      await Clipboard.setStringAsync(publicKey);
-      if (Platform.OS !== 'web') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-      p01Alert('Copied', 'Wallet address copied to clipboard');
-    }
-  };
-
-  // Share address
-  const shareAddress = async () => {
-    if (publicKey) {
-      await Share.share({
-        message: `My Solana wallet address: ${publicKey}`,
-        title: 'My P-01 Wallet Address',
-      });
-    }
-  };
-
-  // Handle WebView navigation state change
-  const handleWebViewStateChange = (navState: any) => {
-    // Check for success URLs to close the modal
+  const handleWebViewNav = (navState: any) => {
     if (navState.url?.includes('success') || navState.url?.includes('complete')) {
       setShowPaymentModal(false);
-      p01Alert(
-        'Payment Initiated',
-        `Your purchase of ${quote?.cryptoAmount.toFixed(4)} ${quote?.cryptoSymbol} is being processed. You will receive your crypto once the payment is confirmed.`,
-        [{ text: 'OK' }]
-      );
+      const msg = selectedRail === 'p01'
+        ? `Your ${tier.label} purchase is being processed.\n\nYour SOL will arrive at a one-time stealth address, pass through the mixer, and auto-shield into your privacy pool.\n\nEstimated: 1-2 hours. You'll be notified.`
+        : `Your ${tier.label} purchase via MoonPay is processing.\n\nOnce received, your SOL will be automatically shielded into the privacy pool.\n\nEstimated: ~5 minutes. You'll be notified.`;
+      p01Alert('Purchase Initiated', msg);
     }
   };
 
-  // Get asset display config
-  const assetConfig = ASSET_CONFIG[selectedAsset.symbol] || { color: P01.cyan, icon: '?' };
-  const p01FeePercent = P01_NETWORK_FEE_BPS / 100;
-  const paymentFeePercent = selectedPayment.feeBps / 100;
+  // ── Render ────────────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <Animated.View entering={FadeInDown.delay(100)} style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color={Colors.text} />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
+        <View style={{ alignItems: 'center' }}>
           <Text style={styles.headerTitle}>Buy Crypto</Text>
-          <View style={styles.poweredBy}>
-            <Text style={styles.poweredByText}>P-01 Network</Text>
-          </View>
+          {isDevnet && (
+            <View style={{ backgroundColor: 'rgba(251,146,60,0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, marginTop: 2 }}>
+              <Text style={{ fontSize: 9, fontFamily: FontFamily.mono, color: '#fb923c' }}>DEVNET</Text>
+            </View>
+          )}
         </View>
-        <View style={styles.headerSpacer} />
+        <View style={{ width: 40 }} />
       </Animated.View>
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Devnet Warning */}
-          {!isOnMainnet && (
-            <Animated.View entering={FadeInUp.delay(150)}>
-              <LinearGradient
-                colors={['rgba(251, 146, 60, 0.2)', 'rgba(251, 146, 60, 0.05)']}
-                style={[styles.warningCard, { borderColor: 'rgba(251, 146, 60, 0.5)' }]}
-              >
-                <Ionicons name="warning" size={24} color="#fb923c" />
-                <Text style={[styles.warningText, { color: '#fb923c' }]}>
-                  Switch to mainnet to buy real crypto.
-                </Text>
-              </LinearGradient>
-            </Animated.View>
-          )}
-
-          {/* Amount Input */}
-          <Animated.View entering={FadeInUp.delay(200)} style={styles.section}>
-            <Text style={styles.sectionLabel}>YOU PAY</Text>
-            <View style={styles.amountCard}>
-              <View style={styles.amountRow}>
-                <Text style={styles.currencySymbol}>{selectedFiat.symbol}</Text>
-                <TextInput
-                  style={styles.amountInput}
-                  value={amount}
-                  onChangeText={handleAmountChange}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={Colors.textTertiary}
-                />
-                <TouchableOpacity style={styles.currencySelector}>
-                  <Text style={styles.currencyCode}>{selectedFiat.code}</Text>
-                  <Ionicons name="chevron-down" size={16} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              {/* Quick amounts */}
-              <View style={styles.quickAmounts}>
-                {[50, 100, 250, 500].map((value) => (
-                  <TouchableOpacity
-                    key={value}
-                    style={[
-                      styles.quickAmountButton,
-                      amount === value.toString() && styles.quickAmountButtonActive,
-                    ]}
-                    onPress={() => handleQuickAmount(value)}
-                  >
-                    <Text
-                      style={[
-                        styles.quickAmountText,
-                        amount === value.toString() && styles.quickAmountTextActive,
-                      ]}
-                    >
-                      {selectedFiat.symbol}{value}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </Animated.View>
-
-          {/* You Receive */}
-          <Animated.View entering={FadeInUp.delay(300)} style={styles.section}>
-            <Text style={styles.sectionLabel}>YOU RECEIVE</Text>
-            <View style={styles.receiveCard}>
-              <View style={styles.receiveRow}>
-                <View style={[styles.assetIcon, { backgroundColor: assetConfig.color + '20' }]}>
-                  <Text style={[styles.assetIconText, { color: assetConfig.color }]}>
-                    {assetConfig.icon}
-                  </Text>
-                </View>
-                <View style={styles.receiveInfo}>
-                  <Text style={styles.receiveAmount}>
-                    {quote ? quote.cryptoAmount.toFixed(selectedAsset.symbol === 'SOL' ? 4 : 2) : '0.00'} {selectedAsset.symbol}
-                  </Text>
-                  <Text style={styles.receiveName}>
-                    {selectedAsset.name}
-                    {prices[selectedAsset.symbol] && (
-                      <Text style={styles.priceText}> @ ${prices[selectedAsset.symbol].toLocaleString()}</Text>
-                    )}
-                  </Text>
-                </View>
-                <TouchableOpacity style={styles.assetSelector}>
-                  <Ionicons name="chevron-down" size={20} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              {/* Asset options */}
-              <View style={styles.assetOptions}>
-                {SUPPORTED_ASSETS.map((asset) => {
-                  const config = ASSET_CONFIG[asset.symbol] || { color: P01.cyan };
-                  return (
-                    <TouchableOpacity
-                      key={asset.symbol}
-                      style={[
-                        styles.assetOption,
-                        selectedAsset.symbol === asset.symbol && styles.assetOptionActive,
-                      ]}
-                      onPress={() => {
-                        setSelectedAsset(asset);
-                        if (Platform.OS !== 'web') {
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.assetOptionText,
-                          selectedAsset.symbol === asset.symbol && { color: config.color },
-                        ]}
-                      >
-                        {asset.symbol}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </Animated.View>
-
-          {/* Payment Method */}
-          <Animated.View entering={FadeInUp.delay(400)} style={styles.section}>
-            <Text style={styles.sectionLabel}>PAYMENT METHOD</Text>
-            <View style={styles.paymentMethods}>
-              {PAYMENT_METHODS.map((method) => (
+        {/* ── SOL Denomination Selector ── */}
+        <Animated.View entering={FadeInUp.delay(150)}>
+          <Text style={styles.sectionLabel}>SELECT AMOUNT</Text>
+          <View style={styles.tierRow}>
+            {SOL_TIERS.map((t, i) => {
+              const active = i === selectedTier;
+              const fiat = solPrice > 0 ? roundUpFiat(Math.ceil(t.sol * solPrice * 1.005)) : 0;
+              return (
                 <TouchableOpacity
-                  key={method.id}
-                  style={[
-                    styles.paymentMethod,
-                    selectedPayment.id === method.id && styles.paymentMethodActive,
-                  ]}
-                  onPress={() => {
-                    setSelectedPayment(method);
-                    if (Platform.OS !== 'web') {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }
-                  }}
+                  key={i}
+                  onPress={() => { setSelectedTier(i); haptic(); }}
+                  style={[styles.tierCard, active && styles.tierCardActive]}
                 >
-                  <Ionicons
-                    name={method.icon as any}
-                    size={24}
-                    color={selectedPayment.id === method.id ? P01.cyan : Colors.textSecondary}
-                  />
-                  <View style={styles.paymentMethodInfo}>
-                    <Text style={styles.paymentMethodName}>{method.name}</Text>
-                    <Text style={styles.paymentMethodDetails}>
-                      {method.processingTime} • {(method.feeBps / 100).toFixed(1)}% fee
+                  <LinearGradient
+                    colors={active ? ['rgba(57,197,187,0.15)', 'rgba(57,197,187,0.05)'] : ['transparent', 'transparent']}
+                    style={styles.tierGradient}
+                  >
+                    <Text style={[styles.tierSol, active && styles.tierSolActive]}>
+                      {t.label}
                     </Text>
-                  </View>
-                  {selectedPayment.id === method.id && (
-                    <Ionicons name="checkmark-circle" size={20} color={P01.cyan} />
-                  )}
+                    <Text style={styles.tierFiat}>
+                      {priceLoading ? '...' : `$${fiat}`}
+                    </Text>
+                    <Text style={styles.tierPool}>Pool tier</Text>
+                  </LinearGradient>
                 </TouchableOpacity>
-              ))}
-            </View>
-          </Animated.View>
+              );
+            })}
+          </View>
+        </Animated.View>
 
-          {/* Fee Breakdown */}
-          <Animated.View entering={FadeInUp.delay(500)} style={styles.section}>
-            <Text style={styles.sectionLabel}>FEE BREAKDOWN</Text>
-            <View style={styles.feeCard}>
-              <View style={styles.feeRow}>
-                <Text style={styles.feeLabel}>Subtotal</Text>
-                <Text style={styles.feeValue}>
-                  {selectedFiat.symbol}{quote?.fiatAmount.toFixed(2) || '0.00'}
-                </Text>
-              </View>
-              <View style={styles.feeRow}>
-                <Text style={styles.feeLabel}>Payment Fee ({paymentFeePercent.toFixed(1)}%)</Text>
-                <Text style={styles.feeValue}>
-                  -{selectedFiat.symbol}{quote?.paymentMethodFee.toFixed(2) || '0.00'}
-                </Text>
-              </View>
-              <View style={styles.feeRow}>
-                <View style={styles.feeLabelRow}>
-                  <Text style={styles.feeLabel}>P-01 Network ({p01FeePercent.toFixed(1)}%)</Text>
-                  <View style={styles.p01Badge}>
-                    <Text style={styles.p01BadgeText}>P-01</Text>
+        {/* ── Payment Rail Selector ── */}
+        <Animated.View entering={FadeInUp.delay(250)}>
+          <Text style={[styles.sectionLabel, { marginTop: Spacing['2xl'] }]}>PAYMENT METHOD</Text>
+
+          {(['p01', 'moonpay'] as Rail[]).map((railId) => {
+            const r = RAILS[railId];
+            const active = railId === selectedRail;
+            const fiat = railId === 'p01'
+              ? (solPrice > 0 ? roundUpFiat(Math.ceil(tier.sol * solPrice * 1.005)) : 0)
+              : (solPrice > 0 ? roundUpFiat(Math.ceil(tier.sol * solPrice * 1.045)) : 0);
+
+            return (
+              <TouchableOpacity
+                key={railId}
+                onPress={() => { setSelectedRail(railId); haptic(); }}
+                style={[styles.railCard, active && { borderColor: r.color }]}
+              >
+                <View style={styles.railHeader}>
+                  <View style={[styles.railIcon, { backgroundColor: r.colorDim }]}>
+                    <Ionicons name={r.icon} size={22} color={r.color} />
+                  </View>
+                  <View style={styles.railInfo}>
+                    <View style={styles.railNameRow}>
+                      <Text style={styles.railName}>{r.name}</Text>
+                      <View style={[styles.railTag, { backgroundColor: r.colorDim }]}>
+                        <Text style={[styles.railTagText, { color: r.color }]}>{r.tag}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.railMethods}>{r.methods}</Text>
+                  </View>
+                  <View style={[styles.radioOuter, active && { borderColor: r.color }]}>
+                    {active && <View style={[styles.radioInner, { backgroundColor: r.color }]} />}
                   </View>
                 </View>
-                <Text style={styles.feeValue}>
-                  -{selectedFiat.symbol}{quote?.p01NetworkFee.toFixed(2) || '0.00'}
-                </Text>
-              </View>
-              <View style={[styles.feeRow, styles.feeRowTotal]}>
-                <Text style={styles.feeLabelTotal}>Net Amount</Text>
-                <Text style={styles.feeValueTotal}>
-                  {selectedFiat.symbol}{quote?.netAmount.toFixed(2) || '0.00'}
-                </Text>
-              </View>
-            </View>
-          </Animated.View>
 
-          {/* Security Info */}
-          <Animated.View entering={FadeInUp.delay(600)} style={styles.securityCard}>
-            <View style={styles.securityRow}>
-              <Ionicons name="shield-checkmark" size={18} color={P01.green} />
-              <Text style={styles.securityText}>Secure payment processing</Text>
-            </View>
-            <View style={styles.securityRow}>
-              <Ionicons name="lock-closed" size={18} color={P01.cyan} />
-              <Text style={styles.securityText}>End-to-end encrypted</Text>
-            </View>
-            <View style={styles.securityRow}>
-              <Ionicons name="flash" size={18} color={P01.pink} />
-              <Text style={styles.securityText}>Instant delivery to your wallet</Text>
-            </View>
-          </Animated.View>
+                <View style={styles.railDetails}>
+                  <View style={styles.railDetail}>
+                    <Text style={styles.railDetailLabel}>Fee</Text>
+                    <Text style={[styles.railDetailValue, railId === 'p01' && { color: P01.green }]}>
+                      {r.feePct}%
+                    </Text>
+                  </View>
+                  <View style={styles.railDetailDivider} />
+                  <View style={styles.railDetail}>
+                    <Text style={styles.railDetailLabel}>Delay</Text>
+                    <Text style={styles.railDetailValue}>{r.delay}</Text>
+                  </View>
+                  <View style={styles.railDetailDivider} />
+                  <View style={styles.railDetail}>
+                    <Text style={styles.railDetailLabel}>KYC</Text>
+                    <Text style={[styles.railDetailValue, railId === 'p01' && { color: P01.green }]}>
+                      {r.kyc}
+                    </Text>
+                  </View>
+                  <View style={styles.railDetailDivider} />
+                  <View style={styles.railDetail}>
+                    <Text style={styles.railDetailLabel}>Privacy</Text>
+                    <Text style={[styles.railDetailValue, { color: P01.cyan }]}>{r.privacy}</Text>
+                  </View>
+                </View>
 
-          {/* Direct Deposit Option */}
-          <Animated.View entering={FadeInUp.delay(650)} style={styles.section}>
-            <TouchableOpacity
-              onPress={handleDirectDeposit}
-              style={styles.directDepositButton}
-            >
-              <View style={styles.directDepositIcon}>
-                <Ionicons name="qr-code" size={24} color={P01.cyan} />
-              </View>
-              <View style={styles.directDepositInfo}>
-                <Text style={styles.directDepositTitle}>Direct Deposit</Text>
-                <Text style={styles.directDepositDesc}>Already have crypto? Send directly to your wallet</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
-            </TouchableOpacity>
-          </Animated.View>
-        </ScrollView>
-
-        {/* Buy Button */}
-        <Animated.View entering={FadeInUp.delay(700)} style={styles.bottomSection}>
-          <TouchableOpacity
-            onPress={handleBuy}
-            disabled={!publicKey || !isOnMainnet || isLoading || !quote}
-            style={[
-              styles.buyButton,
-              (!publicKey || !isOnMainnet || isLoading || !quote) && styles.buyButtonDisabled,
-            ]}
-          >
-            <LinearGradient
-              colors={isOnMainnet && quote ? [P01.cyan, '#00ffe5'] : ['#444', '#333']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.buyButtonGradient}
-            >
-              {isLoading ? (
-                <ActivityIndicator color="#0a0a0c" />
-              ) : priceLoading ? (
-                <ActivityIndicator color="#0a0a0c" size="small" />
-              ) : (
-                <>
-                  <Ionicons name="flash" size={20} color="#0a0a0c" />
-                  <Text style={styles.buyButtonText}>
-                    Buy {quote ? `${quote.cryptoAmount.toFixed(4)} ${selectedAsset.symbol}` : selectedAsset.symbol}
-                  </Text>
-                </>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
-          <Text style={styles.disclaimerText}>
-            Powered by P-01 Network • Secure fiat-to-crypto
-          </Text>
+                {active && (
+                  <View style={styles.railSummary}>
+                    <Text style={styles.railSummaryText}>
+                      You pay <Text style={styles.railSummaryBold}>${fiat}</Text>
+                      {' \u2192 '}receive <Text style={[styles.railSummaryBold, { color: P01.cyan }]}>{tier.label}</Text>
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </Animated.View>
-      </KeyboardAvoidingView>
 
-      {/* Payment WebView Modal */}
+        {/* ── Privacy Info ── */}
+        <Animated.View entering={FadeInUp.delay(350)}>
+          <LinearGradient
+            colors={['rgba(57,197,187,0.08)', 'rgba(57,197,187,0.02)']}
+            style={styles.privacyCard}
+          >
+            <Ionicons name="shield-checkmark" size={18} color={P01.cyan} />
+            <Text style={styles.privacyText}>
+              {selectedRail === 'p01'
+                ? 'Your purchase is anonymized through 8 privacy layers: denominated amounts, noise engine, multi-hop mixer, and ZK shielded pool. No trace.'
+                : 'After MoonPay delivers your SOL, it is automatically shielded into the privacy pool. KYC stays at MoonPay, not on P-01.'
+              }
+            </Text>
+          </LinearGradient>
+        </Animated.View>
+
+        <View style={{ height: 120 }} />
+      </ScrollView>
+
+      {/* ── Buy Button (sticky) ── */}
+      <Animated.View entering={FadeInUp.delay(400)} style={styles.buyContainer}>
+        <TouchableOpacity
+          onPress={handleBuy}
+          disabled={isLoading || priceLoading || solPrice === 0}
+          style={styles.buyButton}
+        >
+          <LinearGradient
+            colors={isLoading ? ['#333', '#333'] : [P01.cyan, '#2ba8a0']}
+            style={styles.buyGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name={rail.icon} size={20} color="#000" style={{ marginRight: 8 }} />
+                <Text style={styles.buyText}>
+                  Buy {tier.label} for ${fiatRounded}
+                </Text>
+              </>
+            )}
+          </LinearGradient>
+        </TouchableOpacity>
+        <Text style={styles.buySubtext}>
+          via {rail.name} \u00b7 {rail.feePct}% fee \u00b7 {rail.delay}
+        </Text>
+      </Animated.View>
+
+      {/* ── Payment WebView Modal ── */}
       <Modal
         visible={showPaymentModal}
         animationType="slide"
         presentationStyle="fullScreen"
         onRequestClose={() => setShowPaymentModal(false)}
       >
-        <SafeAreaView style={styles.modalContainer} edges={['top']}>
+        <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity
-              onPress={() => setShowPaymentModal(false)}
-              style={styles.modalCloseButton}
-            >
-              <Ionicons name="close" size={24} color={Colors.text} />
+            <TouchableOpacity onPress={() => setShowPaymentModal(false)}>
+              <Ionicons name="close" size={28} color={Colors.text} />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Complete Payment</Text>
-            <View style={styles.modalCloseButton} />
+            <Text style={styles.modalTitle}>{rail.name} Payment</Text>
+            <View style={{ width: 28 }} />
           </View>
-          <WebView
-            ref={webViewRef}
-            source={{ uri: paymentUrl }}
-            style={styles.webView}
-            onNavigationStateChange={handleWebViewStateChange}
-            startInLoadingState={true}
-            renderLoading={() => (
-              <View style={styles.webViewLoading}>
-                <ActivityIndicator size="large" color={P01.cyan} />
-                <Text style={styles.webViewLoadingText}>Loading payment provider...</Text>
-              </View>
-            )}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            sharedCookiesEnabled={true}
-            thirdPartyCookiesEnabled={true}
-          />
+          {paymentUrl ? (
+            <WebView
+              source={{ uri: paymentUrl }}
+              style={{ flex: 1 }}
+              onNavigationStateChange={handleWebViewNav}
+              startInLoadingState
+              renderLoading={() => (
+                <View style={styles.webViewLoading}>
+                  <ActivityIndicator size="large" color={P01.cyan} />
+                </View>
+              )}
+            />
+          ) : null}
         </SafeAreaView>
-      </Modal>
-
-      {/* Direct Deposit Modal */}
-      <Modal
-        visible={showDepositModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowDepositModal(false)}
-      >
-        <View style={styles.depositModalContainer}>
-          <View style={styles.depositModalHeader}>
-            <Text style={styles.depositModalTitle}>Receive {selectedAsset.symbol}</Text>
-            <TouchableOpacity
-              onPress={() => setShowDepositModal(false)}
-              style={styles.depositCloseButton}
-            >
-              <Ionicons name="close-circle" size={28} color={Colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.depositContent}>
-            {/* QR Code */}
-            <View style={styles.qrCodeContainer}>
-              <View style={styles.qrCodeWrapper}>
-                {publicKey && (
-                  <QRCode
-                    value={publicKey}
-                    size={180}
-                    color="#000000"
-                    backgroundColor="#FFFFFF"
-                  />
-                )}
-              </View>
-              <Text style={styles.qrCodeLabel}>Scan to deposit {selectedAsset.symbol}</Text>
-            </View>
-
-            {/* Address display */}
-            <View style={styles.addressCard}>
-              <Text style={styles.addressLabel}>Your {selectedAsset.name} Address</Text>
-              <Text style={styles.addressText} numberOfLines={2}>
-                {publicKey}
-              </Text>
-            </View>
-
-            {/* Action buttons */}
-            <View style={styles.depositActions}>
-              <TouchableOpacity onPress={copyAddress} style={styles.depositActionButton}>
-                <LinearGradient
-                  colors={[P01.cyan, '#00ffe5']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.depositActionGradient}
-                >
-                  <Ionicons name="copy" size={20} color="#0a0a0c" />
-                  <Text style={styles.depositActionText}>Copy Address</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-
-              <TouchableOpacity onPress={shareAddress} style={styles.depositActionButtonSecondary}>
-                <Ionicons name="share-outline" size={20} color={P01.cyan} />
-                <Text style={styles.depositActionTextSecondary}>Share</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Warning */}
-            <View style={styles.depositWarning}>
-              <Ionicons name="warning" size={18} color="#fb923c" />
-              <Text style={styles.depositWarningText}>
-                Only send {selectedAsset.symbol} on the Solana network to this address.
-                Sending other tokens may result in permanent loss.
-              </Text>
-            </View>
-          </View>
-        </View>
       </Modal>
     </SafeAreaView>
   );
 }
 
+// ─── Styles ─────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerCenter: {
-    alignItems: 'center',
-  },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
-  },
-  poweredBy: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  poweredByText: {
-    color: P01.cyan,
-    fontSize: 11,
-    fontFamily: FontFamily.medium,
-    letterSpacing: 0.5,
-  },
-  headerSpacer: {
-    width: 40,
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: Spacing.xl,
-  },
-  warningCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    marginBottom: Spacing.lg,
-    gap: Spacing.md,
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-  },
-  section: {
-    marginBottom: Spacing.xl,
-  },
+  backBtn: { width: 40, height: 40, justifyContent: 'center' },
+  headerTitle: { fontSize: 18, fontFamily: FontFamily.semibold, color: Colors.text },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: Spacing.lg },
+
+  // Section
   sectionLabel: {
+    fontSize: 11,
+    fontFamily: FontFamily.mono,
     color: Colors.textTertiary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
+    letterSpacing: 1.5,
     marginBottom: Spacing.sm,
-  },
-  amountCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-  },
-  amountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  currencySymbol: {
-    color: Colors.text,
-    fontSize: 32,
-    fontFamily: FontFamily.bold,
-    marginRight: Spacing.xs,
-  },
-  amountInput: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 32,
-    fontFamily: FontFamily.bold,
-    padding: 0,
-  },
-  currencySelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.surfaceTertiary,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.xs,
-  },
-  currencyCode: {
-    color: Colors.text,
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-  },
-  quickAmounts: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
     marginTop: Spacing.lg,
   },
-  quickAmountButton: {
+
+  // SOL tier selector
+  tierRow: { flexDirection: 'row', gap: Spacing.sm },
+  tierCard: {
     flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surfaceTertiary,
-    alignItems: 'center',
-  },
-  quickAmountButtonActive: {
-    backgroundColor: P01.cyanDim,
-    borderWidth: 1,
-    borderColor: P01.cyan,
-  },
-  quickAmountText: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-  },
-  quickAmountTextActive: {
-    color: P01.cyan,
-  },
-  receiveCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-  },
-  receiveRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  assetIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: BorderRadius.full,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.md,
-  },
-  assetIconText: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-  },
-  receiveInfo: {
-    flex: 1,
-  },
-  receiveAmount: {
-    color: Colors.text,
-    fontSize: 24,
-    fontFamily: FontFamily.bold,
-  },
-  receiveName: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    marginTop: 2,
-  },
-  priceText: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-  },
-  assetSelector: {
-    padding: Spacing.sm,
-  },
-  assetOptions: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-    marginTop: Spacing.lg,
-  },
-  assetOption: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surfaceTertiary,
-    alignItems: 'center',
-  },
-  assetOptionActive: {
-    backgroundColor: 'rgba(57, 197, 187, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.3)',
-  },
-  assetOptionText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-  },
-  paymentMethods: {
-    gap: Spacing.sm,
-  },
-  paymentMethod: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.surfaceSecondary,
     borderRadius: BorderRadius.lg,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: Colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  paymentMethodActive: {
-    borderColor: P01.cyan,
-    backgroundColor: P01.cyanDim,
-  },
-  paymentMethodInfo: {
-    flex: 1,
-  },
-  paymentMethodName: {
-    color: Colors.text,
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-  },
-  paymentMethodDetails: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    marginTop: 2,
-  },
-  feeCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-  },
-  feeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: Spacing.sm,
-  },
-  feeRowTotal: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    marginTop: Spacing.sm,
-    paddingTop: Spacing.md,
-  },
-  feeLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  feeLabel: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-  },
-  feeValue: {
-    color: Colors.text,
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-  },
-  feeLabelTotal: {
-    color: Colors.text,
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-  },
-  feeValueTotal: {
-    color: P01.cyan,
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-  },
-  p01Badge: {
-    backgroundColor: P01.cyanDim,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  p01BadgeText: {
-    color: P01.cyan,
-    fontSize: 10,
-    fontFamily: FontFamily.semibold,
-  },
-  securityCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  securityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-  },
-  securityText: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-  },
-  bottomSection: {
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-    paddingBottom: Spacing['3xl'],
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.background,
-  },
-  buyButton: {
-    borderRadius: BorderRadius.lg,
     overflow: 'hidden',
   },
-  buyButtonDisabled: {
-    opacity: 0.5,
-  },
-  buyButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+  tierCardActive: { borderColor: P01.cyan },
+  tierGradient: {
     paddingVertical: Spacing.lg,
-    gap: Spacing.sm,
+    alignItems: 'center',
+    gap: 4,
   },
-  buyButtonText: {
-    color: '#0a0a0c',
-    fontSize: 16,
+  tierSol: {
+    fontSize: 20,
     fontFamily: FontFamily.bold,
+    color: Colors.textSecondary,
   },
-  disclaimerText: {
+  tierSolActive: { color: P01.cyan },
+  tierFiat: {
+    fontSize: 14,
+    fontFamily: FontFamily.mono,
+    color: Colors.text,
+  },
+  tierPool: {
+    fontSize: 10,
+    fontFamily: FontFamily.mono,
     color: Colors.textTertiary,
-    fontSize: 11,
-    fontFamily: FontFamily.regular,
-    textAlign: 'center',
-    marginTop: Spacing.md,
+    marginTop: 2,
   },
-  // Direct deposit button
-  directDepositButton: {
+
+  // Rail selector
+  railCard: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    marginBottom: Spacing.md,
+    overflow: 'hidden',
+  },
+  railHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
     padding: Spacing.lg,
     gap: Spacing.md,
   },
-  directDepositIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: BorderRadius.full,
-    backgroundColor: P01.cyanDim,
+  railIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  directDepositInfo: {
-    flex: 1,
+  railInfo: { flex: 1 },
+  railNameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  railName: { fontSize: 16, fontFamily: FontFamily.semibold, color: Colors.text },
+  railTag: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
   },
-  directDepositTitle: {
-    color: Colors.text,
-    fontSize: 16,
-    fontFamily: FontFamily.semibold,
-  },
-  directDepositDesc: {
-    color: Colors.textSecondary,
-    fontSize: 13,
+  railTagText: { fontSize: 9, fontFamily: FontFamily.mono, letterSpacing: 1 },
+  railMethods: {
+    fontSize: 12,
     fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
     marginTop: 2,
   },
-  // Modal styles
-  modalContainer: {
-    flex: 1,
-    backgroundColor: Colors.background,
+  radioOuter: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
+  radioInner: { width: 12, height: 12, borderRadius: 6 },
+
+  // Rail details
+  railDetails: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingVertical: Spacing.md,
+    marginHorizontal: Spacing.lg,
+  },
+  railDetail: { flex: 1, alignItems: 'center' },
+  railDetailDivider: { width: 1, backgroundColor: Colors.border },
+  railDetailLabel: {
+    fontSize: 9,
+    fontFamily: FontFamily.mono,
+    color: Colors.textTertiary,
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  railDetailValue: {
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+    color: Colors.text,
+  },
+
+  // Rail summary
+  railSummary: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+  },
+  railSummaryText: {
+    fontSize: 13,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+  },
+  railSummaryBold: { fontFamily: FontFamily.semibold, color: Colors.text },
+
+  // Privacy card
+  privacyCard: {
+    flexDirection: 'row',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.lg,
+    marginTop: Spacing['2xl'],
+    gap: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(57,197,187,0.2)',
+  },
+  privacyText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+
+  // Buy button
+  buyContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Platform.OS === 'ios' ? 34 : Spacing.lg,
+    paddingTop: Spacing.md,
+    backgroundColor: Colors.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  buyButton: { borderRadius: BorderRadius.lg, overflow: 'hidden' },
+  buyGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+  },
+  buyText: {
+    fontSize: 16,
+    fontFamily: FontFamily.bold,
+    color: '#000',
+  },
+  buySubtext: {
+    fontSize: 11,
+    fontFamily: FontFamily.mono,
+    color: Colors.textTertiary,
+    textAlign: 'center',
+    marginTop: 6,
+  },
+
+  // Modal
+  modalContainer: { flex: 1, backgroundColor: Colors.background },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1040,151 +645,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  modalCloseButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalTitle: {
-    color: Colors.text,
-    fontSize: 16,
-    fontFamily: FontFamily.semibold,
-  },
-  webView: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  modalTitle: { fontSize: 16, fontFamily: FontFamily.semibold, color: Colors.text },
   webViewLoading: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.background,
-  },
-  webViewLoadingText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    marginTop: Spacing.md,
-  },
-  // Deposit modal styles
-  depositModalContainer: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  depositModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.xl,
-    paddingBottom: Spacing.lg,
-  },
-  depositModalTitle: {
-    color: Colors.text,
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-  },
-  depositCloseButton: {
-    padding: Spacing.xs,
-  },
-  depositContent: {
-    flex: 1,
-    paddingHorizontal: Spacing.xl,
-  },
-  qrCodeContainer: {
-    alignItems: 'center',
-    paddingVertical: Spacing['2xl'],
-  },
-  qrCodeWrapper: {
-    width: 200,
-    height: 200,
-    borderRadius: BorderRadius.xl,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: Spacing.sm,
-    borderWidth: 2,
-    borderColor: P01.cyan,
-  },
-  qrCodeLabel: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-    marginTop: Spacing.lg,
-  },
-  addressCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    marginBottom: Spacing.xl,
-  },
-  addressLabel: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.medium,
-    marginBottom: Spacing.sm,
-  },
-  addressText: {
-    color: Colors.text,
-    fontSize: 14,
-    fontFamily: FontFamily.mono || FontFamily.regular,
-    lineHeight: 22,
-  },
-  depositActions: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginBottom: Spacing.xl,
-  },
-  depositActionButton: {
-    flex: 2,
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
-  },
-  depositActionGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  depositActionText: {
-    color: '#0a0a0c',
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-  },
-  depositActionButtonSecondary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: P01.cyan,
-    gap: Spacing.sm,
-  },
-  depositActionTextSecondary: {
-    color: P01.cyan,
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-  },
-  depositWarning: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(251, 146, 60, 0.1)',
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  depositWarningText: {
-    flex: 1,
-    color: '#fb923c',
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    lineHeight: 20,
   },
 });

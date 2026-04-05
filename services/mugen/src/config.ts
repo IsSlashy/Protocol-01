@@ -66,4 +66,41 @@ export const CONFIG = {
 
   /** Minimum reserve to keep in wallet (lamports). Default: 0.1 SOL for rent/fees. */
   botReserveLamports: BigInt(process.env.BOT_RESERVE ?? '100000000'),
+
+  // ── Noise Engine (privacy through indistinguishable trades) ───────────
+
+  /** Enable the noise engine. */
+  noiseEnabled: process.env.NOISE_ENABLED === 'true',
+
+  /** Secret seed for deterministic ephemeral wallet derivation. */
+  noiseSeed: process.env.NOISE_SEED ?? '',
+
+  /** Number of ephemeral wallets in the noise pool (default: 6). */
+  noiseWalletCount: parseInt(process.env.NOISE_WALLET_COUNT ?? '6', 10),
+
+  /** Mean interval between noise trades in ms (Poisson). Default: 2 min. */
+  noiseMeanIntervalMs: parseInt(process.env.NOISE_MEAN_INTERVAL_MS ?? '120000', 10),
+
+  /** Min delay between trade steps in ms (default: 5s). */
+  noiseMinStepDelayMs: parseInt(process.env.NOISE_MIN_STEP_DELAY_MS ?? '5000', 10),
+
+  /** Max delay between trade steps in ms (default: 45s). */
+  noiseMaxStepDelayMs: parseInt(process.env.NOISE_MAX_STEP_DELAY_MS ?? '45000', 10),
+
+  // ── Mixer (multi-hop delivery for real trades) ────────────────────────
+
+  /** Enable the mixer for anonymized delivery. */
+  mixerEnabled: process.env.MIXER_ENABLED === 'true',
+
+  /** Secret seed for mixer ephemeral wallet derivation. */
+  mixerSeed: process.env.MIXER_SEED ?? '',
+
+  /** Number of intermediate hops (default: 3). */
+  mixerHops: parseInt(process.env.MIXER_HOPS ?? '3', 10),
+
+  /** Min delay between hops in ms (default: 30s). */
+  mixerMinHopDelayMs: parseInt(process.env.MIXER_MIN_HOP_DELAY_MS ?? '30000', 10),
+
+  /** Max delay between hops in ms (default: 5 min). */
+  mixerMaxHopDelayMs: parseInt(process.env.MIXER_MAX_HOP_DELAY_MS ?? '300000', 10),
 } as const;

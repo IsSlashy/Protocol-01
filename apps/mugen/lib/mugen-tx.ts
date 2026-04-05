@@ -65,12 +65,19 @@ export interface TakeOrderParams {
 }
 
 /**
- * Build a takeOrder transaction (unsigned).
- * The caller must sign it with their wallet.
+ * Build a takeOrder transaction (partially unsigned).
+ *
+ * Two signers required:
+ *   1. Taker (buyer) — signs client-side (extension/mobile)
+ *   2. Seller (maker) — co-signs server-side if seller is the bot
+ *
+ * The seller pubkey is read from the order account on-chain (maker field).
+ * The returned `sellerWallet` tells the caller who needs to co-sign.
  */
 export async function buildTakeOrderTx(params: TakeOrderParams): Promise<{
   transaction: string; // base64 serialized
   escrowAddress: string;
+  sellerWallet: string; // seller pubkey that must co-sign
 }> {
   const connection = new Connection(RPC_URL, 'confirmed');
   const [configPDA] = getConfigPDA();
@@ -78,6 +85,12 @@ export async function buildTakeOrderTx(params: TakeOrderParams): Promise<{
   const takerPubkey = new PublicKey(params.takerWallet);
   const tokenMint = new PublicKey(params.tokenMint);
   const sellerTokenAccount = new PublicKey(params.sellerTokenAccount);
+
+  // Read the order to get the REAL seller (maker) pubkey
+  const orderInfo = await connection.getAccountInfo(orderPubkey);
+  if (!orderInfo) throw new Error('Order account not found');
+  const orderData = Buffer.from(orderInfo.data);
+  const sellerPubkey = new PublicKey(orderData.subarray(8, 40)); // maker field
 
   const [escrowPDA] = getEscrowPDA(orderPubkey, takerPubkey);
   const [vaultPDA] = getVaultPDA(escrowPDA);
@@ -87,7 +100,7 @@ export async function buildTakeOrderTx(params: TakeOrderParams): Promise<{
   let authorityKey = takerPubkey;
   if (configAccount) {
     const data = Buffer.from(configAccount.data);
-    authorityKey = new PublicKey(data.subarray(8, 40)); // authority field
+    authorityKey = new PublicKey(data.subarray(8, 40));
   }
 
   // Encode: disc(8) + option<[u8;32]>(1 + 0|32) + u16
@@ -107,15 +120,15 @@ export async function buildTakeOrderTx(params: TakeOrderParams): Promise<{
 
   const ix = new TransactionInstruction({
     keys: [
-      { pubkey: takerPubkey, isSigner: true, isWritable: true },
-      { pubkey: configPDA, isSigner: false, isWritable: false },
-      { pubkey: orderPubkey, isSigner: false, isWritable: true },
-      { pubkey: escrowPDA, isSigner: false, isWritable: true },
-      { pubkey: vaultPDA, isSigner: false, isWritable: true },
-      { pubkey: sellerTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: takerPubkey, isSigner: true, isWritable: false }, // seller signer (same as taker for devnet)
-      { pubkey: tokenMint, isSigner: false, isWritable: false },
-      { pubkey: authorityKey, isSigner: false, isWritable: false }, // attestation (authority bypass)
+      { pubkey: takerPubkey, isSigner: true, isWritable: true },       // taker
+      { pubkey: configPDA, isSigner: false, isWritable: false },        // config
+      { pubkey: orderPubkey, isSigner: false, isWritable: true },       // order
+      { pubkey: escrowPDA, isSigner: false, isWritable: true },         // escrow (init)
+      { pubkey: vaultPDA, isSigner: false, isWritable: true },          // vault (init)
+      { pubkey: sellerTokenAccount, isSigner: false, isWritable: true },// seller ATA
+      { pubkey: sellerPubkey, isSigner: true, isWritable: false },      // seller (REAL maker, must co-sign)
+      { pubkey: tokenMint, isSigner: false, isWritable: false },        // mint
+      { pubkey: authorityKey, isSigner: false, isWritable: false },     // attestation bypass
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: new PublicKey('SysvarRent111111111111111111111111111111111'), isSigner: false, isWritable: false },
@@ -140,6 +153,7 @@ export async function buildTakeOrderTx(params: TakeOrderParams): Promise<{
   return {
     transaction: serialized.toString('base64'),
     escrowAddress: escrowPDA.toBase58(),
+    sellerWallet: sellerPubkey.toBase58(),
   };
 }
 
@@ -348,15 +362,27 @@ export async function buildReleaseEscrowTx(params: ReleaseEscrowParams): Promise
   // Derive vault PDA from escrow
   const [vaultPDA] = getVaultPDA(escrowPubkey);
 
-  // ── Read config to get fee_wallet ────────────────────────────────────────
+  // ── Read config to get 4 fee wallets ─────────────────────────────────────
   const [configPDA] = getConfigPDA();
   const configInfo = await connection.getAccountInfo(configPDA);
   if (!configInfo) throw new Error('Config account not found');
 
   const configData = Buffer.from(configInfo.data);
-  // Config layout: disc(8) + authority(32) + fee_bps(2) + fee_wallet(32)
-  const feeWallet = new PublicKey(configData.subarray(8 + 32 + 2, 8 + 32 + 2 + 32));
-  const feeTokenAccount: PublicKey = await getAssociatedTokenAddress(tokenMint, feeWallet);
+  // Config layout: disc(8) + authority(32) + fee_bps(2) +
+  //   p01_fee_wallet(32) + mugen_fee_wallet(32) + treasury_wallet(32) +
+  //   p01_fee_share(2) + mugen_fee_share(2) + noise_fund_wallet(32) + noise_fee_share(2)
+  let cfgOff = 8 + 32 + 2; // skip disc + authority + fee_bps
+  const p01FeeWallet = new PublicKey(configData.subarray(cfgOff, cfgOff + 32)); cfgOff += 32;
+  const mugenFeeWallet = new PublicKey(configData.subarray(cfgOff, cfgOff + 32)); cfgOff += 32;
+  const treasuryWallet = new PublicKey(configData.subarray(cfgOff, cfgOff + 32)); cfgOff += 32;
+  cfgOff += 2; // p01_fee_share
+  cfgOff += 2; // mugen_fee_share
+  const noiseFundWallet = new PublicKey(configData.subarray(cfgOff, cfgOff + 32));
+
+  const p01FeeAta: PublicKey = await getAssociatedTokenAddress(tokenMint, p01FeeWallet);
+  const mugenFeeAta: PublicKey = await getAssociatedTokenAddress(tokenMint, mugenFeeWallet);
+  const treasuryFeeAta: PublicKey = await getAssociatedTokenAddress(tokenMint, treasuryWallet);
+  const noiseFundAta: PublicKey = await getAssociatedTokenAddress(tokenMint, noiseFundWallet);
 
   // ── Read order to get maker reputation commitment ────────────────────────
   const orderInfo = await connection.getAccountInfo(orderKey);
@@ -400,15 +426,18 @@ export async function buildReleaseEscrowTx(params: ReleaseEscrowParams): Promise
 
   const ix = new TransactionInstruction({
     keys: [
-      { pubkey: sellerPubkey, isSigner: true, isWritable: false },
-      { pubkey: configPDA, isSigner: false, isWritable: true },
-      { pubkey: escrowPubkey, isSigner: false, isWritable: true },
-      { pubkey: vaultPDA, isSigner: false, isWritable: true },
-      { pubkey: buyerTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: feeTokenAccount, isSigner: false, isWritable: true },
-      { pubkey: makerRepPDA, isSigner: false, isWritable: true },
-      { pubkey: takerRepPubkey, isSigner: false, isWritable: true },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: sellerPubkey, isSigner: true, isWritable: false },      // seller
+      { pubkey: configPDA, isSigner: false, isWritable: true },          // config
+      { pubkey: escrowPubkey, isSigner: false, isWritable: true },       // escrow
+      { pubkey: vaultPDA, isSigner: false, isWritable: true },           // vault
+      { pubkey: buyerTokenAccount, isSigner: false, isWritable: true },  // buyer ATA
+      { pubkey: p01FeeAta, isSigner: false, isWritable: true },          // p01 fee (15%)
+      { pubkey: mugenFeeAta, isSigner: false, isWritable: true },        // mugen fee (55%)
+      { pubkey: treasuryFeeAta, isSigner: false, isWritable: true },     // treasury fee (15%)
+      { pubkey: noiseFundAta, isSigner: false, isWritable: true },       // noise fund (15%)
+      { pubkey: makerRepPDA, isSigner: false, isWritable: true },        // maker rep
+      { pubkey: takerRepPubkey, isSigner: false, isWritable: true },     // taker rep
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },  // token program
     ],
     programId: MUGEN_PROGRAM_ID,
     data: disc,

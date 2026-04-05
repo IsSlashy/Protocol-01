@@ -46,6 +46,10 @@ pub struct ReleaseEscrow<'info> {
     #[account(mut)]
     pub treasury_fee_account: Account<'info, TokenAccount>,
 
+    /// Noise fund token account (auto-feeds noise engine wallets).
+    #[account(mut)]
+    pub noise_fund_account: Account<'info, TokenAccount>,
+
     /// Maker reputation PDA (gets updated on completion).
     #[account(
         mut,
@@ -89,9 +93,15 @@ pub fn handler(ctx: Context<ReleaseEscrow>) -> Result<()> {
         .and_then(|v| v.checked_div(10_000))
         .ok_or(MugenError::MathOverflow)?;
 
-    // Mugen Exchange share (e.g. 65%)
+    // Mugen Exchange share (e.g. 55%)
     let mugen_fee = total_fee
         .checked_mul(config.mugen_fee_share as u64)
+        .and_then(|v| v.checked_div(10_000))
+        .ok_or(MugenError::MathOverflow)?;
+
+    // Noise fund share (e.g. 15%) — auto-feeds noise engine wallets
+    let noise_fee = total_fee
+        .checked_mul(config.noise_fee_share as u64)
         .and_then(|v| v.checked_div(10_000))
         .ok_or(MugenError::MathOverflow)?;
 
@@ -99,6 +109,7 @@ pub fn handler(ctx: Context<ReleaseEscrow>) -> Result<()> {
     let treasury_fee = total_fee
         .checked_sub(p01_fee)
         .and_then(|v| v.checked_sub(mugen_fee))
+        .and_then(|v| v.checked_sub(noise_fee))
         .ok_or(MugenError::MathOverflow)?;
 
     // Amount buyer receives = total - all fees
@@ -174,6 +185,20 @@ pub fn handler(ctx: Context<ReleaseEscrow>) -> Result<()> {
         token::transfer(transfer_treasury, treasury_fee)?;
     }
 
+    // ── Transfer fee to Noise Fund ──────────────────────────────────────
+    if noise_fee > 0 {
+        let transfer_noise = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.escrow_vault.to_account_info(),
+                to: ctx.accounts.noise_fund_account.to_account_info(),
+                authority: ctx.accounts.escrow.to_account_info(),
+            },
+            signer_seeds,
+        );
+        token::transfer(transfer_noise, noise_fee)?;
+    }
+
     // ── Update escrow status ────────────────────────────────────────────
     let escrow = &mut ctx.accounts.escrow;
     escrow.status = ESCROW_RELEASED;
@@ -195,10 +220,11 @@ pub fn handler(ctx: Context<ReleaseEscrow>) -> Result<()> {
     update_reputation(&mut ctx.accounts.taker_reputation, escrow.crypto_amount, payment_time, &clock);
 
     msg!(
-        "Mugen escrow released: {} to buyer | fees: P01={} Mugen={} Treasury={}",
+        "Mugen escrow released: {} to buyer | fees: P01={} Mugen={} Noise={} Treasury={}",
         buyer_amount,
         p01_fee,
         mugen_fee,
+        noise_fee,
         treasury_fee,
     );
 

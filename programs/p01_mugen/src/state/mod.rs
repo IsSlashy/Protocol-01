@@ -88,8 +88,14 @@ pub struct MugenConfig {
     /// Mugen share of fees in basis points out of 10000 (e.g. 6500 = 65%).
     pub mugen_fee_share: u16,
 
-    /// Treasury share = 10000 - p01_share - mugen_share (e.g. 1500 = 15%).
-    /// Not stored — computed on-chain.
+    /// Treasury share = 10000 - p01_share - mugen_share - noise_share.
+    /// Not stored — computed on-chain as remainder.
+
+    /// Noise fund wallet (auto-feeds noise engine ephemeral wallets).
+    pub noise_fund_wallet: Pubkey,
+
+    /// Noise fund share of fees in bps out of 10000 (e.g. 1500 = 15%).
+    pub noise_fee_share: u16,
 
     /// Minimum trade amount in base token units.
     pub min_trade_amount: u64,
@@ -129,6 +135,8 @@ impl MugenConfig {
         + 32         // treasury_wallet
         + 2          // p01_fee_share
         + 2          // mugen_fee_share
+        + 32         // noise_fund_wallet
+        + 2          // noise_fee_share
         + 8          // min_trade_amount
         + 8          // max_trade_amount
         + 8          // escrow_timeout
