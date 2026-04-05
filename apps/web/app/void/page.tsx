@@ -397,11 +397,7 @@ export default function VoidPage() {
     try { a.playbackRate = playbackRate; } catch { /* browser limit */ }
   }, [playbackRate]);
 
-  const handleClick = useCallback(() => {
-    if (phase === 'video' || phase === 'fadeout') return;
-    window.history.replaceState(null, '', '/');
-    router.push('/');
-  }, [phase, router]);
+  // No click escape — you're trapped until the crash
 
   const col = PALETTE[colorIdx];
   const col2 = PALETTE[(colorIdx + 3) % PALETTE.length];
@@ -410,7 +406,6 @@ export default function VoidPage() {
   return (
     <div
       className="fixed inset-0 bg-black z-[9999] overflow-hidden"
-      onClick={handleClick}
       style={{
         filter: [
           inverted ? `invert(1) hue-rotate(${Math.random() * 360}deg)` : '',
