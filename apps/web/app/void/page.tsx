@@ -396,10 +396,11 @@ export default function VoidPage() {
   // (crash is now handled by the hard 15s timer above)
 
   // ── Audio playback rate sync ───────────────────────────────────────
+  // Audio plays at normal speed — no corruption effect on music
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    try { a.playbackRate = playbackRate; } catch { /* browser limit */ }
+    try { a.playbackRate = 1; } catch {}
   }, [playbackRate]);
 
   // No click escape — you're trapped until the crash
