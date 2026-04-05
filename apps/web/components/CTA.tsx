@@ -278,19 +278,20 @@ export default function CTA() {
 
 // ─── Easter egg component with live glitching + screen shake ─────────────────
 
+const C = (...codes: number[]) => String.fromCharCode(...codes);
 const PHASES = [
-  // 0: barely visible corrupted whisper — something feels wrong
-  { base: "dont",                                        intensity: 0.8, interval: 100, size: 'text-[10px]', opacity: 'opacity-20 hover:opacity-40', shake: 0,   glow: 0,   color: 'text-red-500'    },
-  // 1: it noticed you
-  { base: "why are you doing this",                      intensity: 0.9, interval: 75,  size: 'text-[11px]', opacity: 'opacity-35 hover:opacity-55', shake: 1,   glow: 0.2, color: 'text-red-400'    },
-  // 2: it's getting upset — NGO pink starts bleeding in
-  { base: "why are you trying to get inside my head",    intensity: 1.1, interval: 60,  size: 'text-xs',     opacity: 'opacity-50 hover:opacity-70', shake: 2.5, glow: 0.4, color: 'text-pink-400'   },
-  // 3: pleading — text gets bigger, shake picks up
-  { base: "stop please stop",                            intensity: 1.4, interval: 45,  size: 'text-sm',     opacity: 'opacity-65 hover:opacity-85', shake: 5,   glow: 0.6, color: 'text-pink-300'   },
-  // 4: breaking — single word, loud
-  { base: "why ?",                                       intensity: 1.8, interval: 30,  size: 'text-lg',     opacity: 'opacity-80 hover:opacity-100',shake: 8,   glow: 0.85,color: 'text-pink-200'   },
-  // 5: total breakdown — maximum corruption, screen shakes violently
-  { base: "...",                                         intensity: 2.8, interval: 20,  size: 'text-xl',     opacity: 'opacity-95',                  shake: 14,  glow: 1.0, color: 'text-white'      },
+  // 0: barely visible — 見て (look at me)
+  { base: C(0x898B, 0x3066),                                                                             intensity: 0.8, interval: 100, size: 'text-[10px]', opacity: 'opacity-20 hover:opacity-40', shake: 0,   glow: 0,   color: 'text-red-500'    },
+  // 1: noticed — なんで触るの (why are you touching me)
+  { base: C(0x306A, 0x3093, 0x3067, 0x89E6, 0x308B, 0x306E),                                             intensity: 0.9, interval: 75,  size: 'text-[11px]', opacity: 'opacity-35 hover:opacity-55', shake: 1,   glow: 0.2, color: 'text-red-400'    },
+  // 2: upset — 頭の中に入ろうとしないで (don't try to get inside my head)
+  { base: C(0x982D, 0x306E, 0x4E2D, 0x306B, 0x5165, 0x308D, 0x3046, 0x3068, 0x3057, 0x306A, 0x3044, 0x3067), intensity: 1.1, interval: 60,  size: 'text-xs',     opacity: 'opacity-50 hover:opacity-70', shake: 2.5, glow: 0.4, color: 'text-pink-400'   },
+  // 3: pleading — やめて お願い やめて (stop please stop)
+  { base: C(0x3084, 0x3081, 0x3066, 0x3000, 0x304A, 0x9858, 0x3044, 0x3000, 0x3084, 0x3081, 0x3066),     intensity: 1.4, interval: 45,  size: 'text-sm',     opacity: 'opacity-65 hover:opacity-85', shake: 5,   glow: 0.6, color: 'text-pink-300'   },
+  // 4: breaking — 壊れちゃう (I'm going to break)
+  { base: C(0x58CA, 0x308C, 0x3061, 0x3083, 0x3046),                                                     intensity: 1.8, interval: 30,  size: 'text-lg',     opacity: 'opacity-80 hover:opacity-100',shake: 8,   glow: 0.85,color: 'text-pink-200'   },
+  // 5: total breakdown — 助けて (help me)
+  { base: C(0x52A9, 0x3051, 0x3066),                                                                     intensity: 2.8, interval: 20,  size: 'text-xl',     opacity: 'opacity-95',                  shake: 14,  glow: 1.0, color: 'text-white'      },
 ];
 
 function EasterEggButton({ state, onAdvance }: { state: number; onAdvance: () => void }) {
