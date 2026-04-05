@@ -226,7 +226,9 @@ export default function VoidPage() {
       setWhiteOverlay(1);
       setPlayCrash(true);
       // Play crash sound instantly — preloaded <audio>, no iframe delay
-      try { crashRef.current?.play(); } catch { /* autoplay blocked */ }
+      try {
+        if (crashRef.current) { crashRef.current.volume = 0.4; crashRef.current.play(); }
+      } catch { /* autoplay blocked */ }
       window.__p01_corrupted = true;
       window.__p01_corruption_level = 1;
       sessionStorage.setItem('p01_corrupted', '1');
