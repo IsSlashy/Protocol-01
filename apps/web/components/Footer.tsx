@@ -1,7 +1,35 @@
 "use client";
 
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Github, MessageCircle } from "lucide-react";
 import { useT } from "@/i18n";
+
+// ─── Easter egg glitch engine ───────────────────────────────────────────────
+const ZA = '\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308\u030A\u030B\u030C\u030D\u030E\u030F\u0310\u0311\u0312\u0313\u0314\u0315\u031A\u033D\u034A\u034B\u034C';
+const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u0349';
+const ZB = '\u0316\u0317\u0318\u0319\u031C\u031D\u031E\u031F\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329';
+const rc = (s: string) => s[Math.floor(Math.random() * s.length)];
+const SWAP = '!@#$%&?/|~^<>_=+';
+
+function glitchFrame(base: string, intensity: number): string {
+  return base.split('').map(c => {
+    let o = Math.random() < 0.12 * intensity ? SWAP[Math.floor(Math.random() * SWAP.length)] : c;
+    for (let i = 0; i < Math.floor(Math.random() * 3 * intensity); i++) o += rc(ZA);
+    for (let i = 0; i < Math.floor(Math.random() * 2 * intensity); i++) o += rc(ZM);
+    if (Math.random() < 0.3 * intensity) o += rc(ZB);
+    return o;
+  }).join('');
+}
+
+const PHASES = [
+  { base: "dont",                                     intensity: 0.8, interval: 100, color: 'text-red-500/20 hover:text-red-500/40' },
+  { base: "why are you doing this",                   intensity: 0.9, interval: 75,  color: 'text-red-400/35 hover:text-red-400/55' },
+  { base: "why are you trying to get inside my head", intensity: 1.1, interval: 55,  color: 'text-pink-400/50 hover:text-pink-400/70' },
+  { base: "stop please stop",                         intensity: 1.4, interval: 40,  color: 'text-pink-300/65 hover:text-pink-300/85' },
+  { base: "why ?",                                    intensity: 1.8, interval: 30,  color: 'text-pink-200/80 hover:text-pink-200/100' },
+  { base: "...",                                      intensity: 2.5, interval: 20,  color: 'text-white/90' },
+];
 
 interface FooterLink {
   name: string;
@@ -62,6 +90,29 @@ const socialLinks = [
 
 export default function Footer() {
   const t = useT();
+  const router = useRouter();
+  const [eggState, setEggState] = useState(0);
+  const [glitchText, setGlitchText] = useState('');
+  const [shake, setShake] = useState({ x: 0, y: 0 });
+
+  // Live glitch loop
+  useEffect(() => {
+    const phase = PHASES[Math.min(eggState, PHASES.length - 1)];
+    const id = setInterval(() => {
+      setGlitchText(glitchFrame(phase.base, phase.intensity));
+    }, phase.interval + Math.random() * phase.interval * 0.5);
+    return () => clearInterval(id);
+  }, [eggState]);
+
+  // Shake for phases 2+
+  useEffect(() => {
+    if (eggState < 2) { setShake({ x: 0, y: 0 }); return; }
+    const mag = [0, 0, 2, 4, 7, 12][Math.min(eggState, 5)];
+    const id = setInterval(() => {
+      setShake({ x: (Math.random() - 0.5) * mag, y: (Math.random() - 0.5) * mag });
+    }, 30);
+    return () => clearInterval(id);
+  }, [eggState]);
   return (
     <footer className="relative border-t border-p01-border bg-p01-void">
       {/* Main Footer */}
@@ -119,6 +170,35 @@ export default function Footer() {
                     </a>
                   </li>
                 ))}
+                {/* Easter egg — only in community column, under GitHub */}
+                {section.title === 'community' && (
+                  <li className="mt-2">
+                    <button
+                      onClick={() => {
+                        if (eggState >= PHASES.length - 1) {
+                          window.history.pushState(null, '', '/????');
+                          router.push('/void');
+                        } else {
+                          setEggState(s => s + 1);
+                        }
+                      }}
+                      className={`
+                        text-[10px] font-mono select-none bg-transparent border-none
+                        cursor-pointer transition-all duration-500 text-left
+                        ${PHASES[Math.min(eggState, PHASES.length - 1)].color}
+                      `}
+                      style={{
+                        transform: `translate(${shake.x}px, ${shake.y}px)`,
+                        textShadow: eggState >= 2
+                          ? `${-1 - eggState}px 0 rgba(0,255,200,${0.2 + eggState * 0.1}), ${1 + eggState}px 0 rgba(255,45,120,${0.2 + eggState * 0.1})`
+                          : 'none',
+                        ...(eggState >= 3 ? { fontStyle: 'italic' } : {}),
+                      }}
+                    >
+                      {glitchText}
+                    </button>
+                  </li>
+                )}
               </ul>
             </div>
           ))}
