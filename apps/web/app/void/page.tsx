@@ -184,6 +184,7 @@ export default function VoidPage() {
   const [scaleX, setScaleX] = useState(1);
   const [whiteOverlay, setWhiteOverlay] = useState(0);
   const [playCrash, setPlayCrash] = useState(false);
+  const crashRef = useRef<HTMLAudioElement>(null);
   // New glitch states
   const [ghosts, setGhosts] = useState<GhostEcho[]>([]);
   const [glitchBlocks, setGlitchBlocks] = useState<GlitchBlock[]>([]);
@@ -224,6 +225,8 @@ export default function VoidPage() {
     const id = setTimeout(() => {
       setWhiteOverlay(1);
       setPlayCrash(true);
+      // Play crash sound instantly — preloaded <audio>, no iframe delay
+      try { crashRef.current?.play(); } catch { /* autoplay blocked */ }
       window.__p01_corrupted = true;
       window.__p01_corruption_level = 1;
       sessionStorage.setItem('p01_corrupted', '1');
@@ -706,16 +709,8 @@ export default function VoidPage() {
         </>
       ) : null}
 
-      {/* ── Crash sound ── */}
-      {playCrash && (
-        <iframe
-          src="https://www.youtube.com/embed/1POE8JVBe0w?autoplay=1&controls=0&showinfo=0&modestbranding=1&start=0&end=2"
-          allow="autoplay; encrypted-media"
-          className="absolute pointer-events-none"
-          style={{ width: 1, height: 1, opacity: 0 }}
-          tabIndex={-1}
-        />
-      )}
+      {/* ── Crash sound — preloaded mp3, instant playback ── */}
+      <audio ref={crashRef} src="/crash.mp3" preload="auto" />
 
       {/* ── KAngel crash overlay ── */}
       {whiteOverlay > 0 && (
