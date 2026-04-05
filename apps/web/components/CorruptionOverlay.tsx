@@ -82,30 +82,25 @@ export default function CorruptionOverlay() {
   const prevPathRef = useRef(pathname);
   const rafRef = useRef<number>(0);
 
-  // ── Detect activation + escalate on each navigation ──
+  // ── Detect activation — poll window flag until found ──
   useEffect(() => {
-    // Check if corruption was triggered (by void page)
-    if (typeof window !== 'undefined' && window.__p01_corrupted) {
-      setActive(true);
-      const current = window.__p01_corruption_level ?? 0;
-      setLevel(current);
-    }
-  }, []);
-
-  // ── Escalate on route change ──
-  useEffect(() => {
-    if (!active) {
-      // Check again on every pathname change (void page may have just set it)
+    if (active) return;
+    const id = setInterval(() => {
       if (typeof window !== 'undefined' && window.__p01_corrupted) {
         setActive(true);
         setLevel(window.__p01_corruption_level ?? 1);
+        clearInterval(id);
       }
-      return;
-    }
+    }, 200);
+    return () => clearInterval(id);
+  }, [active]);
+
+  // ── Escalate on route change ──
+  useEffect(() => {
+    if (!active) return;
 
     if (pathname !== prevPathRef.current) {
       prevPathRef.current = pathname;
-      // Don't corrupt the void page itself
       if (pathname === '/void') return;
       setLevel(prev => {
         const next = prev + 1;

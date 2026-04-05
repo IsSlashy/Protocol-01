@@ -436,16 +436,14 @@ export default function VoidPage() {
         opacity: 0.2 + corruption * 0.4,
       }} />
 
-      {/* ── Music iframe — only loads when WHY phase begins ── */}
-      {(phase === 'why' || phase === 'fadeout') && (
-        <iframe
-          src="https://www.youtube.com/embed/Ub5Wy8IFRWM?autoplay=1&loop=1&playlist=Ub5Wy8IFRWM&controls=0&showinfo=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&start=0"
-          allow="autoplay; encrypted-media"
-          className="absolute pointer-events-none"
-          style={{ width: 1, height: 1, opacity: 0 }}
-          tabIndex={-1}
-        />
-      )}
+      {/* ── Music iframe — plays from the start alongside video ── */}
+      <iframe
+        src="https://www.youtube.com/embed/Ub5Wy8IFRWM?autoplay=1&loop=1&playlist=Ub5Wy8IFRWM&controls=0&showinfo=0&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&start=0"
+        allow="autoplay; encrypted-media"
+        className="absolute pointer-events-none"
+        style={{ width: 1, height: 1, opacity: 0 }}
+        tabIndex={-1}
+      />
       <audio ref={audioRef} style={{ display: 'none' }} />
 
       {phase === 'video' ? (
