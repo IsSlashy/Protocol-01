@@ -22,20 +22,14 @@ const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u
 const ZB = '\u0316\u0317\u0318\u0319\u031C\u031D\u031E\u031F\u0320\u0321\u0322\u0323\u0324\u0325\u0326\u0327\u0328\u0329\u032A\u032B\u032C\u032D\u032E\u032F';
 const rc = (s: string) => s[Math.floor(Math.random() * s.length)];
 
-// WHY in Japanese — katakana/hiragana/kanji for visual chaos
-const WHY_BASES: string[] = [];
-// Build at runtime to avoid encoding issues
-if (typeof window !== 'undefined') {
-  WHY_BASES.push(
-    String.fromCharCode(0x30CA, 0x30BC),           // ナゼ (katakana)
-    String.fromCharCode(0x306A, 0x305C),           // なぜ (hiragana)
-    String.fromCharCode(0x4F55, 0x6545),           // 何故 (kanji)
-    String.fromCharCode(0x30CA, 0x30BC, 0xFF1F),   // ナゼ？
-    String.fromCharCode(0xFF1F, 0xFF1F),           // ？？
-  );
-} else {
-  WHY_BASES.push('WHY');
-}
+// WHY bases — Japanese + English rotation
+const WHY_BASES = [
+  String.fromCharCode(0x30CA, 0x30BC),           // ナゼ
+  String.fromCharCode(0x306A, 0x305C),           // なぜ
+  String.fromCharCode(0x4F55, 0x6545),           // 何故
+  'WHY',
+  String.fromCharCode(0x30CA, 0x30BC, 0xFF1F),   // ナゼ？
+];
 
 function corruptWhy(intensity: number): string {
   const base = WHY_BASES[Math.floor(Math.random() * (intensity > 2 ? WHY_BASES.length : 2))];
@@ -383,7 +377,9 @@ export default function VoidPage() {
               transform: `rotate(${rotation}deg) scaleX(${scaleX})`,
               transition: 'color 0.05s',
             }}>
-              {whyText}
+              {/* Load JP font for kanji/kana rendering */}
+              <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@900&display=swap" rel="stylesheet" />
+              <span style={{ fontFamily: "'Noto Sans JP', monospace" }}>{whyText}</span>
             </div>
           </div>
 
