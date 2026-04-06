@@ -17,7 +17,7 @@ const processShim = {
   browser: true,
   version: '',
   platform: 'browser',
-  nextTick: (fn: Function, ...args: any[]) => setTimeout(() => fn(...args), 0),
+  nextTick: (fn: (...a: unknown[]) => void, ...args: unknown[]) => setTimeout(() => fn(...args), 0),
 };
 
 (window as any).process = processShim;
