@@ -8,6 +8,33 @@ restore_p01.ps1
 debug.keystore.backup
 %TEMP%*
 P01-Extension-*.zip
+*.zip
+
+# ZK circuit proving keys (too large, download separately)
+*.zkey
+*.ptau
+*.r1cs
+
+# Personal / sensitive docs
+docs/plan-personnel-tokyo-2026.md
+docs/pitch-entrepreneur-go-2026.md
+
+# APK builds
+*.apk
+*.apk.idsig
+
+# Build scripts with local paths
+inject_apk.py
+eas-build.exp
+eas-cloud-build.exp
+eas-init.exp
+
+# Android debug keystore
+**/debug.keystore
+
+# Claude / AI agent configs
+.claude/
+**/.agents/
 
 # Dependencies
 node_modules/
@@ -72,10 +99,8 @@ nul
 *.jks
 *.pfx
 *.keystore
-!**/debug.keystore
 
 .vercel
-*.ptau
 # Generated TypeScript declarations
 **/*.d.ts
 *.timestamp-*.mts

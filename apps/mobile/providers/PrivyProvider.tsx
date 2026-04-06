@@ -27,7 +27,7 @@ import {
   useLoginWithOAuth,
 } from '@privy-io/expo';
 
-const PRIVY_CLIENT_ID = Constants.expoConfig?.extra?.privyClientId || process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID || 'client-WY6VAkfDmcFDEpJKtgxwSkJ7CBe8pFbTJhCi4hXBPFN1X';
+const PRIVY_CLIENT_ID = Constants.expoConfig?.extra?.privyClientId || process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID || '';
 
 const PRIVY_SDK_AVAILABLE = true;
 
