@@ -76,7 +76,7 @@ const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 // P01 Privacy RPC Relay — strips IP/metadata, Tor routing
 // When set, ALL RPC calls go through the relay instead of directly to Helius
 // Fallback to production relay URL if env var not injected (e.g. dev client cache)
-const _rawRelay = process.env.EXPO_PUBLIC_P01_RPC_RELAY || 'https://p01-privacy-relay-production.up.railway.app';
+const _rawRelay = process.env.EXPO_PUBLIC_P01_RPC_RELAY || '';
 const P01_RPC_RELAY = (_rawRelay && _rawRelay.length > 5 && _rawRelay.startsWith('http')) ? _rawRelay : '';
 
 /**
