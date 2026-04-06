@@ -19,9 +19,10 @@ P01-Extension-*.zip
 docs/plan-personnel-tokyo-2026.md
 docs/pitch-entrepreneur-go-2026.md
 
-# APK builds
+# Binaries / executables
 *.apk
 *.apk.idsig
+*.exe
 
 # Build scripts with local paths
 inject_apk.py
