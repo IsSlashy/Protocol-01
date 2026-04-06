@@ -23,6 +23,32 @@ docs/pitch-entrepreneur-go-2026.md
 *.apk
 *.apk.idsig
 *.exe
+*.png
+!docs/assets/**/*.png
+!apps/mobile/assets/**/*.png
+!apps/web/public/**/*.png
+!apps/extension/public/**/*.png
+
+# Scripts, services, tools (kept in Protocol-01-backup)
+scripts/
+services/
+tools/
+p01/
+.test-runner/
+
+# Build / deploy scripts
+build-apk.sh
+build-wsl.sh
+docker-build.sh
+Dockerfile.build
+start-hackathon.ps1
+app.json
+
+# Log / output files
+logs-*.txt
+vitest-run-output.txt
+test-whitelist-output.txt
+package-lock.json
 
 # Build scripts with local paths
 inject_apk.py
