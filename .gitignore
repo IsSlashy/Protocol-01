@@ -37,6 +37,14 @@ eas-init.exp
 .claude/
 **/.agents/
 
+# Portfolio components (separate project, not Protocol-01)
+apps/web/components/GenevaMap.tsx
+apps/web/components/MiamiMap.tsx
+apps/web/components/NewYorkMap.tsx
+apps/web/components/ParisMap.tsx
+apps/web/components/TokyoMap.tsx
+apps/web/components/WindoseLogo.tsx
+
 # Dependencies
 node_modules/
 .pnpm-store/
