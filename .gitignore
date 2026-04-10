@@ -1,3 +1,13 @@
+# External projects / hackathon repos (not part of Protocol-01)
+arcium-auction-rtg/
+arcium-review/
+p01-ows-zkkyc/
+protocol-01-video/
+
+# Log files
+logcat*.txt
+rustc-ice-*.txt
+
 # Secrets / backup files (never commit)
 P01_SECRETS_BACKUP.md
 PC_SECRETS_BACKUP.md
