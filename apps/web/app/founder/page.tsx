@@ -69,7 +69,7 @@ export default function FounderPage() {
             <motion.div variants={fadeUp} className="relative inline-block mb-6">
               <div className="w-32 h-32 rounded-2xl overflow-hidden border-2 border-p01-cyan/40 shadow-[0_0_40px_rgba(57,197,187,0.2)] mx-auto">
                 <img
-                  src="/images/founder-slashy.jpg"
+                  src="/images/founder-slashy.png"
                   alt="Slashy"
                   className="w-full h-full object-cover"
                 />
