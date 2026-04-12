@@ -47,6 +47,7 @@ export default function FounderPage() {
             <div className="hidden md:flex items-center gap-5">
               <a href="/docs" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Docs</a>
               <a href="/roadmap" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Roadmap</a>
+              <a href="/updates" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Updates</a>
               <a href="/founder" className="text-xs text-p01-cyan hover:text-white transition-colors font-mono uppercase tracking-wider">Founder</a>
             </div>
             <div className="flex items-center gap-2">

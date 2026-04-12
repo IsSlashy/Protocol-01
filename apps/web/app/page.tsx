@@ -27,6 +27,7 @@ export default function Home() {
             <div className="hidden md:flex items-center gap-5">
               <a href="/docs" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">{t('nav.docs')}</a>
               <a href="/roadmap" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">{t('nav.roadmap')}</a>
+              <a href="/updates" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Updates</a>
               <a href="/sdk-demo" className="text-xs text-p01-text-dim hover:text-p01-text-muted transition-colors font-mono uppercase tracking-wider">SDK</a>
               <a href="/founder" className="text-xs text-p01-text-dim hover:text-p01-text-muted transition-colors font-mono uppercase tracking-wider">Founder</a>
             </div>
