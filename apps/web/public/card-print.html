@@ -4,24 +4,24 @@
 <meta charset="utf-8"/>
 <title>Slashy — Protocol 01</title>
 <style>
-  @page { size: 85mm 135mm; margin: 0; }
+  @page { size: 85mm 150mm; margin: 0; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   html, body { margin:0; padding:0; background:#0a0a0c; color:#fff;
     font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
-  .page { width:85mm; height:135mm; padding:6mm; background:#0a0a0c;
+  .page { width:85mm; height:150mm; padding:5mm; background:#0a0a0c;
     display:flex; flex-direction:column; }
   .top { display:flex; justify-content:space-between; align-items:center;
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size:7pt;
     letter-spacing:0.25em; text-transform:uppercase; }
   .top .brand { color:#888892; }
   .top .tag { color:#39c5bb; }
-  .card { flex:1; margin-top:4mm; background:#151518; border:0.3mm solid #2a2a30;
-    border-radius:3mm; padding:5mm; display:flex; flex-direction:column; }
+  .card { flex:1; margin-top:3mm; background:#151518; border:0.3mm solid #2a2a30;
+    border-radius:3mm; padding:4mm; display:flex; flex-direction:column; }
   .id { display:flex; gap:3mm; align-items:center; }
-  .avatar { width:18mm; height:18mm; border-radius:2mm; overflow:hidden;
+  .avatar { width:15mm; height:15mm; border-radius:2mm; overflow:hidden;
     border:0.4mm solid rgba(57,197,187,0.5); flex-shrink:0; background:#222; position:relative; }
   .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
-  .name { font-size:18pt; font-weight:700; line-height:1.1; margin:0; letter-spacing:-0.02em; }
+  .name { font-size:15pt; font-weight:700; line-height:1.1; margin:0; letter-spacing:-0.02em; }
   .role { color:#39c5bb; font-family:ui-monospace, Menlo, Consolas, monospace;
     font-size:7pt; letter-spacing:0.15em; margin:1mm 0 0 0; font-weight:700; }
   .sub { color:#9a9aa4; font-size:8pt; margin:1mm 0 0 0; line-height:1.2; }
@@ -29,26 +29,26 @@
     font-family:ui-monospace, Menlo, Consolas, monospace; font-weight:700;
     font-size:5.5pt; letter-spacing:0.12em; padding:0.5mm 1.4mm; border-radius:0.8mm;
     margin-top:1.4mm; }
-  .qr-wrap { background:#fff; border-radius:2.5mm; padding:3mm; margin-top:4mm;
-    position:relative; }
-  .qr-wrap svg { display:block; width:100%; height:auto; }
+  .qr-wrap { background:#fff; border-radius:2.5mm; padding:2mm; margin-top:2.5mm;
+    position:relative; display:flex; justify-content:center; }
+  .qr-wrap svg { display:block; width:48mm; height:48mm; }
   .corner { position:absolute; width:2.2mm; height:2.2mm; border-color:#39c5bb; border-style:solid; border-width:0; }
   .c-tl { top:1.2mm; left:1.2mm; border-top-width:0.5mm; border-left-width:0.5mm; }
   .c-tr { top:1.2mm; right:1.2mm; border-top-width:0.5mm; border-right-width:0.5mm; }
   .c-bl { bottom:1.2mm; left:1.2mm; border-bottom-width:0.5mm; border-left-width:0.5mm; }
   .c-br { bottom:1.2mm; right:1.2mm; border-bottom-width:0.5mm; border-right-width:0.5mm; }
   .scan { text-align:center; color:#888892; font-family:ui-monospace, Menlo, Consolas, monospace;
-    font-size:7pt; letter-spacing:0.25em; text-transform:uppercase; margin:3mm 0 2mm 0; }
-  .rows { display:flex; flex-direction:column; gap:1.5mm; margin-top:auto; }
-  .row { display:flex; align-items:center; gap:2mm; padding:1.8mm 2.5mm;
-    border:0.2mm solid #2a2a30; border-radius:1.5mm; background:rgba(255,255,255,0.025); }
+    font-size:6.5pt; letter-spacing:0.25em; text-transform:uppercase; margin:2mm 0 1.5mm 0; }
+  .rows { display:flex; flex-direction:column; gap:1.2mm; margin-top:auto; }
+  .row { display:flex; align-items:center; gap:1.5mm; padding:1.3mm 2mm;
+    border:0.2mm solid #2a2a30; border-radius:1.2mm; background:rgba(255,255,255,0.025); }
   .row .label { color:#888892; font-family:ui-monospace, Menlo, Consolas, monospace;
-    font-size:6.5pt; letter-spacing:0.2em; text-transform:uppercase; width:16mm; flex-shrink:0; }
+    font-size:6pt; letter-spacing:0.18em; text-transform:uppercase; width:14mm; flex-shrink:0; }
   .row .handle { color:#fff; font-family:ui-monospace, Menlo, Consolas, monospace;
-    font-size:7.5pt; margin-left:auto; }
-  .footer { text-align:center; margin-top:3mm;
+    font-size:6.8pt; margin-left:auto; }
+  .footer { text-align:center; margin-top:2.5mm;
     color:#555560; font-family:ui-monospace, Menlo, Consolas, monospace;
-    font-size:6pt; letter-spacing:0.3em; text-transform:uppercase; }
+    font-size:5.5pt; letter-spacing:0.3em; text-transform:uppercase; }
 </style>
 </head>
 <body>
