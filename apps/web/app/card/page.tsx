@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import QRCode from "react-qr-code";
 
@@ -66,6 +67,27 @@ const links = [
 ];
 
 export default function CardPage() {
+  const [downloaded, setDownloaded] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (sessionStorage.getItem("p01_card_pdf_downloaded") === "1") {
+      setDownloaded(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = "/slashy-card.pdf";
+      a.download = "slashy-protocol01.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      sessionStorage.setItem("p01_card_pdf_downloaded", "1");
+      setDownloaded(true);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
     <main className="min-h-screen bg-p01-void flex items-center justify-center px-4 py-8 relative overflow-hidden">
       {/* Ambient gradient */}
@@ -169,14 +191,23 @@ export default function CardPage() {
             ))}
           </div>
 
-          {/* Save button */}
-          <a
-            href="/slashy.vcf"
-            download="slashy-protocol01.vcf"
-            className="btn-primary w-full text-center text-xs py-3 block"
-          >
-            Save to Contacts (.vcf)
-          </a>
+          {/* Action buttons */}
+          <div className="grid grid-cols-2 gap-2">
+            <a
+              href="/slashy.vcf"
+              download="slashy-protocol01.vcf"
+              className="btn-primary text-center text-xs py-3 block"
+            >
+              Save Contact
+            </a>
+            <a
+              href="/slashy-card.pdf"
+              download="slashy-protocol01.pdf"
+              className="text-center text-xs py-3 block border border-p01-cyan/40 text-p01-cyan rounded-lg hover:bg-p01-cyan/10 transition-colors font-mono uppercase tracking-wider"
+            >
+              {downloaded ? "PDF \u2713" : "Download PDF"}
+            </a>
+          </div>
         </motion.div>
 
         {/* Footer line */}
