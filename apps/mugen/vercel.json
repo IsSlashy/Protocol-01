@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile && pnpm -F @protocol-01/privacy-toolkit build && pnpm -F @protocol-01/arcium-sdk build && pnpm -F @protocol-01/privacy-sdk build",
+  "installCommand": "bash scripts/vercel-install.sh",
   "buildCommand": "cd ../.. && pnpm -F @protocol-01/mugen build",
   "outputDirectory": ".next",
   "crons": [
