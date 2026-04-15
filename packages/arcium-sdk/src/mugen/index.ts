@@ -15,9 +15,60 @@
  */
 
 import * as anchor from '@coral-xyz/anchor';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
 import { createHash } from 'crypto';
+import {
+  ARCIUM_ADDR,
+  getClockAccAddress,
+  getFeePoolAccAddress,
+} from '@arcium-hq/client';
 import type { ArciumClient } from '../client';
+
+/**
+ * Build the full account list for a queue-style Arcium instruction in
+ * `p01_arcium`. Combines the 6-account computation set returned by
+ * {@link ArciumClient.getComputationAccounts} with the 6 additional accounts
+ * required by every queue context (payer, sign_pda, fee pool, clock, system,
+ * arcium program).
+ */
+function buildQueueAccounts(
+  client: ArciumClient,
+  program: anchor.Program,
+  baseAccounts: ReturnType<ArciumClient['getComputationAccounts']>,
+) {
+  const programId = client['programId'] ?? program.programId;
+  const [signPdaAccount] = PublicKey.findProgramAddressSync(
+    [Buffer.from('ArciumSignerAccount')],
+    programId,
+  );
+  // Resolve payer pubkey: anchor providers expose either `.publicKey` (modern)
+  // or `.wallet.publicKey` (older). Our minimal shim attaches a wallet-style
+  // adapter, so prefer `wallet.publicKey` when available.
+  const payer =
+    (program.provider as { wallet?: { publicKey?: PublicKey }; publicKey?: PublicKey })
+      .wallet?.publicKey ?? program.provider.publicKey;
+  if (!payer) {
+    throw new Error('buildQueueAccounts: provider has no wallet pubkey');
+  }
+  // Ordered to match the Anchor `MugenSubmitOfferQueue` struct declaration.
+  // Account order matters: Anchor matches positionally when using
+  // `accountsPartial`, so any reorder produces "AccountNotSigner" or
+  // similar errors at runtime.
+  return {
+    payer,
+    signPdaAccount,
+    mxeAccount: baseAccounts.mxeAccount,
+    mempoolAccount: baseAccounts.mempoolAccount,
+    executingPool: baseAccounts.executingPool,
+    computationAccount: baseAccounts.computationAccount,
+    compDefAccount: baseAccounts.compDefAccount,
+    clusterAccount: baseAccounts.clusterAccount,
+    poolAccount: getFeePoolAccAddress(),
+    clockAccount: getClockAccAddress(),
+    systemProgram: SystemProgram.programId,
+    arciumProgram: new PublicKey(ARCIUM_ADDR),
+  };
+}
 
 // ─── Circuit names (must match encrypted-ixs function names) ────────────────
 
@@ -144,6 +195,17 @@ export async function submitEncryptedOffer(
     computationOffset,
   );
 
+  // Arcium MPC requires one ciphertext per IR input — MugenOfferInput
+  // declares 5 u64 fields, so we forward all 5 ciphertexts produced by
+  // client.encrypt([cryptoAmount, fiatAmount, currHash, paymentMethods,
+  // makerNonce]). Earlier 2-ciphertext "packing" was incorrect; the IR
+  // expects 5 separate encrypted_u64 args matching the 5 plaintexts.
+  if (payload.ciphertexts.length !== 5) {
+    throw new Error(
+      `Expected 5 ciphertexts from client.encrypt, got ${payload.ciphertexts.length}`,
+    );
+  }
+
   let sig: string;
   try {
     sig = await program.methods
@@ -151,16 +213,26 @@ export async function submitEncryptedOffer(
         computationOffset,
         Array.from(payload.ciphertexts[0]),
         Array.from(payload.ciphertexts[1]),
+        Array.from(payload.ciphertexts[2]),
+        Array.from(payload.ciphertexts[3]),
+        Array.from(payload.ciphertexts[4]),
         Array.from(payload.publicKey),
         client.nonceToU128(payload.nonce),
       )
-      .accountsPartial({ ...accounts })
+      .accountsPartial(buildQueueAccounts(client, program, accounts))
       .rpc({ commitment: 'confirmed' });
   } catch (err) {
-    throw new Error(
+    const wrapped = new Error(
       `Mugen MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
-      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.',
     );
+    // Preserve the underlying error chain for diagnostics
+    // (cause property is set manually to avoid ES2022 target requirement)
+    (wrapped as Error & { cause?: unknown }).cause = err;
+    if (err instanceof Error && err.stack) {
+      wrapped.stack = `${wrapped.stack}\n--- Caused by ---\n${err.stack}`;
+    }
+    throw wrapped;
   }
 
   return {
@@ -205,6 +277,12 @@ export async function blindTakeOrder(
     computationOffset,
   );
 
+  if (payload.ciphertexts.length !== 5) {
+    throw new Error(
+      `Expected 5 ciphertexts from client.encrypt, got ${payload.ciphertexts.length}`,
+    );
+  }
+
   let finalizeSig: string;
   try {
     await program.methods
@@ -212,19 +290,29 @@ export async function blindTakeOrder(
         computationOffset,
         Array.from(payload.ciphertexts[0]),
         Array.from(payload.ciphertexts[1]),
+        Array.from(payload.ciphertexts[2]),
+        Array.from(payload.ciphertexts[3]),
+        Array.from(payload.ciphertexts[4]),
         Array.from(payload.publicKey),
         client.nonceToU128(payload.nonce),
       )
-      .accountsPartial({ ...accounts })
+      .accountsPartial(buildQueueAccounts(client, program, accounts))
       .rpc({ commitment: 'confirmed' });
 
     // Wait for MPC callback
     finalizeSig = await client.awaitFinalization(computationOffset);
   } catch (err) {
-    throw new Error(
+    const wrapped = new Error(
       `Mugen MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
-      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.',
     );
+    // Preserve the underlying error chain for diagnostics
+    // (cause property is set manually to avoid ES2022 target requirement)
+    (wrapped as Error & { cause?: unknown }).cause = err;
+    if (err instanceof Error && err.stack) {
+      wrapped.stack = `${wrapped.stack}\n--- Caused by ---\n${err.stack}`;
+    }
+    throw wrapped;
   }
 
   // Parse result from callback logs
@@ -290,14 +378,21 @@ export async function cancelEncryptedOffer(
         Array.from(payload.publicKey),
         client.nonceToU128(payload.nonce),
       )
-      .accountsPartial({ ...accounts })
+      .accountsPartial(buildQueueAccounts(client, program, accounts))
       .rpc({ commitment: 'confirmed' });
 
     return sig;
   } catch (err) {
-    throw new Error(
+    const wrapped = new Error(
       `Mugen MPC computation failed: ${err instanceof Error ? err.message : String(err)}. ` +
-      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.'
+      'This may indicate the Arcium cluster is unavailable or the circuit inputs are invalid.',
     );
+    // Preserve the underlying error chain for diagnostics
+    // (cause property is set manually to avoid ES2022 target requirement)
+    (wrapped as Error & { cause?: unknown }).cause = err;
+    if (err instanceof Error && err.stack) {
+      wrapped.stack = `${wrapped.stack}\n--- Caused by ---\n${err.stack}`;
+    }
+    throw wrapped;
   }
 }

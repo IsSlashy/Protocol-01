@@ -56,6 +56,17 @@ export type {
   TreasurySolvencyProof,
 } from './modules/treasury';
 export { MugenExchangeModule } from './modules/exchange';
+export {
+  splitAmount,
+  CANONICAL_DENOMINATIONS,
+  CANONICAL_DENOMINATIONS_SOL,
+  POOL_SUPPORTED_DENOMINATIONS_SOL,
+} from './modules/denomination';
+export type {
+  DenominationSplit,
+  SplitResult,
+  SplitInput,
+} from './modules/denomination';
 export type {
   MugenOrderParams,
   MugenOrder,

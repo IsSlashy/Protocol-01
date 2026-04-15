@@ -41,6 +41,7 @@ docs/pitch-entrepreneur-go-2026.md
 
 # Scripts, services, tools (kept in Protocol-01-backup)
 scripts/
+!apps/mugen/scripts/
 services/
 tools/
 p01/

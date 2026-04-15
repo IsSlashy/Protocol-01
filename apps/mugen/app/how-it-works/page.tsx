@@ -9,13 +9,17 @@ import {
   CheckCircle,
   Eye,
   ArrowRight,
-  ArrowDown,
   Clock,
   AlertTriangle,
   HelpCircle,
   Infinity,
+  Building2,
+  Layers,
+  Sparkles,
+  Coins,
 } from 'lucide-react';
 import MugenNavbar from '@/components/MugenNavbar';
+import PrivacyLayersGrid from '@/components/PrivacyLayersGrid';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GLASS CARD
@@ -63,6 +67,79 @@ function GlassCard({
         }}
       />
       {children}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FLOW NODE — compact circle/square node for horizontal diagrams
+// ═══════════════════════════════════════════════════════════════════════════
+
+function FlowNode({
+  label,
+  color,
+  shape = 'square',
+  icon: Icon,
+  emoji,
+  minWidth = '100px',
+}: {
+  label: string;
+  color: string;
+  shape?: 'square' | 'circle';
+  icon?: React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
+  emoji?: string;
+  minWidth?: string;
+}) {
+  return (
+    <div style={{ textAlign: 'center', minWidth }}>
+      <div
+        style={{
+          width: '3.5rem',
+          height: '3.5rem',
+          borderRadius: shape === 'circle' ? '50%' : '16px',
+          background: `linear-gradient(135deg, ${color}20, ${color}08)`,
+          border: `1px solid ${color}40`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          margin: '0 auto 0.5rem',
+        }}
+      >
+        {Icon ? <Icon size={22} style={{ color }} /> : <span style={{ fontSize: '1.4rem' }}>{emoji}</span>}
+      </div>
+      <span
+        style={{
+          fontFamily: "'Orbitron',sans-serif",
+          fontSize: '0.6rem',
+          color,
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LABELED ARROW — small label above an arrow, used in horizontal diagrams
+// ═══════════════════════════════════════════════════════════════════════════
+
+function LabeledArrow({ label, color }: { label: string; color: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 0.5rem' }}>
+      <span
+        style={{
+          fontSize: '0.55rem',
+          color: '#555570',
+          fontFamily: "'JetBrains Mono',monospace",
+          marginBottom: '0.2rem',
+        }}
+      >
+        {label}
+      </span>
+      <ArrowRight size={20} style={{ color }} />
     </div>
   );
 }
@@ -205,17 +282,41 @@ export default function HowItWorksPage() {
           }}
         >
           <div style={{ maxWidth: '50rem', margin: '0 auto' }}>
-            <span
+            {/* Live banner */}
+            <div
               style={{
-                fontSize: '0.65rem',
-                color: '#3b82f6',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.35rem 0.85rem',
+                marginBottom: '1.25rem',
+                background: 'linear-gradient(135deg, rgba(34,197,94,0.1), rgba(59,130,246,0.08))',
+                border: '1px solid rgba(34,197,94,0.25)',
+                borderRadius: '999px',
                 fontFamily: "'JetBrains Mono',monospace",
+                fontSize: '0.65rem',
+                color: '#22c55e',
+                letterSpacing: '0.15em',
                 textTransform: 'uppercase',
-                letterSpacing: '0.3em',
               }}
             >
-              How it works
-            </span>
+              <Sparkles size={12} style={{ color: '#22c55e' }} />
+              Layer 1 now live — pay any amount
+            </div>
+
+            <div>
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  color: '#3b82f6',
+                  fontFamily: "'JetBrains Mono',monospace",
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.3em',
+                }}
+              >
+                How it works
+              </span>
+            </div>
             <h1
               style={{
                 fontFamily: "'Orbitron',sans-serif",
@@ -238,9 +339,22 @@ export default function HowItWorksPage() {
                 Stay invisible.
               </span>
             </h1>
-            <p style={{ fontSize: '1.05rem', color: '#8888aa', lineHeight: 1.7, maxWidth: '36rem', margin: '0 auto' }}>
-              Mugen is a peer-to-peer exchange. No account. No KYC. No data stored.
-              You send fiat directly to a seller, and crypto arrives at an untraceable address.
+            <p
+              style={{
+                fontSize: '1.1rem',
+                color: '#b0b0cc',
+                lineHeight: 1.6,
+                maxWidth: '36rem',
+                margin: '0 auto 0.75rem',
+                fontWeight: 500,
+              }}
+            >
+              Two ways to buy. Both private. Both yours.
+            </p>
+            <p style={{ fontSize: '0.95rem', color: '#8888aa', lineHeight: 1.7, maxWidth: '38rem', margin: '0 auto' }}>
+              Mugen offers <strong style={{ color: '#3b82f6' }}>P2P mode</strong> — fiat direct between users,
+              zero KYC, on-chain escrow — and <strong style={{ color: '#8b5cf6' }}>Gateway mode</strong> — a regulated
+              on-ramp routed through our 12-layer privacy stack so clean SOL lands in your stealth wallet.
             </p>
           </div>
         </section>
@@ -259,162 +373,96 @@ export default function HowItWorksPage() {
                   textAlign: 'center',
                 }}
               >
-                {/* Buyer */}
-                <div style={{ textAlign: 'center', minWidth: '100px' }}>
-                  <div
-                    style={{
-                      width: '3.5rem',
-                      height: '3.5rem',
-                      borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #3b82f620, #3b82f608)',
-                      border: '1px solid #3b82f640',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 0.5rem',
-                    }}
-                  >
-                    <span style={{ fontSize: '1.4rem' }}>👤</span>
-                  </div>
-                  <span
-                    style={{
-                      fontFamily: "'Orbitron',sans-serif",
-                      fontSize: '0.65rem',
-                      color: '#3b82f6',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                    }}
-                  >
-                    You
-                  </span>
-                </div>
-
-                {/* Arrow 1 */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 0.5rem' }}>
-                  <span style={{ fontSize: '0.55rem', color: '#555570', fontFamily: "'JetBrains Mono',monospace", marginBottom: '0.2rem' }}>
-                    fiat
-                  </span>
-                  <ArrowRight size={20} style={{ color: '#3b82f6' }} />
-                </div>
-
-                {/* Seller */}
-                <div style={{ textAlign: 'center', minWidth: '100px' }}>
-                  <div
-                    style={{
-                      width: '3.5rem',
-                      height: '3.5rem',
-                      borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #8b5cf620, #8b5cf608)',
-                      border: '1px solid #8b5cf640',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 0.5rem',
-                    }}
-                  >
-                    <span style={{ fontSize: '1.4rem' }}>👤</span>
-                  </div>
-                  <span
-                    style={{
-                      fontFamily: "'Orbitron',sans-serif",
-                      fontSize: '0.65rem',
-                      color: '#8b5cf6',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                    }}
-                  >
-                    Seller
-                  </span>
-                </div>
-
-                {/* Arrow 2 */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 0.5rem' }}>
-                  <span style={{ fontSize: '0.55rem', color: '#555570', fontFamily: "'JetBrains Mono',monospace", marginBottom: '0.2rem' }}>
-                    confirms
-                  </span>
-                  <ArrowRight size={20} style={{ color: '#8b5cf6' }} />
-                </div>
-
-                {/* Escrow */}
-                <div style={{ textAlign: 'center', minWidth: '120px' }}>
-                  <div
-                    style={{
-                      width: '3.5rem',
-                      height: '3.5rem',
-                      borderRadius: '16px',
-                      background: 'linear-gradient(135deg, #60a5fa20, #60a5fa08)',
-                      border: '1px solid #60a5fa40',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 0.5rem',
-                    }}
-                  >
-                    <Lock size={22} style={{ color: '#60a5fa' }} />
-                  </div>
-                  <span
-                    style={{
-                      fontFamily: "'Orbitron',sans-serif",
-                      fontSize: '0.65rem',
-                      color: '#60a5fa',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                    }}
-                  >
-                    Smart Contract
-                  </span>
-                </div>
-
-                {/* Arrow 3 */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '0 0.5rem' }}>
-                  <span style={{ fontSize: '0.55rem', color: '#555570', fontFamily: "'JetBrains Mono',monospace", marginBottom: '0.2rem' }}>
-                    crypto
-                  </span>
-                  <ArrowRight size={20} style={{ color: '#22c55e' }} />
-                </div>
-
-                {/* Stealth */}
-                <div style={{ textAlign: 'center', minWidth: '120px' }}>
-                  <div
-                    style={{
-                      width: '3.5rem',
-                      height: '3.5rem',
-                      borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #22c55e20, #22c55e08)',
-                      border: '1px solid #22c55e40',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 0.5rem',
-                    }}
-                  >
-                    <Eye size={22} style={{ color: '#22c55e' }} />
-                  </div>
-                  <span
-                    style={{
-                      fontFamily: "'Orbitron',sans-serif",
-                      fontSize: '0.65rem',
-                      color: '#22c55e',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                    }}
-                  >
-                    Stealth Address
-                  </span>
-                </div>
+                <FlowNode label="You" color="#3b82f6" shape="circle" emoji="👤" />
+                <LabeledArrow label="fiat" color="#3b82f6" />
+                <FlowNode label="Seller" color="#8b5cf6" shape="circle" emoji="👤" />
+                <LabeledArrow label="confirms" color="#8b5cf6" />
+                <FlowNode label="Smart Contract" color="#60a5fa" icon={Lock} minWidth="120px" />
+                <LabeledArrow label="crypto" color="#22c55e" />
+                <FlowNode label="Stealth Address" color="#22c55e" shape="circle" icon={Eye} minWidth="120px" />
               </div>
 
-              {/* Summary line */}
+              {/* Mode label: P2P */}
               <p
                 style={{
                   textAlign: 'center',
-                  marginTop: '2rem',
-                  fontSize: '0.8rem',
+                  marginTop: '1.25rem',
+                  fontSize: '0.65rem',
+                  color: '#3b82f6',
+                  fontFamily: "'JetBrains Mono',monospace",
+                  letterSpacing: '0.2em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Mode 1 — P2P
+              </p>
+              <p
+                style={{
+                  textAlign: 'center',
+                  fontSize: '0.75rem',
                   color: '#555570',
                   fontFamily: "'JetBrains Mono',monospace",
                 }}
               >
                 Fiat goes directly between users. Crypto is held by a smart contract, not Mugen.
+              </p>
+
+              {/* Divider */}
+              <div
+                style={{
+                  height: '1px',
+                  background: 'linear-gradient(90deg, transparent, rgba(139,92,246,0.25), transparent)',
+                  margin: '2rem 0 1.75rem',
+                }}
+              />
+
+              {/* Mode label: Gateway */}
+              <p
+                style={{
+                  textAlign: 'center',
+                  fontSize: '0.65rem',
+                  color: '#8b5cf6',
+                  fontFamily: "'JetBrains Mono',monospace",
+                  letterSpacing: '0.2em',
+                  textTransform: 'uppercase',
+                  marginBottom: '1.25rem',
+                }}
+              >
+                Mode 2 — Gateway (new)
+              </p>
+
+              {/* Gateway flow row */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.35rem',
+                  flexWrap: 'wrap',
+                  textAlign: 'center',
+                }}
+              >
+                <FlowNode label="You" color="#3b82f6" shape="circle" emoji="👤" minWidth="90px" />
+                <ArrowRight size={16} style={{ color: '#3b82f6' }} />
+                <FlowNode label="MoonPay" color="#60a5fa" icon={Building2} minWidth="90px" />
+                <ArrowRight size={16} style={{ color: '#60a5fa' }} />
+                <FlowNode label="Treasury" color="#8b5cf6" icon={Coins} />
+                <ArrowRight size={16} style={{ color: '#8b5cf6' }} />
+                <FlowNode label="12 Layers" color="#a78bfa" icon={Layers} />
+                <ArrowRight size={16} style={{ color: '#22c55e' }} />
+                <FlowNode label="Stealth" color="#22c55e" shape="circle" icon={Eye} />
+              </div>
+
+              <p
+                style={{
+                  textAlign: 'center',
+                  marginTop: '1.5rem',
+                  fontSize: '0.75rem',
+                  color: '#555570',
+                  fontFamily: "'JetBrains Mono',monospace",
+                }}
+              >
+                Regulated fiat on-ramp in. 12 privacy layers between. Clean SOL out.
               </p>
             </GlassCard>
           </div>
@@ -493,6 +541,249 @@ export default function HowItWorksPage() {
           </div>
         </section>
 
+        {/* ═══ GATEWAY FLOW — Layer 1 Natural Variance Fiat ═══ */}
+        <section style={{ padding: '2rem 1.5rem 5rem' }}>
+          <div style={{ maxWidth: '52rem', margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  color: '#8b5cf6',
+                  fontFamily: "'JetBrains Mono',monospace",
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.3em',
+                }}
+              >
+                Gateway flow
+              </span>
+              <h2
+                style={{
+                  fontFamily: "'Orbitron',sans-serif",
+                  fontSize: '1.8rem',
+                  fontWeight: 800,
+                  color: 'white',
+                  marginTop: '0.5rem',
+                }}
+              >
+                Pay what you <span style={{ color: '#8b5cf6' }}>want</span>.
+              </h2>
+              <p
+                style={{
+                  marginTop: '1rem',
+                  color: '#8888aa',
+                  fontSize: '0.95rem',
+                  lineHeight: 1.7,
+                  maxWidth: '36rem',
+                  marginLeft: 'auto',
+                  marginRight: 'auto',
+                }}
+              >
+                You no longer need to remember &quot;round numbers&quot; to stay private. Pay the exact amount you want —
+                €847.32, $123.45, anything. Our system converts it into canonical denominations internally, so your bank
+                sees a natural human amount and the blockchain sees a perfectly uniform pool entry.
+              </p>
+            </div>
+
+            <GlassCard glow="violet" style={{ padding: '2.25rem 2rem' }}>
+              <div
+                style={{
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: '0.85rem',
+                  color: '#b0b0cc',
+                  lineHeight: 2,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'max-content 1fr',
+                    columnGap: '1.25rem',
+                    rowGap: '0.2rem',
+                    alignItems: 'baseline',
+                  }}
+                >
+                  <span style={{ color: '#555570' }}>What you pay:</span>
+                  <span style={{ color: 'white', fontWeight: 600 }}>€847.32</span>
+
+                  <span style={{ color: '#555570' }}>Routed privately:</span>
+                  <span style={{ color: '#3b82f6' }}>10 SOL + 1 SOL + 9× 0.1 SOL</span>
+
+                  <span style={{ color: '#555570' }}>Pool entry:</span>
+                  <span style={{ color: '#a78bfa' }}>= 11.9 SOL into uniform pool</span>
+
+                  <span style={{ color: '#555570' }}>Tracked residual:</span>
+                  <span style={{ color: '#eab308' }}>€1.23 (0.15%)</span>
+                </div>
+
+                <div
+                  style={{
+                    height: '1px',
+                    background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)',
+                    margin: '1.25rem 0',
+                  }}
+                />
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'max-content 1fr',
+                    columnGap: '1.25rem',
+                    rowGap: '0.2rem',
+                    alignItems: 'baseline',
+                  }}
+                >
+                  <span style={{ color: '#555570' }}>Bank sees:</span>
+                  <span style={{ color: '#22c55e' }}>€847.32 — no pattern</span>
+
+                  <span style={{ color: '#555570' }}>Chain sees:</span>
+                  <span style={{ color: '#22c55e' }}>11.9 SOL — uniform</span>
+                </div>
+              </div>
+            </GlassCard>
+
+            <p
+              style={{
+                textAlign: 'center',
+                marginTop: '1.5rem',
+                fontSize: '0.75rem',
+                color: '#555570',
+                fontFamily: "'JetBrains Mono',monospace",
+              }}
+            >
+              Layer 1 defeats banking structuring detection. The uniform pool defeats chain-analysis clustering.
+            </p>
+
+            {/* Privacy receipt sub-block */}
+            <div style={{ marginTop: '3rem' }}>
+              <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
+                <span
+                  style={{
+                    fontSize: '0.6rem',
+                    color: '#22c55e',
+                    fontFamily: "'JetBrains Mono',monospace",
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.3em',
+                  }}
+                >
+                  Live composition
+                </span>
+                <h3
+                  style={{
+                    fontFamily: "'Orbitron',sans-serif",
+                    fontSize: '1.2rem',
+                    fontWeight: 700,
+                    color: 'white',
+                    marginTop: '0.5rem',
+                  }}
+                >
+                  Your trade&apos;s <span style={{ color: '#22c55e' }}>privacy receipt</span>
+                </h3>
+              </div>
+              <GlassCard glow="blue" style={{ padding: '1.75rem 2rem' }}>
+                <p
+                  style={{
+                    fontSize: '0.85rem',
+                    color: '#b0b0cc',
+                    lineHeight: 1.8,
+                    margin: 0,
+                  }}
+                >
+                  Every private trade composes four live layers into a single cryptographic receipt:{' '}
+                  <strong style={{ color: '#3b82f6' }}>L1</strong> (natural-variance fiat denomination),{' '}
+                  <strong style={{ color: '#8b5cf6' }}>L8</strong> (Arcium MPC blind matching — three circuits on
+                  devnet),{' '}
+                  <strong style={{ color: '#22c55e' }}>L9</strong> (FROST 3-of-3 threshold approval gating every MPC
+                  submit), and <strong style={{ color: '#a78bfa' }}>L11</strong> (STARK + ML-KEM-768 post-quantum
+                  primitives). The match is committed on-chain as a{' '}
+                  <code style={{ color: '#eab308', fontFamily: "'JetBrains Mono',monospace" }}>MugenReputation</code>{' '}
+                  PDA — a verifiable, auditable receipt of the trade, without ever revealing its contents.
+                </p>
+                <div style={{ marginTop: '1.25rem', textAlign: 'center' }}>
+                  <Link
+                    href="/exchange/private"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.6rem 1.25rem',
+                      background: 'linear-gradient(135deg, rgba(34,197,94,0.15), rgba(59,130,246,0.15))',
+                      border: '1px solid rgba(34,197,94,0.3)',
+                      color: '#22c55e',
+                      fontFamily: "'Orbitron',sans-serif",
+                      fontWeight: 600,
+                      fontSize: '0.75rem',
+                      textDecoration: 'none',
+                      borderRadius: '10px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                    }}
+                  >
+                    See it live at /exchange/private
+                    <ArrowRight size={14} />
+                  </Link>
+                </div>
+              </GlassCard>
+            </div>
+          </div>
+        </section>
+
+        {/* ═══ 12-LAYER PRIVACY STACK ═══ */}
+        <section style={{ padding: '2rem 1.5rem 6rem' }}>
+          <div style={{ maxWidth: '64rem', margin: '0 auto' }}>
+            <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  color: '#3b82f6',
+                  fontFamily: "'JetBrains Mono',monospace",
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.3em',
+                }}
+              >
+                The stack
+              </span>
+              <h2
+                style={{
+                  fontFamily: "'Orbitron',sans-serif",
+                  fontSize: '1.8rem',
+                  fontWeight: 800,
+                  color: 'white',
+                  marginTop: '0.5rem',
+                }}
+              >
+                12 layers of <span style={{ color: '#3b82f6' }}>privacy</span>.
+              </h2>
+              <p
+                style={{
+                  marginTop: '1rem',
+                  color: '#8888aa',
+                  fontSize: '0.95rem',
+                  lineHeight: 1.7,
+                  maxWidth: '36rem',
+                  marginLeft: 'auto',
+                  marginRight: 'auto',
+                }}
+              >
+                Every Gateway transaction passes through this stack. Defence in depth: break one layer, eleven more stand.
+              </p>
+            </div>
+
+            <PrivacyLayersGrid />
+
+            <p
+              style={{
+                textAlign: 'center',
+                marginTop: '2rem',
+                fontSize: '0.75rem',
+                color: '#555570',
+                fontFamily: "'JetBrains Mono',monospace",
+              }}
+            >
+              Layer 0, Layer 1, Layer 2, Layer 3, Layer 4, Layer 8, Layer 9, and Layer 11 are live today. Layers 5–7 and Layer 10 roll out progressively over the coming months.
+            </p>
+          </div>
+        </section>
+
         {/* ═══ TRUST / SECURITY ═══ */}
         <section style={{ padding: '4rem 1.5rem 6rem' }}>
           <div style={{ maxWidth: '64rem', margin: '0 auto' }}>
@@ -562,6 +853,12 @@ export default function HowItWorksPage() {
                   desc: 'Stealth addresses use ML-KEM-768 (post-quantum cryptography) alongside classical ECDH. Your privacy is protected against both current and future threats.',
                   color: '#7c3aed',
                 },
+                {
+                  icon: Coins,
+                  title: 'Pay any amount',
+                  desc: 'Gateway mode accepts arbitrary fiat amounts — €847.32, $123.45, anything. No round-number structuring. We split it into canonical denominations internally so the pool stays uniform.',
+                  color: '#22c55e',
+                },
               ].map((item, i) => (
                 <GlassCard key={i} glow={i < 3 ? 'blue' : 'violet'} style={{ padding: '1.5rem' }}>
                   <item.icon size={24} style={{ color: item.color, marginBottom: '0.75rem' }} />
@@ -614,6 +911,14 @@ export default function HowItWorksPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {[
                 {
+                  q: 'Do I need to pay a round number?',
+                  a: 'No. Pay anything — €847.32, $123.45, whatever you want. Layer 1 (Natural Variance Fiat) splits your payment into canonical SOL denominations internally (0.1, 1, 10, 100 SOL). Your bank sees a natural human-looking amount, and the blockchain sees a perfectly uniform pool entry. Leftover fiat (typically under 0.5%) is tracked in a residual sub-wallet.',
+                },
+                {
+                  q: 'What if MoonPay KYCs me?',
+                  a: 'Gateway mode routes regulated on-ramps (like MoonPay) through our Treasury Buffer so the provider never sees your final destination wallet. Today, Layer 1 ships live — it already defeats banking structuring detection via natural-variance fiat amounts. The full Treasury Buffer and upstream layers (L2–L11) ship progressively over the coming months. If maximum privacy is critical right now, prefer P2P mode — no KYC at all.',
+                },
+                {
                   q: 'What if the seller takes my money and never releases?',
                   a: 'The escrow has a 1-hour timeout. If the seller does not confirm, you can open a dispute. If no resolution occurs, the smart contract automatically refunds the crypto. Your fiat transfer is between you and the seller via standard banking — Mugen provides dispute arbitration for the crypto side.',
                 },
@@ -640,6 +945,10 @@ export default function HowItWorksPage() {
                 {
                   q: 'Can I sell crypto too?',
                   a: 'Yes. Go to the P2P Exchange, switch to "Sell Crypto", and create an order. You set your price, accepted payment methods, and trade limits. When a buyer takes your order, your crypto is locked in escrow until you confirm receiving the fiat.',
+                },
+                {
+                  q: 'Where can I see this working today?',
+                  a: '/exchange/private is the live production surface. Create a private order or find a match — every submit is cryptographically receipted on Solana devnet. Browse the on-chain activity feed at the bottom of that page.',
                 },
               ].map((item, i) => (
                 <GlassCard key={i} style={{ padding: '1.25rem 1.5rem' }}>

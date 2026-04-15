@@ -1,7 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "npm install --legacy-peer-deps",
-  "buildCommand": "next build",
-  "outputDirectory": ".next"
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm --filter @protocol-01/mugen... build",
+  "outputDirectory": ".next",
+  "crons": [
+    {
+      "path": "/api/cron/treasury-buffer-tick",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/noise-tick",
+      "schedule": "* * * * *"
+    }
+  ]
 }

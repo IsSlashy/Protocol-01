@@ -8,6 +8,7 @@ import {
   ArrowLeft, Clock, AlertCircle, Zap, RefreshCw,
 } from 'lucide-react';
 import MugenNavbar from '@/components/MugenNavbar';
+import PrivacyPreview from '@/components/PrivacyPreview';
 import { useP01Wallet } from '@/components/WalletProvider';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -179,7 +180,7 @@ export default function PayPage() {
           const { Transaction, Connection } = await import('@solana/web3.js');
           const tx = Transaction.from(Buffer.from(takeData.transaction, 'base64'));
           const signed = await p01.signTransaction(tx);
-          const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+          const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC ?? 'https://api.devnet.solana.com', 'confirmed');
           const sig = await connection.sendRawTransaction(signed.serialize());
           await connection.confirmTransaction(sig, 'confirmed');
           setTxSig(sig);
@@ -395,6 +396,9 @@ export default function PayPage() {
                   <span style={{ color: '#60a5fa', fontWeight: 600 }}>{cryptoAmount.toFixed(token === 'SOL' ? 6 : 2)} {token}</span>
                 </div>
               </div>
+
+              {/* Privacy preview (Layer 1 denomination splitter) */}
+              <PrivacyPreview fiatAmount={fiatNum} fiatCurrency={currency} token={token} />
 
               {/* Continue */}
               <button onClick={handleContinue} disabled={fiatNum < 5} style={{

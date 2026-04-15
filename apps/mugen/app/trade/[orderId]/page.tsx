@@ -316,7 +316,7 @@ export default function TradePage() {
         const tx = Transaction.from(txBytes);
         const signed = await p01.signTransaction(tx);
 
-        const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+        const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC ?? 'https://api.devnet.solana.com', 'confirmed');
         const sig = await connection.sendRawTransaction(signed.serialize());
         await connection.confirmTransaction(sig, 'confirmed');
 
@@ -363,7 +363,7 @@ export default function TradePage() {
         const tx = Transaction.from(txBytes);
         const signed = await p01.signTransaction(tx);
 
-        const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+        const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC ?? 'https://api.devnet.solana.com', 'confirmed');
         const sig = await connection.sendRawTransaction(signed.serialize());
         await connection.confirmTransaction(sig, 'confirmed');
 

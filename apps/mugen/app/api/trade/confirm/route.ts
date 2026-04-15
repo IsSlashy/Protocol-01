@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildConfirmPaymentTx } from '@/lib/mugen-tx';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/trade/confirm — Build an unsigned confirmPayment transaction.
  *

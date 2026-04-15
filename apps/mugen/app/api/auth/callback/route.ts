@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { completeSession, getSession } from '@/lib/sessions';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/auth/callback
  *
@@ -29,7 +32,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Look up session
-    const session = getSession(sessionId);
+    const session = await getSession(sessionId);
     if (!session) {
       return NextResponse.json(
         { success: false, error: 'Session not found or expired' },
@@ -97,7 +100,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Complete the session
-    const completed = completeSession(sessionId, wallet, signature, publicKey);
+    const completed = await completeSession(sessionId, wallet, signature, publicKey);
     if (!completed) {
       return NextResponse.json(
         { success: false, error: 'Failed to complete session' },

@@ -3,6 +3,10 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { buildReleaseEscrowTx } from '@/lib/mugen-tx';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
+
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 
 /**

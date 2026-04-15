@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSession, getSession } from '@/lib/sessions';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/auth/session — Create a new auth session (called by frontend)
  * GET  /api/auth/session?id=xxx — Poll session status (called by frontend)
@@ -14,7 +17,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
     }
 
-    const session = createSession(sessionId, challenge, expiresAt);
+    const session = await createSession(sessionId, challenge, expiresAt);
     return NextResponse.json({ success: true, session });
   } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
@@ -27,7 +30,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing session id' }, { status: 400 });
   }
 
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ status: 'not_found' }, { status: 404 });
   }

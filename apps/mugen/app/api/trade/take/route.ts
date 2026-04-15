@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildTakeOrderTx } from '@/lib/mugen-tx';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 300;
+
 /**
  * POST /api/trade/take — Build an unsigned takeOrder transaction.
  *

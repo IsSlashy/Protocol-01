@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import {
   ArrowDownUp, Search, Plus, Clock, Star, Shield, Wallet,
-  TrendingUp, ArrowRight, RefreshCw, ChevronDown, X,
+  TrendingUp, ArrowRight, RefreshCw, ChevronDown, X, Lock,
 } from 'lucide-react';
 import MugenNavbar from '@/components/MugenNavbar';
 import { useP01Wallet } from '@/components/WalletProvider';
@@ -36,7 +36,7 @@ interface PriceData {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const MUGEN_API = process.env.NEXT_PUBLIC_MUGEN_API || 'https://api.devnet.solana.com';
+const MUGEN_API = process.env.NEXT_PUBLIC_MUGEN_API || (process.env.NEXT_PUBLIC_SOLANA_RPC ?? 'https://api.devnet.solana.com');
 
 const paymentColors: Record<PaymentMethod, string> = {
   bank: '#3b82f6', revolut: '#8b5cf6', wise: '#22c55e',
@@ -221,7 +221,7 @@ export default function ExchangePage() {
 
         // 3. Send signed tx
         const { Connection } = await import('@solana/web3.js');
-        const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+        const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC ?? 'https://api.devnet.solana.com', 'confirmed');
         const sig = await connection.sendRawTransaction(signed.serialize());
         await connection.confirmTransaction(sig, 'confirmed');
 
@@ -310,6 +310,96 @@ export default function ExchangePage() {
               {connected ? 'New Order' : 'Connect to Trade'}
             </button>
           </div>
+
+          {/* Private trade CTA */}
+          <Link
+            href="/exchange/private"
+            style={{ textDecoration: 'none', display: 'block', marginBottom: '1.5rem' }}
+          >
+            <GlassCard
+              style={{
+                padding: '1rem 1.2rem',
+                borderColor: 'rgba(139,92,246,0.3)',
+                background:
+                  'linear-gradient(135deg, rgba(59,130,246,0.08), rgba(139,92,246,0.08))',
+                cursor: 'pointer',
+                transition: 'transform 0.15s ease, border-color 0.15s ease',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      width: '2.6rem',
+                      height: '2.6rem',
+                      flexShrink: 0,
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background:
+                        'linear-gradient(135deg, rgba(59,130,246,0.25), rgba(139,92,246,0.25))',
+                      border: '1px solid rgba(139,92,246,0.4)',
+                      color: '#c4b5fd',
+                    }}
+                  >
+                    <Lock size={18} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontFamily: "'Orbitron', sans-serif",
+                        fontSize: '0.92rem',
+                        fontWeight: 700,
+                        color: '#ffffff',
+                        letterSpacing: '0.02em',
+                      }}
+                    >
+                      Prefer to trade privately?
+                    </div>
+                    <div
+                      style={{
+                        fontFamily: "'Inter', sans-serif",
+                        fontSize: '0.78rem',
+                        color: '#a5b4fc',
+                        marginTop: '0.15rem',
+                      }}
+                    >
+                      Encrypted orderbook + MPC matching + threshold signing. Nobody sees your terms.
+                    </div>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.4rem',
+                    padding: '0.55rem 1.1rem',
+                    borderRadius: '10px',
+                    background: 'linear-gradient(135deg, #3b82f6, #7c3aed)',
+                    color: '#ffffff',
+                    fontFamily: "'Orbitron', sans-serif",
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    boxShadow: '0 4px 18px rgba(124,58,237,0.3)',
+                  }}
+                >
+                  Open private trade
+                  <ArrowRight size={13} />
+                </div>
+              </div>
+            </GlassCard>
+          </Link>
 
           {/* Tabs + filters */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildCreateOrderTx } from '@/lib/mugen-tx';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/trade/create — Build an unsigned createOrder transaction.
  *

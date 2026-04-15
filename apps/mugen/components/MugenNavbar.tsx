@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Menu, X, HelpCircle, ExternalLink } from 'lucide-react';
+import { Menu, X, HelpCircle, ExternalLink, Lock, Network, Zap, Waves } from 'lucide-react';
 
 export default function MugenNavbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -58,6 +58,22 @@ export default function MugenNavbar() {
             <HelpCircle size={12} />
             How it works
           </Link>
+          <Link href="/exchange/private" style={{ fontSize: '0.8rem', color: '#a78bfa', textDecoration: 'none', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <Lock size={12} />
+            Private Trade
+          </Link>
+          <Link href="/demo/nym-mixnet" style={{ fontSize: '0.8rem', color: '#60a5fa', textDecoration: 'none', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <Waves size={12} />
+            Mixnet
+          </Link>
+          <Link href="/demo/threshold-relayer" style={{ fontSize: '0.8rem', color: '#93c5fd', textDecoration: 'none', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <Network size={12} />
+            Threshold
+          </Link>
+          <Link href="/demo/private-rollup" style={{ fontSize: '0.8rem', color: '#60a5fa', textDecoration: 'none', fontFamily: "'JetBrains Mono', monospace", textTransform: 'uppercase', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <Zap size={12} />
+            Private Rollup
+          </Link>
           <a
             href="https://protocol-01.dev"
             target="_blank"
@@ -103,6 +119,18 @@ export default function MugenNavbar() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <Link href="/how-it-works" onClick={() => setMobileOpen(false)} style={{ color: '#8888aa', textDecoration: 'none', fontSize: '0.9rem', fontFamily: "'JetBrains Mono', monospace" }}>
               How it works
+            </Link>
+            <Link href="/exchange/private" onClick={() => setMobileOpen(false)} style={{ color: '#a78bfa', textDecoration: 'none', fontSize: '0.9rem', fontFamily: "'JetBrains Mono', monospace" }}>
+              Private Trade
+            </Link>
+            <Link href="/demo/nym-mixnet" onClick={() => setMobileOpen(false)} style={{ color: '#60a5fa', textDecoration: 'none', fontSize: '0.9rem', fontFamily: "'JetBrains Mono', monospace" }}>
+              Mixnet
+            </Link>
+            <Link href="/demo/threshold-relayer" onClick={() => setMobileOpen(false)} style={{ color: '#93c5fd', textDecoration: 'none', fontSize: '0.9rem', fontFamily: "'JetBrains Mono', monospace" }}>
+              Threshold
+            </Link>
+            <Link href="/demo/private-rollup" onClick={() => setMobileOpen(false)} style={{ color: '#60a5fa', textDecoration: 'none', fontSize: '0.9rem', fontFamily: "'JetBrains Mono', monospace" }}>
+              Private Rollup
             </Link>
             <a
               href="https://protocol-01.dev"

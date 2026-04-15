@@ -29,9 +29,9 @@ function getRandomBytes(n: number): Uint8Array {
   return bytes;
 }
 
-/** Protocol 01 Arcium program ID (deployed on devnet). */
+/** Protocol 01 Arcium program ID (deployed on devnet, 2026-04-13 with mugen circuits). */
 export const P01_ARCIUM_PROGRAM_ID = new PublicKey(
-  'FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT'
+  '9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ'
 );
 
 /** Arcium devnet cluster offset used for PDA derivation and account addressing. */
