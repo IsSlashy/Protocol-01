@@ -5,9 +5,20 @@
 
 set -ex
 
+echo "--- pwd before cd ---"
+pwd
+ls -la
+
 cd ../..
 
+echo "--- pwd at repo root ---"
+pwd
+ls -la
+
 pnpm install --frozen-lockfile
+
+echo "--- packages/ listing ---"
+ls -la packages/ || echo "NO packages/ DIR"
 
 cd packages/privacy-toolkit
 pnpm exec tsc
