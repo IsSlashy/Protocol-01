@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Slashy — Protocol 01</title>
+<style>
+  @page { size: 85mm 135mm; margin: 0; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin:0; padding:0; background:#0a0a0c; color:#fff;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  .page { width:85mm; height:135mm; padding:6mm; background:#0a0a0c;
+    display:flex; flex-direction:column; }
+  .top { display:flex; justify-content:space-between; align-items:center;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size:7pt;
+    letter-spacing:0.25em; text-transform:uppercase; }
+  .top .brand { color:#888892; }
+  .top .tag { color:#39c5bb; }
+  .card { flex:1; margin-top:4mm; background:#151518; border:0.3mm solid #2a2a30;
+    border-radius:3mm; padding:5mm; display:flex; flex-direction:column; }
+  .id { display:flex; gap:3mm; align-items:center; }
+  .avatar { width:18mm; height:18mm; border-radius:2mm; overflow:hidden;
+    border:0.4mm solid rgba(57,197,187,0.5); flex-shrink:0; background:#222; position:relative; }
+  .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+  .name { font-size:18pt; font-weight:700; line-height:1.1; margin:0; letter-spacing:-0.02em; }
+  .role { color:#39c5bb; font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:7pt; letter-spacing:0.15em; margin:1mm 0 0 0; font-weight:700; }
+  .sub { color:#9a9aa4; font-size:8pt; margin:1mm 0 0 0; line-height:1.2; }
+  .badge { display:inline-block; background:#39c5bb; color:#0a0a0c;
+    font-family:ui-monospace, Menlo, Consolas, monospace; font-weight:700;
+    font-size:5.5pt; letter-spacing:0.12em; padding:0.5mm 1.4mm; border-radius:0.8mm;
+    margin-top:1.4mm; }
+  .qr-wrap { background:#fff; border-radius:2.5mm; padding:3mm; margin-top:4mm;
+    position:relative; }
+  .qr-wrap svg { display:block; width:100%; height:auto; }
+  .corner { position:absolute; width:2.2mm; height:2.2mm; border-color:#39c5bb; border-style:solid; border-width:0; }
+  .c-tl { top:1.2mm; left:1.2mm; border-top-width:0.5mm; border-left-width:0.5mm; }
+  .c-tr { top:1.2mm; right:1.2mm; border-top-width:0.5mm; border-right-width:0.5mm; }
+  .c-bl { bottom:1.2mm; left:1.2mm; border-bottom-width:0.5mm; border-left-width:0.5mm; }
+  .c-br { bottom:1.2mm; right:1.2mm; border-bottom-width:0.5mm; border-right-width:0.5mm; }
+  .scan { text-align:center; color:#888892; font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:7pt; letter-spacing:0.25em; text-transform:uppercase; margin:3mm 0 2mm 0; }
+  .rows { display:flex; flex-direction:column; gap:1.5mm; margin-top:auto; }
+  .row { display:flex; align-items:center; gap:2mm; padding:1.8mm 2.5mm;
+    border:0.2mm solid #2a2a30; border-radius:1.5mm; background:rgba(255,255,255,0.025); }
+  .row .label { color:#888892; font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:6.5pt; letter-spacing:0.2em; text-transform:uppercase; width:16mm; flex-shrink:0; }
+  .row .handle { color:#fff; font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:7.5pt; margin-left:auto; }
+  .footer { text-align:center; margin-top:3mm;
+    color:#555560; font-family:ui-monospace, Menlo, Consolas, monospace;
+    font-size:6pt; letter-spacing:0.3em; text-transform:uppercase; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="top">
+      <span class="brand">PROTOCOL 01</span>
+      <span class="tag">vCard</span>
+    </div>
+    <div class="card">
+      <div class="id">
+        <div class="avatar">
+          <img src="/images/founder-slashy.png" alt=""/>
+        </div>
+        <div>
+          <h1 class="name">Slashy</h1>
+          <p class="role">FOUNDER / SOLO DEV</p>
+          <p class="sub">Privacy &amp; ZK infra<br/>for Solana</p>
+          <span class="badge">SOLO</span>
+        </div>
+      </div>
+      <div class="qr-wrap">
+        <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 85 85" shape-rendering="crispEdges"><path fill="#ffffff" d="M0 0h85v85H0z"/><path stroke="#0a0e12" d="M0 0.5h7m3 0h1m2 0h1m3 0h1m4 0h4m1 0h1m1 0h1m1 0h1m6 0h2m2 0h3m2 0h3m2 0h2m1 0h1m1 0h4m6 0h5m1 0h2m1 0h1m1 0h7M0 1.5h1m5 0h1m3 0h1m2 0h2m1 0h1m1 0h2m1 0h1m1 0h1m2 0h2m2 0h1m4 0h2m1 0h2m3 0h1m1 0h1m1 0h4m4 0h3m2 0h1m2 0h1m9 0h3m2 0h1m5 0h1M0 2.5h1m1 0h3m1 0h1m1 0h1m1 0h3m1 0h2m1 0h1m2 0h1m4 0h1m5 0h3m3 0h1m3 0h2m1 0h1m2 0h3m6 0h2m8 0h2m1 0h3m2 0h1m3 0h1m1 0h3m1 0h1M0 3.5h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m2 0h2m3 0h1m1 0h2m1 0h3m2 0h1m2 0h5m1 0h2m2 0h1m1 0h4m1 0h2m3 0h2m2 0h2m2 0h2m1 0h1m1 0h3m2 0h1m2 0h1m1 0h3m1 0h1M0 4.5h1m1 0h3m1 0h1m1 0h1m2 0h1m3 0h1m1 0h2m1 0h1m4 0h1m2 0h6m7 0h3m1 0h2m1 0h2m2 0h5m2 0h1m1 0h1m1 0h1m3 0h3m1 0h1m2 0h1m3 0h1m1 0h3m1 0h1M0 5.5h1m5 0h1m1 0h1m1 0h2m3 0h1m2 0h1m3 0h3m1 0h3m3 0h1m2 0h2m1 0h2m2 0h2m1 0h1m1 0h2m3 0h1m3 0h1m3 0h1m1 0h2m2 0h1m3 0h1m1 0h1m2 0h1m2 0h1m5 0h1M0 6.5h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7M8 7.5h3m1 0h3m2 0h4m4 0h2m1 0h1m3 0h1m2 0h1m1 0h1m4 0h2m4 0h2m1 0h2m3 0h3m5 0h1m2 0h3m1 0h1m2 0h2M0 8.5h1m1 0h5m2 0h2m1 0h3m1 0h1m1 0h4m1 0h1m1 0h8m2 0h1m2 0h2m1 0h1m2 0h4m2 0h7m1 0h5m2 0h1m1 0h1m1 0h7m2 0h5M1 9.5h1m2 0h2m2 0h4m2 0h1m10 0h2m3 0h2m1 0h1m5 0h3m1 0h2m3 0h1m1 0h1m3 0h1m4 0h2m2 0h2m2 0h2m2 0h2m1 0h3m2 0h1m3 0h1M1 10.5h1m2 0h3m3 0h1m2 0h1m1 0h1m1 0h1m1 0h2m1 0h1m4 0h2m2 0h1m1 0h2m1 0h3m2 0h3m3 0h3m6 0h1m1 0h1m2 0h3m1 0h2m1 0h1m1 0h1m2 0h1m3 0h1m1 0h5M2 11.5h3m7 0h7m1 0h5m1 0h1m1 0h1m1 0h1m1 0h1m3 0h2m3 0h2m5 0h2m7 0h2m1 0h1m1 0h1m1 0h1m2 0h1m6 0h3m1 0h1m3 0h1M1 12.5h1m4 0h1m2 0h1m4 0h2m1 0h1m1 0h3m1 0h1m1 0h1m2 0h1m1 0h1m1 0h3m11 0h1m2 0h2m3 0h1m2 0h1m1 0h1m1 0h4m3 0h2m2 0h3m3 0h1m1 0h1m1 0h3M4 13.5h2m1 0h2m1 0h2m2 0h2m2 0h2m1 0h1m10 0h2m1 0h1m1 0h1m2 0h1m11 0h1m6 0h1m2 0h1m1 0h1m2 0h5m2 0h3m2 0h1m1 0h1m2 0h1M0 14.5h7m2 0h1m1 0h1m1 0h1m4 0h1m1 0h3m3 0h4m4 0h4m4 0h1m2 0h1m1 0h6m2 0h1m5 0h6m2 0h2m1 0h1m1 0h1m1 0h1m1 0h7M0 15.5h6m1 0h4m1 0h2m1 0h2m1 0h2m3 0h1m1 0h1m1 0h1m1 0h1m1 0h2m2 0h1m1 0h1m1 0h4m4 0h1m4 0h2m2 0h2m5 0h1m2 0h2m1 0h1m1 0h2m2 0h2m1 0h1m2 0h1m1 0h1M0 16.5h7m3 0h1m2 0h3m1 0h1m1 0h2m1 0h2m3 0h1m5 0h3m4 0h2m1 0h4m2 0h3m1 0h2m1 0h1m1 0h2m2 0h2m1 0h2m1 0h1m1 0h2m1 0h2m1 0h1m1 0h2m1 0h1m1 0h2M1 17.5h4m3 0h2m2 0h2m2 0h2m1 0h1m1 0h2m2 0h1m1 0h1m6 0h1m3 0h5m1 0h2m1 0h1m2 0h6m3 0h2m1 0h4m2 0h5m4 0h1m1 0h1m3 0h1M3 18.5h1m1 0h2m4 0h1m1 0h1m1 0h1m3 0h1m2 0h3m1 0h9m1 0h4m2 0h2m4 0h1m1 0h1m3 0h1m1 0h3m3 0h5m2 0h2m1 0h2m2 0h3m1 0h3m1 0h1M0 19.5h1m1 0h1m1 0h1m2 0h2m2 0h2m2 0h4m4 0h2m3 0h3m1 0h1m3 0h2m2 0h1m1 0h1m1 0h1m2 0h3m2 0h1m4 0h1m1 0h2m1 0h2m2 0h1m1 0h3m1 0h1m2 0h3m5 0h1M0 20.5h1m1 0h1m2 0h3m2 0h3m1 0h2m3 0h1m2 0h1m1 0h1m4 0h3m3 0h5m6 0h1m1 0h3m2 0h1m1 0h1m1 0h3m2 0h1m2 0h2m1 0h2m1 0h2m1 0h1m1 0h3m1 0h1m2 0h2M3 21.5h1m1 0h1m2 0h1m1 0h3m4 0h3m2 0h1m2 0h1m1 0h1m1 0h2m1 0h2m1 0h1m4 0h2m1 0h2m3 0h2m2 0h5m2 0h4m1 0h5m2 0h2m1 0h1m4 0h1M0 22.5h1m1 0h1m1 0h3m3 0h2m2 0h2m1 0h3m4 0h1m2 0h1m1 0h2m1 0h7m2 0h1m1 0h1m1 0h1m1 0h2m2 0h1m2 0h2m1 0h2m1 0h1m2 0h1m4 0h1m3 0h1m1 0h1m1 0h1m2 0h2m1 0h3M0 23.5h2m3 0h1m2 0h5m2 0h2m1 0h1m1 0h1m7 0h1m2 0h2m3 0h1m2 0h1m1 0h2m1 0h1m2 0h1m1 0h1m7 0h1m1 0h2m1 0h3m2 0h1m1 0h1m5 0h1m2 0h3m1 0h1m1 0h1M0 24.5h1m1 0h2m2 0h1m1 0h4m5 0h1m1 0h1m3 0h6m2 0h1m2 0h1m1 0h4m1 0h1m2 0h1m3 0h1m1 0h1m3 0h2m1 0h2m2 0h5m1 0h1m1 0h2m1 0h3m3 0h1m1 0h1m1 0h3M0 25.5h1m1 0h3m4 0h4m2 0h1m3 0h2m1 0h2m1 0h2m1 0h3m1 0h1m2 0h2m1 0h1m1 0h6m1 0h1m1 0h2m3 0h2m1 0h2m3 0h3m3 0h4m2 0h3m1 0h1M1 26.5h1m3 0h4m8 0h1m1 0h2m1 0h2m2 0h1m2 0h1m1 0h1m1 0h1m1 0h2m1 0h1m2 0h2m2 0h4m2 0h1m5 0h2m2 0h3m4 0h1m2 0h1m2 0h1m1 0h1m2 0h1m2 0h1m1 0h1M0 27.5h2m1 0h1m4 0h2m1 0h3m1 0h4m1 0h4m1 0h1m1 0h2m1 0h2m3 0h3m1 0h4m8 0h2m4 0h1m2 0h1m7 0h3m1 0h1m2 0h2m2 0h5M1 28.5h1m1 0h7m3 0h4m1 0h1m1 0h1m1 0h2m1 0h1m1 0h8m3 0h2m1 0h1m2 0h1m3 0h1m3 0h9m1 0h1m6 0h2m2 0h2m1 0h5m2 0h2M2 29.5h3m3 0h1m2 0h1m3 0h1m5 0h5m1 0h2m3 0h1m3 0h1m4 0h2m1 0h2m1 0h1m2 0h3m3 0h4m2 0h2m4 0h2m1 0h1m3 0h2m3 0h2m2 0h1M1 30.5h1m1 0h2m1 0h1m1 0h3m1 0h1m1 0h3m3 0h2m1 0h2m1 0h3m1 0h1m1 0h1m1 0h5m3 0h2m1 0h4m1 0h3m1 0h1m1 0h2m3 0h1m1 0h4m1 0h1m1 0h1m1 0h1m2 0h2m1 0h1m1 0h4M2 31.5h3m3 0h1m1 0h1m1 0h3m6 0h1m1 0h1m2 0h1m1 0h1m3 0h2m1 0h1m1 0h1m1 0h3m2 0h1m3 0h2m1 0h2m3 0h2m2 0h1m2 0h2m3 0h2m2 0h1m1 0h3m3 0h2M0 32.5h3m1 0h6m1 0h1m2 0h1m1 0h2m1 0h4m5 0h8m1 0h2m1 0h1m3 0h1m1 0h4m2 0h5m3 0h4m1 0h1m2 0h1m3 0h3m1 0h6m1 0h2M1 33.5h2m1 0h1m2 0h1m1 0h1m7 0h3m3 0h3m1 0h1m1 0h1m1 0h1m2 0h1m4 0h1m1 0h1m1 0h5m1 0h1m1 0h1m2 0h1m1 0h2m1 0h1m4 0h3m1 0h2m2 0h1m1 0h1m2 0h2m1 0h1m2 0h2M1 34.5h4m1 0h2m1 0h1m1 0h1m2 0h3m1 0h3m1 0h2m2 0h5m2 0h4m1 0h1m3 0h1m4 0h2m2 0h2m3 0h2m5 0h1m2 0h1m1 0h2m1 0h2m1 0h1m2 0h1m1 0h1m1 0h3M0 35.5h2m1 0h2m2 0h4m1 0h2m1 0h1m4 0h1m3 0h1m1 0h3m1 0h1m1 0h1m4 0h1m4 0h2m4 0h2m1 0h2m3 0h2m1 0h2m1 0h2m2 0h1m2 0h1m1 0h2m2 0h2m1 0h1m2 0h1M1 36.5h1m3 0h5m4 0h3m1 0h1m1 0h1m3 0h1m3 0h2m8 0h2m1 0h1m1 0h1m1 0h1m1 0h3m11 0h1m1 0h1m1 0h1m4 0h6m3 0h1m3 0h2M4 37.5h2m2 0h1m3 0h4m1 0h2m2 0h1m2 0h1m6 0h1m1 0h1m1 0h1m1 0h1m1 0h2m6 0h1m6 0h1m2 0h1m3 0h4m1 0h4m2 0h2m3 0h5M0 38.5h3m3 0h1m3 0h6m2 0h3m5 0h2m1 0h1m3 0h1m2 0h1m4 0h1m1 0h1m3 0h2m1 0h5m2 0h1m3 0h1m1 0h2m9 0h2m3 0h1m2 0h3M1 39.5h1m1 0h2m5 0h1m1 0h2m1 0h3m1 0h7m1 0h1m2 0h2m4 0h4m1 0h2m1 0h2m2 0h2m1 0h1m3 0h1m1 0h1m1 0h2m3 0h1m1 0h1m2 0h3m2 0h1m4 0h1m1 0h4M6 40.5h1m1 0h2m1 0h2m2 0h1m1 0h3m1 0h1m1 0h1m2 0h1m1 0h3m2 0h3m2 0h2m2 0h3m1 0h3m2 0h1m4 0h1m1 0h1m1 0h1m1 0h1m2 0h2m1 0h1m1 0h2m1 0h2m1 0h3m2 0h2m1 0h1M0 41.5h2m1 0h3m1 0h2m1 0h7m1 0h2m2 0h3m9 0h1m2 0h2m2 0h2m3 0h2m1 0h1m1 0h1m2 0h5m2 0h1m2 0h1m1 0h2m5 0h1m3 0h5m1 0h1M2 42.5h1m3 0h3m2 0h3m1 0h1m2 0h1m1 0h1m1 0h1m1 0h1m1 0h2m1 0h1m2 0h1m1 0h2m5 0h1m1 0h1m3 0h4m4 0h1m4 0h4m2 0h1m1 0h3m5 0h2m4 0h1m1 0h1M1 43.5h5m2 0h1m1 0h1m1 0h1m2 0h3m2 0h1m2 0h2m3 0h3m6 0h1m2 0h3m4 0h1m1 0h1m1 0h2m2 0h5m6 0h1m2 0h1m2 0h1m5 0h6M0 44.5h1m2 0h2m1 0h1m2 0h4m4 0h1m1 0h2m1 0h1m2 0h1m1 0h1m4 0h1m1 0h1m1 0h1m2 0h2m9 0h1m6 0h1m1 0h3m1 0h3m3 0h5m1 0h2m1 0h1m2 0h4M0 45.5h4m4 0h1m1 0h5m1 0h1m2 0h3m1 0h1m1 0h1m1 0h1m1 0h2m1 0h2m1 0h1m1 0h1m2 0h1m2 0h1m1 0h3m2 0h2m2 0h1m4 0h3m2 0h1m1 0h5m3 0h1m1 0h1m1 0h1M0 46.5h1m5 0h2m1 0h1m1 0h3m1 0h2m1 0h1m1 0h1m2 0h2m3 0h1m1 0h3m1 0h3m1 0h2m1 0h3m4 0h2m2 0h1m3 0h1m3 0h7m1 0h1m7 0h1m2 0h1m1 0h2m1 0h1M4 47.5h1m2 0h1m1 0h1m1 0h1m1 0h1m3 0h1m1 0h5m3 0h1m1 0h1m1 0h2m1 0h1m1 0h2m1 0h1m1 0h4m3 0h1m2 0h1m2 0h1m1 0h2m4 0h2m2 0h7m1 0h1m1 0h2m3 0h3M1 48.5h1m1 0h2m1 0h1m2 0h1m2 0h1m3 0h2m1 0h1m1 0h1m2 0h2m3 0h2m1 0h3m1 0h1m1 0h1m1 0h1m1 0h3m1 0h1m1 0h5m4 0h6m2 0h3m2 0h1m1 0h2m1 0h2m2 0h1m1 0h1m1 0h2M4 49.5h2m1 0h4m2 0h1m3 0h2m2 0h1m2 0h2m2 0h1m2 0h1m2 0h1m2 0h6m4 0h2m1 0h5m1 0h1m2 0h1m5 0h4m1 0h2m5 0h3M0 50.5h1m2 0h2m1 0h3m5 0h1m1 0h1m1 0h2m2 0h1m1 0h1m5 0h1m1 0h2m2 0h3m1 0h4m3 0h2m1 0h3m1 0h1m1 0h1m1 0h1m4 0h3m2 0h2m5 0h2m4 0h2m1 0h1M1 51.5h1m1 0h1m1 0h1m1 0h2m1 0h1m2 0h1m1 0h1m1 0h3m6 0h1m4 0h3m1 0h3m1 0h1m1 0h3m3 0h1m1 0h1m1 0h2m3 0h2m1 0h2m1 0h1m1 0h1m1 0h1m1 0h2m2 0h1m3 0h2m4 0h2M0 52.5h3m1 0h5m1 0h1m3 0h3m3 0h3m2 0h1m2 0h5m2 0h1m1 0h3m1 0h4m1 0h2m2 0h7m1 0h1m2 0h2m2 0h1m2 0h4m1 0h8m2 0h2M0 53.5h2m1 0h2m3 0h3m3 0h2m1 0h1m1 0h2m1 0h2m2 0h3m3 0h2m4 0h5m1 0h2m2 0h3m1 0h1m3 0h1m2 0h1m1 0h1m1 0h6m2 0h1m2 0h1m1 0h1m3 0h1m2 0h1M1 54.5h1m1 0h2m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m2 0h2m1 0h2m1 0h2m1 0h1m1 0h1m1 0h1m1 0h1m2 0h3m1 0h1m1 0h1m1 0h1m1 0h4m1 0h3m1 0h1m1 0h3m3 0h2m2 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1M0 55.5h3m1 0h1m3 0h2m1 0h1m2 0h3m2 0h2m1 0h1m2 0h1m1 0h2m3 0h1m1 0h2m1 0h1m1 0h1m1 0h2m1 0h1m2 0h1m3 0h2m3 0h2m1 0h2m1 0h2m2 0h1m2 0h5m1 0h2m3 0h1M0 56.5h1m1 0h8m1 0h1m4 0h3m1 0h1m4 0h2m1 0h5m1 0h2m1 0h1m3 0h1m2 0h1m1 0h1m1 0h1m1 0h9m1 0h1m2 0h1m10 0h8m1 0h2M1 57.5h1m1 0h1m3 0h1m1 0h1m3 0h1m1 0h1m2 0h2m1 0h1m2 0h3m2 0h1m2 0h2m3 0h1m2 0h3m2 0h1m1 0h1m1 0h2m2 0h1m2 0h2m1 0h1m1 0h1m3 0h5m1 0h1m2 0h3m1 0h3m2 0h2M1 58.5h2m2 0h2m2 0h1m2 0h3m2 0h1m6 0h1m1 0h1m4 0h2m1 0h1m1 0h1m5 0h1m2 0h1m1 0h2m2 0h5m1 0h2m2 0h1m1 0h1m4 0h2m4 0h1m2 0h2m1 0h1M0 59.5h1m1 0h1m1 0h2m1 0h2m1 0h1m1 0h1m1 0h5m1 0h1m4 0h2m1 0h1m4 0h1m1 0h1m3 0h1m1 0h3m3 0h3m1 0h2m4 0h2m5 0h1m1 0h1m1 0h2m6 0h1m4 0h1M0 60.5h1m1 0h8m4 0h1m1 0h1m2 0h1m1 0h3m2 0h1m1 0h1m1 0h3m1 0h2m1 0h5m4 0h1m2 0h1m1 0h1m3 0h2m3 0h1m1 0h1m7 0h1m1 0h6m1 0h2m1 0h3M1 61.5h2m2 0h1m1 0h1m2 0h3m1 0h6m4 0h1m1 0h1m2 0h1m1 0h4m3 0h1m1 0h3m1 0h2m3 0h1m1 0h1m4 0h1m5 0h3m3 0h2m3 0h1m1 0h1m1 0h1m1 0h2m3 0h1M1 62.5h2m1 0h1m1 0h1m3 0h6m1 0h2m2 0h1m3 0h2m1 0h1m1 0h2m1 0h2m1 0h1m1 0h1m3 0h2m2 0h3m1 0h2m4 0h1m1 0h1m1 0h2m1 0h1m2 0h1m2 0h1m2 0h1m2 0h1m1 0h2m1 0h1m1 0h1m1 0h1M0 63.5h1m1 0h3m3 0h5m1 0h1m1 0h1m1 0h2m4 0h3m1 0h1m3 0h2m2 0h1m2 0h1m2 0h1m4 0h1m1 0h1m2 0h1m1 0h2m1 0h1m8 0h5m1 0h1m1 0h1m1 0h1m2 0h1m1 0h1m1 0h1M0 64.5h2m1 0h1m1 0h3m1 0h4m2 0h1m3 0h3m4 0h1m1 0h1m3 0h1m1 0h1m2 0h3m3 0h1m1 0h2m1 0h1m1 0h2m2 0h1m1 0h1m2 0h2m1 0h3m2 0h1m1 0h2m1 0h1m1 0h3m1 0h3m1 0h3M0 65.5h2m3 0h1m2 0h2m1 0h1m1 0h2m2 0h2m1 0h1m1 0h2m2 0h2m1 0h2m1 0h1m5 0h1m1 0h2m1 0h2m3 0h1m4 0h2m1 0h1m1 0h1m3 0h1m1 0h1m2 0h7m3 0h4m2 0h2M1 66.5h1m1 0h1m2 0h1m4 0h2m2 0h2m3 0h2m1 0h11m1 0h2m1 0h1m2 0h1m1 0h1m3 0h2m1 0h1m2 0h1m1 0h2m6 0h4m3 0h1m3 0h2m1 0h2m1 0h1m2 0h2M2 67.5h2m4 0h1m3 0h1m3 0h1m1 0h4m2 0h1m1 0h1m1 0h1m1 0h2m4 0h1m2 0h1m1 0h4m3 0h2m5 0h1m1 0h2m8 0h1m1 0h1m2 0h1m3 0h2m1 0h1m4 0h1M0 68.5h1m3 0h3m3 0h3m1 0h1m4 0h1m5 0h1m1 0h1m2 0h2m3 0h1m2 0h1m6 0h1m2 0h1m1 0h3m2 0h4m2 0h2m1 0h2m1 0h2m1 0h1m1 0h4m2 0h3m1 0h3M0 69.5h2m2 0h1m2 0h4m1 0h1m4 0h2m1 0h3m1 0h1m4 0h2m2 0h1m3 0h2m1 0h1m1 0h3m8 0h1m2 0h1m1 0h1m6 0h2m1 0h1m3 0h1m1 0h1m3 0h4M0 70.5h3m2 0h2m1 0h1m3 0h1m1 0h1m4 0h1m1 0h2m1 0h1m4 0h5m2 0h3m2 0h1m1 0h1m1 0h1m2 0h2m1 0h2m1 0h1m2 0h1m5 0h2m4 0h2m3 0h3m3 0h5M3 71.5h1m1 0h1m5 0h1m3 0h4m2 0h1m1 0h1m1 0h2m2 0h1m1 0h4m1 0h2m2 0h3m1 0h1m4 0h1m1 0h2m4 0h2m1 0h1m1 0h2m4 0h2m4 0h1m1 0h1m4 0h1M0 72.5h1m1 0h3m1 0h4m2 0h3m1 0h3m2 0h4m1 0h2m4 0h1m1 0h1m1 0h1m1 0h1m1 0h1m3 0h6m2 0h1m3 0h1m1 0h1m1 0h1m1 0h1m1 0h1m3 0h1m1 0h6m1 0h1m1 0h1m1 0h1m1 0h2M0 73.5h1m3 0h1m2 0h3m5 0h1m2 0h2m3 0h1m2 0h3m1 0h2m1 0h1m3 0h3m3 0h3m5 0h1m5 0h3m1 0h1m2 0h3m1 0h1m2 0h3m3 0h1m1 0h1m1 0h1m1 0h1M0 74.5h3m1 0h1m1 0h1m2 0h1m5 0h1m2 0h3m1 0h1m1 0h1m2 0h1m1 0h3m1 0h2m1 0h3m3 0h1m4 0h2m1 0h2m1 0h4m3 0h2m1 0h1m2 0h1m3 0h1m1 0h1m1 0h7m1 0h2M1 75.5h1m1 0h1m1 0h1m1 0h1m1 0h2m1 0h1m1 0h1m1 0h1m2 0h1m1 0h1m1 0h1m1 0h2m3 0h1m3 0h1m1 0h2m1 0h2m1 0h1m1 0h2m2 0h2m1 0h5m1 0h1m1 0h1m2 0h3m2 0h1m1 0h4m1 0h1m1 0h1m2 0h1m1 0h1M0 76.5h1m5 0h1m1 0h1m3 0h3m2 0h3m1 0h1m1 0h1m2 0h7m2 0h2m1 0h2m1 0h2m2 0h1m3 0h1m1 0h6m2 0h5m1 0h1m1 0h1m2 0h1m1 0h10m1 0h2M8 77.5h1m1 0h1m1 0h2m2 0h1m4 0h2m3 0h1m1 0h1m3 0h1m1 0h2m1 0h1m4 0h1m1 0h3m3 0h1m1 0h1m3 0h2m1 0h1m2 0h1m1 0h2m3 0h1m1 0h1m1 0h1m2 0h1m3 0h1m2 0h2M0 78.5h7m2 0h1m4 0h1m1 0h1m6 0h1m4 0h1m1 0h1m1 0h1m1 0h4m3 0h3m1 0h5m2 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h3m1 0h1m3 0h2m1 0h4m1 0h1m1 0h1m1 0h1m1 0h1M0 79.5h1m5 0h1m1 0h1m2 0h1m8 0h2m1 0h1m1 0h1m2 0h1m3 0h1m1 0h1m2 0h1m1 0h2m1 0h1m2 0h1m2 0h2m1 0h2m3 0h2m2 0h1m1 0h2m4 0h2m1 0h1m2 0h1m1 0h1m3 0h2M0 80.5h1m1 0h3m1 0h1m1 0h1m2 0h1m1 0h2m2 0h2m2 0h1m1 0h1m1 0h1m2 0h5m1 0h2m2 0h1m2 0h1m4 0h3m2 0h8m1 0h2m3 0h1m1 0h1m2 0h2m1 0h1m1 0h6m1 0h3M0 81.5h1m1 0h3m1 0h1m1 0h1m6 0h2m1 0h1m1 0h1m1 0h6m1 0h3m4 0h2m2 0h1m2 0h1m1 0h3m1 0h2m1 0h1m3 0h5m1 0h1m1 0h1m1 0h3m4 0h1m2 0h1m1 0h3m3 0h1M0 82.5h1m1 0h3m1 0h1m1 0h1m1 0h3m2 0h1m2 0h3m3 0h1m3 0h4m3 0h2m4 0h1m1 0h1m1 0h4m12 0h1m1 0h2m3 0h2m3 0h2m2 0h6m1 0h1M0 83.5h1m5 0h1m2 0h2m2 0h5m1 0h3m2 0h3m2 0h1m5 0h2m2 0h2m1 0h2m3 0h3m1 0h2m2 0h4m1 0h1m1 0h1m5 0h2m2 0h1m1 0h2m1 0h2m1 0h2M0 84.5h7m1 0h4m4 0h1m3 0h1m2 0h1m1 0h4m1 0h5m1 0h2m1 0h3m2 0h2m4 0h2m1 0h3m3 0h2m1 0h3m2 0h1m3 0h1m1 0h2m2 0h2m5 0h1"/></svg>
+        <span class="corner c-tl"></span>
+        <span class="corner c-tr"></span>
+        <span class="corner c-bl"></span>
+        <span class="corner c-br"></span>
+      </div>
+      <div class="scan">Scan to save contact</div>
+      <div class="rows">
+        <div class="row"><span class="label">GitHub</span><span class="handle">github.com/IsSlashy</span></div>
+        <div class="row"><span class="label">Twitter</span><span class="handle">x.com/Slashy_fx</span></div>
+        <div class="row"><span class="label">Email</span><span class="handle">amirramy.chatbi@gmail.com</span></div>
+        <div class="row"><span class="label">Website</span><span class="handle">protocol-01.dev</span></div>
+      </div>
+    </div>
+    <div class="footer">protocol-01.dev/card</div>
+  </div>
+</body>
+</html>
