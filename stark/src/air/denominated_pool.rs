@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_wrong_nullifier_fails_prove() {
-        use crate::prover::prove_generic;
+        use crate::prover::{prove_generic, verify_generic};
 
         let np = BaseElement::new(111);
         let secret = BaseElement::new(222);
@@ -422,10 +422,22 @@ mod tests {
             commitment,
         };
 
-        // Winterfell panics on assertion mismatch instead of returning Err
+        // Soundness: either the prover rejects (panic or Err), or — if it does
+        // produce a proof — the verifier MUST reject it.
         let result = std::panic::catch_unwind(|| {
-            prove_generic::<DenominatedPoolAir>(trace, wrong_pub_inputs)
+            prove_generic::<DenominatedPoolAir>(trace, wrong_pub_inputs.clone())
         });
-        assert!(result.is_err(), "Proof with wrong nullifier should fail");
+
+        match result {
+            Err(_) => { /* prover panicked — acceptable */ }
+            Ok(Err(_)) => { /* prover returned error — acceptable */ }
+            Ok(Ok((proof, _))) => {
+                let verify = verify_generic::<DenominatedPoolAir>(proof, wrong_pub_inputs);
+                assert!(
+                    verify.is_err(),
+                    "Proof with wrong nullifier must fail either prove or verify"
+                );
+            }
+        }
     }
 }

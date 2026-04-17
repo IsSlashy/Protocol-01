@@ -159,4 +159,79 @@ mod tests {
         let d = BaseElement::new(40);
         assert_eq!(hash4(a, b, c, d), hash4(a, b, c, d));
     }
+
+    /// [P1.5] Parity vectors — these lock the Poseidon-t3 output for known inputs.
+    /// The on-chain verifier's `poseidon_round` composed 30 times (see
+    /// programs/p01_stark_verifier/tests for the mirror) MUST produce the same
+    /// values. If either side changes (constants, MDS, S-box exponent), both
+    /// this test and the on-chain parity test will drift together — signalling
+    /// a prover↔verifier protocol break.
+    #[test]
+    fn parity_vectors_t3() {
+        use winterfell::math::StarkField;
+        assert_eq!(
+            hash2(BaseElement::new(0), BaseElement::new(0)).as_int(),
+            parity::POSEIDON_T3_ZERO_ZERO,
+        );
+        assert_eq!(
+            hash2(BaseElement::new(1), BaseElement::new(2)).as_int(),
+            parity::POSEIDON_T3_ONE_TWO,
+        );
+    }
+
+    #[test]
+    fn parity_vectors_t5() {
+        use winterfell::math::StarkField;
+        assert_eq!(
+            hash4(
+                BaseElement::new(1),
+                BaseElement::new(2),
+                BaseElement::new(3),
+                BaseElement::new(4),
+            ).as_int(),
+            parity::POSEIDON_T5_ONE_TWO_THREE_FOUR,
+        );
+    }
+}
+
+/// Parity constants shared between the off-chain STARK prover and the on-chain
+/// verifier. If any of these values changes you MUST update both:
+///   - `stark/src/poseidon/mod.rs::parity`
+///   - `programs/p01_stark_verifier/src/verify.rs::parity_tests`
+#[cfg(test)]
+pub(crate) mod parity {
+    // hash2(0, 0) — canonical zero-seed reference
+    pub const POSEIDON_T3_ZERO_ZERO: u64 = 18051734659105196655;
+    // hash2(1, 2) — canonical (1,2) reference
+    pub const POSEIDON_T3_ONE_TWO: u64 = 18184238532291717445;
+    // hash4(1, 2, 3, 4)
+    pub const POSEIDON_T5_ONE_TWO_THREE_FOUR: u64 = 3933389460072713373;
+
+    // Goldilocks pow7 vectors — pin the S-box primitive across crates.
+    // pow7(2) = 128, pow7(3) = 2187, pow7(p-1) = -1 mod p = MODULUS - 1
+    pub const POW7_OF_TWO: u64 = 128;
+    pub const POW7_OF_THREE: u64 = 2187;
+}
+
+#[cfg(test)]
+mod pow7_tests {
+    use super::{BaseElement, parity};
+    use winterfell::math::{FieldElement, StarkField};
+
+    #[inline]
+    fn pow7(x: BaseElement) -> BaseElement {
+        let x2 = x * x;
+        let x4 = x2 * x2;
+        let x3 = x2 * x;
+        x4 * x3
+    }
+
+    #[test]
+    fn pow7_parity_vectors() {
+        assert_eq!(pow7(BaseElement::new(2)).as_int(), parity::POW7_OF_TWO);
+        assert_eq!(pow7(BaseElement::new(3)).as_int(), parity::POW7_OF_THREE);
+        // Edge: pow7(0) = 0, pow7(1) = 1
+        assert_eq!(pow7(BaseElement::ZERO).as_int(), 0);
+        assert_eq!(pow7(BaseElement::ONE).as_int(), 1);
+    }
 }

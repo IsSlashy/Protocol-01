@@ -194,17 +194,17 @@ pub fn handler(
     require!(verified, ZkShieldedError::InvalidProof);
 
     // Verify the proof was generated for THIS nullifier by checking the public inputs hash.
-    // The STARK verifier stores blake3(public_inputs_le_bytes) when it verifies via
+    // The STARK verifier stores sha256(public_inputs_le_bytes) when it verifies via
     // verify_stark_proof_v2. For pool_commitment (circuit 1), public_inputs = [nullifier_u64, commitment_u64].
     //
     // The on-chain nullifier [u8; 32] stores the Goldilocks u64 nullifier in bytes 0..8.
-    // We reconstruct the same blake3 hash the verifier computed.
+    // We reconstruct the same sha256 hash the verifier computed (single concatenated blob).
     {
         let nullifier_u64 = u64::from_le_bytes(nullifier[..8].try_into().unwrap());
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&nullifier_u64.to_le_bytes());
-        hasher.update(&stark_commitment.to_le_bytes());
-        let expected_hash = *hasher.finalize().as_bytes();
+        let mut pub_buf = [0u8; 16];
+        pub_buf[..8].copy_from_slice(&nullifier_u64.to_le_bytes());
+        pub_buf[8..].copy_from_slice(&stark_commitment.to_le_bytes());
+        let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
             stored_inputs_hash == expected_hash,
             ZkShieldedError::InvalidProof

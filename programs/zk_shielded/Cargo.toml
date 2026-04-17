@@ -26,8 +26,10 @@ solana-bn254 = "2"
 # Hash function for verification key hashing
 sha3 = "0.10"
 
-# Blake3 for STARK public input hash binding (must match p01_stark_verifier)
-blake3 = "=1.8.2"
+# SHA-256 for STARK public input hash binding (must match p01_stark_verifier).
+# Uses the `sol_sha256` syscall on BPF (~85 CU/call). Switched from Blake3 in
+# P1.6 because `sol_blake3` is gated behind an inactive feature on devnet.
+solana-sha256-hasher = { version = "2.3.0", features = ["sha2"] }
 
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }

@@ -105,11 +105,12 @@ pub fn handler(ctx: Context<ResumePrivateStark>) -> Result<()> {
     require!(verified, ZkShieldedError::InvalidProof);
 
     // Verify the proof was generated for THIS vault's commitment by checking
-    // the public inputs hash. The STARK verifier v1 stores blake3(commitment_u64_le).
+    // the public inputs hash. The STARK verifier v1 stores sha256(commitment_u64_le).
     // The vault's subscriber_commitment [u8; 32] stores the Goldilocks u64 in bytes 0..8.
     {
         let commitment_u64 = u64::from_le_bytes(_commitment[..8].try_into().unwrap());
-        let expected_hash = *blake3::hash(&commitment_u64.to_le_bytes()).as_bytes();
+        let commitment_bytes = commitment_u64.to_le_bytes();
+        let expected_hash = solana_sha256_hasher::hashv(&[&commitment_bytes]).to_bytes();
         require!(
             stored_inputs_hash == expected_hash,
             ZkShieldedError::InvalidProof

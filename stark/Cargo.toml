@@ -16,8 +16,14 @@ wasm = ["wasm-bindgen", "serde", "serde_json", "getrandom"]
 # Winterfell STARK library (re-exports air, prover, verifier, math, crypto)
 winterfell = { version = "0.10", default-features = false }
 
-# Blake3 for Merkle tree in compact proof format
-blake3 = { workspace = true }
+# SHA-256 for Merkle tree and Fiat-Shamir transcript.
+# Chosen over Blake3 because the Solana `sol_blake3` syscall is gated behind a
+# runtime feature that is inactive on devnet/mainnet, forcing the on-chain
+# verifier onto the software Blake3 path (~15k CU per 64-byte hash). SHA-256
+# has `sol_sha256` always active (~85 CU/call), which is what keeps the
+# verifier under the 1.4M CU cap. `sha2` via hardware intrinsics on host
+# matches the syscall output bit-for-bit.
+sha2 = "0.10"
 
 # Hex encoding for proof output
 hex = "0.4"

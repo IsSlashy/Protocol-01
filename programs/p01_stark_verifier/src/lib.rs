@@ -1,15 +1,16 @@
 use anchor_lang::prelude::*;
 
-mod compact_proof;
-mod goldilocks;
+pub mod compact_proof;
+pub mod goldilocks;
 mod merkle;
+pub mod periodic_consts;
 mod poseidon_consts;
-mod verify;
+pub mod verify;
 
 use compact_proof::{CompactStarkProof, GenericCompactProof, get_circuit_config};
 use goldilocks::Felt;
 
-declare_id!("DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs");
+declare_id!("EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z");
 
 pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
@@ -125,10 +126,10 @@ pub mod p01_stark_verifier {
                 .map_err(|_| StarkVerifierError::InvalidProof)?;
         }
 
-        // Compute hash of public inputs to bind them to the proof buffer
-        let public_inputs_hash = {
-            *blake3::hash(&commitment.to_le_bytes()).as_bytes()
-        };
+        // Compute hash of public inputs to bind them to the proof buffer.
+        // Uses sol_sha256 syscall on BPF — always-active, ~85 CU/call.
+        let commitment_bytes = commitment.to_le_bytes();
+        let public_inputs_hash = solana_sha256_hasher::hashv(&[&commitment_bytes]).to_bytes();
 
         // Mark verified and store public inputs hash
         drop(account_data);
@@ -175,14 +176,12 @@ pub mod p01_stark_verifier {
         verify::verify_generic(&proof, circuit_id, &public_inputs, config)
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
-        // Compute hash of all public inputs to bind them to the proof buffer
-        let public_inputs_hash = {
-            let mut hasher = blake3::Hasher::new();
-            for v in &public_inputs {
-                hasher.update(&v.to_le_bytes());
-            }
-            *hasher.finalize().as_bytes()
-        };
+        // Compute hash of all public inputs via one sol_sha256 syscall.
+        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
+        for v in &public_inputs {
+            pub_buf.extend_from_slice(&v.to_le_bytes());
+        }
+        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
 
         // Mark verified and store public inputs hash
         drop(account_data);
@@ -243,7 +242,8 @@ pub struct ResizeProofBuffer<'info> {
     #[account(
         mut,
         has_one = authority,
-        realloc = ProofBuffer::space(proof_buffer.proof_size as usize),
+        realloc = (proof_buffer.to_account_info().data_len() + ProofBuffer::MAX_REALLOC_STEP)
+            .min(ProofBuffer::space(proof_buffer.proof_size as usize)),
         realloc::payer = authority,
         realloc::zero = false,
     )]
@@ -299,6 +299,9 @@ pub struct ProofBuffer {
 impl ProofBuffer {
     pub const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1 + 32; // 82
     pub const MAX_INIT_SIZE: usize = 10_240; // 10KB Solana create_account limit
+    /// Max growth per realloc call (Solana's MAX_PERMITTED_DATA_INCREASE = 10KB).
+    /// `resize_proof_buffer` is called iteratively to reach arbitrarily large proof sizes.
+    pub const MAX_REALLOC_STEP: usize = 10_240;
 
     pub fn space(proof_size: usize) -> usize {
         Self::PROOF_DATA_OFFSET + proof_size

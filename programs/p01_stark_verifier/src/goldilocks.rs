@@ -86,6 +86,36 @@ impl Felt {
     }
 }
 
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+
+    // References: `stark/src/poseidon/mod.rs::parity::POW7_OF_*`.
+    const POW7_OF_TWO: u64 = 128;
+    const POW7_OF_THREE: u64 = 2187;
+
+    #[test]
+    fn pow7_parity_vectors() {
+        assert_eq!(Felt::new(2).pow7().as_u64(), POW7_OF_TWO);
+        assert_eq!(Felt::new(3).pow7().as_u64(), POW7_OF_THREE);
+        assert_eq!(Felt::ZERO.pow7().as_u64(), 0);
+        assert_eq!(Felt::ONE.pow7().as_u64(), 1);
+    }
+
+    #[test]
+    fn add_sub_mul_around_modulus() {
+        // (MODULUS - 1) + 1 = 0 mod p
+        let m1 = Felt::new(MODULUS - 1);
+        assert_eq!(m1.add(Felt::ONE).as_u64(), 0);
+        // 0 - 1 = MODULUS - 1
+        assert_eq!(Felt::ZERO.sub(Felt::ONE).as_u64(), MODULUS - 1);
+        // Multiplication wraparound: 2 * (p-1)/2 via composition
+        // (p-1) * 2 mod p = p - 2
+        let product = m1.mul(Felt::new(2));
+        assert_eq!(product.as_u64(), MODULUS - 2);
+    }
+}
+
 /// Reduce a 128-bit product modulo the Goldilocks prime.
 /// Uses the identity: 2^64 ≡ 2^32 - 1 (mod p)
 #[inline]

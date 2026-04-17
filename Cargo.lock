@@ -2646,12 +2646,12 @@ dependencies = [
 name = "p01-stark"
 version = "0.1.0"
 dependencies = [
- "blake3",
  "getrandom 0.2.17",
  "hex",
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "wasm-bindgen",
  "winterfell",
 ]
@@ -2684,7 +2684,7 @@ name = "p01_quantum_vault"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
- "sha2 0.10.9",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
@@ -2707,7 +2707,8 @@ name = "p01_stark_verifier"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
- "blake3",
+ "p01-stark",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
@@ -5884,10 +5885,10 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
- "blake3",
  "bytemuck",
  "sha3",
  "solana-bn254",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
