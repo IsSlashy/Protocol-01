@@ -25,3 +25,13 @@ export {
   createScanner,
   subscribeToPayments,
 } from './scan';
+
+// Post-quantum claim proofs (P4.3)
+export {
+  deriveStealthWotsKeypair,
+  deriveStealthWotsFromRecipient,
+  buildClaimProofPQ,
+  verifyClaimProofPQ,
+  type PQClaimContext,
+  type PQClaimProof,
+} from './quantum';
