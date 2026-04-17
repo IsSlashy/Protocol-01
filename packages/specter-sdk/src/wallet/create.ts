@@ -29,11 +29,22 @@ export function deriveKeypair(seed: Buffer, derivationPath: string): HDDerivatio
 }
 
 /**
- * Generate stealth keys from seed
+ * Generate stealth keys from seed.
+ *
+ * P4.1 (2026-04-17): v2 hybrid is now the default and the only supported
+ * production mode. `enableHybrid=false` is retained strictly as a legacy
+ * interop hook and will throw unless the caller also passes
+ * `allowLegacyV1: true`.
+ *
  * @param seed - 64-byte seed from mnemonic
- * @param enableHybrid - Generate ML-KEM-768 keypair for post-quantum hybrid mode
+ * @param enableHybrid - Generate ML-KEM-768 keypair for post-quantum hybrid mode (default true)
+ * @param options.allowLegacyV1 - Opt-in escape hatch for legacy v1 generation (tests only)
  */
-function generateStealthKeys(seed: Buffer, enableHybrid: boolean = false): {
+function generateStealthKeys(
+  seed: Buffer,
+  enableHybrid: boolean = true,
+  options: { allowLegacyV1?: boolean } = {},
+): {
   spendingKeypair: Keypair;
   viewingKeypair: Keypair;
   stealthMetaAddress: StealthMetaAddress;
@@ -59,6 +70,14 @@ function generateStealthKeys(seed: Buffer, enableHybrid: boolean = false): {
     return { spendingKeypair, viewingKeypair, stealthMetaAddress, kemSecretKey: kem.secretKey };
   }
 
+  if (!options.allowLegacyV1) {
+    throw new SpecterError(
+      SpecterErrorCode.WALLET_CREATION_FAILED,
+      'Legacy v1 stealth meta-address generation is disabled. ' +
+        'Omit `enableHybrid: false` or pass `allowLegacyV1: true` for legacy tests only.',
+    );
+  }
+
   const stealthMetaAddress: StealthMetaAddress = {
     spendingPubKey,
     viewingPubKey,
@@ -78,7 +97,7 @@ export async function createWallet(
   const {
     derivationPath = DEFAULT_DERIVATION_PATH,
     strength = DEFAULT_MNEMONIC_STRENGTH,
-    enableHybrid = false,
+    enableHybrid = true,
   } = options;
 
   try {
@@ -111,7 +130,7 @@ export async function createWallet(
 export async function createWalletState(
   mnemonic: string,
   derivationPath: string = DEFAULT_DERIVATION_PATH,
-  enableHybrid: boolean = false
+  enableHybrid: boolean = true
 ): Promise<WalletState> {
   try {
     const seed = await bip39.mnemonicToSeed(mnemonic);

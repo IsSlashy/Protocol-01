@@ -58,6 +58,7 @@ import {
   subscribeToPayments,
 } from './scan';
 import { encodeStealthMetaAddress } from '../utils/helpers';
+import { kemGenerateKeypair } from '../utils/crypto';
 import type { StealthMetaAddress } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -209,19 +210,22 @@ describe('stealth/generate', () => {
   // -----------------------------------------------------------------------
   // createStealthAnnouncement / parseStealthAnnouncement
   // -----------------------------------------------------------------------
-  describe('stealth announcement round-trip', () => {
-    it('encodes and decodes announcement data correctly', () => {
+  describe('stealth announcement round-trip (v2 hybrid)', () => {
+    it('encodes and decodes v2 announcement data correctly', () => {
       const meta = makeMetaAddress();
       const stealth = generateStealthAddress(meta);
+
+      expect(stealth.kemCiphertext).toBeDefined();
 
       const announcement = createStealthAnnouncement(
         stealth.address,
         stealth.ephemeralPubKey,
-        stealth.viewTag
+        stealth.viewTag,
+        stealth.kemCiphertext,
       );
 
       expect(announcement).toBeInstanceOf(Uint8Array);
-      expect(announcement.length).toBe(65);
+      expect(announcement.length).toBe(1153);
 
       const parsed = parseStealthAnnouncement(announcement);
       expect(parsed.viewTag).toBe(stealth.viewTag);
@@ -231,10 +235,24 @@ describe('stealth/generate', () => {
       expect(parsed.stealthAddress.toBase58()).toBe(
         stealth.address.toBase58()
       );
+      expect(parsed.kemCiphertext).toBeDefined();
+      expect(parsed.kemCiphertext!.length).toBe(1088);
     });
 
     it('parseStealthAnnouncement throws for wrong length', () => {
       expect(() => parseStealthAnnouncement(new Uint8Array(10))).toThrow();
+    });
+
+    it('parseStealthAnnouncement rejects legacy v1 (65 bytes) by default', () => {
+      const v1Announcement = new Uint8Array(65);
+      expect(() => parseStealthAnnouncement(v1Announcement)).toThrow(/legacy|v1/i);
+    });
+
+    it('parseStealthAnnouncement accepts v1 with allowLegacyV1 opt-in', () => {
+      const v1Announcement = new Uint8Array(65);
+      const parsed = parseStealthAnnouncement(v1Announcement, { allowLegacyV1: true });
+      expect(parsed.viewTag).toBe(0);
+      expect(parsed.kemCiphertext).toBeUndefined();
     });
   });
 
@@ -242,7 +260,7 @@ describe('stealth/generate', () => {
   // generateStealthTransferData
   // -----------------------------------------------------------------------
   describe('generateStealthTransferData', () => {
-    it('returns complete transfer data including announcement', () => {
+    it('returns complete v2 transfer data including KEM-bearing announcement', () => {
       const meta = makeMetaAddress();
       const amount = 1_000_000_000n;
       const data = generateStealthTransferData(meta, amount);
@@ -250,7 +268,9 @@ describe('stealth/generate', () => {
       expect(data.stealthAddress).toBeInstanceOf(PublicKey);
       expect(data.ephemeralPubKey.length).toBe(32);
       expect(typeof data.viewTag).toBe('number');
-      expect(data.announcement.length).toBe(65);
+      expect(data.announcement.length).toBe(1153);
+      expect(data.kemCiphertext).toBeDefined();
+      expect(data.kemCiphertext!.length).toBe(1088);
       expect(data.amount).toBe(amount);
     });
   });
@@ -277,15 +297,20 @@ describe('stealth/derive', () => {
       expect(typeof result.viewTag).toBe('number');
     });
 
-    it('same inputs produce same output', () => {
+    it('v2 hybrid derivation is probabilistic (fresh KEM ct on each call)', () => {
+      // Under v2 hybrid, the KEM encapsulation introduces fresh randomness,
+      // so the shared secret (and therefore the stealth address + view tag +
+      // KEM ciphertext) differ across calls even with the same ephemeral key.
       const meta = makeMetaAddress();
       const ephemeral = nacl.box.keyPair();
 
       const a = deriveStealthPublicKey(meta, ephemeral.secretKey);
       const b = deriveStealthPublicKey(meta, ephemeral.secretKey);
 
-      expect(a.stealthPubKey.toBase58()).toBe(b.stealthPubKey.toBase58());
-      expect(a.viewTag).toBe(b.viewTag);
+      expect(a.kemCiphertext).toBeDefined();
+      expect(b.kemCiphertext).toBeDefined();
+      expect(Buffer.from(a.kemCiphertext!).equals(Buffer.from(b.kemCiphertext!))).toBe(false);
+      expect(a.stealthPubKey.toBase58()).not.toBe(b.stealthPubKey.toBase58());
     });
 
     it('different ephemeral keys produce different stealth addresses', () => {
@@ -394,74 +419,82 @@ describe('stealth/derive', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Full round-trip: generate → verify → derive private key
+  // Full round-trip: generate → verify → derive private key (v2 hybrid)
   // -----------------------------------------------------------------------
-  describe('stealth round-trip (generate → verify → derive)', () => {
-    it('sender and receiver derive the same stealth address', () => {
-      // Spending: Ed25519 (for Solana on-chain addresses)
-      // Viewing: X25519 (for ECDH key exchange)
+  describe('stealth round-trip (v2 hybrid: generate → verify → derive)', () => {
+    function makeV2Meta() {
       const spending = Keypair.generate();
       const viewing = nacl.box.keyPair();
-
-      // Build meta-address with X25519 viewing public key
+      const kem = kemGenerateKeypair();
       const meta: StealthMetaAddress = {
         spendingPubKey: spending.publicKey.toBytes(),
         viewingPubKey: viewing.publicKey,
-        encoded: encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey),
+        kemPubKey: kem.publicKey,
+        encoded: encodeStealthMetaAddress(
+          spending.publicKey.toBytes(),
+          viewing.publicKey,
+          kem.publicKey,
+        ),
       };
+      return { spending, viewing, kem, meta };
+    }
+
+    it('sender and receiver derive the same stealth address', () => {
+      const { spending, viewing, kem, meta } = makeV2Meta();
 
       // --- Sender side ---
       const ephemeral = nacl.box.keyPair();
       const senderResult = deriveStealthPublicKey(meta, ephemeral.secretKey);
+      expect(senderResult.kemCiphertext).toBeDefined();
 
       // --- Receiver side ---
-      // Verify ownership using X25519 viewing secret
       const owns = verifyStealthOwnership(
         senderResult.stealthPubKey,
         senderResult.ephemeralPubKey,
         viewing.secretKey,
         spending.publicKey.toBytes(),
         senderResult.viewTag,
+        kem.secretKey,
+        senderResult.kemCiphertext,
       );
       expect(owns).toBe(true);
 
-      // Derive stealth private key
       const stealthKeypair = deriveStealthPrivateKey(
         spending.publicKey.toBytes(),
         viewing.secretKey,
         senderResult.ephemeralPubKey,
+        kem.secretKey,
+        senderResult.kemCiphertext,
       );
 
-      // The derived keypair's public key must match the sender's stealth address
       expect(stealthKeypair.publicKey.toBase58()).toBe(
         senderResult.stealthPubKey.toBase58()
       );
     });
 
     it('round-trip works via encoded meta-address string', () => {
-      const spending = Keypair.generate();
-      const viewing = nacl.box.keyPair();
+      const { spending, viewing, kem, meta } = makeV2Meta();
 
-      const encoded = encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey);
+      const senderResult = deriveStealthPublicKeyFromEncoded(meta.encoded);
+      expect(senderResult.kemCiphertext).toBeDefined();
 
-      // Sender generates stealth address from encoded string
-      const senderResult = deriveStealthPublicKeyFromEncoded(encoded);
-
-      // Receiver verifies ownership
       const owns = verifyStealthOwnership(
         senderResult.stealthPubKey,
         senderResult.ephemeralPubKey,
         viewing.secretKey,
         spending.publicKey.toBytes(),
         senderResult.viewTag,
+        kem.secretKey,
+        senderResult.kemCiphertext,
       );
       expect(owns).toBe(true);
 
-      // Receiver derives matching private key
       const stealthKeypair = deriveStealthPrivateKey(
         spending.publicKey.toBytes(),
         viewing.secretKey,
         senderResult.ephemeralPubKey,
+        kem.secretKey,
+        senderResult.kemCiphertext,
       );
       expect(stealthKeypair.publicKey.toBase58()).toBe(
         senderResult.stealthPubKey.toBase58()
@@ -469,25 +502,19 @@ describe('stealth/derive', () => {
     });
 
     it('round-trip works via generateStealthAddress helper', () => {
-      const spending = Keypair.generate();
-      const viewing = nacl.box.keyPair();
+      const { spending, viewing, kem, meta } = makeV2Meta();
 
-      const meta: StealthMetaAddress = {
-        spendingPubKey: spending.publicKey.toBytes(),
-        viewingPubKey: viewing.publicKey,
-        encoded: encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey),
-      };
-
-      // Sender uses the high-level API
       const stealth = generateStealthAddress(meta);
+      expect(stealth.kemCiphertext).toBeDefined();
 
-      // Receiver verifies and derives
       const owns = verifyStealthOwnership(
         stealth.address,
         stealth.ephemeralPubKey,
         viewing.secretKey,
         spending.publicKey.toBytes(),
         stealth.viewTag,
+        kem.secretKey,
+        stealth.kemCiphertext,
       );
       expect(owns).toBe(true);
 
@@ -495,6 +522,8 @@ describe('stealth/derive', () => {
         spending.publicKey.toBytes(),
         viewing.secretKey,
         stealth.ephemeralPubKey,
+        kem.secretKey,
+        stealth.kemCiphertext,
       );
       expect(stealthKeypair.publicKey.toBase58()).toBe(
         stealth.address.toBase58()
@@ -502,67 +531,48 @@ describe('stealth/derive', () => {
     });
 
     it('different recipients produce different stealth addresses from same ephemeral', () => {
-      const spendingA = Keypair.generate();
-      const viewingA = nacl.box.keyPair();
-      const spendingB = Keypair.generate();
-      const viewingB = nacl.box.keyPair();
-
-      const metaA: StealthMetaAddress = {
-        spendingPubKey: spendingA.publicKey.toBytes(),
-        viewingPubKey: viewingA.publicKey,
-        encoded: encodeStealthMetaAddress(spendingA.publicKey.toBytes(), viewingA.publicKey),
-      };
-      const metaB: StealthMetaAddress = {
-        spendingPubKey: spendingB.publicKey.toBytes(),
-        viewingPubKey: viewingB.publicKey,
-        encoded: encodeStealthMetaAddress(spendingB.publicKey.toBytes(), viewingB.publicKey),
-      };
+      const a = makeV2Meta();
+      const b = makeV2Meta();
 
       const ephemeral = nacl.box.keyPair();
-      const resultA = deriveStealthPublicKey(metaA, ephemeral.secretKey);
-      const resultB = deriveStealthPublicKey(metaB, ephemeral.secretKey);
+      const resultA = deriveStealthPublicKey(a.meta, ephemeral.secretKey);
+      const resultB = deriveStealthPublicKey(b.meta, ephemeral.secretKey);
 
       expect(resultA.stealthPubKey.toBase58()).not.toBe(
         resultB.stealthPubKey.toBase58()
       );
     });
+
+    it('rejects v1 metas end-to-end on the sender path', () => {
+      const spending = Keypair.generate();
+      const viewing = nacl.box.keyPair();
+      const v1Meta: StealthMetaAddress = {
+        spendingPubKey: spending.publicKey.toBytes(),
+        viewingPubKey: viewing.publicKey,
+        encoded: encodeStealthMetaAddress(spending.publicKey.toBytes(), viewing.publicKey),
+      };
+      const ephemeral = nacl.box.keyPair();
+      expect(() => deriveStealthPublicKey(v1Meta, ephemeral.secretKey)).toThrow(/v1|legacy|hybrid/i);
+      expect(() => generateStealthAddress(v1Meta)).toThrow();
+    });
   });
 
   // -----------------------------------------------------------------------
-  // computeStealthAddress
+  // computeStealthAddress — deprecated & insecure, always throws
   // -----------------------------------------------------------------------
   describe('computeStealthAddress', () => {
-    it('returns a PublicKey', () => {
+    it('throws because the helper is deprecated and cryptographically insecure', () => {
       const spending = Keypair.generate();
       const viewing = Keypair.generate();
       const ephemeral = nacl.box.keyPair();
 
-      const result = computeStealthAddress(
-        spending.publicKey.toBytes(),
-        viewing.publicKey.toBytes(),
-        ephemeral.publicKey
-      );
-
-      expect(result).toBeInstanceOf(PublicKey);
-    });
-
-    it('deterministic for same inputs', () => {
-      const spending = Keypair.generate();
-      const viewing = Keypair.generate();
-      const ephemeral = nacl.box.keyPair();
-
-      const a = computeStealthAddress(
-        spending.publicKey.toBytes(),
-        viewing.publicKey.toBytes(),
-        ephemeral.publicKey
-      );
-      const b = computeStealthAddress(
-        spending.publicKey.toBytes(),
-        viewing.publicKey.toBytes(),
-        ephemeral.publicKey
-      );
-
-      expect(a.toBase58()).toBe(b.toBase58());
+      expect(() =>
+        computeStealthAddress(
+          spending.publicKey.toBytes(),
+          viewing.publicKey.toBytes(),
+          ephemeral.publicKey,
+        ),
+      ).toThrow(/deprecated|insecure/i);
     });
   });
 });

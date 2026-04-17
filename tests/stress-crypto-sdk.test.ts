@@ -204,9 +204,14 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 2. Stealth Address Generation (v1 - X25519)
+  // 2. Stealth Address v1 (legacy) — P4.1 rejection semantics
   // ─────────────────────────────────────────────────────────────
-  describe('2. Stealth Address Generation (v1 - X25519)', () => {
+  //
+  // v1 (classic ECDH, no ML-KEM-768) was deprecated in P4.1 (2026-04-17).
+  // v1 metas can still be *generated* and *decoded* via the explicit
+  // `allowLegacyV1` escape hatch (so wallets can scan historical notes
+  // during migration), but every sender-side path must refuse v1.
+  describe('2. Stealth Address v1 (legacy rejection)', () => {
     let spendingKeypair: Keypair;
     let viewingKeypair: Keypair;
 
@@ -215,100 +220,77 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       viewingKeypair = Keypair.generate();
     });
 
-    it('generates valid meta-address from spending+viewing keys', () => {
-      const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, false);
+    it('generation requires explicit allowLegacyV1 flag', () => {
+      expect(() =>
+        generateStealthMetaAddress(spendingKeypair, viewingKeypair, false),
+      ).to.throw(/legacy|v1/i);
+
+      const meta = generateStealthMetaAddress(
+        spendingKeypair,
+        viewingKeypair,
+        false,
+        { allowLegacyV1: true },
+      );
       expect(meta.spendingPubKey).to.have.lengthOf(32);
       expect(meta.viewingPubKey).to.have.lengthOf(32);
-      expect(meta.encoded).to.be.a('string');
       expect(meta.encoded.startsWith('st')).to.be.true;
       expect(meta.kemPubKey).to.be.undefined;
     });
 
-    it('encodes/decodes meta-address string roundtrip', () => {
-      const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, false);
-      const decoded = decodeStealthMetaAddress(meta.encoded);
-      expect(Buffer.from(decoded.spendingPubKey)).to.deep.equal(Buffer.from(meta.spendingPubKey));
-      expect(Buffer.from(decoded.viewingPubKey)).to.deep.equal(Buffer.from(meta.viewingPubKey));
+    it('decode rejects v1 metas unless allowLegacyV1 is set', () => {
+      const v1Meta = generateStealthMetaAddress(
+        spendingKeypair,
+        viewingKeypair,
+        false,
+        { allowLegacyV1: true },
+      );
+
+      expect(() => decodeStealthMetaAddress(v1Meta.encoded)).to.throw(/legacy|v1/i);
+
+      const decoded = decodeStealthMetaAddress(v1Meta.encoded, { allowLegacyV1: true });
+      expect(Buffer.from(decoded.spendingPubKey)).to.deep.equal(Buffer.from(v1Meta.spendingPubKey));
+      expect(Buffer.from(decoded.viewingPubKey)).to.deep.equal(Buffer.from(v1Meta.viewingPubKey));
       expect(decoded.kemPubKey).to.be.undefined;
     });
 
-    it('derives stealth address from meta-address', () => {
-      const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, false);
-      const ephemeral = nacl.box.keyPair();
-      const result = deriveStealthPublicKey(meta, ephemeral.secretKey);
-      expect(result.stealthPubKey).to.be.instanceOf(PublicKey);
-      expect(result.ephemeralPubKey).to.have.lengthOf(32);
-      expect(result.viewTag).to.be.a('number');
-      expect(result.viewTag).to.be.greaterThanOrEqual(0);
-      expect(result.viewTag).to.be.lessThan(256);
-    });
-
-    it('view tag matches between sender and recipient', () => {
-      const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, false);
-      const ephemeral = nacl.box.keyPair();
-
-      // Sender side
-      const senderResult = deriveStealthPublicKey(meta, ephemeral.secretKey);
-
-      // Recipient side: compute same shared secret
-      const viewingPrivKey = nacl.box.keyPair.fromSecretKey(
-        viewingKeypair.secretKey.slice(0, 32)
+    it('sender-side deriveStealthPublicKey refuses v1 metas', () => {
+      const v1Meta = generateStealthMetaAddress(
+        spendingKeypair,
+        viewingKeypair,
+        false,
+        { allowLegacyV1: true },
       );
-      // The viewing key used in stealth is X25519, but the keypair was Ed25519
-      // For v1 stealth, we need to use the same key derivation approach
-      // Test verifyStealthOwnership instead
-      const isOwner = verifyStealthOwnership(
-        senderResult.stealthPubKey,
-        senderResult.ephemeralPubKey,
-        viewingKeypair.secretKey.slice(0, 32),
-        meta.spendingPubKey,
-        senderResult.viewTag
-      );
-      // Note: this may fail because Ed25519 != X25519 key space
-      // The actual SDK generates X25519 keypairs internally
-      // Just verify that viewTag is consistent
-      expect(senderResult.viewTag).to.be.a('number');
-    });
-
-    it('recipient can derive stealth private key', () => {
-      // Use nacl box keypairs (X25519) directly for proper ECDH
-      const spendKp = nacl.box.keyPair();
-      const viewKp = nacl.box.keyPair();
-
-      const spendingPubKey = spendKp.publicKey;
-      const viewingPubKey = viewKp.publicKey;
-
-      const encoded = encodeStealthMetaAddress(spendingPubKey, viewingPubKey);
-      const meta = parseStealthMetaAddress(encoded);
-
       const ephemeral = nacl.box.keyPair();
-      const senderResult = deriveStealthPublicKey(meta, ephemeral.secretKey);
+      expect(() => deriveStealthPublicKey(v1Meta, ephemeral.secretKey))
+        .to.throw(/legacy|v1|ML-KEM|hybrid/i);
+    });
 
-      const recipientKeypair = deriveStealthPrivateKey(
-        spendingPubKey,
-        viewKp.secretKey,
-        senderResult.ephemeralPubKey
+    it('generateStealthAddress refuses v1 metas end-to-end', () => {
+      const v1Meta = generateStealthMetaAddress(
+        spendingKeypair,
+        viewingKeypair,
+        false,
+        { allowLegacyV1: true },
       );
-
-      expect(recipientKeypair.publicKey.equals(senderResult.stealthPubKey)).to.be.true;
+      expect(() => generateStealthAddress(v1Meta)).to.throw();
     });
 
-    it('100 stealth addresses all unique', () => {
-      const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, false);
-      const addresses = new Set<string>();
-      for (let i = 0; i < 100; i++) {
-        const stealth = generateStealthAddress(meta);
-        addresses.add(stealth.address.toBase58());
-      }
-      expect(addresses.size).to.equal(100);
-    });
+    it('isLegacyStealthMetaAddressV1 detects legacy envelopes', async () => {
+      const { isLegacyStealthMetaAddressV1, isValidStealthMetaAddress } = await import(
+        '../packages/specter-sdk/src/utils/helpers'
+      );
+      const v1Meta = generateStealthMetaAddress(
+        spendingKeypair,
+        viewingKeypair,
+        false,
+        { allowLegacyV1: true },
+      );
+      const v2Meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, true);
 
-    it('stealth address is valid Solana pubkey', () => {
-      const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair, false);
-      const stealth = generateStealthAddress(meta);
-      expect(stealth.address).to.be.instanceOf(PublicKey);
-      // Should not throw
-      new PublicKey(stealth.address.toBase58());
+      expect(isLegacyStealthMetaAddressV1(v1Meta.encoded)).to.be.true;
+      expect(isValidStealthMetaAddress(v1Meta.encoded)).to.be.false;
+      expect(isLegacyStealthMetaAddressV1(v2Meta.encoded)).to.be.false;
+      expect(isValidStealthMetaAddress(v2Meta.encoded)).to.be.true;
     });
   });
 
@@ -487,15 +469,15 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       expect(valid).to.be.true;
     });
 
-    it('signature is exactly 1120 bytes', () => {
+    it('signature is exactly 2144 bytes (67 chains × 32 bytes)', () => {
       const seed = randomSeed();
       const kp = generateWotsKeypair(seed);
       const message = sha256(new TextEncoder().encode('size test'));
       const sig = wotsSign(new Uint8Array(message), kp);
       expect(sig.signature).to.have.lengthOf(WOTS_SIG_SIZE);
-      expect(WOTS_SIG_SIZE).to.equal(1120);
+      expect(WOTS_SIG_SIZE).to.equal(2144);
       expect(sig.publicKey).to.have.lengthOf(WOTS_PUBKEY_SIZE);
-      expect(WOTS_PUBKEY_SIZE).to.equal(1120);
+      expect(WOTS_PUBKEY_SIZE).to.equal(2144);
     });
 
     it('50 unique keypairs from different seeds', () => {
@@ -1479,18 +1461,18 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       expect(elapsed).to.be.lessThan(10000);
     });
 
-    it('Stealth address gen: 100 < 5s', () => {
+    it('Stealth address gen: 100 < 10s (v2 hybrid)', () => {
       const spending = Keypair.generate();
       const viewing = Keypair.generate();
-      const meta = generateStealthMetaAddress(spending, viewing, false);
+      const meta = generateStealthMetaAddress(spending, viewing);
 
       const start = Date.now();
       for (let i = 0; i < 100; i++) {
         generateStealthAddress(meta);
       }
       const elapsed = Date.now() - start;
-      console.log(`    Stealth gen x100: ${elapsed}ms`);
-      expect(elapsed).to.be.lessThan(5000);
+      console.log(`    Stealth gen x100 (v2): ${elapsed}ms`);
+      expect(elapsed).to.be.lessThan(10000);
     });
 
     it('WOTS+ keygen: 50 < 5s', () => {

@@ -62,8 +62,10 @@ import { sendPrivate, estimateTransferFee } from '../packages/specter-sdk/src/tr
 
 import {
   deriveSharedSecret,
+  deriveHybridSharedSecret,
   computeViewTag,
   generateEphemeralKeypair,
+  kemDecapsulate,
   toBase58,
   fromBase58,
   hash,
@@ -260,40 +262,45 @@ describe('E2E: Full Stealth Payment Flow', function () {
       console.log('    Address uniqueness: 3 distinct addresses generated');
     });
 
-    it('2.3 -- Bob creates a stealth announcement for on-chain publication', () => {
+    it('2.3 -- Bob creates a v2 hybrid stealth announcement for on-chain publication', () => {
       /**
-       * The announcement is 65 bytes: [viewTag (1)] [ephemeralPubKey (32)] [stealthAddress (32)]
-       * This is stored on-chain (e.g., via Memo instruction) so Alice can scan it.
+       * P4.1 (2026-04-17): announcements are v2 hybrid (1153 bytes):
+       * [viewTag (1)] [ephemeralPubKey (32)] [stealthAddress (32)] [kemCiphertext (1088)]
        */
+      assert.ok(stealthResult.kemCiphertext, 'v2 hybrid derivation emits a KEM ciphertext');
+
       const announcement = createStealthAnnouncement(
         stealthResult.address,
         stealthResult.ephemeralPubKey,
-        stealthResult.viewTag
+        stealthResult.viewTag,
+        stealthResult.kemCiphertext,
       );
 
-      assert.equal(announcement.length, 65, 'announcement should be 65 bytes');
+      assert.equal(announcement.length, 1153, 'v2 announcement should be 1153 bytes');
       assert.equal(announcement[0], stealthResult.viewTag, 'first byte should be view tag');
 
-      // Verify it can be parsed back
+      // Verify it can be parsed back (strict v2)
       const parsed = parseStealthAnnouncement(announcement);
       assert.equal(parsed.viewTag, stealthResult.viewTag);
       assert.equal(parsed.stealthAddress.toBase58(), stealthResult.address.toBase58());
+      assert.ok(parsed.kemCiphertext, 'parsed announcement must include KEM ciphertext');
 
-      console.log('    Announcement: 65 bytes, round-trip OK');
+      console.log('    Announcement: 1153 bytes (v2 hybrid), round-trip OK');
     });
 
-    it('2.4 -- generateStealthTransferData bundles everything needed for a transfer', () => {
+    it('2.4 -- generateStealthTransferData bundles everything needed for a v2 transfer', () => {
       /**
        * Convenience helper: returns the stealth address, ephemeral pubkey,
-       * view tag, encoded announcement, and amount in one call.
+       * view tag, KEM ciphertext, encoded announcement, and amount in one call.
        */
       const transferData = generateStealthTransferData(aliceMetaAddress, 1_000_000_000n);
 
       assert.ok(transferData.stealthAddress);
       assert.ok(transferData.ephemeralPubKey);
       assert.ok(transferData.announcement);
+      assert.ok(transferData.kemCiphertext, 'v2 transfer must include KEM ciphertext');
       assert.equal(transferData.amount, 1_000_000_000n);
-      assert.equal(transferData.announcement.length, 65);
+      assert.equal(transferData.announcement.length, 1153);
 
       console.log('    Transfer data bundle: OK');
     });
@@ -495,58 +502,74 @@ describe('E2E: Full Stealth Payment Flow', function () {
        */
       console.log('\n    --- Complete Lifecycle ---');
 
-      // Step 1: Alice generates meta-address
+      // Step 1: Alice generates v2 hybrid meta-address (default since P4.1)
       const aliceSpend = Keypair.generate();
       const aliceView = nacl.box.keyPair();
       const aliceViewAsKeypair = Keypair.fromSecretKey(
         nacl.sign.keyPair.fromSeed(aliceView.secretKey).secretKey
       );
       const meta = generateStealthMetaAddress(aliceSpend, aliceViewAsKeypair);
-      console.log('    [1] Alice meta-address generated');
+      assert.ok(meta.kemPubKey, 'meta-address must include KEM pubkey');
+      assert.ok(meta.kemSecretKey, 'meta-address helper must return KEM secret');
+      console.log('    [1] Alice v2 meta-address generated (1249 bytes)');
 
       // Step 2: Bob generates stealth address
       const stealth = generateStealthAddress(meta);
+      assert.ok(stealth.kemCiphertext, 'v2 derivation produces KEM ciphertext');
       console.log(`    [2] Bob derived stealth: ${stealth.address.toBase58().slice(0, 20)}...`);
 
-      // Step 3: Bob creates announcement
+      // Step 3: Bob creates v2 announcement (1153 bytes)
       const announcement = createStealthAnnouncement(
         stealth.address,
         stealth.ephemeralPubKey,
-        stealth.viewTag
+        stealth.viewTag,
+        stealth.kemCiphertext,
       );
       console.log(`    [3] Announcement created (${announcement.length} bytes)`);
 
-      // Step 4: Alice parses announcement
+      // Step 4: Alice parses announcement (strict v2)
       const parsed = parseStealthAnnouncement(announcement);
+      assert.ok(parsed.kemCiphertext, 'parsed announcement includes KEM ciphertext');
       console.log(`    [4] Announcement parsed, viewTag=0x${parsed.viewTag.toString(16)}`);
 
-      // Step 5: Alice checks view tag
-      const sharedSecret = deriveSharedSecret(aliceView.secretKey, parsed.ephemeralPubKey);
-      const myTag = computeViewTag(sharedSecret);
+      // Step 5: Alice checks view tag using hybrid shared secret
+      const classicSecret = deriveSharedSecret(aliceView.secretKey, parsed.ephemeralPubKey);
+      const kemShared = kemDecapsulate(parsed.kemCiphertext!, meta.kemSecretKey!);
+      const hybridSecret = deriveHybridSharedSecret(classicSecret, kemShared);
+      const myTag = computeViewTag(hybridSecret);
       const tagMatch = myTag === parsed.viewTag;
       console.log(`    [5] View tag check: ${tagMatch ? 'MATCH' : 'NO MATCH'}`);
       assert.isTrue(tagMatch, 'view tag should match');
 
-      // Step 6: Alice verifies ownership
+      // Step 6: Alice verifies ownership with KEM secret
       const isOwner = verifyStealthOwnership(
         parsed.stealthAddress,
         parsed.ephemeralPubKey,
         aliceView.secretKey,
         aliceSpend.publicKey.toBytes(),
-        parsed.viewTag
+        parsed.viewTag,
+        meta.kemSecretKey,
+        parsed.kemCiphertext,
       );
       console.log(`    [6] Ownership verified: ${isOwner}`);
       assert.isTrue(isOwner);
 
-      // Step 7: Alice derives stealth private key
+      // Step 7: Alice derives stealth private key with KEM secret
       const stealthKeypair = deriveStealthPrivateKey(
-        aliceSpend.secretKey.slice(0, 32),
+        aliceSpend.publicKey.toBytes(),
         aliceView.secretKey,
-        parsed.ephemeralPubKey
+        parsed.ephemeralPubKey,
+        meta.kemSecretKey,
+        parsed.kemCiphertext,
       );
       console.log(`    [7] Stealth private key derived -> pubkey: ${stealthKeypair.publicKey.toBase58().slice(0, 20)}...`);
+      assert.equal(
+        stealthKeypair.publicKey.toBase58(),
+        parsed.stealthAddress.toBase58(),
+        'recipient-derived pubkey must match on-chain stealth address',
+      );
 
-      console.log('\n    Lifecycle COMPLETE -- all 7 steps passed');
+      console.log('\n    Lifecycle COMPLETE -- all 7 steps passed (v2 hybrid)');
     });
 
     it('5.2 -- Multiple payments to the same recipient are unlinkable', () => {

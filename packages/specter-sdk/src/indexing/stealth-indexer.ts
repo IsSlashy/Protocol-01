@@ -341,7 +341,9 @@ export class StealthIndexer {
             const announcementBytes = hexToBytes(hexMatch[1]!);
 
             if (announcementBytes.length === V1_ANNOUNCEMENT_SIZE) {
-              const parsed = parseStealthAnnouncement(announcementBytes);
+              // Legacy v1 scan: indexer must still recognize pre-P4.1 notes
+              // so owners can recover historical funds. Send paths remain v1-closed.
+              const parsed = parseStealthAnnouncement(announcementBytes, { allowLegacyV1: true });
               announcements.push({
                 stealthAddress: parsed.stealthAddress,
                 ephemeralPubKey: parsed.ephemeralPubKey,

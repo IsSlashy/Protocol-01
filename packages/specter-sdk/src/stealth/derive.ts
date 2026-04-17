@@ -15,10 +15,12 @@ import { decodeStealthMetaAddress } from '../utils/helpers';
 
 /**
  * Derive a one-time stealth public key from the recipient's meta-address.
- * If the meta-address contains a kemPubKey (v2), uses hybrid X25519 + ML-KEM-768
- * key exchange for post-quantum resistance.
  *
- * @param recipientMetaAddress - Recipient's stealth meta-address
+ * Sender-side only. P4.1 (2026-04-17) enforces v2 hybrid (X25519 + ML-KEM-768):
+ * recipients without a `kemPubKey` are rejected to prevent sending to legacy
+ * v1 metas that are not post-quantum safe.
+ *
+ * @param recipientMetaAddress - Recipient's stealth meta-address (must be v2)
  * @param ephemeralPrivateKey - Sender's ephemeral X25519 private key
  */
 export function deriveStealthPublicKey(
@@ -28,9 +30,18 @@ export function deriveStealthPublicKey(
   stealthPubKey: PublicKey;
   ephemeralPubKey: Uint8Array;
   viewTag: number;
-  kemCiphertext?: Uint8Array;
+  kemCiphertext: Uint8Array;
 } {
   try {
+    if (!recipientMetaAddress.kemPubKey) {
+      throw new SpecterError(
+        SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
+        'Recipient meta-address is legacy v1 (no ML-KEM-768 public key). ' +
+          'Sending to v1 metas was disabled in P4.1 (2026-04-17). ' +
+          'Ask the recipient to regenerate a v2 hybrid meta-address.',
+      );
+    }
+
     const ephemeralKeypair = nacl.box.keyPair.fromSecretKey(ephemeralPrivateKey);
     const ephemeralPubKey = ephemeralKeypair.publicKey;
 
@@ -40,18 +51,10 @@ export function deriveStealthPublicKey(
       recipientMetaAddress.viewingPubKey
     );
 
-    let sharedSecret: Uint8Array;
-    let kemCiphertext: Uint8Array | undefined;
-
-    if (recipientMetaAddress.kemPubKey) {
-      // Hybrid mode: combine X25519 + ML-KEM-768
-      const kem = kemEncapsulate(recipientMetaAddress.kemPubKey);
-      kemCiphertext = kem.cipherText;
-      sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
-    } else {
-      // Classic mode: ECDH only
-      sharedSecret = classicSecret;
-    }
+    // Hybrid mode: combine X25519 + ML-KEM-768
+    const kem = kemEncapsulate(recipientMetaAddress.kemPubKey);
+    const kemCiphertext = kem.cipherText;
+    const sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
 
     const viewTag = computeViewTag(sharedSecret);
 
@@ -83,7 +86,9 @@ export function deriveStealthPublicKey(
 }
 
 /**
- * Derive a stealth public key from an encoded meta-address string
+ * Derive a stealth public key from an encoded meta-address string.
+ *
+ * P4.1: rejects legacy v1 metas (decodeStealthMetaAddress throws by default).
  */
 export function deriveStealthPublicKeyFromEncoded(
   encodedMetaAddress: string
@@ -92,7 +97,7 @@ export function deriveStealthPublicKeyFromEncoded(
   ephemeralPubKey: Uint8Array;
   viewTag: number;
   ephemeralPrivateKey: Uint8Array;
-  kemCiphertext?: Uint8Array;
+  kemCiphertext: Uint8Array;
 } {
   const decoded = decodeStealthMetaAddress(encodedMetaAddress);
   const metaAddress: StealthMetaAddress = {

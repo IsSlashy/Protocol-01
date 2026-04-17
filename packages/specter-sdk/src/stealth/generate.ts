@@ -14,46 +14,63 @@ import {
 
 /**
  * Generate a stealth meta-address from spending and viewing keypairs.
- * If `enableHybrid` is true, also generates an ML-KEM-768 keypair for
- * post-quantum resistance (v2 meta-address).
+ *
+ * Always emits a v2 hybrid meta-address (X25519 + ML-KEM-768). v1 classic
+ * metas were phased out in P4.1 (2026-04-17). The `enableHybrid=false`
+ * escape hatch is retained only for legacy interop tests and will throw
+ * unless you also pass `allowLegacyV1: true`.
  *
  * @param spendingKeypair - Keypair for spending
  * @param viewingKeypair - Keypair for viewing/scanning
- * @param enableHybrid - Generate v2 hybrid meta-address with ML-KEM-768
- * @returns Meta-address and optionally the KEM secret key (caller must store securely)
+ * @param enableHybrid - Deprecated. Must be true (default) for production.
+ * @returns Meta-address and the KEM secret key (caller must store securely)
  */
 export function generateStealthMetaAddress(
   spendingKeypair: Keypair,
   viewingKeypair: Keypair,
-  enableHybrid: boolean = false
+  enableHybrid: boolean = true,
+  options: { allowLegacyV1?: boolean } = {},
 ): StealthMetaAddress & { kemSecretKey?: Uint8Array } {
   const spendingPubKey = spendingKeypair.publicKey.toBytes();
   const viewingPubKey = viewingKeypair.publicKey.toBytes();
 
-  if (enableHybrid) {
-    const kem = kemGenerateKeypair();
+  if (!enableHybrid) {
+    if (!options.allowLegacyV1) {
+      throw new SpecterError(
+        SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
+        'v1 classic stealth meta-address is no longer supported. ' +
+          'Use `generateStealthMetaAddress(spending, viewing)` (hybrid by default).',
+      );
+    }
     return {
       spendingPubKey,
       viewingPubKey,
-      kemPubKey: kem.publicKey,
-      encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey, kem.publicKey),
-      kemSecretKey: kem.secretKey,
+      encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey),
     };
   }
 
+  const kem = kemGenerateKeypair();
   return {
     spendingPubKey,
     viewingPubKey,
-    encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey),
+    kemPubKey: kem.publicKey,
+    encoded: encodeStealthMetaAddress(spendingPubKey, viewingPubKey, kem.publicKey),
+    kemSecretKey: kem.secretKey,
   };
 }
 
 /**
- * Parse an encoded stealth meta-address (v1 or v2)
+ * Parse an encoded stealth meta-address.
+ *
+ * P4.1: v1 (classic) metas are rejected unless `allowLegacyV1: true` is passed.
+ * Only opt in for historical scanning — never for outgoing sends.
  */
-export function parseStealthMetaAddress(encoded: string): StealthMetaAddress {
+export function parseStealthMetaAddress(
+  encoded: string,
+  options: { allowLegacyV1?: boolean } = {},
+): StealthMetaAddress {
   try {
-    const decoded = decodeStealthMetaAddress(encoded);
+    const decoded = decodeStealthMetaAddress(encoded, options);
     return {
       spendingPubKey: decoded.spendingPubKey,
       viewingPubKey: decoded.viewingPubKey,
@@ -160,9 +177,17 @@ export function createStealthAnnouncement(
 }
 
 /**
- * Parse a stealth announcement (v1 or v2, detected by length)
+ * Parse a stealth announcement.
+ *
+ * P4.1 (2026-04-17): v1 announcements (65 bytes, no KEM ciphertext) are
+ * rejected by default because they lack post-quantum protection. The
+ * `allowLegacyV1` option is retained so wallets can still scan historical
+ * notes emitted before the hybrid cutover — never use it for new sends.
  */
-export function parseStealthAnnouncement(announcement: Uint8Array): {
+export function parseStealthAnnouncement(
+  announcement: Uint8Array,
+  options: { allowLegacyV1?: boolean } = {},
+): {
   viewTag: number;
   ephemeralPubKey: Uint8Array;
   stealthAddress: PublicKey;
@@ -172,6 +197,14 @@ export function parseStealthAnnouncement(announcement: Uint8Array): {
     throw new SpecterError(
       SpecterErrorCode.INVALID_STEALTH_ADDRESS,
       `Invalid announcement length: ${announcement.length} (expected 65 or ${65 + KEM_CIPHERTEXT_SIZE})`
+    );
+  }
+
+  if (announcement.length === 65 && !options.allowLegacyV1) {
+    throw new SpecterError(
+      SpecterErrorCode.INVALID_STEALTH_ADDRESS,
+      'Legacy v1 stealth announcement rejected: v2 hybrid (X25519 + ML-KEM-768) ' +
+        'is required. Pass `{ allowLegacyV1: true }` only when scanning historical notes.',
     );
   }
 

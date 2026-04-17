@@ -27,8 +27,11 @@ export function isValidPublicKey(address: string): boolean {
 }
 
 /**
- * Validate a stealth meta-address (v1 or v2)
- * @param address - Stealth meta-address string
+ * Validate a v2 hybrid (X25519 + ML-KEM-768) stealth meta-address.
+ *
+ * P4.1 (2026-04-17): v1 classic metas are no longer accepted at the API
+ * surface. For migration or historical scans, use
+ * {@link isLegacyStealthMetaAddressV1}.
  */
 export function isValidStealthMetaAddress(address: string): boolean {
   try {
@@ -36,15 +39,24 @@ export function isValidStealthMetaAddress(address: string): boolean {
       return false;
     }
     const data = fromBase58(address.slice(STEALTH_ADDRESS_PREFIX.length));
-    // v1: Version(1) + spending(32) + viewing(32) = 65 bytes
-    if (data.length === 65 && data[0] === STEALTH_META_ADDRESS_VERSION) {
-      return true;
-    }
-    // v2: Version(1) + spending(32) + viewing(32) + kemPubKey(1184) = 1249 bytes
-    if (data.length === 1249 && data[0] === STEALTH_META_ADDRESS_VERSION_2) {
-      return true;
-    }
+    // v2 only: Version(1) + spending(32) + viewing(32) + kemPubKey(1184) = 1249 bytes
+    return data.length === 1249 && data[0] === STEALTH_META_ADDRESS_VERSION_2;
+  } catch {
     return false;
+  }
+}
+
+/**
+ * Detect a legacy v1 meta-address for migration purposes.
+ * Returns true ONLY for valid v1 envelopes. Should never be used in send paths.
+ */
+export function isLegacyStealthMetaAddressV1(address: string): boolean {
+  try {
+    if (!address.startsWith(STEALTH_ADDRESS_PREFIX)) {
+      return false;
+    }
+    const data = fromBase58(address.slice(STEALTH_ADDRESS_PREFIX.length));
+    return data.length === 65 && data[0] === STEALTH_META_ADDRESS_VERSION;
   } catch {
     return false;
   }
@@ -79,10 +91,18 @@ export function encodeStealthMetaAddress(
 }
 
 /**
- * Decode a stealth meta-address to keys (supports v1 and v2)
- * @param encoded - Encoded stealth meta-address
+ * Decode a v2 hybrid stealth meta-address.
+ *
+ * P4.1 (2026-04-17): v1 classic metas are rejected at this API surface.
+ * For migration / historical scan, pass `{ allowLegacyV1: true }`. The
+ * returned `kemPubKey` will be `undefined` in that case, and the caller
+ * is responsible for migrating the recipient to a v2 meta before
+ * accepting any new funds.
  */
-export function decodeStealthMetaAddress(encoded: string): {
+export function decodeStealthMetaAddress(
+  encoded: string,
+  options: { allowLegacyV1?: boolean } = {},
+): {
   spendingPubKey: Uint8Array;
   viewingPubKey: Uint8Array;
   kemPubKey?: Uint8Array;
@@ -102,8 +122,15 @@ export function decodeStealthMetaAddress(encoded: string): {
     };
   }
 
-  // v1: 65 bytes classic
+  // v1: 65 bytes classic — only accepted on explicit opt-in for migration
   if (data.length === 65 && data[0] === STEALTH_META_ADDRESS_VERSION) {
+    if (!options.allowLegacyV1) {
+      throw new Error(
+        'Legacy v1 stealth meta-address rejected: v2 hybrid (X25519 + ML-KEM-768) is required. ' +
+          'Regenerate your meta-address with `generateStealthMetaAddress(..., true)` or pass ' +
+          '`{ allowLegacyV1: true }` for one-way migration scans only.',
+      );
+    }
     return {
       spendingPubKey: data.slice(1, 33),
       viewingPubKey: data.slice(33, 65),
