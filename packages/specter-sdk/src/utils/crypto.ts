@@ -118,22 +118,43 @@ export function kemDecapsulate(
   return ml_kem768.decapsulate(cipherText, kemSecretKey);
 }
 
+const HYBRID_HKDF_INFO_BYTES = new TextEncoder().encode(HYBRID_HKDF_INFO);
+
 /**
  * Derive a hybrid shared secret by combining classical ECDH and post-quantum KEM secrets.
  * Security holds if EITHER the classical or post-quantum scheme is secure.
  *
+ * P4.2 (2026-04-17): the HKDF `info` field is bound to `SHA-256(ephemeralPubKey || kemCiphertext)`.
+ * Without this binding, an attacker who intercepts two concurrent stealth announcements can
+ * swap their KEM ciphertexts and the recipient would derive the same (or related) keys.
+ * Binding the transcript makes each derivation unique to a specific announcement.
+ *
  * @param classicSecret - X25519 ECDH shared secret (32 bytes)
  * @param kemSecret - ML-KEM-768 shared secret (32 bytes)
+ * @param context - Transcript binding: ephemeralPubKey and kemCiphertext from the announcement
  * @returns Combined shared secret (32 bytes)
  */
 export function deriveHybridSharedSecret(
   classicSecret: Uint8Array,
-  kemSecret: Uint8Array
+  kemSecret: Uint8Array,
+  context: { ephemeralPubKey: Uint8Array; kemCiphertext: Uint8Array }
 ): Uint8Array {
   const combined = new Uint8Array(classicSecret.length + kemSecret.length);
   combined.set(classicSecret);
   combined.set(kemSecret, classicSecret.length);
-  return hkdf(sha256, combined, undefined, HYBRID_HKDF_INFO, 32);
+
+  const transcript = new Uint8Array(
+    context.ephemeralPubKey.length + context.kemCiphertext.length,
+  );
+  transcript.set(context.ephemeralPubKey);
+  transcript.set(context.kemCiphertext, context.ephemeralPubKey.length);
+  const transcriptHash = sha256(transcript);
+
+  const info = new Uint8Array(HYBRID_HKDF_INFO_BYTES.length + transcriptHash.length);
+  info.set(HYBRID_HKDF_INFO_BYTES);
+  info.set(transcriptHash, HYBRID_HKDF_INFO_BYTES.length);
+
+  return hkdf(sha256, combined, undefined, info, 32);
 }
 
 // ============================================================================

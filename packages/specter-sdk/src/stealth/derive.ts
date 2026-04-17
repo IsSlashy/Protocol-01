@@ -54,7 +54,10 @@ export function deriveStealthPublicKey(
     // Hybrid mode: combine X25519 + ML-KEM-768
     const kem = kemEncapsulate(recipientMetaAddress.kemPubKey);
     const kemCiphertext = kem.cipherText;
-    const sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
+    const sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret, {
+      ephemeralPubKey,
+      kemCiphertext,
+    });
 
     const viewTag = computeViewTag(sharedSecret);
 
@@ -143,7 +146,10 @@ export function deriveStealthPrivateKey(
     if (kemSecretKey && kemCiphertext) {
       // Hybrid mode: combine X25519 + ML-KEM-768
       const kemSharedSecret = kemDecapsulate(kemCiphertext, kemSecretKey);
-      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret, {
+        ephemeralPubKey,
+        kemCiphertext,
+      });
     } else {
       sharedSecret = classicSecret;
     }
@@ -192,7 +198,10 @@ export function verifyStealthOwnership(
 
     if (kemSecretKey && kemCiphertext) {
       const kemSharedSecret = kemDecapsulate(kemCiphertext, kemSecretKey);
-      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret, {
+        ephemeralPubKey,
+        kemCiphertext,
+      });
     } else {
       sharedSecret = classicSecret;
     }

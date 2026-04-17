@@ -61,15 +61,34 @@ function kemGenerateKeypair() { return ml_kem768.keygen(); }
 function kemEncapsulate(pub: Uint8Array) { return ml_kem768.encapsulate(pub); }
 function kemDecapsulate(ct: Uint8Array, sk: Uint8Array) { return ml_kem768.decapsulate(ct, sk); }
 
+const HYBRID_HKDF_INFO_BYTES = new TextEncoder().encode(HYBRID_HKDF_INFO);
+
 /**
- * Combine X25519 + ML-KEM-768 secrets via HKDF.
- * Security holds if EITHER scheme is secure.
+ * Combine X25519 + ML-KEM-768 secrets via HKDF with transcript binding.
+ * Security holds if EITHER scheme is secure. P4.2: HKDF `info` is bound to
+ * SHA-256(ephemeralPubKey || kemCiphertext) to prevent mix-and-match attacks.
  */
-function deriveHybridSharedSecret(classicSecret: Uint8Array, kemSecret: Uint8Array): Uint8Array {
+function deriveHybridSharedSecret(
+  classicSecret: Uint8Array,
+  kemSecret: Uint8Array,
+  context: { ephemeralPubKey: Uint8Array; kemCiphertext: Uint8Array },
+): Uint8Array {
   const combined = new Uint8Array(classicSecret.length + kemSecret.length);
   combined.set(classicSecret);
   combined.set(kemSecret, classicSecret.length);
-  return hkdf(sha256, combined, undefined, HYBRID_HKDF_INFO, 32);
+
+  const transcript = new Uint8Array(
+    context.ephemeralPubKey.length + context.kemCiphertext.length,
+  );
+  transcript.set(context.ephemeralPubKey);
+  transcript.set(context.kemCiphertext, context.ephemeralPubKey.length);
+  const transcriptHash = sha256(transcript);
+
+  const info = new Uint8Array(HYBRID_HKDF_INFO_BYTES.length + transcriptHash.length);
+  info.set(HYBRID_HKDF_INFO_BYTES);
+  info.set(transcriptHash, HYBRID_HKDF_INFO_BYTES.length);
+
+  return hkdf(sha256, combined, undefined, info, 32);
 }
 
 // ============= Types =============
@@ -166,7 +185,10 @@ export function generateStealthAddress(
     if (recipientKemPubKey && recipientKemPubKey.length === KEM_PUBLIC_KEY_SIZE) {
       const kem = kemEncapsulate(recipientKemPubKey);
       kemCiphertext = kem.cipherText;
-      sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kem.sharedSecret, {
+        ephemeralPubKey: ephemeral.publicKey,
+        kemCiphertext,
+      });
     } else {
       sharedSecret = classicSecret;
     }
@@ -232,6 +254,7 @@ export function scanStealthPayment(
       sharedSecret = deriveHybridSharedSecret(
         classicSecret,
         kemDecapsulate(kemCiphertext, kemSecretKey),
+        { ephemeralPubKey: ephemeralPub, kemCiphertext },
       );
     } else {
       sharedSecret = classicSecret;

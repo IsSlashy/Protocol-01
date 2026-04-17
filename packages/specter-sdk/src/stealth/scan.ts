@@ -122,7 +122,10 @@ export class StealthScanner {
 
     if (this.kemSecretKey && kemCiphertext) {
       const kemSharedSecret = kemDecapsulate(kemCiphertext, this.kemSecretKey);
-      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret);
+      sharedSecret = deriveHybridSharedSecret(classicSecret, kemSharedSecret, {
+        ephemeralPubKey,
+        kemCiphertext,
+      });
     } else {
       sharedSecret = classicSecret;
     }

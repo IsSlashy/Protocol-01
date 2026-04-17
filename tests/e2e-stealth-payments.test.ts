@@ -78,6 +78,24 @@ import {
   decodeStealthMetaAddress,
 } from '../packages/specter-sdk/src/utils/helpers';
 
+/**
+ * Wrap a tweetnacl X25519 keypair as a Solana Keypair-shaped object so it can
+ * be passed to `generateStealthMetaAddress`. Only `.publicKey.toBytes()` is
+ * read by the SDK; the secret field is never inspected.
+ *
+ * Why this helper exists: the viewing key used for stealth ECDH MUST be X25519
+ * (on the Montgomery curve), not Ed25519. Previous versions of this test
+ * wrapped the X25519 secret as an Ed25519 signing seed, which produced a pubkey
+ * on a different curve and silently broke ECDH agreement between sender and
+ * recipient.
+ */
+function asViewingKeypair(kp: nacl.BoxKeyPair): Keypair {
+  return {
+    publicKey: new PublicKey(kp.publicKey),
+    secretKey: new Uint8Array(64),
+  } as unknown as Keypair;
+}
+
 // ============================================================================
 // Test Configuration
 // ============================================================================
@@ -156,10 +174,10 @@ describe('E2E: Full Stealth Payment Flow', function () {
        */
       aliceMetaAddress = generateStealthMetaAddress(
         aliceSpendingKeypair,
-        // The generate function expects a Keypair; we wrap the viewing key
-        Keypair.fromSecretKey(
-          nacl.sign.keyPair.fromSeed(aliceViewingKeypair.secretKey).secretKey
-        )
+        // Wrap the X25519 viewing keypair as a Keypair shape: the stealth
+        // protocol needs an X25519 pubkey for ECDH, so we expose `aliceView.publicKey`
+        // directly rather than deriving a mismatched Ed25519 pubkey from the secret.
+        asViewingKeypair(aliceViewingKeypair)
       );
 
       assert.ok(aliceMetaAddress.spendingPubKey, 'spending pubkey should exist');
@@ -184,26 +202,28 @@ describe('E2E: Full Stealth Payment Flow', function () {
       console.log('    Round-trip parse: OK');
     });
 
-    it('1.3 -- Each meta-address is unique and deterministic', () => {
+    it('1.3 -- Each meta-address is unique per generation and distinguishes identities', () => {
       /**
-       * Generating a meta-address from the same keypairs always yields the
-       * same result. Different keypairs yield different meta-addresses.
+       * P4.1: v2 hybrid metas include a fresh random ML-KEM keypair on each call,
+       * so identical spending/viewing keys still produce distinct encoded metas.
+       * We verify this property (fresh randomness) and that independent identities
+       * never collide.
        */
       const duplicate = generateStealthMetaAddress(
         aliceSpendingKeypair,
-        Keypair.fromSecretKey(
-          nacl.sign.keyPair.fromSeed(aliceViewingKeypair.secretKey).secretKey
-        )
+        asViewingKeypair(aliceViewingKeypair)
       );
-      assert.equal(duplicate.encoded, aliceMetaAddress.encoded, 'same keys -> same meta-address');
+      assert.notEqual(
+        duplicate.encoded,
+        aliceMetaAddress.encoded,
+        'v2 metas must differ per generation because the KEM keypair is freshly random',
+      );
 
       const otherKeypair = Keypair.generate();
       const otherViewKey = nacl.box.keyPair();
       const otherMeta = generateStealthMetaAddress(
         otherKeypair,
-        Keypair.fromSecretKey(
-          nacl.sign.keyPair.fromSeed(otherViewKey.secretKey).secretKey
-        )
+        asViewingKeypair(otherViewKey)
       );
       assert.notEqual(otherMeta.encoded, aliceMetaAddress.encoded, 'different keys -> different meta-address');
 
@@ -320,39 +340,54 @@ describe('E2E: Full Stealth Payment Flow', function () {
     it('3.1 -- Alice uses view tags for O(1) pre-filtering', () => {
       /**
        * The view tag is the first byte of hash(sharedSecret).
-       * Alice can quickly compute this from her viewing key and the ephemeral
-       * public key.  If the tag doesn't match, she can skip the full
-       * derivation -- rejecting 255/256 non-matching announcements instantly.
+       * Alice quickly computes this from her viewing key + KEM secret and the
+       * ephemeral material published on-chain. If the tag doesn't match, she
+       * skips the full derivation -- rejecting 255/256 non-matching
+       * announcements instantly.
+       *
+       * P4.1 onwards: the shared secret is the v2 hybrid (X25519 + ML-KEM-768),
+       * bound to (ephemeralPubKey, kemCiphertext) via HKDF info (P4.2).
        */
-      const sharedSecret = deriveSharedSecret(
+      const classicSecret = deriveSharedSecret(
         aliceViewingKeypair.secretKey,
         stealthAddr.ephemeralPubKey
       );
-      const computedTag = computeViewTag(sharedSecret);
+      const kemShared = kemDecapsulate(
+        stealthAddr.kemCiphertext!,
+        aliceMetaAddress.kemSecretKey!,
+      );
+      const hybridSecret = deriveHybridSharedSecret(classicSecret, kemShared, {
+        ephemeralPubKey: stealthAddr.ephemeralPubKey,
+        kemCiphertext: stealthAddr.kemCiphertext!,
+      });
+      const computedTag = computeViewTag(hybridSecret);
 
       assert.equal(computedTag, stealthAddr.viewTag, 'view tag should match');
       console.log(`    View tag match: 0x${computedTag.toString(16).padStart(2, '0')} == 0x${stealthAddr.viewTag.toString(16).padStart(2, '0')}`);
 
-      // Prove that a random ephemeral key almost certainly produces a different tag
+      // Prove that a random ephemeral key almost certainly produces a different tag.
+      // (Classic-only derivation is fine here -- we're only demonstrating that
+      // unrelated inputs produce unrelated tags.)
       const randomEphemeral = nacl.box.keyPair().publicKey;
       const wrongSecret = deriveSharedSecret(aliceViewingKeypair.secretKey, randomEphemeral);
       const wrongTag = computeViewTag(wrongSecret);
-      // There is a 1/256 chance this assertion is wrong, so we use a soft check
       console.log(`    Random tag: 0x${wrongTag.toString(16).padStart(2, '0')} (likely differs)`);
     });
 
     it('3.2 -- Alice verifies stealth ownership using verifyStealthOwnership', () => {
       /**
-       * After the view-tag pre-filter passes, Alice does the full ECDH
-       * computation to confirm the stealth address was derived from her
-       * meta-address.
+       * After the view-tag pre-filter passes, Alice does the full hybrid
+       * derivation (X25519 + ML-KEM-768) to confirm the stealth address was
+       * derived from her meta-address.
        */
       const isOwner = verifyStealthOwnership(
         stealthAddr.address,
         stealthAddr.ephemeralPubKey,
         aliceViewingKeypair.secretKey,
         aliceSpendingKeypair.publicKey.toBytes(),
-        stealthAddr.viewTag
+        stealthAddr.viewTag,
+        aliceMetaAddress.kemSecretKey,
+        stealthAddr.kemCiphertext,
       );
 
       assert.isTrue(isOwner, 'Alice should be verified as owner');
@@ -380,19 +415,25 @@ describe('E2E: Full Stealth Payment Flow', function () {
     it('3.4 -- StealthScanner can be instantiated for continuous monitoring', () => {
       /**
        * The StealthScanner polls the blockchain for announcements and
-       * automatically filters using the view tag.  In production it
-       * would connect to an RPC and parse program logs.
+       * automatically filters using the view tag. Since P4.1, scanners must
+       * carry the KEM secret so they can recompute the hybrid shared secret
+       * from each announcement's KEM ciphertext.
        */
       const scanner = createScanner(
         connection,
         aliceViewingKeypair.secretKey,
-        aliceSpendingKeypair.publicKey.toBytes()
+        aliceSpendingKeypair.publicKey.toBytes(),
+        aliceMetaAddress.kemSecretKey,
       );
 
       assert.ok(scanner, 'scanner should be created');
 
-      // Verify the checkViewTag method works
-      const matches = scanner.checkViewTag(stealthAddr.viewTag, stealthAddr.ephemeralPubKey);
+      // Verify the checkViewTag method works on a v2 hybrid announcement
+      const matches = scanner.checkViewTag(
+        stealthAddr.viewTag,
+        stealthAddr.ephemeralPubKey,
+        stealthAddr.kemCiphertext,
+      );
       assert.isTrue(matches, 'scanner checkViewTag should match');
 
       console.log('    Scanner instantiation: OK');
@@ -502,13 +543,13 @@ describe('E2E: Full Stealth Payment Flow', function () {
        */
       console.log('\n    --- Complete Lifecycle ---');
 
-      // Step 1: Alice generates v2 hybrid meta-address (default since P4.1)
+      // Step 1: Alice generates v2 hybrid meta-address (default since P4.1).
+      // The viewing pubkey MUST be X25519 -- we wrap the nacl.box keypair so
+      // the SDK reads aliceView.publicKey directly instead of deriving a
+      // mismatched Ed25519 pubkey from the X25519 secret.
       const aliceSpend = Keypair.generate();
       const aliceView = nacl.box.keyPair();
-      const aliceViewAsKeypair = Keypair.fromSecretKey(
-        nacl.sign.keyPair.fromSeed(aliceView.secretKey).secretKey
-      );
-      const meta = generateStealthMetaAddress(aliceSpend, aliceViewAsKeypair);
+      const meta = generateStealthMetaAddress(aliceSpend, asViewingKeypair(aliceView));
       assert.ok(meta.kemPubKey, 'meta-address must include KEM pubkey');
       assert.ok(meta.kemSecretKey, 'meta-address helper must return KEM secret');
       console.log('    [1] Alice v2 meta-address generated (1249 bytes)');
@@ -532,10 +573,13 @@ describe('E2E: Full Stealth Payment Flow', function () {
       assert.ok(parsed.kemCiphertext, 'parsed announcement includes KEM ciphertext');
       console.log(`    [4] Announcement parsed, viewTag=0x${parsed.viewTag.toString(16)}`);
 
-      // Step 5: Alice checks view tag using hybrid shared secret
+      // Step 5: Alice checks view tag using hybrid shared secret (P4.2: bound to transcript)
       const classicSecret = deriveSharedSecret(aliceView.secretKey, parsed.ephemeralPubKey);
       const kemShared = kemDecapsulate(parsed.kemCiphertext!, meta.kemSecretKey!);
-      const hybridSecret = deriveHybridSharedSecret(classicSecret, kemShared);
+      const hybridSecret = deriveHybridSharedSecret(classicSecret, kemShared, {
+        ephemeralPubKey: parsed.ephemeralPubKey,
+        kemCiphertext: parsed.kemCiphertext!,
+      });
       const myTag = computeViewTag(hybridSecret);
       const tagMatch = myTag === parsed.viewTag;
       console.log(`    [5] View tag check: ${tagMatch ? 'MATCH' : 'NO MATCH'}`);

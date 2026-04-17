@@ -347,14 +347,49 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       // Sender side
       const classicSender = deriveSharedSecret(ephemeral.secretKey, recipient.publicKey);
       const { cipherText, sharedSecret: kemSenderSecret } = kemEncapsulate(kem.publicKey);
-      const hybridSender = deriveHybridSharedSecret(classicSender, kemSenderSecret);
+      const ctx = { ephemeralPubKey: ephemeral.publicKey, kemCiphertext: cipherText };
+      const hybridSender = deriveHybridSharedSecret(classicSender, kemSenderSecret, ctx);
 
       // Recipient side
       const classicRecipient = deriveSharedSecret(recipient.secretKey, ephemeral.publicKey);
       const kemRecipientSecret = kemDecapsulate(cipherText, kem.secretKey);
-      const hybridRecipient = deriveHybridSharedSecret(classicRecipient, kemRecipientSecret);
+      const hybridRecipient = deriveHybridSharedSecret(classicRecipient, kemRecipientSecret, ctx);
 
       expect(Buffer.from(hybridSender)).to.deep.equal(Buffer.from(hybridRecipient));
+    });
+
+    it('hybrid HKDF info is bound to (ephemeralPubKey, kemCiphertext) — mix-and-match is rejected', () => {
+      const ephemeralA = nacl.box.keyPair();
+      const ephemeralB = nacl.box.keyPair();
+      const recipient = nacl.box.keyPair();
+      const kem = kemGenerateKeypair();
+
+      // Payment A
+      const classicA = deriveSharedSecret(ephemeralA.secretKey, recipient.publicKey);
+      const { cipherText: ctA, sharedSecret: kemSecretA } = kemEncapsulate(kem.publicKey);
+
+      // Payment B
+      const classicB = deriveSharedSecret(ephemeralB.secretKey, recipient.publicKey);
+      const { cipherText: ctB, sharedSecret: kemSecretB } = kemEncapsulate(kem.publicKey);
+
+      // Honest derivations
+      const honestA = deriveHybridSharedSecret(classicA, kemSecretA, {
+        ephemeralPubKey: ephemeralA.publicKey,
+        kemCiphertext: ctA,
+      });
+      const honestB = deriveHybridSharedSecret(classicB, kemSecretB, {
+        ephemeralPubKey: ephemeralB.publicKey,
+        kemCiphertext: ctB,
+      });
+
+      // Mix-and-match: swap A's ciphertext into B's context
+      const mixed = deriveHybridSharedSecret(classicB, kemSecretB, {
+        ephemeralPubKey: ephemeralB.publicKey,
+        kemCiphertext: ctA, // attacker swapped this
+      });
+
+      expect(Buffer.from(mixed)).to.not.deep.equal(Buffer.from(honestB));
+      expect(Buffer.from(mixed)).to.not.deep.equal(Buffer.from(honestA));
     });
 
     it('v2 stealth address derivation matches', () => {
@@ -1411,7 +1446,8 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
 
     it('stealth: self-payment (sender = recipient meta-address)', () => {
       const kp = nacl.box.keyPair();
-      const encoded = encodeStealthMetaAddress(kp.publicKey, kp.publicKey);
+      const kem = kemGenerateKeypair();
+      const encoded = encodeStealthMetaAddress(kp.publicKey, kp.publicKey, kem.publicKey);
       const meta = parseStealthMetaAddress(encoded);
       const stealth = generateStealthAddress(meta);
       expect(stealth.address).to.be.instanceOf(PublicKey);
