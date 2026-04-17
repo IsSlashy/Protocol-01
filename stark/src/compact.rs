@@ -1531,13 +1531,14 @@ mod tests {
 
     #[test]
     fn test_wire_size_transfer_circuit_5() {
-        // Circuit 5: tw=6, trace=512, blowup=16, md=13 (LDE=8192), num_queries=27
+        // Circuit 5: tw=6, trace=512, blowup=16, md=13 (LDE=8192), num_queries=22
+        // [P2.2g] Dropped from 27→22 to fit phase-1 FRI under 1.4M CU.
         let proof = generate_transfer_compact_proof(
             42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
         );
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(6, 13, 27, 8192, FRI_FINAL_POLY_SIZE),
+            expected_wire_size(6, 13, 22, 8192, FRI_FINAL_POLY_SIZE),
             "transfer wire size drift",
         );
     }
@@ -3836,6 +3837,11 @@ const GENERIC_NUM_QUERIES: usize = 27;
 /// under the 1.4M Solana BPF CU cap. Soundness: 22×4 + 16 = 104 bits,
 /// still well above the 100-bit classical floor.
 const MERKLE_UPDATE_NUM_QUERIES: usize = 22;
+/// [P2.2g] Circuits 3 and 5 (width=6, trace=512, lde=8192) also drop to 22
+/// queries so phase-1 FRI + per-query checks fits within 1.4M CU. DEEP-ALI
+/// still runs, but in phase 2 (`verify_deep_ali_phase2`). Soundness identical
+/// to C6: 22×4 + 16 = 104 bits.
+const HEAVY_GENERIC_NUM_QUERIES: usize = 22;
 
 /// Generate compact proof for denominated pool commitment.
 ///
@@ -3944,7 +3950,7 @@ pub fn generate_merkle_path_compact_proof(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
-        GENERIC_NUM_QUERIES,
+        HEAVY_GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         QuotientSpec::Circuit3 { depth: path_elements.len() },
     );
@@ -4069,7 +4075,7 @@ pub fn generate_transfer_compact_proof(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
-        GENERIC_NUM_QUERIES,
+        HEAVY_GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         QuotientSpec::Circuit5,
     );

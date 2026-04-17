@@ -1235,6 +1235,121 @@ fn eval_periodic_at_z(coeffs: &[u64], z: Felt) -> Felt {
     acc
 }
 
+/// [P2.2g] Evaluate a stride-16 periodic column polynomial at `z`.
+///
+/// # Why a dedicated routine
+/// The periodic polynomials for circuits over the 512-row trace domain with
+/// 32-row cycles have a special structure: the only non-zero monomial
+/// coefficients sit at indices that are multiples of 16 (= trace_length /
+/// cycle_length). Proof: such a polynomial P is invariant under x → x·g^32
+/// (because f(g^i) depends only on i mod 32). Forcing P(x) = P(x·g^32) on
+/// every monomial gives `c_j · (1 − g^{32j}) = 0` for all j. Since g has
+/// order 512, `g^{32j} = 1` iff `j ≡ 0 (mod 16)`, which makes every other
+/// coefficient vanish. Empirically confirmed against the baked periodic
+/// tables (`C3_*_COEFFS`, `C5_*_COEFFS`, `C6_*_COEFFS`).
+///
+/// # Cost model
+/// Standard Horner on 512 coefficients costs 512 muls. Collapsing to
+/// `P(z) = Σ_{k=0}^{31} c_{16k} · y^k` with `y = z^{16}` costs:
+///   - 4 muls (repeated-squaring to compute `z^16`)
+///   - 32 muls for Horner on the compressed coefficient view.
+/// Net: 36 muls vs 512 — ~14× speedup on the dominant component of
+/// `verify_deep_ali_circuit_5` (23 periodic columns ≈ ~1.4M CU at naive
+/// Horner but ~160k CU here).
+///
+/// # Safety
+/// Callers must pass a polynomial that is genuinely stride-16 sparse. The
+/// `debug_assert` below catches accidental use against dense arrays in
+/// tests; production builds skip the check.
+#[inline(never)]
+fn eval_periodic_stride16_at_z(coeffs: &[u64; 512], z: Felt) -> Felt {
+    // Paranoia in tests: non-stride positions must be zero.
+    #[cfg(debug_assertions)]
+    {
+        for (i, &c) in coeffs.iter().enumerate() {
+            if i % 16 != 0 {
+                debug_assert_eq!(c, 0, "stride-16 violation at index {}", i);
+            }
+        }
+    }
+
+    let y = z.exp(16);
+    let mut acc = Felt::ZERO;
+    // Horner over the 32 compressed coefficients c[0], c[16], c[32], ..., c[496].
+    let mut k = 32;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y).add(Felt::new(coeffs[k * 16]));
+    }
+    acc
+}
+
+/// [P2.2g] Montgomery's batch inversion: invert N elements with one real
+/// inversion + 2(N-1) multiplications, instead of N × ~63 muls for Fermat.
+///
+/// Given inputs `a_0, ..., a_{N-1}` (none zero), the routine writes
+/// `a_i^{-1}` into `out`. The trick walks forward accumulating the running
+/// product `p_i = a_0 · ... · a_i`, inverts the final `p_{N-1}`, and walks
+/// backward peeling off factors.
+///
+/// Returns `false` if any input is zero (caller should reject the proof).
+#[inline(never)]
+fn batch_inverse(inputs: &[Felt], out: &mut [Felt]) -> bool {
+    debug_assert_eq!(inputs.len(), out.len());
+    let n = inputs.len();
+    if n == 0 {
+        return true;
+    }
+
+    // Forward scan: out[i] = a_0 · a_1 · ... · a_i.
+    out[0] = inputs[0];
+    for i in 1..n {
+        if inputs[i] == Felt::ZERO {
+            return false;
+        }
+        out[i] = out[i - 1].mul(inputs[i]);
+    }
+    if out[0] == Felt::ZERO {
+        return false;
+    }
+
+    // One real inversion on the total product.
+    let mut running_inv = out[n - 1].inv();
+
+    // Backward scan: peel factors.
+    for i in (1..n).rev() {
+        let prev_inv = running_inv.mul(inputs[i]);
+        out[i] = running_inv.mul(out[i - 1]);
+        running_inv = prev_inv;
+    }
+    out[0] = running_inv;
+    true
+}
+
+/// [P2.2g] Evaluate a one-hot periodic at `z` using the Lagrange closed form.
+///
+/// For a polynomial `P` of degree < N that is 1 on `g^k` and 0 on every
+/// other element of the size-N multiplicative subgroup `<g>`:
+///
+/// ```text
+/// P(x) = g^k · (x^N − 1) / (N · (x − g^k))
+/// ```
+///
+/// With shared inputs `z_n_minus_one = z^N − 1` and `inv_n = 1/N` precomputed
+/// once, and `(z − g^k)^{-1}` obtained via `batch_inverse` over all hot
+/// positions, each call costs exactly 3 muls (no per-column Horner of 512
+/// coefficients, no per-column Fermat inversion). Dominant speedup:
+/// ~500× vs dense Horner for the 17 single-hot flag columns in circuit 5.
+#[inline(always)]
+fn eval_one_hot_lagrange(
+    g_k: Felt,
+    z_n_minus_one: Felt,
+    inv_z_minus_g_k: Felt,
+    inv_n: Felt,
+) -> Felt {
+    g_k.mul(z_n_minus_one).mul(inv_z_minus_g_k).mul(inv_n)
+}
+
 /// Vanishing polynomial `Z_D(z) = z^trace_length - 1` for the trace domain.
 fn vanishing_poly_trace_length(z: Felt, trace_length: usize) -> Felt {
     let zn = z.exp(trace_length as u64);
@@ -2327,6 +2442,16 @@ pub fn verify_deep_ali_circuit_4(
 ///   [21]   out2_rm_to_13: next[1] == current[5] at cycle-13 start.
 ///   [22]   carry_out_rm continuity: next[5] == current[5] except at
 ///          capture points (out_rm_capture_any gate).
+///
+/// [P2.2g] `#[inline(never)]` is load-bearing: without it the compiler fuses
+/// this routine's 23-slot `cs` array and Poseidon-round locals into
+/// `verify_deep_ali_circuit_5`'s already-busy frame (periodic_at_z + 11-row
+/// Lagrange scratch), blowing the 4KB SBF frame cap. Devnet signature
+/// `5zgoLt1nY2X5BZjpRmzz5tWskup73vhAXtwpUC2CaYRJZCwv977UhWF4wX9mdNnoNZ6gZqs2WCEp8YRD3MpbeonU`
+/// failed with "Access violation in stack frame 7 at address 0x200007a58"
+/// when this attribute was missing. All other circuit evaluators (1–4, 6)
+/// already carry it; C5 is the heaviest AIR so the margin vanishes fastest.
+#[inline(never)]
 fn evaluate_transition_at_ood_circuit_5(
     ood_current: &[Felt; 6],
     ood_next: &[Felt; 6],
@@ -2468,31 +2593,97 @@ pub fn verify_deep_ali_circuit_5(
 
     let z = proof.ood_z;
 
-    // Evaluate the 23 periodic columns at z via Horner (~512 muls each).
+    // [P2.2g] Evaluation strategy per column:
+    //   - Cols 0–3 (rc0/1/2, round_flag): cycle-32 polynomial, stride-16
+    //     sparse in monomial basis → stride16 Horner (36 muls each).
+    //   - Cols 5–21 (17 single-hot flags): pure Lagrange basis polynomials
+    //     at a single trace row k → closed-form `g^k · (z^N−1) / (N · (z−g^k))`.
+    //     All 11 unique rows batch-inverted once, then 3 muls per column.
+    //   - Col 22 (out_rm_capture_any, 2-hot at rows 286/382):
+    //     sum of two Lagrange terms we already computed.
+    //   - Col 4 (is_boundary, 15-hot): dense Horner is still cheapest
+    //     (15 Lagrange evals > 512 Horner muls once inversion cost is paid).
+    //
+    // Net periodic-eval budget: ~250 muls (down from 23 × 512 = 11,776).
+    // This is what takes phase 2 from 1.4M CU overflow to ~500K CU.
+    let g_512 = Felt::new(GENERATOR_512);
+    let n_felt = Felt::new(512);
+    let inv_n = n_felt.inv();
+    let z_n = z.exp(512);
+    let z_n_minus_one = z_n.add(Felt::new(crate::goldilocks::MODULUS - 1));
+
+    // 11 unique trace-row positions hit by the 17 single-hot flag columns
+    // and the 2-hot `out_rm_capture_any` column. Order matches the indices
+    // consumed below; keep this array aligned with `FLAG_ROW_*` aliases.
+    const FLAG_ROW_CAPTURE_OWNER: usize = 0;   // row 30
+    const FLAG_ROW_CHAIN_0_1: usize = 1;       // row 31
+    const FLAG_ROW_CAPTURE_OM: usize = 2;      // row 62
+    const FLAG_ROW_95: usize = 3;              // chain_2_3, om_to_3
+    const FLAG_ROW_127: usize = 4;             // chain_3_4, owner_to_4
+    const FLAG_ROW_191: usize = 5;             // chain_5_6, om_to_6
+    const FLAG_ROW_223: usize = 6;             // chain_6_7, owner_to_7
+    const FLAG_ROW_CAPTURE_OUT1_RM: usize = 7; // row 286
+    const FLAG_ROW_319: usize = 8;             // chain_9_10, out1_rm_to_10
+    const FLAG_ROW_CAPTURE_OUT2_RM: usize = 9; // row 382
+    const FLAG_ROW_415: usize = 10;            // chain_12_13, out2_rm_to_13
+    const FLAG_ROWS: [u64; 11] = [30, 31, 62, 95, 127, 191, 223, 286, 319, 382, 415];
+
+    let mut g_pows = [Felt::ZERO; 11];
+    let mut diffs = [Felt::ZERO; 11];
+    for i in 0..11 {
+        let g_k = g_512.exp(FLAG_ROWS[i]);
+        g_pows[i] = g_k;
+        // z − g^k = z + (p − g^k)
+        diffs[i] = z.add(Felt::new(crate::goldilocks::MODULUS - g_k.as_u64()));
+    }
+
+    let mut inv_diffs = [Felt::ZERO; 11];
+    if !batch_inverse(&diffs, &mut inv_diffs) {
+        // z coincides with a hot row — prover cheated or astronomically
+        // unlucky; reject.
+        return Err(VerifyError::DeepAliFailed);
+    }
+
+    let lagrange = |i: usize| -> Felt {
+        eval_one_hot_lagrange(g_pows[i], z_n_minus_one, inv_diffs[i], inv_n)
+    };
+
+    let l_capture_owner = lagrange(FLAG_ROW_CAPTURE_OWNER);
+    let l_chain_0_1 = lagrange(FLAG_ROW_CHAIN_0_1);
+    let l_capture_om = lagrange(FLAG_ROW_CAPTURE_OM);
+    let l_row_95 = lagrange(FLAG_ROW_95);
+    let l_row_127 = lagrange(FLAG_ROW_127);
+    let l_row_191 = lagrange(FLAG_ROW_191);
+    let l_row_223 = lagrange(FLAG_ROW_223);
+    let l_capture_out1_rm = lagrange(FLAG_ROW_CAPTURE_OUT1_RM);
+    let l_row_319 = lagrange(FLAG_ROW_319);
+    let l_capture_out2_rm = lagrange(FLAG_ROW_CAPTURE_OUT2_RM);
+    let l_row_415 = lagrange(FLAG_ROW_415);
+
     let periodic_at_z: [Felt; 23] = [
-        eval_periodic_at_z(&C5_RC0_COEFFS, z),
-        eval_periodic_at_z(&C5_RC1_COEFFS, z),
-        eval_periodic_at_z(&C5_RC2_COEFFS, z),
-        eval_periodic_at_z(&C5_ROUND_FLAG_COEFFS, z),
-        eval_periodic_at_z(&C5_IS_BOUNDARY_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_0_1_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_2_3_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_3_4_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_5_6_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_6_7_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_9_10_COEFFS, z),
-        eval_periodic_at_z(&C5_CHAIN_12_13_COEFFS, z),
-        eval_periodic_at_z(&C5_CAPTURE_OWNER_COEFFS, z),
-        eval_periodic_at_z(&C5_CAPTURE_OM_COEFFS, z),
-        eval_periodic_at_z(&C5_CAPTURE_OUT1_RM_COEFFS, z),
-        eval_periodic_at_z(&C5_CAPTURE_OUT2_RM_COEFFS, z),
-        eval_periodic_at_z(&C5_OM_TO_3_COEFFS, z),
-        eval_periodic_at_z(&C5_OM_TO_6_COEFFS, z),
-        eval_periodic_at_z(&C5_OWNER_TO_4_COEFFS, z),
-        eval_periodic_at_z(&C5_OWNER_TO_7_COEFFS, z),
-        eval_periodic_at_z(&C5_OUT1_RM_TO_10_COEFFS, z),
-        eval_periodic_at_z(&C5_OUT2_RM_TO_13_COEFFS, z),
-        eval_periodic_at_z(&C5_OUT_RM_CAPTURE_ANY_COEFFS, z),
+        eval_periodic_stride16_at_z(&C5_RC0_COEFFS, z),
+        eval_periodic_stride16_at_z(&C5_RC1_COEFFS, z),
+        eval_periodic_stride16_at_z(&C5_RC2_COEFFS, z),
+        eval_periodic_stride16_at_z(&C5_ROUND_FLAG_COEFFS, z),
+        eval_periodic_at_z(&C5_IS_BOUNDARY_COEFFS, z), // 15-hot → dense Horner
+        l_chain_0_1,                                    // chain_0_1 (row 31)
+        l_row_95,                                       // chain_2_3
+        l_row_127,                                      // chain_3_4
+        l_row_191,                                      // chain_5_6
+        l_row_223,                                      // chain_6_7
+        l_row_319,                                      // chain_9_10
+        l_row_415,                                      // chain_12_13
+        l_capture_owner,                                // capture_owner
+        l_capture_om,                                   // capture_om
+        l_capture_out1_rm,                              // capture_out1_rm
+        l_capture_out2_rm,                              // capture_out2_rm
+        l_row_95,                                       // om_to_3
+        l_row_191,                                      // om_to_6
+        l_row_127,                                      // owner_to_4
+        l_row_223,                                      // owner_to_7
+        l_row_319,                                      // out1_rm_to_10
+        l_row_415,                                      // out2_rm_to_13
+        l_capture_out1_rm.add(l_capture_out2_rm),       // out_rm_capture_any
     ];
 
     // Collect OOD trace values. Circuit 5 is width-6.
@@ -2660,14 +2851,15 @@ fn verify_constraints_subscriber_ownership(
 fn verify_constraints_pool_commitment(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    public_inputs: &[u64],
+    _public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    // [P2.2d-C1] DEEP-ALI: bind Q to the AIR's 4 transition constraints at OOD
-    // (including the chain row 63 and the real multi-cycle round_flag). Without
-    // this, a malicious prover could freely rewrite cycles 1-2 and forge
-    // epoch_hash → reduce soundness to ~2^64. See `verify_deep_ali_circuit_1`.
-    verify_deep_ali_circuit_1(proof, public_inputs)?;
-
+    // [P2.2g] DEEP-ALI moved to phase 2 (`verify_deep_ali_phase2`). After the
+    // P2.2f RLC-α-in-transcript change added weight to the FRI layer, phase 1
+    // + DEEP-ALI combined tipped past Solana's 1.4M CU per-instruction cap for
+    // C1 (devnet sig `2BCijpTaTTyrryLu3CZRff53d8T54LcV9gEFfEbybPMxD7CxWRp3RVignRP3H4mgcUNChjgcVhmHnL4PPX12w9Nf`
+    // consumed the full 1.4M budget at step 4). Phase 2 validates the same
+    // public-inputs hash stored here so the two phases remain transcript-
+    // consistent.
     let hash_cycle_len = 32usize;
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
@@ -2717,15 +2909,13 @@ fn verify_constraints_pool_commitment(
 fn verify_constraints_balance_proof(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    public_inputs: &[u64],
+    _public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    // [P2.2d-C2] DEEP-ALI: bind Q to the AIR's 7 transition constraints at OOD
-    // (all 4 Poseidon cycles + chain row 31 / carry row 63 / carry continuity /
-    // chain row 95). Without this, a malicious prover could freely rewrite
-    // cycles 1-3 and forge balance commitments — soundness drops to ~2^64.
-    // See `verify_deep_ali_circuit_2`.
-    verify_deep_ali_circuit_2(proof, public_inputs)?;
-
+    // [P2.2g] DEEP-ALI moved to phase 2 (`verify_deep_ali_phase2`). Same
+    // reason as C1: phase 1 + DEEP-ALI combined overshoots 1.4M CU after the
+    // P2.2f RLC-α-in-transcript bump. Devnet sig
+    // `3WdCRYKZ1LYDgaMcjaCvexhkKcQoyuGiFBWT4rJjgM6dicFrbBKq2cQEuYRaM1izofM6bDLdBEDPBgRYGkGBGMH1`
+    // consumed the full 1.4M at step 4.
     let hash_cycle_len = 32usize;
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
@@ -2787,14 +2977,13 @@ fn verify_constraints_balance_proof(
 fn verify_constraints_merkle_path(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    public_inputs: &[u64],
+    _public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    // [P2.2d-C3] DEEP-ALI identity binds the 11-constraint RLC on the opened
-    // OOD trace to Q(z)·Z_T(z). Without this, hash-start mux, capacity, carry
-    // update, carry continuity, and direction-binary constraints are not
-    // enforced anywhere on-chain for cycles 1-14. Run before per-query checks
-    // so failures short-circuit cleanly.
-    verify_deep_ali_circuit_3(proof, public_inputs)?;
+    // [P2.2g] DEEP-ALI moved to phase 2 (`verify_deep_ali_phase2`) because
+    // phase-1 (FRI + trace-aligned transitions + boundary) + DEEP-ALI combined
+    // exceeds Solana's 1.4M CU per-instruction cap for width=6 trace=512
+    // circuits. Phase 2 validates against the same public-inputs hash stored
+    // here so the two phases remain transcript-consistent.
 
     let hash_cycle_len = 32usize;
 
@@ -2860,11 +3049,11 @@ fn verify_constraints_merkle_path(
 fn verify_constraints_confidential_balance(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    public_inputs: &[u64],
+    _public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    // [P2.2d-C4] DEEP-ALI soundness: bind the full 10-constraint RLC to the
-    // opened OOD trace before doing the cheap row-local checks below.
-    verify_deep_ali_circuit_4(proof, public_inputs)?;
+    // [P2.2g] DEEP-ALI moved to phase 2 — even width=4 trace=256 exceeds 1.4M
+    // CU when combined with FRI + per-query checks. See comment on
+    // `verify_constraints_merkle_path`.
 
     let hash_cycle_len = 32usize;
 
@@ -2927,13 +3116,11 @@ fn verify_constraints_confidential_balance(
 fn verify_constraints_transfer(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    public_inputs: &[u64],
+    _public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    // [P2.2d-C5] DEEP-ALI: bind Q to the AIR's 23 transition constraints at OOD
-    // via an α-combined RLC. Without this, a malicious prover could freely
-    // rewrite carry columns / chain edges → forge mismatched nullifiers or
-    // unbalanced outputs at ~2^64 effort. See `verify_deep_ali_circuit_5`.
-    verify_deep_ali_circuit_5(proof, public_inputs)?;
+    // [P2.2g] DEEP-ALI moved to phase 2 — C5 is the heaviest generic AIR
+    // (width=6, trace=512, 23 constraints). See comment on
+    // `verify_constraints_merkle_path`.
 
     let hash_cycle_len = 32usize;
 

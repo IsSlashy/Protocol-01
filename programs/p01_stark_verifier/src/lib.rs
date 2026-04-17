@@ -18,6 +18,7 @@ pub const CIRCUIT_BALANCE_PROOF: u8 = 2;
 pub const CIRCUIT_MERKLE_PATH: u8 = 3;
 pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
 pub const CIRCUIT_TRANSFER: u8 = 5;
+pub const CIRCUIT_MERKLE_UPDATE: u8 = 6;
 
 #[program]
 pub mod p01_stark_verifier {
@@ -41,6 +42,7 @@ pub mod p01_stark_verifier {
         buffer.bytes_written = 0;
         buffer.verified = false;
         buffer.public_inputs_hash = [0u8; 32];
+        buffer.deep_ali_verified = false;
         Ok(())
     }
 
@@ -193,6 +195,108 @@ pub mod p01_stark_verifier {
         Ok(())
     }
 
+    /// [P2.2a/P2.2e/P2.2g] Phase 2: DEEP-ALI check at OOD for any generic
+    /// circuit (3-6). Must run AFTER `verify_stark_proof_v2` has marked
+    /// `verified = true` — split into a second instruction because phase 1
+    /// (Merkle + FRI + per-query transitions) alone already approaches or
+    /// exceeds Solana's 1.4M CU per-instruction cap for width=6 trace=512
+    /// and width=10 circuits.
+    ///
+    /// DEEP-ALI binds the full AIR's transition constraints (10-23 depending
+    /// on circuit) to the opened OOD trace via Schwartz–Zippel over a random
+    /// z, closing the soundness gap left by trace-aligned-only per-query
+    /// checks (only ~24% of blowup-16 query positions land on trace-aligned
+    /// rows — without OOD RLC, the prover could fabricate non-honest
+    /// transitions on the unopened 76% of rows).
+    ///
+    /// Public inputs must be supplied again (not stored in the buffer to save
+    /// space) and must equal those used in phase 1 — the transcript binding
+    /// in `derive_rlc_alpha_with_tag` means any mismatch changes α and fails
+    /// the DEEP-ALI identity.
+    pub fn verify_deep_ali_phase2(
+        ctx: Context<VerifyStarkProof>,
+        public_inputs: Vec<u64>,
+    ) -> Result<()> {
+        let buffer = &mut ctx.accounts.proof_buffer;
+
+        require!(
+            buffer.verified,
+            StarkVerifierError::NotYetVerified
+        );
+        require!(
+            !buffer.deep_ali_verified,
+            StarkVerifierError::AlreadyVerified
+        );
+        // [P2.2g] Phase 2 applies to circuits 1-6. Only C0 (subscriber_ownership,
+        // width=3 trace=32) still runs DEEP-ALI inside phase 1 — its footprint
+        // is tiny (~200K CU total). All other circuits were phase-split after
+        // the P2.2f RLC-α-in-transcript change tipped C1/C2 phase 1 past 1.4M
+        // CU (their DEEP-ALI used to live inside `verify_constraints_*`).
+        let circuit_id = buffer.circuit_id;
+        require!(
+            matches!(circuit_id, 1 | 2 | 3 | 4 | 5 | 6),
+            StarkVerifierError::UnsupportedCircuit
+        );
+
+        // Bind to the exact same public inputs as phase 1 via the hash stored
+        // when phase 1 completed. Prevents a caller from changing public
+        // inputs between phases (would otherwise change α silently).
+        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
+        for v in &public_inputs {
+            pub_buf.extend_from_slice(&v.to_le_bytes());
+        }
+        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        require!(
+            public_inputs_hash == buffer.public_inputs_hash,
+            StarkVerifierError::InvalidProof
+        );
+
+        let config = get_circuit_config(circuit_id)
+            .ok_or(StarkVerifierError::UnsupportedCircuit)?;
+
+        // Read proof bytes
+        let info = buffer.to_account_info();
+        let account_data = info.data.borrow();
+        let proof_start = ProofBuffer::PROOF_DATA_OFFSET;
+        let proof_end = proof_start + buffer.proof_size as usize;
+        let proof_bytes = &account_data[proof_start..proof_end];
+
+        let proof = GenericCompactProof::from_bytes(proof_bytes, config)
+            .ok_or(StarkVerifierError::DeserializationError)?;
+
+        match circuit_id {
+            1 => verify::verify_deep_ali_circuit_1(&proof, &public_inputs),
+            2 => verify::verify_deep_ali_circuit_2(&proof, &public_inputs),
+            3 => verify::verify_deep_ali_circuit_3(&proof, &public_inputs),
+            4 => verify::verify_deep_ali_circuit_4(&proof, &public_inputs),
+            5 => verify::verify_deep_ali_circuit_5(&proof, &public_inputs),
+            6 => verify::verify_deep_ali_circuit_6(&proof, &public_inputs),
+            _ => unreachable!("circuit_id gated by matches! above"),
+        }
+        .map_err(|_| StarkVerifierError::InvalidProof)?;
+
+        drop(account_data);
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.deep_ali_verified = true;
+
+        msg!("DEEP-ALI phase 2 verified for circuit {}", circuit_id);
+        Ok(())
+    }
+
+    /// [P2.2a/P2.2e] Legacy name for `verify_deep_ali_phase2`, pinned to
+    /// circuit 6 for existing clients that already built txs against this
+    /// discriminator. New code should use `verify_deep_ali_phase2`.
+    pub fn verify_merkle_update_deep_ali(
+        ctx: Context<VerifyStarkProof>,
+        public_inputs: Vec<u64>,
+    ) -> Result<()> {
+        require!(
+            ctx.accounts.proof_buffer.circuit_id == CIRCUIT_MERKLE_UPDATE,
+            StarkVerifierError::UnsupportedCircuit
+        );
+        verify_deep_ali_phase2(ctx, public_inputs)
+    }
+
     /// Resize a proof buffer to accommodate larger proofs (>10KB).
     /// Must be called after init_proof_buffer when proof_size > 10190.
     pub fn resize_proof_buffer(
@@ -294,10 +398,16 @@ pub struct ProofBuffer {
     /// Set after successful verification so consumers can confirm
     /// which inputs were actually proven.
     pub public_inputs_hash: [u8; 32],
+    /// [P2.2a] Phase-2 DEEP-ALI verification flag. For circuits that need a
+    /// separate DEEP-ALI instruction (currently circuit 6 only) this is
+    /// advanced by `verify_merkle_update_deep_ali` after phase 1 has marked
+    /// `verified = true`. Consumers (zk_shielded, etc.) must require both
+    /// `verified` and `deep_ali_verified` for circuit 6 proofs.
+    pub deep_ali_verified: bool,
 }
 
 impl ProofBuffer {
-    pub const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1 + 32; // 82
+    pub const PROOF_DATA_OFFSET: usize = 8 + 32 + 1 + 4 + 4 + 1 + 32 + 1; // 83
     pub const MAX_INIT_SIZE: usize = 10_240; // 10KB Solana create_account limit
     /// Max growth per realloc call (Solana's MAX_PERMITTED_DATA_INCREASE = 10KB).
     /// `resize_proof_buffer` is called iteratively to reach arbitrarily large proof sizes.

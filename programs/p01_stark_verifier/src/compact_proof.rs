@@ -32,6 +32,18 @@ pub struct CircuitConfig {
     pub lde_size: usize,
     pub merkle_depth: usize,
     pub num_rounds: usize,
+    /// [P2.2] Target size of the FRI final polynomial (coefficients).
+    /// Prover folds the quotient LDE down to this size; remaining polynomial
+    /// is sent in the clear so the verifier can evaluate at any domain point.
+    /// Larger values trade off Horner eval CU (linear in size) against fewer
+    /// FRI merkle layers. Tuned per-circuit to fit in the 1.4M CU cap.
+    pub fri_final_poly_size: usize,
+    /// [P2.2] Number of FRI queries. Soundness = num_queries × log2(blowup)
+    /// + grinding_bits. All circuits target ≥ 100-bit classical soundness:
+    /// circuits 0, 1, 2, 4 use 27 (124 bits); circuits 3, 5, 6 use 22
+    /// (104 bits) to fit their LDE=8192 / 10-col trace under the 1.4M CU
+    /// cap. All variants stay well above the 100-bit classical floor.
+    pub num_queries: usize,
 }
 
 /// subscriber_ownership: 3 cols, 32 rows
@@ -42,6 +54,8 @@ pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
     lde_size: 512,
     merkle_depth: 9,   // log2(512) = 9
     num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: NUM_QUERIES,
 };
 
 /// pool_commitment: 3 cols, 128 rows
@@ -52,6 +66,8 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     lde_size: 2048,
     merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: NUM_QUERIES,
 };
 
 /// balance_proof: 4 cols, 128 rows
@@ -62,9 +78,16 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
     lde_size: 2048,
     merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: NUM_QUERIES,
 };
 
 /// merkle_path: 6 cols, variable length (512 for depth 15)
+///
+/// [P2.2g] num_queries dropped 27→22 so phase-1 FRI (LDE=8192, 13 merkle
+/// layers per query) fits under the 1.4M Solana BPF CU cap. DEEP-ALI is
+/// split off to `verify_deep_ali_phase2` (same as circuit 6). Soundness:
+/// 22×4 + 16 = 104 bits, comfortably above the 100-bit classical floor.
 pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512, // depth 15: 15 * 32 = 480, next_pow2 = 512
@@ -72,6 +95,8 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     lde_size: 8192,
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: 22,
 };
 
 /// confidential_balance: 4 cols, 256 rows (7 hash cycles of 32 + 1 padding cycle)
@@ -82,9 +107,15 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
     lde_size: 4096,
     merkle_depth: 12,  // log2(4096) = 12
     num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: NUM_QUERIES,
 };
 
 /// transfer: 6 cols, 512 rows (14 hash cycles of 32 + 2 padding cycles)
+///
+/// [P2.2g] num_queries dropped 27→22 for the same reason as merkle_path:
+/// LDE=8192 with 23-constraint transition polynomial pushes phase-1 FRI
+/// above 1.4M CU at 27 queries. Soundness: 104 bits via 22×4 + 16 grinding.
 pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512,
@@ -92,6 +123,33 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
     lde_size: 8192,
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: 22,
+};
+
+/// merkle_update: 10 cols (OLD Poseidon 0-2, NEW Poseidon 3-5, sibling 6, dir 7,
+/// old_carry 8, new_carry 9), 512 rows (max depth 16 ≤ 16 * 32 = 512).
+///
+/// The 10-col trace inflates per-query merkle + constraint-eval CU relative
+/// to every other circuit (3–6 cols). Two knobs were tuned to fit the 1.4M
+/// BPF CU cap:
+///
+/// - `fri_final_poly_size = 256`: 4 committed FRI layers instead of 8 —
+///   saves ~150k CU in FRI merkle hashing, costs ~104k CU in extra Horner
+///   (256-coeff final poly). Net ~46k CU saved.
+/// - `num_queries = 22` (vs 27 for circuits 0-5): 18.5% fewer per-query
+///   merkle paths, constraint evaluations, and Horner calls. Saves ~200k CU.
+///   Soundness drops from 27×4+16 = 124 bits to 22×4+16 = 104 bits, still
+///   comfortably above the 100-bit industry floor.
+pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
+    trace_width: 10,
+    trace_length: 512,
+    blowup: 16,
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
+    num_rounds: 30,
+    fri_final_poly_size: 16,
+    num_queries: 22,
 };
 
 pub fn get_circuit_config(circuit_id: u8) -> Option<&'static CircuitConfig> {
@@ -102,6 +160,7 @@ pub fn get_circuit_config(circuit_id: u8) -> Option<&'static CircuitConfig> {
         3 => Some(&CONFIG_MERKLE_PATH),
         4 => Some(&CONFIG_CONFIDENTIAL_BALANCE),
         5 => Some(&CONFIG_TRANSFER),
+        6 => Some(&CONFIG_MERKLE_UPDATE),
         _ => None,
     }
 }
@@ -413,7 +472,8 @@ impl<'a> GenericCompactProof<'a> {
         if data.len() < cursor + 2 { return None; }
         let fri_final_poly_size = u16::from_le_bytes([data[cursor], data[cursor + 1]]) as usize;
         cursor += 2;
-        if fri_final_poly_size != FRI_FINAL_POLY_SIZE { return None; }
+        // [P2.2] Per-circuit size; must match the circuit's config exactly.
+        if fri_final_poly_size != config.fri_final_poly_size { return None; }
 
         // fri_final_poly: fri_final_poly_size * 8 bytes (slice view)
         if data.len() < cursor + fri_final_poly_size * 8 { return None; }
@@ -421,7 +481,7 @@ impl<'a> GenericCompactProof<'a> {
         cursor += fri_final_poly_size * 8;
 
         // Consistency: num_fri_layers = num_folds - 1.
-        let num_folds = (config.lde_size / FRI_FINAL_POLY_SIZE).trailing_zeros() as usize;
+        let num_folds = (config.lde_size / config.fri_final_poly_size).trailing_zeros() as usize;
         if num_fri_layers != num_folds.saturating_sub(1) { return None; }
 
         // grinding_nonce: 8 bytes

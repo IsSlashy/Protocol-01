@@ -45,7 +45,7 @@ const NUM_ROUNDS: usize = 30;
 ///
 /// We force `trace_length > active_rows` so that the boundary transition
 /// constraint at the last active row does not wrap around to row 0.
-fn trace_length_for_depth(depth: usize) -> usize {
+pub fn trace_length_for_depth(depth: usize) -> usize {
     let active = depth * HASH_CYCLE_LEN;
     (active + 1).next_power_of_two()
 }
@@ -153,54 +153,7 @@ impl Air for MerkleUpdateAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<BaseElement>> {
-        let tl = self.trace_length;
-        let active_rows = self.depth * HASH_CYCLE_LEN;
-
-        // Round constants (period = trace_length, repeating every 32 rows within active zone)
-        let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-        let mut rc0 = vec![BaseElement::ZERO; tl];
-        let mut rc1 = vec![BaseElement::ZERO; tl];
-        let mut rc2 = vec![BaseElement::ZERO; tl];
-
-        for row in 0..active_rows {
-            let pos_in_cycle = row % HASH_CYCLE_LEN;
-            if pos_in_cycle < NUM_ROUNDS {
-                rc0[row] = rc[pos_in_cycle * 3];
-                rc1[row] = rc[pos_in_cycle * 3 + 1];
-                rc2[row] = rc[pos_in_cycle * 3 + 2];
-            }
-        }
-
-        // round_active: 1 for Poseidon round positions (0..NUM_ROUNDS) in active cycles
-        let mut round_active = vec![BaseElement::ZERO; tl];
-        for row in 0..active_rows {
-            if row % HASH_CYCLE_LEN < NUM_ROUNDS {
-                round_active[row] = BaseElement::ONE;
-            }
-        }
-
-        // hash_start: 1 at the first row of each active hash cycle
-        let mut hash_start = vec![BaseElement::ZERO; tl];
-        for cycle in 0..self.depth {
-            hash_start[cycle * HASH_CYCLE_LEN] = BaseElement::ONE;
-        }
-
-        // is_boundary: 1 at the last row of each active hash cycle (pos 31)
-        let mut is_boundary = vec![BaseElement::ZERO; tl];
-        for cycle in 0..self.depth {
-            is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
-        }
-
-        // is_interior: 1 for positions 1..=30 within each active hash cycle
-        let mut is_interior = vec![BaseElement::ZERO; tl];
-        for row in 0..active_rows {
-            let pos = row % HASH_CYCLE_LEN;
-            if pos >= 1 && pos <= NUM_ROUNDS {
-                is_interior[row] = BaseElement::ONE;
-            }
-        }
-
-        vec![rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]
+        build_merkle_update_periodic_columns(self.depth, self.trace_length)
     }
 
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
@@ -209,82 +162,12 @@ impl Air for MerkleUpdateAir {
         periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        let rc0 = periodic_values[0];
-        let rc1 = periodic_values[1];
-        let rc2 = periodic_values[2];
-        let round_active = periodic_values[3];
-        let hash_start = periodic_values[4];
-        let is_boundary = periodic_values[5];
-        let is_interior = periodic_values[6];
-
-        let three = E::from(3u32);
-        let not_boundary = E::ONE - is_boundary;
-
-        // ── OLD Poseidon round (cols 0-2) ──
-        let o0 = current[0] + rc0;
-        let o1 = current[1] + rc1;
-        let o2 = current[2] + rc2;
-        let o0_7 = pow7(o0);
-        let o1_7 = pow7(o1);
-        let o2_7 = pow7(o2);
-        let oro0 = three * o0_7 + o1_7 + o2_7;
-        let oro1 = o0_7 + three * o1_7 + o2_7;
-        let oro2 = o0_7 + o1_7 + three * o2_7;
-        result[0] = not_boundary * (next[0] - current[0] - round_active * (oro0 - current[0]));
-        result[1] = not_boundary * (next[1] - current[1] - round_active * (oro1 - current[1]));
-        result[2] = not_boundary * (next[2] - current[2] - round_active * (oro2 - current[2]));
-
-        // ── NEW Poseidon round (cols 3-5) ──
-        let n0 = current[3] + rc0;
-        let n1 = current[4] + rc1;
-        let n2 = current[5] + rc2;
-        let n0_7 = pow7(n0);
-        let n1_7 = pow7(n1);
-        let n2_7 = pow7(n2);
-        let nro0 = three * n0_7 + n1_7 + n2_7;
-        let nro1 = n0_7 + three * n1_7 + n2_7;
-        let nro2 = n0_7 + n1_7 + three * n2_7;
-        result[3] = not_boundary * (next[3] - current[3] - round_active * (nro0 - current[3]));
-        result[4] = not_boundary * (next[4] - current[4] - round_active * (nro1 - current[4]));
-        result[5] = not_boundary * (next[5] - current[5] - round_active * (nro2 - current[5]));
-
-        // ── Hash start mux: state = mux(direction, carry, sibling) ──
-        // OLD: state_0 = old_carry + dir * (sib - old_carry)
-        //      state_1 = sib + dir * (old_carry - sib)
-        // NEW: state_3 = new_carry + dir * (sib - new_carry)
-        //      state_4 = sib + dir * (new_carry - sib)
-        // Capacity (state_2, state_5) = 0 at hash start.
-        let dir = current[7];
-        let sib = current[6];
-        let old_carry = current[8];
-        let new_carry = current[9];
-
-        result[6] = hash_start * (current[0] - old_carry - dir * (sib - old_carry));
-        result[7] = hash_start * (current[1] - sib - dir * (old_carry - sib));
-        result[8] = hash_start * (current[3] - new_carry - dir * (sib - new_carry));
-        result[9] = hash_start * (current[4] - sib - dir * (new_carry - sib));
-        result[10] = hash_start * current[2];
-        result[11] = hash_start * current[5];
-
-        // ── Carry update at boundary ──
-        // At row 31→32 (boundary), next_carry = hash output (state[0] / state[3]).
-        result[12] = is_boundary * (next[8] - current[0]);
-        result[13] = is_boundary * (next[9] - current[3]);
-
-        // ── Carry continuity ──
-        // Outside boundaries, carries don't change.
-        result[14] = (E::ONE - is_boundary) * (next[8] - current[8]);
-        result[15] = (E::ONE - is_boundary) * (next[9] - current[9]);
-
-        // ── Sibling/direction continuity within cycle ──
-        result[16] = is_interior * (next[6] - current[6]);
-        result[17] = is_interior * (next[7] - current[7]);
-
-        // ── Direction binary (at hash_start only, carried through by continuity) ──
-        result[18] = hash_start * dir * (E::ONE - dir);
+        evaluate_merkle_update_transition(
+            frame.current(),
+            frame.next(),
+            periodic_values,
+            result,
+        );
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -311,6 +194,148 @@ fn pow7<E: FieldElement>(x: E) -> E {
     let x2 = x * x;
     let x4 = x2 * x2;
     x4 * x2 * x
+}
+
+pub const MERKLE_UPDATE_NUM_CONSTRAINTS: usize = 19;
+pub const MERKLE_UPDATE_NUM_PERIODIC: usize = 7;
+
+/// Build the 7 periodic column value vectors for a circuit-6 trace.
+///
+/// Exposed so the prover can interpolate / inverse-NTT them for LDE and OOD
+/// evaluations outside the AIR.
+pub fn build_merkle_update_periodic_columns(
+    depth: usize,
+    trace_length: usize,
+) -> Vec<Vec<BaseElement>> {
+    let tl = trace_length;
+    let active_rows = depth * HASH_CYCLE_LEN;
+
+    let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
+    let mut rc0 = vec![BaseElement::ZERO; tl];
+    let mut rc1 = vec![BaseElement::ZERO; tl];
+    let mut rc2 = vec![BaseElement::ZERO; tl];
+
+    for row in 0..active_rows {
+        let pos_in_cycle = row % HASH_CYCLE_LEN;
+        if pos_in_cycle < NUM_ROUNDS {
+            rc0[row] = rc[pos_in_cycle * 3];
+            rc1[row] = rc[pos_in_cycle * 3 + 1];
+            rc2[row] = rc[pos_in_cycle * 3 + 2];
+        }
+    }
+
+    let mut round_active = vec![BaseElement::ZERO; tl];
+    for row in 0..active_rows {
+        if row % HASH_CYCLE_LEN < NUM_ROUNDS {
+            round_active[row] = BaseElement::ONE;
+        }
+    }
+
+    let mut hash_start = vec![BaseElement::ZERO; tl];
+    for cycle in 0..depth {
+        hash_start[cycle * HASH_CYCLE_LEN] = BaseElement::ONE;
+    }
+
+    let mut is_boundary = vec![BaseElement::ZERO; tl];
+    for cycle in 0..depth {
+        is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
+    }
+
+    let mut is_interior = vec![BaseElement::ZERO; tl];
+    for row in 0..active_rows {
+        let pos = row % HASH_CYCLE_LEN;
+        if pos >= 1 && pos <= NUM_ROUNDS {
+            is_interior[row] = BaseElement::ONE;
+        }
+    }
+
+    vec![rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]
+}
+
+/// Standalone evaluator for circuit 6 transition constraints.
+///
+/// Mirrors `MerkleUpdateAir::evaluate_transition` so the prover can evaluate
+/// the same constraints at LDE and OOD points without instantiating the AIR.
+/// `current` / `next` must be length 10, `periodic` length 7, `result` length 19.
+///
+/// Periodic layout: `[rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]`.
+pub fn evaluate_merkle_update_transition<E: FieldElement>(
+    current: &[E],
+    next: &[E],
+    periodic: &[E],
+    result: &mut [E],
+) {
+    debug_assert_eq!(current.len(), TRACE_WIDTH);
+    debug_assert_eq!(next.len(), TRACE_WIDTH);
+    debug_assert_eq!(periodic.len(), MERKLE_UPDATE_NUM_PERIODIC);
+    debug_assert_eq!(result.len(), MERKLE_UPDATE_NUM_CONSTRAINTS);
+
+    let rc0 = periodic[0];
+    let rc1 = periodic[1];
+    let rc2 = periodic[2];
+    let round_active = periodic[3];
+    let hash_start = periodic[4];
+    let is_boundary = periodic[5];
+    let is_interior = periodic[6];
+
+    let three = E::from(3u32);
+    let not_boundary = E::ONE - is_boundary;
+
+    // ── OLD Poseidon round (cols 0-2) ──
+    let o0 = current[0] + rc0;
+    let o1 = current[1] + rc1;
+    let o2 = current[2] + rc2;
+    let o0_7 = pow7(o0);
+    let o1_7 = pow7(o1);
+    let o2_7 = pow7(o2);
+    let oro0 = three * o0_7 + o1_7 + o2_7;
+    let oro1 = o0_7 + three * o1_7 + o2_7;
+    let oro2 = o0_7 + o1_7 + three * o2_7;
+    result[0] = not_boundary * (next[0] - current[0] - round_active * (oro0 - current[0]));
+    result[1] = not_boundary * (next[1] - current[1] - round_active * (oro1 - current[1]));
+    result[2] = not_boundary * (next[2] - current[2] - round_active * (oro2 - current[2]));
+
+    // ── NEW Poseidon round (cols 3-5) ──
+    let n0 = current[3] + rc0;
+    let n1 = current[4] + rc1;
+    let n2 = current[5] + rc2;
+    let n0_7 = pow7(n0);
+    let n1_7 = pow7(n1);
+    let n2_7 = pow7(n2);
+    let nro0 = three * n0_7 + n1_7 + n2_7;
+    let nro1 = n0_7 + three * n1_7 + n2_7;
+    let nro2 = n0_7 + n1_7 + three * n2_7;
+    result[3] = not_boundary * (next[3] - current[3] - round_active * (nro0 - current[3]));
+    result[4] = not_boundary * (next[4] - current[4] - round_active * (nro1 - current[4]));
+    result[5] = not_boundary * (next[5] - current[5] - round_active * (nro2 - current[5]));
+
+    // ── Hash start mux: state = mux(direction, carry, sibling) ──
+    let dir = current[7];
+    let sib = current[6];
+    let old_carry = current[8];
+    let new_carry = current[9];
+
+    result[6] = hash_start * (current[0] - old_carry - dir * (sib - old_carry));
+    result[7] = hash_start * (current[1] - sib - dir * (old_carry - sib));
+    result[8] = hash_start * (current[3] - new_carry - dir * (sib - new_carry));
+    result[9] = hash_start * (current[4] - sib - dir * (new_carry - sib));
+    result[10] = hash_start * current[2];
+    result[11] = hash_start * current[5];
+
+    // ── Carry update at boundary ──
+    result[12] = is_boundary * (next[8] - current[0]);
+    result[13] = is_boundary * (next[9] - current[3]);
+
+    // ── Carry continuity ──
+    result[14] = (E::ONE - is_boundary) * (next[8] - current[8]);
+    result[15] = (E::ONE - is_boundary) * (next[9] - current[9]);
+
+    // ── Sibling/direction continuity within cycle ──
+    result[16] = is_interior * (next[6] - current[6]);
+    result[17] = is_interior * (next[7] - current[7]);
+
+    // ── Direction binary ──
+    result[18] = hash_start * dir * (E::ONE - dir);
 }
 
 // ============================================================================
