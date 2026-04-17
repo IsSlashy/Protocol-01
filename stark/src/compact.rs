@@ -1041,6 +1041,30 @@ mod tests {
     }
 
     #[test]
+    fn test_merkle_update_compact_proof() {
+        let old_leaf = 42u64;
+        let new_leaf = 1337u64;
+        let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
+        let path_indices = vec![0u8, 1, 0];
+        let proof = generate_merkle_update_compact_proof(
+            old_leaf, new_leaf, &path_elements, &path_indices,
+        );
+        assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_UPDATE);
+        assert_eq!(proof.public_inputs.len(), 5);
+        assert_eq!(proof.public_inputs[0], old_leaf);
+        assert_eq!(proof.public_inputs[1], new_leaf);
+        assert_ne!(proof.public_inputs[2], proof.public_inputs[3], "old/new roots should differ");
+        assert_eq!(proof.public_inputs[4], path_elements.len() as u64);
+        assert!(!proof.proof_bytes.is_empty());
+        assert!(
+            proof.proof_bytes.len() < 1_500_000,
+            "Merkle update proof too large: {}",
+            proof.proof_bytes.len()
+        );
+        println!("Merkle update (depth 3) proof size: {} bytes", proof.proof_bytes.len());
+    }
+
+    #[test]
     fn test_transfer_compact_proof() {
         let proof = generate_transfer_compact_proof(
             42,   // spending_key
@@ -1171,6 +1195,7 @@ pub const CIRCUIT_BALANCE_PROOF: u8 = 2;
 pub const CIRCUIT_MERKLE_PATH: u8 = 3;
 pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
 pub const CIRCUIT_TRANSFER: u8 = 5;
+pub const CIRCUIT_MERKLE_UPDATE: u8 = 6;
 
 /// Generic compact proof data for any circuit.
 #[derive(Clone, Debug)]
@@ -1991,5 +2016,59 @@ pub fn generate_transfer_compact_proof(
         circuit_id: CIRCUIT_TRANSFER,
         public_inputs: vec![n1_u64, n2_u64, oc1_u64, oc2_u64, public_amount, token_mint],
         root,
+    }
+}
+
+/// Generate compact proof for Merkle update (leaf replacement).
+///
+/// Proves: replacing `old_leaf` by `new_leaf` at the position defined by
+/// `path_indices` with siblings `path_elements` transforms `old_root` into
+/// `new_root`.
+///
+/// Public inputs: old_leaf, new_leaf, old_root, new_root, depth
+///
+/// Soundness note: the compact proof framework's quotient only binds the OLD
+/// Poseidon chain (cols 0-2). The NEW chain (cols 3-5) and the shared path
+/// witnesses (cols 6-9) are bound by the Merkle commitment of the full trace
+/// plus the on-chain verifier's per-query constraint re-evaluation (see
+/// `verify_constraints_merkle_update`). This matches the soundness model used
+/// by circuits 3-5 (wider traces with carry columns).
+pub fn generate_merkle_update_compact_proof(
+    old_leaf: u64,
+    new_leaf: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+) -> GenericCompactProofData {
+    let old_leaf_felt = BaseElement::new(old_leaf);
+    let new_leaf_felt = BaseElement::new(new_leaf);
+    let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
+
+    let trace = crate::air::merkle_update::build_merkle_update_trace(
+        old_leaf_felt, new_leaf_felt, &elems, path_indices,
+    );
+    let (old_root, new_root) = crate::air::merkle_update::compute_update_roots(
+        old_leaf_felt, new_leaf_felt, &elems, path_indices,
+    );
+
+    let old_root_u64 = old_root.as_int();
+    let new_root_u64 = new_root.as_int();
+    let depth = path_elements.len() as u64;
+
+    let mut pub_bytes = Vec::new();
+    pub_bytes.extend_from_slice(&old_leaf.to_le_bytes());
+    pub_bytes.extend_from_slice(&new_leaf.to_le_bytes());
+    pub_bytes.extend_from_slice(&old_root_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&new_root_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&depth.to_le_bytes());
+
+    let (proof_bytes, merkle_root) = generate_compact_proof_from_trace(
+        &trace, &pub_bytes, GENERIC_BLOWUP, GENERIC_NUM_QUERIES,
+    );
+
+    GenericCompactProofData {
+        proof_bytes,
+        circuit_id: CIRCUIT_MERKLE_UPDATE,
+        public_inputs: vec![old_leaf, new_leaf, old_root_u64, new_root_u64, depth],
+        root: merkle_root,
     }
 }

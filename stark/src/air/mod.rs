@@ -5,6 +5,7 @@
 
 pub mod subscriber_ownership;
 pub mod merkle_path;
+pub mod merkle_update;
 pub mod denominated_pool;
 pub mod balance_proof;
 pub mod confidential_balance;

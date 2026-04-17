@@ -60,6 +60,10 @@ pub use air::subscriber_ownership::{
 pub use air::merkle_path::{
     build_merkle_trace, compute_merkle_root, MerklePathAir, MerklePathPublicInputs,
 };
+pub use air::merkle_update::{
+    build_merkle_update_trace, compute_update_roots, MerkleUpdateAir,
+    MerkleUpdatePublicInputs,
+};
 pub use air::denominated_pool::{
     build_pool_commitment_trace, compute_pool_values, DenominatedPoolAir,
     DenominatedPoolPublicInputs,
@@ -79,11 +83,13 @@ pub use air::transfer::{
 pub use prover::{prove_subscriber_ownership, StarkProofBytes};
 pub use compact::{
     generate_pool_commitment_proof, generate_balance_compact_proof,
-    generate_merkle_path_compact_proof, generate_confidential_balance_compact_proof,
+    generate_merkle_path_compact_proof, generate_merkle_update_compact_proof,
+    generate_confidential_balance_compact_proof,
     generate_transfer_compact_proof, GenericCompactProofData,
     CIRCUIT_SUBSCRIBER_OWNERSHIP, CIRCUIT_POOL_COMMITMENT,
     CIRCUIT_BALANCE_PROOF, CIRCUIT_MERKLE_PATH,
     CIRCUIT_CONFIDENTIAL_BALANCE, CIRCUIT_TRANSFER,
+    CIRCUIT_MERKLE_UPDATE,
 };
 pub use winterfell::math::fields::f64::BaseElement;
 
@@ -97,6 +103,7 @@ mod wasm_api {
     use crate::compact::{
         generate_compact_proof, generate_pool_commitment_proof,
         generate_balance_compact_proof, generate_merkle_path_compact_proof,
+        generate_merkle_update_compact_proof,
         generate_confidential_balance_compact_proof, generate_transfer_compact_proof,
     };
 
@@ -241,6 +248,45 @@ mod wasm_api {
             proof_data.circuit_id,
             proof_data.public_inputs[0],
             proof_data.public_inputs[1],
+            proof_hex,
+            proof_data.proof_bytes.len()
+        )
+    }
+
+    /// Generate a compact STARK proof for a Merkle leaf update.
+    /// path_elements and path_indices are comma-separated strings.
+    /// Returns JSON: { circuit_id: 6, old_leaf, new_leaf, old_root, new_root, depth, proof_hex, proof_size }
+    #[wasm_bindgen]
+    pub fn generate_merkle_update_stark_proof(
+        old_leaf: u64,
+        new_leaf: u64,
+        path_elements_csv: &str,
+        path_indices_csv: &str,
+    ) -> String {
+        let path_elements: Vec<u64> = path_elements_csv
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        let path_indices: Vec<u8> = path_indices_csv
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        let proof_data = generate_merkle_update_compact_proof(
+            old_leaf, new_leaf, &path_elements, &path_indices,
+        );
+        let proof_hex = proof_data.proof_bytes.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        format!(
+            r#"{{"circuit_id":{},"old_leaf":"{}","new_leaf":"{}","old_root":"{}","new_root":"{}","depth":"{}","proof_hex":"{}","proof_size":{}}}"#,
+            proof_data.circuit_id,
+            proof_data.public_inputs[0],
+            proof_data.public_inputs[1],
+            proof_data.public_inputs[2],
+            proof_data.public_inputs[3],
+            proof_data.public_inputs[4],
             proof_hex,
             proof_data.proof_bytes.len()
         )
