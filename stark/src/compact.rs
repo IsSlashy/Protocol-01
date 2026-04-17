@@ -950,6 +950,126 @@ fn compute_quotient_lde_circuit_4(
     q_lde
 }
 
+/// [P2.2d-C5] Compute the RLC-combined quotient LDE for circuit 5 (transfer).
+/// Fixed trace_length=512, width=6, 23 transition constraints, 23 periodic
+/// columns. Interpolates each periodic column onto the LDE, evaluates the
+/// 23 constraints at every LDE position, RLC-combines with α, INTT →
+/// coefficients, multiplies by (x − g^{n−1}) to kill the wrap row, and
+/// synthetic-divides by Z_D(x) = x^n − 1.
+///
+/// Closes the P2.2d-C5 soundness gaps:
+///   1. **Multi-cycle Poseidon.** Legacy `evaluate_transition_constraint` used
+///      a single-cycle flag; cycles 1-15 were unconstrained. This path uses
+///      `build_transfer_periodic_columns` with `round_flag` active across all
+///      14 active hash cycles + 2 padding cycles.
+///   2. **Direct chain edges (7 constraints).** None of owner→cycle 1,
+///      in1_left→cycle 3, in_commit_1→cycle 4, in2_left→cycle 6,
+///      in_commit_2→cycle 7, out1_left→cycle 10, out2_left→cycle 13 was
+///      bound on-chain. Attacker could forge any intermediate hash.
+///   3. **Carry captures (4 constraints).** owner (row 30), owner_mint
+///      (row 62), out1_rm (row 286), out2_rm (row 382) capture-into-carry
+///      edges unbound → attacker could substitute rogue carried values.
+///   4. **Carry continuity (3 constraints).** col 3 (owner), col 4
+///      (owner_mint), col 5 (out_rm) continuity unbound at non-capture rows.
+///   5. **Carry → right input (6 constraints).** owner_mint→cycles 3/6,
+///      owner→cycles 4/7, out1_rm→cycle 10, out2_rm→cycle 13 routing
+///      unbound. Attacker could nullify a different note / output.
+fn compute_quotient_lde_circuit_5(
+    trace_lde: &[Vec<BaseElement>],
+    blowup: usize,
+    trace_length: usize,
+    alpha: BaseElement,
+) -> Vec<u64> {
+    use crate::air::transfer::{
+        build_transfer_periodic_columns, evaluate_transfer_transition,
+        TRACE_WIDTH, TRANSFER_NUM_CONSTRAINTS, TRANSFER_NUM_PERIODIC,
+    };
+
+    let trace_width = trace_lde.len();
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 5 trace width is 6");
+    let lde_size = trace_length * blowup;
+    assert_eq!(trace_lde[0].len(), lde_size);
+
+    let trace_g = get_domain_generator_generic(trace_length);
+    let lde_g = get_domain_generator_generic(lde_size);
+
+    // 1. Interpolate periodic columns and evaluate on the LDE domain. Winterfell
+    // handles period-32 vs period-512 internally for the AIR path; for the
+    // compact-proof LDE we materialise every column on the full trace domain
+    // first so one polynomial suffices per column.
+    let periodic_trace_raw = build_transfer_periodic_columns();
+    assert_eq!(periodic_trace_raw.len(), TRANSFER_NUM_PERIODIC);
+
+    let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+        if col.len() == trace_length {
+            col.clone()
+        } else {
+            // Period-32 columns get tiled across the full trace length.
+            let mut full = vec![BaseElement::ZERO; trace_length];
+            for i in 0..trace_length {
+                full[i] = col[i % col.len()];
+            }
+            full
+        }
+    };
+
+    let periodic_trace: Vec<Vec<BaseElement>> =
+        periodic_trace_raw.iter().map(materialise).collect();
+
+    let mut periodic_lde: Vec<Vec<BaseElement>> =
+        vec![vec![BaseElement::ZERO; lde_size]; TRANSFER_NUM_PERIODIC];
+    for (k, col) in periodic_trace.iter().enumerate() {
+        let poly = inverse_ntt(col, trace_g);
+        for i in 0..lde_size {
+            let x = lde_g.exp(i as u64);
+            periodic_lde[k][i] = evaluate_poly(&poly, x);
+        }
+    }
+
+    // 2. Evaluate the 23 constraints at every LDE position and RLC-combine with α.
+    let mut c_lde = vec![BaseElement::ZERO; lde_size];
+    let mut constraints = vec![BaseElement::ZERO; TRANSFER_NUM_CONSTRAINTS];
+    let mut current = vec![BaseElement::ZERO; trace_width];
+    let mut next = vec![BaseElement::ZERO; trace_width];
+    let mut periodic_row = vec![BaseElement::ZERO; TRANSFER_NUM_PERIODIC];
+
+    for pos in 0..lde_size {
+        let next_pos = (pos + blowup) % lde_size;
+        for col in 0..trace_width {
+            current[col] = trace_lde[col][pos];
+            next[col] = trace_lde[col][next_pos];
+        }
+        for k in 0..TRANSFER_NUM_PERIODIC {
+            periodic_row[k] = periodic_lde[k][pos];
+        }
+        evaluate_transfer_transition(&current, &next, &periodic_row, &mut constraints);
+        c_lde[pos] = rlc_combine(&constraints, alpha);
+    }
+
+    // 3. INTT → coefficients on the LDE domain.
+    let c_poly = inverse_ntt(&c_lde, lde_g);
+
+    // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
+    let g_nm1 = trace_g.exp((trace_length - 1) as u64);
+    let c_poly_ext = multiply_by_x_minus_a(&c_poly, g_nm1);
+
+    // 5. Synthetic-divide by x^n − 1 (exact, no remainder).
+    assert!(c_poly_ext.len() > trace_length);
+    let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
+
+    // 6. Pad to lde_size and evaluate on LDE.
+    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
+    let copy_len = q_poly.len().min(lde_size);
+    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+
+    let mut q_lde = vec![0u64; lde_size];
+    for i in 0..lde_size {
+        let x = lde_g.exp(i as u64);
+        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
+    }
+    q_lde
+}
+
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
 /// Uses FFT interpolation + evaluation.
 fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
@@ -1828,6 +1948,97 @@ mod tests {
         assert_eq!(chain_carry_6[255], 0xF82E405A62E30FC3);
     }
 
+    /// [P2.2d-C5] Circuit 5 parity: re-emitting periodic coefficients via
+    /// inverse_ntt on the circuit-5 (transfer) periodic columns — after tiling
+    /// period-32 columns to the full trace length — must match the
+    /// `C5_*_COEFFS` arrays baked into
+    /// `p01_stark_verifier/src/periodic_consts.rs`. Drift breaks the on-chain
+    /// DEEP-ALI check for transfers.
+    #[test]
+    fn circuit_5_periodic_coeffs_match_verifier_constants() {
+        use crate::air::transfer::{
+            build_transfer_periodic_columns, TRACE_LENGTH as TR_TRACE_LENGTH,
+        };
+
+        let trace_length = TR_TRACE_LENGTH; // 512
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_transfer_periodic_columns();
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == trace_length {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; trace_length];
+                for i in 0..trace_length {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        let c: Vec<Vec<u64>> = periodic
+            .iter()
+            .map(|col| {
+                inverse_ntt(&materialise(col), trace_g)
+                    .iter()
+                    .map(|f| f.as_int())
+                    .collect()
+            })
+            .collect();
+
+        // Column order must match emit_circuit_5_periodic_coeffs: rc0, rc1, rc2,
+        // round_flag, is_boundary, chain_0_1, chain_2_3, chain_3_4, chain_5_6,
+        // chain_6_7, chain_9_10, chain_12_13, capture_owner, capture_om,
+        // capture_out1_rm, capture_out2_rm, om_to_3, om_to_6, owner_to_4,
+        // owner_to_7, out1_rm_to_10, out2_rm_to_13, out_rm_capture_any.
+        assert_eq!(c[0][0], 0xC1A9FC17AFE6859A);
+        assert_eq!(c[0][511], 0x0000000000000000);
+        assert_eq!(c[1][0], 0x8ADEDD292D895B59);
+        assert_eq!(c[1][511], 0x0000000000000000);
+        assert_eq!(c[2][0], 0xAC5D8A4EEAC6C386);
+        assert_eq!(c[2][511], 0x0000000000000000);
+        assert_eq!(c[3][0], 0x0FFFFFFFF0000001);
+        assert_eq!(c[3][511], 0x0000000000000000);
+        assert_eq!(c[4][0], 0xF87FFFFF07800001);
+        assert_eq!(c[4][511], 0x39E10F3192185B4B);
+        assert_eq!(c[5][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[5][511], 0xC92185B3E3406959);
+        assert_eq!(c[6][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[6][511], 0x4B539E10A7C92186);
+        assert_eq!(c[7][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[7][511], 0x95836DE70F31CBFA);
+        assert_eq!(c[8][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[8][511], 0x185B4AC60695836E);
+        assert_eq!(c[9][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[9][511], 0xBF96A7C861EF0CE4);
+        assert_eq!(c[10][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[10][511], 0xCE340694B539E110);
+        assert_eq!(c[11][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[11][511], 0x10F31CBF85B4AC62);
+        assert_eq!(c[12][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[12][511], 0x7202DAD8187E103F);
+        assert_eq!(c[13][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[13][511], 0x8E781EFB88A80EB2);
+        assert_eq!(c[14][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[14][511], 0x8DFD2526E781EFC2);
+        assert_eq!(c[15][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[15][511], 0xFC17202CB17187E2);
+        assert_eq!(c[16][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[16][511], 0x4B539E10A7C92186);
+        assert_eq!(c[17][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[17][511], 0x185B4AC60695836E);
+        assert_eq!(c[18][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[18][511], 0x95836DE70F31CBFA);
+        assert_eq!(c[19][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[19][511], 0xBF96A7C861EF0CE4);
+        assert_eq!(c[20][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[20][511], 0xCE340694B539E110);
+        assert_eq!(c[21][0], 0xFF7FFFFF00800001);
+        assert_eq!(c[21][511], 0x10F31CBF85B4AC62);
+        assert_eq!(c[22][0], 0xFEFFFFFF01000001);
+        assert_eq!(c[22][511], 0x8A14455498F377A3);
+    }
+
     /// [P1.1 PR 4] Sanity check: re-emitting coefficients via inverse_ntt matches
     /// the coefficients hardcoded in `p01_stark_verifier/src/periodic_consts.rs`.
     /// If this test ever fails, the on-chain verifier will reject honest proofs.
@@ -2196,6 +2407,72 @@ mod tests {
     }
 
     /// [P2.2d-C4] Emit periodic column coefficients for circuit 4
+    /// [P2.2d-C5] Emit `C5_*_COEFFS` arrays for circuit 5 (transfer), fixed
+    /// trace_length=512. Run with:
+    ///
+    /// `cargo test -p p01-stark --lib emit_circuit_5_periodic_coeffs -- --ignored --nocapture`
+    ///
+    /// Paste output into the verifier crate under `C5_*_COEFFS`.
+    #[test]
+    #[ignore]
+    fn emit_circuit_5_periodic_coeffs() {
+        use crate::air::transfer::{build_transfer_periodic_columns, TRACE_LENGTH as TR_TRACE_LENGTH};
+
+        let trace_length = TR_TRACE_LENGTH; // 512
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic_raw = build_transfer_periodic_columns();
+        let names = [
+            "C5_RC0_COEFFS",
+            "C5_RC1_COEFFS",
+            "C5_RC2_COEFFS",
+            "C5_ROUND_FLAG_COEFFS",
+            "C5_IS_BOUNDARY_COEFFS",
+            "C5_CHAIN_0_1_COEFFS",
+            "C5_CHAIN_2_3_COEFFS",
+            "C5_CHAIN_3_4_COEFFS",
+            "C5_CHAIN_5_6_COEFFS",
+            "C5_CHAIN_6_7_COEFFS",
+            "C5_CHAIN_9_10_COEFFS",
+            "C5_CHAIN_12_13_COEFFS",
+            "C5_CAPTURE_OWNER_COEFFS",
+            "C5_CAPTURE_OM_COEFFS",
+            "C5_CAPTURE_OUT1_RM_COEFFS",
+            "C5_CAPTURE_OUT2_RM_COEFFS",
+            "C5_OM_TO_3_COEFFS",
+            "C5_OM_TO_6_COEFFS",
+            "C5_OWNER_TO_4_COEFFS",
+            "C5_OWNER_TO_7_COEFFS",
+            "C5_OUT1_RM_TO_10_COEFFS",
+            "C5_OUT2_RM_TO_13_COEFFS",
+            "C5_OUT_RM_CAPTURE_ANY_COEFFS",
+        ];
+
+        // Period-32 columns get tiled to full trace length before inverse NTT so
+        // one polynomial suffices per column on-chain.
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == trace_length {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; trace_length];
+                for i in 0..trace_length {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        for (i, col_raw) in periodic_raw.iter().enumerate() {
+            let col = materialise(col_raw);
+            let poly = inverse_ntt(&col, trace_g);
+            println!("pub const {}: [u64; {}] = [", names[i], trace_length);
+            for c in &poly {
+                println!("    0x{:016X},", c.as_int());
+            }
+            println!("];");
+            println!();
+        }
+    }
+
     /// (confidential_balance), fixed trace_length=256. Run with:
     ///
     /// `cargo test -p p01-stark --lib emit_circuit_4_periodic_coeffs -- --ignored --nocapture`
@@ -2704,6 +2981,110 @@ mod tests {
             c_at_z,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-4 proof failed"
+        );
+    }
+
+    /// [P2.2d-C5] End-to-end: a proof produced by
+    /// `generate_transfer_compact_proof` satisfies DEEP-ALI
+    /// (C(z) == Q(z)·Z_T(z)) when C is the full 23-constraint RLC with α
+    /// derived from the `b"rlc-c5\0\0"`-tagged transcript. This closes the
+    /// soundness gap on transfers: a prover cannot produce a valid wire
+    /// format without the transition polynomial actually vanishing on the
+    /// trace domain.
+    #[test]
+    fn transfer_proof_satisfies_deep_ali_end_to_end() {
+        use crate::air::transfer::{
+            build_transfer_periodic_columns, evaluate_transfer_transition,
+            TRACE_LENGTH as TR_TRACE_LENGTH, TRACE_WIDTH as TR_TRACE_WIDTH,
+            TRANSFER_NUM_CONSTRAINTS, TRANSFER_NUM_PERIODIC,
+        };
+
+        let proof = generate_transfer_compact_proof(
+            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
+        );
+        assert_eq!(proof.circuit_id, CIRCUIT_TRANSFER);
+        assert_eq!(proof.public_inputs.len(), 6);
+
+        // Parse header fields deterministically from the wire format.
+        let bytes = &proof.proof_bytes;
+        let mut off = 0usize;
+
+        let mut trace_root = [0u8; 32];
+        trace_root.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
+        let _quotient_root = &bytes[off..off + 32];
+        off += 32;
+
+        let mut ood_current = Vec::with_capacity(TR_TRACE_WIDTH);
+        for _ in 0..TR_TRACE_WIDTH {
+            ood_current.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let mut ood_next = Vec::with_capacity(TR_TRACE_WIDTH);
+        for _ in 0..TR_TRACE_WIDTH {
+            ood_next.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        off += 8;
+        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+
+        // Reconstruct public input bytes exactly as the prover built them:
+        // [null_1, null_2, out_commit_1, out_commit_2, public_amount, token_mint].
+        let mut pub_bytes = Vec::new();
+        for v in &proof.public_inputs {
+            pub_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        // Derive α with circuit-5 domain tag.
+        let alpha = derive_rlc_alpha_with_tag(&trace_root, &pub_bytes, b"rlc-c5\0\0");
+
+        // Evaluate the 23 periodic columns at z. Period-32 columns must first be
+        // tiled to the full trace length so their IFT coefficient vector matches
+        // what the on-chain verifier uses.
+        let trace_length = TR_TRACE_LENGTH;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let z = BaseElement::new(ood_z);
+        let periodic_raw = build_transfer_periodic_columns();
+        assert_eq!(periodic_raw.len(), TRANSFER_NUM_PERIODIC);
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == trace_length {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; trace_length];
+                for i in 0..trace_length {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        let periodic_at_z: Vec<BaseElement> = periodic_raw
+            .iter()
+            .map(|col| {
+                let poly = inverse_ntt(&materialise(col), trace_g);
+                evaluate_poly(&poly, z)
+            })
+            .collect();
+
+        // RLC of the 23 constraints at z.
+        let current: Vec<BaseElement> = ood_current.iter().map(|&v| BaseElement::new(v)).collect();
+        let next: Vec<BaseElement> = ood_next.iter().map(|&v| BaseElement::new(v)).collect();
+        let mut constraints = [BaseElement::ZERO; TRANSFER_NUM_CONSTRAINTS];
+        evaluate_transfer_transition(&current, &next, &periodic_at_z, &mut constraints);
+        let c_at_z = rlc_combine(&constraints, alpha);
+
+        // Z_T(z) = (z^n - 1) / (z - g^(n-1))
+        let last_row_x = trace_g.exp((trace_length - 1) as u64);
+        let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
+        let z_t = z_d * (z - last_row_x).inv();
+
+        let q_at_z = BaseElement::new(ood_quotient);
+        assert_eq!(
+            c_at_z,
+            q_at_z * z_t,
+            "end-to-end DEEP-ALI on generated circuit-5 proof failed"
         );
     }
 }
@@ -3237,6 +3618,8 @@ pub(crate) enum QuotientSpec {
     Circuit3 { depth: usize },
     /// Circuit 4 (confidential balance), trace width 4, length 256.
     Circuit4,
+    /// Circuit 5 (transfer), trace width 6, length 512.
+    Circuit5,
     /// Circuit 6 (merkle update), trace width 10, variable depth.
     Circuit6 { depth: usize },
 }
@@ -3294,6 +3677,10 @@ fn generate_compact_proof_from_trace(
         QuotientSpec::Circuit4 => {
             let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c4\0\0");
             compute_quotient_lde_circuit_4(&lde, blowup, trace_length, alpha)
+        }
+        QuotientSpec::Circuit5 => {
+            let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c5\0\0");
+            compute_quotient_lde_circuit_5(&lde, blowup, trace_length, alpha)
         }
         QuotientSpec::LegacyGeneric => (0..lde_size)
             .map(|pos| {
@@ -3684,7 +4071,7 @@ pub fn generate_transfer_compact_proof(
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
-        QuotientSpec::LegacyGeneric,
+        QuotientSpec::Circuit5,
     );
 
     GenericCompactProofData {

@@ -43,10 +43,18 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-const TRACE_WIDTH: usize = 6;
-const TRACE_LENGTH: usize = 512;
-const HASH_CYCLE_LEN: usize = 32;
-const NUM_ROUNDS: usize = 30;
+pub const TRACE_WIDTH: usize = 6;
+pub const TRACE_LENGTH: usize = 512;
+pub const HASH_CYCLE_LEN: usize = 32;
+pub const NUM_ROUNDS: usize = 30;
+
+/// Number of transition constraints in the transfer AIR (circuit 5).
+pub const TRANSFER_NUM_CONSTRAINTS: usize = 23;
+
+/// Number of periodic columns: rc0, rc1, rc2, round_flag, is_boundary,
+/// 7 direct chain flags, 4 carry-capture flags, 6 carry→right-input flags,
+/// 1 carry-capture-any flag.
+pub const TRANSFER_NUM_PERIODIC: usize = 23;
 
 // ============================================================================
 // Public inputs
@@ -155,76 +163,7 @@ impl Air for TransferAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<BaseElement>> {
-        let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-
-        // Round constants and round_flag: period 32 (all 16 cycles are valid hashes)
-        let mut rc0 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        let mut rc1 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        let mut rc2 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        let mut round_flag = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        for pos in 0..NUM_ROUNDS {
-            rc0[pos] = rc[pos * 3];
-            rc1[pos] = rc[pos * 3 + 1];
-            rc2[pos] = rc[pos * 3 + 2];
-            round_flag[pos] = BaseElement::ONE;
-        }
-
-        // Boundary flag: period 512
-        let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
-        for cycle in 0..16 {
-            let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
-            if row < TRACE_LENGTH - 1 {
-                is_boundary[row] = BaseElement::ONE;
-            }
-        }
-
-        // Direct chaining flags (col 0 output → next col 0 input)
-        let make_flag = |row: usize| -> Vec<BaseElement> {
-            let mut f = vec![BaseElement::ZERO; TRACE_LENGTH];
-            f[row] = BaseElement::ONE;
-            f
-        };
-
-        let chain_0_1 = make_flag(31);    // owner → cycle 1
-        let chain_2_3 = make_flag(95);    // in1_left → cycle 3
-        let chain_3_4 = make_flag(127);   // in_commit_1 → cycle 4
-        let chain_5_6 = make_flag(191);   // in2_left → cycle 6
-        let chain_6_7 = make_flag(223);   // in_commit_2 → cycle 7
-        let chain_9_10 = make_flag(319);  // out1_left → cycle 10
-        let chain_12_13 = make_flag(415); // out2_left → cycle 13
-
-        // Carry capture flags
-        let capture_owner = make_flag(NUM_ROUNDS);       // row 30: capture owner
-        let capture_om = make_flag(HASH_CYCLE_LEN + NUM_ROUNDS); // row 62: capture owner_mint
-        let capture_out1_rm = make_flag(8 * HASH_CYCLE_LEN + NUM_ROUNDS); // row 286: capture out1_rm
-        let capture_out2_rm = make_flag(11 * HASH_CYCLE_LEN + NUM_ROUNDS); // row 382: capture out2_rm
-
-        // Carry → right input flags
-        let om_to_3 = make_flag(95);    // owner_mint → cycle 3 right (row 95→96)
-        let om_to_6 = make_flag(191);   // owner_mint → cycle 6 right
-        let owner_to_4 = make_flag(127); // owner → cycle 4 right
-        let owner_to_7 = make_flag(223); // owner → cycle 7 right
-        let out1_rm_to_10 = make_flag(319); // out1_rm → cycle 10 right
-        let out2_rm_to_13 = make_flag(415); // out2_rm → cycle 13 right
-
-        // carry_out_rm can change at capture_out1_rm (row 286) and capture_out2_rm (row 382)
-        let mut out_rm_capture_any = vec![BaseElement::ZERO; TRACE_LENGTH];
-        out_rm_capture_any[8 * HASH_CYCLE_LEN + NUM_ROUNDS] = BaseElement::ONE;
-        out_rm_capture_any[11 * HASH_CYCLE_LEN + NUM_ROUNDS] = BaseElement::ONE;
-
-        vec![
-            rc0, rc1, rc2, round_flag,       // 0-3: period 32
-            is_boundary,                      // 4: period 512
-            chain_0_1, chain_2_3, chain_3_4,  // 5-7
-            chain_5_6, chain_6_7,             // 8-9
-            chain_9_10, chain_12_13,          // 10-11
-            capture_owner, capture_om,        // 12-13
-            capture_out1_rm, capture_out2_rm, // 14-15
-            om_to_3, om_to_6,                // 16-17
-            owner_to_4, owner_to_7,          // 18-19
-            out1_rm_to_10, out2_rm_to_13,    // 20-21
-            out_rm_capture_any,              // 22
-        ]
+        build_transfer_periodic_columns()
     }
 
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
@@ -233,84 +172,7 @@ impl Air for TransferAir {
         periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        let rc0 = periodic_values[0];
-        let rc1 = periodic_values[1];
-        let rc2 = periodic_values[2];
-        let round_flag = periodic_values[3];
-        let is_boundary = periodic_values[4];
-        let chain_0_1 = periodic_values[5];
-        let chain_2_3 = periodic_values[6];
-        let chain_3_4 = periodic_values[7];
-        let chain_5_6 = periodic_values[8];
-        let chain_6_7 = periodic_values[9];
-        let chain_9_10 = periodic_values[10];
-        let chain_12_13 = periodic_values[11];
-        let capture_owner = periodic_values[12];
-        let capture_om = periodic_values[13];
-        let capture_out1_rm = periodic_values[14];
-        let capture_out2_rm = periodic_values[15];
-        let om_to_3 = periodic_values[16];
-        let om_to_6 = periodic_values[17];
-        let owner_to_4 = periodic_values[18];
-        let owner_to_7 = periodic_values[19];
-        let out1_rm_to_10 = periodic_values[20];
-        let out2_rm_to_13 = periodic_values[21];
-        let out_rm_capture_any = periodic_values[22];
-
-        let not_boundary = E::ONE - is_boundary;
-
-        // ── Poseidon round ──
-        let s0 = current[0] + rc0;
-        let s1 = current[1] + rc1;
-        let s2 = current[2] + rc2;
-        let s0_7 = pow7(s0);
-        let s1_7 = pow7(s1);
-        let s2_7 = pow7(s2);
-        let three = E::from(3u32);
-        let ro0 = three * s0_7 + s1_7 + s2_7;
-        let ro1 = s0_7 + three * s1_7 + s2_7;
-        let ro2 = s0_7 + s1_7 + three * s2_7;
-
-        result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-        result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-        result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
-
-        // ── Direct col-0 chaining ──
-        result[3] = chain_0_1 * (next[0] - current[0]);
-        result[4] = chain_2_3 * (next[0] - current[0]);
-        result[5] = chain_3_4 * (next[0] - current[0]);
-        result[6] = chain_5_6 * (next[0] - current[0]);
-        result[7] = chain_6_7 * (next[0] - current[0]);
-        result[8] = chain_9_10 * (next[0] - current[0]);
-        result[9] = chain_12_13 * (next[0] - current[0]);
-
-        // ── carry_owner (col 3) ──
-        result[10] = capture_owner * (next[3] - current[0]); // capture
-        result[11] = (E::ONE - capture_owner) * (next[3] - current[3]); // continuity
-
-        // ── carry_owner_mint (col 4) ──
-        result[12] = capture_om * (next[4] - current[0]); // capture
-        result[13] = (E::ONE - capture_om) * (next[4] - current[4]); // continuity
-
-        // ── carry_owner_mint → right input ──
-        result[14] = om_to_3 * (next[1] - current[4]); // → cycle 3
-        result[15] = om_to_6 * (next[1] - current[4]); // → cycle 6
-
-        // ── carry_owner → right input ──
-        result[16] = owner_to_4 * (next[1] - current[3]); // → cycle 4
-        result[17] = owner_to_7 * (next[1] - current[3]); // → cycle 7
-
-        // ── carry_out_rm (col 5) ──
-        result[18] = capture_out1_rm * (next[5] - current[0]); // capture out1_rm
-        result[19] = out1_rm_to_10 * (next[1] - current[5]);   // → cycle 10 right
-        result[20] = capture_out2_rm * (next[5] - current[0]); // capture out2_rm
-        result[21] = out2_rm_to_13 * (next[1] - current[5]);   // → cycle 13 right
-
-        // carry_out_rm continuity (except at capture points)
-        result[22] = (E::ONE - out_rm_capture_any) * (next[5] - current[5]);
+        evaluate_transfer_transition(frame.current(), frame.next(), periodic_values, result);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -344,6 +206,170 @@ fn pow7<E: FieldElement>(x: E) -> E {
     let x2 = x * x;
     let x4 = x2 * x2;
     x4 * x2 * x
+}
+
+// ============================================================================
+// Periodic columns (public: shared with compact.rs + on-chain verifier parity)
+// ============================================================================
+
+/// Build the 23 periodic columns for circuit 5 (transfer). Period-32 columns
+/// (rc0/rc1/rc2/round_flag) are returned at their natural period; period-512
+/// columns are the full trace length. Winterfell / the generic compact path
+/// materialise these onto the full-trace domain internally, so consumers
+/// don't need to expand them here.
+pub fn build_transfer_periodic_columns() -> Vec<Vec<BaseElement>> {
+    let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
+
+    // Round constants and round_flag: period 32 (all 16 cycles are valid hashes)
+    let mut rc0 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
+    let mut rc1 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
+    let mut rc2 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
+    let mut round_flag = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
+    for pos in 0..NUM_ROUNDS {
+        rc0[pos] = rc[pos * 3];
+        rc1[pos] = rc[pos * 3 + 1];
+        rc2[pos] = rc[pos * 3 + 2];
+        round_flag[pos] = BaseElement::ONE;
+    }
+
+    // Boundary flag: period 512
+    let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
+    for cycle in 0..16 {
+        let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
+        if row < TRACE_LENGTH - 1 {
+            is_boundary[row] = BaseElement::ONE;
+        }
+    }
+
+    let make_flag = |row: usize| -> Vec<BaseElement> {
+        let mut f = vec![BaseElement::ZERO; TRACE_LENGTH];
+        f[row] = BaseElement::ONE;
+        f
+    };
+
+    let chain_0_1 = make_flag(31);    // owner → cycle 1
+    let chain_2_3 = make_flag(95);    // in1_left → cycle 3
+    let chain_3_4 = make_flag(127);   // in_commit_1 → cycle 4
+    let chain_5_6 = make_flag(191);   // in2_left → cycle 6
+    let chain_6_7 = make_flag(223);   // in_commit_2 → cycle 7
+    let chain_9_10 = make_flag(319);  // out1_left → cycle 10
+    let chain_12_13 = make_flag(415); // out2_left → cycle 13
+
+    let capture_owner = make_flag(NUM_ROUNDS);                               // row 30
+    let capture_om = make_flag(HASH_CYCLE_LEN + NUM_ROUNDS);                 // row 62
+    let capture_out1_rm = make_flag(8 * HASH_CYCLE_LEN + NUM_ROUNDS);        // row 286
+    let capture_out2_rm = make_flag(11 * HASH_CYCLE_LEN + NUM_ROUNDS);       // row 382
+
+    let om_to_3 = make_flag(95);
+    let om_to_6 = make_flag(191);
+    let owner_to_4 = make_flag(127);
+    let owner_to_7 = make_flag(223);
+    let out1_rm_to_10 = make_flag(319);
+    let out2_rm_to_13 = make_flag(415);
+
+    let mut out_rm_capture_any = vec![BaseElement::ZERO; TRACE_LENGTH];
+    out_rm_capture_any[8 * HASH_CYCLE_LEN + NUM_ROUNDS] = BaseElement::ONE;
+    out_rm_capture_any[11 * HASH_CYCLE_LEN + NUM_ROUNDS] = BaseElement::ONE;
+
+    vec![
+        rc0, rc1, rc2, round_flag,       // 0-3: period 32
+        is_boundary,                      // 4: period 512
+        chain_0_1, chain_2_3, chain_3_4,  // 5-7
+        chain_5_6, chain_6_7,             // 8-9
+        chain_9_10, chain_12_13,          // 10-11
+        capture_owner, capture_om,        // 12-13
+        capture_out1_rm, capture_out2_rm, // 14-15
+        om_to_3, om_to_6,                // 16-17
+        owner_to_4, owner_to_7,          // 18-19
+        out1_rm_to_10, out2_rm_to_13,    // 20-21
+        out_rm_capture_any,              // 22
+    ]
+}
+
+/// Evaluate the 23 transition constraints for circuit 5 (transfer) at a
+/// specific (current, next) frame using already-evaluated periodic values.
+/// Used both by the Winterfell AIR and by compact.rs for the DEEP-ALI check.
+pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
+    current: &[E],
+    next: &[E],
+    periodic: &[E],
+    result: &mut [E],
+) {
+    let rc0 = periodic[0];
+    let rc1 = periodic[1];
+    let rc2 = periodic[2];
+    let round_flag = periodic[3];
+    let is_boundary = periodic[4];
+    let chain_0_1 = periodic[5];
+    let chain_2_3 = periodic[6];
+    let chain_3_4 = periodic[7];
+    let chain_5_6 = periodic[8];
+    let chain_6_7 = periodic[9];
+    let chain_9_10 = periodic[10];
+    let chain_12_13 = periodic[11];
+    let capture_owner = periodic[12];
+    let capture_om = periodic[13];
+    let capture_out1_rm = periodic[14];
+    let capture_out2_rm = periodic[15];
+    let om_to_3 = periodic[16];
+    let om_to_6 = periodic[17];
+    let owner_to_4 = periodic[18];
+    let owner_to_7 = periodic[19];
+    let out1_rm_to_10 = periodic[20];
+    let out2_rm_to_13 = periodic[21];
+    let out_rm_capture_any = periodic[22];
+
+    let not_boundary = E::ONE - is_boundary;
+
+    // ── Poseidon round ──
+    let s0 = current[0] + rc0;
+    let s1 = current[1] + rc1;
+    let s2 = current[2] + rc2;
+    let s0_7 = pow7(s0);
+    let s1_7 = pow7(s1);
+    let s2_7 = pow7(s2);
+    let three = E::from(3u32);
+    let ro0 = three * s0_7 + s1_7 + s2_7;
+    let ro1 = s0_7 + three * s1_7 + s2_7;
+    let ro2 = s0_7 + s1_7 + three * s2_7;
+
+    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+
+    // ── Direct col-0 chaining ──
+    result[3] = chain_0_1 * (next[0] - current[0]);
+    result[4] = chain_2_3 * (next[0] - current[0]);
+    result[5] = chain_3_4 * (next[0] - current[0]);
+    result[6] = chain_5_6 * (next[0] - current[0]);
+    result[7] = chain_6_7 * (next[0] - current[0]);
+    result[8] = chain_9_10 * (next[0] - current[0]);
+    result[9] = chain_12_13 * (next[0] - current[0]);
+
+    // ── carry_owner (col 3) ──
+    result[10] = capture_owner * (next[3] - current[0]);
+    result[11] = (E::ONE - capture_owner) * (next[3] - current[3]);
+
+    // ── carry_owner_mint (col 4) ──
+    result[12] = capture_om * (next[4] - current[0]);
+    result[13] = (E::ONE - capture_om) * (next[4] - current[4]);
+
+    // ── carry_owner_mint → right input ──
+    result[14] = om_to_3 * (next[1] - current[4]);
+    result[15] = om_to_6 * (next[1] - current[4]);
+
+    // ── carry_owner → right input ──
+    result[16] = owner_to_4 * (next[1] - current[3]);
+    result[17] = owner_to_7 * (next[1] - current[3]);
+
+    // ── carry_out_rm (col 5) ──
+    result[18] = capture_out1_rm * (next[5] - current[0]);
+    result[19] = out1_rm_to_10 * (next[1] - current[5]);
+    result[20] = capture_out2_rm * (next[5] - current[0]);
+    result[21] = out2_rm_to_13 * (next[1] - current[5]);
+
+    // carry_out_rm continuity (except at capture points)
+    result[22] = (E::ONE - out_rm_capture_any) * (next[5] - current[5]);
 }
 
 // ============================================================================
