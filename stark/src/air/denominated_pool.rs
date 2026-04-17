@@ -34,11 +34,23 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-const TRACE_WIDTH: usize = 3;
-const TRACE_LENGTH: usize = 128;
-const HASH_CYCLE_LEN: usize = 32;
-const NUM_ROUNDS: usize = 30;
-const NUM_HASH_CYCLES: usize = 3;
+pub const TRACE_WIDTH: usize = 3;
+pub const TRACE_LENGTH: usize = 128;
+pub const HASH_CYCLE_LEN: usize = 32;
+pub const NUM_ROUNDS: usize = 30;
+pub const NUM_HASH_CYCLES: usize = 3;
+
+/// Number of transition constraints in the pool-commitment AIR.
+///
+/// Layout: 3 Poseidon-round constraints (cols 0-2, gated by not_boundary *
+/// round_flag) + 1 chain constraint (next[1] at row 64 = current[0] at row 63,
+/// i.e. epoch_hash routed into cycle 2's right input).
+pub const POOL_COMMITMENT_NUM_CONSTRAINTS: usize = 4;
+
+/// Number of periodic columns.
+///
+/// Layout: `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary]`.
+pub const POOL_COMMITMENT_NUM_PERIODIC: usize = 6;
 
 // ============================================================================
 // Public inputs
@@ -105,37 +117,7 @@ impl Air for DenominatedPoolAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<BaseElement>> {
-        let active_rows = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 96
-
-        let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-
-        // Round constants + round flag (period = TRACE_LENGTH)
-        let mut rc0 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        let mut rc1 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        let mut rc2 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        let mut round_flag = vec![BaseElement::ZERO; TRACE_LENGTH];
-
-        for row in 0..active_rows {
-            let pos = row % HASH_CYCLE_LEN;
-            if pos < NUM_ROUNDS {
-                rc0[row] = rc[pos * 3];
-                rc1[row] = rc[pos * 3 + 1];
-                rc2[row] = rc[pos * 3 + 2];
-                round_flag[row] = BaseElement::ONE;
-            }
-        }
-
-        // chain_flag: 1 only at row 63 (boundary of cycle 1, for chaining epoch_hash)
-        let mut chain_flag = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_flag[63] = BaseElement::ONE;
-
-        // is_boundary: 1 at last row of each hash cycle (row 31, 63) — allows free transitions
-        let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
-        for cycle in 0..NUM_HASH_CYCLES {
-            is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
-        }
-
-        vec![rc0, rc1, rc2, round_flag, chain_flag, is_boundary]
+        build_pool_commitment_periodic_columns(TRACE_LENGTH)
     }
 
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
@@ -144,39 +126,7 @@ impl Air for DenominatedPoolAir {
         periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        let rc0 = periodic_values[0];
-        let rc1 = periodic_values[1];
-        let rc2 = periodic_values[2];
-        let round_flag = periodic_values[3];
-        let chain_flag = periodic_values[4];
-        let is_boundary = periodic_values[5];
-
-        // ── Poseidon round ──
-        let s0 = current[0] + rc0;
-        let s1 = current[1] + rc1;
-        let s2 = current[2] + rc2;
-
-        let s0_7 = pow7(s0);
-        let s1_7 = pow7(s1);
-        let s2_7 = pow7(s2);
-
-        let three = E::from(3u32);
-        let ro0 = three * s0_7 + s1_7 + s2_7;
-        let ro1 = s0_7 + three * s1_7 + s2_7;
-        let ro2 = s0_7 + s1_7 + three * s2_7;
-
-        // Gate by (1 - is_boundary) to allow free transitions at hash cycle boundaries
-        let not_boundary = E::ONE - is_boundary;
-        result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-        result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-        result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
-
-        // ── Chain: epoch_hash → cycle 2 right input ──
-        // At row 63 (end of cycle 1): next[1] at row 64 should = current[0] at row 63 (epoch_hash)
-        result[3] = chain_flag * (next[1] - current[0]);
+        evaluate_pool_commitment_transition(frame.current(), frame.next(), periodic_values, result);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -204,6 +154,97 @@ fn pow7<E: FieldElement>(x: E) -> E {
     let x2 = x * x;
     let x4 = x2 * x2;
     x4 * x2 * x
+}
+
+/// Build the 6 periodic column value vectors for circuit 1 (pool_commitment).
+///
+/// Exposed so the prover can interpolate / inverse-NTT them for LDE and OOD
+/// evaluations outside the AIR. Mirrors the `MerkleUpdateAir::get_periodic_column_values`
+/// pattern so the DEEP-ALI quotient path can reuse it.
+///
+/// Layout: `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary]`.
+pub fn build_pool_commitment_periodic_columns(trace_length: usize) -> Vec<Vec<BaseElement>> {
+    let tl = trace_length;
+    let active_rows = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 96
+
+    let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
+
+    let mut rc0 = vec![BaseElement::ZERO; tl];
+    let mut rc1 = vec![BaseElement::ZERO; tl];
+    let mut rc2 = vec![BaseElement::ZERO; tl];
+    let mut round_flag = vec![BaseElement::ZERO; tl];
+
+    for row in 0..active_rows {
+        let pos = row % HASH_CYCLE_LEN;
+        if pos < NUM_ROUNDS {
+            rc0[row] = rc[pos * 3];
+            rc1[row] = rc[pos * 3 + 1];
+            rc2[row] = rc[pos * 3 + 2];
+            round_flag[row] = BaseElement::ONE;
+        }
+    }
+
+    // chain_flag: 1 only at row 63 — end of cycle 1 — to enforce next[1]@row64 = current[0]@row63.
+    let mut chain_flag = vec![BaseElement::ZERO; tl];
+    chain_flag[HASH_CYCLE_LEN * 2 - 1] = BaseElement::ONE;
+
+    // is_boundary: 1 at last row of each hash cycle (rows 31, 63, 95) — allows free transitions.
+    let mut is_boundary = vec![BaseElement::ZERO; tl];
+    for cycle in 0..NUM_HASH_CYCLES {
+        is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
+    }
+
+    vec![rc0, rc1, rc2, round_flag, chain_flag, is_boundary]
+}
+
+/// Standalone evaluator for circuit 1 transition constraints.
+///
+/// Mirrors `DenominatedPoolAir::evaluate_transition` so the prover can evaluate
+/// the same constraints at LDE and OOD points without instantiating the AIR.
+/// `current` / `next` must be length 3, `periodic` length 6, `result` length 4.
+///
+/// Periodic layout: `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary]`.
+pub fn evaluate_pool_commitment_transition<E: FieldElement>(
+    current: &[E],
+    next: &[E],
+    periodic: &[E],
+    result: &mut [E],
+) {
+    debug_assert_eq!(current.len(), TRACE_WIDTH);
+    debug_assert_eq!(next.len(), TRACE_WIDTH);
+    debug_assert_eq!(periodic.len(), POOL_COMMITMENT_NUM_PERIODIC);
+    debug_assert_eq!(result.len(), POOL_COMMITMENT_NUM_CONSTRAINTS);
+
+    let rc0 = periodic[0];
+    let rc1 = periodic[1];
+    let rc2 = periodic[2];
+    let round_flag = periodic[3];
+    let chain_flag = periodic[4];
+    let is_boundary = periodic[5];
+
+    // ── Poseidon round (cols 0-2) ──
+    let s0 = current[0] + rc0;
+    let s1 = current[1] + rc1;
+    let s2 = current[2] + rc2;
+
+    let s0_7 = pow7(s0);
+    let s1_7 = pow7(s1);
+    let s2_7 = pow7(s2);
+
+    let three = E::from(3u32);
+    let ro0 = three * s0_7 + s1_7 + s2_7;
+    let ro1 = s0_7 + three * s1_7 + s2_7;
+    let ro2 = s0_7 + s1_7 + three * s2_7;
+
+    // Gate by (1 - is_boundary) to allow free transitions at hash cycle boundaries.
+    let not_boundary = E::ONE - is_boundary;
+    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+
+    // ── Chain: epoch_hash → cycle 2 right input ──
+    // At row 63 (end of cycle 1): next[1] at row 64 should = current[0] at row 63 (epoch_hash).
+    result[3] = chain_flag * (next[1] - current[0]);
 }
 
 // ============================================================================

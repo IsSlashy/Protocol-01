@@ -31,10 +31,18 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-const TRACE_WIDTH: usize = 4;
-const TRACE_LENGTH: usize = 128;
-const HASH_CYCLE_LEN: usize = 32;
-const NUM_ROUNDS: usize = 30;
+pub const TRACE_WIDTH: usize = 4;
+pub const TRACE_LENGTH: usize = 128;
+pub const HASH_CYCLE_LEN: usize = 32;
+pub const NUM_ROUNDS: usize = 30;
+pub const NUM_HASH_CYCLES: usize = 4;
+
+/// [P2.2d-C2] Number of transition constraints in `evaluate_balance_proof_transition`.
+pub const BALANCE_PROOF_NUM_CONSTRAINTS: usize = 7;
+
+/// [P2.2d-C2] Number of periodic columns in `build_balance_proof_periodic_columns`.
+/// Layout: `[rc0, rc1, rc2, round_flag, chain_01, carry_capture, chain_carry, is_boundary]`.
+pub const BALANCE_PROOF_NUM_PERIODIC: usize = 8;
 
 // ============================================================================
 // Public inputs
@@ -108,50 +116,7 @@ impl Air for BalanceProofAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<BaseElement>> {
-        let active_rows = 4 * HASH_CYCLE_LEN; // 128 (fills entire trace)
-        let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-
-        let mut rc0 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        let mut rc1 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        let mut rc2 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        let mut round_flag = vec![BaseElement::ZERO; TRACE_LENGTH];
-
-        for row in 0..active_rows {
-            let pos = row % HASH_CYCLE_LEN;
-            if pos < NUM_ROUNDS {
-                rc0[row] = rc[pos * 3];
-                rc1[row] = rc[pos * 3 + 1];
-                rc2[row] = rc[pos * 3 + 2];
-                round_flag[row] = BaseElement::ONE;
-            }
-        }
-
-        // chain_0_to_1: 1 at row 31 (cycle 0 → cycle 1: owner feeds into cycle 1 left)
-        let mut chain_01 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_01[31] = BaseElement::ONE;
-
-        // carry_capture: 1 at row 63 (capture owner_mint at end of cycle 1)
-        let mut carry_capture = vec![BaseElement::ZERO; TRACE_LENGTH];
-        carry_capture[63] = BaseElement::ONE;
-
-        // carry_continuity_off: 1 at row 63 (carry can change here)
-        // We invert: continuity holds when this is 0
-        // Same as carry_capture
-
-        // chain_carry_to_3: 1 at row 95 (chain carry → cycle 3 right input)
-        let mut chain_carry = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_carry[95] = BaseElement::ONE;
-
-        // is_boundary: 1 at last row of each hash cycle (rows 31, 63, 95) — allows free transitions
-        let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
-        for cycle in 0..4 {
-            let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
-            if row < TRACE_LENGTH - 1 { // skip last row (127), wrap-around is exempt
-                is_boundary[row] = BaseElement::ONE;
-            }
-        }
-
-        vec![rc0, rc1, rc2, round_flag, chain_01, carry_capture, chain_carry, is_boundary]
+        build_balance_proof_periodic_columns(TRACE_LENGTH)
     }
 
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
@@ -160,52 +125,7 @@ impl Air for BalanceProofAir {
         periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        let rc0 = periodic_values[0];
-        let rc1 = periodic_values[1];
-        let rc2 = periodic_values[2];
-        let round_flag = periodic_values[3];
-        let chain_01 = periodic_values[4];
-        let carry_capture = periodic_values[5];
-        let chain_carry = periodic_values[6];
-        let is_boundary = periodic_values[7];
-
-        // ── Poseidon round ──
-        let s0 = current[0] + rc0;
-        let s1 = current[1] + rc1;
-        let s2 = current[2] + rc2;
-
-        let s0_7 = pow7(s0);
-        let s1_7 = pow7(s1);
-        let s2_7 = pow7(s2);
-
-        let three = E::from(3u32);
-        let ro0 = three * s0_7 + s1_7 + s2_7;
-        let ro1 = s0_7 + three * s1_7 + s2_7;
-        let ro2 = s0_7 + s1_7 + three * s2_7;
-
-        // Gate by (1 - is_boundary) to allow free transitions at hash cycle boundaries
-        let not_boundary = E::ONE - is_boundary;
-        result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-        result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-        result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
-
-        // ── Chain cycle 0 → cycle 1: owner → next left input ──
-        // At row 31: next[0] at row 32 should = current[0] at row 31 (= owner)
-        result[3] = chain_01 * (next[0] - current[0]);
-
-        // ── Carry capture at cycle 1 boundary ──
-        // At row 63: carry_next = current[0] (= owner_mint)
-        result[4] = carry_capture * (next[3] - current[0]);
-
-        // ── Carry continuity (carry doesn't change except at capture point) ──
-        result[5] = (E::ONE - carry_capture) * (next[3] - current[3]);
-
-        // ── Chain carry → cycle 3 right input ──
-        // At row 95: next[1] at row 96 = carry (= owner_mint)
-        result[6] = chain_carry * (next[1] - current[3]);
+        evaluate_balance_proof_transition(frame.current(), frame.next(), periodic_values, result);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -230,6 +150,122 @@ fn pow7<E: FieldElement>(x: E) -> E {
     let x2 = x * x;
     let x4 = x2 * x2;
     x4 * x2 * x
+}
+
+// ============================================================================
+// [P2.2d-C2] Standalone periodic column builder and transition evaluator.
+// ============================================================================
+
+/// Build the 8 periodic columns used by circuit 2 (balance_proof).
+///
+/// Exposed so the prover can interpolate / inverse-NTT them for LDE and OOD
+/// DEEP-ALI evaluations outside the AIR. Mirrors `BalanceProofAir::
+/// get_periodic_column_values` byte-for-byte.
+///
+/// Layout: `[rc0, rc1, rc2, round_flag, chain_01, carry_capture, chain_carry, is_boundary]`.
+pub fn build_balance_proof_periodic_columns(trace_length: usize) -> Vec<Vec<BaseElement>> {
+    let tl = trace_length;
+    let active_rows = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 128 (fills entire trace)
+
+    let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
+
+    let mut rc0 = vec![BaseElement::ZERO; tl];
+    let mut rc1 = vec![BaseElement::ZERO; tl];
+    let mut rc2 = vec![BaseElement::ZERO; tl];
+    let mut round_flag = vec![BaseElement::ZERO; tl];
+
+    for row in 0..active_rows {
+        let pos = row % HASH_CYCLE_LEN;
+        if pos < NUM_ROUNDS {
+            rc0[row] = rc[pos * 3];
+            rc1[row] = rc[pos * 3 + 1];
+            rc2[row] = rc[pos * 3 + 2];
+            round_flag[row] = BaseElement::ONE;
+        }
+    }
+
+    // chain_01: 1 at row 31 — cycle 0 output feeds cycle 1 left input.
+    let mut chain_01 = vec![BaseElement::ZERO; tl];
+    chain_01[HASH_CYCLE_LEN - 1] = BaseElement::ONE;
+
+    // carry_capture: 1 at row 63 — captures owner_mint into col[3].
+    let mut carry_capture = vec![BaseElement::ZERO; tl];
+    carry_capture[2 * HASH_CYCLE_LEN - 1] = BaseElement::ONE;
+
+    // chain_carry: 1 at row 95 — carry (owner_mint) feeds cycle 3 right input.
+    let mut chain_carry = vec![BaseElement::ZERO; tl];
+    chain_carry[3 * HASH_CYCLE_LEN - 1] = BaseElement::ONE;
+
+    // is_boundary: 1 at the last row of each hash cycle except the wrap row.
+    let mut is_boundary = vec![BaseElement::ZERO; tl];
+    for cycle in 0..NUM_HASH_CYCLES {
+        let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
+        if row < tl - 1 {
+            is_boundary[row] = BaseElement::ONE;
+        }
+    }
+
+    vec![rc0, rc1, rc2, round_flag, chain_01, carry_capture, chain_carry, is_boundary]
+}
+
+/// Standalone evaluator for circuit 2 transition constraints.
+///
+/// Mirrors `BalanceProofAir::evaluate_transition` so the prover can evaluate
+/// the same 7 constraints at LDE and OOD points without instantiating the AIR.
+/// `current` / `next` must be length 4, `periodic` length 8, `result` length 7.
+///
+/// Periodic layout: `[rc0, rc1, rc2, round_flag, chain_01, carry_capture,
+/// chain_carry, is_boundary]`.
+pub fn evaluate_balance_proof_transition<E: FieldElement>(
+    current: &[E],
+    next: &[E],
+    periodic: &[E],
+    result: &mut [E],
+) {
+    debug_assert_eq!(current.len(), TRACE_WIDTH);
+    debug_assert_eq!(next.len(), TRACE_WIDTH);
+    debug_assert_eq!(periodic.len(), BALANCE_PROOF_NUM_PERIODIC);
+    debug_assert_eq!(result.len(), BALANCE_PROOF_NUM_CONSTRAINTS);
+
+    let rc0 = periodic[0];
+    let rc1 = periodic[1];
+    let rc2 = periodic[2];
+    let round_flag = periodic[3];
+    let chain_01 = periodic[4];
+    let carry_capture = periodic[5];
+    let chain_carry = periodic[6];
+    let is_boundary = periodic[7];
+
+    // ── Poseidon round (cols 0-2) ──
+    let s0 = current[0] + rc0;
+    let s1 = current[1] + rc1;
+    let s2 = current[2] + rc2;
+
+    let s0_7 = pow7(s0);
+    let s1_7 = pow7(s1);
+    let s2_7 = pow7(s2);
+
+    let three = E::from(3u32);
+    let ro0 = three * s0_7 + s1_7 + s2_7;
+    let ro1 = s0_7 + three * s1_7 + s2_7;
+    let ro2 = s0_7 + s1_7 + three * s2_7;
+
+    let not_boundary = E::ONE - is_boundary;
+    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+
+    // ── Chain row 31: next[0]@32 = current[0]@31 (= owner) ──
+    result[3] = chain_01 * (next[0] - current[0]);
+
+    // ── Carry capture row 63: next[3]@64 = current[0]@63 (= owner_mint) ──
+    result[4] = carry_capture * (next[3] - current[0]);
+
+    // ── Carry continuity: col[3] constant except at the capture row ──
+    result[5] = (E::ONE - carry_capture) * (next[3] - current[3]);
+
+    // ── Chain carry row 95: next[1]@96 = current[3]@95 (= owner_mint) ──
+    result[6] = chain_carry * (next[1] - current[3]);
 }
 
 // ============================================================================
