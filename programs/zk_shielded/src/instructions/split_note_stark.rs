@@ -4,8 +4,11 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
 use crate::fee::{self, PROTOCOL_FEE_WALLET};
-use crate::instructions::split_note::MAX_SPLIT_OUTPUTS;
 use crate::state::{DenominatedPool, MerkleTreeState, NullifierRecord};
+
+/// Maximum number of output notes per split operation.
+/// 20 allows splitting a 10 SOL note into 20 x 0.5 SOL notes.
+pub const MAX_SPLIT_OUTPUTS: u8 = 20;
 
 /// STARK Proof Buffer account layout (from p01_stark_verifier).
 const STARK_PROOF_BUFFER_DISCRIMINATOR: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 161];

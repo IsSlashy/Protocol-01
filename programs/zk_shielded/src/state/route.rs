@@ -5,7 +5,7 @@ use anchor_lang::prelude::*;
 /// 10 hops provides strong unlinkability even against statistical analysis.
 pub const MAX_ROUTE_HOPS: usize = 10;
 
-/// Maximum split factor per route (matches split_note::MAX_SPLIT_OUTPUTS).
+/// Maximum split factor per route (matches split_note_stark::MAX_SPLIT_OUTPUTS).
 /// A single high-denomination note can be split into at most 20
 /// lower-denomination notes in one instruction.
 pub const MAX_SPLIT_OUTPUTS: usize = 20;

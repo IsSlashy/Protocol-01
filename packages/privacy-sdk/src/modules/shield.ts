@@ -350,7 +350,7 @@ export class ShieldModule {
    * For variable pools, a 2-input/2-output model is used where one output
    * is the withdrawal amount and the other is the change note.
    *
-   * @param params - Unshield parameters (amount, token, recipient, useStark)
+   * @param params - Unshield parameters (amount, token, recipient)
    * @returns Receipt with nullifier and withdrawn amount
    */
   async unshield(params: UnshieldParams): Promise<UnshieldReceipt> {
@@ -373,7 +373,7 @@ export class ShieldModule {
 
     try {
       if (params.denominated) {
-        return await this.unshieldDenominated(tokenInfo, amount, recipient, params.useStark);
+        return await this.unshieldDenominated(tokenInfo, amount, recipient);
       } else {
         return await this.unshieldVariable(tokenInfo, amount, recipient, params.useStark);
       }
@@ -866,13 +866,13 @@ export class ShieldModule {
   // ─── Private: Unshield Implementations ───────────────────────────────────
 
   /**
-   * Unshield from a denominated pool using Groth16 or STARK proof.
+   * Unshield from a denominated pool using a pre-verified STARK proof buffer.
+   * Groth16 denominated-pool instructions were removed on-chain in P3.7.
    */
   private async unshieldDenominated(
     tokenInfo: TokenInfo,
     denomination: bigint,
     recipient: PublicKey,
-    useStark?: boolean,
   ): Promise<UnshieldReceipt> {
     const walletPubkey = this.getWalletPublicKey();
     const [poolPDA] = this.derivePoolPDA(tokenInfo.mint, denomination);
@@ -905,46 +905,18 @@ export class ShieldModule {
     // Derive nullifier PDA
     const [nullifierPDA] = this.deriveNullifierPDA(poolPDA, nullifierBytes);
 
-    let tx: Transaction;
-
-    if (useStark) {
-      // STARK-based unshield: requires a pre-verified proof buffer
-      tx = await this.buildUnshieldDenominatedStarkTx(
-        walletPubkey,
-        recipient,
-        poolPDA,
-        merkleTreePDA,
-        nullifierPDA,
-        nullifierBytes,
-        merkleRootBytes,
-        minEpoch,
-        tokenInfo,
-        isNativeSol,
-      );
-    } else {
-      // Groth16-based unshield
-      const proofResult = await this.generateDenominatedProof({
-        merkleRoot: poolInfo.merkleRoot,
-        nullifier,
-        minEpoch,
-        tokenMint: tokenInfo.mint,
-        enforceMaturity: true,
-      });
-
-      tx = await this.buildUnshieldDenominatedTx(
-        walletPubkey,
-        recipient,
-        poolPDA,
-        merkleTreePDA,
-        nullifierPDA,
-        proofResult,
-        nullifierBytes,
-        merkleRootBytes,
-        minEpoch,
-        tokenInfo,
-        isNativeSol,
-      );
-    }
+    const tx = await this.buildUnshieldDenominatedStarkTx(
+      walletPubkey,
+      recipient,
+      poolPDA,
+      merkleTreePDA,
+      nullifierPDA,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      tokenInfo,
+      isNativeSol,
+    );
 
     const txResult = await this.sendTx(tx);
 
@@ -1103,78 +1075,6 @@ export class ShieldModule {
   }
 
   /**
-   * Build an unshield_denominated Groth16 transaction.
-   */
-  private async buildUnshieldDenominatedTx(
-    payer: PublicKey,
-    recipient: PublicKey,
-    poolPDA: PublicKey,
-    merkleTreePDA: PublicKey,
-    nullifierPDA: PublicKey,
-    proofResult: ProofResult,
-    nullifierBytes: Buffer,
-    merkleRootBytes: Buffer,
-    minEpoch: bigint,
-    tokenInfo: TokenInfo,
-    isNativeSol: boolean,
-  ): Promise<Transaction> {
-    const [vkDataPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from(SEEDS.VK_DATA), poolPDA.toBuffer()],
-      this.programIds.zkShielded,
-    );
-
-    const disc = anchorDiscriminator('unshield_denominated');
-    const proofData = encodeGroth16Proof(proofResult.proof);
-
-    const instructionData = Buffer.concat([
-      disc,
-      proofData,
-      nullifierBytes,
-      merkleRootBytes,
-      u64ToBuffer(minEpoch),
-    ]);
-
-    const keys = [
-      { pubkey: payer, isSigner: true, isWritable: true },            // payer
-      { pubkey: recipient, isSigner: false, isWritable: true },        // recipient
-      { pubkey: poolPDA, isSigner: false, isWritable: true },          // denominated_pool
-      { pubkey: merkleTreePDA, isSigner: false, isWritable: false },   // merkle_tree
-      { pubkey: nullifierPDA, isSigner: false, isWritable: true },     // nullifier_record
-      { pubkey: vkDataPDA, isSigner: false, isWritable: false },       // verification_key_data
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ];
-
-    if (!isNativeSol) {
-      const poolVault = await getAssociatedTokenAddress(tokenInfo.mint, poolPDA, true);
-      const recipientAta = await getAssociatedTokenAddress(tokenInfo.mint, recipient);
-      keys.push(
-        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: poolVault, isSigner: false, isWritable: true },
-        { pubkey: recipientAta, isSigner: false, isWritable: true },
-      );
-    }
-
-    // Protocol fee wallet
-    keys.push(
-      { pubkey: FEE_WALLET, isSigner: false, isWritable: true },
-    );
-
-    const ix = new TransactionInstruction({
-      programId: this.programIds.zkShielded,
-      keys,
-      data: instructionData,
-    });
-
-    const tx = new Transaction();
-    tx.add(
-      ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNITS.UNSHIELD }),
-      ix,
-    );
-
-    return tx;
-  }
-
-  /**
    * Build an unshield_denominated_stark transaction.
    * Reads a pre-verified STARK proof buffer from p01_stark_verifier.
    */
@@ -1317,28 +1217,6 @@ export class ShieldModule {
       // Private inputs would be filled from note database
       secret: params.ownerField.toString(),
       spendingKeyHash: params.spendingKeyHash.toString(),
-    };
-
-    return this.generateShieldProof(circuitInputs);
-  }
-
-  /**
-   * Generate a Groth16 proof for denominated pool unshielding.
-   * Circuit: denominated_pool (5 public inputs: merkle_root, nullifier, min_epoch, token_mint, enforce_maturity)
-   */
-  private async generateDenominatedProof(params: {
-    merkleRoot: bigint;
-    nullifier: bigint;
-    minEpoch: bigint;
-    tokenMint: PublicKey;
-    enforceMaturity: boolean;
-  }): Promise<ProofResult> {
-    const circuitInputs = {
-      root: params.merkleRoot.toString(),
-      nullifierHash: params.nullifier.toString(),
-      minEpoch: params.minEpoch.toString(),
-      tokenMint: this.pubkeyToFieldElement(params.tokenMint).toString(),
-      enforceMaturity: params.enforceMaturity ? '1' : '0',
     };
 
     return this.generateShieldProof(circuitInputs);

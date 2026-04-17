@@ -111,7 +111,10 @@ export interface UnshieldParams {
   token: TokenSymbol;
   /** Recipient public key. Defaults to the connected wallet. */
   recipient?: PublicKey;
-  /** Use STARK proof (quantum-resistant) instead of Groth16. */
+  /**
+   * Use STARK proof (quantum-resistant) for variable-pool unshield.
+   * Denominated-pool unshield is always STARK after P3.7 (Groth16 removed on-chain).
+   */
   useStark?: boolean;
   /** Withdraw from denominated pool. */
   denominated?: boolean;
@@ -427,6 +430,14 @@ export interface VaultWithdrawParams {
   amount: number | bigint;
   /** For HTL vaults: the 32-byte SHA-256 preimage that unlocks the vault. */
   preimage?: Uint8Array;
+  /** For WOTS+ vaults: 32-byte seed for the CURRENT signing key. */
+  seed?: Uint8Array;
+  /** For WOTS+ vaults: 32-byte seed for the NEXT key (post-rotation). */
+  nextSeed?: Uint8Array;
+  /** For WOTS+ vaults: withdrawal destination. Defaults to the wallet owner. */
+  destination?: PublicKey;
+  /** For WOTS+ vaults: the vault's current `withdrawal_count` (fetched on-chain). */
+  withdrawalCount?: number | bigint;
 }
 
 /** On-chain state of a quantum-safe vault. */

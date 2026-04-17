@@ -9,23 +9,19 @@ pub mod update_vk;
 // pub mod transfer_via_relayer;
 pub mod init_denominated_pool;
 pub mod shield_denominated;
-pub mod unshield_denominated;
-pub mod emergency_unshield_denominated;
-pub mod transfer_denominated;
-pub mod update_denominated_vk;
-pub mod update_transfer_vk;
+// P3.7 — REMOVED Groth16 denominated-pool instructions (replaced by STARK variants):
+//   unshield_denominated, emergency_unshield_denominated, transfer_denominated,
+//   split_note, subscribe_private, pause_private, resume_private, cancel_private,
+//   update_denominated_vk, update_transfer_vk, store_transfer_vk_data,
+//   store_subscriber_vk_data.
+// The _stark variants below read a pre-verified proof buffer from
+// p01_stark_verifier and are the canonical denominated-pool entrypoints.
 pub mod resize_denominated_pool;
-pub mod store_transfer_vk_data;
 pub mod subscribe_normal;
-pub mod subscribe_private;
 pub mod claim_period;
 pub mod pause_normal;
-pub mod pause_private;
 pub mod resume_normal;
-pub mod resume_private;
 pub mod cancel_normal;
-pub mod cancel_private;
-pub mod store_subscriber_vk_data;
 pub mod unshield_denominated_stark;
 pub mod subscribe_private_stark;
 pub mod pause_private_stark;
@@ -36,7 +32,6 @@ pub mod emergency_unshield_denominated_stark;
 pub mod split_note_stark;
 pub mod propose_authority_transfer;
 pub mod accept_authority_transfer;
-pub mod split_note;
 pub mod escrow_shield;
 pub mod escrow_release;
 pub mod write_escrow_outcome;
@@ -53,23 +48,12 @@ pub use update_vk::*;
 // pub use transfer_via_relayer::*;
 pub use init_denominated_pool::*;
 pub use shield_denominated::*;
-pub use unshield_denominated::*;
-pub use emergency_unshield_denominated::*;
-pub use transfer_denominated::*;
-pub use update_denominated_vk::*;
-pub use update_transfer_vk::*;
 pub use resize_denominated_pool::*;
-pub use store_transfer_vk_data::*;
 pub use subscribe_normal::*;
-pub use subscribe_private::*;
 pub use claim_period::*;
 pub use pause_normal::*;
-pub use pause_private::*;
 pub use resume_normal::*;
-pub use resume_private::*;
 pub use cancel_normal::*;
-pub use cancel_private::*;
-pub use store_subscriber_vk_data::*;
 pub use unshield_denominated_stark::*;
 pub use subscribe_private_stark::*;
 pub use pause_private_stark::*;
@@ -80,7 +64,6 @@ pub use emergency_unshield_denominated_stark::*;
 pub use split_note_stark::*;
 pub use propose_authority_transfer::*;
 pub use accept_authority_transfer::*;
-pub use split_note::*;
 pub use escrow_shield::*;
 pub use escrow_release::*;
 pub use write_escrow_outcome::*;
