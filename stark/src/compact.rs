@@ -731,6 +731,116 @@ fn compute_quotient_lde_circuit_2(
     q_lde
 }
 
+/// [P2.2d-C3] Compute the RLC-combined quotient LDE for circuit 3 (merkle_path).
+///
+/// Same shape as `compute_quotient_lde_circuit_6`: variable-depth periodic columns,
+/// interpolated onto the LDE, 11 transition constraints evaluated at every LDE
+/// position, RLC-combined with α, INTT → coefficients, multiply by
+/// (x − g^{n−1}) to kill the wrap row, synthetic-divide by Z_D(x) = x^n − 1.
+///
+/// Closes the P2.2d-C3 soundness gaps:
+///   1. **Multi-cycle Poseidon.** Legacy `evaluate_transition_constraint` had a
+///      single-cycle flag (cycle 0 only); cycles 1-14 (depth 15) were
+///      unconstrained. This path uses `build_merkle_path_periodic_columns`
+///      with the real 15-cycle `round_active` flag spanning all hash cycles.
+///   2. **Hash-start mux.** `s0 = carry + direction * (sibling - carry)` and
+///      `s1 = sibling - direction * (sibling - carry)` at every cycle start
+///      (rows 0, 32, 64, ...) were never checked on-chain. A malicious prover
+///      could load arbitrary left/right inputs per level. Now bound.
+///   3. **Capacity at hash start.** `s2 = 0` at every cycle start was not
+///      enforced outside row 0 — prover could inject state. Now bound.
+///   4. **Carry update at boundary.** `next[5] = current[0]` at row 31 (end of
+///      cycle 0) — propagates hash output as next level's carry. Never
+///      enforced. Now bound by `is_boundary` flag.
+///   5. **Carry continuity between boundaries.** `next[5] = current[5]` except
+///      at cycle boundaries — prover could rewrite carry mid-cycle. Now bound.
+///   6. **Sibling/direction continuity.** `next[3] = current[3]` and
+///      `next[4] = current[4]` inside a cycle (rows 1-31). Prover could
+///      change the path element mid-hash. Now bound by `is_interior` flag.
+///   7. **Direction binary.** `direction * (1 - direction) = 0` at every
+///      hash start. Legacy form only checked at row 0. Now bound at every
+///      cycle start.
+///
+/// `periodic` layout matches `build_merkle_path_periodic_columns`:
+/// `[rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]`.
+fn compute_quotient_lde_circuit_3(
+    trace_lde: &[Vec<BaseElement>],
+    blowup: usize,
+    trace_length: usize,
+    depth: usize,
+    alpha: BaseElement,
+) -> Vec<u64> {
+    use crate::air::merkle_path::{
+        build_merkle_path_periodic_columns, evaluate_merkle_path_transition,
+        MERKLE_PATH_NUM_CONSTRAINTS, MERKLE_PATH_NUM_PERIODIC, TRACE_WIDTH,
+    };
+
+    let trace_width = trace_lde.len();
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 3 trace width is 6");
+    let lde_size = trace_length * blowup;
+    assert_eq!(trace_lde[0].len(), lde_size);
+
+    let trace_g = get_domain_generator_generic(trace_length);
+    let lde_g = get_domain_generator_generic(lde_size);
+
+    // 1. Interpolate periodic columns (length-n) and evaluate on the LDE domain.
+    let periodic_trace = build_merkle_path_periodic_columns(depth, trace_length);
+    assert_eq!(periodic_trace.len(), MERKLE_PATH_NUM_PERIODIC);
+
+    let mut periodic_lde: Vec<Vec<BaseElement>> =
+        vec![vec![BaseElement::ZERO; lde_size]; MERKLE_PATH_NUM_PERIODIC];
+    for (k, col) in periodic_trace.iter().enumerate() {
+        let poly = inverse_ntt(col, trace_g);
+        for i in 0..lde_size {
+            let x = lde_g.exp(i as u64);
+            periodic_lde[k][i] = evaluate_poly(&poly, x);
+        }
+    }
+
+    // 2. Evaluate the 11 constraints at every LDE position and RLC-combine with α.
+    let mut c_lde = vec![BaseElement::ZERO; lde_size];
+    let mut constraints = vec![BaseElement::ZERO; MERKLE_PATH_NUM_CONSTRAINTS];
+    let mut current = vec![BaseElement::ZERO; trace_width];
+    let mut next = vec![BaseElement::ZERO; trace_width];
+    let mut periodic_row = vec![BaseElement::ZERO; MERKLE_PATH_NUM_PERIODIC];
+
+    for pos in 0..lde_size {
+        let next_pos = (pos + blowup) % lde_size;
+        for col in 0..trace_width {
+            current[col] = trace_lde[col][pos];
+            next[col] = trace_lde[col][next_pos];
+        }
+        for k in 0..MERKLE_PATH_NUM_PERIODIC {
+            periodic_row[k] = periodic_lde[k][pos];
+        }
+        evaluate_merkle_path_transition(&current, &next, &periodic_row, &mut constraints);
+        c_lde[pos] = rlc_combine(&constraints, alpha);
+    }
+
+    // 3. INTT → coefficients on the LDE domain.
+    let c_poly = inverse_ntt(&c_lde, lde_g);
+
+    // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
+    let g_nm1 = trace_g.exp((trace_length - 1) as u64);
+    let c_poly_ext = multiply_by_x_minus_a(&c_poly, g_nm1);
+
+    // 5. Synthetic-divide by x^n − 1 (exact, no remainder).
+    assert!(c_poly_ext.len() > trace_length);
+    let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
+
+    // 6. Pad to lde_size and evaluate on LDE.
+    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
+    let copy_len = q_poly.len().min(lde_size);
+    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+
+    let mut q_lde = vec![0u64; lde_size];
+    for i in 0..lde_size {
+        let x = lde_g.exp(i as u64);
+        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
+    }
+    q_lde
+}
+
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
 /// Uses FFT interpolation + evaluation.
 fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
@@ -1519,6 +1629,45 @@ mod tests {
         assert_eq!(is_boundary[127], 0x20001FFFE0000000);
     }
 
+    /// [P2.2d-C3] Parity check for circuit 3 (merkle_path) periodic columns.
+    /// The 7 coefficient arrays baked into `periodic_consts.rs` must exactly
+    /// match what `inverse_ntt(build_merkle_path_periodic_columns(...))`
+    /// produces, otherwise the on-chain verifier rejects honest proofs.
+    #[test]
+    fn circuit_3_periodic_coeffs_match_verifier_constants() {
+        use crate::air::merkle_path::{
+            build_merkle_path_periodic_columns, CANONICAL_DEPTH, TRACE_LENGTH as MP_TRACE_LENGTH,
+        };
+
+        let trace_length = MP_TRACE_LENGTH; // 512
+        let depth = CANONICAL_DEPTH; // 15
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_merkle_path_periodic_columns(depth, trace_length);
+
+        let rc0: Vec<u64> = inverse_ntt(&periodic[0], trace_g).iter().map(|f| f.as_int()).collect();
+        let rc1: Vec<u64> = inverse_ntt(&periodic[1], trace_g).iter().map(|f| f.as_int()).collect();
+        let rc2: Vec<u64> = inverse_ntt(&periodic[2], trace_g).iter().map(|f| f.as_int()).collect();
+        let round_active: Vec<u64> = inverse_ntt(&periodic[3], trace_g).iter().map(|f| f.as_int()).collect();
+        let hash_start: Vec<u64> = inverse_ntt(&periodic[4], trace_g).iter().map(|f| f.as_int()).collect();
+        let is_boundary: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
+        let is_interior: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
+
+        assert_eq!(rc0[0], 0x558F5C5694E81D40);
+        assert_eq!(rc0[511], 0x0AB02BE02E19C660);
+        assert_eq!(rc1[0], 0x1230EF570AB0C5A3);
+        assert_eq!(rc1[511], 0x6C569A22D587E645);
+        assert_eq!(rc2[0], 0x0197B1AA9C1A574D);
+        assert_eq!(rc2[511], 0x0DD93E6880FF9479);
+        assert_eq!(round_active[0], 0x1EFFFFFFE1000001);
+        assert_eq!(round_active[511], 0xAC5B6AFDF33F4359);
+        assert_eq!(hash_start[0], 0xF87FFFFF07800001);
+        assert_eq!(hash_start[511], 0xFFFFFFFEF8000001);
+        assert_eq!(is_boundary[0], 0xF87FFFFF07800001);
+        assert_eq!(is_boundary[511], 0x39E10F3192185B4B);
+        assert_eq!(is_interior[0], 0x1EFFFFFFE1000001);
+        assert_eq!(is_interior[511], 0x044CB98D1B6CF0E1);
+    }
+
     /// [P1.1 PR 4] Sanity check: re-emitting coefficients via inverse_ntt matches
     /// the coefficients hardcoded in `p01_stark_verifier/src/periodic_consts.rs`.
     /// If this test ever fails, the on-chain verifier will reject honest proofs.
@@ -1849,6 +1998,43 @@ mod tests {
         }
     }
 
+    /// [P2.2d-C3] Emit periodic column coefficients for circuit 3 (merkle_path),
+    /// canonical depth=15 → trace_length=512. Run with:
+    ///
+    /// `cargo test -p p01-stark --lib emit_circuit_3_periodic_coeffs -- --ignored --nocapture`
+    ///
+    /// Paste output into the verifier crate under `C3_*_COEFFS`.
+    #[test]
+    #[ignore]
+    fn emit_circuit_3_periodic_coeffs() {
+        use crate::air::merkle_path::{
+            build_merkle_path_periodic_columns, CANONICAL_DEPTH, TRACE_LENGTH as MP_TRACE_LENGTH,
+        };
+
+        let trace_length = MP_TRACE_LENGTH; // 512
+        let depth = CANONICAL_DEPTH; // 15
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_merkle_path_periodic_columns(depth, trace_length);
+        let names = [
+            "C3_RC0_COEFFS",
+            "C3_RC1_COEFFS",
+            "C3_RC2_COEFFS",
+            "C3_ROUND_ACTIVE_COEFFS",
+            "C3_HASH_START_COEFFS",
+            "C3_IS_BOUNDARY_COEFFS",
+            "C3_IS_INTERIOR_COEFFS",
+        ];
+        for (i, col) in periodic.iter().enumerate() {
+            let poly = inverse_ntt(col, trace_g);
+            println!("pub const {}: [u64; {}] = [", names[i], trace_length);
+            for c in &poly {
+                println!("    0x{:016X},", c.as_int());
+            }
+            println!("];");
+            println!();
+        }
+    }
+
     /// [P2.2a] End-to-end: a proof produced by `generate_merkle_update_compact_proof`
     /// satisfies DEEP-ALI (C(z) == Q(z)·Z_T(z)) when C is the full 19-constraint
     /// RLC with α = `derive_rlc_alpha(trace_root, pub_inputs)`.
@@ -2136,6 +2322,102 @@ mod tests {
             c_at_z,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-2 proof failed"
+        );
+    }
+
+    /// [P2.2d-C3] End-to-end: a proof produced by `generate_merkle_path_compact_proof`
+    /// satisfies DEEP-ALI (C(z) == Q(z)·Z_T(z)) when C is the full 11-constraint
+    /// RLC with α derived from the `b"rlc-c3\0\0"`-tagged transcript.
+    ///
+    /// This is the pipeline test: it proves α, periodic evaluation, quotient
+    /// computation, and OOD point derivation are mutually consistent between
+    /// prover and a reconstructed verifier for circuit 3 at canonical depth=15.
+    #[test]
+    fn merkle_path_proof_satisfies_deep_ali_end_to_end() {
+        use crate::air::merkle_path::{
+            build_merkle_path_periodic_columns, evaluate_merkle_path_transition,
+            CANONICAL_DEPTH, MERKLE_PATH_NUM_CONSTRAINTS, MERKLE_PATH_NUM_PERIODIC,
+            TRACE_LENGTH as MP_TRACE_LENGTH, TRACE_WIDTH as MP_TRACE_WIDTH,
+        };
+
+        // Build a depth-15 path so the trace_length matches what the verifier
+        // bakes into CONFIG_MERKLE_PATH (trace_length=512).
+        let depth = CANONICAL_DEPTH; // 15
+        let leaf = 7u64;
+        let path_elements: Vec<u64> = (0..depth).map(|i| 1000 + i as u64).collect();
+        let path_indices: Vec<u8> =
+            (0..depth).map(|i| (i % 2) as u8).collect();
+
+        let proof =
+            generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices);
+        assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_PATH);
+        assert_eq!(proof.public_inputs.len(), 2);
+
+        // Parse header fields deterministically from the wire format.
+        let bytes = &proof.proof_bytes;
+        let mut off = 0usize;
+
+        let mut trace_root = [0u8; 32];
+        trace_root.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
+        let _quotient_root = &bytes[off..off + 32];
+        off += 32;
+
+        let mut ood_current = Vec::with_capacity(MP_TRACE_WIDTH);
+        for _ in 0..MP_TRACE_WIDTH {
+            ood_current.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let mut ood_next = Vec::with_capacity(MP_TRACE_WIDTH);
+        for _ in 0..MP_TRACE_WIDTH {
+            ood_next.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        off += 8;
+        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+
+        // Reconstruct public input bytes exactly as the prover built them.
+        let leaf_u64 = proof.public_inputs[0];
+        let root_u64 = proof.public_inputs[1];
+        let mut pub_bytes = Vec::new();
+        pub_bytes.extend_from_slice(&leaf_u64.to_le_bytes());
+        pub_bytes.extend_from_slice(&root_u64.to_le_bytes());
+
+        // Derive α with circuit-3 domain tag.
+        let alpha = derive_rlc_alpha_with_tag(&trace_root, &pub_bytes, b"rlc-c3\0\0");
+
+        // Evaluate the 7 periodic columns at z.
+        let trace_length = MP_TRACE_LENGTH;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let z = BaseElement::new(ood_z);
+        let periodic = build_merkle_path_periodic_columns(depth, trace_length);
+        assert_eq!(periodic.len(), MERKLE_PATH_NUM_PERIODIC);
+        let periodic_at_z: Vec<BaseElement> = periodic
+            .iter()
+            .map(|col| {
+                let poly = inverse_ntt(col, trace_g);
+                evaluate_poly(&poly, z)
+            })
+            .collect();
+
+        // RLC of the 11 constraints at z.
+        let current: Vec<BaseElement> = ood_current.iter().map(|&v| BaseElement::new(v)).collect();
+        let next: Vec<BaseElement> = ood_next.iter().map(|&v| BaseElement::new(v)).collect();
+        let mut constraints = [BaseElement::ZERO; MERKLE_PATH_NUM_CONSTRAINTS];
+        evaluate_merkle_path_transition(&current, &next, &periodic_at_z, &mut constraints);
+        let c_at_z = rlc_combine(&constraints, alpha);
+
+        // Z_T(z) = (z^n - 1) / (z - g^(n-1))
+        let last_row_x = trace_g.exp((trace_length - 1) as u64);
+        let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
+        let z_t = z_d * (z - last_row_x).inv();
+
+        let q_at_z = BaseElement::new(ood_quotient);
+        assert_eq!(
+            c_at_z,
+            q_at_z * z_t,
+            "end-to-end DEEP-ALI on generated circuit-3 proof failed"
         );
     }
 }
@@ -2665,6 +2947,8 @@ pub(crate) enum QuotientSpec {
     Circuit1,
     /// Circuit 2 (balance proof), trace width 4, length 128.
     Circuit2,
+    /// Circuit 3 (merkle path), trace width 6, variable depth.
+    Circuit3 { depth: usize },
     /// Circuit 6 (merkle update), trace width 10, variable depth.
     Circuit6 { depth: usize },
 }
@@ -2714,6 +2998,10 @@ fn generate_compact_proof_from_trace(
         QuotientSpec::Circuit2 => {
             let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c2\0\0");
             compute_quotient_lde_circuit_2(&lde, blowup, trace_length, alpha)
+        }
+        QuotientSpec::Circuit3 { depth } => {
+            let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c3\0\0");
+            compute_quotient_lde_circuit_3(&lde, blowup, trace_length, depth, alpha)
         }
         QuotientSpec::LegacyGeneric => (0..lde_size)
             .map(|pos| {
@@ -2979,7 +3267,7 @@ pub fn generate_merkle_path_compact_proof(
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
-        QuotientSpec::LegacyGeneric,
+        QuotientSpec::Circuit3 { depth: path_elements.len() },
     );
 
     GenericCompactProofData {

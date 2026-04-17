@@ -1927,6 +1927,194 @@ pub fn verify_deep_ali_circuit_2(
     Ok(())
 }
 
+/// [P2.2d-C3] Evaluate circuit 3's 11 transition constraints at the OOD point z
+/// and RLC-combine with α powers.
+///
+/// Mirrors `evaluate_merkle_path_transition` in
+/// `stark/src/air/merkle_path.rs`. Periodic layout matches
+/// `build_merkle_path_periodic_columns`:
+/// `[rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]`.
+///
+/// Trace width is 6:
+///   col 0-2: Poseidon state (s0, s1, s2)
+///   col 3:   sibling (path element at this Merkle level)
+///   col 4:   direction (0 = leaf on left, 1 = leaf on right)
+///   col 5:   carry (previous hash output; leaf for first cycle)
+#[inline(never)]
+fn evaluate_transition_at_ood_circuit_3(
+    ood_current: &[Felt; 6],
+    ood_next: &[Felt; 6],
+    periodic_at_z: &[Felt; 7],
+    alpha: Felt,
+) -> Felt {
+    let rc0 = periodic_at_z[0];
+    let rc1 = periodic_at_z[1];
+    let rc2 = periodic_at_z[2];
+    let round_active = periodic_at_z[3];
+    let hash_start = periodic_at_z[4];
+    let is_boundary = periodic_at_z[5];
+    let is_interior = periodic_at_z[6];
+
+    let one = Felt::ONE;
+    let three = Felt::new(3);
+    let not_boundary = one.sub(is_boundary);
+
+    // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
+    let s0 = ood_current[0].add(rc0);
+    let s1 = ood_current[1].add(rc1);
+    let s2 = ood_current[2].add(rc2);
+    let s0_7 = s0.pow7();
+    let s1_7 = s1.pow7();
+    let s2_7 = s2.pow7();
+    let ro0 = three.mul(s0_7).add(s1_7).add(s2_7);
+    let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
+    let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
+
+    // [c0-c2] Poseidon state: not_boundary · (next[i] − current[i] − round_active · (ro_i − current[i])).
+    // When round_active=1 → next=ro_i (active round); when round_active=0 → next=current (padding);
+    // when is_boundary=1 → unconstrained (hash_start mux + carry update take over).
+    let mut cs = [Felt::ZERO; 11];
+    cs[0] = not_boundary.mul(
+        ood_next[0].sub(ood_current[0]).sub(round_active.mul(ro0.sub(ood_current[0])))
+    );
+    cs[1] = not_boundary.mul(
+        ood_next[1].sub(ood_current[1]).sub(round_active.mul(ro1.sub(ood_current[1])))
+    );
+    cs[2] = not_boundary.mul(
+        ood_next[2].sub(ood_current[2]).sub(round_active.mul(ro2.sub(ood_current[2])))
+    );
+
+    // [c3-c4] Hash-start mux: at the start of every Poseidon cycle, the state
+    // absorbs (carry, sibling) routed by direction:
+    //   s0 = carry + dir · (sib − carry)
+    //   s1 = sib   − dir · (sib − carry)
+    // Rewritten so both evaluate to 0 on an honest trace:
+    //   hash_start · (current[0] − carry − dir · (sib − carry)) = 0
+    //   hash_start · (current[1] − sib   + dir · (sib − carry)) = 0
+    let sib = ood_current[3];
+    let dir = ood_current[4];
+    let carry = ood_current[5];
+    let sib_minus_carry = sib.sub(carry);
+    cs[3] = hash_start.mul(
+        ood_current[0].sub(carry).sub(dir.mul(sib_minus_carry))
+    );
+    cs[4] = hash_start.mul(
+        ood_current[1].sub(sib).add(dir.mul(sib_minus_carry))
+    );
+
+    // [c5] Hash-start capacity: state[2] (capacity) = 0 at every cycle start.
+    cs[5] = hash_start.mul(ood_current[2]);
+
+    // [c6] Carry update at cycle boundary (row 31, 63, ...): next[5] = current[0]
+    // (propagate hash output into next level's carry).
+    cs[6] = is_boundary.mul(ood_next[5].sub(ood_current[0]));
+
+    // [c7] Carry continuity between boundaries: next[5] = current[5]
+    // (carry doesn't change mid-cycle).
+    let not_boundary2 = one.sub(is_boundary);
+    cs[7] = not_boundary2.mul(ood_next[5].sub(ood_current[5]));
+
+    // [c8-c9] Sibling/direction continuity inside a cycle (is_interior=1):
+    // both must be constant within a cycle; can only change at a boundary.
+    cs[8] = is_interior.mul(ood_next[3].sub(ood_current[3]));
+    cs[9] = is_interior.mul(ood_next[4].sub(ood_current[4]));
+
+    // [c10] Direction binary at every hash start: dir · (1 − dir) = 0.
+    cs[10] = hash_start.mul(dir.mul(one.sub(dir)));
+
+    // Horner-style RLC: Σ α^i · cs[i].
+    let mut combined = Felt::ZERO;
+    let mut alpha_pow = Felt::ONE;
+    for c in cs.iter() {
+        combined = combined.add(c.mul(alpha_pow));
+        alpha_pow = alpha_pow.mul(alpha);
+    }
+    combined
+}
+
+/// [P2.2d-C3] Check the DEEP-ALI identity at the OOD point for circuit 3.
+///
+/// Computes:
+///   1. α from the Fiat-Shamir transcript (`trace_root || pub_inputs ||
+///      "rlc-c3\0\0"`).
+///   2. The 7 periodic polynomials evaluated at z via Horner.
+///   3. The 11 transition constraints on the opened OOD trace (width 6),
+///      RLC-combined with α to produce `C(z)`.
+///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = 512` (canonical depth=15).
+///   5. The identity `C(z) == Q(z) · Z_T(z)`.
+///
+/// Circuit 3 proves a Merkle path from leaf to root. Without DEEP-ALI on the
+/// hash-start mux, capacity, carry update, carry continuity, sibling/direction
+/// continuity, and direction-binary constraints, a malicious prover could
+/// inject arbitrary state into cycles 1-14 and forge paths — soundness drops
+/// to ~2^64. This check binds all 15 Poseidon cycles and all 14 level-chaining
+/// edges to the opened OOD trace via Schwartz–Zippel.
+#[inline(never)]
+pub fn verify_deep_ali_circuit_3(
+    proof: &GenericCompactProof,
+    public_inputs: &[u64],
+) -> Result<(), VerifyError> {
+    use crate::periodic_consts::{
+        C3_RC0_COEFFS, C3_RC1_COEFFS, C3_RC2_COEFFS, C3_ROUND_ACTIVE_COEFFS,
+        C3_HASH_START_COEFFS, C3_IS_BOUNDARY_COEFFS, C3_IS_INTERIOR_COEFFS,
+    };
+
+    let z = proof.ood_z;
+
+    // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
+    let periodic_at_z: [Felt; 7] = [
+        eval_periodic_at_z(&C3_RC0_COEFFS, z),
+        eval_periodic_at_z(&C3_RC1_COEFFS, z),
+        eval_periodic_at_z(&C3_RC2_COEFFS, z),
+        eval_periodic_at_z(&C3_ROUND_ACTIVE_COEFFS, z),
+        eval_periodic_at_z(&C3_HASH_START_COEFFS, z),
+        eval_periodic_at_z(&C3_IS_BOUNDARY_COEFFS, z),
+        eval_periodic_at_z(&C3_IS_INTERIOR_COEFFS, z),
+    ];
+
+    // Collect OOD trace values. Circuit 3 is width-6.
+    let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
+    let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
+    if ood_current_vec.len() != 6 || ood_next_vec.len() != 6 {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let ood_current = [
+        ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
+        ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
+    ];
+    let ood_next = [
+        ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
+        ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
+    ];
+
+    // Derive α exactly like the prover (C3-specific domain tag).
+    let pub_bytes = public_inputs_to_bytes(public_inputs);
+    let alpha = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"rlc-c3\0\0");
+
+    let c_at_z = evaluate_transition_at_ood_circuit_3(
+        &ood_current, &ood_next, &periodic_at_z, alpha,
+    );
+
+    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 512 (canonical depth=15).
+    const TRACE_LENGTH_C3: usize = 512;
+    let z_d = vanishing_poly(z, TRACE_LENGTH_C3);
+    let g = Felt::new(GENERATOR_512);
+    let last_row_x = g.exp((TRACE_LENGTH_C3 - 1) as u64);
+    let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
+    let z_minus_last = z.add(neg_last);
+    if z_minus_last == Felt::ZERO {
+        // OOD lands on g^(n-1): degenerate sampling — vanishingly rare.
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let z_t = z_d.mul(z_minus_last.inv());
+
+    let rhs = proof.ood_quotient.mul(z_t);
+    if c_at_z != rhs {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    Ok(())
+}
+
 // ============================================================================
 // [C4] + [C5] Quotient verification helper
 // ============================================================================
@@ -2177,8 +2365,15 @@ fn verify_constraints_balance_proof(
 fn verify_constraints_merkle_path(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    _public_inputs: &[u64],
+    public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
+    // [P2.2d-C3] DEEP-ALI identity binds the 11-constraint RLC on the opened
+    // OOD trace to Q(z)·Z_T(z). Without this, hash-start mux, capacity, carry
+    // update, carry continuity, and direction-binary constraints are not
+    // enforced anywhere on-chain for cycles 1-14. Run before per-query checks
+    // so failures short-circuit cleanly.
+    verify_deep_ali_circuit_3(proof, public_inputs)?;
+
     let hash_cycle_len = 32usize;
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
@@ -3048,6 +3243,139 @@ mod merkle_update_e2e {
         wrong_inputs[1] ^= 0xBEEF; // flip token_mint
 
         let res = verify_deep_ali_circuit_2(&parsed, &wrong_inputs);
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "DEEP-ALI must reject wrong public inputs: got {:?}", res
+        );
+    }
+
+    // ========================================================================
+    // [P2.2d-C3] Circuit-3 (merkle_path) positive + negative soundness tests.
+    //
+    // Proof byte layout for circuit 3 (width=6):
+    //   trace_root      = bytes[0..32]
+    //   quotient_root   = bytes[32..64]
+    //   ood_current[6]  = bytes[64..112]   (6 * 8)
+    //   ood_next[6]     = bytes[112..160]  (6 * 8)
+    //   ood_z           = bytes[160..168]
+    //   ood_quotient    = bytes[168..176]
+    // ========================================================================
+
+    /// Build a canonical depth-15 merkle_path proof fixture reused by the C3
+    /// tests below. Uses leaf + 15 path elements + alternating indices so the
+    /// path is fully covered and trace_length=512 matches CONFIG_MERKLE_PATH.
+    fn c3_sample_proof(
+        leaf: u64,
+    ) -> p01_stark::compact::GenericCompactProofData {
+        let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
+        let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+        p01_stark::compact::generate_merkle_path_compact_proof(
+            leaf, &path_elements, &path_indices,
+        )
+    }
+
+    /// [P2.2d-C3] Positive: `verify_generic` accepts an honest merkle-path
+    /// compact proof and therefore transitively the new DEEP-ALI check in
+    /// `verify_constraints_merkle_path`.
+    #[test]
+    fn merkle_path_verify_generic_accepts_honest_proof() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(42u64);
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        verify_generic(&parsed, proof_data.circuit_id, &proof_data.public_inputs, config)
+            .expect("verify_generic should accept honest circuit-3 proof");
+    }
+
+    /// [P2.2d-C3] Positive: `verify_deep_ali_circuit_3` accepts an honest
+    /// merkle-path proof. Exercises the same α derivation, 7-column periodic
+    /// evaluation, 11-constraint RLC, and Z_T division that run on-chain
+    /// inside `verify_constraints_merkle_path`.
+    #[test]
+    fn merkle_path_verify_deep_ali_accepts_honest_proof() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(7u64);
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        verify_deep_ali_circuit_3(&parsed, &proof_data.public_inputs)
+            .expect("DEEP-ALI must accept honest circuit-3 proof");
+    }
+
+    /// [P2.2d-C3] Negative: tamper one byte of `ood_current[0]` (byte 64).
+    /// The 11-constraint RLC at z changes, so `C(z) != Q(z)·Z_T(z)` and
+    /// DEEP-ALI must fail.
+    #[test]
+    fn merkle_path_deep_ali_fails_on_tampered_ood_current() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(1u64);
+
+        let mut tampered = proof_data.proof_bytes.clone();
+        tampered[64] ^= 0x01;
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &tampered, config,
+        ).expect("deserialize");
+
+        let res = verify_deep_ali_circuit_3(&parsed, &proof_data.public_inputs);
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "DEEP-ALI must reject tampered ood_current: got {:?}", res
+        );
+    }
+
+    /// [P2.2d-C3] Negative: tamper `ood_quotient` at byte 168
+    /// (32 trace_root + 32 quotient_root + 48 ood_current + 48 ood_next + 8 ood_z).
+    #[test]
+    fn merkle_path_deep_ali_fails_on_tampered_ood_quotient() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(5u64);
+
+        let mut tampered = proof_data.proof_bytes.clone();
+        tampered[168] ^= 0x02;
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &tampered, config,
+        ).expect("deserialize");
+
+        let res = verify_deep_ali_circuit_3(&parsed, &proof_data.public_inputs);
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "DEEP-ALI must reject tampered ood_quotient: got {:?}", res
+        );
+    }
+
+    /// [P2.2d-C3] Negative: swapping in wrong public inputs changes α and
+    /// breaks the RLC/quotient relation. This confirms the public inputs
+    /// (leaf, root) are genuinely bound into the soundness check.
+    #[test]
+    fn merkle_path_deep_ali_fails_on_wrong_public_inputs() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(9u64);
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        let mut wrong_inputs = proof_data.public_inputs.clone();
+        wrong_inputs[1] ^= 0xBEEF; // flip root
+
+        let res = verify_deep_ali_circuit_3(&parsed, &wrong_inputs);
         assert!(
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "DEEP-ALI must reject wrong public inputs: got {:?}", res
