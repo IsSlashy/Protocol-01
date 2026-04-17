@@ -1,24 +1,44 @@
 # Protocol 01 — Quantum Resistance Assessment & Migration Plan
 
-**Document version:** 1.0
-**Date:** 2026-03-06
-**Status:** Research & planning
+**Document version:** 1.1
+**Date:** 2026-04-17 (v1.0: 2026-03-06)
+**Status:** Research, planning, and partial implementation (stealth + claim layers shipped; proof system migration complete)
 **Classification:** Internal — engineering reference
+
+---
+
+## What's New in v1.1 (2026-04-17)
+
+Since v1.0 this document has tracked planning; this revision tracks **what has actually shipped**. Summary of the post-quantum work landed since March:
+
+| Workstream | Status as of 2026-04-17 | Reference |
+|-----------|------------------------|-----------|
+| STARK proof-system migration (Groth16 → Winterfell) | **Shipped** — all 6 circuits, all 7 shielded-pool instructions switched to STARKs; deprecated Groth16 instructions and VK data removed | P3.1–P3.7 in roadmap |
+| Hybrid X25519 + ML-KEM-768 stealth addresses | **Shipped + mandatory** — v2 is the only accepted format; v1 announcements are rejected at the SDK and on-chain layers | P4.1 |
+| HKDF info-binding enrichment (mix-and-match defense) | **Shipped** — hybrid-KEM shared secret now binds `ephemeralPubKey \|\| kemCiphertext` into the HKDF info field | P4.2 |
+| Stealth claim post-quantum wrapper (WOTS+) | **Shipped (SDK)** — `deriveStealthWotsKeypair`, `buildClaimProofPQ`, `verifyClaimProofPQ`; on-chain "both-sigs-valid" verifier deferred to P4.6 roadmap | P4.3 |
+| SPHINCS+ (SLH-DSA) evaluation for commit-reveal | **Evaluated — DEFER** (see §2.10) | P4.4 |
+| SHA-512 long-term commitment primitive | **Shipped (SDK)** — opt-in `computeLongTermCommitment` with domain separation; no on-chain changes (see §2.11) | P4.5 |
+
+The sections below retain the full March-6 analysis. Where an item has moved from "planned" to "shipped," an inline **Status:** line has been added rather than rewriting the original text — the historical threat analysis is still the correct justification for the work that followed.
 
 ---
 
 ## Executive Summary
 
-Protocol 01 is a privacy layer for Solana using ZK-SNARKs (Groth16), stealth addresses (ECDH), and confidential balances (Poseidon commitments). This document inventories every cryptographic primitive in the protocol, assesses its quantum resistance, and defines a migration path to ensure user privacy remains strong for decades — even against nation-state adversaries with quantum computers.
+Protocol 01 is a privacy layer for Solana using ZK-STARKs (Winterfell, migrated from Groth16 in P3), stealth addresses (hybrid X25519 + ML-KEM-768, v2 mandatory as of P4.1), and confidential balances (Poseidon commitments). This document inventories every cryptographic primitive in the protocol, assesses its quantum resistance, and defines a migration path to ensure user privacy remains strong for decades — even against nation-state adversaries with quantum computers.
 
-**Key findings:**
-- **50% of the cryptographic stack is already quantum-resistant** (Poseidon commitments, Merkle trees, symmetric encryption, hash functions)
-- **3 critical components are vulnerable** to Shor's algorithm: Ed25519 wallet signatures, X25519 ECDH stealth addresses, and Groth16 BN254 proof verification
-- **The "Harvest Now, Decrypt Later" (HNDL) threat is already active** — adversaries may be recording on-chain data today for future quantum decryption
-- **Solana ecosystem is actively preparing** — Dilithium testnet (Dec 2025), Winternitz Vault (mainnet), SIMD-0296 (4KB transactions, in review), STARK on-chain verification proven feasible (1.1M CU)
-- **A phased migration is possible** without breaking the existing user experience
+**Key findings (updated 2026-04-17):**
+- **The proof system is now fully quantum-resistant** — STARKs with hash-only assumptions replaced Groth16/BN254 across all 7 shielded-pool instructions (P3.1–P3.7). The Groth16 verifier has been removed.
+- **Stealth address key exchange is now hybrid post-quantum** — every new stealth payment uses X25519 + ML-KEM-768 with transcript-bound HKDF. V1 is rejected end-to-end; an HNDL attacker who harvests today's announcements cannot decrypt them without breaking both ECDH *and* ML-KEM.
+- **Stealth claims can now be authenticated with a hash-based signature** alongside the Ed25519 signature. The on-chain verifier that enforces "both must be valid" is the next post-quantum step (the SDK is ready).
+- **Wallet signatures remain Ed25519** — this is a Solana-level dependency; see §2.1. Solana's Dilithium testnet (Project Eleven) and SIMD-0296 are the ecosystem path forward.
+- **HNDL defense posture for stealth addresses is now "as good as any L1 payment network has"** — short of waiting for Solana's native Dilithium/Kyber support, the hybrid stealth + WOTS+ claim construction is the maximum client-side defense available today.
+- **Solana ecosystem is actively preparing** — Dilithium testnet (Dec 2025), Winternitz Vault (mainnet), SIMD-0296 (4KB transactions, in review), STARK on-chain verification proven feasible (1.1M CU).
 
 ### Quantum Resistance Scorecard
+
+(Updated 2026-04-17 — rows marked ✓ shipped have moved from "planned" to "implemented and deployed".)
 
 | Component | Primitive | Status | Threat | Timeline |
 |-----------|----------|--------|--------|----------|
@@ -27,14 +47,16 @@ Protocol 01 is a privacy layer for Solana using ZK-SNARKs (Groth16), stealth add
 | Merkle trees | Poseidon | SAFE | ~85-bit quantum collision resistance | N/A |
 | Symmetric encryption | XSalsa20-Poly1305 | SAFE | Grover (256→128 bit, sufficient) | N/A |
 | Metadata encryption | AES-256-CBC | SAFE | Grover (256→128 bit, sufficient) | N/A |
-| Hash functions | SHA-256, Keccak256 | SAFE | Grover (128-bit post-quantum) | N/A |
-| Key derivation | HKDF-SHA256 | SAFE | Grover (halved, sufficient) | N/A |
+| Hash functions | SHA-256, Keccak256, SHA-512 | SAFE | Grover (128-bit post-quantum) | N/A |
+| Key derivation | HKDF-SHA256 (w/ transcript binding) | SAFE | Grover (halved, sufficient) | N/A |
 | Random generation | nacl.randomBytes | SAFE | Not affected by quantum | N/A |
-| **Wallet signatures** | **Ed25519** | **BROKEN** | **Shor — O(n³)** | **2035-2045** |
-| **Stealth addresses** | **X25519 ECDH** | **BROKEN** | **Shor — O(n³)** | **2035-2045** |
-| **ZK proof verification** | **Groth16/BN254** | **BROKEN** | **Shor — O(n³)** | **2035-2045** |
-| **VK on-chain storage** | **BN254 curve points** | **BROKEN** | **Shor — forgeable proofs** | **2035-2045** |
-| **Pedersen commitments** | **Ed25519 (C=vG+rH)** | **BROKEN** | **Shor — unhides values** | **2035-2045** |
+| **ZK proof verification** | **STARK (Winterfell + SHA-256)** ✓ shipped | **SAFE** | **Hash assumptions only** | **N/A** |
+| **Stealth addresses (key exchange)** | **Hybrid X25519 + ML-KEM-768** ✓ shipped | **SAFE (hybrid)** | **Safe unless BOTH ECDH and ML-KEM fall** | **N/A** |
+| **Stealth claim signature (SDK)** | **Ed25519 + WOTS+ (hash-based)** ✓ shipped | **SAFE (hybrid)** | **Safe unless BOTH Ed25519 and SHA-256 fall** | **Verifier: pending (P4.6 roadmap)** |
+| **Long-term commitment primitive** | **SHA-512 domain-separated** ✓ shipped (SDK) | **SAFE** | **2^256 PQ preimage margin** | **N/A** |
+| **Wallet signatures** | **Ed25519** | **BROKEN (Solana-level)** | **Shor — O(n³)** | **2035-2045** |
+| **VK on-chain storage (legacy)** | **BN254 curve points** | **REMOVED** | n/a — Groth16 deprecated in P3.7 | — |
+| **Pedersen commitments (p01-js)** | **Ed25519 (C=vG+rH)** | **BROKEN — unused in production circuits** | **Shor — unhides values** | **2035-2045** |
 
 ---
 
@@ -130,7 +152,13 @@ Protocol 01 is a privacy layer for Solana using ZK-SNARKs (Groth16), stealth add
 
 ### 2.2 Layer 2: Key Exchange — X25519 ECDH (Stealth Addresses)
 
-**Status: BROKEN by Shor's algorithm — HIGHEST PRIORITY for Protocol 01**
+**Status (2026-04-17): MITIGATED via mandatory hybrid X25519 + ML-KEM-768 with transcript-bound HKDF.**
+
+As of P4.1, the SDK and on-chain layers refuse to produce or accept v1 (classical-only) stealth announcements. Every new stealth payment uses `deriveHybridSharedSecret(classic_ecdh, ml_kem_shared, { ephemeralPubKey, kemCiphertext })` — so an HNDL adversary who records today's on-chain data cannot recover the shared secret even with a future Shor oracle, unless ML-KEM is simultaneously broken. P4.2 bound the ephemeral pubkey and KEM ciphertext into the HKDF info field to prevent mix-and-match attacks that would otherwise let an adversary reuse one half of a transcript under a different context.
+
+The original analysis below describes the pre-mitigation state and the design decisions that drove P4.1–P4.3. It is retained because the "BROKEN by Shor" analysis still applies to *old* (pre-P4.1) stealth announcements that remain on-chain — those cannot be retroactively fixed.
+
+**Historical status (v1.0): BROKEN by Shor's algorithm — HIGHEST PRIORITY for Protocol 01.**
 
 This is the component Protocol 01 has the most control over and where HNDL is most dangerous.
 
@@ -295,9 +323,26 @@ These Pedersen commitments are NOT used in the current ZK circuits (which use Po
 
 **Important distinction:** The Poseidon hash itself runs over the BN254 scalar field, but this is just the arithmetic field for computation — it does NOT depend on the BN254 curve's discrete log hardness. If Protocol 01 migrates from Groth16/BN254 to STARKs, Poseidon can be computed over any sufficiently large prime field.
 
-### 2.6 Layer 6: Zero-Knowledge Proof System — Groth16/BN254
+### 2.6 Layer 6: Zero-Knowledge Proof System — STARK (migrated from Groth16/BN254)
 
-**Status: BROKEN by Shor's algorithm**
+**Status (2026-04-17): MIGRATED. All 7 shielded-pool instructions now verify STARK proofs on-chain; Groth16 verifier and VK data removed in P3.7.**
+
+The post-quantum proof-system migration is complete. STARKs rely only on hash function assumptions (SHA-256 via Solana's `hashv` syscall + Blake3 for Merkle), making the proof system resistant to Shor's algorithm. Mapping of current instructions:
+
+| Operation | Previous | Current |
+|-----------|---------|---------|
+| `subscribe_private` / `pause` / `resume` | Groth16 (subscriber_ownership, circuit 0) | STARK circuit 0 |
+| `shield_denominated` (note commitment) | Groth16 (pool_commitment, circuit 1) | STARK circuit 1 |
+| `prove_balance` | Groth16 (balance_proof, circuit 2) | STARK circuit 2 |
+| `unshield_denominated_stark` | Groth16 → **removed** | STARK circuits 0-3 |
+| `transfer_denominated_stark` | Groth16 → **removed** | STARK (multi-circuit) |
+| `cancel_private_stark` | Groth16 → **removed** | STARK circuit 0 |
+| `emergency_unshield_denominated_stark` | Groth16 → **removed** | STARK (multi-circuit) |
+| `split_note_stark` | Groth16 → **removed** | STARK circuit 6 (merkle_update — WIP P2.2 on-chain) |
+
+The original Groth16 analysis below is retained because it motivates the STARK migration, but the "BROKEN" status no longer applies to production code paths — only to historical on-chain proofs that have already been verified and cannot be forged retroactively.
+
+**Historical status (v1.0): BROKEN by Shor's algorithm.**
 
 **Current stack:**
 
@@ -680,7 +725,17 @@ Key design choices:
 
 ### Phase 1: Stealth Address Hybrid Migration (Q3-Q4 2026)
 
+**Status: ✓ SHIPPED (2026-04 — P4.1, P4.2, P4.3)**
 **Effort:** Medium | **Dependencies:** @noble/post-quantum library | **UX Impact:** Minimal
+
+Summary of what landed:
+- `@noble/post-quantum` (ML-KEM-768) integrated into `packages/specter-sdk` and downstream apps
+- Meta-address v2 format is the only accepted version (v1 rejected at SDK + on-chain layers)
+- Hybrid shared secret = `HKDF(classic_ecdh || ml_kem_shared, info = "p01:stealth-hybrid-v1" || ephemeralPubKey || kemCiphertext)`; the transcript binding (P4.2) blocks mix-and-match attacks
+- WOTS+ claim wrapper (P4.3) derives a per-payment hash-based signing keypair from the same stealth seed as the Ed25519 keypair, giving every new claim a post-quantum authentication path (the on-chain "both-sigs-valid" verifier is the next step — P4.6 roadmap)
+- Stealth payment PDA fields expanded for `kem_ciphertext`; module-LWE-aware scanning path landed
+
+The detail below describes the original design plan.
 
 This is the highest-priority migration because:
 1. Protocol 01 controls this fully (no Solana protocol dependency)
@@ -763,6 +818,7 @@ This is the highest-priority migration because:
 
 ### Phase 2: ZK Proof System Preparation (Q1-Q2 2027)
 
+**Status: ✓ SHIPPED EARLY (2026-03/04 — P2, P3 workstreams).** Original Q1-Q2 2027 target beaten by ~9 months.
 **Effort:** High | **Dependencies:** STARK library maturity | **UX Impact:** None (backend change)
 
 1. **Research STARK circuit equivalents**
@@ -783,6 +839,7 @@ This is the highest-priority migration because:
 
 ### Phase 3: Proof System Migration (Q3 2027 — Q2 2028)
 
+**Status: ✓ SHIPPED EARLY (2026-03/04 — P3.1-P3.7).** Original Q3 2027-Q2 2028 target beaten by ~16-22 months. On-chain STARK verification is now the default and only path for all 7 shielded-pool instructions. Groth16 verifier and VK storage removed in P3.7.
 **Effort:** Very High | **Dependencies:** Solana STARK support | **UX Impact:** Proof generation time may increase
 
 1. **Deploy STARK verifier on Solana**
@@ -805,7 +862,25 @@ This is the highest-priority migration because:
 
 ### Phase 4: Full Quantum-Safe Stack (2028+)
 
+**Status (2026-04-17): IN PROGRESS — sub-items 4.1–4.5 shipped; 4.6 is the next on-chain delivery.** Sub-items below renumbered to match the task tracker.
+
 **Effort:** Medium | **Dependencies:** Solana Dilithium mainnet | **UX Impact:** Wallet migration needed
+
+**Sub-item tracker:**
+
+| Sub | Title | Status | Notes |
+|-----|-------|--------|-------|
+| 4.1 | Force v2 hybrid stealth everywhere (refuse v1) | ✓ Shipped (2026-04) | SDK + on-chain refuse v1 announcements |
+| 4.2 | HKDF info binding enrichment | ✓ Shipped (2026-04) | `ephemeralPubKey \|\| kemCiphertext` mixed into info |
+| 4.3 | Stealth spending key WOTS+ wrapping | ✓ Shipped (2026-04) | SDK primitive; on-chain verifier = 4.6 |
+| 4.4 | SPHINCS+ (SLH-DSA) evaluation | ✓ Evaluated → **DEFER** (2026-04) | See §2.10 for rationale |
+| 4.5 | SHA-512 for long-term commit hashes | ✓ Shipped as SDK primitive (2026-04) | See §2.11; no on-chain change |
+| 4.6 | On-chain verifier enforcing Ed25519 + WOTS+ claim proofs | **Pending** | Next post-quantum on-chain delivery |
+| 4.7 | Wallet signature migration (Solana Dilithium) | Blocked on Solana | Monitor Project Eleven mainnet roadmap |
+| 4.8 | Drop classical-only support once 80% ecosystem adoption | Pending | Coupled to 4.7 |
+| 4.9 | Post-migration security audit | Pending | After 4.6 + 4.7 |
+
+**Legacy plan (retained for reference):**
 
 1. **Wallet signature migration**
    - When Solana deploys Dilithium (ML-DSA) on mainnet:
@@ -817,12 +892,65 @@ This is the highest-priority migration because:
 2. **Drop classical-only support**
    - When sufficient ecosystem adoption (~80%): deprecate v1 stealth addresses
    - Convert all stealth announcements to pure ML-KEM (drop X25519)
-   - Drop Groth16 verifier (STARK only)
+   - Drop Groth16 verifier (STARK only) — **done in P3.7 (2026-04)**
 
 3. **Post-migration security audit**
    - Full review of quantum-safe stack
    - Verify no residual classical dependencies
    - Penetration testing with simulated quantum oracle
+
+### 5.5 Implementation Status Snapshot (2026-04-17)
+
+**What an attacker with a Cryptographically Relevant Quantum Computer can do today against Protocol 01:**
+
+| Attack surface | Feasible with CRQC alone? | What else they'd need |
+|----------------|---------------------------|------------------------|
+| Derive any user's Ed25519 private key from on-chain public key | **Yes** | — (Solana-level issue) |
+| Read the contents of a post-P4.1 stealth announcement | **No** | Also break ML-KEM-768 (Module-LWE), OR break SHA-256 HKDF info binding |
+| Read the contents of a pre-P4.1 (legacy) stealth announcement | **Yes** | Data is on-chain; HNDL-harvestable — cannot be retroactively fixed |
+| Forge a STARK proof to steal shielded-pool funds | **No** | Also break SHA-256 collision resistance (hash-only assumptions) |
+| Forge a Groth16 proof (historical) | No production path exists | Groth16 verifier removed in P3.7 |
+| Forge a stealth claim signature (post-P4.6) | **No** | Also break either SHA-256 preimage (WOTS+ half) OR Ed25519 (classical half) — but only when on-chain "both-sigs-valid" verifier ships |
+| Forge a stealth claim signature (today, before P4.6) | **Yes via Ed25519** | SDK emits WOTS+ proofs but on-chain enforcement is pending P4.6 |
+| Open a Pedersen commitment (in `p01-js`) | **Yes** | — but these commitments are NOT used in production circuits (kept for SDK compatibility) |
+
+**What the client SDK exposes to app developers as of 2026-04-17:**
+
+```typescript
+// Post-quantum stealth addresses (v2 mandatory)
+import {
+  generateStealthMetaAddress, // v2 with ML-KEM pubkey
+  generateStealthAddress,      // emits kemCiphertext + ephemeralPubKey
+  createStealthAnnouncement,   // on-chain encoding
+  verifyStealthOwnership,      // hybrid decapsulation path
+  createScanner,               // scans with KEM secret key
+} from '@protocol01/specter-sdk';
+
+// Post-quantum claim proofs (P4.3)
+import {
+  deriveStealthWotsFromRecipient, // per-payment WOTS+ keypair
+  buildClaimProofPQ,              // sign (stealth, ephemeral, spending, destination)
+  verifyClaimProofPQ,             // offline sanity check
+} from '@protocol01/specter-sdk';
+
+// Post-quantum authorization primitives
+import {
+  generateWotsKeypair, wotsSign, wotsVerify, // general-purpose WOTS+
+  computeHashVaultCommitment,                 // SHA-256 vault (default)
+  computeLongTermCommitment,                  // SHA-512 vault (P4.5, opt-in)
+} from '@protocol01/specter-sdk';
+
+// Hybrid-KEM utilities
+import {
+  kemGenerateKeypair, kemEncapsulate, kemDecapsulate,
+  deriveHybridSharedSecret, // P4.2 transcript-bound HKDF
+} from '@protocol01/specter-sdk';
+```
+
+**Dependency on Solana L1 PQC roadmap:**
+- Ed25519 wallet signatures remain the only residual classical-ECDLP dependency Protocol 01 exposes to users. Everything else is either hash-based (SAFE), lattice-based (SAFE under Module-LWE), or hybrid (SAFE unless BOTH halves fall).
+- The realistic unlock is Solana's Dilithium (ML-DSA) mainnet deployment. Project Eleven demonstrated feasibility in Dec 2025; SIMD-0296 (4KB transactions) is the blocker. No mainnet timeline yet.
+- **Until Solana ships Dilithium**, users should treat Protocol 01's quantum resistance as: "all *new* stealth payments and all proof-system operations are post-quantum safe, *but* the wallet key that authorizes these operations is Ed25519 and will remain classical-vulnerable until the base layer upgrades."
 
 ---
 
@@ -931,4 +1059,4 @@ Total additional cost per stealth payment: ~0.009 SOL (~$1.35 at $150/SOL). This
 
 ---
 
-*This document should be updated quarterly as the quantum computing landscape, Solana ecosystem, and PQC standards evolve.*
+*This document should be updated quarterly as the quantum computing landscape, Solana ecosystem, and PQC standards evolve. The next scheduled review is 2026-07 (Q3). Trigger an earlier review if: (a) Solana publishes a Dilithium mainnet roadmap or SIMD-0296 is accepted, (b) NIST publishes new PQC standards or deprecates an existing one, (c) Protocol 01 ships a new on-chain primitive that exposes fresh cryptographic assumptions (e.g., the P4.6 on-chain WOTS+ claim verifier).*
