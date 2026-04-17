@@ -428,6 +428,13 @@ export {
   computeCommitment,
   generateNonce,
 
+  // Long-term (SHA-512) commitments — P4.5
+  computeLongTermCommitment,
+  generateLongTermSecret,
+  verifyLongTermCommitment,
+  LONG_TERM_COMMIT_SIZE,
+  LONG_TERM_COMMIT_DOMAIN,
+
   // WOTS+ types
   type WotsKeypair,
   type WotsSignature,

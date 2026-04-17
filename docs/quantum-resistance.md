@@ -522,6 +522,83 @@ Every current authorization path in Protocol 01 is either (a) Solana-level and t
 - ePrint 2025/1741 — Solana STARK+SLH-DSA measurement (CU costs, tx split strategy)
 - @noble/post-quantum `slh_dsa_sha2_128s` / `slh_dsa_sha2_128f` — reference TypeScript impl
 
+### 2.11 Layer 11: Long-Term Commitment Hashes — SHA-512 (P4.5)
+
+**Status: EVALUATED — SDK primitive added, on-chain state unchanged**
+
+The existing `HashVault.commitment` (`programs/p01_quantum_vault/src/state/hash_vault.rs`) and `CommitRecord.commitment` (`programs/p01_quantum_vault/src/state/commit_reveal.rs`) both store 32-byte SHA-256 digests. Under Grover's algorithm, SHA-256 preimage resistance drops from 2^256 to 2^128. P4.5 asks whether we should migrate long-lived commitments to SHA-512 for additional margin.
+
+#### 2.11.1 What Grover Actually Buys an Attacker
+
+The relevant attack against a hash-timelock vault is **preimage**: given `commitment = H(secret)`, find `secret`.
+
+| Hash | Classical preimage | Quantum (Grover) preimage | Classical collision | Quantum (BHT) collision |
+|------|-------------------|---------------------------|---------------------|-------------------------|
+| SHA-256 (32 B) | 2^256 | 2^128 | 2^128 | ~2^85 |
+| SHA-512 (64 B) | 2^512 | 2^256 | 2^256 | ~2^170 |
+| SHA-384 (48 B) | 2^384 | 2^192 | 2^192 | ~2^128 |
+
+**2^128 operations is already computationally unreachable.** At 10 billion GPUs × 10^10 hashes/sec, 2^128 SHA-256 evaluations would take ≈ 10^19 years — roughly a billion times the age of the universe. Doubling that exponent changes nothing operationally.
+
+The only realistic threat model where SHA-512 gives meaningful benefit:
+- **A structural improvement to Grover** that shaves a constant factor off the √N speedup (currently no known improvement; Grover is already proven optimal for unstructured search).
+- **A future quantum algorithm** that outperforms Grover on hash preimages. None is currently known, and cryptanalysis history suggests if one is discovered it would likely break both SHA-256 *and* SHA-512 simultaneously rather than just shaving bits.
+
+**Conclusion:** SHA-512 is *not* a practical security upgrade for any Protocol 01 commitment at present. It is a "deep paranoia" primitive for commitments intended to survive 30+ years in adversarial conditions.
+
+#### 2.11.2 Cost of Migrating On-Chain State to SHA-512
+
+| Cost dimension | SHA-256 (current) | SHA-512 (hypothetical) | Ratio |
+|----------------|-------------------|------------------------|-------|
+| On-chain verify CU | ~1,000 CU (SHA-256 syscall) | ~30,000–50,000 CU (software impl, no syscall) | **30–50×** |
+| Stored digest size | 32 B | 64 B | 2× |
+| Instruction data for reveal | 32 B preimage | 32 B preimage (same) | 1× |
+| Backward compatibility | — | Requires v2 instruction variant + account migration | N/A |
+
+Solana's `hashv` syscall accelerates SHA-256 to near-native speed. SHA-512 has no syscall — `sha2` crate software implementation costs roughly 30-50× more CU per hash (measured in similar on-chain programs). For a primitive that protects against a non-existent attack, this trade is unambiguously bad.
+
+#### 2.11.3 Where SHA-512 Actually Does Help
+
+Off-chain, in the SDK layer, SHA-512 is essentially free (client CPU time in the microsecond range). Contexts where it's a reasonable choice:
+
+1. **Multi-decade commitment archives** — e.g., a treasury key's recovery commitment stored in multiple physical backups intended to outlast Protocol 01 itself. If the commitment will be retained for 30+ years and the preimage holds value throughout, the extra margin is cheap insurance.
+2. **Hash-based signature pubkey hashes** *when the PK-hash is the cryptographic bottleneck*. Currently it is not — WOTS+ chain security (67 × SHA-256 chains, each providing ~2^128 PQ preimage) dominates the public-key-hash security (one SHA-256 of the concatenated chain tops, also ~2^128 PQ). Moving just the PK hash to SHA-512 would leave the chains as the weaker link.
+3. **Client-side seed or wallet commitments** where the user wants the same margin the BIP39 standard already provides via HMAC-SHA512 — and where the commitment never goes on-chain.
+
+#### 2.11.4 Deliverable: SDK Primitive, No On-Chain Change
+
+P4.5 ships a **client-side SHA-512 commitment primitive** in `packages/specter-sdk/src/quantum/longTermCommit.ts`:
+
+```typescript
+import {
+  generateLongTermSecret,
+  computeLongTermCommitment,
+  verifyLongTermCommitment,
+  LONG_TERM_COMMIT_SIZE, // 64
+  LONG_TERM_COMMIT_DOMAIN, // 'p01:long-term-commit-v1'
+} from '@protocol01/specter-sdk';
+
+const secret = generateLongTermSecret(); // 32-byte random preimage
+const commitment = computeLongTermCommitment(secret, optionalSalt);
+// commitment.length === 64, domain-separated SHA-512
+
+const ok = verifyLongTermCommitment(commitment, secret, optionalSalt);
+// constant-time check, rejects non-64-byte input
+```
+
+Key design choices:
+- **Domain separation**: every input is prefixed with `'p01:long-term-commit-v1'` so that no SHA-512 computed elsewhere in the codebase (e.g., for Ed25519→X25519 conversion) can ever collide with or be mistaken for a long-term commitment.
+- **Optional salt**: callers can derive many independent commitments from one master secret by varying the salt, without risking correlation attacks.
+- **Constant-time verify**: `verifyLongTermCommitment` uses `constantTimeEqual` to avoid leaking bit-position information through timing.
+- **Length validation**: `verifyLongTermCommitment` rejects commitments that are not exactly 64 bytes, so a 32-byte SHA-256 commitment can never be silently accepted as valid.
+
+**No changes to `p01_quantum_vault`.** The existing 32-byte SHA-256 commitments continue to work exactly as before. A future v2 vault instruction could opt into 64-byte commitments if a specific product need emerges (e.g., a premium "century vault" tier); this is a deliberate non-goal for now.
+
+**References specific to this section:**
+- BIP39 (Bitcoin Improvement Proposal 39) — existing standard that already uses HMAC-SHA512 for multi-decade seed commitments
+- NIST FIPS 180-4 — SHA-256 and SHA-512 specifications
+- @noble/hashes `sha512` — audited reference implementation
+
 ---
 
 ## 3. Solana Ecosystem Quantum Readiness
