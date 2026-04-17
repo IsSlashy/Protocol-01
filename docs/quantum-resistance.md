@@ -407,6 +407,121 @@ Lattice-based SNARKs (based on LWE/SIS assumptions) could provide SNARK-like suc
 
 Quantum computers do not provide speedups against properly seeded CSPRNGs.
 
+### 2.10 Layer 10: Post-Quantum Authorization — SPHINCS+ Evaluation (P4.4)
+
+**Status: EVALUATED — DEFER (see recommendation at end of section)**
+
+The P4.3 WOTS+ wrapper (see `packages/specter-sdk/src/stealth/quantum.ts`) gives every stealth payment a hash-based signature binding the claim to `(stealthAddress, ephemeralPubKey, spendingPubKey, destinationPubKey)`. WOTS+ is *one-time* by construction: each stealth seed produces a fresh keypair that signs exactly one claim. This is a perfect fit for stealth claims but a poor fit for anywhere a key must sign repeatedly — e.g., a commit-reveal vault that a user wants to refill or a long-lived authorization key.
+
+SPHINCS+ (standardized as SLH-DSA in NIST FIPS 205) is the stateless hash-based alternative: one keypair can sign a practically unlimited number of messages without tracking state, at the cost of much larger signatures. This section assesses whether SPHINCS+ should replace or augment the current commit-reveal primitive in `p01_quantum_vault`.
+
+#### 2.10.1 Parameter Variants
+
+NIST FIPS 205 defines 12 parameter sets (small `s` = smaller sig, slower sign; fast `f` = larger sig, faster sign):
+
+| Parameter set | Security level | Public key | Signature | Sign time (ref) | Verify time (ref) |
+|---------------|---------------|-----------|-----------|----------------|-------------------|
+| SLH-DSA-SHA2-128s | NIST L1 (≈ AES-128) | 32 B | **7,856 B** | ~2,500 ms | ~2.5 ms |
+| SLH-DSA-SHA2-128f | NIST L1 (≈ AES-128) | 32 B | **17,088 B** | ~115 ms | ~7 ms |
+| SLH-DSA-SHA2-192s | NIST L3 (≈ AES-192) | 48 B | **16,224 B** | ~4,500 ms | ~4 ms |
+| SLH-DSA-SHA2-192f | NIST L3 (≈ AES-192) | 48 B | **35,664 B** | ~180 ms | ~11 ms |
+| SLH-DSA-SHA2-256s | NIST L5 (≈ AES-256) | 64 B | **29,792 B** | ~4,300 ms | ~7 ms |
+| SLH-DSA-SHA2-256f | NIST L5 (≈ AES-256) | 64 B | **49,856 B** | ~320 ms | ~19 ms |
+
+(SHAKE variants exist but offer no Solana advantage — there is no SHAKE syscall; only SHA-256 is hardware-accelerated.)
+
+**Immediate observation:** even the smallest variant (SLH-DSA-SHA2-128s, 7.8 KB) is **more than 6× the 1,232-byte Solana transaction limit** and still 2× the proposed SIMD-0296 4,096-byte limit. Any on-chain use requires the same chunked-upload pattern already built for STARK proofs (`resize_proof_buffer` in `p01_stark_verifier`).
+
+#### 2.10.2 Solana Feasibility Analysis
+
+**Transaction size path (using the proof-buffer pattern):**
+
+| Variant | Proof-buffer chunks needed | Approximate setup cost |
+|---------|---------------------------|-----------------------|
+| 128s (7.8 KB) | 8 chunks × ~1 KB | ~0.06 SOL rent for buffer account |
+| 128f (17 KB) | 17 chunks × ~1 KB | ~0.13 SOL rent |
+| 192s (16 KB) | 16 chunks × ~1 KB | ~0.12 SOL rent |
+| 256s (30 KB) | 30 chunks × ~1 KB | ~0.22 SOL rent |
+
+Every claim would need: (a) create buffer PDA, (b) 8-30 upload txs, (c) one verify tx, (d) close buffer PDA — **10-32 total transactions per claim**. By comparison, the P4.3 WOTS+ flow is **one** transaction with 2,144 bytes of signature + 2,144 bytes of public key, uploaded once.
+
+**Compute unit path:**
+
+SLH-DSA verification performs many thousand SHA-256 compressions. The ePrint 2025/1741 Solana STARK+SLH-DSA study measured:
+
+- Combined STARK + SLH-DSA-SHA2-128f verification: **~1.6M CU** (exceeds 1.4M budget — must split across two txs)
+- SLH-DSA-SHA2-128f alone: estimated **~500K CU** (35% of budget)
+- SLH-DSA-SHA2-128s alone: estimated **~200-300K CU** (smaller sig, fewer hashes)
+
+This is feasible but expensive: roughly 2-3× the CU cost of Groth16 verification for a primitive that only authorizes a single operation.
+
+**Client-side (mobile) path:**
+
+The @noble/post-quantum reference implementation has not been benchmarked on React Native, but parameter-set Fortuna:
+
+- 128s signing: ~2.5 seconds on desktop → likely 8-15 seconds on mobile JS
+- 128f signing: ~115 ms on desktop → likely 500-1500 ms on mobile JS
+- Verification is fast everywhere (2-19 ms desktop, tens of ms on mobile)
+
+The `s` variants have signing times that are prohibitive for interactive UX; only `f` variants are viable for client-side signing, which pushes signature sizes to the 17-50 KB range.
+
+#### 2.10.3 Comparison: SPHINCS+ vs WOTS+ vs Current Commit-Reveal
+
+| Property | Commit-Reveal (current) | WOTS+ (P4.3) | SPHINCS+ (SLH-DSA-128f) |
+|----------|------------------------|--------------|------------------------|
+| Quantum security | Hash preimage (~128-bit PQ) | Hash preimage + one-time (~128-bit PQ) | EUF-CMA under hash assumptions (~128-bit PQ) |
+| Key reuse | N/A (hash lock, no signing) | **NO** (single use per keypair) | YES (stateless, unlimited) |
+| Semantics | Prove knowledge of a preimage | Sign one arbitrary message | Sign unlimited arbitrary messages |
+| Signature size | 32 B (preimage) + 32 B (commitment) | 2,144 B (sig) + 2,144 B (pubkey) | 17,088 B (sig) + 32 B (pubkey) |
+| On-chain verify cost | <5K CU (one SHA-256) | ~100-150K CU (67-chain WOTS) | ~500K CU (thousands of SHA-256) |
+| Fits in one Solana tx | YES | YES (single tx, signature in instruction data or buffer) | **NO** (requires 8-17 chunk uploads) |
+| Client sign time | Instant | ~10-50 ms (67 hash chains) | 500-1500 ms (mobile `f`) |
+| Expressiveness | Limited — only binary "I know X" | Arbitrary messages, context-bound | Arbitrary messages, reusable key |
+| State burden | Stateless | **Stateful** (must track which keys have signed) | Stateless |
+
+**Where each wins:**
+
+- **Commit-reveal** wins when the authorization is binary and the commitment is known at commit time (cold-storage vault unlock, timelocked claim). The current `p01_quantum_vault` hash-lock is already optimal for this use case — it's smaller, faster, and simpler than either hash-based signature scheme.
+- **WOTS+** wins for *per-payment one-time claims* where the keypair is naturally throwaway. P4.3 exploits this: each stealth address derives a fresh WOTS+ keypair from its seed, so the "key must be fresh" rule is satisfied by construction.
+- **SPHINCS+** wins when a *stable, long-lived* quantum-safe signing key is needed — e.g., a user's recovery key, a treasury authorizer, a cross-program authority. None of Protocol 01's current primitives need this.
+
+#### 2.10.4 Use-Case Mapping for Protocol 01
+
+| Primitive | Current use case | Needs SPHINCS+? |
+|-----------|-----------------|-----------------|
+| Wallet transaction signing | Ed25519 (Solana-level) | No — this is Solana's decision; Dilithium is the ecosystem path |
+| Stealth claim authorization | Ed25519 today, WOTS+ added in P4.3 | No — one-time signing is a perfect WOTS+ fit |
+| Commit-reveal vault (`p01_quantum_vault` hash-lock) | SHA-256 preimage | **No** — hash-lock is simpler and smaller; SPHINCS+ would strictly bloat this |
+| Winternitz Vault fallback | WOTS+ already | No |
+| Long-lived auth key (hypothetical) | Does not exist in Protocol 01 today | Would be the right fit if introduced |
+| Relayer operator keys | Ed25519 | Deferred — operator rotation is a governance issue, not a crypto one |
+
+Every current authorization path in Protocol 01 is either (a) Solana-level and therefore outside our control, (b) inherently one-time (stealth claims), or (c) already optimal as a hash-lock (vaults). **There is no current Protocol 01 primitive where SPHINCS+ would be the best tool.**
+
+#### 2.10.5 Recommendation: DEFER
+
+**Decision:** Do **not** adopt SPHINCS+ in Protocol 01 at this time.
+
+**Rationale:**
+
+1. **No fit for current primitives.** WOTS+ (P4.3) covers one-time claim signing with a 10× smaller on-chain footprint. The hash-lock in `p01_quantum_vault` covers preimage-based authorization with a 200× smaller footprint. Adding SPHINCS+ would duplicate capability the stack already has, at a significantly higher cost.
+2. **Prohibitive on-chain cost.** Even SLH-DSA-128s (the smallest variant) requires 8 chunk uploads + a verify call (~9 transactions per claim) versus 1 transaction for WOTS+. SLH-DSA-128f (the only mobile-viable variant for signing) needs 17 uploads.
+3. **Mobile signing latency.** The `s` variants take ~seconds to sign on mobile JS, which breaks UX. The `f` variants sign in ~1 second but produce 17-50 KB signatures.
+4. **NIST maturity is not the bottleneck.** SLH-DSA is FIPS-205 standardized and @noble/post-quantum has an audited implementation. The blocker is not algorithmic maturity — it's that nothing in Protocol 01 demands a stateless hash-based signature.
+
+**Conditions that would flip this decision:**
+
+- A new Protocol 01 feature introduces a *long-lived, reusable* quantum-safe signing key (e.g., governance multisig, delegation authority, cross-chain relay key). WOTS+ cannot serve this role because each key signs at most once.
+- Solana deploys a native SLH-DSA precompile (not currently on any SIMD roadmap), dropping on-chain verify cost below the WOTS+ threshold.
+- NIST identifies a structural weakness in WOTS+/XMSS stateful hash-based signatures that does not apply to SPHINCS+, making stateful one-time signatures untrustworthy.
+
+**Tracking:** Quarterly review. If any condition above becomes true, re-evaluate with a new ADR. The reference @noble/post-quantum library exists and can be integrated quickly if the use case materializes.
+
+**References specific to this section:**
+- NIST FIPS 205 (SLH-DSA), 2024 — canonical SPHINCS+ spec
+- ePrint 2025/1741 — Solana STARK+SLH-DSA measurement (CU costs, tx split strategy)
+- @noble/post-quantum `slh_dsa_sha2_128s` / `slh_dsa_sha2_128f` — reference TypeScript impl
+
 ---
 
 ## 3. Solana Ecosystem Quantum Readiness
