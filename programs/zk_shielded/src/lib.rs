@@ -307,6 +307,29 @@ pub mod zk_shielded {
         instructions::cancel_private_stark::handler(ctx, new_commitments, new_roots)
     }
 
+    /// Transfer a note within a denominated pool using STARK proof (quantum-resistant).
+    /// The old note is nullified and a new commitment is inserted into the tree.
+    /// No funds move — same pool, same denomination.
+    pub fn transfer_denominated_stark(
+        ctx: Context<TransferDenominatedStark>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        stark_commitment: u64,
+        new_commitment: [u8; 32],
+        new_root: [u8; 32],
+    ) -> Result<()> {
+        instructions::transfer_denominated_stark::handler(
+            ctx,
+            nullifier,
+            merkle_root,
+            min_epoch,
+            stark_commitment,
+            new_commitment,
+            new_root,
+        )
+    }
+
     /// Propose a two-step authority transfer (current authority only)
     pub fn propose_authority_transfer(
         ctx: Context<ProposeAuthorityTransfer>,
