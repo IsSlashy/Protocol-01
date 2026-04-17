@@ -349,6 +349,31 @@ pub mod zk_shielded {
         )
     }
 
+    /// Split a note into multiple notes in a lower-denomination pool using STARK
+    /// (quantum-resistant). Uses circuit 1 for source ownership; output commitments
+    /// are bound by the payer's signature on the instruction data.
+    pub fn split_note_stark(
+        ctx: Context<SplitNoteStark>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        stark_commitment: u64,
+        num_outputs: u8,
+        output_commitments: Vec<[u8; 32]>,
+        new_roots: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::split_note_stark::handler(
+            ctx,
+            nullifier,
+            merkle_root,
+            min_epoch,
+            stark_commitment,
+            num_outputs,
+            output_commitments,
+            new_roots,
+        )
+    }
+
     /// Propose a two-step authority transfer (current authority only)
     pub fn propose_authority_transfer(
         ctx: Context<ProposeAuthorityTransfer>,
