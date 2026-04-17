@@ -1,15 +1,23 @@
 /**
- * Denominated Pool Service for Chrome Extension
+ * Denominated Pool Service for Chrome Extension — Groth16-legacy scaffolding.
  *
- * Client-side ZK proving for Tornado Cash-style fixed-denomination pools.
- * Uses the same Web Worker infrastructure as the existing shielded pool.
+ * STATUS (P3.6 — 2026-04-17):
+ *   The `prepare*` helpers below build Groth16 circuit inputs for the
+ *   denominated_pool / denominated_transfer circuits. The mobile client has
+ *   migrated to the STARK verifier (p01_stark_verifier) and the on-chain
+ *   Groth16 denominated-pool instructions are being removed in P3.7.
  *
- * Circuit: denominated_pool.circom (4,273 constraints, depth 15)
- * Program: zk_shielded (GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c)
+ *   None of the exports in this file are currently wired to a working
+ *   transaction builder in the extension (see `store/denominatedPool.ts`,
+ *   where `unshieldNote` never submitted a tx). Before the extension can
+ *   reach functional parity with mobile, the following must be built:
+ *     - WASM STARK prover integration (parallel to mobile's StarkProver)
+ *     - `services/stark.ts` module with chunked proof upload + verify/close
+ *     - STARK instruction builders for shield/unshield/transfer/emergency/split
  *
- * Flow:
- *   Shield:   deposit exact denomination → insert commitment into Merkle tree (no proof)
- *   Unshield: prove knowledge of note secret → withdraw denomination (client-side proof)
+ *   Until then, the `prepareUnshield` / `prepareTransfer` paths are retained
+ *   only as reference for the STARK rework. The store intentionally throws
+ *   instead of returning a fake "pending" signature.
  */
 
 import {

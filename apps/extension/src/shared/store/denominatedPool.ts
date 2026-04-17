@@ -157,46 +157,22 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         }
       },
 
-      unshieldNote: async (noteId, recipient) => {
+      unshieldNote: async (noteId, _recipient) => {
+        // P3.6 (2026-04-17): the on-chain path migrated to p01_stark_verifier.
+        // Groth16 denominated-pool instructions are being removed in P3.7.
+        // The extension has no STARK prover wired yet — fail loudly rather
+        // than silently marking the note spent with a fake "pending" signature.
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
-
-        set({ isProving: true, error: null, progress: 'Preparing unshield...' });
-
-        try {
-          const { walletPublicKey, connection, signTransaction } = getWalletData();
-          const receipt = receiptFromJSON(note.receiptJSON);
-
-          set({ progress: 'Generating ZK proof...' });
-
-          const poolPDA = new PublicKey(note.poolPDA);
-          const epochDelay = BigInt(2); // Default epoch delay
-
-          const { circuitInputs, nullifier, nullifierBytes, merkleRootBytes, minEpoch } =
-            await prepareUnshield(receipt, connection, epochDelay);
-
-          // TODO: Generate proof via worker and submit transaction
-          set({ progress: 'Proof generated. Submitting...' });
-
-          // Mark note as spent
-          set(state => ({
-            notes: state.notes.map(n =>
-              n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n
-            ),
-            isProving: false,
-            progress: null,
-          }));
-
-          return 'pending'; // placeholder signature
-        } catch (err) {
-          set({
-            isProving: false,
-            progress: null,
-            error: (err as Error).message,
-          });
-          throw err;
-        }
+        set({
+          isProving: false,
+          progress: null,
+          error: 'Unshield not available in extension: STARK prover not yet integrated (use mobile client).',
+        });
+        throw new Error(
+          'Unshield not available in extension: STARK prover not yet integrated (use mobile client).'
+        );
       },
 
       refreshNotes: async () => {
