@@ -42,9 +42,12 @@ const HASH_CYCLE_LEN: usize = 32;
 const NUM_ROUNDS: usize = 30;
 
 /// Compute trace length for a given Merkle depth.
+///
+/// We force `trace_length > active_rows` so that the boundary transition
+/// constraint at the last active row does not wrap around to row 0.
 fn trace_length_for_depth(depth: usize) -> usize {
     let active = depth * HASH_CYCLE_LEN;
-    active.next_power_of_two()
+    (active + 1).next_power_of_two()
 }
 
 // ============================================================================
@@ -529,11 +532,14 @@ mod tests {
 
     #[test]
     fn test_trace_length() {
-        assert_eq!(trace_length_for_depth(1), 32);
+        // Always force at least one row of padding after active region so
+        // wrap-around boundary constraints are satisfied.
+        assert_eq!(trace_length_for_depth(1), 64);
         assert_eq!(trace_length_for_depth(7), 256);
-        assert_eq!(trace_length_for_depth(8), 256);
+        assert_eq!(trace_length_for_depth(8), 512);
         assert_eq!(trace_length_for_depth(9), 512);
         assert_eq!(trace_length_for_depth(15), 512);
+        assert_eq!(trace_length_for_depth(16), 1024);
     }
 
     #[test]
@@ -638,6 +644,7 @@ mod tests {
     #[test]
     fn test_winterfell_rejects_wrong_new_root() {
         use crate::prover::{prove_generic, verify_generic};
+        use std::panic;
 
         let (ol, nl, elems, indices, old_root, _new_root) = make_test_update(3);
         let trace = build_merkle_update_trace(ol, nl, &elems, &indices);
@@ -650,15 +657,21 @@ mod tests {
             depth: 3,
         };
 
-        // Prover may succeed (trace is honest) but verifier must reject on assertion mismatch.
-        // OR prover may fail at assertion-commitment stage — either outcome is acceptable.
-        let prove_result = prove_generic::<MerkleUpdateAir>(trace, pub_inputs.clone());
-        match prove_result {
-            Ok((proof, _)) => {
+        // Winterfell's prover panics on assertion mismatch rather than returning Err.
+        // Either panic or Err is an acceptable rejection of the tampered public input.
+        let prev_hook = panic::take_hook();
+        panic::set_hook(Box::new(|_| {}));
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            prove_generic::<MerkleUpdateAir>(trace, pub_inputs.clone())
+        }));
+        panic::set_hook(prev_hook);
+
+        match result {
+            Ok(Ok((proof, _))) => {
                 let verify_result = verify_generic::<MerkleUpdateAir>(proof, pub_inputs);
                 assert!(verify_result.is_err(), "verifier should reject wrong new_root");
             }
-            Err(_) => { /* prover panicked/errored — also acceptable */ }
+            Ok(Err(_)) | Err(_) => { /* prover returned Err or panicked — rejection */ }
         }
     }
 }

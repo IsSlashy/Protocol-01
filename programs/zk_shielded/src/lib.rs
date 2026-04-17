@@ -7,6 +7,7 @@ pub mod instructions;
 pub mod state;
 pub mod verifier;
 
+use compliance::*;
 use instructions::*;
 
 declare_id!("GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c");
@@ -296,6 +297,16 @@ pub mod zk_shielded {
         instructions::resume_private_stark::handler(ctx)
     }
 
+    /// Cancel a private subscription vault using STARK proof (quantum-resistant).
+    /// Re-shields remaining funds back into the source denominated pool.
+    pub fn cancel_private_stark(
+        ctx: Context<CancelPrivateStark>,
+        new_commitments: Vec<[u8; 32]>,
+        new_roots: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::cancel_private_stark::handler(ctx, new_commitments, new_roots)
+    }
+
     /// Propose a two-step authority transfer (current authority only)
     pub fn propose_authority_transfer(
         ctx: Context<ProposeAuthorityTransfer>,
@@ -445,7 +456,7 @@ pub mod zk_shielded {
     /// Verify a Groth16 range proof and create a ComplianceAttestation.
     /// Proves: min_bound <= secret_balance <= max_bound
     pub fn verify_compliance_range(
-        ctx: Context<compliance::VerifyComplianceRange>,
+        ctx: Context<VerifyComplianceRange>,
         proof: Groth16Proof,
         min_bound: u64,
         max_bound: u64,
@@ -458,7 +469,7 @@ pub mod zk_shielded {
     /// Verify a Groth16 innocence proof and create a ComplianceAttestation.
     /// Proves: user identity is NOT in the sanctions Merkle tree.
     pub fn verify_compliance_innocence(
-        ctx: Context<compliance::VerifyComplianceInnocence>,
+        ctx: Context<VerifyComplianceInnocence>,
         proof: Groth16Proof,
         sanctions_root: [u8; 32],
         user_commitment: [u8; 32],
@@ -469,13 +480,13 @@ pub mod zk_shielded {
     }
 
     /// Revoke a previously issued compliance attestation (authority only).
-    pub fn revoke_attestation(ctx: Context<compliance::RevokeAttestation>) -> Result<()> {
+    pub fn revoke_attestation(ctx: Context<RevokeAttestation>) -> Result<()> {
         compliance::revoke_attestation(ctx)
     }
 
     /// Check whether a compliance attestation is currently valid.
     /// Returns Ok(true) if valid, or an error if expired/revoked/unverified.
-    pub fn check_compliance(ctx: Context<compliance::CheckCompliance>) -> Result<bool> {
+    pub fn check_compliance(ctx: Context<CheckCompliance>) -> Result<bool> {
         compliance::check_compliance(ctx)
     }
 }

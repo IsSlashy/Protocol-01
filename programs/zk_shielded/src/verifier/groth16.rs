@@ -477,7 +477,7 @@ impl Groth16Verifier {
 
     /// Hash verification key for storage comparison (SHA-256)
     pub fn hash_verification_key(vk_data: &[u8]) -> [u8; 32] {
-        anchor_lang::solana_program::hash::hash(vk_data).to_bytes()
+        solana_sha256_hasher::hashv(&[vk_data]).to_bytes()
     }
 }
 
