@@ -37,10 +37,14 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-const TRACE_WIDTH: usize = 4;
-const TRACE_LENGTH: usize = 256;
-const HASH_CYCLE_LEN: usize = 32;
-const NUM_ROUNDS: usize = 30;
+pub const TRACE_WIDTH: usize = 4;
+pub const TRACE_LENGTH: usize = 256;
+pub const HASH_CYCLE_LEN: usize = 32;
+pub const NUM_ROUNDS: usize = 30;
+/// Number of transition constraints in C4 (confidential_balance).
+pub const CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS: usize = 10;
+/// Number of periodic columns in C4 (confidential_balance).
+pub const CONFIDENTIAL_BALANCE_NUM_PERIODIC: usize = 11;
 
 // ============================================================================
 // Public inputs
@@ -116,63 +120,7 @@ impl Air for ConfidentialBalanceAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<BaseElement>> {
-        let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-
-        // Round constants and round_flag: TRUE period 32 (all 8 cycles are valid hashes)
-        let mut rc0 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        let mut rc1 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        let mut rc2 = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-        let mut round_flag = vec![BaseElement::ZERO; HASH_CYCLE_LEN];
-
-        for pos in 0..NUM_ROUNDS {
-            rc0[pos] = rc[pos * 3];
-            rc1[pos] = rc[pos * 3 + 1];
-            rc2[pos] = rc[pos * 3 + 2];
-            round_flag[pos] = BaseElement::ONE;
-        }
-
-        // Chaining and boundary flags: period 256 (differ per cycle)
-
-        // is_boundary: 1 at last row of each hash cycle (rows 31, 63, ..., 223)
-        // NOT at row 255 (last row exempt from wrap-around)
-        let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
-        for cycle in 0..8 {
-            let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
-            if row < TRACE_LENGTH - 1 {
-                is_boundary[row] = BaseElement::ONE;
-            }
-        }
-
-        // chain_0_1: 1 at row 31 (owner → cycle 1 left)
-        let mut chain_01 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_01[31] = BaseElement::ONE;
-
-        // chain_3_4: 1 at row 127 (old_bal_salt → cycle 4 left)
-        let mut chain_34 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_34[127] = BaseElement::ONE;
-
-        // chain_5_6: 1 at row 191 (new_bal_salt → cycle 6 left)
-        let mut chain_56 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_56[191] = BaseElement::ONE;
-
-        // carry_capture: 1 at row 63 (capture owner_mint)
-        let mut carry_capture = vec![BaseElement::ZERO; TRACE_LENGTH];
-        carry_capture[63] = BaseElement::ONE;
-
-        // chain_carry_4: 1 at row 127 (owner_mint → cycle 4 right)
-        let mut chain_carry_4 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_carry_4[127] = BaseElement::ONE;
-
-        // chain_carry_6: 1 at row 191 (owner_mint → cycle 6 right)
-        let mut chain_carry_6 = vec![BaseElement::ZERO; TRACE_LENGTH];
-        chain_carry_6[191] = BaseElement::ONE;
-
-        vec![
-            rc0, rc1, rc2, round_flag, // period 32
-            is_boundary,                // period 256
-            chain_01, chain_34, chain_56,
-            carry_capture, chain_carry_4, chain_carry_6,
-        ]
+        build_confidential_balance_periodic_columns()
     }
 
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
@@ -181,49 +129,9 @@ impl Air for ConfidentialBalanceAir {
         periodic_values: &[E],
         result: &mut [E],
     ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        let rc0 = periodic_values[0];
-        let rc1 = periodic_values[1];
-        let rc2 = periodic_values[2];
-        let round_flag = periodic_values[3];
-        let is_boundary = periodic_values[4];
-        let chain_01 = periodic_values[5];
-        let chain_34 = periodic_values[6];
-        let chain_56 = periodic_values[7];
-        let carry_capture = periodic_values[8];
-        let chain_carry_4 = periodic_values[9];
-        let chain_carry_6 = periodic_values[10];
-
-        let not_boundary = E::ONE - is_boundary;
-
-        // ── Poseidon round (t=3, MDS [3,1,1]) ──
-        let s0 = current[0] + rc0;
-        let s1 = current[1] + rc1;
-        let s2 = current[2] + rc2;
-
-        let s0_7 = pow7(s0);
-        let s1_7 = pow7(s1);
-        let s2_7 = pow7(s2);
-
-        let three = E::from(3u32);
-        let ro0 = three * s0_7 + s1_7 + s2_7;
-        let ro1 = s0_7 + three * s1_7 + s2_7;
-        let ro2 = s0_7 + s1_7 + three * s2_7;
-
-        result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-        result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-        result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
-
-        // ── Chaining constraints ──
-        result[3] = chain_01 * (next[0] - current[0]);       // cycle 0→1: owner
-        result[4] = chain_34 * (next[0] - current[0]);       // cycle 3→4: old_bal_salt
-        result[5] = chain_56 * (next[0] - current[0]);       // cycle 5→6: new_bal_salt
-        result[6] = carry_capture * (next[3] - current[0]);  // capture owner_mint
-        result[7] = (E::ONE - carry_capture) * (next[3] - current[3]); // carry continuity
-        result[8] = chain_carry_4 * (next[1] - current[3]);  // carry→cycle 4 right
-        result[9] = chain_carry_6 * (next[1] - current[3]);  // carry→cycle 6 right
+        evaluate_confidential_balance_transition(
+            frame.current(), frame.next(), periodic_values, result,
+        );
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -253,6 +161,147 @@ fn pow7<E: FieldElement>(x: E) -> E {
     let x2 = x * x;
     let x4 = x2 * x2;
     x4 * x2 * x
+}
+
+// ============================================================================
+// [P2.2d-C4] Standalone periodic-column builder and transition evaluator
+//
+// Both are shared by:
+//   * the Winterfell AIR (delegated to from get_periodic_column_values /
+//     evaluate_transition),
+//   * the compact-proof prover (compute_quotient_lde_circuit_4 in
+//     stark/src/compact.rs),
+//   * the DEEP-ALI end-to-end test (merkle_update_e2e equivalent for C4),
+//   * the on-chain verifier tests (compact/tests exercising the same
+//     constraint form the verifier evaluates via periodic polynomials).
+// ============================================================================
+
+/// [P2.2d-C4] Build the 11 periodic columns for confidential_balance.
+///
+/// Layout matches the C4 constraint evaluator:
+/// `[rc0, rc1, rc2, round_flag, is_boundary, chain_01, chain_34, chain_56,
+///   carry_capture, chain_carry_4, chain_carry_6]`.
+///
+/// Columns 0-3 have true period 32 (every cycle is a valid Poseidon hash).
+/// Columns 4-10 have period 256 since they differ per cycle (chain edges
+/// and cycle boundaries fire at specific rows only).
+pub fn build_confidential_balance_periodic_columns() -> Vec<Vec<BaseElement>> {
+    let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
+
+    let mut rc0 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    let mut rc1 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    let mut rc2 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    let mut round_flag = vec![BaseElement::ZERO; TRACE_LENGTH];
+
+    // Period-32 round constants + round_flag, repeated every cycle across
+    // the full 256-row trace. Even though they share the value of cycle 0,
+    // we materialise the length-256 form so the prover/verifier can use a
+    // single polynomial per column without needing two different periods.
+    for cycle in 0..(TRACE_LENGTH / HASH_CYCLE_LEN) {
+        for pos in 0..NUM_ROUNDS {
+            let row = cycle * HASH_CYCLE_LEN + pos;
+            rc0[row] = rc[pos * 3];
+            rc1[row] = rc[pos * 3 + 1];
+            rc2[row] = rc[pos * 3 + 2];
+            round_flag[row] = BaseElement::ONE;
+        }
+    }
+
+    // is_boundary: 1 at last row of each hash cycle (rows 31, 63, ..., 223)
+    // NOT at row 255 (last row exempt from wrap-around by construction).
+    let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
+    for cycle in 0..(TRACE_LENGTH / HASH_CYCLE_LEN) {
+        let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
+        if row < TRACE_LENGTH - 1 {
+            is_boundary[row] = BaseElement::ONE;
+        }
+    }
+
+    // chain_0_1: 1 at row 31 — cycle 0 output (owner) is forced onto cycle 1 left input.
+    let mut chain_01 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    chain_01[31] = BaseElement::ONE;
+
+    // chain_3_4: 1 at row 127 — cycle 3 output (old_bal_salt) → cycle 4 left.
+    let mut chain_34 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    chain_34[127] = BaseElement::ONE;
+
+    // chain_5_6: 1 at row 191 — cycle 5 output (new_bal_salt) → cycle 6 left.
+    let mut chain_56 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    chain_56[191] = BaseElement::ONE;
+
+    // carry_capture: 1 at row 63 — captures cycle 1 output (owner_mint) into
+    // carry col (col 3).
+    let mut carry_capture = vec![BaseElement::ZERO; TRACE_LENGTH];
+    carry_capture[63] = BaseElement::ONE;
+
+    // chain_carry_4: 1 at row 127 — carry (owner_mint) → cycle 4 right input.
+    let mut chain_carry_4 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    chain_carry_4[127] = BaseElement::ONE;
+
+    // chain_carry_6: 1 at row 191 — carry (owner_mint) → cycle 6 right input.
+    let mut chain_carry_6 = vec![BaseElement::ZERO; TRACE_LENGTH];
+    chain_carry_6[191] = BaseElement::ONE;
+
+    vec![
+        rc0, rc1, rc2, round_flag, is_boundary,
+        chain_01, chain_34, chain_56,
+        carry_capture, chain_carry_4, chain_carry_6,
+    ]
+}
+
+/// [P2.2d-C4] Evaluate the 10 transition constraints at a single row.
+///
+/// Shape matches `evaluate_balance_proof_transition` but with width=4 + 8 cycles
+/// (256 rows) and chain edges at rows 31 / 63 / 127 / 191. Same Poseidon
+/// constraint form `not_boundary · (next[i] − current[i] − round_flag ·
+/// (ro_i − current[i]))` — when round_flag=1 → next=ro (active round);
+/// when round_flag=0 → next=current (padding); when is_boundary=1 → free.
+pub fn evaluate_confidential_balance_transition<E: FieldElement<BaseField = BaseElement>>(
+    current: &[E],
+    next: &[E],
+    periodic: &[E],
+    result: &mut [E],
+) {
+    let rc0 = periodic[0];
+    let rc1 = periodic[1];
+    let rc2 = periodic[2];
+    let round_flag = periodic[3];
+    let is_boundary = periodic[4];
+    let chain_01 = periodic[5];
+    let chain_34 = periodic[6];
+    let chain_56 = periodic[7];
+    let carry_capture = periodic[8];
+    let chain_carry_4 = periodic[9];
+    let chain_carry_6 = periodic[10];
+
+    let not_boundary = E::ONE - is_boundary;
+
+    // ── Poseidon round (t=3, MDS [3,1,1]) ──
+    let s0 = current[0] + rc0;
+    let s1 = current[1] + rc1;
+    let s2 = current[2] + rc2;
+
+    let s0_7 = pow7(s0);
+    let s1_7 = pow7(s1);
+    let s2_7 = pow7(s2);
+
+    let three = E::from(3u32);
+    let ro0 = three * s0_7 + s1_7 + s2_7;
+    let ro1 = s0_7 + three * s1_7 + s2_7;
+    let ro2 = s0_7 + s1_7 + three * s2_7;
+
+    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+
+    // ── Chaining constraints ──
+    result[3] = chain_01 * (next[0] - current[0]);       // cycle 0→1: owner
+    result[4] = chain_34 * (next[0] - current[0]);       // cycle 3→4: old_bal_salt
+    result[5] = chain_56 * (next[0] - current[0]);       // cycle 5→6: new_bal_salt
+    result[6] = carry_capture * (next[3] - current[0]);  // capture owner_mint
+    result[7] = (E::ONE - carry_capture) * (next[3] - current[3]); // carry continuity
+    result[8] = chain_carry_4 * (next[1] - current[3]);  // carry→cycle 4 right
+    result[9] = chain_carry_6 * (next[1] - current[3]);  // carry→cycle 6 right
 }
 
 // ============================================================================

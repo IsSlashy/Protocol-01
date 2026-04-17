@@ -841,6 +841,115 @@ fn compute_quotient_lde_circuit_3(
     q_lde
 }
 
+/// [P2.2d-C4] Compute the RLC-combined quotient LDE for circuit 4
+/// (confidential_balance). Same shape as circuit 1/2: fixed trace_length=256,
+/// interpolate the 11 periodic columns onto the LDE, evaluate the 10
+/// transition constraints at every LDE position, RLC-combine with α, INTT →
+/// coefficients, multiply by (x − g^{n−1}) to kill the wrap row, synthetic-
+/// divide by Z_D(x) = x^n − 1.
+///
+/// Closes the P2.2d-C4 soundness gaps:
+///   1. **Multi-cycle Poseidon.** Legacy `evaluate_transition_constraint` used
+///      a single-cycle flag (cycle 0 only); cycles 1-7 were unconstrained.
+///      This path uses `build_confidential_balance_periodic_columns` with the
+///      real 8-cycle `round_flag` spanning every hash cycle (period 32, but
+///      materialised across full length 256 so one polynomial suffices).
+///   2. **chain_01 @ row 31.** `next[0]@32 = current[0]@31` (= owner) was never
+///      checked on-chain. Without it, a malicious prover could rewrite the
+///      cycle 1 left input → forge a different `owner_mint`. Now bound.
+///   3. **carry_capture @ row 63.** `next[3]@64 = current[0]@63` (= owner_mint)
+///      was not checked — attacker could pick arbitrary `owner_mint'`. Bound.
+///   4. **carry_continuity.** col[3] must be constant except at row 63.
+///      Partially checked per-query (legacy); now bound at all LDE positions.
+///   5. **chain_34 @ row 127.** `next[0]@128 = current[0]@127` (= old_bal_salt)
+///      was never checked. Prover could forge old_commitment.
+///   6. **chain_carry_4 @ row 127.** `next[1]@128 = current[3]@127`
+///      (owner_mint → cycle 4 right) never checked.
+///   7. **chain_56 @ row 191.** `next[0]@192 = current[0]@191`
+///      (= new_bal_salt) never checked. Prover could forge new_commitment.
+///   8. **chain_carry_6 @ row 191.** `next[1]@192 = current[3]@191`
+///      (owner_mint → cycle 6 right) never checked.
+///
+/// `periodic` layout matches `build_confidential_balance_periodic_columns`:
+/// `[rc0, rc1, rc2, round_flag, is_boundary, chain_01, chain_34, chain_56,
+///   carry_capture, chain_carry_4, chain_carry_6]`.
+fn compute_quotient_lde_circuit_4(
+    trace_lde: &[Vec<BaseElement>],
+    blowup: usize,
+    trace_length: usize,
+    alpha: BaseElement,
+) -> Vec<u64> {
+    use crate::air::confidential_balance::{
+        build_confidential_balance_periodic_columns, evaluate_confidential_balance_transition,
+        CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS, CONFIDENTIAL_BALANCE_NUM_PERIODIC, TRACE_WIDTH,
+    };
+
+    let trace_width = trace_lde.len();
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 4 trace width is 4");
+    let lde_size = trace_length * blowup;
+    assert_eq!(trace_lde[0].len(), lde_size);
+
+    let trace_g = get_domain_generator_generic(trace_length);
+    let lde_g = get_domain_generator_generic(lde_size);
+
+    // 1. Interpolate periodic columns (length-n) and evaluate on the LDE domain.
+    let periodic_trace = build_confidential_balance_periodic_columns();
+    assert_eq!(periodic_trace.len(), CONFIDENTIAL_BALANCE_NUM_PERIODIC);
+
+    let mut periodic_lde: Vec<Vec<BaseElement>> =
+        vec![vec![BaseElement::ZERO; lde_size]; CONFIDENTIAL_BALANCE_NUM_PERIODIC];
+    for (k, col) in periodic_trace.iter().enumerate() {
+        let poly = inverse_ntt(col, trace_g);
+        for i in 0..lde_size {
+            let x = lde_g.exp(i as u64);
+            periodic_lde[k][i] = evaluate_poly(&poly, x);
+        }
+    }
+
+    // 2. Evaluate the 10 constraints at every LDE position and RLC-combine with α.
+    let mut c_lde = vec![BaseElement::ZERO; lde_size];
+    let mut constraints = vec![BaseElement::ZERO; CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS];
+    let mut current = vec![BaseElement::ZERO; trace_width];
+    let mut next = vec![BaseElement::ZERO; trace_width];
+    let mut periodic_row = vec![BaseElement::ZERO; CONFIDENTIAL_BALANCE_NUM_PERIODIC];
+
+    for pos in 0..lde_size {
+        let next_pos = (pos + blowup) % lde_size;
+        for col in 0..trace_width {
+            current[col] = trace_lde[col][pos];
+            next[col] = trace_lde[col][next_pos];
+        }
+        for k in 0..CONFIDENTIAL_BALANCE_NUM_PERIODIC {
+            periodic_row[k] = periodic_lde[k][pos];
+        }
+        evaluate_confidential_balance_transition(&current, &next, &periodic_row, &mut constraints);
+        c_lde[pos] = rlc_combine(&constraints, alpha);
+    }
+
+    // 3. INTT → coefficients on the LDE domain.
+    let c_poly = inverse_ntt(&c_lde, lde_g);
+
+    // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
+    let g_nm1 = trace_g.exp((trace_length - 1) as u64);
+    let c_poly_ext = multiply_by_x_minus_a(&c_poly, g_nm1);
+
+    // 5. Synthetic-divide by x^n − 1 (exact, no remainder).
+    assert!(c_poly_ext.len() > trace_length);
+    let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
+
+    // 6. Pad to lde_size and evaluate on LDE.
+    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
+    let copy_len = q_poly.len().min(lde_size);
+    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+
+    let mut q_lde = vec![0u64; lde_size];
+    for i in 0..lde_size {
+        let x = lde_g.exp(i as u64);
+        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
+    }
+    q_lde
+}
+
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
 /// Uses FFT interpolation + evaluation.
 fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
@@ -1668,6 +1777,57 @@ mod tests {
         assert_eq!(is_interior[511], 0x044CB98D1B6CF0E1);
     }
 
+    /// [P2.2d-C4] Circuit 4 parity: re-emitting periodic coefficients via
+    /// inverse_ntt on the circuit-4 (confidential_balance) periodic columns
+    /// must match the `C4_*_COEFFS` arrays baked into
+    /// `p01_stark_verifier/src/periodic_consts.rs`. Drift breaks the on-chain
+    /// DEEP-ALI check.
+    #[test]
+    fn circuit_4_periodic_coeffs_match_verifier_constants() {
+        use crate::air::confidential_balance::{
+            build_confidential_balance_periodic_columns, TRACE_LENGTH as CB_TRACE_LENGTH,
+        };
+
+        let trace_length = CB_TRACE_LENGTH; // 256
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_confidential_balance_periodic_columns();
+
+        let rc0: Vec<u64> = inverse_ntt(&periodic[0], trace_g).iter().map(|f| f.as_int()).collect();
+        let rc1: Vec<u64> = inverse_ntt(&periodic[1], trace_g).iter().map(|f| f.as_int()).collect();
+        let rc2: Vec<u64> = inverse_ntt(&periodic[2], trace_g).iter().map(|f| f.as_int()).collect();
+        let round_flag: Vec<u64> = inverse_ntt(&periodic[3], trace_g).iter().map(|f| f.as_int()).collect();
+        let is_boundary: Vec<u64> = inverse_ntt(&periodic[4], trace_g).iter().map(|f| f.as_int()).collect();
+        let chain_01: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
+        let chain_34: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
+        let chain_56: Vec<u64> = inverse_ntt(&periodic[7], trace_g).iter().map(|f| f.as_int()).collect();
+        let carry_capture: Vec<u64> = inverse_ntt(&periodic[8], trace_g).iter().map(|f| f.as_int()).collect();
+        let chain_carry_4: Vec<u64> = inverse_ntt(&periodic[9], trace_g).iter().map(|f| f.as_int()).collect();
+        let chain_carry_6: Vec<u64> = inverse_ntt(&periodic[10], trace_g).iter().map(|f| f.as_int()).collect();
+
+        assert_eq!(rc0[0], 0xC1A9FC17AFE6859A);
+        assert_eq!(rc0[255], 0x0000000000000000);
+        assert_eq!(rc1[0], 0x8ADEDD292D895B59);
+        assert_eq!(rc1[255], 0x0000000000000000);
+        assert_eq!(rc2[0], 0xAC5D8A4EEAC6C386);
+        assert_eq!(rc2[255], 0x0000000000000000);
+        assert_eq!(round_flag[0], 0x0FFFFFFFF0000001);
+        assert_eq!(round_flag[255], 0x0000000000000000);
+        assert_eq!(is_boundary[0], 0xF8FFFFFF07000001);
+        assert_eq!(is_boundary[255], 0xAFE29D1C405B5B12);
+        assert_eq!(chain_01[0], 0xFEFFFFFF01000001);
+        assert_eq!(chain_01[255], 0x1CF03DF811501D63);
+        assert_eq!(chain_34[0], 0xFEFFFFFF01000001);
+        assert_eq!(chain_34[255], 0xAFE29D1C405B5B12);
+        assert_eq!(chain_56[0], 0xFEFFFFFF01000001);
+        assert_eq!(chain_56[255], 0xF82E405A62E30FC3);
+        assert_eq!(carry_capture[0], 0xFEFFFFFF01000001);
+        assert_eq!(carry_capture[255], 0x07D1BFA49D1CF03E);
+        assert_eq!(chain_carry_4[0], 0xFEFFFFFF01000001);
+        assert_eq!(chain_carry_4[255], 0xAFE29D1C405B5B12);
+        assert_eq!(chain_carry_6[0], 0xFEFFFFFF01000001);
+        assert_eq!(chain_carry_6[255], 0xF82E405A62E30FC3);
+    }
+
     /// [P1.1 PR 4] Sanity check: re-emitting coefficients via inverse_ntt matches
     /// the coefficients hardcoded in `p01_stark_verifier/src/periodic_consts.rs`.
     /// If this test ever fails, the on-chain verifier will reject honest proofs.
@@ -2023,6 +2183,46 @@ mod tests {
             "C3_HASH_START_COEFFS",
             "C3_IS_BOUNDARY_COEFFS",
             "C3_IS_INTERIOR_COEFFS",
+        ];
+        for (i, col) in periodic.iter().enumerate() {
+            let poly = inverse_ntt(col, trace_g);
+            println!("pub const {}: [u64; {}] = [", names[i], trace_length);
+            for c in &poly {
+                println!("    0x{:016X},", c.as_int());
+            }
+            println!("];");
+            println!();
+        }
+    }
+
+    /// [P2.2d-C4] Emit periodic column coefficients for circuit 4
+    /// (confidential_balance), fixed trace_length=256. Run with:
+    ///
+    /// `cargo test -p p01-stark --lib emit_circuit_4_periodic_coeffs -- --ignored --nocapture`
+    ///
+    /// Paste output into the verifier crate under `C4_*_COEFFS`.
+    #[test]
+    #[ignore]
+    fn emit_circuit_4_periodic_coeffs() {
+        use crate::air::confidential_balance::{
+            build_confidential_balance_periodic_columns, TRACE_LENGTH as CB_TRACE_LENGTH,
+        };
+
+        let trace_length = CB_TRACE_LENGTH; // 256
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_confidential_balance_periodic_columns();
+        let names = [
+            "C4_RC0_COEFFS",
+            "C4_RC1_COEFFS",
+            "C4_RC2_COEFFS",
+            "C4_ROUND_FLAG_COEFFS",
+            "C4_IS_BOUNDARY_COEFFS",
+            "C4_CHAIN_01_COEFFS",
+            "C4_CHAIN_34_COEFFS",
+            "C4_CHAIN_56_COEFFS",
+            "C4_CARRY_CAPTURE_COEFFS",
+            "C4_CHAIN_CARRY_4_COEFFS",
+            "C4_CHAIN_CARRY_6_COEFFS",
         ];
         for (i, col) in periodic.iter().enumerate() {
             let poly = inverse_ntt(col, trace_g);
@@ -2418,6 +2618,92 @@ mod tests {
             c_at_z,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-3 proof failed"
+        );
+    }
+
+    /// [P2.2d-C4] End-to-end: a proof produced by
+    /// `generate_confidential_balance_compact_proof` satisfies DEEP-ALI
+    /// (C(z) == Q(z)·Z_T(z)) when C is the full 10-constraint RLC with α
+    /// derived from the `b"rlc-c4\0\0"`-tagged transcript.
+    #[test]
+    fn confidential_balance_proof_satisfies_deep_ali_end_to_end() {
+        use crate::air::confidential_balance::{
+            build_confidential_balance_periodic_columns, evaluate_confidential_balance_transition,
+            CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS, CONFIDENTIAL_BALANCE_NUM_PERIODIC,
+            TRACE_LENGTH as CB_TRACE_LENGTH, TRACE_WIDTH as CB_TRACE_WIDTH,
+        };
+
+        let proof = generate_confidential_balance_compact_proof(
+            42, 1000, 111, 800, 222, 200, 333, 999,
+        );
+        assert_eq!(proof.circuit_id, CIRCUIT_CONFIDENTIAL_BALANCE);
+        assert_eq!(proof.public_inputs.len(), 4);
+
+        // Parse header fields deterministically from the wire format.
+        let bytes = &proof.proof_bytes;
+        let mut off = 0usize;
+
+        let mut trace_root = [0u8; 32];
+        trace_root.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
+        let _quotient_root = &bytes[off..off + 32];
+        off += 32;
+
+        let mut ood_current = Vec::with_capacity(CB_TRACE_WIDTH);
+        for _ in 0..CB_TRACE_WIDTH {
+            ood_current.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let mut ood_next = Vec::with_capacity(CB_TRACE_WIDTH);
+        for _ in 0..CB_TRACE_WIDTH {
+            ood_next.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        off += 8;
+        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+
+        // Reconstruct public input bytes exactly as the prover built them:
+        // [old_commit, new_commit, amount_hash, token_mint].
+        let mut pub_bytes = Vec::new();
+        for v in &proof.public_inputs {
+            pub_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        // Derive α with circuit-4 domain tag.
+        let alpha = derive_rlc_alpha_with_tag(&trace_root, &pub_bytes, b"rlc-c4\0\0");
+
+        // Evaluate the 11 periodic columns at z.
+        let trace_length = CB_TRACE_LENGTH;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let z = BaseElement::new(ood_z);
+        let periodic = build_confidential_balance_periodic_columns();
+        assert_eq!(periodic.len(), CONFIDENTIAL_BALANCE_NUM_PERIODIC);
+        let periodic_at_z: Vec<BaseElement> = periodic
+            .iter()
+            .map(|col| {
+                let poly = inverse_ntt(col, trace_g);
+                evaluate_poly(&poly, z)
+            })
+            .collect();
+
+        // RLC of the 10 constraints at z.
+        let current: Vec<BaseElement> = ood_current.iter().map(|&v| BaseElement::new(v)).collect();
+        let next: Vec<BaseElement> = ood_next.iter().map(|&v| BaseElement::new(v)).collect();
+        let mut constraints = [BaseElement::ZERO; CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS];
+        evaluate_confidential_balance_transition(&current, &next, &periodic_at_z, &mut constraints);
+        let c_at_z = rlc_combine(&constraints, alpha);
+
+        // Z_T(z) = (z^n - 1) / (z - g^(n-1))
+        let last_row_x = trace_g.exp((trace_length - 1) as u64);
+        let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
+        let z_t = z_d * (z - last_row_x).inv();
+
+        let q_at_z = BaseElement::new(ood_quotient);
+        assert_eq!(
+            c_at_z,
+            q_at_z * z_t,
+            "end-to-end DEEP-ALI on generated circuit-4 proof failed"
         );
     }
 }
@@ -2949,6 +3235,8 @@ pub(crate) enum QuotientSpec {
     Circuit2,
     /// Circuit 3 (merkle path), trace width 6, variable depth.
     Circuit3 { depth: usize },
+    /// Circuit 4 (confidential balance), trace width 4, length 256.
+    Circuit4,
     /// Circuit 6 (merkle update), trace width 10, variable depth.
     Circuit6 { depth: usize },
 }
@@ -3002,6 +3290,10 @@ fn generate_compact_proof_from_trace(
         QuotientSpec::Circuit3 { depth } => {
             let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c3\0\0");
             compute_quotient_lde_circuit_3(&lde, blowup, trace_length, depth, alpha)
+        }
+        QuotientSpec::Circuit4 => {
+            let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c4\0\0");
+            compute_quotient_lde_circuit_4(&lde, blowup, trace_length, alpha)
         }
         QuotientSpec::LegacyGeneric => (0..lde_size)
             .map(|pos| {
@@ -3322,7 +3614,7 @@ pub fn generate_confidential_balance_compact_proof(
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
-        QuotientSpec::LegacyGeneric,
+        QuotientSpec::Circuit4,
     );
 
     GenericCompactProofData {

@@ -2115,6 +2115,186 @@ pub fn verify_deep_ali_circuit_3(
     Ok(())
 }
 
+/// [P2.2d-C4] Evaluate the 10-constraint circuit-4 (confidential_balance)
+/// transition RLC at the OOD point `z`.
+///
+/// Mirrors `evaluate_confidential_balance_transition` in the prover's AIR.
+/// Width 4: cols 0-2 are Poseidon state, col 3 is the chain carry. The 7
+/// chained hashes (owner, owner_mint, amount_hash, old_bal_salt, old_commit,
+/// new_bal_salt, new_commit) sit in 7 consecutive 32-row cycles followed by
+/// one identity-padding cycle — chain-edge periodic flags are non-zero only
+/// at the exact row where one hash feeds the next.
+///
+/// Constraints:
+///   [c0-c2] Poseidon state: not_boundary · (next[i] − current[i]
+///           − round_flag · (ro_i − current[i]))
+///   [c3]    chain_01 · (next[0] − current[0])  — cycle 0→1 (owner in)
+///   [c4]    chain_34 · (next[0] − current[0])  — cycle 3→4 (old_bal_salt in)
+///   [c5]    chain_56 · (next[0] − current[0])  — cycle 5→6 (new_bal_salt in)
+///   [c6]    carry_capture · (next[3] − current[0])  — capture owner_mint
+///   [c7]    (1 − carry_capture) · (next[3] − current[3])  — carry continuity
+///   [c8]    chain_carry_4 · (next[1] − current[3])  — carry → cycle 4 right input
+///   [c9]    chain_carry_6 · (next[1] − current[3])  — carry → cycle 6 right input
+#[inline(never)]
+fn evaluate_transition_at_ood_circuit_4(
+    ood_current: &[Felt; 4],
+    ood_next: &[Felt; 4],
+    periodic_at_z: &[Felt; 11],
+    alpha: Felt,
+) -> Felt {
+    let rc0 = periodic_at_z[0];
+    let rc1 = periodic_at_z[1];
+    let rc2 = periodic_at_z[2];
+    let round_flag = periodic_at_z[3];
+    let is_boundary = periodic_at_z[4];
+    let chain_01 = periodic_at_z[5];
+    let chain_34 = periodic_at_z[6];
+    let chain_56 = periodic_at_z[7];
+    let carry_capture = periodic_at_z[8];
+    let chain_carry_4 = periodic_at_z[9];
+    let chain_carry_6 = periodic_at_z[10];
+
+    let one = Felt::ONE;
+    let three = Felt::new(3);
+    let not_boundary = one.sub(is_boundary);
+
+    // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
+    let s0 = ood_current[0].add(rc0);
+    let s1 = ood_current[1].add(rc1);
+    let s2 = ood_current[2].add(rc2);
+    let s0_7 = s0.pow7();
+    let s1_7 = s1.pow7();
+    let s2_7 = s2.pow7();
+    let ro0 = three.mul(s0_7).add(s1_7).add(s2_7);
+    let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
+    let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
+
+    let mut cs = [Felt::ZERO; 10];
+
+    // [c0-c2] Poseidon state transition (active round when round_flag=1,
+    // identity when round_flag=0, unconstrained at cycle boundary).
+    cs[0] = not_boundary.mul(
+        ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
+    );
+    cs[1] = not_boundary.mul(
+        ood_next[1].sub(ood_current[1]).sub(round_flag.mul(ro1.sub(ood_current[1])))
+    );
+    cs[2] = not_boundary.mul(
+        ood_next[2].sub(ood_current[2]).sub(round_flag.mul(ro2.sub(ood_current[2])))
+    );
+
+    // [c3-c5] Chain edges: when the flag is 1 the next cycle's state[0] must
+    // equal the current cycle's output (state[0] at end-of-cycle).
+    cs[3] = chain_01.mul(ood_next[0].sub(ood_current[0]));
+    cs[4] = chain_34.mul(ood_next[0].sub(ood_current[0]));
+    cs[5] = chain_56.mul(ood_next[0].sub(ood_current[0]));
+
+    // [c6] Capture owner_mint into carry column at cycle-1 boundary.
+    cs[6] = carry_capture.mul(ood_next[3].sub(ood_current[0]));
+    // [c7] Carry continuity everywhere else.
+    cs[7] = one.sub(carry_capture).mul(ood_next[3].sub(ood_current[3]));
+    // [c8-c9] Chain carry → right input of cycle 4 / cycle 6.
+    cs[8] = chain_carry_4.mul(ood_next[1].sub(ood_current[3]));
+    cs[9] = chain_carry_6.mul(ood_next[1].sub(ood_current[3]));
+
+    // Horner RLC: Σ α^i · cs[i].
+    let mut combined = Felt::ZERO;
+    let mut alpha_pow = Felt::ONE;
+    for c in cs.iter() {
+        combined = combined.add(c.mul(alpha_pow));
+        alpha_pow = alpha_pow.mul(alpha);
+    }
+    combined
+}
+
+/// [P2.2d-C4] Check the DEEP-ALI identity at the OOD point for circuit 4.
+///
+/// Computes:
+///   1. α from the Fiat-Shamir transcript (`trace_root || pub_inputs ||
+///      "rlc-c4\0\0"`).
+///   2. The 11 periodic polynomials evaluated at z via Horner.
+///   3. The 10 transition constraints on the opened OOD trace (width 4),
+///      RLC-combined with α to produce `C(z)`.
+///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = 256`.
+///   5. The identity `C(z) == Q(z) · Z_T(z)`.
+///
+/// Circuit 4 proves a confidential balance update: new and old Poseidon
+/// commitments are correctly formed from private (spending_key, balance,
+/// salt, amount) with `Poseidon(amount, amount_salt)` folded into a public
+/// amount hash. Without DEEP-ALI on the chain edges, an attacker could swap
+/// cycles, inject rogue balances, or forge commitments that don't correspond
+/// to any real spending path — soundness drops to ~2^64. This check binds
+/// every chain edge and carry update to the opened OOD trace via
+/// Schwartz–Zippel.
+#[inline(never)]
+pub fn verify_deep_ali_circuit_4(
+    proof: &GenericCompactProof,
+    public_inputs: &[u64],
+) -> Result<(), VerifyError> {
+    use crate::periodic_consts::{
+        C4_CARRY_CAPTURE_COEFFS, C4_CHAIN_01_COEFFS, C4_CHAIN_34_COEFFS,
+        C4_CHAIN_56_COEFFS, C4_CHAIN_CARRY_4_COEFFS, C4_CHAIN_CARRY_6_COEFFS,
+        C4_IS_BOUNDARY_COEFFS, C4_RC0_COEFFS, C4_RC1_COEFFS, C4_RC2_COEFFS,
+        C4_ROUND_FLAG_COEFFS,
+    };
+
+    let z = proof.ood_z;
+
+    // Evaluate the 11 periodic columns at z via Horner (~256 muls each).
+    let periodic_at_z: [Felt; 11] = [
+        eval_periodic_at_z(&C4_RC0_COEFFS, z),
+        eval_periodic_at_z(&C4_RC1_COEFFS, z),
+        eval_periodic_at_z(&C4_RC2_COEFFS, z),
+        eval_periodic_at_z(&C4_ROUND_FLAG_COEFFS, z),
+        eval_periodic_at_z(&C4_IS_BOUNDARY_COEFFS, z),
+        eval_periodic_at_z(&C4_CHAIN_01_COEFFS, z),
+        eval_periodic_at_z(&C4_CHAIN_34_COEFFS, z),
+        eval_periodic_at_z(&C4_CHAIN_56_COEFFS, z),
+        eval_periodic_at_z(&C4_CARRY_CAPTURE_COEFFS, z),
+        eval_periodic_at_z(&C4_CHAIN_CARRY_4_COEFFS, z),
+        eval_periodic_at_z(&C4_CHAIN_CARRY_6_COEFFS, z),
+    ];
+
+    // Collect OOD trace values. Circuit 4 is width-4.
+    let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
+    let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
+    if ood_current_vec.len() != 4 || ood_next_vec.len() != 4 {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let ood_current = [
+        ood_current_vec[0], ood_current_vec[1], ood_current_vec[2], ood_current_vec[3],
+    ];
+    let ood_next = [
+        ood_next_vec[0], ood_next_vec[1], ood_next_vec[2], ood_next_vec[3],
+    ];
+
+    // Derive α exactly like the prover (C4-specific domain tag).
+    let pub_bytes = public_inputs_to_bytes(public_inputs);
+    let alpha = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"rlc-c4\0\0");
+
+    let c_at_z = evaluate_transition_at_ood_circuit_4(
+        &ood_current, &ood_next, &periodic_at_z, alpha,
+    );
+
+    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 256.
+    const TRACE_LENGTH_C4: usize = 256;
+    let z_d = vanishing_poly(z, TRACE_LENGTH_C4);
+    let g = Felt::new(GENERATOR_256);
+    let last_row_x = g.exp((TRACE_LENGTH_C4 - 1) as u64);
+    let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
+    let z_minus_last = z.add(neg_last);
+    if z_minus_last == Felt::ZERO {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let z_t = z_d.mul(z_minus_last.inv());
+
+    let rhs = proof.ood_quotient.mul(z_t);
+    if c_at_z != rhs {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    Ok(())
+}
+
 // ============================================================================
 // [C4] + [C5] Quotient verification helper
 // ============================================================================
@@ -2438,8 +2618,12 @@ fn verify_constraints_merkle_path(
 fn verify_constraints_confidential_balance(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
-    _public_inputs: &[u64],
+    public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
+    // [P2.2d-C4] DEEP-ALI soundness: bind the full 10-constraint RLC to the
+    // opened OOD trace before doing the cheap row-local checks below.
+    verify_deep_ali_circuit_4(proof, public_inputs)?;
+
     let hash_cycle_len = 32usize;
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
@@ -3376,6 +3560,137 @@ mod merkle_update_e2e {
         wrong_inputs[1] ^= 0xBEEF; // flip root
 
         let res = verify_deep_ali_circuit_3(&parsed, &wrong_inputs);
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "DEEP-ALI must reject wrong public inputs: got {:?}", res
+        );
+    }
+
+    // ========================================================================
+    // [P2.2d-C4] Circuit-4 (confidential_balance) positive + negative tests.
+    //
+    // Proof byte layout for circuit 4 (width=4):
+    //   trace_root      = bytes[0..32]
+    //   quotient_root   = bytes[32..64]
+    //   ood_current[4]  = bytes[64..96]   (4 * 8)
+    //   ood_next[4]     = bytes[96..128]  (4 * 8)
+    //   ood_z           = bytes[128..136]
+    //   ood_quotient    = bytes[136..144]
+    // ========================================================================
+
+    fn c4_sample_proof() -> p01_stark::compact::GenericCompactProofData {
+        p01_stark::compact::generate_confidential_balance_compact_proof(
+            42, 1000, 111, 800, 222, 200, 333, 999,
+        )
+    }
+
+    /// [P2.2d-C4] Positive: `verify_generic` accepts an honest confidential-
+    /// balance compact proof and therefore transitively the new DEEP-ALI
+    /// check in `verify_constraints_confidential_balance`.
+    #[test]
+    fn confidential_balance_verify_generic_accepts_honest_proof() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c4_sample_proof();
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        verify_generic(&parsed, proof_data.circuit_id, &proof_data.public_inputs, config)
+            .expect("verify_generic should accept honest circuit-4 proof");
+    }
+
+    /// [P2.2d-C4] Positive: `verify_deep_ali_circuit_4` accepts an honest
+    /// confidential-balance proof. Exercises the same α derivation, 11-column
+    /// periodic evaluation, 10-constraint RLC, and Z_T division that run
+    /// on-chain inside `verify_constraints_confidential_balance`.
+    #[test]
+    fn confidential_balance_verify_deep_ali_accepts_honest_proof() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = p01_stark::compact::generate_confidential_balance_compact_proof(
+            13, 500, 77, 400, 88, 100, 99, 1234,
+        );
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        verify_deep_ali_circuit_4(&parsed, &proof_data.public_inputs)
+            .expect("DEEP-ALI must accept honest circuit-4 proof");
+    }
+
+    /// [P2.2d-C4] Negative: tamper one byte of `ood_current[0]` (byte 64) —
+    /// the 10-constraint RLC at z changes, so `C(z) != Q(z)·Z_T(z)` and
+    /// DEEP-ALI must fail.
+    #[test]
+    fn confidential_balance_deep_ali_fails_on_tampered_ood_current() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c4_sample_proof();
+
+        let mut tampered = proof_data.proof_bytes.clone();
+        tampered[64] ^= 0x01;
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &tampered, config,
+        ).expect("deserialize");
+
+        let res = verify_deep_ali_circuit_4(&parsed, &proof_data.public_inputs);
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "DEEP-ALI must reject tampered ood_current: got {:?}", res
+        );
+    }
+
+    /// [P2.2d-C4] Negative: tamper `ood_quotient` at byte 136
+    /// (32 trace_root + 32 quotient_root + 32 ood_current + 32 ood_next + 8 ood_z).
+    #[test]
+    fn confidential_balance_deep_ali_fails_on_tampered_ood_quotient() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = p01_stark::compact::generate_confidential_balance_compact_proof(
+            1, 2, 3, 4, 5, 6, 7, 8,
+        );
+
+        let mut tampered = proof_data.proof_bytes.clone();
+        tampered[136] ^= 0x02;
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &tampered, config,
+        ).expect("deserialize");
+
+        let res = verify_deep_ali_circuit_4(&parsed, &proof_data.public_inputs);
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "DEEP-ALI must reject tampered ood_quotient: got {:?}", res
+        );
+    }
+
+    /// [P2.2d-C4] Negative: swapping in wrong public inputs changes α and
+    /// breaks the RLC/quotient relation. This confirms the public inputs
+    /// (old_commit, new_commit, amount_hash, token_mint) are genuinely bound
+    /// into the soundness check.
+    #[test]
+    fn confidential_balance_deep_ali_fails_on_wrong_public_inputs() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c4_sample_proof();
+
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        let mut wrong_inputs = proof_data.public_inputs.clone();
+        wrong_inputs[3] ^= 0xBEEF; // flip token_mint
+
+        let res = verify_deep_ali_circuit_4(&parsed, &wrong_inputs);
         assert!(
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "DEEP-ALI must reject wrong public inputs: got {:?}", res
