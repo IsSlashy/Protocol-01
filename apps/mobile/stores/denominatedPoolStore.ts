@@ -24,7 +24,10 @@ import {
   unshield,
   unshieldStark,
   emergencyUnshield,
+  emergencyUnshieldStark,
   transferNote as serviceTransferNote,
+  transferNoteStark as serviceTransferNoteStark,
+  splitNoteStark as serviceSplitNoteStark,
   importNote as serviceImportNote,
   exportNote as serviceExportNote,
   encodeShareableNote,
@@ -110,10 +113,28 @@ interface DenominatedPoolState {
     recipient: string,
     proofGenerator: ProofGenerator,
   ) => Promise<string>;
+  /** Quantum-resistant STARK emergency unshield (bypasses maturity) */
+  emergencyUnshieldNoteStark: (
+    noteId: string,
+    recipient: string,
+    starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<string>;
   transferNote: (
     noteId: string,
     proofGenerator: ProofGenerator,
   ) => Promise<{ txSig: string; shareableNote: string }>;
+  /** Quantum-resistant STARK peer-to-peer transfer */
+  transferNoteStark: (
+    noteId: string,
+    starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<{ txSig: string; shareableNote: string }>;
+  /** Quantum-resistant STARK split across denominations (same token) */
+  splitNoteStark: (
+    noteId: string,
+    targetPoolPDA: string,
+    outputSecrets: bigint[],
+    starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<{ txSignature: string; outputCommitments: bigint[] }>;
   importNote: (encodedNote: string, source?: NoteSource) => void;
   exportAllNotes: () => string[];
   exportNote: (noteId: string) => string;
@@ -283,7 +304,7 @@ async function stealthUnshieldAndSweep(
   onProgress?: (msg: string) => void,
 ): Promise<string> {
   const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
-  const { sha256 } = await import('@noble/hashes/sha256');
+  const { sha256 } = await import('@noble/hashes/sha2');
   const { hmac } = await import('@noble/hashes/hmac');
 
   // Derive ephemeral stealth keypair
@@ -598,7 +619,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           console.log('[DenomStore] Creating stealth intermediary to hide wallet origin...');
           try {
             const { Keypair: SolKeypair, SystemProgram, Transaction } = await import('@solana/web3.js');
-            const { sha256 } = await import('@noble/hashes/sha256');
+            const { sha256 } = await import('@noble/hashes/sha2');
             const { bytesToHex } = await import('@noble/hashes/utils');
             const { hmac } = await import('@noble/hashes/hmac');
             const connection = getConnection();
@@ -793,7 +814,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const walletSigner = getWalletSignerIfPrivy();
           const { Keypair: SolKeypair, PublicKey: PK, SystemProgram, Transaction } = await import('@solana/web3.js');
-          const { sha256 } = await import('@noble/hashes/sha256');
+          const { sha256 } = await import('@noble/hashes/sha2');
           const { hmac } = await import('@noble/hashes/hmac');
 
           // Full stealth unshield: BOTH signer AND recipient are ephemeral.
@@ -1070,7 +1091,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           // Use stealth intermediary — wallet never appears on-chain
           const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
-          const { sha256 } = await import('@noble/hashes/sha256');
+          const { sha256 } = await import('@noble/hashes/sha2');
           const { hmac } = await import('@noble/hashes/hmac');
 
           // Derive ephemeral stealth keypair
@@ -1146,6 +1167,272 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           return { txSig, shareableNote: encoded };
         } catch (err) {
           console.error('[DenomPool] Transfer error:', err);
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // STARK Emergency Unshield (quantum-resistant, bypass maturity)
+      // ------------------------------------------------------------------
+
+      emergencyUnshieldNoteStark: async (noteId, recipientAddress, starkProofData) => {
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+
+        const receipt = readReceipt(note.receiptJSON);
+        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('Pool config not found for this note');
+
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK emergency unshield...' });
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+
+          const sig = await stealthUnshieldAndSweep(
+            async (stealthPubkey, stealthKeypair) => emergencyUnshieldStark(
+              receipt,
+              pool,
+              stealthPubkey,
+              starkProofData,
+              (step) => {
+                const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+                set({ progress: step, isProving: proving });
+              },
+              undefined,
+              stealthKeypair,
+            ),
+            recipientAddress,
+            walletAddr,
+            walletSigner,
+            (msg) => set({ progress: msg, isProving: false }),
+          );
+
+          set(state => ({
+            isLoading: false,
+            isProving: false,
+            progress: null,
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
+            ),
+          }));
+
+          useWalletStore.getState().refreshBalance();
+          setTimeout(() => {
+            useWalletStore.getState().refreshTransactions();
+          }, 5000);
+
+          scheduleLocalNotification(
+            'Unshield Confirmed',
+            `${note.denomination} ${note.token} withdrawn from privacy pool`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          return sig;
+        } catch (err) {
+          console.error('[DenomPool] STARK emergency unshield error:', err);
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Unshield Failed',
+            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // STARK Transfer Note (quantum-resistant, peer-to-peer)
+      // ------------------------------------------------------------------
+
+      transferNoteStark: async (noteId, starkProofData) => {
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.status !== 'mature') throw new Error('Note must be mature for transfer');
+
+        const receipt = readReceipt(note.receiptJSON);
+        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('Pool config not found for this note');
+
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK transfer...' });
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const walletAddr = walletSigner?.publicKey.toBase58()
+            || useWalletStore.getState().publicKey || '';
+
+          const { Keypair: SolKeypair, SystemProgram, Transaction } = await import('@solana/web3.js');
+          const { sha256 } = await import('@noble/hashes/sha2');
+          const { hmac } = await import('@noble/hashes/hmac');
+
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_stark_${Date.now()}`));
+          const stealthKp = SolKeypair.fromSeed(seed);
+
+          // Fund stealth for fees + STARK buffer rent + nullifier rent
+          const FEE_FUND = 100_000_000; // 0.1 SOL
+          set({ progress: 'Funding stealth signer...' });
+          const connection = getConnection();
+          if (walletSigner) {
+            const fundTx = new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: walletSigner.publicKey,
+                toPubkey: stealthKp.publicKey,
+                lamports: FEE_FUND,
+              })
+            );
+            const { blockhash } = await connection.getLatestBlockhash();
+            fundTx.recentBlockhash = blockhash;
+            fundTx.feePayer = walletSigner.publicKey;
+            const signedFund = await walletSigner.signTransaction(fundTx);
+            const fundSig = await connection.sendRawTransaction(signedFund.serialize());
+            await connection.confirmTransaction(fundSig, 'confirmed');
+          } else {
+            const keypair = await getKeypair();
+            if (keypair) {
+              const fundTx = new Transaction().add(
+                SystemProgram.transfer({
+                  fromPubkey: keypair.publicKey,
+                  toPubkey: stealthKp.publicKey,
+                  lamports: FEE_FUND,
+                })
+              );
+              const { sendAndConfirmTransaction } = await import('@solana/web3.js');
+              await sendAndConfirmTransaction(connection, fundTx, [keypair], { commitment: 'confirmed' });
+            }
+          }
+
+          // Timing jitter (1-3s)
+          const jitter = 1000 + Math.floor(Math.random() * 2000);
+          set({ progress: 'Waiting (timing privacy)...' });
+          await new Promise(r => setTimeout(r, jitter));
+
+          const { txSig, recipientNote } = await serviceTransferNoteStark(
+            receipt,
+            pool,
+            starkProofData,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+              set({ progress: step, isProving: proving });
+            },
+            undefined,
+            stealthKp,
+          );
+
+          const encoded = encodeShareableNote(recipientNote);
+
+          set(state => ({
+            isLoading: false,
+            isProving: false,
+            progress: null,
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'transferred' as NoteStatus, spentTxSig: txSig, transferredTo: encoded } : n
+            ),
+          }));
+
+          return { txSig, shareableNote: encoded };
+        } catch (err) {
+          console.error('[DenomPool] STARK transfer error:', err);
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // STARK Split Note (quantum-resistant, cross-denomination)
+      // ------------------------------------------------------------------
+
+      splitNoteStark: async (noteId, targetPoolPDA, outputSecrets, starkProofData) => {
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.status !== 'mature') throw new Error('Note must be mature for split');
+
+        const receipt = readReceipt(note.receiptJSON);
+        const sourcePool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        const targetPool = ALL_POOLS.find(p => p.poolPDA.toBase58() === targetPoolPDA);
+        if (!sourcePool) throw new Error('Source pool config not found');
+        if (!targetPool) throw new Error('Target pool config not found');
+        if (!sourcePool.tokenMint.equals(targetPool.tokenMint)) {
+          throw new Error('Source and target pools must use the same token');
+        }
+
+        const numOutputs = Number(sourcePool.denominationAtomic / targetPool.denominationAtomic);
+        if (outputSecrets.length !== numOutputs) {
+          throw new Error(`Expected ${numOutputs} output secrets, got ${outputSecrets.length}`);
+        }
+
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK split...' });
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const { txSignature, outputCommitments, outputNullifierPreimages } = await serviceSplitNoteStark(
+            sourcePool,
+            targetPool,
+            receipt,
+            numOutputs,
+            outputSecrets,
+            starkProofData,
+            walletSigner,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+              set({ progress: step, isProving: proving });
+            },
+          );
+
+          // Import the output notes into the wallet as fresh 'pending' notes.
+          // The user owns all of them — this is a denomination conversion.
+          const slot = await getConnection().getSlot('confirmed');
+          const depositEpoch = slotToEpoch(slot);
+          const newNotes: StoredNote[] = outputCommitments.map((commitment, i) => {
+            const outputReceipt: ShieldReceipt = {
+              secret: outputSecrets[i],
+              nullifierPreimage: outputNullifierPreimages[i],
+              depositEpoch,
+              tokenMint: receipt.tokenMint,
+              commitment,
+              leafIndex: -1,
+              denomination: targetPool.denominationAtomic,
+              pool: targetPool.poolPDA.toBase58(),
+              token: targetPool.token,
+              denominationHuman: targetPool.denomination,
+              shieldedAt: Date.now(),
+            };
+            return {
+              id: noteIdFromReceipt(outputReceipt),
+              receiptJSON: secureReceipt(outputReceipt),
+              token: targetPool.token,
+              denomination: targetPool.denomination,
+              poolPDA: targetPool.poolPDA.toBase58(),
+              shieldedAt: Date.now(),
+              status: 'pending' as NoteStatus,
+              source: 'shielded' as NoteSource,
+              cluster: getCluster(),
+            };
+          });
+
+          set(state => ({
+            isLoading: false,
+            isProving: false,
+            progress: null,
+            notes: [
+              ...newNotes,
+              ...state.notes.map(n =>
+                n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: txSignature } : n
+              ),
+            ],
+          }));
+
+          return { txSignature, outputCommitments };
+        } catch (err) {
+          console.error('[DenomPool] STARK split error:', err);
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
           throw err;
         }

@@ -15,20 +15,15 @@ import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { useDenominatedPoolStore, type StoredNote } from '@/stores/denominatedPoolStore';
-import {
-  DenominatedPoolProverProvider,
-  useDenominatedPoolProver,
-} from '@/components/privacy/DenominatedPoolProver';
+import { useStarkProver } from '@/providers/StarkProverProvider';
+import { receiptFromJSON } from '@/services/denominatedPool';
+import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
 
 export default function DenominatedTransferScreen() {
-  return (
-    <DenominatedPoolProverProvider>
-      <TransferScreenContent />
-    </DenominatedPoolProverProvider>
-  );
+  return <TransferScreenContent />;
 }
 
 function TransferScreenContent() {
@@ -38,13 +33,13 @@ function TransferScreenContent() {
   const { noteId: paramNoteId } = useLocalSearchParams<{ noteId?: string }>();
   const {
     notes,
-    transferNote,
+    transferNoteStark,
     isLoading,
     isProving,
     progress,
     error,
   } = useDenominatedPoolStore();
-  const { generateProof, preloadCircuit } = useDenominatedPoolProver();
+  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(paramNoteId ?? null);
   const [result, setResult] = useState<{ txSig: string; shareableNote: string } | null>(null);
@@ -66,19 +61,34 @@ function TransferScreenContent() {
     }
   }, [paramNoteId, matureNotes]);
 
-  useEffect(() => { preloadCircuit?.('transfer'); }, []);
-
   const handleTransfer = useCallback(async () => {
     if (!selectedNoteId) return;
+    if (!starkReady) {
+      p01Alert(t('common.error'), t('shieldUnshield.starkNotReady'));
+      return;
+    }
+    const note = notes.find(n => n.id === selectedNoteId);
+    if (!note) return;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const res = await transferNote(selectedNoteId, generateProof);
+      const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
+      const starkResult = await generatePoolCommitmentProof(
+        receipt.nullifierPreimage.toString(),
+        receipt.secret.toString(),
+        receipt.depositEpoch.toString(),
+        receipt.tokenMint.toString(),
+      );
+      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+      const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
+      const res = await transferNoteStark(selectedNoteId, {
+        proofBytes, publicInputs, proofSize: starkResult.proofSize,
+      });
       setResult(res);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       p01Alert(t('alerts.sendFailed'), (err as Error).message || t('alerts.errorGeneric'));
     }
-  }, [selectedNoteId, generateProof, transferNote]);
+  }, [selectedNoteId, notes, starkReady, generatePoolCommitmentProof, transferNoteStark, t]);
 
   const handleCopy = useCallback(async () => {
     if (!result) return;

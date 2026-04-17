@@ -33,7 +33,7 @@ export default function DenominatedUnshieldScreen() {
 
   const {
     notes, isLoading, isProving, error, progress,
-    unshieldNoteStark, emergencyUnshieldNote, refreshNoteStatuses,
+    unshieldNoteStark, emergencyUnshieldNoteStark, refreshNoteStatuses,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
@@ -98,9 +98,13 @@ export default function DenominatedUnshieldScreen() {
       );
       const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
       const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
-      const sig = await unshieldNoteStark(selectedNote.id, recipient, {
-        proofBytes, publicInputs, proofSize: starkResult.proofSize,
-      }, emergency);
+      const sig = emergency
+        ? await emergencyUnshieldNoteStark(selectedNote.id, recipient, {
+            proofBytes, publicInputs, proofSize: starkResult.proofSize,
+          })
+        : await unshieldNoteStark(selectedNote.id, recipient, {
+            proofBytes, publicInputs, proofSize: starkResult.proofSize,
+          }, false);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       useWalletStore.getState().refreshBalance();
@@ -116,7 +120,7 @@ export default function DenominatedUnshieldScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('common.error'), err.message);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, starkReady, generatePoolCommitmentProof, router, t, isMpcActive]);
+  }, [selectedNote, recipient, unshieldNoteStark, emergencyUnshieldNoteStark, starkReady, generatePoolCommitmentProof, router, t, isMpcActive]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {
