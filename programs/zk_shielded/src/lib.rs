@@ -330,6 +330,25 @@ pub mod zk_shielded {
         )
     }
 
+    /// Emergency unshield from a denominated pool using STARK (quantum-resistant).
+    /// Bypasses the on-chain maturity check. Emits is_emergency=true — reduces
+    /// anonymity set for this withdrawal.
+    pub fn emergency_unshield_denominated_stark(
+        ctx: Context<EmergencyUnshieldDenominatedStark>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        stark_commitment: u64,
+    ) -> Result<()> {
+        instructions::emergency_unshield_denominated_stark::handler(
+            ctx,
+            nullifier,
+            merkle_root,
+            min_epoch,
+            stark_commitment,
+        )
+    }
+
     /// Propose a two-step authority transfer (current authority only)
     pub fn propose_authority_transfer(
         ctx: Context<ProposeAuthorityTransfer>,
