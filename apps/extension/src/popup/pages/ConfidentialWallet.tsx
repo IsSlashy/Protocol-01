@@ -709,8 +709,9 @@ export default function ConfidentialWallet() {
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">How it works</h4>
                 <p className="text-p01-chrome/80">
-                  zkSPL uses Poseidon hash commitments and Groth16 ZK proofs to hide your balance
-                  on-chain. Only you know your actual balance; the blockchain only stores a commitment.
+                  zkSPL uses Poseidon hash commitments and post-quantum STARK proofs to hide your
+                  balance on-chain. Only you know your actual balance; the blockchain only stores a
+                  commitment.
                 </p>
               </div>
 

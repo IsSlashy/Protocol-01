@@ -2,7 +2,7 @@
  * Tests for ShieldedWallet page
  *
  * The ShieldedWallet page provides Zcash-style privacy on Solana using
- * ZK-SNARKs (Groth16 proofs). It displays:
+ * post-quantum ZK-STARKs. It displays:
  * - Shielded balance with hide/show toggle
  * - ZK address for receiving shielded transfers
  * - Shield / Unshield / Transfer / Recover action buttons
@@ -175,9 +175,9 @@ describe('ShieldedWallet', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('ZK-SNARK Protection')).toBeInTheDocument();
+    expect(screen.getByText('ZK-STARK Protection')).toBeInTheDocument();
     expect(
-      screen.getByText(/Groth16 zero-knowledge proofs/),
+      screen.getByText(/post-quantum STARK proofs/),
     ).toBeInTheDocument();
   });
 

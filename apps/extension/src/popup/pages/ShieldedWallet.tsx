@@ -568,9 +568,9 @@ export default function ShieldedWallet() {
                 <ShieldCheck className="w-5 h-5 text-p01-cyan" />
               </div>
               <div>
-                <p className="text-white font-medium">ZK-SNARK Protection</p>
+                <p className="text-white font-medium">ZK-STARK Protection</p>
                 <p className="text-p01-chrome text-xs mt-1">
-                  Your shielded transactions use Groth16 zero-knowledge proofs. No one can see amounts, senders, or recipients on-chain.
+                  Your shielded transactions use post-quantum STARK proofs. No one can see amounts, senders, or recipients on-chain.
                 </p>
               </div>
             </div>
