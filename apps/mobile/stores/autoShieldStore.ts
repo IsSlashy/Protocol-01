@@ -17,9 +17,9 @@
 import { create } from 'zustand';
 import { Keypair, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
-import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha256';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../services/solana/connection';
 import { useWalletStore } from './walletStore';
 import { useDenominatedPoolStore } from './denominatedPoolStore';
@@ -136,7 +136,7 @@ export const useAutoShieldStore = create<AutoShieldState>((set, get) => ({
       const seed = hmac(
         sha256,
         stealthKeys.viewingSecretKey,
-        `p01_auto_receive_${counter}`,
+        utf8ToBytes(`p01_auto_receive_${counter}`),
       );
 
       const keypair = Keypair.fromSeed(seed);

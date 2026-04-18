@@ -112,8 +112,8 @@ export default function PrivateSendScreen() {
 
       if (source === 'note' && selectedNote) {
         useDenominatedPoolStore.getState().lockNote(selectedNote.id);
-        const { sha256 } = await import('@noble/hashes/sha256');
-        const { bytesToHex } = await import('@noble/hashes/utils');
+        const { sha256 } = await import('@noble/hashes/sha2.js');
+        const { bytesToHex } = await import('@noble/hashes/utils.js');
         const skHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
         const { startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
         if (!isPrivacyRouterAvailable()) {
@@ -127,7 +127,7 @@ export default function PrivateSendScreen() {
       }
 
       // FROM WALLET: stealth → shield → route
-      const { sha256: sha256E } = require('@noble/hashes/sha256');
+      const { sha256: sha256E } = require('@noble/hashes/sha2');
       const { bytesToHex: bthE } = require('@noble/hashes/utils');
       const skHash = bthE(sha256E(new TextEncoder().encode(publicKey || 'default')));
       const ephId = `ephemeral_${Date.now().toString(36)}`;
@@ -154,8 +154,8 @@ export default function PrivateSendScreen() {
 
       const noteId = await shieldNote(pool);
 
-      const { sha256 } = await import('@noble/hashes/sha256');
-      const { bytesToHex } = await import('@noble/hashes/utils');
+      const { sha256 } = await import('@noble/hashes/sha2.js');
+      const { bytesToHex } = await import('@noble/hashes/utils.js');
       const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey || 'default')));
       const { startPrivateRoute, isPrivacyRouterAvailable } = await import('@/services/privacyRouter');
       if (!isPrivacyRouterAvailable()) {

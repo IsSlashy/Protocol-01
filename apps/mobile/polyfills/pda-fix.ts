@@ -11,7 +11,7 @@
  * ed25519_pow_2_252_3 addition chain from @noble/curves.
  */
 import { PublicKey } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { Buffer } from 'buffer';
 
 // Ed25519 field prime: p = 2^255 - 19

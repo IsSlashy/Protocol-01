@@ -14,8 +14,8 @@
  */
 
 import { Keypair, PublicKey } from '@solana/web3.js';
-import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha256';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 /**
  * Derives a deterministic stealth keypair for a specific position in a privacy route.

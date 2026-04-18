@@ -22,8 +22,9 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { getConnection } from '../solana/connection';
 
@@ -83,7 +84,7 @@ export enum JobStatus {
 // ── Encryption ─────────────────────────────────────────────────────────
 
 /** HKDF info for hybrid relay encryption (must match relayer-side decryption) */
-const HYBRID_RELAY_HKDF_INFO = 'p01_relay_job_hybrid_v2';
+const HYBRID_RELAY_HKDF_INFO = utf8ToBytes('p01_relay_job_hybrid_v2');
 
 /** ML-KEM-768 sizes */
 const KEM_PUBLIC_KEY_SIZE = 1184;
@@ -124,7 +125,7 @@ export function encryptForRelayer(
     symmetricKey = hkdf(sha256, combined, undefined, HYBRID_RELAY_HKDF_INFO, 32);
   } else {
     // Classic v1: X25519 only
-    symmetricKey = hkdf(sha256, classicSecret, undefined, 'p01_relay_job_v1', 32);
+    symmetricKey = hkdf(sha256, classicSecret, undefined, utf8ToBytes('p01_relay_job_v1'), 32);
   }
 
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);

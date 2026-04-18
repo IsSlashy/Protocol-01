@@ -141,7 +141,6 @@ export default {
     shieldedBalance: 'Solde prot\u00e9g\u00e9',
     myNotes: 'Mes notes',
     viewAllNotes: 'Voir toutes les notes',
-    importNote: 'Importer',
     noNotes: 'Aucune note',
     noNotesDesc: 'Prot\u00e9gez des fonds pour cr\u00e9er votre premi\u00e8re note.',
     shield: 'Prot\u00e9ger',

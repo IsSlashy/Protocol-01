@@ -59,9 +59,6 @@ export default function ConfidentialBalanceScreen() {
     refreshAllBalances,
     validateState,
     emergencyReset,
-    deposit,
-    withdraw,
-    confidentialTransfer,
     depositStark,
     withdrawStark,
     confidentialTransferStark,
@@ -73,7 +70,6 @@ export default function ConfidentialBalanceScreen() {
   const {
     isReady: starkReady,
     generateConfidentialBalanceProof,
-    generateTransferProof,
   } = useStarkProver();
 
   const [showBalance, setShowBalance] = useState(true);
@@ -147,42 +143,39 @@ export default function ConfidentialBalanceScreen() {
     setProgressMessage(`Preparing ${tokenSymbol} deposit...`);
 
     try {
-      if (starkReady) {
-        // --- STARK path (quantum-resistant) ---
-        setProgressStep(5);
-        setProgressMessage('Computing STARK proof inputs...');
-        const inputs = await getConfidentialProofInputs(selectedToken, parseFloat(amount), false);
-
-        setProgressStep(15);
-        setProgressMessage('Generating STARK proof on-device...');
-        const starkResult = await generateConfidentialBalanceProof(
-          inputs.spendingKey, inputs.oldBalance, inputs.oldSalt,
-          inputs.newBalance, inputs.newSalt, inputs.amount, inputs.amountSalt, inputs.tokenMint,
-        );
-
-        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-        const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
-
-        setProgressStep(40);
-        setProgressMessage('Verifying STARK proof on-chain...');
-        const interval = runProgress(40, [[60, 'Submitting deposit...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
-        await depositStark(selectedToken, parseFloat(amount), {
-          proofBytes,
-          publicInputs,
-          proofSize: starkResult.proofSize,
-        }, (step) => setProgressMessage(step));
-        clearInterval(interval);
-      } else {
-        // --- Groth16 fallback ---
-        const interval = runProgress(10, [[30, 'Generating proof...'], [55, 'Signing transaction...'], [75, 'Submitting to Solana...'], [100, 'Confirming...']]);
-        await deposit(selectedToken, parseFloat(amount));
-        clearInterval(interval);
+      if (!starkReady) {
+        throw new Error('STARK prover is still initializing. Please try again in a moment.');
       }
+
+      setProgressStep(5);
+      setProgressMessage('Computing STARK proof inputs...');
+      const inputs = await getConfidentialProofInputs(selectedToken, parseFloat(amount), false);
+
+      setProgressStep(15);
+      setProgressMessage('Generating STARK proof on-device...');
+      const starkResult = await generateConfidentialBalanceProof(
+        inputs.spendingKey, inputs.oldBalance, inputs.oldSalt,
+        inputs.newBalance, inputs.newSalt, inputs.amount, inputs.amountSalt, inputs.tokenMint,
+      );
+
+      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+      const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+
+      setProgressStep(40);
+      setProgressMessage('Verifying STARK proof on-chain...');
+      const interval = runProgress(40, [[60, 'Submitting deposit...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
+      await depositStark(selectedToken, parseFloat(amount), {
+        proofBytes,
+        publicInputs,
+        proofSize: starkResult.proofSize,
+      }, (step) => setProgressMessage(step));
+      clearInterval(interval);
+
       await completeProgress();
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      p01Alert('Success', `${tokenSymbol} deposited into confidential balance${starkReady ? ' (STARK verified)' : ''}`);
+      p01Alert('Success', `${tokenSymbol} deposited into confidential balance (STARK verified)`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
@@ -208,42 +201,39 @@ export default function ConfidentialBalanceScreen() {
     setProgressMessage(`Preparing ${tokenSymbol} withdrawal...`);
 
     try {
-      if (starkReady) {
-        // --- STARK path (quantum-resistant) ---
-        setProgressStep(5);
-        setProgressMessage('Computing STARK proof inputs...');
-        const inputs = await getConfidentialProofInputs(selectedToken, parseFloat(amount), true);
-
-        setProgressStep(15);
-        setProgressMessage('Generating STARK proof on-device...');
-        const starkResult = await generateConfidentialBalanceProof(
-          inputs.spendingKey, inputs.oldBalance, inputs.oldSalt,
-          inputs.newBalance, inputs.newSalt, inputs.amount, inputs.amountSalt, inputs.tokenMint,
-        );
-
-        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-        const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
-
-        setProgressStep(40);
-        setProgressMessage('Verifying STARK proof on-chain...');
-        const interval = runProgress(40, [[60, 'Submitting withdrawal...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
-        await withdrawStark(selectedToken, parseFloat(amount), {
-          proofBytes,
-          publicInputs,
-          proofSize: starkResult.proofSize,
-        }, (step) => setProgressMessage(step));
-        clearInterval(interval);
-      } else {
-        // --- Groth16 fallback ---
-        const interval = runProgress(10, [[30, 'Generating ZK proof...'], [55, 'Signing transaction...'], [75, 'Submitting to Solana...'], [100, 'Confirming...']]);
-        await withdraw(selectedToken, parseFloat(amount));
-        clearInterval(interval);
+      if (!starkReady) {
+        throw new Error('STARK prover is still initializing. Please try again in a moment.');
       }
+
+      setProgressStep(5);
+      setProgressMessage('Computing STARK proof inputs...');
+      const inputs = await getConfidentialProofInputs(selectedToken, parseFloat(amount), true);
+
+      setProgressStep(15);
+      setProgressMessage('Generating STARK proof on-device...');
+      const starkResult = await generateConfidentialBalanceProof(
+        inputs.spendingKey, inputs.oldBalance, inputs.oldSalt,
+        inputs.newBalance, inputs.newSalt, inputs.amount, inputs.amountSalt, inputs.tokenMint,
+      );
+
+      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+      const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+
+      setProgressStep(40);
+      setProgressMessage('Verifying STARK proof on-chain...');
+      const interval = runProgress(40, [[60, 'Submitting withdrawal...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
+      await withdrawStark(selectedToken, parseFloat(amount), {
+        proofBytes,
+        publicInputs,
+        proofSize: starkResult.proofSize,
+      }, (step) => setProgressMessage(step));
+      clearInterval(interval);
+
       await completeProgress();
       setActionModal(null);
       setAmount('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      p01Alert('Success', `${tokenSymbol} withdrawn from confidential balance${starkReady ? ' (STARK verified)' : ''}`);
+      p01Alert('Success', `${tokenSymbol} withdrawn from confidential balance (STARK verified)`);
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
@@ -263,46 +253,55 @@ export default function ConfidentialBalanceScreen() {
     setProgressMessage(`Preparing ${tokenSymbol} transfer...`);
 
     try {
-      if (starkReady) {
-        // --- STARK path (quantum-resistant) ---
-        setProgressStep(5);
-        setProgressMessage('Computing STARK proof inputs...');
-        const inputs = await getTransferProofInputs(selectedToken, parseFloat(amount), recipientAddress.trim());
+      if (!starkReady) {
+        throw new Error('STARK prover is still initializing. Please try again in a moment.');
+      }
 
-        setProgressStep(15);
-        setProgressMessage('Generating STARK transfer proof...');
-        const starkResult = await generateTransferProof(
-          inputs.spendingKey, inputs.tokenMint,
-          inputs.inAmount1, inputs.inRand1, inputs.inAmount2, inputs.inRand2,
-          inputs.outAmount1, inputs.outRand1, inputs.outRecipient1,
-          inputs.outAmount2, inputs.outRand2, inputs.outRecipient2,
-          inputs.publicAmount,
-        );
+      // zkSPL's confidential_transfer uses STARK circuit 4 (confidential_balance)
+      // on the sender side — the recipient-side pending credit is applied later
+      // via applyPending. The returned inputs have the same 8-field shape as
+      // getConfidentialProofInputs plus a deterministic non-zero amountSalt.
+      setProgressStep(5);
+      setProgressMessage('Computing STARK proof inputs...');
+      const inputs = await getTransferProofInputs(selectedToken, parseFloat(amount), recipientAddress.trim());
 
-        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-        const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+      setProgressStep(15);
+      setProgressMessage('Generating STARK transfer proof...');
+      const starkResult = await generateConfidentialBalanceProof(
+        inputs.spendingKey, inputs.oldBalance, inputs.oldSalt,
+        inputs.newBalance, inputs.newSalt, inputs.amount, inputs.amountSalt, inputs.tokenMint,
+      );
 
-        setProgressStep(40);
-        setProgressMessage('Verifying STARK proof on-chain...');
-        const interval = runProgress(40, [[55, 'Creating commitment...'], [70, 'Submitting transfer...'], [85, 'Confirming on Solana...'], [100, 'Complete!']]);
-        await confidentialTransferStark(selectedToken, recipientAddress.trim(), parseFloat(amount), {
+      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+      const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+
+      setProgressStep(40);
+      setProgressMessage('Verifying STARK proof on-chain...');
+      const interval = runProgress(40, [[55, 'Creating commitment...'], [70, 'Submitting transfer...'], [85, 'Confirming on Solana...'], [100, 'Complete!']]);
+      await confidentialTransferStark(
+        selectedToken,
+        recipientAddress.trim(),
+        parseFloat(amount),
+        inputs.amountSalt,
+        {
           proofBytes,
           publicInputs,
           proofSize: starkResult.proofSize,
-        }, (step) => setProgressMessage(step));
-        clearInterval(interval);
-      } else {
-        // --- Groth16 fallback ---
-        const interval = runProgress(10, [[25, 'Generating ZK proof...'], [45, 'Creating commitment...'], [65, 'Signing transaction...'], [80, 'Submitting to Solana...'], [100, 'Confirming...']]);
-        await confidentialTransfer(selectedToken, recipientAddress.trim(), parseFloat(amount));
-        clearInterval(interval);
-      }
+        },
+        (step) => setProgressMessage(step),
+      );
+      clearInterval(interval);
+
       await completeProgress();
       setActionModal(null);
       setAmount('');
       setRecipientAddress('');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      p01Alert('Transfer Sent', `The confidential ${tokenSymbol} transfer has been sent${starkReady ? ' (STARK verified)' : ''}. The recipient will see a pending credit they need to apply.`);
+      p01Alert(
+        'Transfer Sent',
+        `The confidential ${tokenSymbol} transfer has been sent (STARK verified). ` +
+        `The recipient must apply the pending credit; share the amount and salt (${inputs.amountSalt.slice(0, 10)}...) out-of-band.`,
+      );
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);

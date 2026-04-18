@@ -51,6 +51,7 @@ export interface StarkProverHandle {
   generateMerklePathProof(id: string, leaf: string, pathElements: string[], pathIndices: number[]): void;
   generateConfidentialBalanceProof(id: string, spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string): void;
   generateTransferProof(id: string, spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string): void;
+  generateMerkleUpdateProof(id: string, oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]): void;
   isMounted(): boolean;
 }
 
@@ -188,6 +189,9 @@ const STARK_HTML = `<!DOCTYPE html>
         break;
       case 'generateTransferProof':
         generateTransferProofFn(data.id, data);
+        break;
+      case 'generateMerkleUpdateProof':
+        generateMerkleUpdateProofFn(data.id, data.oldLeaf, data.newLeaf, data.pathElements, data.pathIndices);
         break;
     }
   }
@@ -377,6 +381,36 @@ const STARK_HTML = `<!DOCTYPE html>
     }
   }
 
+  function generateMerkleUpdateProofFn(id, oldLeaf, newLeaf, pathElements, pathIndices) {
+    try {
+      if (!wasmInstance) throw new Error('WASM not initialized');
+      var startTime = performance.now();
+      var elemsCsv = pathElements.join(',');
+      var indicesCsv = pathIndices.join(',');
+      var elemsPtr = passStringToWasm(elemsCsv);
+      var elemsLen = WASM_VECTOR_LEN;
+      var indicesPtr = passStringToWasm(indicesCsv);
+      var indicesLen = WASM_VECTOR_LEN;
+      var ret = wasmInstance.exports.generate_merkle_update_stark_proof(
+        BigInt(oldLeaf), BigInt(newLeaf), elemsPtr, elemsLen, indicesPtr, indicesLen
+      );
+      var jsonStr = getStringFromWasm(ret[0], ret[1]);
+      wasmInstance.exports.__wbindgen_free(ret[0], ret[1], 1);
+      var elapsed = Math.round(performance.now() - startTime);
+      var result = JSON.parse(jsonStr);
+      post({
+        type: 'proof', id: id,
+        circuitId: result.circuit_id,
+        publicInputs: [result.old_leaf, result.new_leaf, result.old_root, result.new_root, String(result.depth)],
+        proofHex: result.proof_hex,
+        proofSize: result.proof_size,
+        durationMs: elapsed
+      });
+    } catch(e) {
+      post({ type: 'error', id: id, error: e.message || 'Merkle update proof failed' });
+    }
+  }
+
   function generateTransferProofFn(id, data) {
     try {
       if (!wasmInstance) throw new Error('WASM not initialized');
@@ -389,11 +423,11 @@ const STARK_HTML = `<!DOCTYPE html>
         BigInt(data.inAmount2),
         BigInt(data.inRand2),
         BigInt(data.outAmount1),
-        BigInt(data.outRand1),
         BigInt(data.outRecipient1),
+        BigInt(data.outRand1),
         BigInt(data.outAmount2),
-        BigInt(data.outRand2),
         BigInt(data.outRecipient2),
+        BigInt(data.outRand2),
         BigInt(data.publicAmount)
       );
       var jsonStr = getStringFromWasm(ret[0], ret[1]);
@@ -518,6 +552,14 @@ export const StarkProver = forwardRef<StarkProverHandle, StarkProverProps>(
           outAmount1, outRand1, outRecipient1,
           outAmount2, outRand2, outRecipient2,
           publicAmount,
+        }));
+      },
+
+      generateMerkleUpdateProof(id: string, oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]) {
+        if (!webViewRef.current) return;
+        inject(JSON.stringify({
+          type: 'generateMerkleUpdateProof', id,
+          oldLeaf, newLeaf, pathElements, pathIndices,
         }));
       },
 

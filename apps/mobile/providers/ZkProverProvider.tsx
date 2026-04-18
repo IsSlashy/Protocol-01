@@ -29,7 +29,6 @@ import {
   type CircuitName,
   type Groth16Proof,
 } from '../services/zk/webviewProver';
-import { getZkService } from '../services/zk';
 
 // -----------------------------------------------------------------------
 // Lazy circuit data loading (transfer circuit — 19MB base64)
@@ -121,9 +120,8 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
       isCircuitLoadedRef.current = true;
       setIsCircuitLoaded(true);
       setError(null);
-
-      // Wire the local prover into ZkService so existing code paths use it
-      connectToZkService();
+      // Note: transfer/shield/unshield are STARK-proven through StarkProverProvider.
+      // This Groth16 WebView is retained only for subscribe-private + vault-detail.
     }
 
     if (msg.type === 'circuitLoaded' && !msg.success) {
@@ -154,28 +152,6 @@ export function ZkProverProvider({ children }: ZkProverProviderProps) {
     if (handle) {
       webviewProverService.attachWebView(handle);
     }
-  }, []);
-
-  // ------------------------------------------------------------------
-  // Connect prover functions to ZkService singleton
-  // ------------------------------------------------------------------
-
-  const connectToZkService = useCallback(() => {
-    const zkService = getZkService();
-
-    // Byte-array prover (for on-chain Solana transactions)
-    zkService.setProver(async (inputs: Record<string, string>): Promise<Groth16Proof> => {
-      const result = await webviewProverService.generateProof('transfer', inputs);
-      return convertSnarkjsProofToBytes(result.proof);
-    });
-
-    // Raw snarkjs-format prover (for relayer)
-    zkService.setProverRaw(async (inputs: Record<string, string>) => {
-      const result = await webviewProverService.generateProof('transfer', inputs);
-      return { proof: result.proof, publicSignals: result.publicSignals };
-    });
-
-    console.log('[ZkProver] Local prover connected to ZkService');
   }, []);
 
   // ------------------------------------------------------------------

@@ -6,6 +6,7 @@ import { getConnection, isDevnet } from '../services/solana/connection';
 import {
   getZkSplService,
   resetZkSplService,
+  ZkSplService,
   NATIVE_SOL_MINT,
   NATIVE_SOL_MINT_STR,
   USDC_DEVNET_MINT,
@@ -13,13 +14,12 @@ import {
   SUPPORTED_TOKENS,
   getTokenDecimals,
   getTokenSymbol,
-  type ZkSplService,
 } from '../services/zkspl';
 import {
-  submitGenericStarkProof,
+  submitAndVerifyStarkProof,
+  closeStarkProofBuffer,
   type GenericStarkProof,
   CIRCUIT_CONFIDENTIAL_BALANCE,
-  CIRCUIT_TRANSFER,
 } from '../services/stark';
 
 // ---------------------------------------------------------------------------
@@ -77,36 +77,42 @@ interface ConfidentialState {
   refreshAllBalances: () => Promise<void>;
   validateState: (tokenMint?: string) => Promise<StateValidation | null>;
   emergencyReset: (tokenMint: string) => Promise<void>;
-  deposit: (tokenMint: string, amount: number) => Promise<string>;
-  withdraw: (tokenMint: string, amount: number) => Promise<string>;
-  confidentialTransfer: (
-    tokenMint: string,
-    recipient: string,
-    amount: number,
-  ) => Promise<string>;
-  /** Deposit with supplementary STARK proof (quantum-resistant redundancy) */
+  /**
+   * Deposit tokens into the confidential account.
+   * STARK-only: caller generates a STARK proof for circuit 4 (confidential_balance)
+   * off-device, then passes it here. The store uploads+verifies the proof via
+   * `p01_stark_verifier`, calls the on-chain `deposit` with the verified proof
+   * buffer, and closes the buffer to recover rent.
+   */
   depositStark: (
     tokenMint: string,
     amount: number,
     starkProofData: ConfidentialStarkProofData,
     onStarkProgress?: (step: string) => void,
   ) => Promise<string>;
-  /** Withdraw with supplementary STARK proof (quantum-resistant redundancy) */
+  /** Withdraw (STARK-only; see depositStark docs). */
   withdrawStark: (
     tokenMint: string,
     amount: number,
     starkProofData: ConfidentialStarkProofData,
     onStarkProgress?: (step: string) => void,
   ) => Promise<string>;
-  /** Transfer with supplementary STARK proof (quantum-resistant redundancy) */
+  /**
+   * Confidential transfer (STARK-only).
+   * The caller must pass the `amountSalt` used to build `amount_hash`
+   * (it comes from `getTransferProofInputs`). The returned value contains
+   * the sender-side signature; the recipient needs `amount` + `amountSalt`
+   * out-of-band to later call `applyPending`.
+   */
   confidentialTransferStark: (
     tokenMint: string,
     recipient: string,
     amount: number,
+    amountSalt: string,
     starkProofData: ConfidentialStarkProofData,
     onStarkProgress?: (step: string) => void,
   ) => Promise<string>;
-  /** Get STARK proof inputs for confidential balance operations */
+  /** Get STARK proof inputs for confidential balance operations (circuit 4) */
   getConfidentialProofInputs: (
     tokenMint: string,
     amount: number,
@@ -121,30 +127,44 @@ interface ConfidentialState {
     amountSalt: string;
     tokenMint: string;
   }>;
-  /** Get STARK proof inputs for transfer operations */
+  /**
+   * Get STARK proof inputs for confidential transfer.
+   * Returns the same shape as `getConfidentialProofInputs` (sender-side
+   * balance update uses circuit 4), with a deterministic non-zero
+   * `amountSalt` so the recipient can match the on-chain `amount_hash`.
+   */
   getTransferProofInputs: (
     tokenMint: string,
     amount: number,
     recipientPubkey: string,
   ) => Promise<{
     spendingKey: string;
+    oldBalance: string;
+    oldSalt: string;
+    newBalance: string;
+    newSalt: string;
+    amount: string;
+    amountSalt: string;
     tokenMint: string;
-    inAmount1: string;
-    inRand1: string;
-    inAmount2: string;
-    inRand2: string;
-    outAmount1: string;
-    outRand1: string;
-    outRecipient1: string;
-    outAmount2: string;
-    outRand2: string;
-    outRecipient2: string;
-    publicAmount: string;
   }>;
-  applyPending: (
+  /**
+   * Apply a pending credit to the confidential balance (STARK-only).
+   * Caller must generate a STARK proof for circuit 4 using the same
+   * `amount`+`amountSalt` the sender shared off-band.
+   */
+  applyPendingStark: (
     tokenMint: string,
     amount: number,
     amountSalt: string,
+    starkProofData: ConfidentialStarkProofData,
+    onStarkProgress?: (step: string) => void,
+  ) => Promise<string>;
+  /** Prove the confidential balance satisfies a threshold (STARK-only, circuit 2). */
+  proveBalanceStark: (
+    tokenMint: string,
+    threshold: number,
+    starkProofData: ConfidentialStarkProofData,
+    onStarkProgress?: (step: string) => void,
   ) => Promise<string>;
   sweepToMainWallet: (mainWalletAddress: string, amount: number, onProgress?: (step: 'shield' | 'unshield', message: string) => void) => Promise<string>;
   reset: () => void;
@@ -527,226 +547,6 @@ export const useConfidentialStore = create<ConfidentialState>()(
       },
 
       /**
-       * Deposit tokens into the confidential account.
-       */
-      deposit: async (tokenMint: string, amount: number) => {
-        const initialized = await get().ensureInitialized();
-        if (!initialized) {
-          throw new Error('ZkSPL service not initialized. Please restart the app.');
-        }
-
-        const { _service } = get();
-        if (!_service) throw new Error('ZkSPL service not available');
-
-        set({ isLoading: true, error: null });
-
-        try {
-          const mintPubkey = new PublicKey(tokenMint);
-          const decimals = getTokenDecimals(tokenMint);
-          let amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-
-          // Pre-flight SOL balance check for native SOL deposits
-          if (tokenMint === NATIVE_SOL_MINT_STR) {
-            const connection = getConnection();
-            const walletPubkey = _service.getWalletPublicKey();
-            const walletBalance = await connection.getBalance(walletPubkey);
-            set({ zkWalletBalance: walletBalance }); // refresh displayed balance
-            const FEE_RESERVE = 15_000; // lamports reserved for tx fee
-            const maxDepositable = walletBalance - FEE_RESERVE;
-            if (maxDepositable <= 0) {
-              throw new Error(`ZK wallet has no SOL available for deposit. Send SOL to your ZK wallet first.`);
-            }
-            // Auto-cap to max depositable if user entered too much
-            if (Number(amountAtomic) > maxDepositable) {
-              amountAtomic = BigInt(maxDepositable);
-            }
-          }
-
-          const { signature, newBalance } = await _service.deposit(
-            mintPubkey,
-            amountAtomic,
-          );
-
-          set((state) => ({
-            isLoading: false,
-            balances: {
-              ...state.balances,
-              [tokenMint]: Number(newBalance),
-            },
-          }));
-
-          return signature;
-        } catch (error) {
-          console.error('[Confidential] Deposit error:', error);
-          const msg = (error as Error).message || '';
-          // Friendly error for insufficient SOL
-          if (msg.includes('insufficient lamports') || msg.includes('Insufficient SOL')) {
-            const friendly = msg.includes('Insufficient SOL')
-              ? msg
-              : 'Insufficient SOL for this deposit. Try a smaller amount.';
-            set({ isLoading: false, error: friendly });
-            throw new Error(friendly);
-          }
-          set({ isLoading: false, error: msg });
-          throw error;
-        }
-      },
-
-      /**
-       * Withdraw tokens from the confidential account.
-       */
-      withdraw: async (tokenMint: string, amount: number) => {
-        const initialized = await get().ensureInitialized();
-        if (!initialized) {
-          throw new Error('ZkSPL service not initialized. Please restart the app.');
-        }
-
-        const { _service } = get();
-        if (!_service) throw new Error('ZkSPL service not available');
-
-        const currentBalance = get().balances[tokenMint] || 0;
-        const decimals = getTokenDecimals(tokenMint);
-        const amountAtomic = Math.floor(amount * Math.pow(10, decimals));
-        if (amountAtomic > currentBalance) {
-          throw new Error(`Insufficient confidential ${getTokenSymbol(tokenMint)} balance`);
-        }
-
-        set({ isLoading: true, error: null });
-
-        try {
-          const mintPubkey = new PublicKey(tokenMint);
-          const amountBigint = BigInt(amountAtomic);
-
-          // Pre-flight: ensure ZK wallet has enough SOL for the tx fee
-          const connection = getConnection();
-          const walletPubkey = _service.getWalletPublicKey();
-          const walletBalance = await connection.getBalance(walletPubkey);
-          const MIN_FEE_LAMPORTS = 10_000; // ~2 tx fees worth
-
-          if (walletBalance < MIN_FEE_LAMPORTS) {
-            if (isDevnet()) {
-              // On devnet, auto-airdrop to cover fees
-              try {
-                const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
-                const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
-                await devnetConn.confirmTransaction(sig, 'confirmed');
-              } catch (airdropErr: any) {
-                throw new Error(
-                  `ZK wallet has insufficient SOL for transaction fee (${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL). ` +
-                  `Send a small amount of SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
-                );
-              }
-            } else {
-              throw new Error(
-                `ZK wallet has insufficient SOL for transaction fee (${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL). ` +
-                `Send a small amount of SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
-              );
-            }
-          }
-
-          const { signature, newBalance } = await _service.withdraw(
-            mintPubkey,
-            amountBigint,
-          );
-
-          set((state) => ({
-            isLoading: false,
-            balances: {
-              ...state.balances,
-              [tokenMint]: Number(newBalance),
-            },
-          }));
-
-          return signature;
-        } catch (error) {
-          console.error('[Confidential] Withdraw error:', error);
-          set({ isLoading: false, error: (error as Error).message });
-          throw error;
-        }
-      },
-
-      /**
-       * Send a confidential transfer to another user.
-       */
-      confidentialTransfer: async (
-        tokenMint: string,
-        recipient: string,
-        amount: number,
-      ) => {
-        const initialized = await get().ensureInitialized();
-        if (!initialized) {
-          throw new Error('ZkSPL service not initialized. Please restart the app.');
-        }
-
-        const { _service } = get();
-        if (!_service) throw new Error('ZkSPL service not available');
-
-        const currentBalance = get().balances[tokenMint] || 0;
-        const decimals = getTokenDecimals(tokenMint);
-        const amountAtomic = Math.floor(amount * Math.pow(10, decimals));
-        if (amountAtomic > currentBalance) {
-          throw new Error(`Insufficient confidential ${getTokenSymbol(tokenMint)} balance`);
-        }
-
-        set({ isLoading: true, error: null });
-
-        try {
-          // Pre-flight: ensure ZK wallet has enough SOL for the tx fee
-          const connection = getConnection();
-          const walletPubkey = _service.getWalletPublicKey();
-          const walletBalance = await connection.getBalance(walletPubkey);
-          const MIN_FEE_LAMPORTS = 10_000;
-
-          if (walletBalance < MIN_FEE_LAMPORTS) {
-            if (isDevnet()) {
-              try {
-                const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
-                const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
-                await devnetConn.confirmTransaction(sig, 'confirmed');
-              } catch {
-                throw new Error(
-                  `ZK wallet has insufficient SOL for transaction fee. ` +
-                  `Send SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
-                );
-              }
-            } else {
-              throw new Error(
-                `ZK wallet has insufficient SOL for transaction fee. ` +
-                `Send SOL to ${walletPubkey.toBase58().slice(0, 8)}... to cover fees.`
-              );
-            }
-          }
-
-          const mintPubkey = new PublicKey(tokenMint);
-          const recipientPubkey = new PublicKey(recipient);
-          const amountBigint = BigInt(amountAtomic);
-
-          const { signature } = await _service.transfer(
-            mintPubkey,
-            recipientPubkey,
-            amountBigint,
-          );
-
-          // Refresh balance after transfer
-          const newBalance = await _service.getLocalBalance(mintPubkey);
-
-          set((state) => ({
-            isLoading: false,
-            balances: {
-              ...state.balances,
-              [tokenMint]: Number(newBalance),
-            },
-          }));
-
-          return signature;
-        } catch (error) {
-          console.error('[Confidential] Transfer error:', error);
-          set({ isLoading: false, error: (error as Error).message });
-          throw error;
-        }
-      },
-
-      /**
        * Get STARK proof inputs for confidential balance (circuit 4).
        * Must be called before deposit/withdraw to capture the pre-op state.
        */
@@ -770,13 +570,18 @@ export const useConfidentialStore = create<ConfidentialState>()(
       },
 
       /**
-       * Get STARK proof inputs for transfer (circuit 5).
-       * Must be called before confidentialTransfer to capture the pre-op state.
+       * Get STARK proof inputs for confidential transfer.
+       * zkSPL transfer uses circuit 4 (confidential_balance) for the sender-
+       * side balance update — circuit 5 (UTXO) is reserved for zk_shielded.
+       * Returns the same 8-field shape as `getConfidentialProofInputs` with a
+       * deterministic non-zero `amountSalt`. The `recipientPubkey` is passed
+       * for forward compatibility but currently unused — the recipient is
+       * bound through the zkSPL instruction's `recipient_account` PDA.
        */
       getTransferProofInputs: async (
         tokenMint: string,
         amount: number,
-        recipientPubkey: string,
+        _recipientPubkey: string,
       ) => {
         const initialized = await get().ensureInitialized();
         if (!initialized) throw new Error('ZkSPL service not initialized');
@@ -788,18 +593,21 @@ export const useConfidentialStore = create<ConfidentialState>()(
         return _service.getTransferProofInputs(
           new PublicKey(tokenMint),
           amountAtomic,
-          new PublicKey(recipientPubkey),
         );
       },
 
       /**
-       * Deposit with supplementary STARK proof (quantum-resistant).
-       * Generates STARK proof for circuit 4, verifies on-chain, then deposits via Groth16.
+       * Deposit (STARK-only).
+       *
+       * Flow:
+       *   1. Upload+verify STARK proof (keep buffer open for zkSPL to read)
+       *   2. Call zkSPL `deposit` with the verified proof buffer + newCommitment
+       *   3. Close the proof buffer to recover rent
        */
       depositStark: async (
         tokenMint: string,
         amount: number,
-        starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+        starkProofData: ConfidentialStarkProofData,
         onStarkProgress?: (step: string) => void,
       ) => {
         const initialized = await get().ensureInitialized();
@@ -810,7 +618,27 @@ export const useConfidentialStore = create<ConfidentialState>()(
         set({ isLoading: true, error: null });
 
         try {
-          // Step 1: Submit STARK proof to on-chain verifier (quantum-resistant audit)
+          const mintPubkey = new PublicKey(tokenMint);
+          const decimals = getTokenDecimals(tokenMint);
+          let amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
+
+          // Pre-flight SOL balance check for native SOL deposits
+          if (tokenMint === NATIVE_SOL_MINT_STR) {
+            const connection = getConnection();
+            const walletPubkey = _service.getWalletPublicKey();
+            const walletBalance = await connection.getBalance(walletPubkey);
+            set({ zkWalletBalance: walletBalance });
+            const FEE_RESERVE = 200_000; // lamports reserved for STARK upload + deposit fees
+            const maxDepositable = walletBalance - FEE_RESERVE;
+            if (maxDepositable <= 0) {
+              throw new Error(`ZK wallet has no SOL available for deposit. Send SOL to your ZK wallet first.`);
+            }
+            if (Number(amountAtomic) > maxDepositable) {
+              amountAtomic = BigInt(maxDepositable);
+            }
+          }
+
+          // Step 1: upload STARK proof and verify on-chain (buffer kept open).
           onStarkProgress?.('Verifying STARK proof on-chain...');
           const starkProof: GenericStarkProof = {
             proofBytes: starkProofData.proofBytes,
@@ -818,26 +646,59 @@ export const useConfidentialStore = create<ConfidentialState>()(
             publicInputs: starkProofData.publicInputs,
             proofSize: starkProofData.proofSize,
           };
-          await submitGenericStarkProof(starkProof, undefined, onStarkProgress);
+          const { proofBuffer } = await submitAndVerifyStarkProof(
+            starkProof,
+            undefined,
+            onStarkProgress,
+          );
 
-          // Step 2: Execute the Groth16 deposit (existing flow)
-          onStarkProgress?.('Executing deposit...');
-          const signature = await get().deposit(tokenMint, amount);
+          // The AIR public inputs order is [old_commitment, new_commitment,
+          // amount_hash, token_mint]. new_commitment sits at index 1.
+          const newCommitment = ZkSplService.fieldToBytes32LE(
+            starkProofData.publicInputs[1],
+          );
+
+          // Step 2: run the on-chain zkSPL deposit.
+          onStarkProgress?.('Submitting zkSPL deposit...');
+          const { signature, newBalance } = await _service.deposit(
+            mintPubkey,
+            amountAtomic,
+            proofBuffer,
+            newCommitment,
+          );
+
+          // Step 3: recover rent from the proof buffer (best-effort).
+          onStarkProgress?.('Closing STARK proof buffer...');
+          await closeStarkProofBuffer(proofBuffer).catch(() => {});
+
+          set((state) => ({
+            isLoading: false,
+            balances: {
+              ...state.balances,
+              [tokenMint]: Number(newBalance),
+            },
+          }));
+
           return signature;
         } catch (error) {
           console.error('[Confidential] STARK deposit error:', error);
-          set({ isLoading: false, error: (error as Error).message });
-          throw error;
+          const msg = (error as Error).message || '';
+          const friendly =
+            msg.includes('insufficient lamports') || msg.includes('Insufficient SOL')
+              ? 'Insufficient SOL for this deposit. Try a smaller amount.'
+              : msg;
+          set({ isLoading: false, error: friendly });
+          throw new Error(friendly);
         }
       },
 
       /**
-       * Withdraw with supplementary STARK proof (quantum-resistant).
+       * Withdraw (STARK-only).
        */
       withdrawStark: async (
         tokenMint: string,
         amount: number,
-        starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+        starkProofData: ConfidentialStarkProofData,
         onStarkProgress?: (step: string) => void,
       ) => {
         const initialized = await get().ensureInitialized();
@@ -845,9 +706,45 @@ export const useConfidentialStore = create<ConfidentialState>()(
         const { _service } = get();
         if (!_service) throw new Error('ZkSPL service not available');
 
+        const currentBalance = get().balances[tokenMint] || 0;
+        const decimals = getTokenDecimals(tokenMint);
+        const amountAtomic = Math.floor(amount * Math.pow(10, decimals));
+        if (amountAtomic > currentBalance) {
+          throw new Error(`Insufficient confidential ${getTokenSymbol(tokenMint)} balance`);
+        }
+
         set({ isLoading: true, error: null });
 
         try {
+          const mintPubkey = new PublicKey(tokenMint);
+          const amountBigint = BigInt(amountAtomic);
+
+          // Pre-flight: ensure ZK wallet has enough SOL for the tx fees
+          const connection = getConnection();
+          const walletPubkey = _service.getWalletPublicKey();
+          const walletBalance = await connection.getBalance(walletPubkey);
+          const MIN_FEE_LAMPORTS = 200_000;
+          if (walletBalance < MIN_FEE_LAMPORTS) {
+            if (isDevnet()) {
+              try {
+                const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
+                const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
+                await devnetConn.confirmTransaction(sig, 'confirmed');
+              } catch {
+                throw new Error(
+                  `ZK wallet has insufficient SOL for STARK + withdrawal fees ` +
+                  `(${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL). ` +
+                  `Send a small amount of SOL to ${walletPubkey.toBase58().slice(0, 8)}...`,
+                );
+              }
+            } else {
+              throw new Error(
+                `ZK wallet has insufficient SOL for STARK + withdrawal fees ` +
+                `(${(walletBalance / LAMPORTS_PER_SOL).toFixed(6)} SOL).`,
+              );
+            }
+          }
+
           onStarkProgress?.('Verifying STARK proof on-chain...');
           const starkProof: GenericStarkProof = {
             proofBytes: starkProofData.proofBytes,
@@ -855,10 +752,35 @@ export const useConfidentialStore = create<ConfidentialState>()(
             publicInputs: starkProofData.publicInputs,
             proofSize: starkProofData.proofSize,
           };
-          await submitGenericStarkProof(starkProof, undefined, onStarkProgress);
+          const { proofBuffer } = await submitAndVerifyStarkProof(
+            starkProof,
+            undefined,
+            onStarkProgress,
+          );
 
-          onStarkProgress?.('Executing withdrawal...');
-          const signature = await get().withdraw(tokenMint, amount);
+          const newCommitment = ZkSplService.fieldToBytes32LE(
+            starkProofData.publicInputs[1],
+          );
+
+          onStarkProgress?.('Submitting zkSPL withdraw...');
+          const { signature, newBalance } = await _service.withdraw(
+            mintPubkey,
+            amountBigint,
+            proofBuffer,
+            newCommitment,
+          );
+
+          onStarkProgress?.('Closing STARK proof buffer...');
+          await closeStarkProofBuffer(proofBuffer).catch(() => {});
+
+          set((state) => ({
+            isLoading: false,
+            balances: {
+              ...state.balances,
+              [tokenMint]: Number(newBalance),
+            },
+          }));
+
           return signature;
         } catch (error) {
           console.error('[Confidential] STARK withdraw error:', error);
@@ -868,13 +790,14 @@ export const useConfidentialStore = create<ConfidentialState>()(
       },
 
       /**
-       * Confidential transfer with supplementary STARK proof (quantum-resistant).
+       * Confidential transfer (STARK-only).
        */
       confidentialTransferStark: async (
         tokenMint: string,
         recipient: string,
         amount: number,
-        starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+        amountSalt: string,
+        starkProofData: ConfidentialStarkProofData,
         onStarkProgress?: (step: string) => void,
       ) => {
         const initialized = await get().ensureInitialized();
@@ -882,20 +805,83 @@ export const useConfidentialStore = create<ConfidentialState>()(
         const { _service } = get();
         if (!_service) throw new Error('ZkSPL service not available');
 
+        const currentBalance = get().balances[tokenMint] || 0;
+        const decimals = getTokenDecimals(tokenMint);
+        const amountAtomic = Math.floor(amount * Math.pow(10, decimals));
+        if (amountAtomic > currentBalance) {
+          throw new Error(`Insufficient confidential ${getTokenSymbol(tokenMint)} balance`);
+        }
+
         set({ isLoading: true, error: null });
 
         try {
+          const connection = getConnection();
+          const walletPubkey = _service.getWalletPublicKey();
+          const walletBalance = await connection.getBalance(walletPubkey);
+          const MIN_FEE_LAMPORTS = 200_000;
+          if (walletBalance < MIN_FEE_LAMPORTS) {
+            if (isDevnet()) {
+              try {
+                const devnetConn = new Connection('https://api.devnet.solana.com', 'confirmed');
+                const sig = await devnetConn.requestAirdrop(walletPubkey, 0.01 * LAMPORTS_PER_SOL);
+                await devnetConn.confirmTransaction(sig, 'confirmed');
+              } catch {
+                throw new Error(
+                  `ZK wallet has insufficient SOL for STARK + transfer fees. ` +
+                  `Send SOL to ${walletPubkey.toBase58().slice(0, 8)}...`,
+                );
+              }
+            } else {
+              throw new Error(`ZK wallet has insufficient SOL for STARK + transfer fees.`);
+            }
+          }
+
+          const mintPubkey = new PublicKey(tokenMint);
+          const recipientPubkey = new PublicKey(recipient);
+          const amountBigint = BigInt(amountAtomic);
+
           onStarkProgress?.('Verifying STARK proof on-chain...');
           const starkProof: GenericStarkProof = {
             proofBytes: starkProofData.proofBytes,
-            circuitId: CIRCUIT_TRANSFER,
+            circuitId: CIRCUIT_CONFIDENTIAL_BALANCE,
             publicInputs: starkProofData.publicInputs,
             proofSize: starkProofData.proofSize,
           };
-          await submitGenericStarkProof(starkProof, undefined, onStarkProgress);
+          const { proofBuffer } = await submitAndVerifyStarkProof(
+            starkProof,
+            undefined,
+            onStarkProgress,
+          );
 
-          onStarkProgress?.('Executing transfer...');
-          const signature = await get().confidentialTransfer(tokenMint, recipient, amount);
+          // AIR order: [old_commitment, new_commitment, amount_hash, token_mint]
+          const newCommitment = ZkSplService.fieldToBytes32LE(starkProofData.publicInputs[1]);
+          const amountHash = ZkSplService.fieldToBytes32LE(starkProofData.publicInputs[2]);
+
+          onStarkProgress?.('Submitting zkSPL confidential transfer...');
+          const { signature } = await _service.transfer(
+            mintPubkey,
+            recipientPubkey,
+            amountBigint,
+            proofBuffer,
+            newCommitment,
+            amountHash,
+            BigInt(amountSalt),
+          );
+
+          onStarkProgress?.('Closing STARK proof buffer...');
+          await closeStarkProofBuffer(proofBuffer).catch(() => {});
+
+          // Refresh balance after transfer
+          const newBalance = await _service.getLocalBalance(mintPubkey);
+
+          set((state) => ({
+            isLoading: false,
+            balances: {
+              ...state.balances,
+              [tokenMint]: Number(newBalance),
+            },
+          }));
+
           return signature;
         } catch (error) {
           console.error('[Confidential] STARK transfer error:', error);
@@ -905,12 +891,16 @@ export const useConfidentialStore = create<ConfidentialState>()(
       },
 
       /**
-       * Apply a pending credit to the confidential balance.
+       * Apply a pending credit (STARK-only).
+       * The caller must hand over the STARK proof they generated using the
+       * same `amount` + `amountSalt` that the sender shared out-of-band.
        */
-      applyPending: async (
+      applyPendingStark: async (
         tokenMint: string,
         amount: number,
-        amountSalt: string,
+        _amountSalt: string,
+        starkProofData: ConfidentialStarkProofData,
+        onStarkProgress?: (step: string) => void,
       ) => {
         const initialized = await get().ensureInitialized();
         if (!initialized) {
@@ -926,13 +916,35 @@ export const useConfidentialStore = create<ConfidentialState>()(
           const mintPubkey = new PublicKey(tokenMint);
           const decimals = getTokenDecimals(tokenMint);
           const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-          const salt = BigInt(amountSalt);
 
+          onStarkProgress?.('Verifying STARK proof on-chain...');
+          const starkProof: GenericStarkProof = {
+            proofBytes: starkProofData.proofBytes,
+            circuitId: CIRCUIT_CONFIDENTIAL_BALANCE,
+            publicInputs: starkProofData.publicInputs,
+            proofSize: starkProofData.proofSize,
+          };
+          const { proofBuffer } = await submitAndVerifyStarkProof(
+            starkProof,
+            undefined,
+            onStarkProgress,
+          );
+
+          // AIR order: [old_commitment, new_commitment, amount_hash, token_mint]
+          const newCommitment = ZkSplService.fieldToBytes32LE(starkProofData.publicInputs[1]);
+          const amountHash = ZkSplService.fieldToBytes32LE(starkProofData.publicInputs[2]);
+
+          onStarkProgress?.('Submitting zkSPL apply_pending...');
           const { signature, newBalance } = await _service.applyPending(
             mintPubkey,
             amountAtomic,
-            salt,
+            proofBuffer,
+            newCommitment,
+            amountHash,
           );
+
+          onStarkProgress?.('Closing STARK proof buffer...');
+          await closeStarkProofBuffer(proofBuffer).catch(() => {});
 
           // Refresh pending credits count
           let pendingCount = 0;
@@ -956,7 +968,61 @@ export const useConfidentialStore = create<ConfidentialState>()(
 
           return signature;
         } catch (error) {
-          console.error('[Confidential] Apply pending error:', error);
+          console.error('[Confidential] STARK apply_pending error:', error);
+          set({ isLoading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      /**
+       * Prove the confidential balance is >= `threshold` (STARK-only, circuit 2).
+       */
+      proveBalanceStark: async (
+        tokenMint: string,
+        threshold: number,
+        starkProofData: ConfidentialStarkProofData,
+        onStarkProgress?: (step: string) => void,
+      ) => {
+        const initialized = await get().ensureInitialized();
+        if (!initialized) throw new Error('ZkSPL service not initialized');
+        const { _service } = get();
+        if (!_service) throw new Error('ZkSPL service not available');
+
+        set({ isLoading: true, error: null });
+
+        try {
+          const mintPubkey = new PublicKey(tokenMint);
+          const decimals = getTokenDecimals(tokenMint);
+          const thresholdAtomic = BigInt(Math.floor(threshold * Math.pow(10, decimals)));
+
+          onStarkProgress?.('Verifying STARK balance proof on-chain...');
+          const starkProof: GenericStarkProof = {
+            proofBytes: starkProofData.proofBytes,
+            // Circuit 2 = balance_proof (kept inline to avoid an extra constant import)
+            circuitId: 2,
+            publicInputs: starkProofData.publicInputs,
+            proofSize: starkProofData.proofSize,
+          };
+          const { proofBuffer } = await submitAndVerifyStarkProof(
+            starkProof,
+            undefined,
+            onStarkProgress,
+          );
+
+          onStarkProgress?.('Submitting zkSPL prove_balance...');
+          const signature = await _service.proveBalance(
+            mintPubkey,
+            thresholdAtomic,
+            proofBuffer,
+          );
+
+          onStarkProgress?.('Closing STARK proof buffer...');
+          await closeStarkProofBuffer(proofBuffer).catch(() => {});
+
+          set({ isLoading: false });
+          return signature;
+        } catch (error) {
+          console.error('[Confidential] STARK prove_balance error:', error);
           set({ isLoading: false, error: (error as Error).message });
           throw error;
         }

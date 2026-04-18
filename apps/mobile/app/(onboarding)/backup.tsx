@@ -19,12 +19,10 @@ export default function BackupScreen() {
   const [seedPhrase, setSeedPhrase] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // H3: Block screenshots while seed phrase is visible
   useEffect(() => {
-    // TEMP: disabled for demo recording
-    // ScreenCapture.preventScreenCaptureAsync();
+    ScreenCapture.preventScreenCaptureAsync();
     return () => {
-      // ScreenCapture.allowScreenCaptureAsync();
+      ScreenCapture.allowScreenCaptureAsync();
     };
   }, []);
 

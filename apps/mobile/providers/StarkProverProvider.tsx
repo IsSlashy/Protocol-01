@@ -10,6 +10,7 @@
 import React, {
   createContext,
   useContext,
+  useEffect,
   useRef,
   useState,
   useCallback,
@@ -20,6 +21,7 @@ import {
   type StarkProverHandle,
   type StarkProverMessage,
 } from '../services/stark/StarkProver';
+import { getZkService } from '../services/zk';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +55,7 @@ interface StarkProverContextType {
   generateBalanceProof: (sk: string, balance: string, salt: string, mint: string) => Promise<GenericStarkProofResult>;
   generateConfidentialBalanceProof: (spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string) => Promise<GenericStarkProofResult>;
   generateTransferProof: (spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string) => Promise<GenericStarkProofResult>;
+  generateMerkleUpdateProof: (oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]) => Promise<GenericStarkProofResult>;
   error: string | null;
 }
 
@@ -256,6 +259,68 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     [sendRequestRaw],
   );
 
+  const generateMerkleUpdateProof = useCallback(
+    async (
+      oldLeaf: string, newLeaf: string,
+      pathElements: string[], pathIndices: number[],
+    ): Promise<GenericStarkProofResult> => {
+      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
+        proverRef.current!.generateMerkleUpdateProof(id, oldLeaf, newLeaf, pathElements, pathIndices);
+      });
+      return {
+        circuitId: msg.circuitId ?? 6,
+        publicInputs: msg.publicInputs ?? [],
+        proofHex: msg.proofHex!,
+        proofSize: msg.proofSize!,
+        durationMs: msg.durationMs!,
+      };
+    },
+    [sendRequestRaw],
+  );
+
+  // Wire circuit 6 (merkle_update) + circuit 5 (transfer) provers into
+  // ZkService so shield/transfer/unshield can generate STARK proofs without
+  // threading the hook through every caller.
+  useEffect(() => {
+    if (!isReady) return;
+    try {
+      const zkService = getZkService();
+      zkService.setMerkleUpdateProver(async (oldLeaf, newLeaf, pathElements, pathIndices) => {
+        const result = await generateMerkleUpdateProof(oldLeaf, newLeaf, pathElements, pathIndices);
+        return {
+          circuitId: result.circuitId,
+          publicInputs: result.publicInputs,
+          proofHex: result.proofHex,
+          proofSize: result.proofSize,
+        };
+      });
+      zkService.setTransferProver(async (
+        spendingKey, tokenMint,
+        inAmount1, inRand1, inAmount2, inRand2,
+        outAmount1, outRand1, outRecipient1,
+        outAmount2, outRand2, outRecipient2,
+        publicAmount,
+      ) => {
+        const result = await generateTransferProof(
+          spendingKey, tokenMint,
+          inAmount1, inRand1, inAmount2, inRand2,
+          outAmount1, outRand1, outRecipient1,
+          outAmount2, outRand2, outRecipient2,
+          publicAmount,
+        );
+        return {
+          circuitId: result.circuitId,
+          publicInputs: result.publicInputs,
+          proofHex: result.proofHex,
+          proofSize: result.proofSize,
+        };
+      });
+      console.log('[StarkProver] merkle_update + transfer provers wired into ZkService');
+    } catch (err) {
+      console.warn('[StarkProver] Failed to wire into ZkService:', err);
+    }
+  }, [isReady, generateMerkleUpdateProof, generateTransferProof]);
+
   const contextValue: StarkProverContextType = {
     isReady,
     generateProof,
@@ -264,6 +329,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     generateBalanceProof,
     generateConfidentialBalanceProof,
     generateTransferProof,
+    generateMerkleUpdateProof,
     error,
   };
 
@@ -291,6 +357,7 @@ export function useStarkProver(): StarkProverContextType {
       generateBalanceProof: notAvailable as any,
       generateConfidentialBalanceProof: notAvailable as any,
       generateTransferProof: notAvailable as any,
+      generateMerkleUpdateProof: notAvailable as any,
       error: 'StarkProverProvider not in component tree',
     };
   }

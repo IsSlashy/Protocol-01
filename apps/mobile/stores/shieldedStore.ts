@@ -3,6 +3,7 @@ import { persist, createJSONStorage, type StateStorage } from 'zustand/middlewar
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 import { getZkService, ZkService, ZkAddress, Note } from '../services/zk';
 import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
@@ -198,12 +199,7 @@ export async function restoreShieldedForWallet(walletAddress: string): Promise<v
     const raw = await AsyncStorage.getItem(`${SHIELDED_ARCHIVE_PREFIX}${walletAddress}`);
     if (!raw) return;
     const key = await getShieldedEncryptionKey();
-    let decrypted: string;
-    try {
-      decrypted = decryptShieldedData(raw, key);
-    } catch {
-      decrypted = raw;
-    }
+    const decrypted = decryptShieldedData(raw, key);
     const archived = JSON.parse(decrypted);
     if (!archived || !Array.isArray(archived.notes)) return;
 
@@ -229,13 +225,8 @@ const encryptedShieldedStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     const raw = await AsyncStorage.getItem(name);
     if (!raw) return null;
-    try {
-      const key = await getShieldedEncryptionKey();
-      return decryptShieldedData(raw, key);
-    } catch {
-      // Fallback: if decryption fails, data may be unencrypted (migration from old format)
-      return raw;
-    }
+    const key = await getShieldedEncryptionKey();
+    return decryptShieldedData(raw, key);
   },
   setItem: async (name: string, value: string): Promise<void> => {
     const key = await getShieldedEncryptionKey();
@@ -247,14 +238,7 @@ const encryptedShieldedStorage: StateStorage = {
   },
 };
 
-// Helper to generate UUID
-const generateUUID = (): string => {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-};
+const generateUUID = (): string => Crypto.randomUUID();
 
 /**
  * Shielded wallet store for mobile

@@ -67,7 +67,7 @@ export default function DenominatedNotesScreen() {
         const { useWalletStore } = require('@/stores/walletStore');
         const pk = useWalletStore.getState().publicKey;
         if (!pk) return;
-        const { sha256 } = require('@noble/hashes/sha256');
+        const { sha256 } = require('@noble/hashes/sha2');
         const { bytesToHex } = require('@noble/hashes/utils');
         const skHash = bytesToHex(sha256(new TextEncoder().encode(pk)));
         const { loadAllRoutes } = require('@/services/privacyRouter/routeCipher');

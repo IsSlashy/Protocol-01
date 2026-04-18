@@ -36,6 +36,7 @@ const CIRCUIT_BALANCE_PROOF = 2;
 const CIRCUIT_MERKLE_PATH = 3;
 const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
 const CIRCUIT_TRANSFER = 5;
+const CIRCUIT_MERKLE_UPDATE = 6;
 const MAX_CHUNK_SIZE = 1000; // ~1000 bytes per chunk (fits in 1232-byte tx limit)
 
 // Instruction discriminators (from Anchor IDL)
@@ -45,10 +46,11 @@ const DISCRIMINATORS = {
   writeProofChunk: Buffer.from([183, 3, 171, 138, 153, 138, 133, 147]),
   verifyStarkProof: Buffer.from([208, 216, 183, 38, 47, 69, 156, 138]),
   verifyStarkProofV2: Buffer.from([149, 18, 96, 15, 144, 68, 8, 233]),
+  verifyDeepAliPhase2: Buffer.from([217, 239, 203, 65, 109, 182, 70, 115]),
   closeProofBuffer: Buffer.from([130, 150, 6, 35, 193, 34, 243, 87]),
 };
 
-const PROOF_DATA_OFFSET = 82; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash
+const PROOF_DATA_OFFSET = 83; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified
 const MAX_INIT_SIZE = 10_240; // Solana create_account limit
 
 // ---------------------------------------------------------------------------
@@ -80,6 +82,23 @@ export interface StarkVerificationResult {
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
+}
+
+/**
+ * Adapt a Keypair into the WalletSigner interface so an ephemeral keypair can
+ * drive the STARK upload pipeline without a user wallet prompt per tx. Used
+ * for the relay/stealth flows where we fund an ephemeral once, then have it
+ * author every tx in the multi-step STARK pipeline (init + chunks + verify
+ * phase1/phase2 + close).
+ */
+export function keypairToWalletSigner(kp: Keypair): WalletSigner {
+  return {
+    publicKey: kp.publicKey,
+    signTransaction: async (tx: Transaction) => {
+      tx.partialSign(kp);
+      return tx;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +216,36 @@ function buildVerifyStarkProofV2Ix(
     return buf;
   });
   const data = Buffer.concat([DISCRIMINATORS.verifyStarkProofV2, vecLen, ...inputBufs]);
+
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_PROGRAM_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
+}
+
+/**
+ * [P2.2g] Phase-2 DEEP-ALI dispatcher for circuits 1-6. Must run AFTER
+ * `verify_stark_proof_v2` (phase 1) succeeds on the same buffer. Public inputs
+ * must match phase 1 byte-for-byte — the on-chain instruction re-hashes them
+ * and compares against the phase-1 stored hash.
+ */
+function buildVerifyDeepAliPhase2Ix(
+  publicInputs: bigint[],
+  proofBuffer: PublicKey,
+  authority: PublicKey
+): TransactionInstruction {
+  const vecLen = Buffer.alloc(4);
+  vecLen.writeUInt32LE(publicInputs.length, 0);
+  const inputBufs = publicInputs.map(v => {
+    const buf = Buffer.alloc(8);
+    buf.writeBigUInt64LE(v);
+    return buf;
+  });
+  const data = Buffer.concat([DISCRIMINATORS.verifyDeepAliPhase2, vecLen, ...inputBufs]);
 
   return new TransactionInstruction({
     programId: STARK_VERIFIER_PROGRAM_ID,
@@ -466,12 +515,21 @@ export async function submitGenericStarkProof(
     await signSendConfirm(conn, chunkTx, keypair, walletSigner);
   }
 
-  // Step 3: Verify with v2 (multiple public inputs)
-  onProgress?.('Verifying STARK proof on-chain...');
+  // Step 3a: Phase 1 — verify_stark_proof_v2 (FRI + trace-aligned + boundary)
+  onProgress?.('Verifying STARK proof phase 1...');
   const verifyTx = new Transaction()
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
     .add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
   const txSig = await signSendConfirm(conn, verifyTx, keypair, walletSigner);
+
+  // Step 3b: Phase 2 — DEEP-ALI at OOD. Mandatory for circuits 1-6.
+  if (proof.circuitId >= 1 && proof.circuitId <= 6) {
+    onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
+    const deepAliTx = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+      .add(buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority));
+    await signSendConfirm(conn, deepAliTx, keypair, walletSigner);
+  }
 
   // Step 4: Close buffer and recover rent
   onProgress?.('Closing proof buffer...');
@@ -592,12 +650,23 @@ export async function submitAndVerifyStarkProof(
     })
   );
 
-  // Step 3: Verify with v2 (multiple public inputs)
-  onProgress?.('Verifying STARK proof on-chain...');
+  // Step 3a: Phase 1 — verify_stark_proof_v2 (FRI + trace-aligned + boundary)
+  onProgress?.('Verifying STARK proof phase 1...');
   const verifyTx = new Transaction()
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
     .add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
   const txSig = await signSendConfirm(conn, verifyTx, keypair, walletSigner);
+
+  // Step 3b: Phase 2 — DEEP-ALI at OOD. Mandatory for circuits 1-6 (C0 runs
+  // DEEP-ALI inline in phase 1). Combined phase 1+2 exceeds 1.4M CU per-ix,
+  // so split across two transactions.
+  if (proof.circuitId >= 1 && proof.circuitId <= 6) {
+    onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
+    const deepAliTx = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+      .add(buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority));
+    await signSendConfirm(conn, deepAliTx, keypair, walletSigner);
+  }
 
   onProgress?.('STARK proof verified (buffer retained for cross-program read)');
   return { proofBuffer, authority, txSignature: txSig };
@@ -635,4 +704,5 @@ export {
   CIRCUIT_MERKLE_PATH,
   CIRCUIT_CONFIDENTIAL_BALANCE,
   CIRCUIT_TRANSFER,
+  CIRCUIT_MERKLE_UPDATE,
 };

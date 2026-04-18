@@ -16,7 +16,7 @@
 import { Keypair } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
 import nacl from 'tweetnacl';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import {
   createMetaAddress,
   generateStealthAddress,

@@ -149,7 +149,7 @@ async function pollPendingHops(): Promise<void> {
     const { publicKey } = useWalletStore.getState();
     if (!publicKey) return;
 
-    const { sha256 } = require('@noble/hashes/sha256');
+    const { sha256 } = require('@noble/hashes/sha2');
     const { bytesToHex } = require('@noble/hashes/utils');
     const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey)));
 
@@ -268,7 +268,7 @@ export async function startAutonomousRunner(): Promise<void> {
   console.log('[AutoRunner] Starting autonomous privacy router...');
 
   try {
-    const { sha256 } = require('@noble/hashes/sha256');
+    const { sha256 } = require('@noble/hashes/sha2');
     const { bytesToHex } = require('@noble/hashes/utils');
     const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey)));
 

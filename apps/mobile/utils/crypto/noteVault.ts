@@ -5,21 +5,31 @@
  * Even if an attacker extracts AsyncStorage + SecureStore, they cannot
  * reconstruct the receipt (and thus cannot unshield) without the user's PIN.
  *
- * Encryption: nacl.secretbox with key = SHA-512(domain + vaultSalt + pinHash).slice(0,32)
+ * V2 KDF: PBKDF2-HMAC-SHA256(password = DOMAIN || pinHash, salt, 600_000 iters, 32 B).
+ * 600k matches OWASP 2023 recommendation for PBKDF2-SHA256. V1 used only 10k
+ * rounds of plain SHA-256 (no HMAC, no standard KDF) — cheap to brute-force
+ * a 6-digit PIN offline. V2 bumps cost by ~60x and uses a standard construction.
  *
- * The vault key is derived at unlock time and held in memory only.
- * It is wiped when the app backgrounds or locks.
+ * Migration: V2 uses a distinct salt key so old V1 vaults can't be unlocked
+ * with the new derivation. Pre-prod: users re-unlock + rescan on-chain notes.
+ *
+ * The vault key is derived at unlock time and held in memory only; it is
+ * wiped when the app backgrounds or locks.
  */
 
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
+import { pbkdf2Async } from '@noble/hashes/pbkdf2.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
-const VAULT_SALT_KEY = 'p01_note_vault_salt';
+const VAULT_SALT_KEY = 'p01_note_vault_v2_salt';
 const VAULT_ENABLED_KEY = 'p01_note_vault_enabled';
 const VAULT_BIO_KEY = 'p01_note_vault_biokey'; // Random key for biometric-only users
-const DOMAIN = 'P01_NOTE_VAULT_V1';
+const DOMAIN = 'P01_NOTE_VAULT_V2';
+const PBKDF2_ITERATIONS = 600_000;
+const KEY_LENGTH = 32;
 
 // In-memory vault key — never persisted
 let _vaultKey: Uint8Array | null = null;
@@ -42,24 +52,14 @@ async function getVaultSalt(): Promise<string> {
 // Key derivation
 // ---------------------------------------------------------------------------
 
-/**
- * Derive the vault key from PIN hash + device salt.
- * Uses SHA-256 iterated 10,000 times for stretching.
- */
 async function deriveVaultKey(pinHash: string): Promise<Uint8Array> {
-  const salt = await getVaultSalt();
-  let input = `${DOMAIN}:${salt}:${pinHash}`;
-
-  // 10,000 iterations of SHA-256 for key stretching
-  for (let i = 0; i < 10_000; i++) {
-    input = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      input,
-    );
-  }
-
-  // Take first 32 bytes of the final hash as the key
-  return new Uint8Array(Buffer.from(input, 'hex').slice(0, 32));
+  const saltHex = await getVaultSalt();
+  const salt = Buffer.from(saltHex, 'hex');
+  const password = new TextEncoder().encode(`${DOMAIN}:${pinHash}`);
+  return pbkdf2Async(sha256, password, salt, {
+    c: PBKDF2_ITERATIONS,
+    dkLen: KEY_LENGTH,
+  });
 }
 
 // ---------------------------------------------------------------------------

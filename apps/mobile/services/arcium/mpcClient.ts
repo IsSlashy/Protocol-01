@@ -279,7 +279,7 @@ function buildInstruction(
 ): TransactionInstruction {
   // Anchor discriminator = SHA-256("global:<snake_case_name>")[0..8]
   const snakeName = methodName.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
-  const { sha256 } = require('@noble/hashes/sha256');
+  const { sha256 } = require('@noble/hashes/sha2');
   const disc = sha256(`global:${snakeName}`).slice(0, 8);
 
   // Serialize args as Borsh (simplified — enough for our Arcium instructions)

@@ -1,7 +1,12 @@
 /**
  * ZkSPL Service for Mobile
  *
- * Wraps the @protocol-01/zkspl-sdk client for use in the React Native mobile app.
+ * Wraps the @protocol-01/zkspl-sdk client for use in the React Native mobile
+ * app. STARK-only mode: proofs are generated off-device (via the in-app
+ * WASM prover), uploaded to `p01_stark_verifier`, and the verified proof
+ * buffer pubkey is passed to every zkSPL instruction. The SDK itself never
+ * generates proofs and never sees private witnesses.
+ *
  * Handles wallet integration, spending key derivation, and state persistence
  * via AsyncStorage.
  */
@@ -28,13 +33,13 @@ const SECURE_OPTIONS = {
 // Import directly from SDK source (monorepo workspace)
 import {
   ZkSplClient,
-  ZkSplProver,
   LocalStateManager,
   poseidonHash,
   bytesToField,
   pubkeyToField,
   deriveOwnerPubkey,
   deriveDeterministicSalt,
+  fieldToBytes,
   type StateStore,
   type ConfidentialAccountData,
   type ZkSplTxResult,
@@ -206,19 +211,14 @@ export class ZkSplService {
     this.connection = connection;
     this.keypair = keypair;
 
-    // TRUSTLESS MODE: All proofs generated locally via snarkjs WASM.
-    // The spending_key NEVER leaves the device. No relayer dependency.
-    // Circuit files loaded from app assets at runtime.
-    if (__DEV__) console.log('[ZkSPL] Trustless mode: local-only proving (spending_key stays on device)');
+    // STARK-ONLY MODE: No prover config. Callers upload a verified STARK proof
+    // buffer to `p01_stark_verifier` and pass its pubkey to each mutation.
+    if (__DEV__) console.log('[ZkSPL] STARK-only mode: spending_key never leaves the device');
 
     this.client = new ZkSplClient({
       connection,
       wallet,
       programId: new PublicKey(ZKSPL_PROGRAM_ID),
-      prover: {
-        localOnly: true,
-        timeout: 120_000,
-      },
       stateStore: new AsyncStorageStateStore(),
       spendingKey,
     });
@@ -248,7 +248,7 @@ export class ZkSplService {
   }
 
   // -----------------------------------------------------------------------
-  // Operations
+  // Operations (STARK-proof-buffer-driven)
   // -----------------------------------------------------------------------
 
   /**
@@ -285,20 +285,23 @@ export class ZkSplService {
 
   /**
    * Deposit tokens into the confidential account.
-   * The deposit amount is public; the resulting balance is hidden.
    *
-   * For native SOL, no userTokenAccount/poolVault needed --
-   * the program handles lamport transfer via SystemProgram.
-   * For SPL tokens, the user's ATA and pool vault ATA are derived automatically.
+   * Caller must have already uploaded + verified a STARK proof for circuit 4
+   * (confidential_balance) and pass the verified proof buffer here along with
+   * the same `newCommitment` that was bound into the proof's public inputs.
    */
   async deposit(
     tokenMint: PublicKey,
     amount: bigint,
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
   ): Promise<{ signature: string; newBalance: bigint }> {
     const { userTokenAccount, poolVaultTokenAccount } = this.deriveTokenAccounts(tokenMint);
     const result: ZkSplTxResult = await this.client.deposit(
       tokenMint,
       amount,
+      proofBuffer,
+      newCommitment,
       userTokenAccount,
       poolVaultTokenAccount,
     );
@@ -310,12 +313,15 @@ export class ZkSplService {
 
   /**
    * Withdraw tokens from the confidential account.
-   * The withdrawal amount is public; the remaining balance stays hidden.
-   * For SPL tokens, ensures the user's ATA exists before withdrawing.
+   *
+   * Caller must have already uploaded + verified a STARK proof for circuit 4
+   * and pass the verified proof buffer here.
    */
   async withdraw(
     tokenMint: PublicKey,
     amount: bigint,
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
   ): Promise<{ signature: string; newBalance: bigint }> {
     // For SPL tokens, ensure user has an ATA to receive the tokens
     if (!this.isNativeSol(tokenMint)) {
@@ -325,6 +331,8 @@ export class ZkSplService {
     const result: ZkSplTxResult = await this.client.withdraw(
       tokenMint,
       amount,
+      proofBuffer,
+      newCommitment,
       userTokenAccount,
       poolVaultTokenAccount,
     );
@@ -336,44 +344,75 @@ export class ZkSplService {
 
   /**
    * Send a confidential transfer to another user.
+   *
+   * Caller must have already uploaded + verified a STARK proof for circuit 4
+   * (confidential_balance — sender-side balance update). Circuit 5 (UTXO
+   * transfer) belongs to `zk_shielded`, not to zkSPL.
+   *
    * Returns the amountHash and amountSalt the recipient needs to apply.
    */
   async transfer(
     tokenMint: PublicKey,
     recipientPubkey: PublicKey,
     amount: bigint,
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
+    amountHash: Uint8Array,
+    amountSalt: FieldElement,
   ): Promise<{ signature: string; amountHash: bigint; amountSalt: bigint }> {
     const result = await this.client.confidentialTransfer(
       tokenMint,
       recipientPubkey,
       amount,
+      proofBuffer,
+      newCommitment,
+      amountHash,
+      amountSalt,
     );
     return {
       signature: result.signature,
-      amountHash: result.amountHash,
+      amountHash: bytesToField(amountHash),
       amountSalt: result.amountSaltUsed,
     };
   }
 
   /**
    * Apply a pending credit (receive side).
+   *
    * The recipient must know the plaintext amount and amount_salt
-   * (communicated out-of-band by the sender).
+   * (communicated out-of-band by the sender) so they can regenerate the
+   * matching STARK proof.
    */
   async applyPending(
     tokenMint: PublicKey,
     amount: bigint,
-    amountSalt: FieldElement,
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
+    amountHash: Uint8Array,
   ): Promise<{ signature: string; newBalance: bigint }> {
     const result: ZkSplTxResult = await this.client.applyPending(
       tokenMint,
       amount,
-      amountSalt,
+      proofBuffer,
+      newCommitment,
+      amountHash,
     );
     return {
       signature: result.signature,
       newBalance: result.newBalance,
     };
+  }
+
+  /**
+   * Prove the balance satisfies a threshold. Caller must have uploaded +
+   * verified a STARK proof for circuit 2 (balance_proof).
+   */
+  async proveBalance(
+    tokenMint: PublicKey,
+    threshold: bigint,
+    proofBuffer: PublicKey,
+  ): Promise<string> {
+    return this.client.proveBalance(tokenMint, threshold, proofBuffer);
   }
 
   // -----------------------------------------------------------------------
@@ -412,6 +451,11 @@ export class ZkSplService {
    */
   getWalletPublicKey(): PublicKey {
     return this.walletPublicKey;
+  }
+
+  /** Expose the derived spending key (never leaves the device). */
+  getSpendingKey(): FieldElement {
+    return this.spendingKey;
   }
 
   // -----------------------------------------------------------------------
@@ -469,34 +513,31 @@ export class ZkSplService {
 
   /**
    * Get the inputs needed for STARK transfer proof generation.
-   * Used for confidential transfers (circuit 5).
+   *
+   * NOTE: zkSPL's confidential_transfer uses STARK circuit 4 (confidential_balance)
+   * for the sender's balance update — NOT circuit 5 (which is UTXO-style and
+   * reserved for `zk_shielded`). This helper returns the same shape as
+   * `getConfidentialProofInputs` but with a non-zero `amountSalt` so the
+   * resulting `amount_hash = Poseidon(amount, amountSalt)` can be shared
+   * with the recipient.
    *
    * @param tokenMint - The SPL token mint
    * @param amount - The transfer amount (in atomic units)
-   * @param recipientPubkey - The recipient's public key
-   * @returns All values needed for STARK circuit 5 (transfer)
    */
   async getTransferProofInputs(
     tokenMint: PublicKey,
     amount: bigint,
-    recipientPubkey: PublicKey,
   ): Promise<{
     spendingKey: string;
+    oldBalance: string;
+    oldSalt: string;
+    newBalance: string;
+    newSalt: string;
+    amount: string;
+    amountSalt: string;
     tokenMint: string;
-    inAmount1: string;
-    inRand1: string;
-    inAmount2: string;
-    inRand2: string;
-    outAmount1: string;
-    outRand1: string;
-    outRecipient1: string;
-    outAmount2: string;
-    outRand2: string;
-    outRecipient2: string;
-    publicAmount: string;
   }> {
     const tokenMintField = pubkeyToField(tokenMint.toBytes());
-    const ownerPubkey = deriveOwnerPubkey(this.spendingKey);
 
     const state = await this.client.getLocalState(tokenMint);
     if (!state) {
@@ -508,23 +549,35 @@ export class ZkSplService {
     const oldSalt = state.salt;
     const newBalance = oldBalance - amount;
     const newSalt = deriveDeterministicSalt(this.spendingKey, currentNonce + 1n);
-    const recipientField = pubkeyToField(recipientPubkey.toBytes());
+
+    // Amount salt binds the pending credit to a specific sender/nonce.
+    // Derive deterministically so we can regenerate it if the store is lost.
+    const amountSalt = deriveDeterministicSalt(
+      this.spendingKey,
+      currentNonce + 1n + (1n << 32n), // domain separator away from balance salt
+    );
 
     return {
       spendingKey: this.spendingKey.toString(),
+      oldBalance: oldBalance.toString(),
+      oldSalt: oldSalt.toString(),
+      newBalance: newBalance.toString(),
+      newSalt: newSalt.toString(),
+      amount: amount.toString(),
+      amountSalt: amountSalt.toString(),
       tokenMint: tokenMintField.toString(),
-      inAmount1: oldBalance.toString(),
-      inRand1: oldSalt.toString(),
-      inAmount2: '0', // dummy second input
-      inRand2: '0',
-      outAmount1: amount.toString(),
-      outRand1: newSalt.toString(),
-      outRecipient1: recipientField.toString(),
-      outAmount2: newBalance.toString(),
-      outRand2: newSalt.toString(),
-      outRecipient2: ownerPubkey.toString(), // change output back to sender
-      publicAmount: '0', // no public amount in confidential transfer
     };
+  }
+
+  /**
+   * Compute the 32-byte LE representation of a bigint commitment / hash, as
+   * required by the zkSPL Anchor instructions. Each u64 value is projected
+   * into the first 8 bytes of the [u8; 32] and the rest stays zero, matching
+   * the Goldilocks-field convention used on-chain.
+   */
+  static fieldToBytes32LE(value: FieldElement | string | bigint): Uint8Array {
+    const v = typeof value === 'bigint' ? value : BigInt(value);
+    return fieldToBytes(v);
   }
 
   // -----------------------------------------------------------------------

@@ -17,8 +17,8 @@ import {
 import * as SecureStore from 'expo-secure-store';
 import { generateMnemonic as scureGenerateMnemonic, mnemonicToSeedSync, validateMnemonic as scureValidateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
-import { hmac } from '@noble/hashes/hmac';
-import { sha512 } from '@noble/hashes/sha512';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha512 } from '@noble/hashes/sha2.js';
 import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 import { getConnection } from './connection';

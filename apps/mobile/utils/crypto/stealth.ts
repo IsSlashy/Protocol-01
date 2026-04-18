@@ -17,14 +17,15 @@ import { Keypair, PublicKey } from '@solana/web3.js';
 import * as Crypto from 'expo-crypto';
 import nacl from 'tweetnacl';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
-import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha256';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import bs58 from 'bs58';
 
 // ============= Constants =============
 
-const STEALTH_SEED_INFO = 'p01-stealth-seed';
-const HYBRID_HKDF_INFO = 'p01-hybrid-stealth-v2';
+const STEALTH_SEED_INFO = utf8ToBytes('p01-stealth-seed');
+const HYBRID_HKDF_INFO = utf8ToBytes('p01-hybrid-stealth-v2');
 const KEM_PUBLIC_KEY_SIZE = 1184;
 const KEM_CIPHERTEXT_SIZE = 1088;
 const META_ADDRESS_PREFIX = 'st:';
@@ -61,7 +62,7 @@ function kemGenerateKeypair() { return ml_kem768.keygen(); }
 function kemEncapsulate(pub: Uint8Array) { return ml_kem768.encapsulate(pub); }
 function kemDecapsulate(ct: Uint8Array, sk: Uint8Array) { return ml_kem768.decapsulate(ct, sk); }
 
-const HYBRID_HKDF_INFO_BYTES = new TextEncoder().encode(HYBRID_HKDF_INFO);
+const HYBRID_HKDF_INFO_BYTES = HYBRID_HKDF_INFO;
 
 /**
  * Combine X25519 + ML-KEM-768 secrets via HKDF with transcript binding.

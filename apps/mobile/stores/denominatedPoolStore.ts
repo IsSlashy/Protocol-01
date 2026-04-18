@@ -304,8 +304,8 @@ async function stealthUnshieldAndSweep(
   onProgress?: (msg: string) => void,
 ): Promise<string> {
   const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
-  const { sha256 } = await import('@noble/hashes/sha2');
-  const { hmac } = await import('@noble/hashes/hmac');
+  const { sha256 } = await import('@noble/hashes/sha2.js');
+  const { hmac } = await import('@noble/hashes/hmac.js');
 
   // Derive ephemeral stealth keypair
   const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${Date.now()}`));
@@ -619,9 +619,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           console.log('[DenomStore] Creating stealth intermediary to hide wallet origin...');
           try {
             const { Keypair: SolKeypair, SystemProgram, Transaction } = await import('@solana/web3.js');
-            const { sha256 } = await import('@noble/hashes/sha2');
-            const { bytesToHex } = await import('@noble/hashes/utils');
-            const { hmac } = await import('@noble/hashes/hmac');
+            const { sha256 } = await import('@noble/hashes/sha2.js');
+            const { bytesToHex } = await import('@noble/hashes/utils.js');
+            const { hmac } = await import('@noble/hashes/hmac.js');
             const connection = getConnection();
 
             const walletAddr = walletSigner?.publicKey.toBase58() || '';
@@ -814,8 +814,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const walletSigner = getWalletSignerIfPrivy();
           const { Keypair: SolKeypair, PublicKey: PK, SystemProgram, Transaction } = await import('@solana/web3.js');
-          const { sha256 } = await import('@noble/hashes/sha2');
-          const { hmac } = await import('@noble/hashes/hmac');
+          const { sha256 } = await import('@noble/hashes/sha2.js');
+          const { hmac } = await import('@noble/hashes/hmac.js');
 
           // Full stealth unshield: BOTH signer AND recipient are ephemeral.
           //
@@ -1091,8 +1091,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           // Use stealth intermediary — wallet never appears on-chain
           const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
-          const { sha256 } = await import('@noble/hashes/sha2');
-          const { hmac } = await import('@noble/hashes/hmac');
+          const { sha256 } = await import('@noble/hashes/sha2.js');
+          const { hmac } = await import('@noble/hashes/hmac.js');
 
           // Derive ephemeral stealth keypair
           const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_${Date.now()}`));
@@ -1269,8 +1269,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             || useWalletStore.getState().publicKey || '';
 
           const { Keypair: SolKeypair, SystemProgram, Transaction } = await import('@solana/web3.js');
-          const { sha256 } = await import('@noble/hashes/sha2');
-          const { hmac } = await import('@noble/hashes/hmac');
+          const { sha256 } = await import('@noble/hashes/sha2.js');
+          const { hmac } = await import('@noble/hashes/hmac.js');
 
           const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_stark_${Date.now()}`));
           const stealthKp = SolKeypair.fromSeed(seed);

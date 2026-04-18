@@ -101,14 +101,12 @@ export default function BackupRecoveryScreen() {
     .filter(n => n.token === 'SOL')
     .reduce((sum, n) => sum + n.denomination, 0);
 
-  // H3: Block screenshots when seed phrase modal is visible
-  // TEMP: disabled for demo recording
   useEffect(() => {
-    // if (showSeedModal) {
-    //   ScreenCapture.preventScreenCaptureAsync();
-    // } else {
-    //   ScreenCapture.allowScreenCaptureAsync();
-    // }
+    if (showSeedModal) {
+      ScreenCapture.preventScreenCaptureAsync();
+    } else {
+      ScreenCapture.allowScreenCaptureAsync();
+    }
   }, [showSeedModal]);
 
   // Load persisted backup status

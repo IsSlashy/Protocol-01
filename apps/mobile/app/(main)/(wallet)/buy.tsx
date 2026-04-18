@@ -28,6 +28,20 @@ import {
   createPaymentSession,
   P01_NETWORK_FEE_BPS,
 } from '@/services/payments/p01-payments';
+import {
+  createMoonPayUrl,
+  loadMoonPayConfigFromEnv,
+  type MoonPayFiatCurrency,
+} from '@/services/payments/moonpay';
+import { splitAmount, type SplitResult } from '@/services/payments/denomination';
+import {
+  registerTreasuryRoute,
+  getTreasuryRouteStatus,
+  type TreasuryBufferRoute,
+  type TreasuryBufferStatus,
+  type TreasuryRouteStatus,
+} from '@/services/payments/treasury-buffer-client';
+import { GojoColors } from '@/components/mugen/SharedStyles';
 
 // ─── Design Tokens ──────────────────────────────────────────────────────────
 
@@ -99,20 +113,20 @@ const RAILS = {
   },
 };
 
-// ─── MoonPay config (replace with real API key) ─────────────────────────────
+// ─── MoonPay config (driven by EXPO_PUBLIC_MOONPAY_* env vars) ──────────────
 
-const MOONPAY_API_KEY = 'pk_test_key'; // TODO: Replace with real MoonPay API key
-
-function buildMoonPayUrl(solAmount: number, walletAddress: string): string {
-  const params = new URLSearchParams({
-    apiKey: MOONPAY_API_KEY,
-    currencyCode: 'sol',
-    baseCurrencyAmount: solAmount.toString(),
-    walletAddress,
-    colorCode: '39c5bb',
-    language: 'fr',
-  });
-  return `https://buy.moonpay.com?${params.toString()}`;
+/**
+ * Load MoonPay config lazily so a missing env var surfaces at the moment the
+ * user taps Buy (with a readable error), rather than at module import time
+ * (which would crash the whole Buy screen).
+ */
+function tryLoadMoonPayConfig(): ReturnType<typeof loadMoonPayConfigFromEnv> | null {
+  try {
+    return loadMoonPayConfigFromEnv();
+  } catch (err) {
+    console.warn('[Buy] MoonPay config not available:', (err as Error).message);
+    return null;
+  }
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
@@ -130,6 +144,15 @@ export default function BuyScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentUrl, setPaymentUrl] = useState('');
+  const [fiatCurrency] = useState<MoonPayFiatCurrency>('USD');
+
+  // Treasury Buffer routing (MoonPay rail only). When set, MoonPay is pointed
+  // at `bufferAddress` and the backend will forward to the stealth address
+  // after a randomized delay. When null, we fell back to direct stealth payout.
+  const [treasuryRoute, setTreasuryRoute] = useState<TreasuryBufferRoute | null>(null);
+  const [treasuryStatus, setTreasuryStatus] = useState<TreasuryBufferStatus | null>(null);
+  const [treasuryError, setTreasuryError] = useState<string | null>(null);
+  const [treasuryFellBack, setTreasuryFellBack] = useState(false);
 
   // Derived values
   const tier = SOL_TIERS[selectedTier];
@@ -138,6 +161,22 @@ export default function BuyScreen() {
   const fiatRounded = solPrice > 0 ? roundUpFiat(Math.ceil(fiatRaw)) : 0;
   const feeAmount = fiatRounded > 0 ? (fiatRounded * rail.feePct / 100) : 0;
   const solAfterFee = tier.sol * (1 - P01_NETWORK_FEE_BPS / 10000);
+
+  // ─── L1 denomination preview ─────────────────────────────────────
+  // Compute what the incoming SOL will split into (pool tiers) +
+  // untracked residual in fiat. Shown on the MoonPay rail preview.
+  const splitPreview: SplitResult | null = React.useMemo(() => {
+    if (solPrice <= 0 || fiatRounded <= 0) return null;
+    try {
+      return splitAmount({
+        fiatAmount: fiatRounded,
+        fiatCurrency,
+        solPriceInFiat: solPrice,
+      });
+    } catch {
+      return null;
+    }
+  }, [fiatRounded, fiatCurrency, solPrice]);
 
   // Network info (devnet allowed for testing, badge shown)
   const isDevnet = !isOnMainnet;
@@ -155,6 +194,46 @@ export default function BuyScreen() {
     const interval = setInterval(fetch, 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  // ── Treasury status polling ────────────────────────────────────────
+  // Polls /api/treasury/status/:id every 10s while the WebView is open OR
+  // the route is still in flight (pending/funded). Stops on terminal status.
+  useEffect(() => {
+    if (!treasuryRoute) return;
+    const terminal = (s: TreasuryRouteStatus | undefined): boolean =>
+      s === 'paid' || s === 'failed' || s === 'expired';
+    if (terminal(treasuryStatus?.status)) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async (): Promise<void> => {
+      try {
+        const s = await getTreasuryRouteStatus(treasuryRoute.id);
+        if (cancelled) return;
+        setTreasuryStatus(s);
+        if (terminal(s.status)) return;
+      } catch (err) {
+        if (cancelled) return;
+        console.warn(
+          '[Buy] Treasury status poll failed:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      if (!cancelled) {
+        timer = setTimeout(() => {
+          void tick();
+        }, 10_000);
+      }
+    };
+
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+    // Re-run when id or terminal-state flip happens.
+  }, [treasuryRoute, treasuryStatus?.status]);
 
   const haptic = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -188,8 +267,77 @@ export default function BuyScreen() {
       }
 
       if (selectedRail === 'moonpay') {
-        const url = buildMoonPayUrl(tier.sol, receiveAddress);
-        setPaymentUrl(url);
+        const moonPayConfig = tryLoadMoonPayConfig();
+        if (!moonPayConfig) {
+          p01Alert(
+            'MoonPay Unavailable',
+            'MoonPay API key is not configured. Set EXPO_PUBLIC_MOONPAY_API_KEY in your env.',
+          );
+          return;
+        }
+
+        // ── Treasury Buffer registration (privacy hop before stealth) ──
+        // Reset stale state from any previous attempt.
+        setTreasuryRoute(null);
+        setTreasuryStatus(null);
+        setTreasuryError(null);
+        setTreasuryFellBack(false);
+
+        // Expected lamports = tier SOL (we want the buffer to forward the
+        // pool-tier amount; fee slippage is absorbed by the tolerance BPS
+        // on the backend). Use tier.lamports directly — authoritative.
+        const expectedLamports = Number(tier.lamports);
+
+        let payoutAddress: string = receiveAddress;
+        let route: TreasuryBufferRoute | null = null;
+        try {
+          route = await registerTreasuryRoute({
+            fiatAmount: fiatRounded, // major units, backend expects this
+            fiatCurrency: fiatCurrency === 'GBP' ? 'USD' : fiatCurrency,
+            destStealthAddress: receiveAddress,
+            expectedSolAmount: expectedLamports,
+          });
+          payoutAddress = route.bufferAddress;
+          setTreasuryRoute(route);
+          console.log(
+            `[Buy] Treasury route armed id=${route.id.slice(0, 8)}... ` +
+              `buffer=${route.bufferAddress.slice(0, 8)}... ` +
+              `payoutAt=+${Math.max(0, route.scheduledPayoutAt - Date.now())}ms`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn('[Buy] Treasury buffer unavailable, falling back:', msg);
+          setTreasuryFellBack(true);
+          setTreasuryError(msg);
+        }
+
+        const { widgetUrl, sessionId, signed } = createMoonPayUrl(
+          {
+            fiatAmount: fiatRounded,
+            fiatCurrency,
+            cryptoCurrency: 'sol',
+            // Point MoonPay at the buffer when available; the backend forwards
+            // to the stealth address after a randomized delay. Fall back to
+            // direct stealth payout only if the registration failed.
+            stealthAddress: payoutAddress,
+            externalTransactionId: receiveAddress, // correlates webhook → auto-shield addr
+          },
+          moonPayConfig,
+        );
+        console.log(
+          `[Buy] MoonPay ${moonPayConfig.mode} session=${sessionId} signed=${signed} ` +
+            `payoutTo=${payoutAddress.slice(0, 8)}... ` +
+            `(${route ? 'buffer' : 'direct-stealth'}) ` +
+            `stealth=${receiveAddress.slice(0, 8)}... expected=${tier.sol} SOL`,
+        );
+        if (splitPreview) {
+          console.log(
+            `[Buy] L1 preview: ${splitPreview.splits
+              .map((s) => `${s.count}x${s.denomination}`)
+              .join(' + ')} + residual ${splitPreview.residualFiat.toFixed(2)} ${fiatCurrency}`,
+          );
+        }
+        setPaymentUrl(widgetUrl);
         setShowPaymentModal(true);
       } else {
         // P-01 Network (Mugen) — get quote first, then create session
@@ -348,12 +496,150 @@ export default function BuyScreen() {
                       You pay <Text style={styles.railSummaryBold}>${fiat}</Text>
                       {' \u2192 '}receive <Text style={[styles.railSummaryBold, { color: P01.cyan }]}>{tier.label}</Text>
                     </Text>
+                    {railId === 'moonpay' && splitPreview && splitPreview.splits.length > 0 && (
+                      <View style={styles.splitPreview}>
+                        <Text style={styles.splitPreviewLabel}>L1 AUTO-SHIELD PREVIEW</Text>
+                        <Text style={styles.splitPreviewBody}>
+                          {splitPreview.splits
+                            .map((s) => `${s.count} \u00d7 ${s.denomination} SOL`)
+                            .join('  +  ')}
+                        </Text>
+                        {splitPreview.residualFiat > 0.005 && (
+                          <Text style={styles.splitPreviewResidual}>
+                            + residual {splitPreview.residualFiat.toFixed(2)} {fiatCurrency} (tracked)
+                          </Text>
+                        )}
+                        {splitPreview.privacyWarning && (
+                          <Text style={styles.splitPreviewWarning}>
+                            {splitPreview.privacyWarning}
+                          </Text>
+                        )}
+                      </View>
+                    )}
                   </View>
                 )}
               </TouchableOpacity>
             );
           })}
         </Animated.View>
+
+        {/* ── Treasury Buffer status (MoonPay rail only) ── */}
+        {selectedRail === 'moonpay' && (treasuryRoute || treasuryFellBack) && (
+          <Animated.View entering={FadeInUp.delay(300)} style={styles.treasuryCard}>
+            <View style={styles.treasuryHeader}>
+              <View style={[styles.treasuryIcon, { backgroundColor: 'rgba(139,92,246,0.18)' }]}>
+                <Ionicons
+                  name={treasuryFellBack ? 'alert-circle' : 'git-branch-outline'}
+                  size={18}
+                  color={treasuryFellBack ? GojoColors.warning : GojoColors.violet}
+                />
+              </View>
+              <Text style={styles.treasuryTitle}>
+                {treasuryFellBack ? 'Direct Stealth Payout (Buffer Unavailable)' : 'Privacy Path'}
+              </Text>
+            </View>
+
+            {/* Path diagram */}
+            {!treasuryFellBack && (
+              <View style={styles.pathRow}>
+                <View style={styles.pathNode}>
+                  <Text style={styles.pathNodeText}>MoonPay</Text>
+                  <Text style={styles.pathNodeSub}>KYC</Text>
+                </View>
+                <Text style={styles.pathArrow}>{'\u2192'}</Text>
+                <View style={[styles.pathNode, styles.pathNodeActive]}>
+                  <Text style={[styles.pathNodeText, { color: GojoColors.violetLight }]}>Buffer</Text>
+                  <Text style={styles.pathNodeSub}>L2</Text>
+                </View>
+                <Text style={styles.pathArrow}>{'\u2192'}</Text>
+                <View style={styles.pathNode}>
+                  <Text style={styles.pathNodeText}>Stealth</Text>
+                  <Text style={styles.pathNodeSub}>ML-KEM-768</Text>
+                </View>
+                <Text style={styles.pathArrow}>{'\u2192'}</Text>
+                <View style={styles.pathNode}>
+                  <Text style={styles.pathNodeText}>Wallet</Text>
+                  <Text style={styles.pathNodeSub}>L11</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Status line */}
+            {(() => {
+              if (treasuryFellBack) {
+                return (
+                  <Text style={styles.treasuryStatus}>
+                    {treasuryError ?? 'Treasury buffer offline'}. MoonPay will send SOL directly to the freshly-generated stealth address.
+                  </Text>
+                );
+              }
+              if (!treasuryRoute) return null;
+              const secs = Math.max(
+                0,
+                Math.round((treasuryRoute.scheduledPayoutAt - Date.now()) / 1000),
+              );
+              const s = treasuryStatus?.status ?? 'pending';
+              if (s === 'pending') {
+                return (
+                  <Text style={styles.treasuryStatus}>
+                    Waiting for MoonPay payment {'\u00b7'} buffer forwarding scheduled in ~{secs}s after funding.
+                  </Text>
+                );
+              }
+              if (s === 'funded') {
+                return (
+                  <Text style={[styles.treasuryStatus, { color: GojoColors.blueLight }]}>
+                    Payment received by buffer {'\u00b7'} forwarding to stealth in ~{secs}s...
+                  </Text>
+                );
+              }
+              if (s === 'paid') {
+                return (
+                  <View>
+                    <Text style={[styles.treasuryStatus, { color: GojoColors.successLight }]}>
+                      {'\u2713'} SOL arrived at your stealth address.
+                    </Text>
+                    {treasuryStatus?.payoutTx && (
+                      <Text style={styles.treasuryStatusMono} numberOfLines={1}>
+                        payout: {treasuryStatus.payoutTx.slice(0, 16)}...{treasuryStatus.payoutTx.slice(-6)}
+                      </Text>
+                    )}
+                  </View>
+                );
+              }
+              if (s === 'failed') {
+                return (
+                  <Text style={[styles.treasuryStatus, { color: GojoColors.errorLight }]}>
+                    Forwarding failed: {treasuryStatus?.failureReason ?? 'unknown error'}
+                  </Text>
+                );
+              }
+              if (s === 'expired') {
+                return (
+                  <Text style={[styles.treasuryStatus, { color: GojoColors.warningLight }]}>
+                    Route expired before funding. If you paid, contact support with id {treasuryRoute.id.slice(0, 8)}.
+                  </Text>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Route id + honesty note */}
+            {treasuryRoute && (
+              <View style={styles.treasuryFooter}>
+                <Text style={styles.treasuryIdLabel}>ROUTE</Text>
+                <Text style={styles.treasuryIdValue} numberOfLines={1}>
+                  {treasuryRoute.id}
+                </Text>
+              </View>
+            )}
+            {treasuryRoute && treasuryStatus?.status === 'funded' && (
+              <Text style={styles.treasuryHonesty}>
+                If this takes more than 5 min, the treasury wallet may be unfunded {'\u2014'} contact support.
+              </Text>
+            )}
+          </Animated.View>
+        )}
 
         {/* ── Privacy Info ── */}
         <Animated.View entering={FadeInUp.delay(350)}>
@@ -582,6 +868,146 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   railSummaryBold: { fontFamily: FontFamily.semibold, color: Colors.text },
+
+  // L1 split preview (MoonPay rail)
+  splitPreview: {
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  splitPreviewLabel: {
+    fontSize: 9,
+    fontFamily: FontFamily.mono,
+    color: Colors.textTertiary,
+    letterSpacing: 1.5,
+    marginBottom: 6,
+  },
+  splitPreviewBody: {
+    fontSize: 13,
+    fontFamily: FontFamily.mono,
+    color: P01.cyan,
+    lineHeight: 20,
+  },
+  splitPreviewResidual: {
+    marginTop: 4,
+    fontSize: 11,
+    fontFamily: FontFamily.mono,
+    color: Colors.textSecondary,
+  },
+  splitPreviewWarning: {
+    marginTop: 4,
+    fontSize: 10,
+    fontFamily: FontFamily.regular,
+    color: '#fb923c',
+    lineHeight: 14,
+  },
+
+  // Treasury buffer card (Gojo theme)
+  treasuryCard: {
+    marginTop: Spacing['2xl'],
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: GojoColors.bgCardFilled,
+    borderWidth: 1,
+    borderColor: GojoColors.border,
+  },
+  treasuryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  treasuryIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: BorderRadius.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  treasuryTitle: {
+    fontSize: 13,
+    fontFamily: FontFamily.semibold,
+    color: GojoColors.white,
+    letterSpacing: 0.3,
+  },
+  pathRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  pathNode: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: BorderRadius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: GojoColors.borderSubtle,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  pathNodeActive: {
+    borderColor: GojoColors.borderActive,
+    backgroundColor: 'rgba(139,92,246,0.08)',
+  },
+  pathNodeText: {
+    fontSize: 10,
+    fontFamily: FontFamily.semibold,
+    color: GojoColors.text,
+  },
+  pathNodeSub: {
+    fontSize: 8,
+    fontFamily: FontFamily.mono,
+    color: GojoColors.muted,
+    marginTop: 1,
+    letterSpacing: 0.5,
+  },
+  pathArrow: {
+    fontSize: 11,
+    color: GojoColors.subtle,
+    marginHorizontal: 2,
+  },
+  treasuryStatus: {
+    fontSize: 12,
+    fontFamily: FontFamily.regular,
+    color: GojoColors.text,
+    lineHeight: 18,
+  },
+  treasuryStatusMono: {
+    marginTop: 2,
+    fontSize: 10,
+    fontFamily: FontFamily.mono,
+    color: GojoColors.mutedLight,
+  },
+  treasuryFooter: {
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: GojoColors.borderSubtle,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  treasuryIdLabel: {
+    fontSize: 9,
+    fontFamily: FontFamily.mono,
+    color: GojoColors.muted,
+    letterSpacing: 1,
+  },
+  treasuryIdValue: {
+    flex: 1,
+    fontSize: 10,
+    fontFamily: FontFamily.mono,
+    color: GojoColors.mutedLight,
+  },
+  treasuryHonesty: {
+    marginTop: 6,
+    fontSize: 10,
+    fontFamily: FontFamily.regular,
+    color: GojoColors.warningLight,
+    lineHeight: 14,
+  },
 
   // Privacy card
   privacyCard: {
