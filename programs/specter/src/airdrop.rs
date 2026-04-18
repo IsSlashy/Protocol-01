@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::hash::hashv;
+use solana_sha256_hasher::hashv;
 use anchor_spl::token::{self, CloseAccount, Token, TokenAccount, Transfer};
 
 // =============================================================================

@@ -1,22 +1,24 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkSplError;
+use crate::stark_proof::{
+    u32_bytes_to_u64_le, verify_stark_proof, CIRCUIT_CONFIDENTIAL_BALANCE,
+};
 use crate::state::{ConfidentialAccount, MintConfig};
-use crate::verifier::Groth16Verifier;
-use crate::Groth16Proof;
 
 /// Apply a pending credit to the recipient's balance.
 ///
-/// The recipient decrypts the amount off-chain, then proves they correctly
-/// integrated it into their balance commitment.
+/// The recipient learns the plaintext amount + amount_salt out-of-band from the
+/// sender, then proves (via STARK circuit `confidential_balance`, ID 4) that
+/// their new commitment correctly integrates a value whose
+/// `Poseidon(amount, amount_salt)` matches the stored pending credit.
 ///
-/// Circuit public inputs (recipient's proof):
-///   old_commitment, new_commitment, amount_hash, public_credit=0,
-///   public_debit=0, token_mint, nonce
+/// STARK circuit 4 public inputs (order matches AIR `to_elements`):
+///   [old_commitment, new_commitment, amount_hash, token_mint]
 ///
-/// The amount_hash must match one of the pending credits.
+/// `amount_hash` must match exactly one of the pending credit entries.
 #[derive(Accounts)]
-#[instruction(proof: Groth16Proof, new_commitment: [u8; 32], amount_hash: [u8; 32])]
+#[instruction(new_commitment: [u8; 32], amount_hash: [u8; 32])]
 pub struct ApplyPending<'info> {
     /// Recipient (account owner)
     pub recipient: Signer<'info>,
@@ -42,14 +44,14 @@ pub struct ApplyPending<'info> {
     )]
     pub confidential_account: Account<'info, ConfidentialAccount>,
 
-    /// Verification key data
-    /// CHECK: Validated via VK hash
-    pub vk_data: UncheckedAccount<'info>,
+    /// Verified STARK proof buffer from `p01_stark_verifier` (circuit 4).
+    /// Must have `verified == true` and `authority == recipient`.
+    /// CHECK: Validated manually.
+    pub stark_proof_buffer: AccountInfo<'info>,
 }
 
 pub fn handler(
     ctx: Context<ApplyPending>,
-    proof: Groth16Proof,
     new_commitment: [u8; 32],
     amount_hash: [u8; 32],
 ) -> Result<()> {
@@ -62,25 +64,25 @@ pub fn handler(
         .position(|c| c.amount_hash == amount_hash)
         .ok_or(ZkSplError::PendingCreditNotFound)?;
 
-    // --- Verify recipient's ZK proof ---
-    // Proves: recipient correctly added `amount` to their balance
-    // is_debit = 0 in the circuit (receiving)
-    let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
+    // -----------------------------------------------------------------------
+    // STARK proof verification.
+    //
+    // Circuit 4 (confidential_balance) public inputs in AIR order:
+    //   [old_commitment, new_commitment, amount_hash, token_mint]
+    // -----------------------------------------------------------------------
     let token_mint_bytes = config.token_mint.to_bytes();
-
-    let is_valid = Groth16Verifier::verify_confidential_balance(
-        &proof,
-        &account.balance_commitment,
-        &new_commitment,
-        &amount_hash,
-        0,  // public_credit = 0
-        0,  // public_debit = 0
-        &token_mint_bytes,
-        account.nonce,
-        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
+    let public_inputs = [
+        u32_bytes_to_u64_le(&account.balance_commitment),
+        u32_bytes_to_u64_le(&new_commitment),
+        u32_bytes_to_u64_le(&amount_hash),
+        u64::from_le_bytes(token_mint_bytes[..8].try_into().unwrap()),
+    ];
+    verify_stark_proof(
+        &ctx.accounts.stark_proof_buffer,
+        &ctx.accounts.recipient.key(),
+        CIRCUIT_CONFIDENTIAL_BALANCE,
+        &public_inputs,
     )?;
-
-    require!(is_valid, ZkSplError::InvalidProof);
 
     // --- Update account ---
     account.balance_commitment = new_commitment;

@@ -7,7 +7,6 @@ members = [
     "programs/whitelist",
     "programs/p01-fee-splitter",
     "programs/p01_zkspl",
-    "programs/p01_trustless",
     "programs/p01_relayer",
     "programs/p01_stark_verifier",
     "programs/p01_quantum_vault",

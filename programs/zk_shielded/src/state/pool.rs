@@ -14,13 +14,15 @@ pub struct ShieldedPool {
     /// Current Merkle tree root
     pub merkle_root: [u8; 32],
 
-    /// Depth of the Merkle tree (20 = ~1M notes)
+    /// Depth of the Merkle tree (15 = 32K notes, bound by STARK circuit 6)
     pub tree_depth: u8,
 
     /// Index of the next leaf to insert
     pub next_leaf_index: u64,
 
-    /// Hash of the verification key for proof validation
+    /// DEPRECATED (P9 STARK migration): Groth16 verification key hash. No
+    /// longer consulted — STARK circuits are pinned in p01_stark_verifier.
+    /// Retained for account-layout compatibility with pre-migration pools.
     pub vk_hash: [u8; 32],
 
     /// Total amount currently shielded in the pool
@@ -82,8 +84,11 @@ impl ShieldedPool {
     /// Seeds for PDA derivation
     pub const SEED_PREFIX: &'static [u8] = b"shielded_pool";
 
-    /// Default tree depth (2^20 = ~1M notes)
-    pub const DEFAULT_TREE_DEPTH: u8 = 20;
+    /// Default tree depth (2^15 = 32,768 notes per pool).
+    /// Must equal CANONICAL_DEPTH in p01_stark_verifier (circuit 6 merkle_update),
+    /// otherwise shield_stark proofs will be rejected. If the circuit's canonical
+    /// depth changes, this must change too.
+    pub const DEFAULT_TREE_DEPTH: u8 = 15;
 
     /// Maximum historical roots to store
     pub const MAX_HISTORICAL_ROOTS: u8 = 100;

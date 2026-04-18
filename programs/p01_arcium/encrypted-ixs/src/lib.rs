@@ -610,7 +610,10 @@ mod circuits {
     ///   1. Currency match (hash comparison)
     ///   2. Amount check (buyer wants ≤ offer's crypto)
     ///   3. Price check (offer's fiat ≤ buyer's max)
-    ///   4. Payment method overlap (bitwise AND > 0)
+    ///   4. Payment method match (exact equality — Arcium MPC does not
+    ///      yet support bitwise operations between encrypted u64s, so the
+    ///      buyer's mask must equal the seller's mask. Single-method
+    ///      preference encoding is recommended for MVP).
     ///
     /// If ALL checks pass: reveal trade terms for escrow creation.
     /// If ANY check fails: reveal "no match" (nothing else leaked).
@@ -631,7 +634,8 @@ mod circuits {
         let currency_ok: u64 = if q.currency_hash == s.currency_hash { 1 } else { 0 };
         let amount_ok: u64 = if q.desired_crypto <= s.crypto_amount { 1 } else { 0 };
         let price_ok: u64 = if s.fiat_amount <= q.max_fiat { 1 } else { 0 };
-        let payment_ok: u64 = if (q.payment_methods & s.payment_methods) > 0 { 1 } else { 0 };
+        // Exact-match instead of bitwise overlap (Arcium MPC limitation)
+        let payment_ok: u64 = if q.payment_methods == s.payment_methods { 1 } else { 0 };
 
         let matched: u64 = is_active * currency_ok * amount_ok * price_ok * payment_ok;
 

@@ -31,7 +31,15 @@ pub struct ResolveDispute<'info> {
     pub escrow_vault: Account<'info, TokenAccount>,
 
     /// Recipient of the resolved funds (buyer or seller depending on outcome).
-    #[account(mut)]
+    /// Must match one of the token accounts bound at escrow creation — prevents
+    /// an attacker from passing an arbitrary token account to siphon funds.
+    #[account(
+        mut,
+        constraint = (
+            recipient_token_account.key() == escrow.buyer_token_account ||
+            recipient_token_account.key() == escrow.seller_token_account
+        ) @ MugenError::UnauthorizedParticipant,
+    )]
     pub recipient_token_account: Account<'info, TokenAccount>,
 
     /// Loser reputation PDA (gets dispute count incremented).
@@ -52,6 +60,22 @@ pub fn handler(ctx: Context<ResolveDispute>, outcome: u8) -> Result<()> {
     );
 
     let escrow = &ctx.accounts.escrow;
+
+    // Outcome must match the recipient side (buyer release vs seller refund).
+    let recipient_key = ctx.accounts.recipient_token_account.key();
+    match outcome {
+        DISPUTE_RELEASE_TO_BUYER => require_keys_eq!(
+            recipient_key,
+            escrow.buyer_token_account,
+            MugenError::InvalidDisputeOutcome
+        ),
+        DISPUTE_REFUND_TO_SELLER => require_keys_eq!(
+            recipient_key,
+            escrow.seller_token_account,
+            MugenError::InvalidDisputeOutcome
+        ),
+        _ => return err!(MugenError::InvalidDisputeOutcome),
+    }
 
     // PDA signer seeds
     let order_key = escrow.order;

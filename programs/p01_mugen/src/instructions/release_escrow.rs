@@ -21,6 +21,10 @@ pub struct ReleaseEscrow<'info> {
     )]
     pub escrow: Account<'info, MugenEscrow>,
 
+    /// The parent order — needed to derive the seller role from order_type.
+    #[account(constraint = order.key() == escrow.order @ MugenError::UnauthorizedParticipant)]
+    pub order: Account<'info, MugenOrder>,
+
     /// The escrow vault token account holding the crypto.
     #[account(
         mut,
@@ -31,7 +35,11 @@ pub struct ReleaseEscrow<'info> {
     pub escrow_vault: Account<'info, TokenAccount>,
 
     /// The buyer's token account (receives the crypto minus fees).
-    #[account(mut)]
+    /// Must match the token account bound at escrow creation.
+    #[account(
+        mut,
+        constraint = buyer_token_account.key() == escrow.buyer_token_account @ MugenError::UnauthorizedBuyer,
+    )]
     pub buyer_token_account: Account<'info, TokenAccount>,
 
     /// P01 Protocol fee wallet token account.
@@ -72,11 +80,19 @@ pub struct ReleaseEscrow<'info> {
 pub fn handler(ctx: Context<ReleaseEscrow>) -> Result<()> {
     let clock = Clock::get()?;
     let escrow = &ctx.accounts.escrow;
-    let seller = ctx.accounts.seller.key();
+    let order = &ctx.accounts.order;
 
-    // Verify seller is a participant
-    let is_seller = seller == escrow.maker || seller == escrow.taker;
-    require!(is_seller, MugenError::UnauthorizedSeller);
+    // Seller is derived from order type — caller cannot mis-claim the seller role.
+    let expected_seller = match order.order_type {
+        ORDER_TYPE_SELL_CRYPTO => escrow.maker,
+        ORDER_TYPE_BUY_CRYPTO => escrow.taker,
+        _ => return err!(MugenError::InvalidOrderType),
+    };
+    require_keys_eq!(
+        ctx.accounts.seller.key(),
+        expected_seller,
+        MugenError::UnauthorizedSeller
+    );
 
     let config = &ctx.accounts.config;
 

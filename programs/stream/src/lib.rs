@@ -151,12 +151,16 @@ pub mod p01_stream {
             StreamError::StreamNotActive
         );
 
-        let seeds = &[
+        let sender_key = stream.sender.to_bytes();
+        let recipient_key = stream.recipient.to_bytes();
+        let mint_key = stream.mint.to_bytes();
+        let bump = stream.bump;
+        let seeds: [&[u8]; 5] = [
             b"stream",
-            stream.sender.as_ref(),
-            stream.recipient.as_ref(),
-            stream.mint.as_ref(),
-            &[stream.bump],
+            &sender_key,
+            &recipient_key,
+            &mint_key,
+            std::slice::from_ref(&bump),
         ];
         let signer_seeds = &[&seeds[..]];
 

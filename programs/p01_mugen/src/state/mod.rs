@@ -57,6 +57,16 @@ pub const ESCROW_EXPIRED: u8 = 5;
 pub const DISPUTE_RELEASE_TO_BUYER: u8 = 0;
 pub const DISPUTE_REFUND_TO_SELLER: u8 = 1;
 
+/// Designated authority allowed to gate `init_reputation`. Only this signer
+/// can mint a reputation PDA for a given Poseidon commitment, preventing
+/// reputation squatting. Devnet: `7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU`.
+pub const REPUTATION_AUTHORITY: Pubkey = Pubkey::new_from_array([
+    0x63, 0x45, 0x7f, 0xc3, 0xeb, 0xa4, 0x0e, 0x69,
+    0x13, 0x9c, 0xea, 0xa0, 0xaa, 0x19, 0x96, 0xa4,
+    0x9d, 0xe9, 0xae, 0x35, 0x37, 0x16, 0x3e, 0x16,
+    0xb0, 0xb8, 0x42, 0xda, 0xd8, 0xdd, 0x62, 0xd7,
+]);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ACCOUNTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -263,6 +273,21 @@ pub struct MugenEscrow {
     /// Dispute reason code (0 = none).
     pub dispute_reason: u8,
 
+    /// Buyer's token account bound at escrow creation. Used by `resolve_dispute`
+    /// to prevent passing an arbitrary recipient token account.
+    pub buyer_token_account: Pubkey,
+
+    /// Seller's token account bound at escrow creation. Used by `resolve_dispute`
+    /// and `expire_escrow` to prevent passing an arbitrary recipient token account.
+    pub seller_token_account: Pubkey,
+
+    /// Maker reputation snapshot at trade time — prevents race between
+    /// reputation updates and escrow finalization.
+    pub maker_reputation_snapshot: u64,
+
+    /// Taker reputation snapshot at trade time.
+    pub taker_reputation_snapshot: u64,
+
     /// PDA bump.
     pub bump: u8,
 
@@ -272,7 +297,7 @@ pub struct MugenEscrow {
 
 impl MugenEscrow {
     /// Account discriminator (8) + fields
-    pub const LEN: usize = 8 + 32 + 32 + 32 + 32 + 8 + 8 + 32 + 32 + 32 + 32 + 2 + 1 + 8 + 8 + 8 + 32 + 1 + 1 + 1;
+    pub const LEN: usize = 8 + 32 + 32 + 32 + 32 + 8 + 8 + 32 + 32 + 32 + 32 + 2 + 1 + 8 + 8 + 8 + 32 + 1 + 32 + 32 + 8 + 8 + 1 + 1;
 }
 
 /// Anonymous on-chain reputation tied to a Poseidon commitment.

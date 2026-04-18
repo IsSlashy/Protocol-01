@@ -6,6 +6,7 @@ pub mod instructions;
 pub mod state;
 
 use instructions::*;
+pub use airdrop::*;
 
 declare_id!("8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh");
 
@@ -129,7 +130,7 @@ pub mod p01 {
     /// Create a new Merkle-based private airdrop campaign.
     /// Escrows SPL tokens into a PDA; no recipient data stored on-chain.
     pub fn create_airdrop(
-        ctx: Context<airdrop::CreateAirdrop>,
+        ctx: Context<CreateAirdrop>,
         merkle_root: [u8; 32],
         total_amount: u64,
         total_recipients: u32,
@@ -142,7 +143,7 @@ pub mod p01 {
 
     /// Claim tokens from a private airdrop using a SHA-256 Merkle proof.
     pub fn claim_airdrop(
-        ctx: Context<airdrop::ClaimAirdrop>,
+        ctx: Context<ClaimAirdrop>,
         amount: u64,
         salt: [u8; 32],
         leaf_index: u32,
@@ -153,7 +154,7 @@ pub mod p01 {
     }
 
     /// Close an expired airdrop campaign and reclaim remaining tokens.
-    pub fn close_airdrop(ctx: Context<airdrop::CloseAirdrop>) -> Result<()> {
+    pub fn close_airdrop(ctx: Context<CloseAirdrop>) -> Result<()> {
         airdrop::handler_close_airdrop(ctx)
     }
 }

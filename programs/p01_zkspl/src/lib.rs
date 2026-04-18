@@ -2,8 +2,8 @@ use anchor_lang::prelude::*;
 
 pub mod errors;
 pub mod instructions;
+pub mod stark_proof;
 pub mod state;
-pub mod verifier;
 
 use instructions::*;
 
@@ -14,7 +14,7 @@ pub mod p01_zkspl {
     use super::*;
 
     /// Register an SPL token for zkSPL confidential operations.
-    /// Creates a MintConfig PDA with verification key hashes.
+    /// Creates a MintConfig PDA.
     pub fn initialize_mint(
         ctx: Context<InitializeMint>,
         balance_vk_hash: [u8; 32],
@@ -33,58 +33,55 @@ pub mod p01_zkspl {
     }
 
     /// Deposit SPL tokens into a confidential account.
-    /// Amount is public. ZK proof verifies correct commitment update.
+    /// Amount is public. STARK proof (circuit 4) verifies correct commitment update.
+    /// The caller must upload & verify the proof via p01_stark_verifier first,
+    /// then pass the verified proof buffer account.
     pub fn deposit(
         ctx: Context<Deposit>,
         amount: u64,
-        proof: Groth16Proof,
         new_commitment: [u8; 32],
     ) -> Result<()> {
-        instructions::deposit::handler(ctx, amount, proof, new_commitment)
+        instructions::deposit::handler(ctx, amount, new_commitment)
     }
 
     /// Private transfer between two confidential accounts.
     /// Amount is hidden — only amount_hash is stored on-chain.
-    /// Creates a pending credit for the recipient.
+    /// STARK proof (circuit 5) verifies correct commitment update.
     pub fn confidential_transfer(
         ctx: Context<ConfidentialTransfer>,
-        proof: Groth16Proof,
         new_commitment: [u8; 32],
         amount_hash: [u8; 32],
     ) -> Result<()> {
-        instructions::confidential_transfer::handler(ctx, proof, new_commitment, amount_hash)
+        instructions::confidential_transfer::handler(ctx, new_commitment, amount_hash)
     }
 
     /// Apply a pending credit to update recipient's balance.
-    /// Recipient proves they correctly integrated the amount.
+    /// STARK proof (circuit 4) verifies recipient correctly integrated the amount.
     pub fn apply_pending(
         ctx: Context<ApplyPending>,
-        proof: Groth16Proof,
         new_commitment: [u8; 32],
         amount_hash: [u8; 32],
     ) -> Result<()> {
-        instructions::apply_pending::handler(ctx, proof, new_commitment, amount_hash)
+        instructions::apply_pending::handler(ctx, new_commitment, amount_hash)
     }
 
     /// Withdraw from confidential account to regular SPL tokens.
-    /// Amount is public. ZK proof verifies correct commitment update.
+    /// Amount is public. STARK proof (circuit 4) verifies correct commitment update.
     pub fn withdraw(
         ctx: Context<Withdraw>,
         amount: u64,
-        proof: Groth16Proof,
         new_commitment: [u8; 32],
     ) -> Result<()> {
-        instructions::withdraw::handler(ctx, amount, proof, new_commitment)
+        instructions::withdraw::handler(ctx, amount, new_commitment)
     }
 
     /// Prove balance >= threshold without revealing the actual balance.
-    /// For DeFi composability (DEXes, lending, etc.).
+    /// For DeFi composability. STARK proof (circuit 2).
     pub fn prove_balance(
         ctx: Context<ProveBalance>,
         threshold: u64,
-        proof: Groth16Proof,
     ) -> Result<()> {
-        instructions::prove_balance::handler(ctx, threshold, proof)
+        instructions::prove_balance::handler(ctx, threshold)
     }
 
     /// Add a viewing key (opt-in compliance).
@@ -102,32 +99,4 @@ pub mod p01_zkspl {
     ) -> Result<()> {
         instructions::manage_viewers::handler_remove_viewer(ctx, viewer)
     }
-
-    /// Initialize VK data storage account.
-    /// vk_type: 0 = balance circuit VK, 1 = proof circuit VK
-    pub fn init_vk_data(
-        ctx: Context<InitVkData>,
-        vk_type: u8,
-        vk_size: u32,
-    ) -> Result<()> {
-        instructions::store_vk_data::handler_init(ctx, vk_type, vk_size)
-    }
-
-    /// Write VK data chunk.
-    pub fn write_vk_data(
-        ctx: Context<WriteVkData>,
-        vk_type: u8,
-        offset: u32,
-        data: Vec<u8>,
-    ) -> Result<()> {
-        instructions::store_vk_data::handler_write(ctx, vk_type, offset, data)
-    }
-}
-
-/// Groth16 proof structure for on-chain verification
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
-pub struct Groth16Proof {
-    pub pi_a: [u8; 64],  // G1 point
-    pub pi_b: [u8; 128], // G2 point
-    pub pi_c: [u8; 64],  // G1 point
 }

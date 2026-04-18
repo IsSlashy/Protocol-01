@@ -1,12 +1,11 @@
 pub mod initialize_pool;
-pub mod shield;
-pub mod store_vk_data;
-pub mod transfer;
-pub mod unshield;
-pub mod update_vk;
-// REMOVED: transfer_via_relayer — disabled due to unproven relayer fee commitment
-// and panic in insert(). Relaying is handled by the on-chain p01_relayer program.
-// pub mod transfer_via_relayer;
+pub mod shield_stark;
+pub mod transfer_stark;
+pub mod unshield_stark;
+// P9 — REMOVED Groth16 base-pool instructions (replaced by STARK variants):
+//   shield, transfer, unshield, transfer_via_relayer, store_vk_data, update_vk.
+// The _stark variants read a pre-verified ProofBuffer from p01_stark_verifier
+// and are the canonical base-pool entrypoints.
 pub mod init_denominated_pool;
 pub mod shield_denominated;
 // P3.7 — REMOVED Groth16 denominated-pool instructions (replaced by STARK variants):
@@ -40,12 +39,9 @@ pub mod store_escrow_vk_data;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
-pub use shield::*;
-pub use store_vk_data::*;
-pub use transfer::*;
-pub use unshield::*;
-pub use update_vk::*;
-// pub use transfer_via_relayer::*;
+pub use shield_stark::*;
+pub use transfer_stark::*;
+pub use unshield_stark::*;
 pub use init_denominated_pool::*;
 pub use shield_denominated::*;
 pub use resize_denominated_pool::*;

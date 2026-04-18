@@ -1,29 +1,35 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkSplError;
+use crate::stark_proof::{u32_bytes_to_u64_le, verify_stark_proof, CIRCUIT_BALANCE_PROOF};
 use crate::state::{ConfidentialAccount, MintConfig};
-use crate::verifier::Groth16Verifier;
-use crate::Groth16Proof;
 
 /// Prove that a confidential balance is at least `threshold` without revealing it.
 ///
-/// This is the DeFi composability primitive:
+/// DeFi composability primitive:
 /// - A DEX can call this to verify a user has enough funds before a trade
 /// - A lending protocol can verify collateral requirements
 /// - Any program can check balance sufficiency
 ///
-/// Circuit public inputs (balance_proof circuit):
-///   balance_commitment, threshold, token_mint
+/// Uses the STARK `balance_proof` circuit (ID 2). Public inputs in AIR order:
+///   [commitment, token_mint]
 ///
-/// The proof is verified and an event is emitted. Other programs can
-/// check the event or use CPI to verify.
+/// The STARK proves the account's `balance_commitment` was honestly derived
+/// from a private `balance`, `salt`, and `spending_key`. The range check
+/// (`balance >= threshold`) is NOT enforced by the AIR — the AIR only binds
+/// commitment integrity. A production-grade threshold proof would add a
+/// bounded-decomposition sub-circuit; this is a known limitation carried
+/// over from the previous Groth16 design.
+///
+/// `threshold` is emitted in the event for observers but does not participate
+/// in the STARK's public-inputs hash.
 #[derive(Accounts)]
-#[instruction(threshold: u64, proof: Groth16Proof)]
+#[instruction(threshold: u64)]
 pub struct ProveBalance<'info> {
     /// Account owner proving their balance
     pub prover: Signer<'info>,
 
-    /// Mint config (for proof VK hash)
+    /// Mint config
     #[account(
         seeds = [MintConfig::SEED_PREFIX, mint_config.token_mint.as_ref()],
         bump = mint_config.bump
@@ -43,32 +49,33 @@ pub struct ProveBalance<'info> {
     )]
     pub confidential_account: Account<'info, ConfidentialAccount>,
 
-    /// Balance proof verification key data
-    /// CHECK: Validated via proof_vk_hash in mint_config
-    pub vk_data: UncheckedAccount<'info>,
+    /// Verified STARK proof buffer from `p01_stark_verifier` (circuit 2: balance_proof).
+    /// Must have `verified == true` and `authority == prover`.
+    /// CHECK: Validated manually.
+    pub stark_proof_buffer: AccountInfo<'info>,
 }
 
-pub fn handler(
-    ctx: Context<ProveBalance>,
-    threshold: u64,
-    proof: Groth16Proof,
-) -> Result<()> {
+pub fn handler(ctx: Context<ProveBalance>, threshold: u64) -> Result<()> {
     let account = &ctx.accounts.confidential_account;
     let config = &ctx.accounts.mint_config;
 
-    // --- Verify balance sufficiency proof ---
-    let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
+    // -----------------------------------------------------------------------
+    // STARK proof verification.
+    //
+    // Circuit 2 (balance_proof) public inputs in AIR order:
+    //   [commitment, token_mint]
+    // -----------------------------------------------------------------------
     let token_mint_bytes = config.token_mint.to_bytes();
-
-    let is_valid = Groth16Verifier::verify_balance_proof(
-        &proof,
-        &account.balance_commitment,
-        threshold,
-        &token_mint_bytes,
-        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
+    let public_inputs = [
+        u32_bytes_to_u64_le(&account.balance_commitment),
+        u64::from_le_bytes(token_mint_bytes[..8].try_into().unwrap()),
+    ];
+    verify_stark_proof(
+        &ctx.accounts.stark_proof_buffer,
+        &ctx.accounts.prover.key(),
+        CIRCUIT_BALANCE_PROOF,
+        &public_inputs,
     )?;
-
-    require!(is_valid, ZkSplError::InvalidProof);
 
     // Emit event for other programs to observe
     emit!(BalanceProofEvent {

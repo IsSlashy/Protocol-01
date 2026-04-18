@@ -7,6 +7,11 @@ pub struct InitReputation<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
+    /// Designated attestation authority — gates reputation creation so that
+    /// anyone can't squat an arbitrary commitment. Must co-sign.
+    #[account(address = REPUTATION_AUTHORITY)]
+    pub authority: Signer<'info>,
+
     #[account(
         init,
         payer = payer,

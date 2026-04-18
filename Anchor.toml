@@ -1,13 +1,13 @@
 [toolchain]
 anchor_version = "0.32.1"
-solana_version = "3.2.0"
+solana_version = "3.1.9"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.devnet]
-p01_arcium = "FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT"
+p01_arcium = "9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ"
 p01_fee_splitter = "UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM"
 p01_quantum_vault = "9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv"
 p01_registry = "ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr"
@@ -15,7 +15,6 @@ p01_relayer = "Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw"
 p01_stark_verifier = "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z"
 p01_stream = "C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx"
 p01_subscription = "3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW"
-p01_trustless = "5x8qr9UwF6BTN4ySb4gPwL4TYgZiiLCzg4mKDmQrnjyJ"
 p01_whitelist = "5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33"
 p01_zkspl = "AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT"
 specter = "8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh"
@@ -23,15 +22,14 @@ zk_shielded = "2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms"
 p01_mugen = "EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN"
 
 [programs.localnet]
-p01_arcium = "FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT"
+p01_arcium = "9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ"
 p01_fee_splitter = "muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD"
-p01_quantum_vault = "HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o"
+p01_quantum_vault = "9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv"
 p01_registry = "QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB"
 p01_relayer = "2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW"
 p01_stark_verifier = "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs"
 p01_stream = "2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws"
 p01_subscription = "5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt"
-p01_trustless = "FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q"
 p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
 p01_zkspl = "EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah"
 specter = "2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp"

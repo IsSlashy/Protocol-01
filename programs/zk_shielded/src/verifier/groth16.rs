@@ -51,109 +51,6 @@ impl Groth16Verifier {
         Self::pairing_check(&pairing_input)
     }
 
-    /// Verify a transfer proof with standard public inputs
-    ///
-    /// IMPORTANT: Public inputs are received in little-endian format (matching Solana storage)
-    /// but the alt_bn128 precompile expects big-endian. We convert inside this function.
-    pub fn verify_transfer(
-        proof: &Groth16Proof,
-        merkle_root: &[u8; 32],
-        nullifier_1: &[u8; 32],
-        nullifier_2: &[u8; 32],
-        output_commitment_1: &[u8; 32],
-        output_commitment_2: &[u8; 32],
-        public_amount: i64,
-        token_mint: &[u8; 32],
-        vk_data: &[u8],
-    ) -> Result<bool> {
-        let public_amount_bytes = Self::i64_to_field_bytes(public_amount);
-
-        // Convert public inputs from little-endian to big-endian for alt_bn128 pairing
-        let public_inputs = [
-            Self::le_to_be(merkle_root),
-            Self::le_to_be(nullifier_1),
-            Self::le_to_be(nullifier_2),
-            Self::le_to_be(output_commitment_1),
-            Self::le_to_be(output_commitment_2),
-            Self::le_to_be(&public_amount_bytes),
-            Self::le_to_be(token_mint),
-        ];
-
-        Self::verify(proof, &public_inputs, vk_data)
-    }
-
-    /// Verify a denominated pool unshield proof with 5 public inputs
-    ///
-    /// Circuit public inputs: [merkle_root, nullifier, min_epoch, token_mint, enforce_maturity]
-    /// The circuit verifies:
-    /// - Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint) is in the tree
-    /// - Nullifier = Poseidon(nullifier_preimage, secret) matches
-    /// - deposit_epoch <= min_epoch (time delay) — when enforce_maturity=1
-    /// - enforce_maturity=0 bypasses epoch check (emergency unshield)
-    pub fn verify_denominated(
-        proof: &Groth16Proof,
-        merkle_root: &[u8; 32],
-        nullifier: &[u8; 32],
-        min_epoch: u64,
-        token_mint: &[u8; 32],
-        enforce_maturity: bool,
-        vk_data: &[u8],
-    ) -> Result<bool> {
-        // Convert min_epoch to 32-byte field element (little-endian)
-        let mut min_epoch_bytes = [0u8; 32];
-        min_epoch_bytes[..8].copy_from_slice(&min_epoch.to_le_bytes());
-
-        // Convert enforce_maturity to field element (1 or 0)
-        let mut enforce_maturity_bytes = [0u8; 32];
-        if enforce_maturity {
-            enforce_maturity_bytes[0] = 1;
-        }
-
-        // Convert public inputs from little-endian to big-endian for alt_bn128 pairing
-        let public_inputs = [
-            Self::le_to_be(merkle_root),
-            Self::le_to_be(nullifier),
-            Self::le_to_be(&min_epoch_bytes),
-            Self::le_to_be(token_mint),
-            Self::le_to_be(&enforce_maturity_bytes),
-        ];
-
-        Self::verify(proof, &public_inputs, vk_data)
-    }
-
-    /// Verify a denominated pool transfer proof with 5 public inputs
-    ///
-    /// Circuit public inputs: [merkle_root, nullifier, min_epoch, token_mint, new_commitment]
-    /// The circuit verifies:
-    /// - Old note exists in the tree and is owned by the prover
-    /// - Nullifier is correctly derived
-    /// - Time delay is enforced (always, no bypass for transfers)
-    /// - New commitment is correctly formed
-    pub fn verify_denominated_transfer(
-        proof: &Groth16Proof,
-        merkle_root: &[u8; 32],
-        nullifier: &[u8; 32],
-        min_epoch: u64,
-        token_mint: &[u8; 32],
-        new_commitment: &[u8; 32],
-        vk_data: &[u8],
-    ) -> Result<bool> {
-        // Convert min_epoch to 32-byte field element (little-endian)
-        let mut min_epoch_bytes = [0u8; 32];
-        min_epoch_bytes[..8].copy_from_slice(&min_epoch.to_le_bytes());
-
-        // Convert public inputs from little-endian to big-endian for alt_bn128 pairing
-        let public_inputs = [
-            Self::le_to_be(merkle_root),
-            Self::le_to_be(nullifier),
-            Self::le_to_be(&min_epoch_bytes),
-            Self::le_to_be(token_mint),
-            Self::le_to_be(new_commitment),
-        ];
-
-        Self::verify(proof, &public_inputs, vk_data)
-    }
-
     /// Verify an escrow bid proof with 7 public inputs
     ///
     /// Circuit public inputs: [merkle_root, nullifier, min_epoch, token_mint,
@@ -186,22 +83,6 @@ impl Groth16Verifier {
             Self::le_to_be(auction_id),
             Self::le_to_be(pay_commitment),
             Self::le_to_be(refund_commitment),
-        ];
-
-        Self::verify(proof, &public_inputs, vk_data)
-    }
-
-    /// Verify a subscriber ownership proof with 1 public input
-    ///
-    /// Circuit public inputs: [commitment]
-    /// The circuit verifies: Poseidon(subscriber_secret) == commitment
-    pub fn verify_subscriber_ownership(
-        proof: &Groth16Proof,
-        commitment: &[u8; 32],
-        vk_data: &[u8],
-    ) -> Result<bool> {
-        let public_inputs = [
-            Self::le_to_be(commitment),
         ];
 
         Self::verify(proof, &public_inputs, vk_data)
@@ -437,6 +318,7 @@ impl Groth16Verifier {
 
     /// Convert i64 to field element bytes (handles negative values)
     /// For negative values, returns FIELD_MODULUS - |value| (little-endian)
+    #[allow(dead_code)]
     fn i64_to_field_bytes(value: i64) -> [u8; 32] {
         let mut bytes = [0u8; 32];
         if value >= 0 {

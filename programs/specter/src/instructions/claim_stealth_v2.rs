@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::hash::hash as sha256;
+use solana_sha256_hasher::hash as sha256;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use ed25519_dalek::{Signature, VerifyingKey};
 

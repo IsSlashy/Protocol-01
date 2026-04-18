@@ -3,20 +3,40 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkSplError;
+use crate::stark_proof::{
+    u32_bytes_to_u64_le, verify_stark_proof, CIRCUIT_CONFIDENTIAL_BALANCE,
+};
 use crate::state::{ConfidentialAccount, MintConfig};
-use crate::verifier::Groth16Verifier;
-use crate::Groth16Proof;
 
 /// Deposit SPL tokens into a zkSPL confidential account.
 ///
-/// The deposit amount is PUBLIC (visible on-chain) because the SPL transfer is visible.
-/// The ZK proof proves that the new balance commitment correctly integrates the deposit.
+/// The deposit amount is PUBLIC (visible on-chain) because the SPL transfer is
+/// visible. The STARK proof (circuit `confidential_balance`, ID 4) proves that
+/// the new balance commitment correctly commits a balance derived from the
+/// same `old_balance` + `new_balance` private witnesses that the AIR enforces
+/// via chained Poseidon hashes.
 ///
-/// Circuit public inputs:
-///   old_commitment, new_commitment, amount_hash=Poseidon(0,0), public_credit=amount,
-///   public_debit=0, token_mint, nonce
+/// The caller must upload + verify the proof via `p01_stark_verifier` in prior
+/// transactions (init_proof_buffer → write_proof_chunk* → verify_stark_proof_v2),
+/// then pass the verified proof buffer account here.
+///
+/// STARK circuit 4 public inputs (order matches AIR `to_elements`):
+///   [old_commitment, new_commitment, amount_hash, token_mint]
+///
+/// The on-chain handler reconstructs `sha256(u64_le || u64_le || u64_le || u64_le)`
+/// and checks it matches the proof buffer's `public_inputs_hash`. `amount_hash`
+/// must equal `Poseidon(0, 0)` (ZERO_AMOUNT_HASH) because the deposit amount is
+/// public; there is no hidden amount for a deposit.
+///
+/// NOTE: The STARK AIR does NOT prove conservation (`new_balance =
+/// old_balance + amount`). It only proves both commitments are well-formed
+/// from the committed private witnesses and that `amount_hash = Poseidon(amount_priv,
+/// amount_salt_priv)`. The on-chain program cannot observe the private
+/// balances, so conservation relies on the client generating the proof with
+/// honest witnesses. This is a known limitation carried over from the
+/// previous Groth16 circuits and applies to withdraw/apply_pending as well.
 #[derive(Accounts)]
-#[instruction(amount: u64, proof: Groth16Proof, new_commitment: [u8; 32])]
+#[instruction(amount: u64, new_commitment: [u8; 32])]
 pub struct Deposit<'info> {
     /// User depositing tokens
     #[account(mut)]
@@ -44,9 +64,11 @@ pub struct Deposit<'info> {
     )]
     pub confidential_account: Account<'info, ConfidentialAccount>,
 
-    /// Verification key data account (stores the binary VK for on-chain verification)
-    /// CHECK: Validated via VK hash in mint_config
-    pub vk_data: UncheckedAccount<'info>,
+    /// Verified STARK proof buffer from `p01_stark_verifier` (circuit 4).
+    /// Must have `verified == true` and `authority == depositor`.
+    /// CHECK: Validated manually — owner == STARK_VERIFIER_PROGRAM_ID,
+    /// discriminator, authority, circuit_id, verified, public inputs hash.
+    pub stark_proof_buffer: AccountInfo<'info>,
 
     /// Pool vault that holds deposited tokens (PDA seeded by mint)
     /// CHECK: Validated as PDA via seeds
@@ -71,10 +93,18 @@ pub struct Deposit<'info> {
     pub pool_vault: Option<Account<'info, TokenAccount>>,
 }
 
+/// Poseidon(0, 0) — the canonical zero amount hash used when the deposit amount
+/// is public (stored here as little-endian bytes for convenience).
+const ZERO_AMOUNT_HASH: [u8; 32] = [
+    100, 72, 182, 70, 132, 238, 57, 168,
+    35, 213, 254, 95, 213, 36, 49, 220,
+    129, 228, 129, 123, 242, 195, 234, 60,
+    171, 158, 35, 158, 251, 245, 152, 32,
+];
+
 pub fn handler(
     ctx: Context<Deposit>,
     amount: u64,
-    proof: Groth16Proof,
     new_commitment: [u8; 32],
 ) -> Result<()> {
     require!(amount > 0, ZkSplError::InvalidAmount);
@@ -83,38 +113,28 @@ pub fn handler(
     let account = &mut ctx.accounts.confidential_account;
     let config = &ctx.accounts.mint_config;
 
-    // --- Verify ZK proof ---
-    // The proof proves:
-    //   1. The prover knows the opening of old_commitment
-    //   2. new_balance = old_balance + amount (public_credit = amount)
-    //   3. new_commitment is correctly formed
-    //   4. new_balance fits in 64 bits
-    let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
-
-    // Zero amount_hash for public deposit: Poseidon(0, 0) — a known constant (LE bytes)
-    // The circuit enforces amount=0 and amount_salt=0 for this
-    let zero_amount_hash: [u8; 32] = [
-        100, 72, 182, 70, 132, 238, 57, 168,
-        35, 213, 254, 95, 213, 36, 49, 220,
-        129, 228, 129, 123, 242, 195, 234, 60,
-        171, 158, 35, 158, 251, 245, 152, 32,
-    ];
-
+    // -----------------------------------------------------------------------
+    // STARK proof verification.
+    //
+    // Circuit 4 (confidential_balance) public inputs in AIR order:
+    //   [old_commitment, new_commitment, amount_hash, token_mint]
+    //
+    // For deposit, the amount is public; the private `amount`/`amount_salt`
+    // that the STARK hashes must both be zero so amount_hash = Poseidon(0, 0).
+    // -----------------------------------------------------------------------
     let token_mint_bytes = config.token_mint.to_bytes();
-
-    let is_valid = Groth16Verifier::verify_confidential_balance(
-        &proof,
-        &account.balance_commitment,
-        &new_commitment,
-        &zero_amount_hash,
-        amount,              // public_credit
-        0,                   // public_debit
-        &token_mint_bytes,
-        account.nonce,
-        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
+    let public_inputs = [
+        u32_bytes_to_u64_le(&account.balance_commitment),
+        u32_bytes_to_u64_le(&new_commitment),
+        u32_bytes_to_u64_le(&ZERO_AMOUNT_HASH),
+        u64::from_le_bytes(token_mint_bytes[..8].try_into().unwrap()),
+    ];
+    verify_stark_proof(
+        &ctx.accounts.stark_proof_buffer,
+        &ctx.accounts.depositor.key(),
+        CIRCUIT_CONFIDENTIAL_BALANCE,
+        &public_inputs,
     )?;
-
-    require!(is_valid, ZkSplError::InvalidProof);
 
     // --- Transfer tokens to vault ---
     let is_native_sol = config.token_mint == system_program::ID;

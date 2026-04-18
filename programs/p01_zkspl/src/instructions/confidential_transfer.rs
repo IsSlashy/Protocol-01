@@ -1,22 +1,35 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkSplError;
+use crate::stark_proof::{
+    u32_bytes_to_u64_le, verify_stark_proof, CIRCUIT_CONFIDENTIAL_BALANCE,
+};
 use crate::state::{ConfidentialAccount, MintConfig, PendingCredit};
-use crate::verifier::Groth16Verifier;
-use crate::Groth16Proof;
 
-/// Private transfer: sender reduces their balance, creates a pending credit for recipient.
+/// Private transfer: sender reduces their balance, creates a pending credit
+/// for the recipient.
 ///
-/// The transfer amount is HIDDEN. Only the amount_hash is stored on-chain.
-/// The recipient must later call apply_pending to integrate the credit.
+/// The transfer amount is HIDDEN on-chain — only the amount_hash is stored.
+/// The recipient must later call `apply_pending` (with the plaintext amount
+/// + salt received out-of-band) to integrate the credit into their own
+/// balance commitment.
 ///
-/// Circuit public inputs (sender's proof):
-///   old_commitment, new_commitment, amount_hash, public_credit=0,
-///   public_debit=0, token_mint, nonce
+/// Sender verification uses STARK circuit `confidential_balance` (ID 4),
+/// same as deposit / withdraw / apply_pending — this is a commitment update
+/// for the sender where the amount is bound by `amount_hash`.
 ///
-/// The sender also provides amount_hash which the recipient will verify.
+/// STARK circuit 4 public inputs (order matches AIR `to_elements`):
+///   [old_commitment, new_commitment, amount_hash, token_mint]
+///
+/// The sender's STARK proves their new_commitment correctly follows from
+/// the old commitment and a hidden `amount` whose Poseidon hash equals
+/// `amount_hash`. The recipient's apply_pending proof later proves their
+/// commitment integrates the same `amount_hash`.
+///
+/// NOTE: Circuit 5 (`transfer`, UTXO-style with nullifiers) is NOT used here.
+/// That circuit belongs to the `zk_shielded` denominated-pool program.
 #[derive(Accounts)]
-#[instruction(proof: Groth16Proof, new_commitment: [u8; 32], amount_hash: [u8; 32])]
+#[instruction(new_commitment: [u8; 32], amount_hash: [u8; 32])]
 pub struct ConfidentialTransfer<'info> {
     /// Sender
     #[account(mut)]
@@ -57,14 +70,15 @@ pub struct ConfidentialTransfer<'info> {
     )]
     pub recipient_account: Account<'info, ConfidentialAccount>,
 
-    /// Verification key data
-    /// CHECK: Validated via VK hash
-    pub vk_data: UncheckedAccount<'info>,
+    /// Verified STARK proof buffer from `p01_stark_verifier` (circuit 4:
+    /// confidential_balance — sender's balance update).
+    /// Must have `verified == true` and `authority == sender`.
+    /// CHECK: Validated manually.
+    pub stark_proof_buffer: AccountInfo<'info>,
 }
 
 pub fn handler(
     ctx: Context<ConfidentialTransfer>,
-    proof: Groth16Proof,
     new_commitment: [u8; 32],
     amount_hash: [u8; 32],
 ) -> Result<()> {
@@ -79,25 +93,25 @@ pub fn handler(
         ZkSplError::TooManyPendingCredits
     );
 
-    // --- Verify sender's ZK proof ---
-    // Proves: sender correctly reduced their balance by `amount`
-    // is_debit = 1 in the circuit
-    let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
+    // -----------------------------------------------------------------------
+    // STARK proof verification (sender side).
+    //
+    // Circuit 4 (confidential_balance) public inputs in AIR order:
+    //   [old_commitment, new_commitment, amount_hash, token_mint]
+    // -----------------------------------------------------------------------
     let token_mint_bytes = config.token_mint.to_bytes();
-
-    let is_valid = Groth16Verifier::verify_confidential_balance(
-        &proof,
-        &sender_account.balance_commitment,
-        &new_commitment,
-        &amount_hash,
-        0,  // public_credit = 0 (private transfer)
-        0,  // public_debit = 0 (private transfer)
-        &token_mint_bytes,
-        sender_account.nonce,
-        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
+    let public_inputs = [
+        u32_bytes_to_u64_le(&sender_account.balance_commitment),
+        u32_bytes_to_u64_le(&new_commitment),
+        u32_bytes_to_u64_le(&amount_hash),
+        u64::from_le_bytes(token_mint_bytes[..8].try_into().unwrap()),
+    ];
+    verify_stark_proof(
+        &ctx.accounts.stark_proof_buffer,
+        &ctx.accounts.sender.key(),
+        CIRCUIT_CONFIDENTIAL_BALANCE,
+        &public_inputs,
     )?;
-
-    require!(is_valid, ZkSplError::InvalidProof);
 
     // --- Update sender ---
     sender_account.balance_commitment = new_commitment;

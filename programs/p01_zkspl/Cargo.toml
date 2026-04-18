@@ -1,7 +1,7 @@
 [package]
 name = "p01_zkspl"
 version = "0.1.0"
-description = "Protocol 01 - zkSPL Confidential Token Balances"
+description = "Protocol 01 - zkSPL Confidential Token Balances (STARK-verified)"
 edition = "2021"
 
 [lib]
@@ -20,11 +20,9 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
 
-# BN254 alt_bn128 operations for Groth16 verification (syscalls)
-solana-bn254 = "2"
-
-# Hash function for verification key hashing
-sha3 = "0.10"
+# SHA-256 for STARK public input hash binding (must match p01_stark_verifier).
+# Uses the `sol_sha256` syscall on BPF (~85 CU/call).
+solana-sha256-hasher = { version = "2.3.0", features = ["sha2"] }
 
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }

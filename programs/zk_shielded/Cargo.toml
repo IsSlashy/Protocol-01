@@ -1,7 +1,7 @@
 [package]
 name = "zk_shielded"
 version = "0.1.0"
-description = "Protocol 01 - ZK Shielded Pool with Groth16 verification"
+description = "Protocol 01 - ZK Shielded Pool (STARK base pool; Groth16 retained only for compliance + escrow)"
 edition = "2021"
 
 [lib]
@@ -20,7 +20,9 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
 
-# BN254 alt_bn128 operations for Groth16 verification (syscalls)
+# BN254 alt_bn128 operations for Groth16 verification (syscalls).
+# Retained for compliance attestations + sealed-bid auction escrow ONLY —
+# base-pool shield/transfer/unshield migrated to STARK in P9.
 solana-bn254 = "2"
 
 # Hash function for verification key hashing

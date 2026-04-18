@@ -18,7 +18,12 @@ idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
-sha2 = "0.10"
+
+# SHA-256 syscall wrapper — on `target_os = "solana"` this compiles to the
+# `sol_sha256` syscall (~85 CU / call), which is ~20x cheaper than linking
+# the `sha2` crate into BPF. Critical for the 67-chain WOTS+ verifier whose
+# hot path does ~500 SHA-256 ops per withdrawal.
+solana-sha256-hasher = "2.3"
 
 [lints.rust.unexpected_cfgs]
 level = "allow"

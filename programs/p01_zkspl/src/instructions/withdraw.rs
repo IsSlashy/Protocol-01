@@ -3,20 +3,26 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkSplError;
+use crate::stark_proof::{
+    u32_bytes_to_u64_le, verify_stark_proof, CIRCUIT_CONFIDENTIAL_BALANCE,
+};
 use crate::state::{ConfidentialAccount, MintConfig};
-use crate::verifier::Groth16Verifier;
-use crate::Groth16Proof;
 
 /// Withdraw from zkSPL back to regular SPL tokens.
 ///
-/// The withdrawal amount is PUBLIC (the SPL transfer is visible).
-/// The ZK proof proves the new commitment correctly reflects the reduced balance.
+/// The withdrawal amount is PUBLIC (the SPL transfer is visible). The STARK
+/// proof (circuit `confidential_balance`, ID 4) proves the new commitment
+/// correctly reflects a valid balance update.
 ///
-/// Circuit public inputs:
-///   old_commitment, new_commitment, amount_hash=Poseidon(0,0), public_credit=0,
-///   public_debit=amount, token_mint, nonce
+/// STARK circuit 4 public inputs (order matches AIR `to_elements`):
+///   [old_commitment, new_commitment, amount_hash, token_mint]
+///
+/// For withdraw, the "amount" moved is public; the private amount / amount_salt
+/// in the STARK are both zero so `amount_hash = Poseidon(0, 0)`.
+///
+/// NOTE: Same conservation caveat as deposit — see `deposit.rs` for details.
 #[derive(Accounts)]
-#[instruction(amount: u64, proof: Groth16Proof, new_commitment: [u8; 32])]
+#[instruction(amount: u64, new_commitment: [u8; 32])]
 pub struct Withdraw<'info> {
     /// User withdrawing tokens
     #[account(mut)]
@@ -43,9 +49,10 @@ pub struct Withdraw<'info> {
     )]
     pub confidential_account: Account<'info, ConfidentialAccount>,
 
-    /// Verification key data
-    /// CHECK: Validated via VK hash
-    pub vk_data: UncheckedAccount<'info>,
+    /// Verified STARK proof buffer from `p01_stark_verifier` (circuit 4).
+    /// Must have `verified == true` and `authority == withdrawer`.
+    /// CHECK: Validated manually.
+    pub stark_proof_buffer: AccountInfo<'info>,
 
     /// Vault holding the tokens (PDA seeded by mint)
     /// CHECK: Validated as PDA via seeds
@@ -67,10 +74,17 @@ pub struct Withdraw<'info> {
     pub pool_vault: Option<Account<'info, TokenAccount>>,
 }
 
+/// Poseidon(0, 0) — the canonical zero amount hash (LE bytes).
+const ZERO_AMOUNT_HASH: [u8; 32] = [
+    100, 72, 182, 70, 132, 238, 57, 168,
+    35, 213, 254, 95, 213, 36, 49, 220,
+    129, 228, 129, 123, 242, 195, 234, 60,
+    171, 158, 35, 158, 251, 245, 152, 32,
+];
+
 pub fn handler(
     ctx: Context<Withdraw>,
     amount: u64,
-    proof: Groth16Proof,
     new_commitment: [u8; 32],
 ) -> Result<()> {
     require!(amount > 0, ZkSplError::InvalidAmount);
@@ -79,30 +93,27 @@ pub fn handler(
     let account = &mut ctx.accounts.confidential_account;
     let config = &ctx.accounts.mint_config;
 
-    // --- Verify ZK proof ---
-    let vk_data = ctx.accounts.vk_data.try_borrow_data()?;
-    // Poseidon(0, 0) — zero amount hash constant (LE bytes)
-    let zero_amount_hash: [u8; 32] = [
-        100, 72, 182, 70, 132, 238, 57, 168,
-        35, 213, 254, 95, 213, 36, 49, 220,
-        129, 228, 129, 123, 242, 195, 234, 60,
-        171, 158, 35, 158, 251, 245, 152, 32,
-    ];
+    // -----------------------------------------------------------------------
+    // STARK proof verification.
+    //
+    // Circuit 4 (confidential_balance) public inputs in AIR order:
+    //   [old_commitment, new_commitment, amount_hash, token_mint]
+    //
+    // For withdraw, amount is public; amount_hash must be Poseidon(0, 0).
+    // -----------------------------------------------------------------------
     let token_mint_bytes = config.token_mint.to_bytes();
-
-    let is_valid = Groth16Verifier::verify_confidential_balance(
-        &proof,
-        &account.balance_commitment,
-        &new_commitment,
-        &zero_amount_hash,
-        0,       // public_credit = 0
-        amount,  // public_debit = withdraw amount
-        &token_mint_bytes,
-        account.nonce,
-        &vk_data[12..],  // skip 8-byte discriminator + 4-byte size header
+    let public_inputs = [
+        u32_bytes_to_u64_le(&account.balance_commitment),
+        u32_bytes_to_u64_le(&new_commitment),
+        u32_bytes_to_u64_le(&ZERO_AMOUNT_HASH),
+        u64::from_le_bytes(token_mint_bytes[..8].try_into().unwrap()),
+    ];
+    verify_stark_proof(
+        &ctx.accounts.stark_proof_buffer,
+        &ctx.accounts.withdrawer.key(),
+        CIRCUIT_CONFIDENTIAL_BALANCE,
+        &public_inputs,
     )?;
-
-    require!(is_valid, ZkSplError::InvalidProof);
 
     // --- Transfer tokens from vault to user ---
     let is_native_sol = config.token_mint == system_program::ID;

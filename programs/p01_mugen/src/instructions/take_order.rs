@@ -44,16 +44,23 @@ pub struct TakeOrder<'info> {
     pub escrow_vault: Account<'info, TokenAccount>,
 
     /// The seller's token account (source of crypto to escrow).
-    /// For sell_crypto orders: this is the maker's token account.
-    /// For buy_crypto orders: this is the taker's token account.
+    /// Bound to the `seller` signer below so a caller cannot pass an unrelated
+    /// token account on finalization paths (resolve_dispute, expire_escrow).
     #[account(
         mut,
         token::mint = token_mint,
+        token::authority = seller,
     )]
     pub seller_token_account: Account<'info, TokenAccount>,
 
+    /// The buyer's token account (destination for `release_escrow` / `resolve_dispute`).
+    /// Captured at escrow creation so later finalization cannot be redirected.
+    #[account(
+        token::mint = token_mint,
+    )]
+    pub buyer_token_account: Account<'info, TokenAccount>,
+
     /// The seller must sign if they are depositing crypto.
-    /// CHECK: validated by the transfer CPI.
     pub seller: Signer<'info>,
 
     pub token_mint: Account<'info, Mint>,
@@ -61,6 +68,20 @@ pub struct TakeOrder<'info> {
     /// Taker's compliance attestation.
     /// CHECK: validated in handler via raw byte reading.
     pub taker_attestation: AccountInfo<'info>,
+
+    /// Maker reputation PDA — snapshotted into escrow at trade time.
+    #[account(
+        seeds = [REPUTATION_SEED, maker_reputation.commitment.as_ref()],
+        bump = maker_reputation.bump,
+    )]
+    pub maker_reputation: Account<'info, MugenReputation>,
+
+    /// Taker reputation PDA — snapshotted into escrow at trade time.
+    #[account(
+        seeds = [REPUTATION_SEED, taker_reputation.commitment.as_ref()],
+        bump = taker_reputation.bump,
+    )]
+    pub taker_reputation: Account<'info, MugenReputation>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -85,6 +106,32 @@ pub fn handler(
         validate_attestation(&ctx.accounts.taker_attestation, &ctx.accounts.taker.key(), &clock)?;
     }
 
+    // Seller role is derived from order type — the caller cannot pick sides.
+    // SELL order: maker lists crypto → maker is seller.
+    // BUY order: maker wants crypto → taker supplies crypto → taker is seller.
+    let expected_seller = match order.order_type {
+        ORDER_TYPE_SELL_CRYPTO => order.maker,
+        ORDER_TYPE_BUY_CRYPTO => ctx.accounts.taker.key(),
+        _ => return err!(MugenError::InvalidOrderType),
+    };
+    require_keys_eq!(
+        ctx.accounts.seller.key(),
+        expected_seller,
+        MugenError::UnauthorizedSeller
+    );
+
+    // Buyer is the other side; bind their token account so finalization can't be redirected.
+    let expected_buyer = if expected_seller == order.maker {
+        ctx.accounts.taker.key()
+    } else {
+        order.maker
+    };
+    require_keys_eq!(
+        ctx.accounts.buyer_token_account.owner,
+        expected_buyer,
+        MugenError::UnauthorizedBuyer
+    );
+
     // Transfer crypto from seller into escrow vault
     let transfer_ctx = CpiContext::new(
         ctx.accounts.token_program.to_account_info(),
@@ -96,29 +143,50 @@ pub fn handler(
     );
     token::transfer(transfer_ctx, order.crypto_amount)?;
 
+    // Snapshot reputations (Fix: prevents race between live rep updates and finalization).
+    let maker_rep_snapshot = ctx.accounts.maker_reputation.trades_completed as u64;
+    let taker_rep_snapshot = ctx.accounts.taker_reputation.trades_completed as u64;
+
+    let seller_ta = ctx.accounts.seller_token_account.key();
+    let buyer_ta = ctx.accounts.buyer_token_account.key();
+    let escrow_vault_key = ctx.accounts.escrow_vault.key();
+    let taker_attestation_key = ctx.accounts.taker_attestation.key();
+    let taker_key = ctx.accounts.taker.key();
+    let escrow_timeout = ctx.accounts.config.escrow_timeout;
+
     // Update order status
     let order = &mut ctx.accounts.order;
     order.status = STATUS_IN_ESCROW;
+    let order_key = order.key();
+    let order_maker = order.maker;
+    let order_token_mint = order.token_mint;
+    let order_crypto_amount = order.crypto_amount;
+    let order_fiat_amount = order.fiat_amount;
+    let order_attestation = order.compliance_attestation;
 
     // Initialize escrow
     let escrow = &mut ctx.accounts.escrow;
-    escrow.order = order.key();
-    escrow.maker = order.maker;
-    escrow.taker = ctx.accounts.taker.key();
-    escrow.token_mint = order.token_mint;
-    escrow.crypto_amount = order.crypto_amount;
-    escrow.fiat_amount = order.fiat_amount;
-    escrow.escrow_vault = ctx.accounts.escrow_vault.key();
-    escrow.maker_attestation = order.compliance_attestation;
-    escrow.taker_attestation = ctx.accounts.taker_attestation.key();
+    escrow.order = order_key;
+    escrow.maker = order_maker;
+    escrow.taker = taker_key;
+    escrow.token_mint = order_token_mint;
+    escrow.crypto_amount = order_crypto_amount;
+    escrow.fiat_amount = order_fiat_amount;
+    escrow.escrow_vault = escrow_vault_key;
+    escrow.maker_attestation = order_attestation;
+    escrow.taker_attestation = taker_attestation_key;
     escrow.stealth_recipient = stealth_recipient.unwrap_or([0u8; 32]);
     escrow.payment_method = payment_method;
     escrow.status = ESCROW_AWAITING_PAYMENT;
     escrow.created_at = clock.unix_timestamp;
-    escrow.expires_at = clock.unix_timestamp + ctx.accounts.config.escrow_timeout;
+    escrow.expires_at = clock.unix_timestamp + escrow_timeout;
     escrow.payment_confirmed_at = 0;
     escrow.dispute_initiator = Pubkey::default();
     escrow.dispute_reason = 0;
+    escrow.buyer_token_account = buyer_ta;
+    escrow.seller_token_account = seller_ta;
+    escrow.maker_reputation_snapshot = maker_rep_snapshot;
+    escrow.taker_reputation_snapshot = taker_rep_snapshot;
     escrow.bump = ctx.bumps.escrow;
     escrow.vault_bump = ctx.bumps.escrow_vault;
 

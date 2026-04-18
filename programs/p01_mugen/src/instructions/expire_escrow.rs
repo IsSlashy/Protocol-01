@@ -33,7 +33,11 @@ pub struct ExpireEscrow<'info> {
     pub escrow_vault: Account<'info, TokenAccount>,
 
     /// The seller's token account (refund destination).
-    #[account(mut)]
+    /// Must match the seller_token_account bound at escrow creation.
+    #[account(
+        mut,
+        constraint = seller_token_account.key() == escrow.seller_token_account @ MugenError::UnauthorizedSeller,
+    )]
     pub seller_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
