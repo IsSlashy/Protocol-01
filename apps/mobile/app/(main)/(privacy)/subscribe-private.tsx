@@ -21,9 +21,7 @@ import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { receiptFromJSON, findPool } from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
-import type { ProofGenerator } from '@/services/denominatedPool';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { useZkProver } from '@/providers/ZkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 
@@ -48,13 +46,11 @@ export default function SubscribePrivateScreen() {
   const router = useRouter();
   const { notes } = useDenominatedPoolStore();
   const {
-    subscribePrivateAction,
     subscribePrivateStarkAction,
     isLoading,
     progress,
   } = useSubscriptionVaultStore();
   const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof } = useStarkProver();
-  const { generateRawProof } = useZkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [retailer, setRetailer] = useState('');
@@ -74,6 +70,11 @@ export default function SubscribePrivateScreen() {
       return;
     }
     try {
+      if (!starkReady) {
+        p01Alert('Prover initializing', 'STARK prover not ready yet — try again in a moment.');
+        return;
+      }
+
       const retailerKey = new PublicKey(retailer);
       const rateLamports = BigInt(Math.floor(parseFloat(rate || '0') * 1e9));
       const intervalSlotsNum = BigInt(parseInt(intervalSlots, 10));
@@ -92,65 +93,34 @@ export default function SubscribePrivateScreen() {
 
       const subscriberSecret = receipt.secret;
 
-      // Generate STARK commitment for vkHashSubscriber
-      // The STARK commitment is a Poseidon hash in the Goldilocks field.
-      // We truncate the SHA-256 of the STARK commitment hex to 32 bytes for the vk_hash.
-      let vkHashSubscriber: Uint8Array;
-      if (starkReady) {
-        setStarkStatus('Computing STARK commitment...');
-        const starkResult = await starkGenerate(subscriberSecret.toString());
-        vkHashSubscriber = sha256(Buffer.from(starkResult.commitment, 'hex'));
-      } else {
-        // Fallback: zero vk_hash if STARK not ready (less secure)
-        vkHashSubscriber = new Uint8Array(32);
-      }
+      setStarkStatus('Computing STARK commitment...');
+      const ownershipResult = await starkGenerate(subscriberSecret.toString());
+      const vkHashSubscriber = sha256(Buffer.from(ownershipResult.commitment, 'hex'));
 
-      let sig: string;
+      setStarkStatus('Generating STARK pool commitment proof...');
+      const starkResult = await generatePoolCommitmentProof(
+        receipt.nullifierPreimage.toString(),
+        receipt.secret.toString(),
+        receipt.depositEpoch.toString(),
+        receipt.tokenMint.toString(),
+      );
 
-      if (starkReady) {
-        // --- STARK path (quantum-resistant) ---
-        // Uses subscribe_private_stark on-chain instruction which reads
-        // a pre-verified STARK proof buffer instead of inline Groth16.
-        setStarkStatus('Generating STARK pool commitment proof...');
-        const starkResult = await generatePoolCommitmentProof(
-          receipt.nullifierPreimage.toString(),
-          receipt.secret.toString(),
-          receipt.depositEpoch.toString(),
-          receipt.tokenMint.toString(),
-        );
+      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+      const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
 
-        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-        const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
-
-        setStarkStatus('Submitting STARK subscription...');
-        sig = await subscribePrivateStarkAction(
-          receipt,
-          poolConfig,
-          vaultConfig,
-          subscriberSecret,
-          vkHashSubscriber,
-          {
-            proofBytes,
-            publicInputs,
-            proofSize: starkResult.proofSize,
-          },
-        );
-      } else {
-        // --- Groth16 fallback ---
-        // Uses subscribe_private on-chain instruction with inline Groth16 verification.
-        const proofGenerator: ProofGenerator = async (inputs, _circuit) => {
-          return generateRawProof(inputs as Record<string, string>);
-        };
-
-        sig = await subscribePrivateAction(
-          receipt,
-          poolConfig,
-          vaultConfig,
-          subscriberSecret,
-          vkHashSubscriber,
-          proofGenerator,
-        );
-      }
+      setStarkStatus('Submitting STARK subscription...');
+      const sig = await subscribePrivateStarkAction(
+        receipt,
+        poolConfig,
+        vaultConfig,
+        subscriberSecret,
+        vkHashSubscriber,
+        {
+          proofBytes,
+          publicInputs,
+          proofSize: starkResult.proofSize,
+        },
+      );
 
       setStarkStatus(null);
       p01Alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);

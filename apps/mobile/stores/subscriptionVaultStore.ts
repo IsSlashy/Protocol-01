@@ -11,22 +11,18 @@ import {
   type SubscribePrivateConfig,
   type WalletSigner,
   subscribeNormal,
-  subscribePrivate,
   subscribePrivateStark,
   claimPeriod,
   pauseNormal,
-  pausePrivate,
   pausePrivateStark,
   resumeNormal,
-  resumePrivate,
   resumePrivateStark,
   cancelNormal,
-  cancelPrivate,
   fetchVault,
   computeClaimable,
   computeClaimableAmount,
 } from '../services/subscriptionVault';
-import type { ShieldReceipt, PoolConfig, ProofGenerator } from '../services/denominatedPool';
+import type { ShieldReceipt, PoolConfig } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner } from './walletStore';
 import { scheduleLocalNotification } from '../services/notifications';
 
@@ -66,14 +62,6 @@ interface SubscriptionVaultState {
     config: SubscribeNormalConfig,
     vkHashSubscriber: Uint8Array,
   ) => Promise<string>;
-  subscribePrivateAction: (
-    receipt: ShieldReceipt,
-    poolConfig: PoolConfig,
-    vaultConfig: SubscribePrivateConfig,
-    subscriberSecret: bigint,
-    vkHashSubscriber: Uint8Array,
-    proofGenerator: ProofGenerator,
-  ) => Promise<string>;
   /** STARK variant: quantum-resistant subscribe_private using pre-verified proof buffer */
   subscribePrivateStarkAction: (
     receipt: ShieldReceipt,
@@ -85,37 +73,18 @@ interface SubscriptionVaultState {
   ) => Promise<string>;
   claimPeriodAction: (vaultAddress: string) => Promise<string>;
   pauseNormalAction: (vaultAddress: string) => Promise<string>;
-  pausePrivateAction: (
-    vaultAddress: string,
-    subscriberSecret: bigint,
-    proofGenerator: ProofGenerator,
-  ) => Promise<string>;
   /** STARK variant: quantum-resistant pause_private using pre-verified proof buffer */
   pausePrivateStarkAction: (
     vaultAddress: string,
     starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
   resumeNormalAction: (vaultAddress: string) => Promise<string>;
-  resumePrivateAction: (
-    vaultAddress: string,
-    subscriberSecret: bigint,
-    proofGenerator: ProofGenerator,
-  ) => Promise<string>;
   /** STARK variant: quantum-resistant resume_private using pre-verified proof buffer */
   resumePrivateStarkAction: (
     vaultAddress: string,
     starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
   cancelNormalAction: (vaultAddress: string, retailer: string) => Promise<string>;
-  cancelPrivateAction: (
-    vaultAddress: string,
-    retailer: string,
-    poolConfig: PoolConfig,
-    subscriberSecret: bigint,
-    newCommitments: bigint[],
-    newRoot: bigint,
-    proofGenerator: ProofGenerator,
-  ) => Promise<string>;
   reset: () => void;
 }
 
@@ -278,85 +247,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // ------------------------------------------------------------------
-      // Subscribe Private
-      // ------------------------------------------------------------------
-
-      subscribePrivateAction: async (
-        receipt,
-        poolConfig,
-        vaultConfig,
-        subscriberSecret,
-        vkHashSubscriber,
-        proofGenerator,
-      ) => {
-        set({ isLoading: true, error: null, progress: 'Preparing...' });
-
-        try {
-          const walletSigner = getWalletSignerIfPrivy();
-          const sig = await subscribePrivate(
-            receipt,
-            poolConfig,
-            vaultConfig,
-            proofGenerator,
-            subscriberSecret,
-            vkHashSubscriber,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          // Add vault to store
-          const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
-          const subscriberCommitmentBytes = new Uint8Array(32);
-          let tmpCommitment = subscriberCommitment;
-          for (let i = 0; i < 32; i++) {
-            subscriberCommitmentBytes[i] = Number(tmpCommitment & 0xFFn);
-            tmpCommitment >>= 8n;
-          }
-
-          const { deriveVaultPDA } = await import('../services/subscriptionVault');
-          const [vaultPDA] = deriveVaultPDA(
-            vaultConfig.retailer,
-            subscriberCommitmentBytes,
-            poolConfig.tokenMint
-          );
-
-          const storedVault: StoredVaultInfo = {
-            vaultAddress: vaultPDA.toBase58(),
-            retailer: vaultConfig.retailer.toBase58(),
-            tokenMint: poolConfig.tokenMint.toBase58(),
-            rate: vaultConfig.rate.toString(),
-            intervalSlots: vaultConfig.intervalSlots.toString(),
-            isNormalMode: false,
-            isPrivateMode: true,
-            createdAt: Date.now(),
-          };
-
-          // Save secret to SecureStore (not AsyncStorage)
-          await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
-
-          set(state => ({
-            isLoading: false,
-            progress: null,
-            vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
-          }));
-
-          notifySubscriptionEvent(
-            'Subscription Active',
-            `Subscribed at ${formatRateSOL(vaultConfig.rate)} per period`,
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] subscribePrivate error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
       // Subscribe Private (STARK — quantum-resistant)
       // ------------------------------------------------------------------
 
@@ -506,42 +396,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // ------------------------------------------------------------------
-      // Pause Private
-      // ------------------------------------------------------------------
-
-      pausePrivateAction: async (vaultAddress, subscriberSecret, proofGenerator) => {
-        set({ isLoading: true, error: null, progress: 'Pausing...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
-          const sig = await pausePrivate(
-            vaultPDA,
-            subscriberSecret,
-            proofGenerator,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          set({ isLoading: false, progress: null });
-
-          notifySubscriptionEvent(
-            'Subscription Paused',
-            'Your subscription has been paused',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] pausePrivate error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
       // Pause Private (STARK — quantum-resistant)
       // ------------------------------------------------------------------
 
@@ -605,42 +459,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] resumeNormal error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
-      // Resume Private
-      // ------------------------------------------------------------------
-
-      resumePrivateAction: async (vaultAddress, subscriberSecret, proofGenerator) => {
-        set({ isLoading: true, error: null, progress: 'Resuming...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
-          const sig = await resumePrivate(
-            vaultPDA,
-            subscriberSecret,
-            proofGenerator,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          set({ isLoading: false, progress: null });
-
-          notifySubscriptionEvent(
-            'Subscription Resumed',
-            'Your subscription has been resumed',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] resumePrivate error:', err);
           set({ isLoading: false, progress: null, error: (err as Error).message });
           throw err;
         }
@@ -717,61 +535,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] cancelNormal error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
-      // Cancel Private
-      // ------------------------------------------------------------------
-
-      cancelPrivateAction: async (
-        vaultAddress,
-        retailer,
-        poolConfig,
-        subscriberSecret,
-        newCommitments,
-        newRoot,
-        proofGenerator,
-      ) => {
-        set({ isLoading: true, error: null, progress: 'Cancelling...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const retailerKey = new PublicKey(retailer);
-          const walletSigner = getWalletSignerIfPrivy();
-          const sig = await cancelPrivate(
-            vaultPDA,
-            retailerKey,
-            poolConfig,
-            subscriberSecret,
-            newCommitments,
-            newRoot,
-            proofGenerator,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          // Remove vault from store and delete secret from SecureStore
-          await deleteSecretSecurely(vaultAddress);
-          set(state => ({
-            isLoading: false,
-            progress: null,
-            vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
-          }));
-
-          notifySubscriptionEvent(
-            'Subscription Cancelled',
-            'Your subscription has been cancelled',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] cancelPrivate error:', err);
           set({ isLoading: false, progress: null, error: (err as Error).message });
           throw err;
         }

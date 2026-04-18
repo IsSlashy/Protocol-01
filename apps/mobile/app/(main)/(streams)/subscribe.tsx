@@ -17,10 +17,9 @@ import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
 import { sendSolWithSigner, sendSolPrivate } from '../../../services/solana/transactions';
 import { deriveStealthAddressSimple } from '../../../utils/crypto/stealth';
-import {
-  DenominatedPoolProverProvider,
-  useDenominatedPoolProver,
-} from '../../../components/privacy/DenominatedPoolProver';
+import { useStarkProver } from '../../../providers/StarkProverProvider';
+import { receiptFromJSON } from '../../../services/denominatedPool';
+import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
 
@@ -30,11 +29,7 @@ const SERVICE_ICONS: Record<string, string> = {
 };
 
 export default function SubscribeScreen() {
-  return (
-    <DenominatedPoolProverProvider>
-      <SubscribeContent />
-    </DenominatedPoolProverProvider>
-  );
+  return <SubscribeContent />;
 }
 
 function SubscribeContent() {
@@ -48,7 +43,7 @@ function SubscribeContent() {
   const { createNewStream, refresh } = useStreamStore();
   const { publicKey, isPrivyWallet } = useWalletStore();
   const { notes: denomNotes } = useDenominatedPoolStore();
-  const { generateProof } = useDenominatedPoolProver();
+  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
 
   const availableNotes = denomNotes.filter(n => n.status === 'mature' || n.status === 'pending');
   const privateBalance = availableNotes.reduce((sum, n) => sum + n.denomination, 0);
@@ -79,6 +74,7 @@ function SubscribeContent() {
       let sig: string; let paid = price;
 
       if (useZkPool) {
+        if (!starkReady) throw new Error('STARK prover not ready — try again in a moment');
         setProgress(t('common.loading'));
         const store = useDenominatedPoolStore.getState();
         const note = store.getActiveNotes()
@@ -87,7 +83,18 @@ function SubscribeContent() {
           .find(n => n.denomination >= price);
         if (!note) throw new Error(t('subscribe.noMatureNote'));
         setProgress(t('shieldUnshield.generatingProof'));
-        sig = await store.unshieldNote(note.id, devAddr, generateProof);
+        const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
+        const starkResult = await generatePoolCommitmentProof(
+          receipt.nullifierPreimage.toString(),
+          receipt.secret.toString(),
+          receipt.depositEpoch.toString(),
+          receipt.tokenMint.toString(),
+        );
+        sig = await store.unshieldNoteStark(note.id, devAddr, {
+          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+          publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
+          proofSize: starkResult.proofSize,
+        }, false);
         paid = note.denomination;
       } else if (enablePrivacy) {
         // Privacy Shield: stealth recipient + ephemeral feePayer via relay

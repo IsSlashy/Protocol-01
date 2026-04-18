@@ -13,7 +13,6 @@ import {
   type PoolConfig,
   type ShieldReceipt,
   type PoolOnChainInfo,
-  type ProofGenerator,
   type WalletSigner,
   type ShareableNote,
   ALL_POOLS,
@@ -21,11 +20,8 @@ import {
   USDC_POOLS,
   fetchPoolInfo,
   shield,
-  unshield,
   unshieldStark,
-  emergencyUnshield,
   emergencyUnshieldStark,
-  transferNote as serviceTransferNote,
   transferNoteStark as serviceTransferNoteStark,
   splitNoteStark as serviceSplitNoteStark,
   importNote as serviceImportNote,
@@ -96,22 +92,12 @@ interface DenominatedPoolState {
   setSelectedToken: (token: TokenFilter) => void;
   setSelectedDenomination: (denom: number | null) => void;
   shieldNote: (pool: PoolConfig) => Promise<string>;
-  unshieldNote: (
-    noteId: string,
-    recipient: string,
-    proofGenerator: ProofGenerator,
-  ) => Promise<string>;
-  /** Quantum-resistant STARK unshield (no Groth16 proof needed) */
+  /** Quantum-resistant STARK unshield */
   unshieldNoteStark: (
     noteId: string,
     recipient: string,
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
     emergency?: boolean,
-  ) => Promise<string>;
-  emergencyUnshieldNote: (
-    noteId: string,
-    recipient: string,
-    proofGenerator: ProofGenerator,
   ) => Promise<string>;
   /** Quantum-resistant STARK emergency unshield (bypasses maturity) */
   emergencyUnshieldNoteStark: (
@@ -119,10 +105,6 @@ interface DenominatedPoolState {
     recipient: string,
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   ) => Promise<string>;
-  transferNote: (
-    noteId: string,
-    proofGenerator: ProofGenerator,
-  ) => Promise<{ txSig: string; shareableNote: string }>;
   /** Quantum-resistant STARK peer-to-peer transfer */
   transferNoteStark: (
     noteId: string,
@@ -717,85 +699,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       // ------------------------------------------------------------------
-      // Unshield (withdraw)
-      // ------------------------------------------------------------------
-
-      unshieldNote: async (noteId, recipientAddress, proofGenerator) => {
-        const note = get().notes.find(n => n.id === noteId);
-        if (!note) throw new Error('Note not found');
-        if (note.status === 'spent') throw new Error('Note already spent');
-        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
-
-        const receipt = readReceipt(note.receiptJSON);
-        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
-        if (!pool) throw new Error('Pool config not found for this note');
-
-        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing stealth withdrawal...' });
-
-        try {
-          const walletSigner = getWalletSignerIfPrivy();
-          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
-
-          // Stealth unshield: pool → stealth → recipient
-          // Stealth keypair signs the unshield TX — wallet NEVER appears on-chain
-          const sig = await stealthUnshieldAndSweep(
-            async (stealthPubkey, stealthKeypair) => unshield(
-              receipt,
-              pool,
-              stealthPubkey,
-              proofGenerator,
-              (step) => {
-                const proving = step.includes('proof') || step.includes('Proof');
-                set({ progress: step, isProving: proving });
-              },
-              undefined, // stealth signs, not wallet
-              stealthKeypair,
-            ),
-            recipientAddress,
-            walletAddr,
-            walletSigner,
-            (msg) => set({ progress: msg, isProving: false }),
-          );
-
-          // Mark note as spent
-          set(state => ({
-            isLoading: false,
-            isProving: false,
-            progress: null,
-            notes: state.notes.map(n =>
-              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
-            ),
-          }));
-
-          // Refresh wallet balance immediately, delay transaction fetch
-          // to let RPC rate-limit window reset after STARK chunk uploads
-          useWalletStore.getState().refreshBalance();
-          setTimeout(() => {
-            useWalletStore.getState().refreshTransactions();
-          }, 5000);
-
-          scheduleLocalNotification(
-            'Unshield Confirmed',
-            `${note.denomination} ${note.token} withdrawn from privacy pool`,
-            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
-          ).catch(() => {});
-
-          return sig;
-        } catch (err) {
-          console.error('[DenomPool] Unshield error:', err);
-          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
-
-          scheduleLocalNotification(
-            'Unshield Failed',
-            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
-            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
-          ).catch(() => {});
-
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
       // STARK Unshield (quantum-resistant — no Groth16 proof)
       // ------------------------------------------------------------------
 
@@ -985,189 +888,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
           ).catch(() => {});
 
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
-      // Emergency Unshield (bypass maturity)
-      // ------------------------------------------------------------------
-
-      emergencyUnshieldNote: async (noteId, recipientAddress, proofGenerator) => {
-        const note = get().notes.find(n => n.id === noteId);
-        if (!note) throw new Error('Note not found');
-        if (note.status === 'spent') throw new Error('Note already spent');
-        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
-
-        const receipt = readReceipt(note.receiptJSON);
-        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
-        if (!pool) throw new Error('Pool config not found for this note');
-
-        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing emergency unshield...' });
-
-        try {
-          const walletSigner = getWalletSignerIfPrivy();
-          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
-
-          // Stealth emergency unshield: pool → stealth → recipient
-          // Stealth keypair signs — wallet never appears on-chain
-          const sig = await stealthUnshieldAndSweep(
-            async (stealthPubkey, stealthKeypair) => emergencyUnshield(
-              receipt,
-              pool,
-              stealthPubkey,
-              proofGenerator,
-              (step) => {
-                const proving = step.includes('proof') || step.includes('Proof');
-                set({ progress: step, isProving: proving });
-              },
-              undefined, // stealth signs, not wallet
-              stealthKeypair,
-            ),
-            recipientAddress,
-            walletAddr,
-            walletSigner,
-            (msg) => set({ progress: msg, isProving: false }),
-          );
-
-          set(state => ({
-            isLoading: false,
-            isProving: false,
-            progress: null,
-            notes: state.notes.map(n =>
-              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
-            ),
-          }));
-
-          // Refresh wallet balance immediately, delay transaction fetch
-          // to let RPC rate-limit window reset after STARK chunk uploads
-          useWalletStore.getState().refreshBalance();
-          setTimeout(() => {
-            useWalletStore.getState().refreshTransactions();
-          }, 5000);
-
-          scheduleLocalNotification(
-            'Unshield Confirmed',
-            `${note.denomination} ${note.token} withdrawn from privacy pool`,
-            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
-          ).catch(() => {});
-
-          return sig;
-        } catch (err) {
-          console.error('[DenomPool] Emergency unshield error:', err);
-          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
-
-          scheduleLocalNotification(
-            'Unshield Failed',
-            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
-            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
-          ).catch(() => {});
-
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
-      // Transfer note (peer-to-peer)
-      // ------------------------------------------------------------------
-
-      transferNote: async (noteId, proofGenerator) => {
-        const note = get().notes.find(n => n.id === noteId);
-        if (!note) throw new Error('Note not found');
-        if (note.status === 'spent') throw new Error('Note already spent');
-        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
-        if (note.status !== 'mature') throw new Error('Note must be mature for transfer');
-
-        const receipt = readReceipt(note.receiptJSON);
-        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
-        if (!pool) throw new Error('Pool config not found for this note');
-
-        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing stealth transfer...' });
-
-        try {
-          const walletSigner = getWalletSignerIfPrivy();
-          const walletAddr = walletSigner?.publicKey.toBase58()
-            || useWalletStore.getState().publicKey || '';
-
-          // Use stealth intermediary — wallet never appears on-chain
-          const { Keypair: SolKeypair, SystemProgram, Transaction, PublicKey } = await import('@solana/web3.js');
-          const { sha256 } = await import('@noble/hashes/sha2.js');
-          const { hmac } = await import('@noble/hashes/hmac.js');
-
-          // Derive ephemeral stealth keypair
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_${Date.now()}`));
-          const stealthKp = SolKeypair.fromSeed(seed);
-          console.log(`[Stealth] Transfer via stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
-
-          // Fund stealth with enough for TX fees + nullifier PDA rent
-          const FEE_FUND = 10_000_000; // 0.01 SOL — TX fee (~0.003) + nullifier rent (~0.002) + margin
-          set({ progress: 'Funding stealth for fees...' });
-          const connection = getConnection();
-          if (walletSigner) {
-            const fundTx = new Transaction().add(
-              SystemProgram.transfer({
-                fromPubkey: walletSigner.publicKey,
-                toPubkey: stealthKp.publicKey,
-                lamports: FEE_FUND,
-              })
-            );
-            const { blockhash } = await connection.getLatestBlockhash();
-            fundTx.recentBlockhash = blockhash;
-            fundTx.feePayer = walletSigner.publicKey;
-            const signedFund = await walletSigner.signTransaction(fundTx);
-            const fundSig = await connection.sendRawTransaction(signedFund.serialize());
-            await connection.confirmTransaction(fundSig, 'confirmed');
-            console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}... TX: ${fundSig.slice(0, 16)}...`);
-          } else {
-            const keypair = await getKeypair();
-            if (keypair) {
-              const fundTx = new Transaction().add(
-                SystemProgram.transfer({
-                  fromPubkey: keypair.publicKey,
-                  toPubkey: stealthKp.publicKey,
-                  lamports: FEE_FUND,
-                })
-              );
-              const { sendAndConfirmTransaction } = await import('@solana/web3.js');
-              await sendAndConfirmTransaction(connection, fundTx, [keypair], { commitment: 'confirmed' });
-              console.log(`[Stealth] Fee funding: ${FEE_FUND / 1e9} SOL → ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
-            }
-          }
-
-          // Timing jitter (1-3s) — breaks timing correlation between fund and transfer
-          const jitter = 1000 + Math.floor(Math.random() * 2000);
-          console.log(`[Stealth] Timing jitter: ${jitter}ms before transfer`);
-          set({ progress: 'Waiting (timing privacy)...' });
-          await new Promise(r => setTimeout(r, jitter));
-
-          const { txSig, recipientNote } = await serviceTransferNote(
-            receipt,
-            pool,
-            proofGenerator,
-            (step) => {
-              const proving = step.includes('proof') || step.includes('Proof');
-              set({ progress: step, isProving: proving });
-            },
-            undefined, // no wallet signer — stealth signs
-            stealthKp,
-          );
-
-          const encoded = encodeShareableNote(recipientNote);
-
-          // Mark old note as transferred (not just spent)
-          set(state => ({
-            isLoading: false,
-            isProving: false,
-            progress: null,
-            notes: state.notes.map(n =>
-              n.id === noteId ? { ...n, status: 'transferred' as NoteStatus, spentTxSig: txSig, transferredTo: encoded } : n
-            ),
-          }));
-
-          return { txSig, shareableNote: encoded };
-        } catch (err) {
-          console.error('[DenomPool] Transfer error:', err);
-          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
           throw err;
         }
       },

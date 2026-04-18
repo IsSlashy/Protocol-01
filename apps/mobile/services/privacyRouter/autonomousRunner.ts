@@ -130,10 +130,7 @@ function buildCallbacks(): HopExecutionCallbacks {
         console.log(`[AutoRunner] 🔓 STARK unshield confirmed: ${sig.slice(0, 16)}...`);
         return { txSignature: sig };
       } catch (starkErr: any) {
-        console.warn(`[AutoRunner] 🔓 STARK unshield failed, trying Groth16:`, starkErr.message?.slice(0, 80));
-
-        // Fallback: try regular unshield if STARK proof fails
-        // This requires a ZK proof generator which may not be available in background
+        console.warn(`[AutoRunner] 🔓 STARK unshield failed:`, starkErr.message?.slice(0, 80));
         throw new Error(`RETRY: Proof generation not available in background — ${starkErr.message}`);
       }
     },

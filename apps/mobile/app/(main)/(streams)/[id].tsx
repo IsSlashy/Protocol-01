@@ -17,15 +17,15 @@ import { getExplorerUrl, getConnection } from '../../../services/solana/connecti
 import { getKeypair } from '../../../services/solana/wallet';
 import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
 import { sendSolWithSigner } from '../../../services/solana/transactions';
-import {
-  DenominatedPoolProverProvider, useDenominatedPoolProver,
-} from '../../../components/privacy/DenominatedPoolProver';
+import { useStarkProver } from '../../../providers/StarkProverProvider';
+import { receiptFromJSON } from '../../../services/denominatedPool';
+import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { getServiceById, CATEGORY_CONFIG, ServiceCategory } from '../../../services/subscriptions/serviceRegistry';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
 
 export default function StreamDetailScreen() {
-  return <DenominatedPoolProverProvider><DetailContent /></DenominatedPoolProverProvider>;
+  return <DetailContent />;
 }
 
 function DetailContent() {
@@ -34,7 +34,7 @@ function DetailContent() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { streams, processingPayment, refresh, pauseStream, resumeStream, cancelStream, deleteStream } = useStreamStore();
-  const { generateProof } = useDenominatedPoolProver();
+  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
   const { publicKey, isPrivyWallet } = useWalletStore();
 
   const [stream, setStream] = useState<Stream | null>(null);
@@ -98,14 +98,26 @@ function DetailContent() {
         let sig: string; let paid = stream.amountPerPayment;
 
         if (stream.useZkPool) {
-          setPayProgress(t('shieldUnshield.generatingProof'));
+          if (!starkReady) throw new Error('STARK prover not ready — try again in a moment');
           const store = useDenominatedPoolStore.getState();
           const note = store.getActiveNotes()
             .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
             .sort((a: any, b: any) => a.denomination - b.denomination)
             .find((n: any) => n.denomination >= stream.amountPerPayment);
           if (!note) throw new Error('No mature note large enough.');
-          sig = await store.unshieldNote(note.id, stream.recipientAddress, generateProof);
+          setPayProgress(t('shieldUnshield.generatingProof'));
+          const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
+          const starkResult = await generatePoolCommitmentProof(
+            receipt.nullifierPreimage.toString(),
+            receipt.secret.toString(),
+            receipt.depositEpoch.toString(),
+            receipt.tokenMint.toString(),
+          );
+          sig = await store.unshieldNoteStark(note.id, stream.recipientAddress, {
+            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+            publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
+            proofSize: starkResult.proofSize,
+          }, false);
           paid = note.denomination;
         } else {
           setPayProgress(t('shieldUnshield.sendingTransaction'));

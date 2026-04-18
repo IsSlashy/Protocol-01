@@ -20,7 +20,6 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useWalletStore } from '@/stores/walletStore';
-import { useZkProver } from '@/providers/ZkProverProvider';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
@@ -42,7 +41,6 @@ export default function ShieldedTransferScreen() {
 
   const { publicKey, isPrivyWallet } = useWalletStore();
   const { solanaWallet: privyWallet } = usePrivyAuth();
-  const { isCircuitLoaded, error: proverError } = useZkProver();
   const {
     isReady: starkReady,
     generateTransferProof: generateStarkTransferProof,

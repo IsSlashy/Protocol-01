@@ -18,7 +18,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { P01PrivyProvider } from '../providers/PrivyProvider';
 import React from 'react';
-import { ZkProverProvider } from '../providers/ZkProverProvider';
 import { StarkProverProvider } from '../providers/StarkProverProvider';
 import { AlertProvider } from '../providers/AlertProvider';
 import { ArciumProvider } from '../providers/ArciumProvider';
@@ -89,29 +88,27 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#050505' }}>
       <SafeAreaProvider>
         <P01PrivyProvider>
-          <ZkProverProvider>
           <StarkProverProvider>
-          <ArciumProvider>
-            <AlertProvider>
-              <View style={{ flex: 1, backgroundColor: '#050505' }}>
-                <StatusBar style="light" />
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    contentStyle: { backgroundColor: '#050505' },
-                    animation: 'fade',
-                  }}
-                >
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="(onboarding)" />
-                  <Stack.Screen name="(auth)" />
-                  <Stack.Screen name="(main)" />
-                </Stack>
-              </View>
-            </AlertProvider>
-          </ArciumProvider>
+            <ArciumProvider>
+              <AlertProvider>
+                <View style={{ flex: 1, backgroundColor: '#050505' }}>
+                  <StatusBar style="light" />
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      contentStyle: { backgroundColor: '#050505' },
+                      animation: 'fade',
+                    }}
+                  >
+                    <Stack.Screen name="index" />
+                    <Stack.Screen name="(onboarding)" />
+                    <Stack.Screen name="(auth)" />
+                    <Stack.Screen name="(main)" />
+                  </Stack>
+                </View>
+              </AlertProvider>
+            </ArciumProvider>
           </StarkProverProvider>
-          </ZkProverProvider>
         </P01PrivyProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

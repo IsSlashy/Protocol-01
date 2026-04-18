@@ -19,7 +19,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
-import { useZkProver } from '@/providers/ZkProverProvider';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
@@ -77,7 +76,6 @@ export default function ShieldedWalletScreen() {
     getPendingStealthPayments,
   } = useShieldedStore();
 
-  const { isCircuitLoaded, error: proverError } = useZkProver();
   const {
     isReady: starkReady,
     generateConfidentialBalanceProof,

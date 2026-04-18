@@ -27,12 +27,11 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
-import type { PoolConfig, ShieldReceipt, ProofGenerator } from '../denominatedPool';
+import type { PoolConfig, ShieldReceipt } from '../denominatedPool';
 import {
   createNullifier,
   bigintToLeBytes32,
   deriveNullifierPDA,
-  proofToOnChainBytes,
 } from '../denominatedPool';
 
 // ---------------------------------------------------------------------------
@@ -132,13 +131,6 @@ export function deriveVaultPDA(
   );
 }
 
-export function deriveSubscriberVkDataPDA(authority: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from('vk_data_subscriber'), authority.toBuffer()],
-    ZK_SHIELDED_PROGRAM_ID
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Instruction Builders
 // ---------------------------------------------------------------------------
@@ -190,56 +182,6 @@ function buildSubscribeNormalIx(
 }
 
 /**
- * Build subscribe_private instruction.
- * Creates a ZK-authenticated subscription vault from a denominated pool note.
- */
-function buildSubscribePrivateIx(
-  payer: PublicKey,
-  retailer: PublicKey,
-  poolPDA: PublicKey,
-  treePDA: PublicKey,
-  nullifierPDA: PublicKey,
-  vkDataPDA: PublicKey,
-  vaultPDA: PublicKey,
-  proof: number[],
-  nullifierBytes: number[],
-  merkleRootBytes: number[],
-  minEpoch: bigint,
-  subscriberCommitmentBytes: number[],
-  rate: bigint,
-  intervalSlots: bigint,
-  vkHashSubscriber: Uint8Array,
-): TransactionInstruction {
-  const disc = getDiscriminator('subscribe_private');
-
-  // Args: proof, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber
-  const data = Buffer.alloc(8 + 256 + 32 + 32 + 8 + 32 + 8 + 8 + 32);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  Buffer.from(proof).copy(data, offset); offset += 256;
-  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
-  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
-  Buffer.from(subscriberCommitmentBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(rate, offset); offset += 8;
-  data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
-  Buffer.from(vkHashSubscriber).copy(data, offset);
-
-  const keys = [
-    { pubkey: payer, isSigner: true, isWritable: true },
-    { pubkey: retailer, isSigner: false, isWritable: false },
-    { pubkey: poolPDA, isSigner: false, isWritable: true },
-    { pubkey: treePDA, isSigner: false, isWritable: false },
-    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
-    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
-/**
  * Build claim_period instruction.
  * Allows the retailer to claim accumulated subscription payments.
  */
@@ -280,33 +222,6 @@ function buildPauseNormalIx(
 }
 
 /**
- * Build pause_private instruction.
- */
-function buildPausePrivateIx(
-  payer: PublicKey,
-  vaultPDA: PublicKey,
-  vkDataPDA: PublicKey,
-  proof: number[],
-  commitmentBytes: number[],
-): TransactionInstruction {
-  const disc = getDiscriminator('pause_private');
-
-  const data = Buffer.alloc(8 + 256 + 32);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  Buffer.from(proof).copy(data, offset); offset += 256;
-  Buffer.from(commitmentBytes).copy(data, offset);
-
-  const keys = [
-    { pubkey: payer, isSigner: true, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
-/**
  * Build resume_normal instruction.
  */
 function buildResumeNormalIx(
@@ -320,33 +235,6 @@ function buildResumeNormalIx(
   const keys = [
     { pubkey: subscriber, isSigner: true, isWritable: false },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
-/**
- * Build resume_private instruction.
- */
-function buildResumePrivateIx(
-  payer: PublicKey,
-  vaultPDA: PublicKey,
-  vkDataPDA: PublicKey,
-  proof: number[],
-  commitmentBytes: number[],
-): TransactionInstruction {
-  const disc = getDiscriminator('resume_private');
-
-  const data = Buffer.alloc(8 + 256 + 32);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  Buffer.from(proof).copy(data, offset); offset += 256;
-  Buffer.from(commitmentBytes).copy(data, offset);
-
-  const keys = [
-    { pubkey: payer, isSigner: true, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -368,49 +256,6 @@ function buildCancelNormalIx(
     { pubkey: subscriber, isSigner: true, isWritable: true },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
     { pubkey: retailer, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
-/**
- * Build cancel_private instruction (re-shields refund into new notes).
- */
-function buildCancelPrivateIx(
-  payer: PublicKey,
-  vaultPDA: PublicKey,
-  retailer: PublicKey,
-  poolPDA: PublicKey,
-  treePDA: PublicKey,
-  vkDataPDA: PublicKey,
-  proof: number[],
-  commitmentBytes: number[],
-  newCommitmentsBytes: number[][],
-  newRootBytes: number[],
-): TransactionInstruction {
-  const disc = getDiscriminator('cancel_private');
-
-  // Args: proof, commitment, new_commitments (Vec<[u8;32]>), new_root
-  const vecLen = newCommitmentsBytes.length;
-  const data = Buffer.alloc(8 + 256 + 32 + 4 + vecLen * 32 + 32);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  Buffer.from(proof).copy(data, offset); offset += 256;
-  Buffer.from(commitmentBytes).copy(data, offset); offset += 32;
-  data.writeUInt32LE(vecLen, offset); offset += 4;
-  for (const c of newCommitmentsBytes) {
-    Buffer.from(c).copy(data, offset); offset += 32;
-  }
-  Buffer.from(newRootBytes).copy(data, offset);
-
-  const keys = [
-    { pubkey: payer, isSigner: true, isWritable: true },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: retailer, isSigner: false, isWritable: true },
-    { pubkey: poolPDA, isSigner: false, isWritable: true },
-    { pubkey: treePDA, isSigner: false, isWritable: true },
-    { pubkey: vkDataPDA, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ];
 
@@ -502,101 +347,6 @@ export async function subscribeNormal(
 }
 
 /**
- * Create a private (ZK-authenticated) subscription from a denominated pool note.
- */
-export async function subscribePrivate(
-  receipt: ShieldReceipt,
-  poolConfig: PoolConfig,
-  vaultConfig: SubscribePrivateConfig,
-  proofGenerator: ProofGenerator,
-  subscriberSecret: bigint,
-  vkHashSubscriber: Uint8Array,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-): Promise<string> {
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Computing subscriber commitment...');
-  const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
-  const subscriberCommitmentBytes = bigintToLeBytes32(subscriberCommitment);
-
-  onProgress?.('Deriving vault PDA...');
-  const [vaultPDA] = deriveVaultPDA(
-    vaultConfig.retailer,
-    new Uint8Array(subscriberCommitmentBytes),
-    poolConfig.tokenMint
-  );
-
-  onProgress?.('Preparing unshield proof...');
-  const slot = await connection.getSlot('confirmed');
-  const currentEpoch = BigInt(Math.floor(slot / 7200));
-
-  // Use the saved proof from the receipt
-  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
-    throw new Error('Receipt missing Merkle proof data');
-  }
-
-  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
-  const nullifierBytes = bigintToLeBytes32(nullifier);
-  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
-  const minEpoch = currentEpoch - 1n; // Simple epoch delay
-
-  // Build proof inputs
-  const inputs = {
-    merkle_root: receipt.merkleRoot.toString(),
-    nullifier: nullifier.toString(),
-    min_epoch: minEpoch.toString(),
-    token_mint: receipt.tokenMint.toString(),
-    enforce_maturity: '1',
-    secret: receipt.secret.toString(),
-    nullifier_preimage: receipt.nullifierPreimage.toString(),
-    deposit_epoch: receipt.depositEpoch.toString(),
-    path_elements: receipt.merklePathElements.map(e => e.toString()),
-    path_indices: receipt.merklePathIndices.map(i => i.toString()),
-  };
-
-  onProgress?.('Generating proof...');
-  const { proof } = await proofGenerator(inputs as any);
-  const proofBytes = proofToOnChainBytes(proof);
-
-  onProgress?.('Building transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-  const [vkDataPDA] = deriveSubscriberVkDataPDA(walletPubkey);
-
-  const ix = buildSubscribePrivateIx(
-    walletPubkey,
-    vaultConfig.retailer,
-    poolConfig.poolPDA,
-    poolConfig.treePDA,
-    nullifierPDA,
-    vkDataPDA,
-    vaultPDA,
-    proofBytes,
-    Array.from(nullifierBytes),
-    merkleRootBytes,
-    minEpoch,
-    subscriberCommitmentBytes,
-    vaultConfig.rate,
-    vaultConfig.intervalSlots,
-    vkHashSubscriber,
-  );
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(500_000));
-  tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
-
-  onProgress?.('Done!');
-  return sig;
-}
-
-/**
  * Retailer claims accumulated subscription payments.
  */
 export async function claimPeriod(
@@ -649,49 +399,6 @@ export async function pauseNormal(
 }
 
 /**
- * Pause a private subscription (requires ZK proof).
- */
-export async function pausePrivate(
-  vaultPDA: PublicKey,
-  subscriberSecret: bigint,
-  proofGenerator: ProofGenerator,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-): Promise<string> {
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Computing commitment...');
-  const commitment = poseidon2([subscriberSecret, 1234567890n]);
-  const commitmentBytes = bigintToLeBytes32(commitment);
-
-  onProgress?.('Generating proof...');
-  const inputs = {
-    commitment: commitment.toString(),
-    subscriber_secret: subscriberSecret.toString(),
-  };
-  const { proof } = await proofGenerator(inputs as any, 'subscriber');
-  const proofBytes = proofToOnChainBytes(proof);
-
-  onProgress?.('Building transaction...');
-  const [vkDataPDA] = deriveSubscriberVkDataPDA(walletPubkey);
-  const ix = buildPausePrivateIx(walletPubkey, vaultPDA, vkDataPDA, proofBytes, commitmentBytes);
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
-
-  onProgress?.('Done!');
-  return sig;
-}
-
-/**
  * Resume a normal subscription.
  */
 export async function resumeNormal(
@@ -711,49 +418,6 @@ export async function resumeNormal(
 
   onProgress?.('Sending transaction...');
   const tx = new Transaction().add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
-
-  onProgress?.('Done!');
-  return sig;
-}
-
-/**
- * Resume a private subscription (requires ZK proof).
- */
-export async function resumePrivate(
-  vaultPDA: PublicKey,
-  subscriberSecret: bigint,
-  proofGenerator: ProofGenerator,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-): Promise<string> {
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Computing commitment...');
-  const commitment = poseidon2([subscriberSecret, 1234567890n]);
-  const commitmentBytes = bigintToLeBytes32(commitment);
-
-  onProgress?.('Generating proof...');
-  const inputs = {
-    commitment: commitment.toString(),
-    subscriber_secret: subscriberSecret.toString(),
-  };
-  const { proof } = await proofGenerator(inputs as any, 'subscriber');
-  const proofBytes = proofToOnChainBytes(proof);
-
-  onProgress?.('Building transaction...');
-  const [vkDataPDA] = deriveSubscriberVkDataPDA(walletPubkey);
-  const ix = buildResumePrivateIx(walletPubkey, vaultPDA, vkDataPDA, proofBytes, commitmentBytes);
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
   const sig = await signAndSend(connection, tx, keypair, walletSigner);
 
   onProgress?.('Done!');
@@ -787,70 +451,8 @@ export async function cancelNormal(
   return sig;
 }
 
-/**
- * Cancel a private subscription (re-shields refund into new notes).
- */
-export async function cancelPrivate(
-  vaultPDA: PublicKey,
-  retailer: PublicKey,
-  poolConfig: PoolConfig,
-  subscriberSecret: bigint,
-  newCommitments: bigint[],
-  newRoot: bigint,
-  proofGenerator: ProofGenerator,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-): Promise<string> {
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Computing commitment...');
-  const commitment = poseidon2([subscriberSecret, 1234567890n]);
-  const commitmentBytes = bigintToLeBytes32(commitment);
-
-  onProgress?.('Generating proof...');
-  const inputs = {
-    commitment: commitment.toString(),
-    subscriber_secret: subscriberSecret.toString(),
-  };
-  const { proof } = await proofGenerator(inputs as any, 'subscriber');
-  const proofBytes = proofToOnChainBytes(proof);
-
-  onProgress?.('Building transaction...');
-  const [vkDataPDA] = deriveSubscriberVkDataPDA(walletPubkey);
-
-  const newCommitmentsBytes = newCommitments.map(c => bigintToLeBytes32(c));
-  const newRootBytes = bigintToLeBytes32(newRoot);
-
-  const ix = buildCancelPrivateIx(
-    walletPubkey,
-    vaultPDA,
-    retailer,
-    poolConfig.poolPDA,
-    poolConfig.treePDA,
-    vkDataPDA,
-    proofBytes,
-    commitmentBytes,
-    newCommitmentsBytes,
-    newRootBytes,
-  );
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(500_000));
-  tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
-
-  onProgress?.('Done!');
-  return sig;
-}
-
 // ---------------------------------------------------------------------------
-// STARK Variants (quantum-resistant, no inline Groth16)
+// STARK Variants (quantum-resistant)
 // ---------------------------------------------------------------------------
 
 /**

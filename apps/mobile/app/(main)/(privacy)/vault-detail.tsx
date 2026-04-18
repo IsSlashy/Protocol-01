@@ -15,8 +15,6 @@ import * as SecureStore from 'expo-secure-store';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { type VaultInfo } from '@/services/subscriptionVault';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { useZkProver } from '@/providers/ZkProverProvider';
-import type { ProofGenerator } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 
@@ -31,15 +29,12 @@ export default function VaultDetailScreen() {
     pauseNormalAction,
     resumeNormalAction,
     cancelNormalAction,
-    pausePrivateAction,
     pausePrivateStarkAction,
-    resumePrivateAction,
     resumePrivateStarkAction,
     isLoading,
     progress,
   } = useSubscriptionVaultStore();
   const { isReady: starkReady, generateProof: starkGenerate } = useStarkProver();
-  const { generateRawProof } = useZkProver();
 
   const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
   const [starkStatus, setStarkStatus] = useState<string | null>(null);
@@ -57,13 +52,6 @@ export default function VaultDetailScreen() {
     load();
   }, [vaultAddress, refreshVault]);
 
-  // Build a ProofGenerator that uses Groth16 (fallback for when STARK isn't ready)
-  const buildProofGenerator = useCallback((): ProofGenerator => {
-    return async (inputs, _circuit) => {
-      return generateRawProof(inputs as Record<string, string>);
-    };
-  }, [generateRawProof]);
-
   // Load subscriber secret from SecureStore
   const loadSecret = useCallback(async (): Promise<bigint> => {
     if (!vaultAddress) throw new Error('No vault address');
@@ -76,25 +64,20 @@ export default function VaultDetailScreen() {
     if (!vaultAddress) return;
     try {
       if (isPrivate) {
-        const secret = await loadSecret();
-
-        if (starkReady) {
-          // --- STARK path (quantum-resistant) ---
-          // Generate subscriber_ownership proof on-device, then submit + verify
-          // the proof buffer on-chain, then call pause_private_stark which reads it.
-          setStarkStatus('Generating STARK ownership proof...');
-          const starkResult = await starkGenerate(secret.toString());
-
-          setStarkStatus('Submitting STARK pause...');
-          await pausePrivateStarkAction(vaultAddress, {
-            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
-            commitment: BigInt(starkResult.commitment),
-            proofSize: starkResult.proofSize,
-          });
-        } else {
-          // --- Groth16 fallback ---
-          await pausePrivateAction(vaultAddress, secret, buildProofGenerator());
+        if (!starkReady) {
+          p01Alert('Prover initializing', 'STARK prover not ready yet — try again in a moment.');
+          return;
         }
+        const secret = await loadSecret();
+        setStarkStatus('Generating STARK ownership proof...');
+        const starkResult = await starkGenerate(secret.toString());
+
+        setStarkStatus('Submitting STARK pause...');
+        await pausePrivateStarkAction(vaultAddress, {
+          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+          commitment: BigInt(starkResult.commitment),
+          proofSize: starkResult.proofSize,
+        });
       } else {
         await pauseNormalAction(vaultAddress);
       }
@@ -112,25 +95,20 @@ export default function VaultDetailScreen() {
     if (!vaultAddress) return;
     try {
       if (isPrivate) {
-        const secret = await loadSecret();
-
-        if (starkReady) {
-          // --- STARK path (quantum-resistant) ---
-          // Generate subscriber_ownership proof on-device, then submit + verify
-          // the proof buffer on-chain, then call resume_private_stark which reads it.
-          setStarkStatus('Generating STARK ownership proof...');
-          const starkResult = await starkGenerate(secret.toString());
-
-          setStarkStatus('Submitting STARK resume...');
-          await resumePrivateStarkAction(vaultAddress, {
-            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
-            commitment: BigInt(starkResult.commitment),
-            proofSize: starkResult.proofSize,
-          });
-        } else {
-          // --- Groth16 fallback ---
-          await resumePrivateAction(vaultAddress, secret, buildProofGenerator());
+        if (!starkReady) {
+          p01Alert('Prover initializing', 'STARK prover not ready yet — try again in a moment.');
+          return;
         }
+        const secret = await loadSecret();
+        setStarkStatus('Generating STARK ownership proof...');
+        const starkResult = await starkGenerate(secret.toString());
+
+        setStarkStatus('Submitting STARK resume...');
+        await resumePrivateStarkAction(vaultAddress, {
+          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+          commitment: BigInt(starkResult.commitment),
+          proofSize: starkResult.proofSize,
+        });
       } else {
         await resumeNormalAction(vaultAddress);
       }
