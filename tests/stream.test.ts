@@ -352,8 +352,8 @@ describe('P01 Stream Program', () => {
     });
 
     it('should prevent double cancellation', () => {
-      const status = StreamStatus.Cancelled;
-      const isActive = status === StreamStatus.Active;
+      const status: StreamStatus = StreamStatus.Cancelled;
+      const isActive = (status as StreamStatus) === StreamStatus.Active;
       expect(isActive).to.be.false;
     });
   });

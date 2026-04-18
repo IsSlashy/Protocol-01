@@ -14,16 +14,15 @@
  *   1.  zk_shielded        - GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
  *   2.  p01_zkspl          - EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah
  *   3.  specter            - 2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp
- *   4.  p01_trustless      - FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q
- *   5.  p01_relayer        - 2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW
- *   6.  p01_quantum_vault  - HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o
- *   7.  p01_registry       - QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB
- *   8.  p01_stark_verifier - DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
- *   9.  p01_arcium         - FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT
- *   10. p01_fee_splitter   - UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM
- *   11. p01_stream         - C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx
- *   12. p01_subscription   - 3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW
- *   13. p01_whitelist      - 5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33
+ *   4.  p01_relayer        - 2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW
+ *   5.  p01_quantum_vault  - 9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv
+ *   6.  p01_registry       - QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB
+ *   7.  p01_stark_verifier - DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
+ *   8.  p01_arcium         - FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT
+ *   9.  p01_fee_splitter   - UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM
+ *   10. p01_stream         - C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx
+ *   11. p01_subscription   - 3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW
+ *   12. p01_whitelist      - 5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -62,9 +61,8 @@ const PROGRAM_IDS = {
   ZK_SHIELDED: new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'),
   ZKSPL: new PublicKey('EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah'),
   SPECTER: new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
-  TRUSTLESS: new PublicKey('FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q'),
   RELAYER: new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
-  QUANTUM_VAULT: new PublicKey('HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o'),
+  QUANTUM_VAULT: new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv'),
   REGISTRY: new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
   STARK_VERIFIER: new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs'),
   ARCIUM: new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT'),
@@ -184,7 +182,9 @@ const TEST_RUN_ID = Date.now().toString(36) + Math.random().toString(36).slice(2
 // WOTS+ Helpers (mirrors specter-sdk/src/quantum/wots.ts)
 // =============================================================================
 
-const WOTS_CHAINS = 32;
+const WOTS_MSG_CHAINS = 64;
+const WOTS_CHECKSUM_CHAINS = 3;
+const WOTS_CHAINS = WOTS_MSG_CHAINS + WOTS_CHECKSUM_CHAINS; // 67
 const WOTS_MAX_VAL = 15;
 const HASH_SIZE = 32;
 
@@ -258,11 +258,23 @@ function computeWithdrawMessage(
 
 function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignature {
   const signature = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
-  for (let i = 0; i < WOTS_CHAINS; i++) {
-    const byteIdx = Math.floor(i / 2);
+
+  const nibbles = new Array<number>(WOTS_CHAINS);
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    const byteIdx = i >> 1;
     const byte = message[byteIdx]!;
-    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
-    const stepsToHash = WOTS_MAX_VAL - nibble;
+    nibbles[i] = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
+  }
+  let checksum = 0;
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    checksum += WOTS_MAX_VAL - nibbles[i]!;
+  }
+  nibbles[WOTS_MSG_CHAINS] = (checksum >> 8) & 0x0f;
+  nibbles[WOTS_MSG_CHAINS + 1] = (checksum >> 4) & 0x0f;
+  nibbles[WOTS_MSG_CHAINS + 2] = checksum & 0x0f;
+
+  for (let i = 0; i < WOTS_CHAINS; i++) {
+    const stepsToHash = WOTS_MAX_VAL - nibbles[i]!;
     let current: Uint8Array = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
     for (let step = 0; step < stepsToHash; step++) {
       current = sha256Hash(current);
@@ -862,174 +874,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 4. p01_trustless -- Trustless Shielded Pool
+  // 4. p01_relayer -- Decentralized Relay Network
   // ===========================================================================
 
-  describe('4. p01_trustless -- Trustless Shielded Pool', () => {
-    const PROG = PROGRAM_IDS.TRUSTLESS;
-    const SEEDS = {
-      TRUSTLESS_POOL: Buffer.from('trustless_pool'),
-      MERKLE_TREE: Buffer.from('merkle_tree'),
-      NULLIFIER: Buffer.from('nullifier'),
-      VK_DATA: Buffer.from('trustless_vk_data'),
-      ZKSPL_VK_DATA: Buffer.from('trustless_zkspl_vk'),
-      CONFIDENTIAL_ACCOUNT: Buffer.from('trustless_account'),
-    };
-    const DISC = {
-      initialize_pool: computeDiscriminator('initialize_pool'),
-      shield_trustless: computeDiscriminator('shield_trustless'),
-      init_vk_data: computeDiscriminator('init_vk_data'),
-      write_vk_data: computeDiscriminator('write_vk_data'),
-    };
-
-    let tokenMint: PublicKey;
-    let poolPDA: PublicKey;
-    let merkleTreePDA: PublicKey;
-    const denomination = 100_000_000n;
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_trustless deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('initialize_pool: creates trustless pool with denomination', async () => {
-      tokenMint = await withRetry(() =>
-        createMint(connection, payer, payer.publicKey, null, 9),
-      );
-
-      const denomBuf = Buffer.alloc(8);
-      denomBuf.writeBigUInt64LE(denomination);
-
-      [poolPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.TRUSTLESS_POOL, tokenMint.toBuffer(), denomBuf],
-        PROG,
-      );
-      [merkleTreePDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.MERKLE_TREE, poolPDA.toBuffer()],
-        PROG,
-      );
-
-      const vkHash = Buffer.alloc(32, 0x42);
-      const zksplVkHash = Buffer.alloc(32, 0x43);
-
-      const data = Buffer.concat([
-        DISC.initialize_pool,
-        vkHash,
-        zksplVkHash,
-        tokenMint.toBuffer(),
-        u64ToLeBytes(denomination),
-      ]);
-
-      const tx = new Transaction()
-        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }))
-        .add({
-          programId: PROG,
-          keys: [
-            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-            { pubkey: poolPDA, isSigner: false, isWritable: true },
-            { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-            { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-          ],
-          data,
-        });
-
-      const sig = await withRetry(() => provider.sendAndConfirm(tx));
-      console.log(`    initialize_pool tx: ${sig}`);
-
-      const poolAccount = await connection.getAccountInfo(poolPDA);
-      expect(poolAccount).to.not.be.null;
-      expect(poolAccount!.owner.toBase58()).to.equal(PROG.toBase58());
-    });
-
-    it('shield_trustless: deposits tokens with a commitment', async () => {
-      const userAta = await withRetry(() =>
-        getOrCreateAssociatedTokenAccount(connection, payer, tokenMint, payer.publicKey),
-      );
-      await withRetry(() =>
-        mintTo(connection, payer, tokenMint, userAta.address, payer, 10_000_000_000n),
-      );
-      const vaultAta = await withRetry(() =>
-        getOrCreateAssociatedTokenAccount(connection, payer, tokenMint, poolPDA, true),
-      );
-
-      const commitment = randomBytes32();
-      const newRoot = randomBytes32();
-
-      const data = Buffer.concat([
-        DISC.shield_trustless,
-        commitment,
-        newRoot,
-      ]);
-
-      const tx = new Transaction()
-        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
-        .add({
-          programId: PROG,
-          keys: [
-            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-            { pubkey: poolPDA, isSigner: false, isWritable: true },
-            { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-            { pubkey: userAta.address, isSigner: false, isWritable: true },
-            { pubkey: vaultAta.address, isSigner: false, isWritable: true },
-          ],
-          data,
-        });
-
-      const sig = await withRetry(() => provider.sendAndConfirm(tx));
-      console.log(`    shield_trustless tx: ${sig}`);
-    });
-
-    it('creates nullifier PDA for future unshield', () => {
-      const nullifier = randomBytes32();
-      const [nullifierPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.NULLIFIER, poolPDA.toBuffer(), nullifier],
-        PROG,
-      );
-      expect(nullifierPDA).to.not.be.null;
-    });
-
-    it('init_vk_data + write_vk_data: uploads unshield VK', async () => {
-      const [vkDataPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.VK_DATA, poolPDA.toBuffer()],
-        PROG,
-      );
-
-      const mockVkData = Buffer.alloc(512, 0x01);
-
-      const initData = Buffer.concat([
-        DISC.init_vk_data,
-        u32ToLeBytes(mockVkData.length),
-      ]);
-
-      try {
-        const initTx = new Transaction().add({
-          programId: PROG,
-          keys: [
-            { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-            { pubkey: poolPDA, isSigner: false, isWritable: false },
-            { pubkey: vkDataPDA, isSigner: false, isWritable: true },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-          ],
-          data: initData,
-        });
-        await withRetry(() => provider.sendAndConfirm(initTx));
-        console.log(`    VK data PDA initialized: ${vkDataPDA.toBase58()}`);
-      } catch (err: any) {
-        console.log(`    VK data init: ${err.message.includes('already') ? 'already exists' : err.message.slice(0, 80)}`);
-      }
-    });
-  });
-
-  // ===========================================================================
-  // 5. p01_relayer -- Decentralized Relay Network
-  // ===========================================================================
-
-  describe('5. p01_relayer -- Decentralized Relay Network', () => {
+  describe('4. p01_relayer -- Decentralized Relay Network', () => {
     const PROG = PROGRAM_IDS.RELAYER;
 
     it('verifies program is deployed', async () => {
@@ -1079,10 +927,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 6. p01_quantum_vault -- Quantum-Safe Vault (3 Layers)
+  // 5. p01_quantum_vault -- Quantum-Safe Vault (3 Layers)
   // ===========================================================================
 
-  describe('6. p01_quantum_vault -- Quantum-Safe Vault (3 Layers)', () => {
+  describe('5. p01_quantum_vault -- Quantum-Safe Vault (3 Layers)', () => {
     const PROG = PROGRAM_IDS.QUANTUM_VAULT;
     const SEEDS = {
       WOTS_VAULT: Buffer.from('wots_vault'),
@@ -1217,10 +1065,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 7. p01_registry -- Stealth Meta-Address Directory
+  // 6. p01_registry -- Stealth Meta-Address Directory
   // ===========================================================================
 
-  describe('7. p01_registry -- Stealth Meta-Address Directory', () => {
+  describe('6. p01_registry -- Stealth Meta-Address Directory', () => {
     const PROG = PROGRAM_IDS.REGISTRY;
 
     it('verifies program is deployed', async () => {
@@ -1281,10 +1129,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 8. p01_stark_verifier -- Multi-Circuit STARK Verifier
+  // 7. p01_stark_verifier -- Multi-Circuit STARK Verifier
   // ===========================================================================
 
-  describe('8. p01_stark_verifier -- Multi-Circuit STARK Verifier', () => {
+  describe('7. p01_stark_verifier -- Multi-Circuit STARK Verifier', () => {
     const program = new Program(STARK_IDL, provider);
     const authority = payer;
 
@@ -1482,10 +1330,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 9. p01_arcium -- MPC Confidential Computation
+  // 8. p01_arcium -- MPC Confidential Computation
   // ===========================================================================
 
-  describe('9. p01_arcium -- MPC Confidential Computation', () => {
+  describe('8. p01_arcium -- MPC Confidential Computation', () => {
     it('verifies program is deployed and accessible', async () => {
       const accountInfo = await withRetry(() =>
         connection.getAccountInfo(PROGRAM_IDS.ARCIUM),
@@ -1541,10 +1389,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 10. p01_fee_splitter -- Fee Splitting
+  // 9. p01_fee_splitter -- Fee Splitting
   // ===========================================================================
 
-  describe('10. p01_fee_splitter -- Fee Splitting', () => {
+  describe('9. p01_fee_splitter -- Fee Splitting', () => {
     const PROG = PROGRAM_IDS.FEE_SPLITTER;
     const DEFAULT_FEE_BPS = 50;
     const MAX_FEE_BPS = 500;
@@ -1615,10 +1463,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 11. p01_stream -- Payment Streams
+  // 10. p01_stream -- Payment Streams
   // ===========================================================================
 
-  describe('11. p01_stream -- Payment Streams', () => {
+  describe('10. p01_stream -- Payment Streams', () => {
     const PROG = PROGRAM_IDS.STREAM;
 
     it('verifies program is deployed', async () => {
@@ -1709,10 +1557,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 12. p01_subscription -- Recurring Payments
+  // 11. p01_subscription -- Recurring Payments
   // ===========================================================================
 
-  describe('12. p01_subscription -- Recurring Payments', () => {
+  describe('11. p01_subscription -- Recurring Payments', () => {
     const PROG = PROGRAM_IDS.SUBSCRIPTION;
 
     enum SubscriptionStatus {
@@ -1807,10 +1655,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 13. p01_whitelist -- Developer Access Control
+  // 12. p01_whitelist -- Developer Access Control
   // ===========================================================================
 
-  describe('13. p01_whitelist -- Developer Access Control', () => {
+  describe('12. p01_whitelist -- Developer Access Control', () => {
     const PROG = PROGRAM_IDS.WHITELIST;
 
     enum WhitelistStatus {
@@ -1894,12 +1742,12 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   // 14. Concurrent Operations Stress
   // ===========================================================================
 
-  describe('14. Concurrent Operations Stress', () => {
+  describe('13. Concurrent Operations Stress', () => {
     it('handles 5 simultaneous program deployment checks', async () => {
       const programs = [
         PROGRAM_IDS.ZK_SHIELDED,
         PROGRAM_IDS.SPECTER,
-        PROGRAM_IDS.TRUSTLESS,
+        PROGRAM_IDS.RELAYER,
         PROGRAM_IDS.QUANTUM_VAULT,
         PROGRAM_IDS.REGISTRY,
       ];
@@ -2012,7 +1860,7 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   // 15. Cross-Program Invariants
   // ===========================================================================
 
-  describe('15. Cross-Program Invariants', () => {
+  describe('14. Cross-Program Invariants', () => {
     it('all 13 programs are deployed and executable', async () => {
       const entries = Object.entries(PROGRAM_IDS);
       const results = await Promise.all(

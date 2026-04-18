@@ -14,10 +14,9 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import { expect } from 'chai';
-import { sha256 } from '@noble/hashes/sha256';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { sha256 } from '@noble/hashes/sha2.js';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
+import type { P01Relayer } from '../target/types/p01_relayer';
 
 /** ML-KEM-768 public key size per FIPS 203 */
 const KEM_PUBLIC_KEY_SIZE = 1184;
@@ -98,7 +97,7 @@ describe('p01_relayer', () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = new Program(
+  const program = new Program<P01Relayer>(
     require('../target/idl/p01_relayer.json'),
     provider,
   );
@@ -136,7 +135,7 @@ describe('p01_relayer', () => {
           SLASH_AMOUNT,
           COOLDOWN_SLOTS,
         )
-        .accounts({
+        .accountsPartial({
           authority: admin.publicKey,
           config: configPda,
           systemProgram: SystemProgram.programId,
@@ -157,7 +156,7 @@ describe('p01_relayer', () => {
       const newFee = new BN(0.02 * LAMPORTS_PER_SOL);
       await program.methods
         .updateConfig(null, null, newFee, null, null, null, null, null, null)
-        .accounts({ authority: admin.publicKey, config: configPda })
+        .accountsPartial({ authority: admin.publicKey, config: configPda })
         .rpc();
 
       const config = await program.account.relayerConfig.fetch(configPda);
@@ -165,7 +164,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .updateConfig(null, null, JOB_FEE, null, null, null, null, null, null)
-        .accounts({ authority: admin.publicKey, config: configPda })
+        .accountsPartial({ authority: admin.publicKey, config: configPda })
         .rpc();
     });
 
@@ -173,7 +172,7 @@ describe('p01_relayer', () => {
       try {
         await program.methods
           .updateConfig(null, null, null, null, null, null, null, null, null)
-          .accounts({ authority: operator1.publicKey, config: configPda })
+          .accountsPartial({ authority: operator1.publicKey, config: configPda })
           .signers([operator1])
           .rpc();
         expect.fail('Should have thrown');
@@ -190,7 +189,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .registerRelayer(encKey, endpointHash, null)
-        .accounts({
+        .accountsPartial({
           operator: operator1.publicKey,
           config: configPda,
           relayerNode: relayer1Pda,
@@ -215,7 +214,7 @@ describe('p01_relayer', () => {
     it('registers relayer 2 (no KEM key)', async () => {
       await program.methods
         .registerRelayer(randomEncryptionKey(), randomEndpointHash(), null)
-        .accounts({
+        .accountsPartial({
           operator: operator2.publicKey,
           config: configPda,
           relayerNode: relayer2Pda,
@@ -232,7 +231,7 @@ describe('p01_relayer', () => {
       const newKey = randomEncryptionKey();
       await program.methods
         .updateRelayerKey(newKey, null)
-        .accounts({
+        .accountsPartial({
           operator: operator1.publicKey,
           relayerNode: relayer1Pda,
         })
@@ -254,7 +253,7 @@ describe('p01_relayer', () => {
       const kem = realKemPublicKey();
       await program.methods
         .registerRelayer(randomEncryptionKey(), randomEndpointHash(), Buffer.from(kem.publicKey))
-        .accounts({
+        .accountsPartial({
           operator: newOp.publicKey,
           config: configPda,
           relayerNode: newPda,
@@ -270,7 +269,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .deactivateRelayer()
-        .accounts({ operator: newOp.publicKey, config: configPda, relayerNode: newPda })
+        .accountsPartial({ operator: newOp.publicKey, config: configPda, relayerNode: newPda })
         .signers([newOp])
         .rpc();
     });
@@ -278,8 +277,8 @@ describe('p01_relayer', () => {
     it('adds KEM key to existing relayer via updateRelayerKey', async () => {
       const kem = realKemPublicKey();
       await program.methods
-        .updateRelayerKey(null, Buffer.from(kem.publicKey))
-        .accounts({
+        .updateRelayerKey(randomEncryptionKey(), Buffer.from(kem.publicKey))
+        .accountsPartial({
           operator: operator1.publicKey,
           relayerNode: relayer1Pda,
         })
@@ -295,8 +294,8 @@ describe('p01_relayer', () => {
       const badKey = Buffer.alloc(100, 0xaa);
       try {
         await program.methods
-          .updateRelayerKey(null, badKey)
-          .accounts({
+          .updateRelayerKey(randomEncryptionKey(), badKey)
+          .accountsPartial({
             operator: operator1.publicKey,
             relayerNode: relayer1Pda,
           })
@@ -313,7 +312,7 @@ describe('p01_relayer', () => {
       const newKem = realKemPublicKey();
       await program.methods
         .updateRelayerKey(newX25519, Buffer.from(newKem.publicKey))
-        .accounts({
+        .accountsPartial({
           operator: operator1.publicKey,
           relayerNode: relayer1Pda,
         })
@@ -340,7 +339,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .submitJob(Array.from(jobId), encryptedTx)
-        .accounts({
+        .accountsPartial({
           submitter: submitter.publicKey,
           config: configPda,
           assignedRelayer: relayer1Pda,
@@ -365,7 +364,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .completeJob(Array.from(txSig))
-        .accounts({
+        .accountsPartial({
           operator: operator1.publicKey,
           config: configPda,
           relayerNode: relayer1Pda,
@@ -399,7 +398,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .submitJob(Array.from(jobId), encryptedTx)
-        .accounts({
+        .accountsPartial({
           submitter: submitter.publicKey,
           config: configPda,
           assignedRelayer: relayer1Pda,
@@ -413,7 +412,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .cancelJob()
-        .accounts({
+        .accountsPartial({
           submitter: submitter.publicKey,
           job: jobPda,
         })
@@ -432,7 +431,7 @@ describe('p01_relayer', () => {
     it('deactivates relayer 2', async () => {
       await program.methods
         .deactivateRelayer()
-        .accounts({
+        .accountsPartial({
           operator: operator2.publicKey,
           config: configPda,
           relayerNode: relayer2Pda,
@@ -452,7 +451,7 @@ describe('p01_relayer', () => {
       try {
         await program.methods
           .unstakeRelayer()
-          .accounts({
+          .accountsPartial({
             operator: operator2.publicKey,
             config: configPda,
             relayerNode: relayer2Pda,
@@ -476,7 +475,7 @@ describe('p01_relayer', () => {
       try {
         await program.methods
           .submitJob(Array.from(jobId), oversizedTx)
-          .accounts({
+          .accountsPartial({
             submitter: submitter.publicKey,
             config: configPda,
             assignedRelayer: relayer1Pda,
@@ -496,7 +495,7 @@ describe('p01_relayer', () => {
     it('rejects registration when protocol is paused', async () => {
       await program.methods
         .updateConfig(null, null, null, null, null, null, null, null, false)
-        .accounts({ authority: admin.publicKey, config: configPda })
+        .accountsPartial({ authority: admin.publicKey, config: configPda })
         .rpc();
 
       const newOp = Keypair.generate();
@@ -506,7 +505,7 @@ describe('p01_relayer', () => {
       try {
         await program.methods
           .registerRelayer(randomEncryptionKey(), randomEndpointHash(), null)
-          .accounts({
+          .accountsPartial({
             operator: newOp.publicKey,
             config: configPda,
             relayerNode: newPda,
@@ -521,7 +520,7 @@ describe('p01_relayer', () => {
 
       await program.methods
         .updateConfig(null, null, null, null, null, null, null, null, true)
-        .accounts({ authority: admin.publicKey, config: configPda })
+        .accountsPartial({ authority: admin.publicKey, config: configPda })
         .rpc();
     });
 
@@ -532,7 +531,7 @@ describe('p01_relayer', () => {
       try {
         await program.methods
           .submitJob(Array.from(jobId), Buffer.alloc(64, 0xaa))
-          .accounts({
+          .accountsPartial({
             submitter: submitter.publicKey,
             config: configPda,
             assignedRelayer: relayer2Pda,

@@ -13,7 +13,8 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   getByMakerNonce,
   removeByMakerNonce,
@@ -56,7 +57,7 @@ const DEVNET_RPC =
   process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 
 function anchorDisc(ixName: string): Buffer {
-  return Buffer.from(sha256(`global:${ixName}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${ixName}`)).slice(0, 8));
 }
 
 interface ClaimMatchBody {

@@ -16,8 +16,9 @@ import * as crypto from 'crypto';
 import nacl from 'tweetnacl';
 import { Keypair, PublicKey, SystemProgram, Transaction, ComputeBudgetProgram } from '@solana/web3.js';
 import { poseidon2, poseidon4 } from 'poseidon-lite';
-import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha256';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 
@@ -280,7 +281,7 @@ function calculateFinalPaymentAdjustment(
 // Stealth — Re-implement pure crypto functions for testing
 // =============================================================================
 
-const STEALTH_SEED_INFO = 'p01-stealth-seed';
+const STEALTH_SEED_INFO = utf8ToBytes('p01-stealth-seed');
 const HYBRID_HKDF_INFO = 'p01-hybrid-stealth-v2';
 const META_ADDRESS_PREFIX = 'st:';
 

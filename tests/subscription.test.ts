@@ -444,9 +444,10 @@ describe('P01 Subscription Program', () => {
       const pausedOk = SubscriptionStatus.Paused === SubscriptionStatus.Paused;
       expect(activeOk || pausedOk).to.be.true;
 
+      const cancelled: SubscriptionStatus = SubscriptionStatus.Cancelled;
       const cancelledFails =
-        SubscriptionStatus.Cancelled === SubscriptionStatus.Active ||
-        SubscriptionStatus.Cancelled === SubscriptionStatus.Paused;
+        (cancelled as SubscriptionStatus) === SubscriptionStatus.Active ||
+        (cancelled as SubscriptionStatus) === SubscriptionStatus.Paused;
       expect(cancelledFails).to.be.false;
     });
 
@@ -504,27 +505,27 @@ describe('P01 Subscription Program', () => {
     });
 
     it('should only allow closing Completed subscriptions', () => {
-      const completed = SubscriptionStatus.Completed;
+      const completed: SubscriptionStatus = SubscriptionStatus.Completed;
       const canClose =
-        completed === SubscriptionStatus.Cancelled ||
-        completed === SubscriptionStatus.Completed;
+        (completed as SubscriptionStatus) === SubscriptionStatus.Cancelled ||
+        (completed as SubscriptionStatus) === SubscriptionStatus.Completed;
       expect(canClose).to.be.true;
     });
 
     it('should reject closing Active subscriptions', () => {
-      const active = SubscriptionStatus.Active;
+      const active: SubscriptionStatus = SubscriptionStatus.Active;
       const canClose =
-        active === SubscriptionStatus.Cancelled ||
-        active === SubscriptionStatus.Completed;
+        (active as SubscriptionStatus) === SubscriptionStatus.Cancelled ||
+        (active as SubscriptionStatus) === SubscriptionStatus.Completed;
       expect(canClose).to.be.false;
       // Would error with SubscriptionError::CannotCloseActiveSubscription
     });
 
     it('should reject closing Paused subscriptions', () => {
-      const paused = SubscriptionStatus.Paused;
+      const paused: SubscriptionStatus = SubscriptionStatus.Paused;
       const canClose =
-        paused === SubscriptionStatus.Cancelled ||
-        paused === SubscriptionStatus.Completed;
+        (paused as SubscriptionStatus) === SubscriptionStatus.Cancelled ||
+        (paused as SubscriptionStatus) === SubscriptionStatus.Completed;
       expect(canClose).to.be.false;
     });
 

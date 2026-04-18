@@ -29,7 +29,7 @@ import {
 } from '@solana/spl-token';
 import { expect } from 'chai';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 // ---------------------------------------------------------------------------
 // Constants

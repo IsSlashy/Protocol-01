@@ -47,7 +47,6 @@ const PROGRAM_ID = new PublicKey(
 const SEEDS = {
   DENOMINATED_POOL: Buffer.from("denominated_pool"),
   MERKLE_TREE: Buffer.from("merkle_tree"),
-  NULLIFIER: Buffer.from("nullifier"),
 };
 
 const NATIVE_SOL_MINT = SystemProgram.programId;
@@ -83,30 +82,12 @@ function deriveMerkleTreePDA(pool: PublicKey): [PublicKey, number] {
   );
 }
 
-function deriveNullifierPDA(
-  pool: PublicKey,
-  nullifier: number[]
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.NULLIFIER, pool.toBuffer(), Buffer.from(nullifier)],
-    PROGRAM_ID
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 function random32(): number[] {
   return Array.from(Keypair.generate().publicKey.toBuffer()).slice(0, 32);
-}
-
-function mockProof(): { piA: number[]; piB: number[]; piC: number[] } {
-  return {
-    piA: new Array(64).fill(0),
-    piB: new Array(128).fill(0),
-    piC: new Array(64).fill(0),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -226,16 +207,12 @@ describe("Dynamic Time Delay", () => {
       // The current epoch's buffer slot should have count = 1
       // Since we just created the pool in the same epoch, the offset is 0 or small
       const currentEpochStart = pool.epochNoteStart.toNumber();
-      const counts = pool.epochNoteCounts as BN[] | number[];
+      const counts = pool.epochNoteCounts as BN[];
 
       // At least one slot in the buffer should have count >= 1
       let foundDeposit = false;
       for (let i = 0; i < EPOCH_BUFFER_SIZE; i++) {
-        const val =
-          typeof counts[i] === "number"
-            ? counts[i]
-            : (counts[i] as BN).toNumber();
-        if (val >= 1) {
+        if (counts[i].toNumber() >= 1) {
           foundDeposit = true;
           break;
         }
@@ -261,14 +238,10 @@ describe("Dynamic Time Delay", () => {
       expect(pool.noteCount.toNumber()).to.equal(5);
 
       // Sum all epoch_note_counts — should be 5 (all in same or adjacent epoch)
-      const counts = pool.epochNoteCounts as BN[] | number[];
+      const counts = pool.epochNoteCounts as BN[];
       let total = 0;
       for (let i = 0; i < EPOCH_BUFFER_SIZE; i++) {
-        const val =
-          typeof counts[i] === "number"
-            ? counts[i]
-            : (counts[i] as BN).toNumber();
-        total += val;
+        total += counts[i].toNumber();
       }
       expect(total).to.equal(5);
 
@@ -293,14 +266,10 @@ describe("Dynamic Time Delay", () => {
       expect(pool.noteCount.toNumber()).to.equal(10);
 
       // All 10 deposits are in the epoch buffer
-      const counts = pool.epochNoteCounts as BN[] | number[];
+      const counts = pool.epochNoteCounts as BN[];
       let total = 0;
       for (let i = 0; i < EPOCH_BUFFER_SIZE; i++) {
-        const val =
-          typeof counts[i] === "number"
-            ? counts[i]
-            : (counts[i] as BN).toNumber();
-        total += val;
+        total += counts[i].toNumber();
       }
       expect(total).to.equal(10);
     });
@@ -351,104 +320,10 @@ describe("Dynamic Time Delay", () => {
   // 4. Unshield with dynamic delay enforcement
   // =========================================================================
 
-  describe("unshield_denominated — dynamic delay enforcement", () => {
-    const recipient = Keypair.generate();
-
-    it("note too young in small pool is rejected (epoch delay not met)", async () => {
-      // With 0 mature notes, dynamic_delay = 24 epochs.
-      // Even if the circuit's min_epoch = current_epoch (note just matured
-      // past the base epoch_delay), the additional dynamic delay of 24 epochs
-      // means current_epoch must be >= min_epoch + 24.
-      //
-      // Since we're in the same epoch as the deposits, this should fail.
-      // However, we'll get InvalidMerkleRoot first if we use a bad root,
-      // or EpochDelayNotMet if the root is valid but epoch check fails.
-      //
-      // Use a valid root to get past the constraint check:
-      const pool = await program.account.denominatedPool.fetch(poolPDA);
-      const validRoot = Array.from(pool.merkleRoot);
-      const testNullifier = random32();
-      const [nullPDA] = deriveNullifierPDA(poolPDA, testNullifier);
-
-      // min_epoch = 0 → effective_min_epoch = 0 + 24 = 24
-      // current_epoch (validator just started) is likely small
-      // BUT: current_epoch might be >= 24 on a long-running validator.
-      // To test the delay properly, set min_epoch = current_epoch
-      // so effective_min_epoch = current_epoch + 24 > current_epoch → REJECTED
-      const slot = await provider.connection.getSlot();
-      const currentEpoch = Math.floor(slot / SLOTS_PER_EPOCH);
-      const minEpoch = new BN(currentEpoch);
-
-      try {
-        await program.methods
-          .unshieldDenominated(
-            mockProof(),
-            testNullifier,
-            validRoot,
-            minEpoch
-          )
-          .accountsPartial({
-            payer: authority.publicKey,
-            recipient: recipient.publicKey,
-            denominatedPool: poolPDA,
-            merkleTree: treePDA,
-            nullifierRecord: nullPDA,
-            verificationKeyData: authority.publicKey,
-            systemProgram: SystemProgram.programId,
-          })
-          .rpc();
-        expect.fail("Should have thrown — dynamic delay not met");
-      } catch (err: any) {
-        const msg = err.toString();
-        // Should fail with EpochDelayNotMet (dynamic delay adds 24 to min_epoch)
-        // because current_epoch < min_epoch + 24
-        expect(
-          msg.includes("EpochDelayNotMet") ||
-            msg.includes("custom program error")
-        ).to.be.true;
-      }
-    });
-
-    it("unshield with min_epoch=0 still fails due to VK check (passes epoch check)", async () => {
-      // With min_epoch=0, effective_min_epoch = 0 + 24 = 24
-      // If current_epoch >= 24, the epoch check passes but VK check fails.
-      // If current_epoch < 24, epoch check fails.
-      // Either way, the unshield is rejected — proving the pipeline works.
-      const pool = await program.account.denominatedPool.fetch(poolPDA);
-      const validRoot = Array.from(pool.merkleRoot);
-      const testNullifier = random32();
-      const [nullPDA] = deriveNullifierPDA(poolPDA, testNullifier);
-
-      try {
-        await program.methods
-          .unshieldDenominated(
-            mockProof(),
-            testNullifier,
-            validRoot,
-            new BN(0)
-          )
-          .accountsPartial({
-            payer: authority.publicKey,
-            recipient: recipient.publicKey,
-            denominatedPool: poolPDA,
-            merkleTree: treePDA,
-            nullifierRecord: nullPDA,
-            verificationKeyData: authority.publicKey,
-            systemProgram: SystemProgram.programId,
-          })
-          .rpc();
-        expect.fail("Should have thrown");
-      } catch (err: any) {
-        const msg = err.toString();
-        // Either EpochDelayNotMet or InvalidVerificationKey — both valid
-        expect(
-          msg.includes("EpochDelayNotMet") ||
-            msg.includes("InvalidVerificationKey") ||
-            msg.includes("custom program error")
-        ).to.be.true;
-      }
-    });
-  });
+  // NOTE: unshield-via-attempted-call tests are covered by
+  // tests/denominated-pool-e2e.ts (full STARK pipeline with real proof buffer).
+  // The state-based assertions above already verify dynamic-delay logic
+  // (mature_note_count, thresholds) without needing an on-chain STARK verify.
 
   // =========================================================================
   // 5. Lazy update verification — buffer state after bulk deposits
@@ -493,14 +368,10 @@ describe("Dynamic Time Delay", () => {
       expect(pool.noteCount.toNumber()).to.equal(10);
 
       // All deposits are in the buffer
-      const counts = pool.epochNoteCounts as BN[] | number[];
+      const counts = pool.epochNoteCounts as BN[];
       let bufferSum = 0;
       for (let i = 0; i < EPOCH_BUFFER_SIZE; i++) {
-        const val =
-          typeof counts[i] === "number"
-            ? counts[i]
-            : (counts[i] as BN).toNumber();
-        bufferSum += val;
+        bufferSum += counts[i].toNumber();
       }
       expect(bufferSum).to.equal(10);
 
@@ -569,14 +440,10 @@ describe("Dynamic Time Delay", () => {
   describe("invariants", () => {
     it("mature_note_count + buffer_sum <= note_count", async () => {
       const pool = await program.account.denominatedPool.fetch(poolPDA);
-      const counts = pool.epochNoteCounts as BN[] | number[];
+      const counts = pool.epochNoteCounts as BN[];
       let bufferSum = 0;
       for (let i = 0; i < EPOCH_BUFFER_SIZE; i++) {
-        const val =
-          typeof counts[i] === "number"
-            ? counts[i]
-            : (counts[i] as BN).toNumber();
-        bufferSum += val;
+        bufferSum += counts[i].toNumber();
       }
 
       const matureCount = pool.matureNoteCount.toNumber();
@@ -594,58 +461,78 @@ describe("Dynamic Time Delay", () => {
     });
 
     it("IDL includes new dynamic delay fields", async () => {
-      // Verify the IDL reflects the new fields
-      const poolType = program.idl.accounts?.find(
-        (a) => a.name === "DenominatedPool" || a.name === "denominatedPool"
+      // In Anchor 0.32, account field schemas live in idl.types, not idl.accounts.
+      const idl = program.idl as any;
+      const poolType = idl.types?.find(
+        (t: any) => t.name === "DenominatedPool" || t.name === "denominatedPool"
       );
 
-      // If IDL uses camelCase (Anchor convention)
-      if (poolType) {
-        const fieldNames = poolType.type?.fields?.map((f: any) => f.name) || [];
-        expect(fieldNames).to.include("matureNoteCount");
-        expect(fieldNames).to.include("lastMaturityUpdateEpoch");
-        expect(fieldNames).to.include("epochNoteCounts");
-        expect(fieldNames).to.include("epochNoteStart");
-      }
+      expect(poolType).to.not.be.undefined;
+      const fieldNames = poolType.type?.fields?.map((f: any) => f.name) || [];
+      // Fields are snake_case in the JSON IDL, camelCase on the typed client.
+      expect(
+        fieldNames.includes("mature_note_count") ||
+          fieldNames.includes("matureNoteCount")
+      ).to.be.true;
+      expect(
+        fieldNames.includes("last_maturity_update_epoch") ||
+          fieldNames.includes("lastMaturityUpdateEpoch")
+      ).to.be.true;
+      expect(
+        fieldNames.includes("epoch_note_counts") ||
+          fieldNames.includes("epochNoteCounts")
+      ).to.be.true;
+      expect(
+        fieldNames.includes("epoch_note_start") ||
+          fieldNames.includes("epochNoteStart")
+      ).to.be.true;
     });
 
     it("dynamic delay event fields are in shield instruction", () => {
-      const ix = program.idl.instructions.find(
-        (i) => i.name === "shieldDenominated"
+      const idl = program.idl as any;
+      const ix = idl.instructions.find(
+        (i: any) =>
+          i.name === "shield_denominated" || i.name === "shieldDenominated"
       );
       expect(ix).to.not.be.undefined;
-      // The event ShieldDenominatedEvent should include dynamic delay info
-      const events = program.idl.events;
-      if (events) {
-        const shieldEvent = events.find(
-          (e) =>
-            e.name === "ShieldDenominatedEvent" ||
-            e.name === "shieldDenominatedEvent"
-        );
-        if (shieldEvent) {
-          const fieldNames =
-            shieldEvent.type?.fields?.map((f: any) => f.name) || [];
-          expect(fieldNames).to.include("matureNoteCount");
-          expect(fieldNames).to.include("dynamicDelay");
-        }
-      }
+
+      const shieldEventType = idl.types?.find(
+        (t: any) =>
+          t.name === "ShieldDenominatedEvent" ||
+          t.name === "shieldDenominatedEvent"
+      );
+      expect(shieldEventType).to.not.be.undefined;
+      const fieldNames =
+        shieldEventType.type?.fields?.map((f: any) => f.name) || [];
+      expect(
+        fieldNames.includes("mature_note_count") ||
+          fieldNames.includes("matureNoteCount")
+      ).to.be.true;
+      expect(
+        fieldNames.includes("dynamic_delay") ||
+          fieldNames.includes("dynamicDelay")
+      ).to.be.true;
     });
 
     it("dynamic delay event fields are in unshield instruction", () => {
-      const events = program.idl.events;
-      if (events) {
-        const unshieldEvent = events.find(
-          (e) =>
-            e.name === "UnshieldDenominatedEvent" ||
-            e.name === "unshieldDenominatedEvent"
-        );
-        if (unshieldEvent) {
-          const fieldNames =
-            unshieldEvent.type?.fields?.map((f: any) => f.name) || [];
-          expect(fieldNames).to.include("dynamicDelay");
-          expect(fieldNames).to.include("matureNoteCount");
-        }
-      }
+      // unshield_denominated was retired in favour of unshield_denominated_stark.
+      const idl = program.idl as any;
+      const unshieldEventType = idl.types?.find(
+        (t: any) =>
+          t.name === "UnshieldDenominatedStarkEvent" ||
+          t.name === "unshieldDenominatedStarkEvent"
+      );
+      expect(unshieldEventType).to.not.be.undefined;
+      const fieldNames =
+        unshieldEventType.type?.fields?.map((f: any) => f.name) || [];
+      expect(
+        fieldNames.includes("dynamic_delay") ||
+          fieldNames.includes("dynamicDelay")
+      ).to.be.true;
+      expect(
+        fieldNames.includes("mature_note_count") ||
+          fieldNames.includes("matureNoteCount")
+      ).to.be.true;
     });
   });
 });

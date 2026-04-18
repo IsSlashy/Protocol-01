@@ -17,6 +17,8 @@ import {
 } from '@arcium-hq/client';
 import { randomBytes } from 'crypto';
 import { expect } from 'chai';
+import type { P01Arcium } from '../target/types/p01_arcium';
+import type { ZkShielded } from '../target/types/zk_shielded';
 
 // Program IDs
 const P01_ARCIUM_ID = new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT');
@@ -63,8 +65,8 @@ describe('Sealed-Bid Auction — Full Integration', () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  let arciumProgram: Program;
-  let shieldedProgram: Program;
+  let arciumProgram: Program<P01Arcium>;
+  let shieldedProgram: Program<ZkShielded>;
   let ephemeralPrivKey: Uint8Array;
   let ephemeralPubKey: Uint8Array;
   let sharedSecret: Uint8Array;
@@ -82,6 +84,7 @@ describe('Sealed-Bid Auction — Full Integration', () => {
     ephemeralPrivKey = x25519.utils.randomSecretKey();
     ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
     const mxePubKey = await getMXEPublicKey(provider, P01_ARCIUM_ID);
+    if (!mxePubKey) throw new Error('MXE public key not found');
     sharedSecret = x25519.getSharedSecret(ephemeralPrivKey, mxePubKey);
     cipher = new RescueCipher(sharedSecret);
   });
@@ -100,7 +103,7 @@ describe('Sealed-Bid Auction — Full Integration', () => {
       mxeAccount: getMXEAccAddress(P01_ARCIUM_ID),
       mempoolAccount: getMempoolAccAddress(env.arciumClusterOffset),
       executingPool: getExecutingPoolAccAddress(env.arciumClusterOffset),
-      compDefAccount: getCompDefAccAddress(P01_ARCIUM_ID, getCompDefAccOffset(circuitName)),
+      compDefAccount: getCompDefAccAddress(P01_ARCIUM_ID, Buffer.from(getCompDefAccOffset(circuitName)).readUInt32LE(0)),
     };
   }
 

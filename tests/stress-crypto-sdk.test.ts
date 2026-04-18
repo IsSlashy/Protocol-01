@@ -14,8 +14,9 @@
 import { expect } from 'chai';
 import { Keypair, PublicKey } from '@solana/web3.js';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { poseidon2, poseidon4 } from 'poseidon-lite';
 
 // BigInt-safe chai helpers (chai .greaterThan/.lessThan don't support BigInt)
@@ -1219,8 +1220,8 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
 
     it('different salts -> different keys', () => {
       const ikm = randomSeed();
-      const k1 = hkdf(sha256, ikm, randomBytes(16), 'same-info', 32);
-      const k2 = hkdf(sha256, ikm, randomBytes(16), 'same-info', 32);
+      const k1 = hkdf(sha256, ikm, randomBytes(16), utf8ToBytes('same-info'), 32);
+      const k2 = hkdf(sha256, ikm, randomBytes(16), utf8ToBytes('same-info'), 32);
       expect(Buffer.from(k1)).to.not.deep.equal(Buffer.from(k2));
     });
 

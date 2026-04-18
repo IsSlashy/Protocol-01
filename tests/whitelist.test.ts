@@ -212,8 +212,8 @@ describe('P01 Whitelist Program', () => {
     });
 
     it('should not allow re-approval of already approved entry', () => {
-      const status = WhitelistStatus.Approved;
-      const isPending = status === WhitelistStatus.Pending;
+      const status: WhitelistStatus = WhitelistStatus.Approved;
+      const isPending = (status as WhitelistStatus) === WhitelistStatus.Pending;
       expect(isPending).to.be.false;
     });
   });
@@ -228,8 +228,8 @@ describe('P01 Whitelist Program', () => {
     });
 
     it('should require a pending entry', () => {
-      const status = WhitelistStatus.Rejected;
-      const isPending = status === WhitelistStatus.Pending;
+      const status: WhitelistStatus = WhitelistStatus.Rejected;
+      const isPending = (status as WhitelistStatus) === WhitelistStatus.Pending;
       expect(isPending).to.be.false;
       // Would fail with WhitelistError::NotPending
     });
@@ -269,15 +269,15 @@ describe('P01 Whitelist Program', () => {
 
     it('should only work on Approved entries', () => {
       // require!(entry.status == WhitelistStatus::Approved)
-      const statusPending = WhitelistStatus.Pending;
-      const isApproved = statusPending === WhitelistStatus.Approved;
+      const statusPending: WhitelistStatus = WhitelistStatus.Pending;
+      const isApproved = (statusPending as WhitelistStatus) === WhitelistStatus.Approved;
       expect(isApproved).to.be.false;
       // Would fail with WhitelistError::NotApproved
     });
 
     it('should reject revocation of already rejected entries', () => {
-      const status = WhitelistStatus.Rejected;
-      const isApproved = status === WhitelistStatus.Approved;
+      const status: WhitelistStatus = WhitelistStatus.Rejected;
+      const isApproved = (status as WhitelistStatus) === WhitelistStatus.Approved;
       expect(isApproved).to.be.false;
     });
 
@@ -294,8 +294,8 @@ describe('P01 Whitelist Program', () => {
     });
 
     it('should not allow re-revocation of already revoked entries', () => {
-      const status = WhitelistStatus.Revoked;
-      const isApproved = status === WhitelistStatus.Approved;
+      const status: WhitelistStatus = WhitelistStatus.Revoked;
+      const isApproved = (status as WhitelistStatus) === WhitelistStatus.Approved;
       expect(isApproved).to.be.false;
     });
   });
@@ -311,20 +311,20 @@ describe('P01 Whitelist Program', () => {
     });
 
     it('should return false for Pending entries', () => {
-      const status = WhitelistStatus.Pending;
-      const hasAccess = status === WhitelistStatus.Approved;
+      const status: WhitelistStatus = WhitelistStatus.Pending;
+      const hasAccess = (status as WhitelistStatus) === WhitelistStatus.Approved;
       expect(hasAccess).to.be.false;
     });
 
     it('should return false for Rejected entries', () => {
-      const status = WhitelistStatus.Rejected;
-      const hasAccess = status === WhitelistStatus.Approved;
+      const status: WhitelistStatus = WhitelistStatus.Rejected;
+      const hasAccess = (status as WhitelistStatus) === WhitelistStatus.Approved;
       expect(hasAccess).to.be.false;
     });
 
     it('should return false for Revoked entries', () => {
-      const status = WhitelistStatus.Revoked;
-      const hasAccess = status === WhitelistStatus.Approved;
+      const status: WhitelistStatus = WhitelistStatus.Revoked;
+      const hasAccess = (status as WhitelistStatus) === WhitelistStatus.Approved;
       expect(hasAccess).to.be.false;
     });
 
@@ -358,20 +358,20 @@ describe('P01 Whitelist Program', () => {
     });
 
     it('Rejected -> Approved is NOT allowed (status not Pending)', () => {
-      const status = WhitelistStatus.Rejected;
-      const canApprove = status === WhitelistStatus.Pending;
+      const status: WhitelistStatus = WhitelistStatus.Rejected;
+      const canApprove = (status as WhitelistStatus) === WhitelistStatus.Pending;
       expect(canApprove).to.be.false;
     });
 
     it('Revoked -> Approved is NOT allowed (status not Pending)', () => {
-      const status = WhitelistStatus.Revoked;
-      const canApprove = status === WhitelistStatus.Pending;
+      const status: WhitelistStatus = WhitelistStatus.Revoked;
+      const canApprove = (status as WhitelistStatus) === WhitelistStatus.Pending;
       expect(canApprove).to.be.false;
     });
 
     it('Approved -> Rejected is NOT allowed (status not Pending)', () => {
-      const status = WhitelistStatus.Approved;
-      const canReject = status === WhitelistStatus.Pending;
+      const status: WhitelistStatus = WhitelistStatus.Approved;
+      const canReject = (status as WhitelistStatus) === WhitelistStatus.Pending;
       expect(canReject).to.be.false;
     });
   });

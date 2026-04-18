@@ -1,0 +1,80 @@
+# pnpm / npm
+node_modules
+**/node_modules
+
+# Next.js / Turbo / build output
+**/.next
+**/.turbo
+**/dist
+**/build
+
+# Rust / Solana / Anchor
+target
+**/target
+**/.anchor
+.anchor
+
+# Solana on-chain code and Rust crates (not deployable to Vercel)
+programs/
+stark/
+
+# Circom circuit artifacts
+circuits/
+**/*.ptau
+**/*.zkey
+**/*.r1cs
+**/*.sym
+**/*.wasm.tmp
+circuits/**/build
+
+# Backend services (local-only dev backends — not Vercel targets)
+services/
+
+# Android / native
+**/.cxx
+**/.gradle
+apps/mobile/android/app/build
+apps/mobile/android/build
+apps/mobile/ios/build
+apps/mobile/ios/Pods
+
+# Secrets / keypairs (never deploy)
+**/.secrets/
+.secrets/
+**/*.keypair.json
+**/*-keypair.json
+**/keypair.json
+**/id.json
+*.key
+*.pem
+*.p12
+*.jks
+*.pfx
+*.keystore
+
+# Environment files (defensive — Vercel handles env separately)
+.env
+.env.*
+!.env.example
+!.env.*.example
+.env.local
+.env.*.local
+
+# IDE / editor
+.vscode
+.idea
+**/.DS_Store
+
+# AI / agent configs
+.claude/
+**/.agents/
+
+# Misc
+.git
+*.log
+coverage
+.env*.local
+
+# Vercel local
+.vercel
+apps/*/.vercel

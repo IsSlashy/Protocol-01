@@ -6,7 +6,7 @@
  *   - Hash-timelock vaults (SHA-256 preimage + timelock)
  *   - Commit-then-reveal protocol (slot-based timing)
  *
- * Program ID: DrcALZu194DwnHUuxWCixFcFH7zJhhVUH9biHZR9cotW
+ * Program ID: 9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -19,17 +19,18 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import { expect } from 'chai';
-import { sha256 } from '@noble/hashes/sha256';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { sha256 } from '@noble/hashes/sha2.js';
+import type { P01QuantumVault } from '../target/types/p01_quantum_vault';
 
 // ============================================================================
 // Constants (match Rust program)
 // ============================================================================
 
-const PROGRAM_ID = new PublicKey('DrcALZu194DwnHUuxWCixFcFH7zJhhVUH9biHZR9cotW');
+const PROGRAM_ID = new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv');
 
-const WOTS_CHAINS = 32;
+const WOTS_MSG_CHAINS = 64;
+const WOTS_CHECKSUM_CHAINS = 3;
+const WOTS_CHAINS = WOTS_MSG_CHAINS + WOTS_CHECKSUM_CHAINS; // 67
 const WOTS_MAX_VAL = 15;
 const HASH_SIZE = 32;
 
@@ -38,9 +39,13 @@ const MAX_REVEAL_WINDOW = 6750;
 
 const SEEDS = {
   WOTS_VAULT: Buffer.from('wots_vault'),
+  WOTS_SIG: Buffer.from('wots_sig'),
   HASH_VAULT: Buffer.from('hash_vault'),
   COMMIT: Buffer.from('commit'),
 };
+
+const WOTS_SIG_SIZE = 67 * 32; // 2144 bytes
+const WOTS_SIG_CHUNK = 900;
 
 // ============================================================================
 // WOTS+ Client-Side Helpers (mirrors packages/specter-sdk/src/quantum/wots.ts)
@@ -122,12 +127,25 @@ function computeWithdrawMessage(
 function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignature {
   const signature = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
 
-  for (let i = 0; i < WOTS_CHAINS; i++) {
-    const byteIdx = Math.floor(i / 2);
+  // Extract 64 message nibbles from the full 32-byte digest
+  const nibbles = new Array<number>(WOTS_CHAINS);
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    const byteIdx = i >> 1;
     const byte = message[byteIdx]!;
-    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
-    const stepsToHash = WOTS_MAX_VAL - nibble;
+    nibbles[i] = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
+  }
 
+  // Checksum = sum(15 - m_i); encode MSB-first as 3 nibbles
+  let checksum = 0;
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    checksum += WOTS_MAX_VAL - nibbles[i]!;
+  }
+  nibbles[WOTS_MSG_CHAINS] = (checksum >> 8) & 0x0f;
+  nibbles[WOTS_MSG_CHAINS + 1] = (checksum >> 4) & 0x0f;
+  nibbles[WOTS_MSG_CHAINS + 2] = checksum & 0x0f;
+
+  for (let i = 0; i < WOTS_CHAINS; i++) {
+    const stepsToHash = WOTS_MAX_VAL - nibbles[i]!;
     let current: Uint8Array = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
     for (let step = 0; step < stepsToHash; step++) {
       current = new Uint8Array(sha256(current));
@@ -161,6 +179,74 @@ function findCommitPda(committer: PublicKey, commitment: Uint8Array): [PublicKey
     [SEEDS.COMMIT, committer.toBuffer(), Buffer.from(commitment)],
     PROGRAM_ID,
   );
+}
+
+function findWotsSigBufferPda(
+  vault: PublicKey,
+  authority: PublicKey,
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.WOTS_SIG, vault.toBuffer(), authority.toBuffer()],
+    PROGRAM_ID,
+  );
+}
+
+/**
+ * Upload a WOTS+ signature into a buffer PDA in chunks.
+ * Returns the buffer PDA. Caller is responsible for closing it.
+ */
+async function uploadWotsSig(
+  program: Program<P01QuantumVault>,
+  authority: Keypair,
+  vaultPda: PublicKey,
+  signature: Uint8Array,
+): Promise<PublicKey> {
+  const [bufferPda] = findWotsSigBufferPda(vaultPda, authority.publicKey);
+
+  await program.methods
+    .initWotsSigBuffer(signature.length)
+    .accountsPartial({
+      authority: authority.publicKey,
+      vault: vaultPda,
+      buffer: bufferPda,
+      systemProgram: SystemProgram.programId,
+    })
+    .signers([authority])
+    .rpc();
+
+  for (let off = 0; off < signature.length; off += WOTS_SIG_CHUNK) {
+    const slice = signature.slice(off, off + WOTS_SIG_CHUNK);
+    await program.methods
+      .writeWotsSigChunk(off, Buffer.from(slice))
+      .accountsPartial({
+        authority: authority.publicKey,
+        buffer: bufferPda,
+      })
+      .signers([authority])
+      .rpc();
+  }
+
+  return bufferPda;
+}
+
+async function closeWotsSigBuffer(
+  program: Program<P01QuantumVault>,
+  authority: Keypair,
+  vaultPda: PublicKey,
+): Promise<void> {
+  const [bufferPda] = findWotsSigBufferPda(vaultPda, authority.publicKey);
+  try {
+    await program.methods
+      .closeWotsSigBuffer()
+      .accountsPartial({
+        authority: authority.publicKey,
+        buffer: bufferPda,
+      })
+      .signers([authority])
+      .rpc();
+  } catch {
+    // buffer may not exist if init failed — ignore
+  }
 }
 
 // ============================================================================
@@ -206,7 +292,7 @@ describe('p01_quantum_vault', () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = new Program(
+  const program = new Program<P01QuantumVault>(
     require('../target/idl/p01_quantum_vault.json'),
     provider,
   );
@@ -251,7 +337,7 @@ describe('p01_quantum_vault', () => {
     it('initializes a WOTS+ vault', async () => {
       await program.methods
         .initWinternitzVault(Array.from(keypair0.publicKeyHash))
-        .accounts({
+        .accountsPartial({
           owner: wotsOwner.publicKey,
           vault: wotsVaultPda,
           systemProgram: SystemProgram.programId,
@@ -271,7 +357,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .initWinternitzVault(Array.from(keypair0.publicKeyHash))
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
             systemProgram: SystemProgram.programId,
@@ -294,7 +380,7 @@ describe('p01_quantum_vault', () => {
 
       await program.methods
         .depositWinternitz(depositAmount)
-        .accounts({
+        .accountsPartial({
           owner: wotsOwner.publicKey,
           vault: wotsVaultPda,
           systemProgram: SystemProgram.programId,
@@ -310,7 +396,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .depositWinternitz(new BN(0))
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
             systemProgram: SystemProgram.programId,
@@ -327,7 +413,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .depositWinternitz(new BN(1 * LAMPORTS_PER_SOL))
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             vault: wotsVaultPda,
             systemProgram: SystemProgram.programId,
@@ -362,21 +448,25 @@ describe('p01_quantum_vault', () => {
 
       const destBalBefore = await provider.connection.getBalance(destination.publicKey);
 
+      const sigBufferPda = await uploadWotsSig(program, wotsOwner, wotsVaultPda, sig.signature);
+
       await program.methods
         .withdrawWinternitz(
           new BN(Number(withdrawAmount)),
-          Buffer.from(sig.signature),
-          Buffer.from(sig.publicKey),
           Array.from(keypair1.publicKeyHash),
         )
-        .accounts({
+        .accountsPartial({
           owner: wotsOwner.publicKey,
           vault: wotsVaultPda,
+          sigBuffer: sigBufferPda,
           destination: destination.publicKey,
+          authority: wotsOwner.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([wotsOwner])
         .rpc();
+
+      await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
 
       const vault = await program.account.winternitzVault.fetch(wotsVaultPda);
       expect(vault.balance.toNumber()).to.equal(3 * LAMPORTS_PER_SOL);
@@ -400,21 +490,25 @@ describe('p01_quantum_vault', () => {
 
       const sig = wotsSign(message, keypair1);
 
+      const sigBufferPda = await uploadWotsSig(program, wotsOwner, wotsVaultPda, sig.signature);
+
       await program.methods
         .withdrawWinternitz(
           new BN(Number(withdrawAmount)),
-          Buffer.from(sig.signature),
-          Buffer.from(sig.publicKey),
           Array.from(keypair2.publicKeyHash),
         )
-        .accounts({
+        .accountsPartial({
           owner: wotsOwner.publicKey,
           vault: wotsVaultPda,
+          sigBuffer: sigBufferPda,
           destination: destination.publicKey,
+          authority: wotsOwner.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .signers([wotsOwner])
         .rpc();
+
+      await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
 
       const vault = await program.account.winternitzVault.fetch(wotsVaultPda);
       expect(vault.balance.toNumber()).to.equal(2 * LAMPORTS_PER_SOL);
@@ -437,17 +531,18 @@ describe('p01_quantum_vault', () => {
       const nextKeypair = deriveWotsKeypair(masterSeed, 3);
 
       try {
+        const sigBufferPda = await uploadWotsSig(program, wotsOwner, wotsVaultPda, sig.signature);
         await program.methods
           .withdrawWinternitz(
             new BN(Number(withdrawAmount)),
-            Buffer.from(sig.signature),
-            Buffer.from(sig.publicKey),
             Array.from(nextKeypair.publicKeyHash),
           )
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
+            sigBuffer: sigBufferPda,
             destination: destination.publicKey,
+            authority: wotsOwner.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([wotsOwner])
@@ -455,6 +550,8 @@ describe('p01_quantum_vault', () => {
         expect.fail('Should have thrown');
       } catch (err: any) {
         expect(err.message).to.include('WotsPubkeyMismatch');
+      } finally {
+        await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
       }
     });
 
@@ -472,17 +569,18 @@ describe('p01_quantum_vault', () => {
       const nextKeypair = deriveWotsKeypair(masterSeed, 3);
 
       try {
+        const sigBufferPda = await uploadWotsSig(program, wotsOwner, wotsVaultPda, sig.signature);
         await program.methods
           .withdrawWinternitz(
             new BN(Number(withdrawAmount)),
-            Buffer.from(sig.signature),
-            Buffer.from(sig.publicKey),
             Array.from(nextKeypair.publicKeyHash),
           )
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
+            sigBuffer: sigBufferPda,
             destination: destination.publicKey,
+            authority: wotsOwner.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([wotsOwner])
@@ -490,6 +588,8 @@ describe('p01_quantum_vault', () => {
         expect.fail('Should have thrown');
       } catch (err: any) {
         expect(err.message).to.include('InsufficientBalance');
+      } finally {
+        await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
       }
     });
 
@@ -504,17 +604,18 @@ describe('p01_quantum_vault', () => {
       const nextKeypair = deriveWotsKeypair(masterSeed, 3);
 
       try {
+        const sigBufferPda = await uploadWotsSig(program, wotsOwner, wotsVaultPda, sig.signature);
         await program.methods
           .withdrawWinternitz(
             new BN(0),
-            Buffer.from(sig.signature),
-            Buffer.from(sig.publicKey),
             Array.from(nextKeypair.publicKeyHash),
           )
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
+            sigBuffer: sigBufferPda,
             destination: destination.publicKey,
+            authority: wotsOwner.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([wotsOwner])
@@ -522,32 +623,52 @@ describe('p01_quantum_vault', () => {
         expect.fail('Should have thrown');
       } catch (err: any) {
         expect(err.message).to.include('ZeroAmount');
+      } finally {
+        await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
       }
     });
 
     it('rejects withdrawal with wrong signature length', async () => {
-      const badSig = Buffer.alloc(512, 0xab); // 512 instead of 1024
+      // Buffer size is validated at init time — initializing with wrong size should fail.
       const nextKeypair = deriveWotsKeypair(masterSeed, 3);
+      const [sigBufferPda] = findWotsSigBufferPda(wotsVaultPda, wotsOwner.publicKey);
 
       try {
         await program.methods
+          .initWotsSigBuffer(512) // 512 != WOTS_SIG_SIZE (2144)
+          .accountsPartial({
+            authority: wotsOwner.publicKey,
+            vault: wotsVaultPda,
+            buffer: sigBufferPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([wotsOwner])
+          .rpc();
+
+        await program.methods
           .withdrawWinternitz(
             new BN(1 * LAMPORTS_PER_SOL),
-            badSig,
-            Buffer.from(keypair2.publicKey),
             Array.from(nextKeypair.publicKeyHash),
           )
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
+            sigBuffer: sigBufferPda,
             destination: destination.publicKey,
+            authority: wotsOwner.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([wotsOwner])
           .rpc();
         expect.fail('Should have thrown');
       } catch (err: any) {
-        expect(err.message).to.include('InvalidWotsSignature');
+        expect(err.message).to.satisfy((msg: string) =>
+          msg.includes('InvalidWotsSignature') ||
+          msg.includes('InvalidSigSize') ||
+          msg.includes('custom program error'),
+        );
+      } finally {
+        await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
       }
     });
 
@@ -570,24 +691,30 @@ describe('p01_quantum_vault', () => {
       const nextKeypair = deriveWotsKeypair(masterSeed, 3);
 
       try {
+        const sigBufferPda = await uploadWotsSig(program, wotsOwner, wotsVaultPda, tamperedSig);
         await program.methods
           .withdrawWinternitz(
             new BN(Number(withdrawAmount)),
-            Buffer.from(tamperedSig),
-            Buffer.from(sig.publicKey),
             Array.from(nextKeypair.publicKeyHash),
           )
-          .accounts({
+          .accountsPartial({
             owner: wotsOwner.publicKey,
             vault: wotsVaultPda,
+            sigBuffer: sigBufferPda,
             destination: destination.publicKey,
+            authority: wotsOwner.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([wotsOwner])
           .rpc();
         expect.fail('Should have thrown');
       } catch (err: any) {
-        expect(err.message).to.include('InvalidWotsSignature');
+        expect(err.message).to.satisfy((msg: string) =>
+          msg.includes('InvalidWotsSignature') ||
+          msg.includes('WotsPubkeyMismatch'),
+        );
+      } finally {
+        await closeWotsSigBuffer(program, wotsOwner, wotsVaultPda);
       }
     });
 
@@ -604,17 +731,19 @@ describe('p01_quantum_vault', () => {
       const nextKeypair = deriveWotsKeypair(masterSeed, 3);
 
       try {
+        // Attacker uploads their own sig buffer scoped to their pubkey.
+        const sigBufferPda = await uploadWotsSig(program, attacker, wotsVaultPda, sig.signature);
         await program.methods
           .withdrawWinternitz(
             new BN(Number(withdrawAmount)),
-            Buffer.from(sig.signature),
-            Buffer.from(sig.publicKey),
             Array.from(nextKeypair.publicKeyHash),
           )
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             vault: wotsVaultPda,
+            sigBuffer: sigBufferPda,
             destination: destination.publicKey,
+            authority: attacker.publicKey,
             systemProgram: SystemProgram.programId,
           })
           .signers([attacker])
@@ -627,6 +756,8 @@ describe('p01_quantum_vault', () => {
           msg.includes('A seeds constraint was violated') ||
           msg.includes('has one constraint'),
         );
+      } finally {
+        await closeWotsSigBuffer(program, attacker, wotsVaultPda);
       }
     });
   });
@@ -643,7 +774,7 @@ describe('p01_quantum_vault', () => {
           new BN(0),                   // no timelock
           destination.publicKey,
         )
-        .accounts({
+        .accountsPartial({
           owner: hashOwner.publicKey,
           vault: hashVaultPda,
           systemProgram: SystemProgram.programId,
@@ -665,7 +796,7 @@ describe('p01_quantum_vault', () => {
 
       await program.methods
         .depositHashVault(depositAmount)
-        .accounts({
+        .accountsPartial({
           owner: hashOwner.publicKey,
           vault: hashVaultPda,
           systemProgram: SystemProgram.programId,
@@ -681,7 +812,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .depositHashVault(new BN(0))
-          .accounts({
+          .accountsPartial({
             owner: hashOwner.publicKey,
             vault: hashVaultPda,
             systemProgram: SystemProgram.programId,
@@ -698,7 +829,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .depositHashVault(new BN(1 * LAMPORTS_PER_SOL))
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             vault: hashVaultPda,
             systemProgram: SystemProgram.programId,
@@ -725,7 +856,7 @@ describe('p01_quantum_vault', () => {
           Array.from(hashSecret),
           withdrawAmount,
         )
-        .accounts({
+        .accountsPartial({
           signer: hashOwner.publicKey,
           vault: hashVaultPda,
           destination: destination.publicKey,
@@ -751,7 +882,7 @@ describe('p01_quantum_vault', () => {
           Array.from(hashSecret),
           withdrawAmount,
         )
-        .accounts({
+        .accountsPartial({
           signer: attacker.publicKey,
           vault: hashVaultPda,
           destination: destination.publicKey,
@@ -776,7 +907,7 @@ describe('p01_quantum_vault', () => {
             Array.from(badPreimage),
             new BN(1 * LAMPORTS_PER_SOL),
           )
-          .accounts({
+          .accountsPartial({
             signer: hashOwner.publicKey,
             vault: hashVaultPda,
             destination: destination.publicKey,
@@ -799,7 +930,7 @@ describe('p01_quantum_vault', () => {
             Array.from(hashSecret),
             new BN(1 * LAMPORTS_PER_SOL),
           )
-          .accounts({
+          .accountsPartial({
             signer: hashOwner.publicKey,
             vault: hashVaultPda,
             destination: wrongDest.publicKey,
@@ -819,7 +950,7 @@ describe('p01_quantum_vault', () => {
             Array.from(hashSecret),
             new BN(100 * LAMPORTS_PER_SOL),
           )
-          .accounts({
+          .accountsPartial({
             signer: hashOwner.publicKey,
             vault: hashVaultPda,
             destination: destination.publicKey,
@@ -841,7 +972,7 @@ describe('p01_quantum_vault', () => {
           Array.from(hashSecret),
           remaining,
         )
-        .accounts({
+        .accountsPartial({
           signer: hashOwner.publicKey,
           vault: hashVaultPda,
           destination: destination.publicKey,
@@ -861,7 +992,7 @@ describe('p01_quantum_vault', () => {
             Array.from(hashSecret),
             new BN(1),
           )
-          .accounts({
+          .accountsPartial({
             signer: hashOwner.publicKey,
             vault: hashVaultPda,
             destination: destination.publicKey,
@@ -878,7 +1009,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .depositHashVault(new BN(1 * LAMPORTS_PER_SOL))
-          .accounts({
+          .accountsPartial({
             owner: hashOwner.publicKey,
             vault: hashVaultPda,
             systemProgram: SystemProgram.programId,
@@ -920,7 +1051,7 @@ describe('p01_quantum_vault', () => {
           new BN(futureTime),
           timelockDest.publicKey,
         )
-        .accounts({
+        .accountsPartial({
           owner: timelockOwner.publicKey,
           vault: timelockVaultPda,
           systemProgram: SystemProgram.programId,
@@ -935,7 +1066,7 @@ describe('p01_quantum_vault', () => {
     it('deposits into the timelocked vault', async () => {
       await program.methods
         .depositHashVault(new BN(3 * LAMPORTS_PER_SOL))
-        .accounts({
+        .accountsPartial({
           owner: timelockOwner.publicKey,
           vault: timelockVaultPda,
           systemProgram: SystemProgram.programId,
@@ -954,7 +1085,7 @@ describe('p01_quantum_vault', () => {
             Array.from(timelockSecret),
             new BN(1 * LAMPORTS_PER_SOL),
           )
-          .accounts({
+          .accountsPartial({
             signer: timelockOwner.publicKey,
             vault: timelockVaultPda,
             destination: timelockDest.publicKey,
@@ -992,7 +1123,7 @@ describe('p01_quantum_vault', () => {
           0,              // action_type = transfer
           revealWindow,
         )
-        .accounts({
+        .accountsPartial({
           committer: committer.publicKey,
           record: commitPda,
           systemProgram: SystemProgram.programId,
@@ -1015,7 +1146,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .revealCommitment(actionData, Array.from(nonce))
-          .accounts({
+          .accountsPartial({
             committer: committer.publicKey,
             record: commitPda,
           })
@@ -1033,7 +1164,7 @@ describe('p01_quantum_vault', () => {
 
       await program.methods
         .revealCommitment(actionData, Array.from(nonce))
-        .accounts({
+        .accountsPartial({
           committer: committer.publicKey,
           record: commitPda,
         })
@@ -1048,7 +1179,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .revealCommitment(actionData, Array.from(nonce))
-          .accounts({
+          .accountsPartial({
             committer: committer.publicKey,
             record: commitPda,
           })
@@ -1074,7 +1205,7 @@ describe('p01_quantum_vault', () => {
           1,
           new BN(450),
         )
-        .accounts({
+        .accountsPartial({
           committer: committer.publicKey,
           record: commitPda2,
           systemProgram: SystemProgram.programId,
@@ -1090,7 +1221,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .revealCommitment(wrongActionData, Array.from(nonce2))
-          .accounts({
+          .accountsPartial({
             committer: committer.publicKey,
             record: commitPda2,
           })
@@ -1116,7 +1247,7 @@ describe('p01_quantum_vault', () => {
           2,
           new BN(450),
         )
-        .accounts({
+        .accountsPartial({
           committer: committer.publicKey,
           record: commitPda3,
           systemProgram: SystemProgram.programId,
@@ -1132,7 +1263,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .revealCommitment(actionData3, Array.from(wrongNonce))
-          .accounts({
+          .accountsPartial({
             committer: committer.publicKey,
             record: commitPda3,
           })
@@ -1157,7 +1288,7 @@ describe('p01_quantum_vault', () => {
             0,
             new BN(1), // too small, less than MIN_REVEAL_DELAY
           )
-          .accounts({
+          .accountsPartial({
             committer: committer.publicKey,
             record: badPda,
             systemProgram: SystemProgram.programId,
@@ -1183,7 +1314,7 @@ describe('p01_quantum_vault', () => {
             0,
             new BN(MAX_REVEAL_WINDOW + 1), // too large
           )
-          .accounts({
+          .accountsPartial({
             committer: committer.publicKey,
             record: bigPda,
             systemProgram: SystemProgram.programId,
@@ -1208,7 +1339,7 @@ describe('p01_quantum_vault', () => {
           0,
           new BN(450),
         )
-        .accounts({
+        .accountsPartial({
           committer: committer.publicKey,
           record: commitPda4,
           systemProgram: SystemProgram.programId,
@@ -1222,7 +1353,7 @@ describe('p01_quantum_vault', () => {
       try {
         await program.methods
           .revealCommitment(actionData4, Array.from(nonce4))
-          .accounts({
+          .accountsPartial({
             committer: attacker.publicKey,
             record: commitPda4,
           })

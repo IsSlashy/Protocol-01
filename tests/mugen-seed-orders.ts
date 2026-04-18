@@ -17,7 +17,8 @@ import {
   TransactionInstruction,
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 
@@ -28,7 +29,7 @@ const NATIVE_SOL = new PublicKey('So11111111111111111111111111111111111111112');
 const DEVNET_USDC = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
 
 function anchorDisc(name: string): Buffer {
-  return Buffer.from(sha256(`global:${name}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`)).slice(0, 8));
 }
 
 function loadKeypair(): Keypair {

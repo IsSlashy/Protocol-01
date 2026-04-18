@@ -21,10 +21,9 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import { expect } from 'chai';
-import { sha256 } from '@noble/hashes/sha256';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+import { sha256 } from '@noble/hashes/sha2.js';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
+import type { P01Registry } from '../target/types/p01_registry';
 
 // ============================================================================
 // Constants (match Rust program)
@@ -103,7 +102,7 @@ describe('p01_registry', () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = new Program(
+  const program = new Program<P01Registry>(
     require('../target/idl/p01_registry.json'),
     provider,
   );
@@ -143,7 +142,7 @@ describe('p01_registry', () => {
     it('registers a v1 meta-address with spending and viewing keys', async () => {
       await program.methods
         .registerV1(spendingKey1, viewingKey1, 'alice.sol')
-        .accounts({
+        .accountsPartial({
           owner: user1.publicKey,
           entry: user1Pda,
           systemProgram: SystemProgram.programId,
@@ -167,7 +166,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .registerV1(spendingKey1, viewingKey1, 'alice-dup')
-          .accounts({
+          .accountsPartial({
             owner: user1.publicKey,
             entry: user1Pda,
             systemProgram: SystemProgram.programId,
@@ -192,7 +191,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .registerV1(zeroKey32(), viewingKey1, 'zero-spend')
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -213,7 +212,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .registerV1(spendingKey1, zeroKey32(), 'zero-view')
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -236,7 +235,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .registerV1(randomKey32(), randomKey32(), longName)
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -256,7 +255,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .registerV1(randomKey32(), randomKey32(), '')
-        .accounts({
+        .accountsPartial({
           owner: tempUser.publicKey,
           entry: tempPda,
           systemProgram: SystemProgram.programId,
@@ -278,7 +277,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .registerV1(randomKey32(), randomKey32(), maxName)
-        .accounts({
+        .accountsPartial({
           owner: tempUser.publicKey,
           entry: tempPda,
           systemProgram: SystemProgram.programId,
@@ -306,7 +305,7 @@ describe('p01_registry', () => {
           Buffer.from(kem.publicKey),
           'bob-pq.sol',
         )
-        .accounts({
+        .accountsPartial({
           owner: user2.publicKey,
           entry: user2Pda,
           systemProgram: SystemProgram.programId,
@@ -341,7 +340,7 @@ describe('p01_registry', () => {
             badKemKey,
             'bad-kem',
           )
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -367,7 +366,7 @@ describe('p01_registry', () => {
             Buffer.from(randomKemPublicKey()),
             'bad-spend',
           )
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -393,7 +392,7 @@ describe('p01_registry', () => {
             Buffer.from(randomKemPublicKey()),
             'bad-view',
           )
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -421,7 +420,7 @@ describe('p01_registry', () => {
             Buffer.from(randomKemPublicKey()),
             longName,
           )
-          .accounts({
+          .accountsPartial({
             owner: tempUser.publicKey,
             entry: tempPda,
             systemProgram: SystemProgram.programId,
@@ -446,7 +445,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .updateKeysV1(newSpending, newViewing)
-        .accounts({
+        .accountsPartial({
           owner: user1.publicKey,
           entry: user1Pda,
         })
@@ -467,7 +466,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateKeysV1(randomKey32(), randomKey32())
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             entry: user1Pda,
           })
@@ -488,7 +487,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateKeysV1(zeroKey32(), randomKey32())
-          .accounts({
+          .accountsPartial({
             owner: user1.publicKey,
             entry: user1Pda,
           })
@@ -504,7 +503,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateKeysV1(randomKey32(), zeroKey32())
-          .accounts({
+          .accountsPartial({
             owner: user1.publicKey,
             entry: user1Pda,
           })
@@ -529,7 +528,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .updateKeysV2(newSpending, newViewing, Buffer.from(kem.publicKey))
-        .accounts({
+        .accountsPartial({
           owner: user1.publicKey,
           entry: user1Pda,
         })
@@ -552,7 +551,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .updateKeysV2(newSpending, newViewing, Buffer.from(newKem.publicKey))
-        .accounts({
+        .accountsPartial({
           owner: user2.publicKey,
           entry: user2Pda,
         })
@@ -569,7 +568,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateKeysV2(randomKey32(), randomKey32(), Buffer.from(randomKemPublicKey()))
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             entry: user2Pda,
           })
@@ -592,7 +591,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateKeysV2(randomKey32(), randomKey32(), badKemKey)
-          .accounts({
+          .accountsPartial({
             owner: user1.publicKey,
             entry: user1Pda,
           })
@@ -608,7 +607,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateKeysV2(zeroKey32(), randomKey32(), Buffer.from(randomKemPublicKey()))
-          .accounts({
+          .accountsPartial({
             owner: user1.publicKey,
             entry: user1Pda,
           })
@@ -629,7 +628,7 @@ describe('p01_registry', () => {
     it('updates the display name', async () => {
       await program.methods
         .updateName('alice-v2.sol')
-        .accounts({
+        .accountsPartial({
           owner: user1.publicKey,
           entry: user1Pda,
         })
@@ -643,7 +642,7 @@ describe('p01_registry', () => {
     it('updates name to empty string', async () => {
       await program.methods
         .updateName('')
-        .accounts({
+        .accountsPartial({
           owner: user1.publicKey,
           entry: user1Pda,
         })
@@ -659,7 +658,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .updateName(maxName)
-        .accounts({
+        .accountsPartial({
           owner: user1.publicKey,
           entry: user1Pda,
         })
@@ -676,7 +675,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateName(longName)
-          .accounts({
+          .accountsPartial({
             owner: user1.publicKey,
             entry: user1Pda,
           })
@@ -692,7 +691,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .updateName('hacked')
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             entry: user1Pda,
           })
@@ -726,7 +725,7 @@ describe('p01_registry', () => {
       // Register a v1 entry to deregister
       await program.methods
         .registerV1(randomKey32(), randomKey32(), 'to-delete')
-        .accounts({
+        .accountsPartial({
           owner: deregUser.publicKey,
           entry: deregPda,
           systemProgram: SystemProgram.programId,
@@ -739,7 +738,7 @@ describe('p01_registry', () => {
       try {
         await program.methods
           .deregister()
-          .accounts({
+          .accountsPartial({
             owner: attacker.publicKey,
             entry: deregPda,
           })
@@ -761,7 +760,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .deregister()
-        .accounts({
+        .accountsPartial({
           owner: deregUser.publicKey,
           entry: deregPda,
         })
@@ -783,7 +782,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .registerV1(newSpending, newViewing, 're-registered')
-        .accounts({
+        .accountsPartial({
           owner: deregUser.publicKey,
           entry: deregPda,
           systemProgram: SystemProgram.programId,
@@ -823,7 +822,7 @@ describe('p01_registry', () => {
           Buffer.from(kem.publicKey),
           'quantum-user',
         )
-        .accounts({
+        .accountsPartial({
           owner: flowUser.publicKey,
           entry: flowPda,
           systemProgram: SystemProgram.programId,
@@ -841,7 +840,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .updateKeysV1(newSpending, newViewing)
-        .accounts({
+        .accountsPartial({
           owner: flowUser.publicKey,
           entry: flowPda,
         })
@@ -863,7 +862,7 @@ describe('p01_registry', () => {
 
       await program.methods
         .updateKeysV2(newSpending, newViewing, Buffer.from(kem2.publicKey))
-        .accounts({
+        .accountsPartial({
           owner: flowUser.publicKey,
           entry: flowPda,
         })

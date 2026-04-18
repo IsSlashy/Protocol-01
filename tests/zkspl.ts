@@ -1,1402 +1,1167 @@
 /**
- * p01_zkspl - Comprehensive End-to-End Test Suite
+ * p01_zkspl — STARK end-to-end test (quantum-resistant path)
  *
- * Tests the full lifecycle of zkSPL confidential token operations:
- *   1. Initialize mint config for native SOL
- *   2. Upload verification keys (init_vk_data + write_vk_data)
- *   3. Create confidential accounts for Alice and Bob
- *   4. Alice deposits 100 SOL
- *   5. Alice privately transfers 30 SOL to Bob
- *   6. Bob applies the pending credit
- *   7. Alice withdraws 20 SOL
- *   8. Alice proves balance >= 40 SOL
- *   9. Viewer key management (add + remove)
- *  10. Error cases (wrong signer, overflow, double-apply, etc.)
+ * Exercises the full zkSPL lifecycle using STARK proofs. Groth16 is gone:
+ * every mutation reads a pre-verified STARK proof buffer from
+ * `p01_stark_verifier`. The on-chain handler checks the buffer's
+ * `public_inputs_hash` against `sha256(u64_le || ...)` where each u64 is
+ * projected from the first 8 bytes of the corresponding 32-byte commitment.
  *
- * The on-chain verifier returns `true` in non-Solana mode (cfg(not(target_os = "solana"))),
- * so mock Groth16 proofs work for testing account logic on a local validator.
+ * Flow:
+ *   1. initialize_mint (native SOL)
+ *   2. create_account (initial commitment is Goldilocks u64 → LE bytes + pad)
+ *   3. STARK circuit 4 (confidential_balance):
+ *      init_proof_buffer → write_proof_chunk(s) → [resize if >10KB] → verify_v2
+ *   4. deposit(amount, new_commitment) reads the verified buffer
+ *   5. STARK circuit 2 (balance_proof): verify → prove_balance
+ *   6. confidential_transfer: sender-side STARK → transfer → pending credit
+ *   7. apply_pending: recipient-side STARK → apply_pending
+ *   8. withdraw: STARK → withdraw
+ *   9. Error paths: double-spend pending credit, mismatched authority
  *
- * Program: EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah
+ * Programs:
+ *   p01_zkspl:          AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT
+ *   p01_stark_verifier: DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
+ *
+ * NOTE: This test deliberately builds every p01_zkspl instruction by hand,
+ * bypassing the auto-generated `target/types/p01_zkspl.ts` types. That file
+ * is stale (it still references the removed `Groth16Proof` arg) and Anchor's
+ * `idl build` currently fails because of an unrelated workspace crate. We
+ * compute Anchor discriminators as `sha256("global:<method>")[..8]` and
+ * serialize arg structs manually. This keeps the test runnable even while
+ * the IDL regeneration tooling is broken.
+ *
+ * Run (devnet):
+ *   ANCHOR_PROVIDER_URL="https://devnet.helius-rpc.com/?api-key=..." \
+ *   ANCHOR_WALLET=~/.config/solana/id.json \
+ *   npx ts-mocha -p tsconfig.test.json tests/zkspl.ts --timeout 900000
+ *
+ * Requires ~0.05 SOL devnet balance (rent for mint config, two accounts, proof buffers).
  */
 
-import * as anchor from "@coral-xyz/anchor";
-import { Program, AnchorProvider, BN } from "@coral-xyz/anchor";
-import { P01Zkspl } from "../target/types/p01_zkspl";
+import * as anchor from '@coral-xyz/anchor';
+import { AnchorProvider, BN } from '@coral-xyz/anchor';
 import {
-  PublicKey,
+  ComputeBudgetProgram,
+  Connection,
   Keypair,
-  SystemProgram,
   LAMPORTS_PER_SOL,
-} from "@solana/web3.js";
-import { expect } from "chai";
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+  sendAndConfirmTransaction,
+} from '@solana/web3.js';
+import { expect } from 'chai';
+import { execSync } from 'child_process';
+import * as crypto from 'crypto';
+import * as path from 'path';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+const ZKSPL_ID = new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT');
+const STARK_VERIFIER_ID = new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs');
+const NATIVE_SOL_MINT = SystemProgram.programId;
 
-const PROGRAM_ID = new PublicKey(
-  "EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah"
-);
-
-const FIELD_MODULUS = BigInt(
-  "21888242871839275222246405745257275088548364400416034343698204186575808495617"
-);
-
-/** PDA seed prefixes (must match Rust constants). */
 const SEEDS = {
-  ZKSPL_MINT: Buffer.from("zkspl_mint"),
-  ZKSPL_ACCOUNT: Buffer.from("zkspl_account"),
-  ZKSPL_VAULT: Buffer.from("zkspl_vault"),
-  ZKSPL_VK: Buffer.from("zkspl_vk"),
+  ZKSPL_MINT: Buffer.from('zkspl_mint'),
+  ZKSPL_ACCOUNT: Buffer.from('zkspl_account'),
+  ZKSPL_VAULT: Buffer.from('zkspl_vault'),
+  STARK_PROOF: Buffer.from('stark_proof'),
 };
 
-/** VK types */
-const VK_TYPE_BALANCE = 0;
-const VK_TYPE_PROOF = 1;
+// Anchor discriminators — sha256("global:<method>")[..8]
+const DISC = {
+  initialize_mint: Buffer.from([209, 42, 195, 4, 129, 85, 209, 44]),
+  create_account: Buffer.from([99, 20, 130, 119, 196, 235, 131, 149]),
+  deposit: Buffer.from([242, 35, 198, 137, 82, 225, 242, 182]),
+  withdraw: Buffer.from([183, 18, 70, 156, 148, 109, 161, 34]),
+  confidential_transfer: Buffer.from([97, 79, 128, 58, 134, 222, 73, 143]),
+  apply_pending: Buffer.from([88, 86, 232, 48, 42, 150, 180, 196]),
+  prove_balance: Buffer.from([168, 126, 148, 46, 16, 58, 26, 202]),
+};
 
-// On-chain VK binary format:
-//   alpha_g1(64) | beta_g2(128) | gamma_g2(128) | delta_g2(128) | ic_count(4) | IC[](64 each)
-// For the confidential_balance circuit, public inputs = 7, so ic_count = 8 (7+1)
-const G1_SIZE = 64;
-const G2_SIZE = 128;
+const MAX_CHUNK_SIZE = 900;
+const PROOF_DATA_OFFSET = 82;
 
-// ---------------------------------------------------------------------------
-// Poseidon helpers (circomlibjs)
-// ---------------------------------------------------------------------------
+// Account offsets for ConfidentialAccount:
+// 8 disc | 32 owner | 32 mint | 32 balance_commitment | 8 nonce
+//   | 4 + vec<PendingCredit> | ...
+const ACC_OFFSET_BALANCE_COMMIT = 8 + 32 + 32;
+const ACC_OFFSET_NONCE = 8 + 32 + 32 + 32;
+const ACC_OFFSET_PENDING_LEN = 8 + 32 + 32 + 32 + 8;
 
-let poseidon: any;
-let F: any; // Finite field
-
-async function initPoseidon(): Promise<void> {
-  const circomlibjs = await import("circomlibjs");
-  poseidon = await (circomlibjs as any).buildPoseidon();
-  F = poseidon.F;
-}
-
-function poseidonHash(inputs: bigint[]): bigint {
-  const hash = poseidon(inputs.map((x: bigint) => F.e(x)));
-  return F.toObject(hash);
-}
-
-/** Balance commitment = Poseidon(balance, Poseidon(salt, nonce), owner_pubkey, token_mint) */
-function createBalanceCommitment(
-  balance: bigint,
-  salt: bigint,
-  nonce: bigint,
-  ownerPubkey: bigint,
-  tokenMint: bigint
-): bigint {
-  const augmentedSalt = poseidonHash([salt, nonce]);
-  return poseidonHash([balance, augmentedSalt, ownerPubkey, tokenMint]);
-}
-
-/** Amount commitment = Poseidon(amount, amount_salt) */
-function createAmountCommitment(amount: bigint, amountSalt: bigint): bigint {
-  return poseidonHash([amount, amountSalt]);
-}
-
-/** Owner pubkey = Poseidon(spending_key, 0) — domain tag 0 */
-function deriveOwnerPubkey(spendingKey: bigint): bigint {
-  return poseidonHash([spendingKey, BigInt(0)]);
-}
+// PendingCredit: 32 amount_hash | 32 sender | 8 timestamp = 72 bytes
+const PENDING_CREDIT_LEN = 72;
 
 // ---------------------------------------------------------------------------
-// Byte conversion helpers
+// Byte / field helpers
 // ---------------------------------------------------------------------------
-
-/** Convert a BigInt to a 32-byte little-endian Uint8Array (for on-chain [u8; 32]). */
-function bigintToLeBytes(value: bigint): number[] {
-  const buf: number[] = new Array(32).fill(0);
-  let val = value;
-  for (let i = 0; i < 32; i++) {
-    buf[i] = Number(val & 0xffn);
-    val >>= 8n;
-  }
+/**
+ * Project a Goldilocks u64 onto a 32-byte commitment (LE padded).
+ * Matches what the on-chain handler reconstructs via
+ *   `u64::from_le_bytes(bytes[..8].try_into().unwrap())`.
+ */
+function u64To32LE(v: bigint): Buffer {
+  const buf = Buffer.alloc(32);
+  buf.writeBigUInt64LE(v, 0);
   return buf;
 }
 
-/** Create a mock Groth16Proof (all zeros -- verifier returns true in non-Solana mode). */
-function mockProof(): { piA: number[]; piB: number[]; piC: number[] } {
+function pubkeyLowU64(pk: PublicKey): bigint {
+  const bytes = pk.toBytes();
+  return Buffer.from(bytes).readBigUInt64LE(0);
+}
+
+function u64LeToBuffer(v: bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(v);
+  return b;
+}
+
+function u64BN(v: number | bigint): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64LE(BigInt(v));
+  return b;
+}
+
+// ---------------------------------------------------------------------------
+// PDA helpers
+// ---------------------------------------------------------------------------
+function deriveMintConfigPDA(mint: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.ZKSPL_MINT, mint.toBuffer()],
+    ZKSPL_ID,
+  );
+}
+
+function deriveConfidentialAccountPDA(owner: PublicKey, mint: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.ZKSPL_ACCOUNT, owner.toBuffer(), mint.toBuffer()],
+    ZKSPL_ID,
+  );
+}
+
+function deriveVaultPDA(mint: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.ZKSPL_VAULT, mint.toBuffer()],
+    ZKSPL_ID,
+  );
+}
+
+function deriveProofBufferPDA(authority: PublicKey, circuitId: number): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [SEEDS.STARK_PROOF, authority.toBuffer(), Buffer.from([circuitId])],
+    STARK_VERIFIER_ID,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Retry helper (devnet blockhash flakiness)
+// ---------------------------------------------------------------------------
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelay = 2000,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = err.toString();
+      if (
+        attempt < maxRetries &&
+        (msg.includes('Blockhash not found') || msg.includes('block height exceeded'))
+      ) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`      Retry ${attempt + 1}/${maxRetries} after ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Unreachable');
+}
+
+// ---------------------------------------------------------------------------
+// STARK proof generation — driven via the `gen_proof` cargo binary.
+// ---------------------------------------------------------------------------
+interface GeneratedProof {
+  circuitId: number;
+  publicInputs: bigint[];
+  proofBytes: Buffer;
+}
+
+function generateBalanceProof(
+  sk: bigint,
+  balance: bigint,
+  salt: bigint,
+  mintU64: bigint,
+): GeneratedProof {
+  const projectRoot = path.resolve(__dirname, '..');
+  const cmd = `cargo run --bin gen_proof -p p01-stark -- balance ${sk} ${balance} ${salt} ${mintU64}`;
+  const output = execSync(cmd, { cwd: projectRoot, encoding: 'utf-8', timeout: 240000 });
+  const jsonStart = output.indexOf('{');
+  const jsonEnd = output.lastIndexOf('}') + 1;
+  const json = JSON.parse(output.slice(jsonStart, jsonEnd));
+  const inputsMatch = output.match(/"public_inputs":\s*\[(\d+),\s*(\d+)\]/);
+  if (!inputsMatch) throw new Error('Could not parse public_inputs from gen_proof (balance)');
   return {
-    piA: new Array(64).fill(0),
-    piB: new Array(128).fill(0),
-    piC: new Array(64).fill(0),
+    circuitId: json.circuit_id,
+    publicInputs: [BigInt(inputsMatch[1]), BigInt(inputsMatch[2])],
+    proofBytes: Buffer.from(json.proof_hex, 'hex'),
   };
 }
 
-/**
- * Build a minimal valid VK binary blob.
- * Format: alpha_g1(64) | beta_g2(128) | gamma_g2(128) | delta_g2(128) | ic_count(4LE) | IC[](64 each)
- * For the confidential_balance circuit: 7 public inputs => ic_count = 8
- * For the balance_proof circuit: 3 public inputs => ic_count = 4
- */
-function buildMockVk(publicInputCount: number): Buffer {
-  const icCount = publicInputCount + 1;
-  const headerSize = G1_SIZE + G2_SIZE * 3 + 4;
-  const totalSize = headerSize + icCount * G1_SIZE;
-  const buf = Buffer.alloc(totalSize);
-
-  // Fill with non-zero data so it looks like a real VK (the verifier in test mode
-  // doesn't actually process VK contents -- it always returns true)
-  buf.fill(0x01, 0, G1_SIZE); // alpha_g1
-  buf.fill(0x02, G1_SIZE, G1_SIZE + G2_SIZE); // beta_g2
-  buf.fill(0x03, G1_SIZE + G2_SIZE, G1_SIZE + G2_SIZE * 2); // gamma_g2
-  buf.fill(0x04, G1_SIZE + G2_SIZE * 2, G1_SIZE + G2_SIZE * 3); // delta_g2
-
-  // ic_count as u32 LE
-  const offset = G1_SIZE + G2_SIZE * 3;
-  buf.writeUInt32LE(icCount, offset);
-
-  // IC points (just fill with 0x05)
-  buf.fill(0x05, offset + 4, offset + 4 + icCount * G1_SIZE);
-
-  return buf;
-}
-
-// ---------------------------------------------------------------------------
-// PDA derivation
-// ---------------------------------------------------------------------------
-
-function deriveMintConfig(
-  tokenMint: PublicKey
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.ZKSPL_MINT, tokenMint.toBuffer()],
-    PROGRAM_ID
+function generateConfidentialBalanceProof(
+  sk: bigint,
+  oldBal: bigint,
+  oldSalt: bigint,
+  newBal: bigint,
+  newSalt: bigint,
+  amount: bigint,
+  amtSalt: bigint,
+  mintU64: bigint,
+): GeneratedProof {
+  const projectRoot = path.resolve(__dirname, '..');
+  const cmd = `cargo run --bin gen_proof -p p01-stark -- confidential ${sk} ${oldBal} ${oldSalt} ${newBal} ${newSalt} ${amount} ${amtSalt} ${mintU64}`;
+  const output = execSync(cmd, { cwd: projectRoot, encoding: 'utf-8', timeout: 240000 });
+  const jsonStart = output.indexOf('{');
+  const jsonEnd = output.lastIndexOf('}') + 1;
+  const json = JSON.parse(output.slice(jsonStart, jsonEnd));
+  const inputsMatch = output.match(
+    /"public_inputs":\s*\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]/,
   );
+  if (!inputsMatch) {
+    throw new Error('Could not parse public_inputs from gen_proof (confidential)');
+  }
+  return {
+    circuitId: json.circuit_id,
+    publicInputs: [
+      BigInt(inputsMatch[1]),
+      BigInt(inputsMatch[2]),
+      BigInt(inputsMatch[3]),
+      BigInt(inputsMatch[4]),
+    ],
+    proofBytes: Buffer.from(json.proof_hex, 'hex'),
+  };
 }
 
-function deriveConfidentialAccount(
+// ---------------------------------------------------------------------------
+// p01_stark_verifier instruction builders (IDL inlined)
+// ---------------------------------------------------------------------------
+function buildInitProofBufferIx(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  proofSize: number,
+  circuitId: number,
+): TransactionInstruction {
+  const disc = Buffer.from([49, 27, 28, 88, 19, 99, 133, 194]);
+  const sz = Buffer.alloc(4);
+  sz.writeUInt32LE(proofSize, 0);
+  const cid = Buffer.from([circuitId]);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([disc, sz, cid]),
+  });
+}
+
+function buildWriteProofChunkIx(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  offset: number,
+  chunk: Buffer,
+): TransactionInstruction {
+  const disc = Buffer.from([183, 3, 171, 138, 153, 138, 133, 147]);
+  const off = Buffer.alloc(4);
+  off.writeUInt32LE(offset, 0);
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(chunk.length, 0);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.concat([disc, off, len, chunk]),
+  });
+}
+
+function buildVerifyStarkProofV2Ix(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  publicInputs: bigint[],
+): TransactionInstruction {
+  const disc = Buffer.from([149, 18, 96, 15, 144, 68, 8, 233]);
+  const vecLen = Buffer.alloc(4);
+  vecLen.writeUInt32LE(publicInputs.length, 0);
+  const inputBufs = publicInputs.map(u64LeToBuffer);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.concat([disc, vecLen, ...inputBufs]),
+  });
+}
+
+function buildResizeProofBufferIx(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+): TransactionInstruction {
+  const disc = Buffer.from([187, 39, 46, 173, 247, 90, 178, 205]);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: disc,
+  });
+}
+
+function buildCloseProofBufferIx(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+): TransactionInstruction {
+  const disc = Buffer.from([130, 150, 6, 35, 193, 34, 243, 87]);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: true },
+    ],
+    data: disc,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// p01_zkspl instruction builders
+// ---------------------------------------------------------------------------
+function buildInitializeMintIx(
+  authority: PublicKey,
+  tokenMint: PublicKey,
+  balanceVkHash: Buffer,
+  proofVkHash: Buffer,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: tokenMint, isSigner: false, isWritable: false },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([DISC.initialize_mint, balanceVkHash, proofVkHash]),
+  });
+}
+
+function buildCreateAccountIx(
   owner: PublicKey,
-  tokenMint: PublicKey
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.ZKSPL_ACCOUNT, owner.toBuffer(), tokenMint.toBuffer()],
-    PROGRAM_ID
+  tokenMint: PublicKey,
+  initialCommitment: Buffer,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  const [confAccountPDA] = deriveConfidentialAccountPDA(owner, tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: owner, isSigner: true, isWritable: true },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: false },
+      { pubkey: confAccountPDA, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([DISC.create_account, initialCommitment]),
+  });
+}
+
+function buildDepositIx(
+  depositor: PublicKey,
+  tokenMint: PublicKey,
+  starkProofBuffer: PublicKey,
+  amountLamports: bigint,
+  newCommitment: Buffer,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  const [confAccountPDA] = deriveConfidentialAccountPDA(depositor, tokenMint);
+  const [vaultPDA] = deriveVaultPDA(tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: depositor, isSigner: true, isWritable: true },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: false },
+      { pubkey: confAccountPDA, isSigner: false, isWritable: true },
+      { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+      { pubkey: vaultPDA, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      // Optional: token_program, user_token_account, pool_vault
+      // Anchor serializes None as a single 0 byte trailing tag — no account keys needed.
+    ],
+    data: Buffer.concat([
+      DISC.deposit,
+      u64BN(amountLamports),
+      newCommitment,
+    ]),
+  });
+}
+
+function buildWithdrawIx(
+  withdrawer: PublicKey,
+  tokenMint: PublicKey,
+  starkProofBuffer: PublicKey,
+  amountLamports: bigint,
+  newCommitment: Buffer,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  const [confAccountPDA] = deriveConfidentialAccountPDA(withdrawer, tokenMint);
+  const [vaultPDA] = deriveVaultPDA(tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: withdrawer, isSigner: true, isWritable: true },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: false },
+      { pubkey: confAccountPDA, isSigner: false, isWritable: true },
+      { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+      { pubkey: vaultPDA, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([
+      DISC.withdraw,
+      u64BN(amountLamports),
+      newCommitment,
+    ]),
+  });
+}
+
+function buildConfidentialTransferIx(
+  sender: PublicKey,
+  recipient: PublicKey,
+  tokenMint: PublicKey,
+  starkProofBuffer: PublicKey,
+  newCommitment: Buffer,
+  amountHash: Buffer,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  const [senderAccountPDA] = deriveConfidentialAccountPDA(sender, tokenMint);
+  const [recipientAccountPDA] = deriveConfidentialAccountPDA(recipient, tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: sender, isSigner: true, isWritable: true },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: false },
+      { pubkey: senderAccountPDA, isSigner: false, isWritable: true },
+      { pubkey: recipientAccountPDA, isSigner: false, isWritable: true },
+      { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([DISC.confidential_transfer, newCommitment, amountHash]),
+  });
+}
+
+function buildApplyPendingIx(
+  recipient: PublicKey,
+  tokenMint: PublicKey,
+  starkProofBuffer: PublicKey,
+  newCommitment: Buffer,
+  amountHash: Buffer,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  const [confAccountPDA] = deriveConfidentialAccountPDA(recipient, tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: recipient, isSigner: true, isWritable: false },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: false },
+      { pubkey: confAccountPDA, isSigner: false, isWritable: true },
+      { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([DISC.apply_pending, newCommitment, amountHash]),
+  });
+}
+
+function buildProveBalanceIx(
+  prover: PublicKey,
+  tokenMint: PublicKey,
+  starkProofBuffer: PublicKey,
+  threshold: bigint,
+): TransactionInstruction {
+  const [mintConfigPDA] = deriveMintConfigPDA(tokenMint);
+  const [confAccountPDA] = deriveConfidentialAccountPDA(prover, tokenMint);
+  return new TransactionInstruction({
+    programId: ZKSPL_ID,
+    keys: [
+      { pubkey: prover, isSigner: true, isWritable: false },
+      { pubkey: mintConfigPDA, isSigner: false, isWritable: false },
+      { pubkey: confAccountPDA, isSigner: false, isWritable: false },
+      { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.concat([DISC.prove_balance, u64BN(threshold)]),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Proof buffer helpers
+// ---------------------------------------------------------------------------
+async function uploadProofChunks(
+  connection: Connection,
+  authority: Keypair,
+  proofBuffer: PublicKey,
+  proofBytes: Buffer,
+): Promise<void> {
+  for (let offset = 0; offset < proofBytes.length; offset += MAX_CHUNK_SIZE) {
+    const slice = proofBytes.subarray(
+      offset,
+      Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length),
+    );
+    const ix = buildWriteProofChunkIx(proofBuffer, authority.publicKey, offset, slice);
+    await withRetry(async () => {
+      const sig = await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(ix),
+        [authority],
+        { commitment: 'confirmed', skipPreflight: true },
+      );
+      await connection.confirmTransaction(sig, 'confirmed');
+    });
+  }
+}
+
+async function cleanupStaleProofBuffer(
+  connection: Connection,
+  authority: Keypair,
+  proofBuffer: PublicKey,
+): Promise<void> {
+  const existing = await connection.getAccountInfo(proofBuffer);
+  if (!existing) return;
+  try {
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, authority.publicKey)),
+      [authority],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Upload + verify a STARK proof on p01_stark_verifier.
+ * Returns the proof-buffer PDA (kept open for the cross-program read).
+ */
+async function uploadAndVerifyProof(
+  connection: Connection,
+  authority: Keypair,
+  proof: GeneratedProof,
+): Promise<PublicKey> {
+  const [proofBufferPDA] = deriveProofBufferPDA(authority.publicKey, proof.circuitId);
+  await cleanupStaleProofBuffer(connection, authority, proofBufferPDA);
+
+  // Init
+  await withRetry(async () => {
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(
+        buildInitProofBufferIx(
+          proofBufferPDA,
+          authority.publicKey,
+          proof.proofBytes.length,
+          proof.circuitId,
+        ),
+      ),
+      [authority],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
+  });
+
+  // Resize if the buffer needs >10KB
+  if (proof.proofBytes.length + PROOF_DATA_OFFSET > 10_240) {
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(buildResizeProofBufferIx(proofBufferPDA, authority.publicKey)),
+        [authority],
+        { commitment: 'confirmed', skipPreflight: true },
+      );
+    });
+  }
+
+  // Upload chunks
+  await uploadProofChunks(connection, authority, proofBufferPDA, proof.proofBytes);
+
+  // Verify
+  await withRetry(async () => {
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction()
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+        .add(
+          buildVerifyStarkProofV2Ix(
+            proofBufferPDA,
+            authority.publicKey,
+            proof.publicInputs,
+          ),
+        ),
+      [authority],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
+  });
+
+  const info = await connection.getAccountInfo(proofBufferPDA);
+  if (!info) throw new Error('Proof buffer missing after verify');
+  if (info.data[49] !== 1) throw new Error('Proof buffer not marked verified');
+
+  return proofBufferPDA;
+}
+
+// ---------------------------------------------------------------------------
+// Funding helper
+// ---------------------------------------------------------------------------
+async function fundWallet(
+  provider: AnchorProvider,
+  dest: PublicKey,
+  lamports: number,
+): Promise<void> {
+  const authority = (provider.wallet as anchor.Wallet).payer;
+  await provider.sendAndConfirm(
+    new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: authority.publicKey,
+        toPubkey: dest,
+        lamports,
+      }),
+    ),
   );
 }
 
-function deriveVault(
-  tokenMint: PublicKey
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.ZKSPL_VAULT, tokenMint.toBuffer()],
-    PROGRAM_ID
-  );
+// ---------------------------------------------------------------------------
+// Account readers (raw binary — stale IDL means no fetch() helpers)
+// ---------------------------------------------------------------------------
+interface ConfidentialAccountSnapshot {
+  balanceCommitment: Buffer;
+  nonce: bigint;
+  pendingCreditCount: number;
 }
 
-function deriveVkData(
-  mintConfigKey: PublicKey,
-  vkType: number
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.ZKSPL_VK, mintConfigKey.toBuffer(), Buffer.from([vkType])],
-    PROGRAM_ID
+async function readConfidentialAccount(
+  connection: Connection,
+  owner: PublicKey,
+  mint: PublicKey,
+): Promise<ConfidentialAccountSnapshot> {
+  const [pda] = deriveConfidentialAccountPDA(owner, mint);
+  const info = await connection.getAccountInfo(pda);
+  if (!info) throw new Error(`ConfidentialAccount not found for ${owner.toBase58()}`);
+  const balanceCommitment = info.data.subarray(
+    ACC_OFFSET_BALANCE_COMMIT,
+    ACC_OFFSET_BALANCE_COMMIT + 32,
   );
+  const nonce = info.data.readBigUInt64LE(ACC_OFFSET_NONCE);
+  const pendingCreditCount = info.data.readUInt32LE(ACC_OFFSET_PENDING_LEN);
+  return {
+    balanceCommitment: Buffer.from(balanceCommitment),
+    nonce,
+    pendingCreditCount,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
-
-describe("p01_zkspl", () => {
-  const provider = AnchorProvider.env();
+describe('p01_zkspl — STARK lifecycle (native SOL)', () => {
+  const provider = new AnchorProvider(
+    AnchorProvider.env().connection,
+    AnchorProvider.env().wallet,
+    { commitment: 'confirmed', preflightCommitment: 'confirmed' },
+  );
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.P01Zkspl as Program<P01Zkspl>;
+  const connection = provider.connection;
+  const authority = (provider.wallet as anchor.Wallet).payer;
 
-  // Users
+  // Two users (sender + recipient). New keypairs per run — no PDA collisions.
   const alice = Keypair.generate();
   const bob = Keypair.generate();
-  const viewer = Keypair.generate();
-  const stranger = Keypair.generate();
 
-  // We use native SOL as the "token" -- represented by system program ID
-  const tokenMint = SystemProgram.programId;
+  // ---------------------------------------------------------------------
+  // STARK witness seeds (kept inside u32 range for Goldilocks safety)
+  // ---------------------------------------------------------------------
+  const aliceSK = BigInt(Math.floor(Math.random() * 0xffffffff));
+  const bobSK = BigInt(Math.floor(Math.random() * 0xffffffff));
 
-  // Derived PDAs (populated in before())
+  const mintU64 = pubkeyLowU64(NATIVE_SOL_MINT);
+
+  // Alice's balance witnesses
+  const aliceInitSalt = BigInt(1111);
+  const aliceDepositAmount = BigInt(42);
+  const aliceDepositSalt = BigInt(2222);
+
+  // Alice → Bob transfer witnesses
+  const transferAmount = BigInt(10);
+  const transferAmtSalt = BigInt(3333);
+  const alicePostTransferBalance = aliceDepositAmount - transferAmount; // 32
+  const alicePostTransferSalt = BigInt(4444);
+
+  // Bob's witnesses
+  const bobInitSalt = BigInt(5555);
+  const bobPostApplySalt = BigInt(6666);
+
+  // Alice withdrawal witnesses (after transfer: 32 → 20)
+  const aliceWithdrawAmount = BigInt(12);
+  const aliceWithdrawSalt = BigInt(7777);
+  const alicePostWithdrawBalance = alicePostTransferBalance - aliceWithdrawAmount; // 20
+
+  // ---------------------------------------------------------------------
+  // PDA + byte handles
+  // ---------------------------------------------------------------------
   let mintConfigPDA: PublicKey;
-  let mintConfigBump: number;
-  let aliceAccountPDA: PublicKey;
-  let bobAccountPDA: PublicKey;
   let vaultPDA: PublicKey;
-  let balanceVkPDA: PublicKey;
-  let proofVkPDA: PublicKey;
 
-  // Crypto state
-  const aliceSpendingKey = BigInt("98765432101234567890");
-  const bobSpendingKey = BigInt("55555555555555555555");
-  let aliceOwnerPubkey: bigint;
-  let bobOwnerPubkey: bigint;
-  const tokenMintField = BigInt(0); // system_program::ID -> all zeros -> 0 as field element
+  // Commitments (32-byte Goldilocks-u64 LE projection — the exact shape the
+  // on-chain handler reconstructs via `bytes[..8].try_into()`).
+  let aliceInitCommit32: Buffer;
+  let aliceDepositCommit32: Buffer;
+  let alicePostTransferCommit32: Buffer;
+  let alicePostWithdrawCommit32: Buffer;
 
-  // Mock VK hashes (32 bytes each)
-  const balanceVkHash = new Array(32).fill(0xab);
-  const proofVkHash = new Array(32).fill(0xcd);
+  let bobInitCommit32: Buffer;
+  let bobPostApplyCommit32: Buffer;
 
-  // Track Alice's balance state across tests
-  let aliceBalance = 0n;
-  let aliceSalt = BigInt("111111111111");
-  let aliceCommitment: bigint;
-  let aliceNonce = 0;
+  // Amount hash bytes for hidden-amount operations.
+  let transferAmtHash32: Buffer;
 
-  // Track Bob's balance state across tests
-  let bobBalance = 0n;
-  let bobSalt = BigInt("666666666666");
-  let bobCommitment: bigint;
-  let bobNonce = 0;
+  // Stashed proofs (generated in `before`)
+  let proofs: {
+    aliceDeposit: GeneratedProof;
+    aliceBalance: GeneratedProof;
+    aliceTransfer: GeneratedProof;
+    bobApply: GeneratedProof;
+    aliceWithdraw: GeneratedProof;
+  };
 
-  // Amount hash from the transfer (shared between sender and recipient)
-  let transferAmountHash: number[];
-  let transferAmountSalt: bigint;
+  before(async function () {
+    this.timeout(600_000);
 
-  before(async () => {
-    // Initialize Poseidon hasher
-    await initPoseidon();
+    // Fund test users
+    const fundAmount = 0.01 * LAMPORTS_PER_SOL;
+    await fundWallet(provider, alice.publicKey, fundAmount);
+    await fundWallet(provider, bob.publicKey, fundAmount);
 
-    // Derive crypto keys
-    aliceOwnerPubkey = deriveOwnerPubkey(aliceSpendingKey);
-    bobOwnerPubkey = deriveOwnerPubkey(bobSpendingKey);
+    // PDAs
+    [mintConfigPDA] = deriveMintConfigPDA(NATIVE_SOL_MINT);
+    [vaultPDA] = deriveVaultPDA(NATIVE_SOL_MINT);
 
-    // Derive PDAs
-    [mintConfigPDA, mintConfigBump] = deriveMintConfig(tokenMint);
-    [aliceAccountPDA] = deriveConfidentialAccount(alice.publicKey, tokenMint);
-    [bobAccountPDA] = deriveConfidentialAccount(bob.publicKey, tokenMint);
-    [vaultPDA] = deriveVault(tokenMint);
-    [balanceVkPDA] = deriveVkData(mintConfigPDA, VK_TYPE_BALANCE);
-    [proofVkPDA] = deriveVkData(mintConfigPDA, VK_TYPE_PROOF);
-
-    // Compute initial commitments for balance=0
-    aliceCommitment = createBalanceCommitment(
-      aliceBalance,
-      aliceSalt,
-      BigInt(aliceNonce),
-      aliceOwnerPubkey,
-      tokenMintField
+    // Generate every STARK proof up-front (each run takes ~30-60s).
+    console.log('    generating circuit-4 STARK proof (alice deposit)...');
+    const aliceDepositProof = generateConfidentialBalanceProof(
+      aliceSK,
+      0n, aliceInitSalt,
+      aliceDepositAmount, aliceDepositSalt,
+      0n, 0n, // amount/salt both zero → amount_hash = Poseidon(0,0)
+      mintU64,
     );
-    bobCommitment = createBalanceCommitment(
-      bobBalance,
-      bobSalt,
-      BigInt(bobNonce),
-      bobOwnerPubkey,
-      tokenMintField
+    aliceInitCommit32 = u64To32LE(aliceDepositProof.publicInputs[0]);
+    aliceDepositCommit32 = u64To32LE(aliceDepositProof.publicInputs[1]);
+
+    console.log('    generating circuit-2 STARK proof (alice balance proof)...');
+    const aliceBalanceProof = generateBalanceProof(
+      aliceSK, aliceDepositAmount, aliceDepositSalt, mintU64,
+    );
+    expect(aliceBalanceProof.publicInputs[0].toString())
+      .to.equal(aliceDepositProof.publicInputs[1].toString());
+
+    console.log('    generating circuit-4 STARK proof (alice transfer sender)...');
+    const aliceTransferProof = generateConfidentialBalanceProof(
+      aliceSK,
+      aliceDepositAmount, aliceDepositSalt,
+      alicePostTransferBalance, alicePostTransferSalt,
+      transferAmount, transferAmtSalt,
+      mintU64,
+    );
+    alicePostTransferCommit32 = u64To32LE(aliceTransferProof.publicInputs[1]);
+    transferAmtHash32 = u64To32LE(aliceTransferProof.publicInputs[2]);
+
+    console.log('    generating circuit-4 STARK proof (bob init → apply_pending)...');
+    const bobApplyProof = generateConfidentialBalanceProof(
+      bobSK,
+      0n, bobInitSalt,
+      transferAmount, bobPostApplySalt,
+      transferAmount, transferAmtSalt,
+      mintU64,
+    );
+    bobInitCommit32 = u64To32LE(bobApplyProof.publicInputs[0]);
+    bobPostApplyCommit32 = u64To32LE(bobApplyProof.publicInputs[1]);
+    const bobAmtHashFromProof = u64To32LE(bobApplyProof.publicInputs[2]);
+    expect(bobAmtHashFromProof.equals(transferAmtHash32)).to.equal(
+      true,
+      'sender and recipient must agree on amount_hash (same amount + salt)',
     );
 
-    // Fund accounts
-    const fundAmount = 200 * LAMPORTS_PER_SOL;
-    const fundSigs = await Promise.all([
-      provider.connection.requestAirdrop(alice.publicKey, fundAmount),
-      provider.connection.requestAirdrop(bob.publicKey, fundAmount),
-      provider.connection.requestAirdrop(stranger.publicKey, LAMPORTS_PER_SOL),
-    ]);
-    for (const sig of fundSigs) {
-      await provider.connection.confirmTransaction(sig, "confirmed");
+    console.log('    generating circuit-4 STARK proof (alice withdraw)...');
+    const aliceWithdrawProof = generateConfidentialBalanceProof(
+      aliceSK,
+      alicePostTransferBalance, alicePostTransferSalt,
+      alicePostWithdrawBalance, aliceWithdrawSalt,
+      0n, 0n,
+      mintU64,
+    );
+    alicePostWithdrawCommit32 = u64To32LE(aliceWithdrawProof.publicInputs[1]);
+
+    proofs = {
+      aliceDeposit: aliceDepositProof,
+      aliceBalance: aliceBalanceProof,
+      aliceTransfer: aliceTransferProof,
+      bobApply: bobApplyProof,
+      aliceWithdraw: aliceWithdrawProof,
+    };
+  });
+
+  // ---------------------------------------------------------------------
+  // 1. initialize_mint (idempotent — skips if already registered)
+  // ---------------------------------------------------------------------
+  it('initialize_mint (native SOL)', async function () {
+    this.timeout(60_000);
+    const existing = await connection.getAccountInfo(mintConfigPDA);
+    if (existing) {
+      console.log('    mint already initialized, skipping');
+      return;
     }
 
-    // Fund the vault PDA with rent-exempt minimum so it exists for withdrawals
-    const vaultFundSig = await provider.connection.requestAirdrop(
-      vaultPDA,
-      LAMPORTS_PER_SOL
+    const vkBalance = crypto.randomBytes(32);
+    const vkProof = crypto.randomBytes(32);
+
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildInitializeMintIx(authority.publicKey, NATIVE_SOL_MINT, vkBalance, vkProof),
+        ),
+        [authority],
+        { commitment: 'confirmed', skipPreflight: true },
+      );
+    });
+
+    const cfg = await connection.getAccountInfo(mintConfigPDA);
+    expect(cfg).to.not.equal(null);
+    // is_active flag sits after disc (8) + authority (32) + token_mint (32) + balance_vk_hash (32) + proof_vk_hash (32) = 136
+    expect(cfg!.data[136]).to.equal(1);
+  });
+
+  // ---------------------------------------------------------------------
+  // 2. create_account (alice + bob)
+  // ---------------------------------------------------------------------
+  it('create_account: alice', async function () {
+    this.timeout(60_000);
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildCreateAccountIx(alice.publicKey, NATIVE_SOL_MINT, aliceInitCommit32),
+        ),
+        [alice],
+        { commitment: 'confirmed', skipPreflight: true },
+      );
+    });
+
+    const acc = await readConfidentialAccount(connection, alice.publicKey, NATIVE_SOL_MINT);
+    expect(acc.balanceCommitment.equals(aliceInitCommit32)).to.equal(true);
+    expect(acc.nonce.toString()).to.equal('0');
+  });
+
+  it('create_account: bob', async function () {
+    this.timeout(60_000);
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildCreateAccountIx(bob.publicKey, NATIVE_SOL_MINT, bobInitCommit32),
+        ),
+        [bob],
+        { commitment: 'confirmed', skipPreflight: true },
+      );
+    });
+
+    const acc = await readConfidentialAccount(connection, bob.publicKey, NATIVE_SOL_MINT);
+    expect(acc.balanceCommitment.equals(bobInitCommit32)).to.equal(true);
+  });
+
+  // ---------------------------------------------------------------------
+  // 3. deposit: upload+verify circuit 4 → call deposit
+  // ---------------------------------------------------------------------
+  it('deposit: alice deposits via verified STARK buffer', async function () {
+    this.timeout(300_000);
+    const proofBuffer = await uploadAndVerifyProof(connection, alice, proofs.aliceDeposit);
+
+    // Small lamport deposit — the u64 amount arg is independent of the STARK
+    // AIR's private balance witnesses; the handler just uses it for the SPL
+    // transfer and lets the STARK bind commitment integrity.
+    const depositLamports = 1_000_000n;
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildDepositIx(
+            alice.publicKey,
+            NATIVE_SOL_MINT,
+            proofBuffer,
+            depositLamports,
+            aliceDepositCommit32,
+          ),
+        ),
+        [alice],
+        { commitment: 'confirmed', skipPreflight: true },
+      );
+    });
+
+    const acc = await readConfidentialAccount(connection, alice.publicKey, NATIVE_SOL_MINT);
+    expect(acc.nonce.toString()).to.equal('1');
+    expect(acc.balanceCommitment.equals(aliceDepositCommit32)).to.equal(true);
+
+    const vaultInfo = await connection.getAccountInfo(vaultPDA);
+    expect(vaultInfo).to.not.equal(null);
+    expect(vaultInfo!.lamports).to.be.gte(Number(depositLamports));
+
+    // Recover rent
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, alice.publicKey)),
+      [alice],
+      { commitment: 'confirmed', skipPreflight: true },
     );
-    await provider.connection.confirmTransaction(vaultFundSig, "confirmed");
-
-    console.log("  Setup complete:");
-    console.log(`    Alice:       ${alice.publicKey.toBase58()}`);
-    console.log(`    Bob:         ${bob.publicKey.toBase58()}`);
-    console.log(`    MintConfig:  ${mintConfigPDA.toBase58()}`);
-    console.log(`    Vault:       ${vaultPDA.toBase58()}`);
-    console.log(`    Balance VK:  ${balanceVkPDA.toBase58()}`);
-    console.log(`    Proof VK:    ${proofVkPDA.toBase58()}`);
   });
 
-  // =========================================================================
-  // 1. Initialize Mint
-  // =========================================================================
-  describe("1. Initialize Mint", () => {
-    it("should register native SOL for zkSPL", async () => {
-      await program.methods
-        .initializeMint(balanceVkHash, proofVkHash)
-        .accounts({
-          authority: alice.publicKey,
-          tokenMint: tokenMint,
-          mintConfig: mintConfigPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([alice])
-        .rpc();
+  // ---------------------------------------------------------------------
+  // 4. prove_balance: upload+verify circuit 2 → call prove_balance
+  // ---------------------------------------------------------------------
+  it('prove_balance: alice proves balance (STARK circuit 2)', async function () {
+    this.timeout(300_000);
+    const proofBuffer = await uploadAndVerifyProof(connection, alice, proofs.aliceBalance);
 
-      // Fetch and verify
-      const config = await program.account.mintConfig.fetch(mintConfigPDA);
-      expect(config.authority.toBase58()).to.equal(alice.publicKey.toBase58());
-      expect(config.tokenMint.toBase58()).to.equal(tokenMint.toBase58());
-      expect(config.isActive).to.be.true;
-      expect(config.accountCount.toNumber()).to.equal(0);
-      expect(Buffer.from(config.balanceVkHash)).to.deep.equal(
-        Buffer.from(balanceVkHash)
-      );
-      expect(Buffer.from(config.proofVkHash)).to.deep.equal(
-        Buffer.from(proofVkHash)
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildProveBalanceIx(alice.publicKey, NATIVE_SOL_MINT, proofBuffer, 1n),
+        ),
+        [alice],
+        { commitment: 'confirmed', skipPreflight: true },
       );
     });
 
-    it("should fail to initialize the same mint twice", async () => {
-      try {
-        await program.methods
-          .initializeMint(balanceVkHash, proofVkHash)
-          .accounts({
-            authority: alice.publicKey,
-            tokenMint: tokenMint,
-            mintConfig: mintConfigPDA,
-            systemProgram: SystemProgram.programId,
-          })
-          .signers([alice])
-          .rpc();
-        expect.fail("Should have thrown");
-      } catch (err: any) {
-        // PDA already exists -- Anchor will throw
-        expect(err).to.exist;
-      }
-    });
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, alice.publicKey)),
+      [alice],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
   });
 
-  // =========================================================================
-  // 2. Upload Verification Keys
-  // =========================================================================
-  describe("2. Upload Verification Keys", () => {
-    const balanceVkData = buildMockVk(7); // 7 public inputs for confidential_balance
-    const proofVkData = buildMockVk(3); // 3 public inputs for balance_proof
+  // ---------------------------------------------------------------------
+  // 5. confidential_transfer: alice → bob
+  // ---------------------------------------------------------------------
+  it('confidential_transfer: alice → bob (hidden amount)', async function () {
+    this.timeout(300_000);
+    const proofBuffer = await uploadAndVerifyProof(connection, alice, proofs.aliceTransfer);
 
-    it("should init balance VK data account", async () => {
-      await program.methods
-        .initVkData(VK_TYPE_BALANCE, balanceVkData.length)
-        .accounts({
-          authority: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          vkData: balanceVkPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([alice])
-        .rpc();
-
-      const accountInfo = await provider.connection.getAccountInfo(
-        balanceVkPDA
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildConfidentialTransferIx(
+            alice.publicKey,
+            bob.publicKey,
+            NATIVE_SOL_MINT,
+            proofBuffer,
+            alicePostTransferCommit32,
+            transferAmtHash32,
+          ),
+        ),
+        [alice],
+        { commitment: 'confirmed', skipPreflight: true },
       );
-      expect(accountInfo).to.not.be.null;
-      // Account size: 8 discriminator + 4 size header + vk bytes
-      expect(accountInfo!.data.length).to.equal(8 + 4 + balanceVkData.length);
     });
 
-    it("should write balance VK data in chunks", async () => {
-      // Write in a single chunk (test data is small enough)
-      await program.methods
-        .writeVkData(VK_TYPE_BALANCE, 0, balanceVkData)
-        .accounts({
-          authority: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([alice])
-        .rpc();
+    // Alice's commitment advanced to post-transfer
+    const aliceAcc = await readConfidentialAccount(connection, alice.publicKey, NATIVE_SOL_MINT);
+    expect(aliceAcc.nonce.toString()).to.equal('2');
+    expect(aliceAcc.balanceCommitment.equals(alicePostTransferCommit32)).to.equal(true);
 
-      // Verify data was written
-      const accountInfo = await provider.connection.getAccountInfo(
-        balanceVkPDA
-      );
-      expect(accountInfo).to.not.be.null;
-      // Check the data portion (after 8 byte discriminator + 4 byte size header)
-      const dataSlice = accountInfo!.data.slice(12, 12 + balanceVkData.length);
-      expect(Buffer.from(dataSlice)).to.deep.equal(balanceVkData);
-    });
+    // Bob picked up a pending credit
+    const bobAcc = await readConfidentialAccount(connection, bob.publicKey, NATIVE_SOL_MINT);
+    expect(bobAcc.pendingCreditCount).to.equal(1);
 
-    it("should init and write proof VK data account", async () => {
-      await program.methods
-        .initVkData(VK_TYPE_PROOF, proofVkData.length)
-        .accounts({
-          authority: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          vkData: proofVkPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([alice])
-        .rpc();
-
-      await program.methods
-        .writeVkData(VK_TYPE_PROOF, 0, proofVkData)
-        .accounts({
-          authority: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          vkData: proofVkPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      const accountInfo = await provider.connection.getAccountInfo(proofVkPDA);
-      expect(accountInfo).to.not.be.null;
-      const dataSlice = accountInfo!.data.slice(12, 12 + proofVkData.length);
-      expect(Buffer.from(dataSlice)).to.deep.equal(proofVkData);
-    });
-
-    it("should write VK data in multiple chunks", async () => {
-      // Create a new VK type to test chunked upload
-      // We reuse the balance VK but write in two parts
-      const halfSize = Math.floor(balanceVkData.length / 2);
-      const chunk1 = balanceVkData.slice(0, halfSize);
-      const chunk2 = balanceVkData.slice(halfSize);
-
-      // Overwrite existing balance VK with chunked writes
-      await program.methods
-        .writeVkData(VK_TYPE_BALANCE, 0, chunk1)
-        .accounts({
-          authority: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      await program.methods
-        .writeVkData(VK_TYPE_BALANCE, halfSize, chunk2)
-        .accounts({
-          authority: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      const accountInfo = await provider.connection.getAccountInfo(
-        balanceVkPDA
-      );
-      const dataSlice = accountInfo!.data.slice(12, 12 + balanceVkData.length);
-      expect(Buffer.from(dataSlice)).to.deep.equal(balanceVkData);
-    });
-
-    it("should reject VK write from non-authority", async () => {
-      try {
-        await program.methods
-          .writeVkData(VK_TYPE_BALANCE, 0, Buffer.from([0x00]))
-          .accounts({
-            authority: bob.publicKey,
-            mintConfig: mintConfigPDA,
-            vkData: balanceVkPDA,
-          })
-          .signers([bob])
-          .rpc();
-        expect.fail("Should have thrown -- bob is not authority");
-      } catch (err: any) {
-        // Unauthorized constraint error
-        expect(err).to.exist;
-      }
-    });
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, alice.publicKey)),
+      [alice],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
   });
 
-  // =========================================================================
-  // 3. Create Confidential Accounts
-  // =========================================================================
-  describe("3. Create Confidential Accounts", () => {
-    it("should create Alice's confidential account", async () => {
-      const initialCommitment = bigintToLeBytes(aliceCommitment);
+  // ---------------------------------------------------------------------
+  // 6. apply_pending: bob integrates the credit
+  // ---------------------------------------------------------------------
+  it('apply_pending: bob applies credit from alice', async function () {
+    this.timeout(300_000);
+    const proofBuffer = await uploadAndVerifyProof(connection, bob, proofs.bobApply);
 
-      await program.methods
-        .createAccount(initialCommitment)
-        .accounts({
-          owner: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([alice])
-        .rpc();
-
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.owner.toBase58()).to.equal(alice.publicKey.toBase58());
-      expect(account.mint.toBase58()).to.equal(tokenMint.toBase58());
-      expect(account.isInitialized).to.be.true;
-      expect(account.nonce.toNumber()).to.equal(0);
-      expect(account.pendingCredits).to.have.length(0);
-      expect(account.viewerKeys).to.have.length(0);
-      expect(Buffer.from(account.balanceCommitment)).to.deep.equal(
-        Buffer.from(initialCommitment)
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildApplyPendingIx(
+            bob.publicKey,
+            NATIVE_SOL_MINT,
+            proofBuffer,
+            bobPostApplyCommit32,
+            transferAmtHash32,
+          ),
+        ),
+        [bob],
+        { commitment: 'confirmed', skipPreflight: true },
       );
     });
 
-    it("should create Bob's confidential account", async () => {
-      const initialCommitment = bigintToLeBytes(bobCommitment);
+    const bobAcc = await readConfidentialAccount(connection, bob.publicKey, NATIVE_SOL_MINT);
+    expect(bobAcc.nonce.toString()).to.equal('1');
+    expect(bobAcc.balanceCommitment.equals(bobPostApplyCommit32)).to.equal(true);
+    expect(bobAcc.pendingCreditCount).to.equal(0);
 
-      await program.methods
-        .createAccount(initialCommitment)
-        .accounts({
-          owner: bob.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: bobAccountPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([bob])
-        .rpc();
-
-      const account = await program.account.confidentialAccount.fetch(
-        bobAccountPDA
-      );
-      expect(account.owner.toBase58()).to.equal(bob.publicKey.toBase58());
-      expect(account.isInitialized).to.be.true;
-      expect(account.nonce.toNumber()).to.equal(0);
-    });
-
-    it("should fail to create duplicate account for Alice", async () => {
-      try {
-        const initialCommitment = bigintToLeBytes(aliceCommitment);
-        await program.methods
-          .createAccount(initialCommitment)
-          .accounts({
-            owner: alice.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: aliceAccountPDA,
-            systemProgram: SystemProgram.programId,
-          })
-          .signers([alice])
-          .rpc();
-        expect.fail("Should have thrown");
-      } catch (err: any) {
-        // PDA already exists
-        expect(err).to.exist;
-      }
-    });
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, bob.publicKey)),
+      [bob],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
   });
 
-  // =========================================================================
-  // 4. Deposit -- Alice deposits 100 SOL
-  // =========================================================================
-  describe("4. Deposit", () => {
-    const depositAmountSol = 100;
-    const depositAmountLamports = BigInt(depositAmountSol) * BigInt(LAMPORTS_PER_SOL);
+  // ---------------------------------------------------------------------
+  // 7. apply_pending double-spend is rejected (pending credit was consumed)
+  // ---------------------------------------------------------------------
+  it('apply_pending: double-apply is rejected', async function () {
+    this.timeout(300_000);
+    const proofBuffer = await uploadAndVerifyProof(connection, bob, proofs.bobApply);
 
-    it("should deposit 100 SOL into Alice's confidential account", async () => {
-      // Compute new commitment after deposit
-      const newBalance = aliceBalance + depositAmountLamports;
-      const newSalt = BigInt("222222222222");
-      const newCommitment = createBalanceCommitment(
-        newBalance,
-        newSalt,
-        BigInt(aliceNonce),
-        aliceOwnerPubkey,
-        tokenMintField
+    let rejected = false;
+    try {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildApplyPendingIx(
+            bob.publicKey,
+            NATIVE_SOL_MINT,
+            proofBuffer,
+            bobPostApplyCommit32,
+            transferAmtHash32,
+          ),
+        ),
+        [bob],
+        { commitment: 'confirmed', skipPreflight: true },
       );
-      const newCommitmentBytes = bigintToLeBytes(newCommitment);
-      const proof = mockProof();
+    } catch (err: any) {
+      rejected = true;
+      expect(err.toString()).to.match(/PendingCreditNotFound|0x|custom program error/);
+    }
+    expect(rejected).to.equal(true);
 
-      const aliceBalanceBefore = await provider.connection.getBalance(
-        alice.publicKey
-      );
-
-      await program.methods
-        .deposit(
-          new BN(depositAmountLamports.toString()),
-          proof,
-          newCommitmentBytes
-        )
-        .accounts({
-          depositor: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-          vkData: balanceVkPDA,
-          vault: vaultPDA,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: null,
-          userTokenAccount: null,
-          poolVault: null,
-        })
-        .signers([alice])
-        .rpc();
-
-      // Update local state
-      aliceBalance = newBalance;
-      aliceSalt = newSalt;
-      aliceCommitment = newCommitment;
-      aliceNonce += 1;
-
-      // Verify on-chain state
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.nonce.toNumber()).to.equal(aliceNonce);
-      expect(Buffer.from(account.balanceCommitment)).to.deep.equal(
-        Buffer.from(newCommitmentBytes)
-      );
-
-      // Verify SOL was transferred to vault
-      const aliceBalanceAfter = await provider.connection.getBalance(
-        alice.publicKey
-      );
-      // Alice should have spent depositAmount + tx fees
-      expect(aliceBalanceBefore - aliceBalanceAfter).to.be.greaterThan(
-        Number(depositAmountLamports)
-      );
-
-      const vaultBalance = await provider.connection.getBalance(vaultPDA);
-      // Vault should have at least the deposited amount (plus its initial rent)
-      expect(vaultBalance).to.be.greaterThanOrEqual(
-        Number(depositAmountLamports)
-      );
-    });
-
-    it("should reject deposit of 0 amount", async () => {
-      const newCommitmentBytes = bigintToLeBytes(aliceCommitment);
-      const proof = mockProof();
-
-      try {
-        await program.methods
-          .deposit(new BN(0), proof, newCommitmentBytes)
-          .accounts({
-            depositor: alice.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: aliceAccountPDA,
-            vkData: balanceVkPDA,
-            vault: vaultPDA,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: null,
-            userTokenAccount: null,
-            poolVault: null,
-          })
-          .signers([alice])
-          .rpc();
-        expect.fail("Should have thrown -- zero amount");
-      } catch (err: any) {
-        expect(err.toString()).to.contain("InvalidAmount");
-      }
-    });
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, bob.publicKey)),
+      [bob],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
   });
 
-  // =========================================================================
-  // 5. Private Transfer -- Alice sends 30 SOL to Bob
-  // =========================================================================
-  describe("5. Confidential Transfer", () => {
-    const transferAmountLamports = BigInt(30) * BigInt(LAMPORTS_PER_SOL);
+  // ---------------------------------------------------------------------
+  // 8. withdraw: alice takes funds back out
+  // ---------------------------------------------------------------------
+  it('withdraw: alice withdraws via verified STARK buffer', async function () {
+    this.timeout(300_000);
+    const proofBuffer = await uploadAndVerifyProof(connection, alice, proofs.aliceWithdraw);
 
-    it("should transfer 30 SOL privately from Alice to Bob", async () => {
-      // Sender (Alice) -- reduce balance
-      const aliceNewBalance = aliceBalance - transferAmountLamports;
-      const aliceNewSalt = BigInt("333333333333");
-      const aliceNewCommitment = createBalanceCommitment(
-        aliceNewBalance,
-        aliceNewSalt,
-        BigInt(aliceNonce),
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-      const aliceNewCommitmentBytes = bigintToLeBytes(aliceNewCommitment);
+    const balBefore = await connection.getBalance(alice.publicKey);
+    const withdrawLamports = 300_000n; // strictly < current vault balance
 
-      // Amount hash = Poseidon(amount, amount_salt) -- links sender and recipient
-      transferAmountSalt = BigInt("555555555555");
-      const amountHashBigint = createAmountCommitment(
-        transferAmountLamports,
-        transferAmountSalt
-      );
-      transferAmountHash = bigintToLeBytes(amountHashBigint);
-
-      const proof = mockProof();
-
-      await program.methods
-        .confidentialTransfer(proof, aliceNewCommitmentBytes, transferAmountHash)
-        .accounts({
-          sender: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          senderAccount: aliceAccountPDA,
-          recipientAccount: bobAccountPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      // Update local Alice state
-      aliceBalance = aliceNewBalance;
-      aliceSalt = aliceNewSalt;
-      aliceCommitment = aliceNewCommitment;
-      aliceNonce += 1;
-
-      // Verify sender account
-      const aliceAccount = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(aliceAccount.nonce.toNumber()).to.equal(aliceNonce);
-      expect(Buffer.from(aliceAccount.balanceCommitment)).to.deep.equal(
-        Buffer.from(aliceNewCommitmentBytes)
-      );
-
-      // Verify recipient has a pending credit
-      const bobAccount = await program.account.confidentialAccount.fetch(
-        bobAccountPDA
-      );
-      expect(bobAccount.pendingCredits).to.have.length(1);
-      expect(Buffer.from(bobAccount.pendingCredits[0].amountHash)).to.deep.equal(
-        Buffer.from(transferAmountHash)
-      );
-      expect(bobAccount.pendingCredits[0].sender.toBase58()).to.equal(
-        alice.publicKey.toBase58()
+    await withRetry(async () => {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildWithdrawIx(
+            alice.publicKey,
+            NATIVE_SOL_MINT,
+            proofBuffer,
+            withdrawLamports,
+            alicePostWithdrawCommit32,
+          ),
+        ),
+        [alice],
+        { commitment: 'confirmed', skipPreflight: true },
       );
     });
+
+    const balAfter = await connection.getBalance(alice.publicKey);
+    expect(balAfter).to.be.gte(balBefore);
+
+    const acc = await readConfidentialAccount(connection, alice.publicKey, NATIVE_SOL_MINT);
+    expect(acc.nonce.toString()).to.equal('3');
+    expect(acc.balanceCommitment.equals(alicePostWithdrawCommit32)).to.equal(true);
+
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(proofBuffer, alice.publicKey)),
+      [alice],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
   });
 
-  // =========================================================================
-  // 6. Apply Pending -- Bob applies the incoming credit
-  // =========================================================================
-  describe("6. Apply Pending", () => {
-    const transferAmountLamports = BigInt(30) * BigInt(LAMPORTS_PER_SOL);
+  // ---------------------------------------------------------------------
+  // 9. error path: mismatched proof authority is rejected.
+  //    Bob uploads his own circuit-4 proof, then Alice tries to reuse Bob's
+  //    verified buffer to drive her own deposit. The on-chain check
+  //    `authority(buffer) == payer` must reject.
+  // ---------------------------------------------------------------------
+  it('deposit: mismatched proof authority is rejected', async function () {
+    this.timeout(300_000);
+    const bobsBuffer = await uploadAndVerifyProof(connection, bob, proofs.bobApply);
 
-    it("should apply pending credit to Bob's account", async () => {
-      // Bob adds the received amount to his balance
-      const bobNewBalance = bobBalance + transferAmountLamports;
-      const bobNewSalt = BigInt("777777777777");
-      const bobNewCommitment = createBalanceCommitment(
-        bobNewBalance,
-        bobNewSalt,
-        BigInt(bobNonce),
-        bobOwnerPubkey,
-        tokenMintField
+    let rejected = false;
+    try {
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildDepositIx(
+            alice.publicKey,
+            NATIVE_SOL_MINT,
+            bobsBuffer,
+            100_000n,
+            aliceDepositCommit32,
+          ),
+        ),
+        [alice],
+        { commitment: 'confirmed', skipPreflight: true },
       );
-      const bobNewCommitmentBytes = bigintToLeBytes(bobNewCommitment);
-
-      const proof = mockProof();
-
-      await program.methods
-        .applyPending(proof, bobNewCommitmentBytes, transferAmountHash)
-        .accounts({
-          recipient: bob.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: bobAccountPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([bob])
-        .rpc();
-
-      // Update local Bob state
-      bobBalance = bobNewBalance;
-      bobSalt = bobNewSalt;
-      bobCommitment = bobNewCommitment;
-      bobNonce += 1;
-
-      // Verify
-      const bobAccount = await program.account.confidentialAccount.fetch(
-        bobAccountPDA
-      );
-      expect(bobAccount.nonce.toNumber()).to.equal(bobNonce);
-      expect(bobAccount.pendingCredits).to.have.length(0);
-      expect(Buffer.from(bobAccount.balanceCommitment)).to.deep.equal(
-        Buffer.from(bobNewCommitmentBytes)
-      );
-    });
-
-    it("should fail to apply the same pending credit twice (double-apply)", async () => {
-      const bobNewCommitmentBytes = bigintToLeBytes(bobCommitment);
-      const proof = mockProof();
-
-      try {
-        await program.methods
-          .applyPending(proof, bobNewCommitmentBytes, transferAmountHash)
-          .accounts({
-            recipient: bob.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: bobAccountPDA,
-            vkData: balanceVkPDA,
-          })
-          .signers([bob])
-          .rpc();
-        expect.fail("Should have thrown -- pending credit already consumed");
-      } catch (err: any) {
-        expect(err.toString()).to.contain("PendingCreditNotFound");
-      }
-    });
-  });
-
-  // =========================================================================
-  // 7. Withdraw -- Alice withdraws 20 SOL
-  // =========================================================================
-  describe("7. Withdraw", () => {
-    const withdrawAmountLamports = BigInt(20) * BigInt(LAMPORTS_PER_SOL);
-
-    it("should withdraw 20 SOL from Alice's confidential account", async () => {
-      const aliceNewBalance = aliceBalance - withdrawAmountLamports;
-      const aliceNewSalt = BigInt("444444444444");
-      const aliceNewCommitment = createBalanceCommitment(
-        aliceNewBalance,
-        aliceNewSalt,
-        BigInt(aliceNonce),
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-      const aliceNewCommitmentBytes = bigintToLeBytes(aliceNewCommitment);
-      const proof = mockProof();
-
-      const aliceSolBefore = await provider.connection.getBalance(
-        alice.publicKey
-      );
-
-      await program.methods
-        .withdraw(
-          new BN(withdrawAmountLamports.toString()),
-          proof,
-          aliceNewCommitmentBytes
-        )
-        .accounts({
-          withdrawer: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-          vkData: balanceVkPDA,
-          vault: vaultPDA,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: null,
-          userTokenAccount: null,
-          poolVault: null,
-        })
-        .signers([alice])
-        .rpc();
-
-      // Update local state
-      aliceBalance = aliceNewBalance;
-      aliceSalt = aliceNewSalt;
-      aliceCommitment = aliceNewCommitment;
-      aliceNonce += 1;
-
-      // Verify on-chain
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.nonce.toNumber()).to.equal(aliceNonce);
-      expect(Buffer.from(account.balanceCommitment)).to.deep.equal(
-        Buffer.from(aliceNewCommitmentBytes)
-      );
-
-      // Alice should have received SOL back (minus tx fee)
-      const aliceSolAfter = await provider.connection.getBalance(
-        alice.publicKey
-      );
-      // Her SOL should have increased by roughly the withdraw amount (minus small tx fee)
-      const netGain = aliceSolAfter - aliceSolBefore;
-      expect(netGain).to.be.greaterThan(
-        Number(withdrawAmountLamports) - 100_000 // allow for tx fee
-      );
-    });
-
-    it("should reject withdrawal of 0 amount", async () => {
-      const commitmentBytes = bigintToLeBytes(aliceCommitment);
-      const proof = mockProof();
-
-      try {
-        await program.methods
-          .withdraw(new BN(0), proof, commitmentBytes)
-          .accounts({
-            withdrawer: alice.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: aliceAccountPDA,
-            vkData: balanceVkPDA,
-            vault: vaultPDA,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: null,
-            userTokenAccount: null,
-            poolVault: null,
-          })
-          .signers([alice])
-          .rpc();
-        expect.fail("Should have thrown -- zero amount");
-      } catch (err: any) {
-        expect(err.toString()).to.contain("InvalidAmount");
-      }
-    });
-  });
-
-  // =========================================================================
-  // 8. Prove Balance -- Alice proves balance >= 40 SOL
-  // =========================================================================
-  describe("8. Prove Balance", () => {
-    it("should prove Alice has >= 40 SOL", async () => {
-      // Alice's balance after deposit(100) - transfer(30) - withdraw(20) = 50 SOL
-      // She should be able to prove >= 40 SOL
-      const threshold = new BN((40n * BigInt(LAMPORTS_PER_SOL)).toString());
-      const proof = mockProof();
-
-      await program.methods
-        .proveBalance(threshold, proof)
-        .accounts({
-          prover: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-          vkData: proofVkPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      // If we get here without error, the proof was accepted
-    });
-
-    it("should prove Bob has >= 20 SOL", async () => {
-      // Bob received 30 SOL, so >= 20 should pass
-      const threshold = new BN((20n * BigInt(LAMPORTS_PER_SOL)).toString());
-      const proof = mockProof();
-
-      await program.methods
-        .proveBalance(threshold, proof)
-        .accounts({
-          prover: bob.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: bobAccountPDA,
-          vkData: proofVkPDA,
-        })
-        .signers([bob])
-        .rpc();
-    });
-  });
-
-  // =========================================================================
-  // 9. Viewer Management
-  // =========================================================================
-  describe("9. Viewer Management", () => {
-    it("should add a viewer key to Alice's account", async () => {
-      await program.methods
-        .addViewer(viewer.publicKey)
-        .accounts({
-          owner: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.viewerKeys).to.have.length(1);
-      expect(account.viewerKeys[0].toBase58()).to.equal(
-        viewer.publicKey.toBase58()
-      );
-    });
-
-    it("should reject duplicate viewer key", async () => {
-      try {
-        await program.methods
-          .addViewer(viewer.publicKey)
-          .accounts({
-            owner: alice.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: aliceAccountPDA,
-          })
-          .signers([alice])
-          .rpc();
-        expect.fail("Should have thrown -- viewer already exists");
-      } catch (err: any) {
-        expect(err.toString()).to.contain("ViewerKeyAlreadyExists");
-      }
-    });
-
-    it("should add a second viewer key", async () => {
-      const viewer2 = Keypair.generate();
-
-      await program.methods
-        .addViewer(viewer2.publicKey)
-        .accounts({
-          owner: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.viewerKeys).to.have.length(2);
-    });
-
-    it("should remove a viewer key", async () => {
-      await program.methods
-        .removeViewer(viewer.publicKey)
-        .accounts({
-          owner: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.viewerKeys).to.have.length(1);
-      // The remaining viewer should NOT be the removed one
-      expect(account.viewerKeys[0].toBase58()).to.not.equal(
-        viewer.publicKey.toBase58()
-      );
-    });
-
-    it("should reject removing a non-existent viewer key", async () => {
-      const nonExistentViewer = Keypair.generate();
-
-      try {
-        await program.methods
-          .removeViewer(nonExistentViewer.publicKey)
-          .accounts({
-            owner: alice.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: aliceAccountPDA,
-          })
-          .signers([alice])
-          .rpc();
-        expect.fail("Should have thrown -- viewer not found");
-      } catch (err: any) {
-        expect(err.toString()).to.contain("ViewerKeyNotFound");
-      }
-    });
-
-    it("should reject viewer management from non-owner", async () => {
-      try {
-        await program.methods
-          .addViewer(stranger.publicKey)
-          .accounts({
-            owner: stranger.publicKey,
-            mintConfig: mintConfigPDA,
-            // stranger doesn't have a confidential account for this mint,
-            // so PDA derivation will fail
-            confidentialAccount: aliceAccountPDA,
-          })
-          .signers([stranger])
-          .rpc();
-        expect.fail("Should have thrown -- stranger is not account owner");
-      } catch (err: any) {
-        expect(err).to.exist;
-      }
-    });
-  });
-
-  // =========================================================================
-  // 10. Error Cases
-  // =========================================================================
-  describe("10. Error Cases", () => {
-    it("should reject deposit from wrong signer (PDA mismatch)", async () => {
-      // Bob tries to deposit into Alice's account
-      const proof = mockProof();
-      const commitmentBytes = bigintToLeBytes(aliceCommitment);
-
-      try {
-        await program.methods
-          .deposit(new BN(LAMPORTS_PER_SOL), proof, commitmentBytes)
-          .accounts({
-            depositor: bob.publicKey,
-            mintConfig: mintConfigPDA,
-            // Alice's account PDA -- but depositor is Bob, so seeds mismatch
-            confidentialAccount: aliceAccountPDA,
-            vkData: balanceVkPDA,
-            vault: vaultPDA,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: null,
-            userTokenAccount: null,
-            poolVault: null,
-          })
-          .signers([bob])
-          .rpc();
-        expect.fail("Should have thrown -- PDA seeds mismatch");
-      } catch (err: any) {
-        // Anchor will reject because PDA derivation from bob.publicKey != aliceAccountPDA
-        expect(err).to.exist;
-      }
-    });
-
-    it("should reject withdraw from wrong signer (PDA mismatch)", async () => {
-      const proof = mockProof();
-      const commitmentBytes = bigintToLeBytes(aliceCommitment);
-
-      try {
-        await program.methods
-          .withdraw(new BN(LAMPORTS_PER_SOL), proof, commitmentBytes)
-          .accounts({
-            withdrawer: bob.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: aliceAccountPDA,
-            vkData: balanceVkPDA,
-            vault: vaultPDA,
-            systemProgram: SystemProgram.programId,
-            tokenProgram: null,
-            userTokenAccount: null,
-            poolVault: null,
-          })
-          .signers([bob])
-          .rpc();
-        expect.fail("Should have thrown -- PDA seeds mismatch");
-      } catch (err: any) {
-        expect(err).to.exist;
-      }
-    });
-
-    it("should reject apply_pending with non-existent amount_hash", async () => {
-      const proof = mockProof();
-      const commitmentBytes = bigintToLeBytes(bobCommitment);
-      const fakeAmountHash = new Array(32).fill(0xff);
-
-      try {
-        await program.methods
-          .applyPending(proof, commitmentBytes, fakeAmountHash)
-          .accounts({
-            recipient: bob.publicKey,
-            mintConfig: mintConfigPDA,
-            confidentialAccount: bobAccountPDA,
-            vkData: balanceVkPDA,
-          })
-          .signers([bob])
-          .rpc();
-        expect.fail("Should have thrown -- no matching pending credit");
-      } catch (err: any) {
-        expect(err.toString()).to.contain("PendingCreditNotFound");
-      }
-    });
-
-    it("should reject prove_balance from non-owner (PDA mismatch)", async () => {
-      const proof = mockProof();
-
-      try {
-        await program.methods
-          .proveBalance(new BN(0), proof)
-          .accounts({
-            prover: bob.publicKey,
-            mintConfig: mintConfigPDA,
-            // Alice's account -- but prover is Bob
-            confidentialAccount: aliceAccountPDA,
-            vkData: proofVkPDA,
-          })
-          .signers([bob])
-          .rpc();
-        expect.fail("Should have thrown -- PDA mismatch");
-      } catch (err: any) {
-        expect(err).to.exist;
-      }
-    });
-
-    it("should correctly track nonces across operations", async () => {
-      // Alice has done: create(nonce=0), deposit(nonce->1), transfer(nonce->2), withdraw(nonce->3)
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.nonce.toNumber()).to.equal(aliceNonce);
-      expect(account.nonce.toNumber()).to.equal(3);
-    });
-
-    it("should verify commitment privacy (same balance, different salts)", async () => {
-      const balance = BigInt(100) * BigInt(LAMPORTS_PER_SOL);
-      const salt1 = BigInt("111111111111");
-      const salt2 = BigInt("999999999999");
-
-      const comm1 = createBalanceCommitment(
-        balance,
-        salt1,
-        0n,
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-      const comm2 = createBalanceCommitment(
-        balance,
-        salt2,
-        0n,
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-
-      expect(comm1).to.not.equal(comm2);
-    });
-
-    it("should verify wrong spending key produces different owner pubkey", async () => {
-      const wrongKey = BigInt("11111111111111111111");
-      const wrongPubkey = deriveOwnerPubkey(wrongKey);
-
-      expect(wrongPubkey).to.not.equal(aliceOwnerPubkey);
-
-      // Commitment with wrong key differs
-      const balance = BigInt(100) * BigInt(LAMPORTS_PER_SOL);
-      const salt = BigInt("123456789");
-      const realComm = createBalanceCommitment(
-        balance,
-        salt,
-        0n,
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-      const wrongComm = createBalanceCommitment(
-        balance,
-        salt,
-        0n,
-        wrongPubkey,
-        tokenMintField
-      );
-
-      expect(realComm).to.not.equal(wrongComm);
-    });
-
-    it("should verify overflow protection (negative balance in field > 2^64)", async () => {
-      // If someone tried to withdraw more than they have, the "new balance"
-      // in field arithmetic would be p - delta, which exceeds 2^64.
-      // The Num2Bits(64) constraint in the circuit would reject this.
-      const balance = BigInt(100) * BigInt(LAMPORTS_PER_SOL);
-      const excessiveWithdraw = BigInt(200) * BigInt(LAMPORTS_PER_SOL);
-      const badNewBalance =
-        (FIELD_MODULUS + balance - excessiveWithdraw) % FIELD_MODULUS;
-
-      expect(badNewBalance).to.be.greaterThan(BigInt(2) ** BigInt(64));
-    });
-
-    it("should verify amount commitment linkage between sender and recipient", async () => {
-      const amount = BigInt(30) * BigInt(LAMPORTS_PER_SOL);
-      const salt = BigInt("555555555555");
-
-      const senderHash = createAmountCommitment(amount, salt);
-      const recipientHash = createAmountCommitment(amount, salt);
-
-      // Same amount + salt = same hash (sender and recipient agree)
-      expect(senderHash).to.equal(recipientHash);
-
-      // Different amount = different hash (can't claim different amount)
-      const wrongHash = createAmountCommitment(
-        BigInt(50) * BigInt(LAMPORTS_PER_SOL),
-        salt
-      );
-      expect(senderHash).to.not.equal(wrongHash);
-    });
-  });
-
-  // =========================================================================
-  // 11. Additional Flow -- Second Deposit + Transfer Sequence
-  // =========================================================================
-  describe("11. Additional Flow", () => {
-    it("should allow a second deposit from Alice", async () => {
-      const depositAmount = BigInt(10) * BigInt(LAMPORTS_PER_SOL);
-      const newBalance = aliceBalance + depositAmount;
-      const newSalt = BigInt("888888888888");
-      const newCommitment = createBalanceCommitment(
-        newBalance,
-        newSalt,
-        BigInt(aliceNonce),
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-      const newCommitmentBytes = bigintToLeBytes(newCommitment);
-      const proof = mockProof();
-
-      await program.methods
-        .deposit(new BN(depositAmount.toString()), proof, newCommitmentBytes)
-        .accounts({
-          depositor: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-          vkData: balanceVkPDA,
-          vault: vaultPDA,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: null,
-          userTokenAccount: null,
-          poolVault: null,
-        })
-        .signers([alice])
-        .rpc();
-
-      aliceBalance = newBalance;
-      aliceSalt = newSalt;
-      aliceCommitment = newCommitment;
-      aliceNonce += 1;
-
-      const account = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(account.nonce.toNumber()).to.equal(aliceNonce);
-    });
-
-    it("should allow Bob to send back to Alice", async () => {
-      const transferAmount = BigInt(10) * BigInt(LAMPORTS_PER_SOL);
-      const bobNewBalance = bobBalance - transferAmount;
-      const bobNewSalt = BigInt("999999999999");
-      const bobNewCommitment = createBalanceCommitment(
-        bobNewBalance,
-        bobNewSalt,
-        BigInt(bobNonce),
-        bobOwnerPubkey,
-        tokenMintField
-      );
-      const bobNewCommitmentBytes = bigintToLeBytes(bobNewCommitment);
-
-      const amtSalt = BigInt("101010101010");
-      const amountHashBigint = createAmountCommitment(transferAmount, amtSalt);
-      const amountHashBytes = bigintToLeBytes(amountHashBigint);
-      const proof = mockProof();
-
-      await program.methods
-        .confidentialTransfer(proof, bobNewCommitmentBytes, amountHashBytes)
-        .accounts({
-          sender: bob.publicKey,
-          mintConfig: mintConfigPDA,
-          senderAccount: bobAccountPDA,
-          recipientAccount: aliceAccountPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([bob])
-        .rpc();
-
-      bobBalance = bobNewBalance;
-      bobSalt = bobNewSalt;
-      bobCommitment = bobNewCommitment;
-      bobNonce += 1;
-
-      // Verify Alice has pending credit
-      const aliceAccount = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(aliceAccount.pendingCredits).to.have.length(1);
-      expect(aliceAccount.pendingCredits[0].sender.toBase58()).to.equal(
-        bob.publicKey.toBase58()
-      );
-
-      // Alice applies the pending credit
-      const aliceNewBalance = aliceBalance + transferAmount;
-      const aliceNewSalt = BigInt("121212121212");
-      const aliceNewCommitment = createBalanceCommitment(
-        aliceNewBalance,
-        aliceNewSalt,
-        BigInt(aliceNonce),
-        aliceOwnerPubkey,
-        tokenMintField
-      );
-      const aliceNewCommitmentBytes = bigintToLeBytes(aliceNewCommitment);
-
-      await program.methods
-        .applyPending(proof, aliceNewCommitmentBytes, amountHashBytes)
-        .accounts({
-          recipient: alice.publicKey,
-          mintConfig: mintConfigPDA,
-          confidentialAccount: aliceAccountPDA,
-          vkData: balanceVkPDA,
-        })
-        .signers([alice])
-        .rpc();
-
-      aliceBalance = aliceNewBalance;
-      aliceSalt = aliceNewSalt;
-      aliceCommitment = aliceNewCommitment;
-      aliceNonce += 1;
-
-      // Verify clean state
-      const aliceAccountAfter = await program.account.confidentialAccount.fetch(
-        aliceAccountPDA
-      );
-      expect(aliceAccountAfter.pendingCredits).to.have.length(0);
-      expect(aliceAccountAfter.nonce.toNumber()).to.equal(aliceNonce);
-    });
-
-    it("should verify final balance expectations via local tracking", () => {
-      // Alice: started 0, +100, -30, -20, +10, +10 = 70 SOL
-      const expectedAlice = BigInt(70) * BigInt(LAMPORTS_PER_SOL);
-      expect(aliceBalance).to.equal(expectedAlice);
-
-      // Bob: started 0, +30, -10 = 20 SOL
-      const expectedBob = BigInt(20) * BigInt(LAMPORTS_PER_SOL);
-      expect(bobBalance).to.equal(expectedBob);
-
-      // Nonces: alice = 5 ops (deposit, transfer, withdraw, deposit, apply)
-      expect(aliceNonce).to.equal(5);
-      // Bob = 2 ops (apply, transfer)
-      expect(bobNonce).to.equal(2);
-    });
+    } catch (err: any) {
+      rejected = true;
+      expect(err.toString()).to.match(/InvalidProof|0x|custom program error/);
+    }
+    expect(rejected).to.equal(true, 'Alice must not be able to use Bobs proof');
+
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(buildCloseProofBufferIx(bobsBuffer, bob.publicKey)),
+      [bob],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
   });
 });
+
+// Keep BN reachable for @coral-xyz/anchor peer check (tsc doesn't otherwise).
+export const _bnMarker: BN | null = null;

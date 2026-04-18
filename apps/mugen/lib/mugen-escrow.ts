@@ -31,7 +31,8 @@ import {
   createAssociatedTokenAccountInstruction,
   createSyncNativeInstruction,
 } from '@solana/spl-token';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants — must mirror programs/p01_mugen/src/state/mod.rs
@@ -211,7 +212,7 @@ export async function ensureRelayerWrappedSol(
 // ═══════════════════════════════════════════════════════════════════════════
 
 function anchorDisc(ixName: string): Buffer {
-  return Buffer.from(sha256(`global:${ixName}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${ixName}`)).slice(0, 8));
 }
 
 function u16LE(n: number): Buffer {

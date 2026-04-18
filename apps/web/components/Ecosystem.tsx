@@ -1,13 +1,13 @@
 "use client";
 
-import { memo } from "react";
+import { memo, type ReactElement } from "react";
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
 import { useT } from "@/i18n";
 
 
 // Tech logo SVGs — small recognizable icons for each technology
-const techLogos: Record<string, JSX.Element> = {
+const techLogos: Record<string, ReactElement> = {
   Solana: (
     <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor">
       <path d="M4.52 16.57l3.17-3.24a.56.56 0 01.4-.17h12.35c.25 0 .38.31.2.49l-3.17 3.24a.56.56 0 01-.4.17H4.72a.28.28 0 01-.2-.49z" />

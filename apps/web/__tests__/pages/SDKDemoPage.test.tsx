@@ -9,7 +9,7 @@ import SDKDemoPage from '@/app/sdk-demo/page';
 describe('SDKDemoPage -- Developer SDK playground and widget showcase', () => {
   beforeEach(() => {
     // Reset window.protocol01 to not installed state
-    delete (window as Record<string, unknown>).protocol01;
+    delete (window as unknown as Record<string, unknown>).protocol01;
     render(<SDKDemoPage />);
   });
 

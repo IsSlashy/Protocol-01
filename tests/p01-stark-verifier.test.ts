@@ -494,8 +494,8 @@ describe('p01_stark_verifier', () => {
     preflightCommitment: 'confirmed',
     commitment: 'confirmed',
   };
-  const provider = AnchorProvider.env();
-  provider.opts = opts;
+  const baseProvider = AnchorProvider.env();
+  const provider = new AnchorProvider(baseProvider.connection, baseProvider.wallet, opts);
   anchor.setProvider(provider);
 
   const program = new Program(IDL, provider);

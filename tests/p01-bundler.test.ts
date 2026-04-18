@@ -20,6 +20,7 @@ describe("p01_bundler", () => {
   anchor.setProvider(provider);
   const connection = provider.connection;
   const coordinator = provider.wallet.payer;
+  if (!coordinator) throw new Error("Provider wallet has no payer keypair");
 
   it("batch_shield — 2 shields from different depositors, atomic", async () => {
     // Create 2 test depositors

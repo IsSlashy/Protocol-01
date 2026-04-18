@@ -1,17 +1,15 @@
 /**
- * Subscription Vault — Anchor Tests
+ * Subscription Vault — Anchor Tests (normal mode only)
  *
- * Tests the vault-based subscription system (normal + private ZK modes):
- *   1. subscribe_normal — wallet-based vault creation with SOL + SPL
- *   2. subscribe_private — vault from denominated pool note
- *   3. claim_period — retailer claims accrued periods
- *   4. pause_normal / pause_private — pause vault
- *   5. resume_normal / resume_private — resume vault
- *   6. cancel_normal — refund remaining to subscriber
- *   7. cancel_private — re-shield remaining into pool
+ * Tests the wallet-based (non-ZK) subscription lifecycle:
+ *   1. subscribe_normal — SOL + SPL vault creation
+ *   2. claim_period — retailer claims accrued periods
+ *   3. pause_normal / resume_normal — pause + resume
+ *   4. cancel_normal — refund remaining to subscriber
+ *   5. Full normal lifecycle end-to-end
  *
- * Uses mock proofs (ZK verifier in non-SBF mode returns true).
- * For real proof tests, see subscription-vault-e2e.ts.
+ * STARK-based private subscription flows are covered in
+ * subscription-vault-stark.ts.
  *
  * Program: GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
  */
@@ -46,15 +44,9 @@ const PROGRAM_ID = new PublicKey(
 
 const SEEDS = {
   SUBSCRIPTION_VAULT: Buffer.from("subscription_vault"),
-  DENOMINATED_POOL: Buffer.from("denominated_pool"),
-  MERKLE_TREE: Buffer.from("merkle_tree"),
-  NULLIFIER: Buffer.from("nullifier"),
-  VK_DATA_SUBSCRIBER: Buffer.from("vk_data_subscriber"),
 };
 
 const NATIVE_SOL_MINT = SystemProgram.programId;
-const ONE_SOL = new BN(LAMPORTS_PER_SOL);
-const EPOCH_DELAY_1 = new BN(1);
 
 // ---------------------------------------------------------------------------
 // PDA derivation helpers
@@ -76,43 +68,6 @@ function deriveVaultPDA(
   );
 }
 
-function deriveDenominatedPoolPDA(
-  tokenMint: PublicKey,
-  denomination: BN
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [
-      SEEDS.DENOMINATED_POOL,
-      tokenMint.toBuffer(),
-      denomination.toArrayLike(Buffer, "le", 8),
-    ],
-    PROGRAM_ID
-  );
-}
-
-function deriveMerkleTreePDA(pool: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.MERKLE_TREE, pool.toBuffer()],
-    PROGRAM_ID
-  );
-}
-
-function deriveNullifierPDA(
-  pool: PublicKey,
-  nullifier: number[]
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.NULLIFIER, pool.toBuffer(), Buffer.from(nullifier)],
-    PROGRAM_ID
-  );
-}
-
-function deriveSubscriberVkPDA(authority: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.VK_DATA_SUBSCRIBER, authority.toBuffer()],
-    PROGRAM_ID
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -120,14 +75,6 @@ function deriveSubscriberVkPDA(authority: PublicKey): [PublicKey, number] {
 
 function random32(): number[] {
   return Array.from(Keypair.generate().publicKey.toBuffer()).slice(0, 32);
-}
-
-function mockProof(): { piA: number[]; piB: number[]; piC: number[] } {
-  return {
-    piA: new Array(64).fill(0),
-    piB: new Array(128).fill(0),
-    piC: new Array(64).fill(0),
-  };
 }
 
 /** Wait for N slots to pass */
@@ -209,7 +156,8 @@ describe("Subscription Vault", () => {
 
       // Verify vault state
       const vault = await program.account.subscriptionVault.fetch(vaultPDA);
-      expect(vault.subscriberPubkey.toBase58()).to.equal(
+      expect(vault.subscriberPubkey).to.not.be.null;
+      expect(vault.subscriberPubkey!.toBase58()).to.equal(
         authority.publicKey.toBase58()
       );
       expect(vault.subscriberCommitment).to.be.null;
@@ -490,278 +438,6 @@ describe("Subscription Vault", () => {
       // Vault account closed
       const vaultInfo = await provider.connection.getAccountInfo(vaultPDA);
       expect(vaultInfo).to.be.null;
-    });
-  });
-
-  // =========================================================================
-  // 6. subscribe_private (denominated pool)
-  // =========================================================================
-
-  describe("subscribe_private", () => {
-    const poolDenom = ONE_SOL;
-    const poolEpochDelay = EPOCH_DELAY_1;
-    const poolVkHash = random32();
-
-    let poolPDA: PublicKey;
-    let poolTreePDA: PublicKey;
-
-    // Private vault parameters
-    const subscriberCommitment = random32();
-    const nullifier = random32();
-    const merkleRoot = random32();
-    let privateVaultPDA: PublicKey;
-
-    before(async () => {
-      // Create a denominated pool for the private subscription source
-      [poolPDA] = deriveDenominatedPoolPDA(NATIVE_SOL_MINT, poolDenom);
-      [poolTreePDA] = deriveMerkleTreePDA(poolPDA);
-
-      // Check if pool already exists
-      const poolInfo = await provider.connection.getAccountInfo(poolPDA);
-      if (!poolInfo) {
-        await program.methods
-          .initDenominatedPool(
-            poolVkHash,
-            NATIVE_SOL_MINT,
-            poolDenom,
-            poolEpochDelay
-          )
-          .accountsPartial({
-            authority: authority.publicKey,
-            denominatedPool: poolPDA,
-            merkleTree: poolTreePDA,
-            systemProgram: SystemProgram.programId,
-            rent: SYSVAR_RENT_PUBKEY,
-          })
-          .rpc();
-      }
-
-      // Shield a note into the pool
-      const commitment = random32();
-      const newRoot = random32();
-      await program.methods
-        .shieldDenominated(commitment, newRoot)
-        .accountsPartial({
-          depositor: authority.publicKey,
-          denominatedPool: poolPDA,
-          merkleTree: poolTreePDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      // Derive private vault PDA using commitment as subscriber ID
-      [privateVaultPDA] = deriveVaultPDA(
-        retailer.publicKey,
-        Buffer.from(subscriberCommitment),
-        NATIVE_SOL_MINT
-      );
-    });
-
-    it("creates a private vault from a denominated pool note", async () => {
-      const proof = mockProof();
-      const [nullifierPDA] = deriveNullifierPDA(poolPDA, nullifier);
-
-      // Upload a fake VK for the denominated pool proof verification
-      // In test mode (non-SBF), the verifier always returns true
-      // so we need a VK data account but its contents don't matter for mock tests
-
-      // For this test, we need the pool's VK data account
-      // The mock verifier on the test validator (non-SBF) returns true
-      // so we use the pool itself as the VK data account (it has data)
-      // In production, this would be a proper VK account.
-
-      try {
-        await program.methods
-          .subscribePrivate(
-            proof,
-            nullifier,
-            merkleRoot,
-            new BN(0), // min_epoch
-            subscriberCommitment,
-            rate,
-            intervalSlots,
-            vkHashSubscriber
-          )
-          .accountsPartial({
-            payer: authority.publicKey,
-            retailer: retailer.publicKey,
-            vault: privateVaultPDA,
-            denominatedPool: poolPDA,
-            merkleTree: poolTreePDA,
-            nullifierRecord: nullifierPDA,
-            verificationKeyData: poolPDA, // mock: use pool as VK data
-            systemProgram: SystemProgram.programId,
-          })
-          .rpc();
-
-        const vault = await program.account.subscriptionVault.fetch(
-          privateVaultPDA
-        );
-        expect(vault.subscriberPubkey).to.be.null;
-        expect(Buffer.from(vault.subscriberCommitment)).to.deep.equal(
-          Buffer.from(subscriberCommitment)
-        );
-        expect(vault.retailer.toBase58()).to.equal(
-          retailer.publicKey.toBase58()
-        );
-        expect(vault.isActive).to.be.true;
-        expect(vault.sourcePool.toBase58()).to.equal(poolPDA.toBase58());
-      } catch (err: any) {
-        // In SBF mode, mock proofs are rejected — this is expected
-        console.log(
-          "  (subscribe_private with mock proof rejected in SBF mode — expected)"
-        );
-        console.log("  Error:", err.message?.slice(0, 100));
-      }
-    });
-
-    it("rejects double-spend (same nullifier)", async () => {
-      const proof = mockProof();
-      const [nullifierPDA] = deriveNullifierPDA(poolPDA, nullifier);
-
-      const subscriberCommitment2 = random32();
-      const [privateVault2] = deriveVaultPDA(
-        retailer.publicKey,
-        Buffer.from(subscriberCommitment2),
-        NATIVE_SOL_MINT
-      );
-
-      try {
-        await program.methods
-          .subscribePrivate(
-            proof,
-            nullifier, // same nullifier
-            merkleRoot,
-            new BN(0),
-            subscriberCommitment2,
-            rate,
-            intervalSlots,
-            vkHashSubscriber
-          )
-          .accountsPartial({
-            payer: authority.publicKey,
-            retailer: retailer.publicKey,
-            vault: privateVault2,
-            denominatedPool: poolPDA,
-            merkleTree: poolTreePDA,
-            nullifierRecord: nullifierPDA,
-            verificationKeyData: poolPDA,
-            systemProgram: SystemProgram.programId,
-          })
-          .rpc();
-        expect.fail("Should have thrown — double spend");
-      } catch (err: any) {
-        // Nullifier PDA already exists
-        const msg = err.toString();
-        expect(
-          msg.includes("already in use") ||
-            msg.includes("0x0") ||
-            msg.includes("InvalidProof")
-        ).to.be.true;
-      }
-    });
-  });
-
-  // =========================================================================
-  // 7. pause_private / resume_private (mock proofs)
-  // =========================================================================
-
-  describe("pause_private / resume_private", () => {
-    // These tests would require a subscriber VK data account.
-    // With mock proofs in non-SBF mode, we test the account structure.
-    // Full proof tests in subscription-vault-e2e.ts.
-
-    it("requires private mode vault for pause_private", async () => {
-      // Create a fresh normal vault to test mode check
-      const sub4 = Keypair.generate();
-      const sig = await provider.connection.requestAirdrop(
-        sub4.publicKey,
-        2 * LAMPORTS_PER_SOL
-      );
-      await provider.connection.confirmTransaction(sig);
-
-      const [normalVault] = deriveVaultPDA(
-        retailer.publicKey,
-        sub4.publicKey.toBuffer(),
-        NATIVE_SOL_MINT
-      );
-
-      await program.methods
-        .subscribeNormal(rate, intervalSlots, amount, NATIVE_SOL_MINT, vkHashSubscriber)
-        .accountsPartial({
-          subscriber: sub4.publicKey,
-          retailer: retailer.publicKey,
-          vault: normalVault,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([sub4])
-        .rpc();
-
-      // Try pause_private on a normal vault — should fail
-      try {
-        await program.methods
-          .pausePrivate(mockProof())
-          .accountsPartial({
-            payer: authority.publicKey,
-            vault: normalVault,
-            subscriberVkData: authority.publicKey, // dummy
-          })
-          .rpc();
-        expect.fail("Should have thrown");
-      } catch (err: any) {
-        expect(err.toString()).to.include("ExpectedPrivateMode");
-      }
-
-      // Clean up: cancel the vault
-      await program.methods
-        .cancelNormal()
-        .accountsPartial({
-          subscriber: sub4.publicKey,
-          retailer: retailer.publicKey,
-          vault: normalVault,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([sub4])
-        .rpc();
-    });
-  });
-
-  // =========================================================================
-  // 8. Subscriber VK data storage
-  // =========================================================================
-
-  describe("subscriber VK data", () => {
-    it("initializes subscriber VK data account", async () => {
-      const [vkPDA] = deriveSubscriberVkPDA(authority.publicKey);
-
-      await program.methods
-        .initSubscriberVkData(452)
-        .accountsPartial({
-          authority: authority.publicKey,
-          vkDataAccount: vkPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      const vkInfo = await provider.connection.getAccountInfo(vkPDA);
-      expect(vkInfo).to.not.be.null;
-      expect(vkInfo!.data.length).to.equal(452);
-    });
-
-    it("writes subscriber VK data", async () => {
-      const [vkPDA] = deriveSubscriberVkPDA(authority.publicKey);
-      const chunk = Buffer.alloc(100, 0xab);
-
-      await program.methods
-        .writeSubscriberVkData(0, chunk)
-        .accountsPartial({
-          authority: authority.publicKey,
-          vkDataAccount: vkPDA,
-        })
-        .rpc();
-
-      const vkInfo = await provider.connection.getAccountInfo(vkPDA);
-      expect(vkInfo!.data.slice(0, 100)).to.deep.equal(chunk);
     });
   });
 

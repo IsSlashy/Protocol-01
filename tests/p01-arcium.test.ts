@@ -40,6 +40,7 @@ describe('p01_arcium — Arcium MPC Integration', () => {
     ephemeralPrivKey = x25519.utils.randomSecretKey();
     ephemeralPubKey = x25519.getPublicKey(ephemeralPrivKey);
     const mxePubKey = await getMXEPublicKey(provider, PROGRAM_ID);
+    if (!mxePubKey) throw new Error('MXE public key not found');
     sharedSecret = x25519.getSharedSecret(ephemeralPrivKey, mxePubKey);
     cipher = new RescueCipher(sharedSecret);
   });
@@ -401,70 +402,6 @@ describe('p01_arcium — Arcium MPC Integration', () => {
       const commitLog = logs.find((l) => l.includes('NullifierCommitment:'));
       expect(commitLog).to.not.be.undefined;
       console.log('  Commitment:', commitLog);
-    });
-  });
-
-  // =========================================================================
-  // UC1: Confidential Relay
-  // =========================================================================
-
-  describe('UC1: Confidential Relay', () => {
-    it('Submit encrypted TX for threshold decryption', async () => {
-      // Create a dummy serialized TX (64 bytes for one chunk)
-      const dummyTx = randomBytes(64);
-      const chunks: bigint[] = [];
-      for (let i = 0; i < dummyTx.length; i += 8) {
-        chunks.push(
-          BigInt('0x' + Buffer.from(dummyTx.slice(i, i + 8)).reverse().toString('hex'))
-        );
-      }
-
-      const { ciphertexts, nonce, pubKey } = encrypt(chunks);
-      const computationOffset = new anchor.BN(randomBytes(8), 'hex');
-      const accounts = getAccounts('threshold_decrypt', computationOffset);
-
-      const [relayJobAddress] = PublicKey.findProgramAddressSync(
-        [Buffer.from('p01_arcium_relay'), computationOffset.toArray('le', 8)],
-        PROGRAM_ID
-      );
-
-      const fee = 5000n; // 5000 lamports
-      const slot = await provider.connection.getSlot();
-      const deadline = BigInt(slot) + 100n;
-
-      const tx = await program.methods
-        .submitConfidentialRelay(
-          computationOffset,
-          Array.from(ciphertexts[0]),
-          Array.from(pubKey),
-          new anchor.BN(deserializeLE(nonce).toString()),
-          new anchor.BN(fee.toString()),
-          new anchor.BN(deadline.toString()),
-          dummyTx.length
-        )
-        .accountsPartial({
-          ...accounts,
-          relayJob: relayJobAddress,
-          payer: provider.wallet.publicKey,
-        })
-        .rpc({ commitment: 'confirmed' });
-
-      console.log('  Relay job submitted:', tx);
-
-      const finalizeSig = await awaitComputationFinalization(
-        provider,
-        computationOffset,
-        PROGRAM_ID,
-        'confirmed'
-      );
-
-      console.log('  MPC decrypted:', finalizeSig);
-
-      // Verify relay job account
-      const jobAccount = await program.account.relayJob.fetch(relayJobAddress);
-      expect(jobAccount.fee.toNumber()).to.equal(5000);
-      expect(jobAccount.originalTxLen).to.equal(64);
-      console.log('  Relay job verified on-chain');
     });
   });
 

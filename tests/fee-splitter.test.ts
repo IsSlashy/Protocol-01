@@ -191,7 +191,7 @@ describe('P01 Fee Splitter Program', () => {
       const largeAmount = BigInt('18446744073709551615'); // max u64
       const fee = calculateFee(largeAmount, 50);
       // fee = max_u64 * 50 / 10000 = ~92233720368547758
-      expect(fee).to.be.greaterThan(BigInt(0));
+      expect(fee > BigInt(0)).to.be.true;
     });
 
     it('should ensure fee + recipient_amount == total amount', () => {

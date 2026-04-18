@@ -92,6 +92,15 @@ dist/
 .expo/
 build/
 target/
+# Track generated Anchor IDL + TS types for SDK consumers.
+!target/
+target/*
+!target/idl/
+!target/types/
+target/idl/*
+!target/idl/*.json
+target/types/*
+!target/types/*.ts
 
 # Environment
 .env
@@ -140,11 +149,25 @@ nul
 **/keypair.json
 **/recipient-keypair.json
 **/id.json
+**/*.keypair.json
+**/*-keypair.json
+**/noise-wallet-*.json
+**/taker-keypair.json
+**/treasury-buffer-keypair.json
+**/.secrets/
+.secrets/
 *.key
 *.p12
 *.jks
 *.pfx
 *.keystore
+
+# Anchor IDL build temp files
+_idl_*.txt
+_idl_*.json
+
+# Weekly-update video renders
+apps/weekly-update/out/
 
 .vercel
 # Generated TypeScript declarations
@@ -152,6 +175,24 @@ nul
 *.timestamp-*.mts
 *.timestamp-*.mjs
 **/vercel_out.txt
+
+# Compiled TS output in source trees (not dist/)
+apps/*/src/**/*.js
+apps/*/services/**/*.js
+apps/*/providers/**/*.js
+apps/*/stores/**/*.js
+apps/*/components/**/*.js
+apps/*/app/**/*.js
+apps/*/hooks/**/*.js
+apps/*/lib/**/*.js
+apps/*/utils/**/*.js
+apps/*/i18n/**/*.js
+apps/*/__tests__/**/*.js
+packages/*/src/**/*.js
+packages/*/tests/**/*.js
+tests/**/*.js
+tests/**/*.js.map
+**/*.tsbuildinfo
 
 # APK build artifacts
 *.apk

@@ -29,7 +29,7 @@ import { NextRequest } from 'next/server';
 // Helper to create NextRequest
 function createRequest(url: string, options: RequestInit & { headers?: Record<string, string> } = {}) {
   const fullUrl = `http://localhost:3000${url}`;
-  return new NextRequest(fullUrl, options);
+  return new NextRequest(fullUrl, options as unknown as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 describe('Whitelist API -- Developer access management', () => {

@@ -29,7 +29,8 @@ import {
   mintTo,
   getOrCreateAssociatedTokenAccount,
 } from '@solana/spl-token';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 
@@ -45,7 +46,7 @@ const REPUTATION_SEED = Buffer.from('mugen_rep');
 const NATIVE_SOL = new PublicKey('So11111111111111111111111111111111111111112');
 
 function anchorDisc(name: string): Buffer {
-  const hash = sha256(`global:${name}`);
+  const hash = sha256(utf8ToBytes(`global:${name}`));
   return Buffer.from(hash.slice(0, 8));
 }
 

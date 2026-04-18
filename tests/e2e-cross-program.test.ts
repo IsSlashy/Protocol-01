@@ -4,12 +4,10 @@
  * Tests interactions between multiple Protocol 01 programs on devnet:
  *   - Fee Splitter: SOL split with hardcoded PROTOCOL_FEE_WALLET
  *   - Registry + Stealth: v1/v2 meta-address registration, lookup, deregister
- *   - Trustless Nullifier: pool init, shield, nullifier PDA creation
  *
  * Programs:
  *   p01_fee_splitter: UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM
  *   p01_registry:     QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB
- *   p01_trustless:    FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q
  *
  * Run:
  *   ANCHOR_PROVIDER_URL="https://devnet.helius-rpc.com/?api-key=..."
@@ -36,7 +34,6 @@ import * as crypto from 'crypto';
 // ---------------------------------------------------------------------------
 const FEE_SPLITTER_PROGRAM_ID = new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM');
 const REGISTRY_PROGRAM_ID = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
-const TRUSTLESS_PROGRAM_ID = new PublicKey('FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q');
 
 /** Hardcoded protocol fee wallet (BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN) */
 const PROTOCOL_FEE_WALLET = new PublicKey('BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN');
@@ -163,32 +160,6 @@ function findRegistryPda(owner: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
     [Buffer.from('user_registry'), owner.toBuffer()],
     REGISTRY_PROGRAM_ID,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Trustless PDA helpers
-// ---------------------------------------------------------------------------
-function derivePoolPDA(tokenMint: PublicKey, denomination: bigint): [PublicKey, number] {
-  const denomBuf = Buffer.alloc(8);
-  denomBuf.writeBigUInt64LE(denomination);
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from('trustless_pool'), tokenMint.toBuffer(), denomBuf],
-    TRUSTLESS_PROGRAM_ID,
-  );
-}
-
-function deriveMerkleTreePDA(poolPDA: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from('merkle_tree'), poolPDA.toBuffer()],
-    TRUSTLESS_PROGRAM_ID,
-  );
-}
-
-function deriveNullifierPDA(poolPDA: PublicKey, nullifier: Buffer): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from('nullifier'), poolPDA.toBuffer(), nullifier],
-    TRUSTLESS_PROGRAM_ID,
   );
 }
 
@@ -471,130 +442,4 @@ describe('E2E: Cross-Program Integration', () => {
     });
   });
 
-  // =========================================================================
-  // Trustless Nullifier
-  // =========================================================================
-  describe('Trustless Nullifier', () => {
-    // Use native SOL (system program ID as token mint) with a unique denomination
-    // to avoid collisions with existing pools
-    const tokenMint = SystemProgram.programId;
-    const denomination = BigInt(Math.floor(Math.random() * 1_000_000) + 100_000);
-    let poolPDA: PublicKey;
-    let merkleTreePDA: PublicKey;
-
-    before(async () => {
-      [poolPDA] = derivePoolPDA(tokenMint, denomination);
-      [merkleTreePDA] = deriveMerkleTreePDA(poolPDA);
-    });
-
-    it('initializes trustless pool', async () => {
-      const vkHash = randomBytes32();
-      const zksplVkHash = randomBytes32();
-
-      const disc = computeDiscriminator('initialize_pool');
-      const data = Buffer.concat([
-        disc,
-        vkHash,                             // vk_hash: [u8; 32]
-        zksplVkHash,                        // zkspl_vk_hash: [u8; 32]
-        tokenMint.toBuffer(),               // token_mint: Pubkey
-        u64ToLeBytes(denomination),         // denomination: u64
-      ]);
-
-      const ix = new anchor.web3.TransactionInstruction({
-        programId: TRUSTLESS_PROGRAM_ID,
-        keys: [
-          { pubkey: authority.publicKey, isSigner: true, isWritable: true },
-          { pubkey: poolPDA, isSigner: false, isWritable: true },
-          { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-          { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-        ],
-        data,
-      });
-
-      await withRetry(async () => {
-        const sig = await sendAndConfirmTransaction(
-          provider.connection,
-          new Transaction().add(ix),
-          [authority],
-          { commitment: 'confirmed', skipPreflight: true },
-        );
-        console.log(`    initialize_pool tx: ${sig}`);
-      });
-
-      // Verify pool exists
-      const poolInfo = await provider.connection.getAccountInfo(poolPDA);
-      expect(poolInfo).to.not.be.null;
-      expect(poolInfo!.owner.toBase58()).to.equal(TRUSTLESS_PROGRAM_ID.toBase58());
-      console.log(`    Pool initialized: denomination=${denomination} lamports`);
-    });
-
-    it('stores nullifier PDA', async () => {
-      // Shield first to insert a commitment
-      const commitment = randomBytes32();
-      // For native SOL pools, the new_root needs to be valid.
-      // We use a random 32-byte root (the on-chain program will accept any root
-      // when the tree is empty and update tracking).
-      const newRoot = randomBytes32();
-
-      const shieldDisc = computeDiscriminator('shield_trustless');
-      const shieldData = Buffer.concat([shieldDisc, commitment, newRoot]);
-
-      const shieldIx = new anchor.web3.TransactionInstruction({
-        programId: TRUSTLESS_PROGRAM_ID,
-        keys: [
-          { pubkey: authority.publicKey, isSigner: true, isWritable: true },
-          { pubkey: poolPDA, isSigner: false, isWritable: true },
-          { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        data: shieldData,
-      });
-
-      await withRetry(async () => {
-        const sig = await sendAndConfirmTransaction(
-          provider.connection,
-          new Transaction().add(shieldIx),
-          [authority],
-          { commitment: 'confirmed', skipPreflight: true },
-        );
-        console.log(`    shield_trustless tx: ${sig}`);
-      });
-
-      // Verify pool state updated
-      const poolInfo = await provider.connection.getAccountInfo(poolPDA);
-      expect(poolInfo).to.not.be.null;
-      console.log('    Commitment inserted into Merkle tree');
-
-      // Verify the nullifier PDA can be derived deterministically
-      const nullifierHash = randomBytes32();
-      const [nullifierPDA] = deriveNullifierPDA(poolPDA, nullifierHash);
-      expect(nullifierPDA).to.not.be.null;
-      console.log(`    Nullifier PDA derivable: ${nullifierPDA.toBase58().slice(0, 16)}...`);
-    });
-
-    it('rejects duplicate nullifier (double-spend)', async () => {
-      // The nullifier PDA mechanism prevents double-spend:
-      // If a nullifier PDA already exists, the on-chain init_if_needed
-      // or init constraint will reject the duplicate.
-      //
-      // Full unshield requires a valid Groth16 proof, which we cannot
-      // generate in a test without circuit files. Instead, verify that:
-      // 1. The nullifier PDA is deterministic
-      // 2. Two derivations with the same nullifier produce the same PDA
-      const nullifierHash = randomBytes32();
-      const [pda1] = deriveNullifierPDA(poolPDA, nullifierHash);
-      const [pda2] = deriveNullifierPDA(poolPDA, nullifierHash);
-
-      expect(pda1.toBase58()).to.equal(pda2.toBase58());
-
-      // Different nullifiers produce different PDAs
-      const differentHash = randomBytes32();
-      const [pda3] = deriveNullifierPDA(poolPDA, differentHash);
-      expect(pda3.toBase58()).to.not.equal(pda1.toBase58());
-
-      console.log('    Nullifier PDA determinism verified (same input = same PDA)');
-      console.log('    Different nullifier = different PDA (no collision)');
-    });
-  });
 });

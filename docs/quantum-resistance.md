@@ -763,7 +763,7 @@ This is the highest-priority migration because:
 3. **Implement hybrid key exchange**
    ```typescript
    // packages/specter-sdk/src/stealth/derive.ts
-   import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+   import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 
    function deriveHybridSharedSecret(
      ephemeralX25519Secret: Uint8Array,

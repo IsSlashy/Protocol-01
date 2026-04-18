@@ -6,7 +6,7 @@
  *   - Hash-Timelock Vault: SHA-256 preimage lock, timelock enforcement
  *   - Commit-Reveal: slot-based timing, commitment matching
  *
- * Program ID: HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o
+ * Program ID: 9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv
  *
  * Run:
  *   ANCHOR_PROVIDER_URL="https://devnet.helius-rpc.com/?api-key=..."
@@ -24,15 +24,17 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import { expect } from 'chai';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 // ============================================================================
 // Constants (match Rust program)
 // ============================================================================
 
-const PROGRAM_ID = new PublicKey('HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o');
+const PROGRAM_ID = new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv');
 
-const WOTS_CHAINS = 32;
+const WOTS_MSG_CHAINS = 64;
+const WOTS_CHECKSUM_CHAINS = 3;
+const WOTS_CHAINS = WOTS_MSG_CHAINS + WOTS_CHECKSUM_CHAINS; // 67
 const WOTS_MAX_VAL = 15;
 const HASH_SIZE = 32;
 
@@ -146,12 +148,22 @@ function computeWithdrawMessage(
 function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignature {
   const signature = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
 
-  for (let i = 0; i < WOTS_CHAINS; i++) {
-    const byteIdx = Math.floor(i / 2);
+  const nibbles = new Array<number>(WOTS_CHAINS);
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    const byteIdx = i >> 1;
     const byte = message[byteIdx]!;
-    const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
-    const stepsToHash = WOTS_MAX_VAL - nibble;
+    nibbles[i] = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
+  }
+  let checksum = 0;
+  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
+    checksum += WOTS_MAX_VAL - nibbles[i]!;
+  }
+  nibbles[WOTS_MSG_CHAINS] = (checksum >> 8) & 0x0f;
+  nibbles[WOTS_MSG_CHAINS + 1] = (checksum >> 4) & 0x0f;
+  nibbles[WOTS_MSG_CHAINS + 2] = checksum & 0x0f;
 
+  for (let i = 0; i < WOTS_CHAINS; i++) {
+    const stepsToHash = WOTS_MAX_VAL - nibbles[i]!;
     let current: Uint8Array = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
     for (let step = 0; step < stepsToHash; step++) {
       current = new Uint8Array(sha256(current));

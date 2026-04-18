@@ -39,7 +39,7 @@ import {
   createAssociatedTokenAccountInstruction,
   createSyncNativeInstruction,
 } from '@solana/spl-token';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

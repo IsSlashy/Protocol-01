@@ -12,7 +12,6 @@
  *
  * Programs:
  *   zk_shielded:   GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
- *   p01_trustless:  FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q
  *
  * Run:
  *   ANCHOR_PROVIDER_URL="https://devnet.helius-rpc.com/?api-key=..."
@@ -50,7 +49,6 @@ import * as crypto from 'crypto';
 // Program IDs
 // ---------------------------------------------------------------------------
 const ZK_SHIELDED_PROGRAM_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
-const TRUSTLESS_PROGRAM_ID = new PublicKey('FnTmMxsNx5yQ4nDxiUq7HKLyb6Hwi5Wb5D71Zu69i43Q');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,9 +60,6 @@ const SEEDS = {
   SHIELDED_POOL: Buffer.from('shielded_pool'),
   MERKLE_TREE: Buffer.from('merkle_tree'),
   NULLIFIER_SET: Buffer.from('nullifier_set'),
-  TRUSTLESS_POOL: Buffer.from('trustless_pool'),
-  TRUSTLESS_MERKLE: Buffer.from('merkle_tree'),
-  TRUSTLESS_NULLIFIER: Buffer.from('nullifier'),
 };
 
 // ---------------------------------------------------------------------------
@@ -107,7 +102,6 @@ function computeDiscriminator(name: string): Buffer {
 const DISCRIMINATORS = {
   initialize_pool: computeDiscriminator('initialize_pool'),
   shield: computeDiscriminator('shield'),
-  shield_trustless: computeDiscriminator('shield_trustless'),
 };
 
 // ---------------------------------------------------------------------------
@@ -276,32 +270,6 @@ function u64ToLeBytes(value: bigint): Buffer {
 
 function randomBytes32(): Buffer {
   return crypto.randomBytes(32);
-}
-
-// ---------------------------------------------------------------------------
-// Trustless pool PDA helpers
-// ---------------------------------------------------------------------------
-function deriveTrustlessPoolPDA(tokenMint: PublicKey, denomination: bigint): [PublicKey, number] {
-  const denomBuf = Buffer.alloc(8);
-  denomBuf.writeBigUInt64LE(denomination);
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.TRUSTLESS_POOL, tokenMint.toBuffer(), denomBuf],
-    TRUSTLESS_PROGRAM_ID,
-  );
-}
-
-function deriveTrustlessMerkleTreePDA(poolPDA: PublicKey): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.TRUSTLESS_MERKLE, poolPDA.toBuffer()],
-    TRUSTLESS_PROGRAM_ID,
-  );
-}
-
-function deriveTrustlessNullifierPDA(poolPDA: PublicKey, nullifier: Buffer): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [SEEDS.TRUSTLESS_NULLIFIER, poolPDA.toBuffer(), nullifier],
-    TRUSTLESS_PROGRAM_ID,
-  );
 }
 
 // ===========================================================================
@@ -682,94 +650,4 @@ describe('E2E: Full Shield -> Unshield Flow', () => {
     });
   });
 
-  // ─────────────────────────────────────────────────────────────────
-  // 5. Denominated Pool (Trustless)
-  // ─────────────────────────────────────────────────────────────────
-  describe('Denominated Pool', () => {
-    // Use native SOL with a unique denomination
-    const denomination = BigInt(100_000); // 0.0001 SOL
-    let dPoolPDA: PublicKey;
-    let dMerkleTreePDA: PublicKey;
-
-    it('handles denominated pool (fixed amounts)', async () => {
-      // Generate unique denomination to avoid collision
-      const uniqueDenom = BigInt(Math.floor(Math.random() * 1_000_000) + 50_000);
-
-      [dPoolPDA] = deriveTrustlessPoolPDA(SystemProgram.programId, uniqueDenom);
-      [dMerkleTreePDA] = deriveTrustlessMerkleTreePDA(dPoolPDA);
-
-      const vkHash = randomBytes32();
-      const zksplVkHash = randomBytes32();
-
-      const disc = computeDiscriminator('initialize_pool');
-      const data = Buffer.concat([
-        disc,
-        vkHash,
-        zksplVkHash,
-        SystemProgram.programId.toBuffer(),
-        u64ToLeBytes(uniqueDenom),
-      ]);
-
-      const ix = {
-        programId: TRUSTLESS_PROGRAM_ID,
-        keys: [
-          { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-          { pubkey: dPoolPDA, isSigner: false, isWritable: true },
-          { pubkey: dMerkleTreePDA, isSigner: false, isWritable: true },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-          { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-        ],
-        data,
-      };
-
-      await withRetry(async () => {
-        const sig = await sendAndConfirmTransaction(
-          connection,
-          new Transaction().add(ix),
-          [payer],
-          { commitment: 'confirmed', skipPreflight: true },
-        );
-        console.log(`    Denominated pool initialized: ${uniqueDenom} lamports/note`);
-        console.log(`    TX: ${sig}`);
-      });
-
-      // Shield into denominated pool
-      const commitment = randomBytes32();
-      const newRoot = randomBytes32();
-
-      const shieldDisc = computeDiscriminator('shield_trustless');
-      const shieldData = Buffer.concat([shieldDisc, commitment, newRoot]);
-
-      const shieldIx = {
-        programId: TRUSTLESS_PROGRAM_ID,
-        keys: [
-          { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-          { pubkey: dPoolPDA, isSigner: false, isWritable: true },
-          { pubkey: dMerkleTreePDA, isSigner: false, isWritable: true },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        data: shieldData,
-      };
-
-      await withRetry(async () => {
-        const sig = await sendAndConfirmTransaction(
-          connection,
-          new Transaction().add(shieldIx),
-          [payer],
-          { commitment: 'confirmed', skipPreflight: true },
-        );
-        console.log(`    Shielded ${uniqueDenom} lamports into denominated pool`);
-      });
-
-      // Verify pool state
-      const poolInfo = await connection.getAccountInfo(dPoolPDA);
-      expect(poolInfo).to.not.be.null;
-
-      // Verify nullifier PDA derivation
-      const nullifierHash = randomBytes32();
-      const [nullifierPDA] = deriveTrustlessNullifierPDA(dPoolPDA, nullifierHash);
-      expect(nullifierPDA).to.not.be.null;
-      console.log('    Denominated pool working with fixed amounts');
-    });
-  });
 });
