@@ -68,7 +68,8 @@ const UNSHIELD_FEE_BPS = 50; // 0.5 %
 const SHIELD_FEE_BPS = 30;   // 0.3 %
 
 const MAX_CHUNK_SIZE = 900;
-const PROOF_DATA_OFFSET = 82;
+const PROOF_DATA_OFFSET = 83;
+const MAX_REALLOC_STEP = 10_240;
 
 // ---------------------------------------------------------------------------
 // PDA helpers
@@ -227,6 +228,29 @@ function buildVerifyStarkProofV2Ix(
   });
 }
 
+function buildVerifyDeepAliPhase2Ix(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  publicInputs: bigint[],
+): anchor.web3.TransactionInstruction {
+  const disc = Buffer.from([217, 239, 203, 65, 109, 182, 70, 115]);
+  const vecLen = Buffer.alloc(4);
+  vecLen.writeUInt32LE(publicInputs.length, 0);
+  const inputBufs = publicInputs.map((v) => {
+    const b = Buffer.alloc(8);
+    b.writeBigUInt64LE(v);
+    return b;
+  });
+  return new anchor.web3.TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.concat([disc, vecLen, ...inputBufs]),
+  });
+}
+
 function buildResizeProofBufferIx(
   proofBuffer: PublicKey,
   authority: PublicKey,
@@ -279,6 +303,46 @@ async function uploadProofChunks(
   }
 }
 
+async function logErrorDetails(
+  err: any,
+  label: string,
+  connection: Connection,
+): Promise<void> {
+  const sig = err?.signature ?? err?.txSignature;
+  console.error(`${label} ERROR: ${err?.message ?? err}`);
+  if (sig) console.error(`${label} SIG: ${sig}`);
+  if (err?.logs && Array.isArray(err.logs) && err.logs.length > 0) {
+    console.error(`${label} LOGS (preflight):\n${err.logs.slice(-40).join('\n')}`);
+    return;
+  }
+  if (typeof err?.getLogs === 'function') {
+    try {
+      const logs = await err.getLogs(connection);
+      if (logs?.length) {
+        console.error(`${label} LOGS (fetched):\n${logs.slice(-40).join('\n')}`);
+        return;
+      }
+    } catch (logErr: any) {
+      console.error(`${label} getLogs() failed: ${logErr?.message ?? logErr}`);
+    }
+  }
+  if (sig) {
+    try {
+      const tx = await connection.getTransaction(sig, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      if (tx?.meta?.logMessages?.length) {
+        console.error(
+          `${label} LOGS (getTransaction):\n${tx.meta.logMessages.slice(-40).join('\n')}`,
+        );
+      }
+    } catch (txErr: any) {
+      console.error(`${label} getTransaction() failed: ${txErr?.message ?? txErr}`);
+    }
+  }
+}
+
 async function cleanupStaleProofBuffer(
   connection: Connection,
   authority: Keypair,
@@ -315,11 +379,16 @@ function nullifierFromU64(nullifierU64: bigint): Buffer {
 // Test suite
 // ---------------------------------------------------------------------------
 describe('E2E Smoke: shield → unshield with STARK', () => {
-  const provider = new AnchorProvider(
-    AnchorProvider.env().connection,
-    AnchorProvider.env().wallet,
-    { commitment: 'confirmed', preflightCommitment: 'confirmed' },
-  );
+  // Rebuild connection with 'confirmed' commitment — AnchorProvider.env() creates
+  // a Connection without specifying commitment, which defaults to 'processed' and
+  // breaks err.getLogs() (requires at least 'confirmed').
+  const envProvider = AnchorProvider.env();
+  const rpcUrl = (envProvider.connection as any)._rpcEndpoint as string;
+  const connection = new Connection(rpcUrl, 'confirmed');
+  const provider = new AnchorProvider(connection, envProvider.wallet, {
+    commitment: 'confirmed',
+    preflightCommitment: 'confirmed',
+  });
   anchor.setProvider(provider);
 
   const program = anchor.workspace.ZkShielded as Program<ZkShielded>;
@@ -414,6 +483,9 @@ describe('E2E Smoke: shield → unshield with STARK', () => {
           denominatedPool: poolPDA,
           merkleTree: treePDA,
           systemProgram: SystemProgram.programId,
+          tokenProgram: null,
+          userTokenAccount: null,
+          poolVault: null,
           protocolFeeWallet: PROTOCOL_FEE_WALLET,
         })
         .rpc({ commitment: 'confirmed' });
@@ -465,8 +537,10 @@ describe('E2E Smoke: shield → unshield with STARK', () => {
       );
     });
 
-    // Resize if > 10KB so write_proof_chunk can store the tail bytes
-    if (starkProof.proofBytes.length + PROOF_DATA_OFFSET > 10_240) {
+    // Resize iteratively until buffer holds the full proof (10KB per call).
+    const targetSize = starkProof.proofBytes.length + PROOF_DATA_OFFSET;
+    let currentSize = Math.min(targetSize, 10_240);
+    while (currentSize < targetSize) {
       await withRetry(async () => {
         await sendAndConfirmTransaction(
           provider.connection,
@@ -475,34 +549,65 @@ describe('E2E Smoke: shield → unshield with STARK', () => {
           { commitment: 'confirmed', skipPreflight: true },
         );
       });
+      currentSize = Math.min(currentSize + MAX_REALLOC_STEP, targetSize);
     }
 
     // Upload
     await uploadProofChunks(provider.connection, authority, proofBufferPDA, starkProof.proofBytes);
 
-    // Verify with v2 (multi-input)
+    // Verify with v2 (multi-input) — phase 1
     await withRetry(async () => {
-      await sendAndConfirmTransaction(
-        provider.connection,
-        new Transaction()
-          .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
-          .add(
-            buildVerifyStarkProofV2Ix(
-              proofBufferPDA,
-              authority.publicKey,
-              [...starkProof.publicInputs],
+      try {
+        await sendAndConfirmTransaction(
+          provider.connection,
+          new Transaction()
+            .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+            .add(
+              buildVerifyStarkProofV2Ix(
+                proofBufferPDA,
+                authority.publicKey,
+                [...starkProof.publicInputs],
+              ),
             ),
-          ),
-        [authority],
-        { commitment: 'confirmed', skipPreflight: true },
-      );
+          [authority],
+          { commitment: 'confirmed', skipPreflight: true },
+        );
+      } catch (err: any) {
+        await logErrorDetails(err, 'PHASE 1', provider.connection);
+        throw err;
+      }
     });
 
-    // Sanity: verified flag must be set
+    // Phase 2 — DEEP-ALI at OOD for circuit 1
+    await withRetry(async () => {
+      try {
+        await sendAndConfirmTransaction(
+          provider.connection,
+          new Transaction()
+            .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+            .add(
+              buildVerifyDeepAliPhase2Ix(
+                proofBufferPDA,
+                authority.publicKey,
+                [...starkProof.publicInputs],
+              ),
+            ),
+          [authority],
+          { commitment: 'confirmed', skipPreflight: true },
+        );
+      } catch (err: any) {
+        await logErrorDetails(err, 'PHASE 2', provider.connection);
+        throw err;
+      }
+    });
+
+    // Sanity: verified + deep_ali_verified flags must be set
     const info = await provider.connection.getAccountInfo(proofBufferPDA);
     expect(info).to.not.be.null;
     // verified byte offset = 49 (8 disc + 32 auth + 1 circuit + 4 size + 4 written)
     expect(info!.data[49]).to.equal(1);
+    // deep_ali_verified byte offset = 82 (after public_inputs_hash)
+    expect(info!.data[82]).to.equal(1);
   });
 
   // ─────────────────────────────────────────────────────────────────
@@ -513,25 +618,40 @@ describe('E2E Smoke: shield → unshield with STARK', () => {
     const feeBalBefore = await provider.connection.getBalance(PROTOCOL_FEE_WALLET);
 
     await withRetry(async () => {
-      await program.methods
-        .unshieldDenominatedStark(
-          Array.from(nullifier),
-          Array.from(shieldRoot),
-          new BN(0), // min_epoch — dynamic_delay=2 with 0 mature notes; 0+2 << current_epoch
-          new BN(starkProof.publicInputs[1].toString()), // stark_commitment_u64
-        )
-        .accountsPartial({
-          payer: authority.publicKey,
-          recipient: recipient.publicKey,
-          denominatedPool: poolPDA,
-          merkleTree: treePDA,
-          nullifierRecord: nullifierRecordPDA,
-          starkProofBuffer: proofBufferPDA,
-          systemProgram: SystemProgram.programId,
-          protocolFeeWallet: PROTOCOL_FEE_WALLET,
-        })
-        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
-        .rpc({ commitment: 'confirmed', skipPreflight: true });
+      try {
+        const unshieldIx = await program.methods
+          .unshieldDenominatedStark(
+            Array.from(nullifier),
+            Array.from(shieldRoot),
+            new BN(0), // min_epoch — dynamic_delay=2 with 0 mature notes; 0+2 << current_epoch
+            new BN(starkProof.publicInputs[1].toString()), // stark_commitment_u64
+          )
+          .accountsPartial({
+            payer: authority.publicKey,
+            recipient: recipient.publicKey,
+            denominatedPool: poolPDA,
+            merkleTree: treePDA,
+            nullifierRecord: nullifierRecordPDA,
+            starkProofBuffer: proofBufferPDA,
+            systemProgram: SystemProgram.programId,
+            tokenProgram: null,
+            poolVault: null,
+            recipientTokenAccount: null,
+            protocolFeeWallet: PROTOCOL_FEE_WALLET,
+          })
+          .instruction();
+        await sendAndConfirmTransaction(
+          provider.connection,
+          new Transaction()
+            .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }))
+            .add(unshieldIx),
+          [authority],
+          { commitment: 'confirmed', skipPreflight: true },
+        );
+      } catch (err: any) {
+        await logErrorDetails(err, 'UNSHIELD', provider.connection);
+        throw err;
+      }
     });
 
     // Fee math — mirrors fee::calculate_fee in Rust
