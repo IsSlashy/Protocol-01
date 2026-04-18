@@ -32,8 +32,8 @@
  * (e.g., for client-side key derivation, seed-phrase commitment archives,
  * or future v2 instructions that explicitly opt into 64-byte commitments).
  */
-import { sha512 } from '@noble/hashes/sha512';
-import { randomBytes } from '@noble/hashes/utils';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 import { constantTimeEqual } from '../utils/crypto';
 
 // ── Constants ─────────────────────────────────────────────────────────────

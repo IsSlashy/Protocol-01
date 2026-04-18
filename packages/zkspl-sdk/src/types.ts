@@ -11,20 +11,6 @@ export type Bytes32 = Uint8Array;
 export type FieldElement = bigint;
 
 // ---------------------------------------------------------------------------
-// Groth16 proof (on-chain representation)
-// ---------------------------------------------------------------------------
-
-/** Groth16 proof structure matching the Anchor IDL Groth16Proof type */
-export interface Groth16Proof {
-  /** G1 point pi_a (64 bytes: x || y) */
-  pi_a: Uint8Array; // [u8; 64]
-  /** G2 point pi_b (128 bytes: x0 || x1 || y0 || y1) */
-  pi_b: Uint8Array; // [u8; 128]
-  /** G1 point pi_c (64 bytes: x || y) */
-  pi_c: Uint8Array; // [u8; 64]
-}
-
-// ---------------------------------------------------------------------------
 // On-chain account types (deserialized from Anchor)
 // ---------------------------------------------------------------------------
 
@@ -66,10 +52,13 @@ export interface ConfidentialAccountData {
 // ---------------------------------------------------------------------------
 
 /**
- * Public inputs for the confidential_balance circuit.
+ * Public inputs for the STARK `confidential_balance` circuit (ID 4) —
+ * consumed by deposit, withdraw, apply_pending, and (indirectly) transfer
+ * when callers prepare their STARK proof.
  *
- * Matches: old_commitment, new_commitment, amount_hash,
- *          public_credit, public_debit, token_mint, nonce
+ * Order (must match proof generation):
+ *   old_commitment, new_commitment, amount_hash,
+ *   public_credit, public_debit, token_mint, nonce
  */
 export interface ConfidentialBalancePublicInputs {
   oldCommitment: FieldElement;
@@ -82,37 +71,14 @@ export interface ConfidentialBalancePublicInputs {
 }
 
 /**
- * Private inputs for the confidential_balance circuit.
- */
-export interface ConfidentialBalancePrivateInputs {
-  oldBalance: bigint;
-  oldSalt: FieldElement;
-  newBalance: bigint;
-  newSalt: FieldElement;
-  amount: bigint;
-  amountSalt: FieldElement;
-  spendingKey: FieldElement;
-  isDebit: 0 | 1;
-}
-
-/**
- * Public inputs for the balance_proof (sufficiency) circuit.
+ * Public inputs for the STARK `balance_proof` circuit (ID 2).
  *
- * Matches: balance_commitment, threshold, token_mint
+ * Order: balance_commitment, threshold, token_mint
  */
 export interface BalanceProofPublicInputs {
   balanceCommitment: FieldElement;
   threshold: bigint;
   tokenMint: FieldElement;
-}
-
-/**
- * Private inputs for the balance_proof circuit.
- */
-export interface BalanceProofPrivateInputs {
-  balance: bigint;
-  salt: FieldElement;
-  spendingKey: FieldElement;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,30 +114,19 @@ export interface KnownPendingCredit {
 }
 
 // ---------------------------------------------------------------------------
-// Prover configuration
+// STARK proof reference (passed to zkSPL instructions)
 // ---------------------------------------------------------------------------
 
-/** Configuration for proof generation (local-only — spending_key NEVER leaves device) */
-export interface ProverConfig {
-  /** Path / URL of the confidential_balance circuit WASM */
-  balanceWasmPath?: string;
-  /** Path / URL of the confidential_balance circuit zkey */
-  balanceZkeyPath?: string;
-  /** Path / URL of the balance_proof circuit WASM */
-  proofWasmPath?: string;
-  /** Path / URL of the balance_proof circuit zkey */
-  proofZkeyPath?: string;
-  /**
-   * Base URL for circuit files. When set, circuit file paths are resolved
-   * relative to this URL (e.g. `"https://cdn.example.com/circuits/"`).
-   * Individual path overrides (`balanceWasmPath`, etc.) take precedence.
-   */
-  circuitBaseUrl?: string;
-  /** Timeout for proof generation in ms (default 120000) */
-  timeout?: number;
-  /** If true, all proofs are generated locally (no remote prover fallback) */
-  localOnly?: boolean;
-}
+/**
+ * Circuit identifiers used by `p01_stark_verifier` and reconstructed by zkSPL.
+ * Must stay in sync with the Rust `stark_proof` module.
+ *
+ * NOTE: zkSPL's confidential_transfer uses circuit 4 (confidential_balance)
+ * for the sender's commitment update. Circuit 5 (transfer, UTXO-style) is
+ * used by `zk_shielded` denominated pools, not here.
+ */
+export const CIRCUIT_BALANCE_PROOF = 2;
+export const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
 
 // ---------------------------------------------------------------------------
 // Transaction result

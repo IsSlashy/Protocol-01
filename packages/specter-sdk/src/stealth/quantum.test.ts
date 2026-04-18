@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { PublicKey, Keypair } from '@solana/web3.js';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import {
   deriveStealthWotsKeypair,

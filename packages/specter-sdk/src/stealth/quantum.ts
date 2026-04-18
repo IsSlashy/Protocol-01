@@ -26,8 +26,9 @@
  * the per-payment WOTS+ keypair only ever signs one claim challenge.
  */
 import { PublicKey } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   generateWotsKeypair,
   wotsSign,
@@ -50,7 +51,7 @@ import {
  * keypairs independent: even knowing the Ed25519 seed does not leak the WOTS+
  * seed and vice versa.
  */
-const STEALTH_WOTS_INFO = 'p01:stealth:wots-pq-v1';
+const STEALTH_WOTS_INFO = utf8ToBytes('p01:stealth:wots-pq-v1');
 
 /**
  * Claim-proof domain tag. Any input that would change a claim's meaning

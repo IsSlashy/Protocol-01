@@ -11,13 +11,14 @@
  */
 
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { KEM_PUBLIC_KEY_SIZE } from './types';
 
-const RELAY_HKDF_INFO_V1 = 'p01_relay_job_v1';
-const RELAY_HKDF_INFO_V2 = 'p01_relay_job_hybrid_v2';
+const RELAY_HKDF_INFO_V1 = utf8ToBytes('p01_relay_job_v1');
+const RELAY_HKDF_INFO_V2 = utf8ToBytes('p01_relay_job_hybrid_v2');
 const KEM_CIPHERTEXT_SIZE = 1088;
 
 /**

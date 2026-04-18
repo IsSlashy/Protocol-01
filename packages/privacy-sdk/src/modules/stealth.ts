@@ -10,8 +10,9 @@ import {
 } from '@solana/web3.js';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type {
   StealthMetaAddress,
@@ -39,10 +40,10 @@ const CLAIM_DOMAIN_V1 = new TextEncoder().encode('p01:claim:v1');
 const CLAIM_DOMAIN_V2 = new TextEncoder().encode('p01:claim:v2');
 
 /** HKDF info for combining hybrid shared secrets (X25519 + ML-KEM). */
-const HYBRID_HKDF_INFO = 'p01-hybrid-stealth-v2';
+const HYBRID_HKDF_INFO = utf8ToBytes('p01-hybrid-stealth-v2');
 
 /** HKDF info for deriving the deterministic stealth seed. */
-const STEALTH_SEED_INFO = 'p01-stealth-seed';
+const STEALTH_SEED_INFO = utf8ToBytes('p01-stealth-seed');
 
 /** Stealth meta-address encoding prefix. */
 const META_ADDRESS_PREFIX = 'st';

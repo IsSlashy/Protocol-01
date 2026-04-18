@@ -10,8 +10,8 @@ import {
   WOTS_PUBKEY_SIZE,
   HASH_SIZE,
 } from './wots';
-import { sha256 } from '@noble/hashes/sha256';
-import { randomBytes } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 
 describe('WOTS+ (Winternitz One-Time Signatures)', () => {
   const seed = sha256(new TextEncoder().encode('test-seed-for-wots'));
@@ -134,5 +134,39 @@ describe('WOTS+ (Winternitz One-Time Signatures)', () => {
 
     const sig = wotsSign(message, kp);
     expect(wotsVerify(message, sig, kp.publicKeyHash)).toBe(true);
+  });
+
+  // ── Checksum soundness ──────────────────────────────────────────────
+  // Without a checksum, an attacker observing a legitimate signature for
+  // `message A` can forge a valid signature for any `message B` whose nibbles
+  // are ALL less-than-or-equal to A's nibbles (simply by hashing sig_i
+  // forward by (A_nibble_i - B_nibble_i) extra times). The checksum prevents
+  // this: decreasing any message nibble INCREASES the checksum sum, forcing
+  // at least one checksum nibble to decrease — which is not forgeable.
+  it('rejects nibble-decrease forgery (checksum soundness)', () => {
+    const kp = generateWotsKeypair(seed);
+    const originalMsg = new Uint8Array(32).fill(0xff); // all nibbles = 15
+    const sig = wotsSign(originalMsg, kp);
+    expect(wotsVerify(originalMsg, sig, kp.publicKeyHash)).toBe(true);
+
+    // Attacker forges by walking all 64 message chains forward.
+    // Pick a target with every nibble = 14 (one less than original).
+    const forgedMsg = new Uint8Array(32).fill(0xee);
+    const forgedSig = new Uint8Array(sig.signature);
+    for (let i = 0; i < 64; i++) {
+      // Walk chain forward by 1 step (from 15-15=0 to 15-14=1)
+      const start = i * HASH_SIZE;
+      forgedSig.set(sha256(forgedSig.slice(start, start + HASH_SIZE)), start);
+    }
+    // Checksum chains untouched by attacker (they don't know the next-step
+    // preimages). The verifier recomputes checksum for forgedMsg and requires
+    // the checksum chains to decode the NEW (smaller) checksum — which will
+    // fail because sig provides the OLD (larger) checksum chain positions.
+    const valid = wotsVerify(
+      forgedMsg,
+      { signature: forgedSig, publicKey: sig.publicKey },
+      kp.publicKeyHash,
+    );
+    expect(valid).toBe(false);
   });
 });

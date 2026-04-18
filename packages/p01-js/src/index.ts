@@ -1,6 +1,8 @@
 /**
  * Protocol 01 SDK
  *
+ * @deprecated Use `@protocol-01/privacy-sdk` instead. See docs/MIGRATION.md.
+ *
  * Privacy-first crypto payments for the modern web.
  *
  * @example Basic Setup
@@ -50,6 +52,17 @@
  *
  * @packageDocumentation
  */
+
+// ─── Deprecation Warning ─────────────────────────────────────────────────────
+if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
+  const DEPRECATION_WARNED = Symbol.for('p01.p01-js.deprecated');
+  const g = globalThis as any;
+  if (!g[DEPRECATION_WARNED]) {
+    g[DEPRECATION_WARNED] = true;
+    // eslint-disable-next-line no-console
+    console.warn('[@protocol-01/p01-js] This package is deprecated. Migrate to @protocol-01/privacy-sdk. See docs/MIGRATION.md.');
+  }
+}
 
 // Main SDK
 export { Protocol01, type Protocol01UrlConfig } from './protocol01';

@@ -1,6 +1,8 @@
 /**
  * @protocol-01/specter-js - Protocol 01 SDK
  *
+ * @deprecated Use `@protocol-01/privacy-sdk` instead. See docs/MIGRATION.md.
+ *
  * Privacy-first payment SDK for Solana with Stream Secure subscriptions.
  *
  * @example Basic usage
@@ -45,6 +47,17 @@
  * }
  * ```
  */
+
+// ─── Deprecation Warning ─────────────────────────────────────────────────────
+if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
+  const DEPRECATION_WARNED = Symbol.for('p01.specter-js.deprecated');
+  const g = globalThis as any;
+  if (!g[DEPRECATION_WARNED]) {
+    g[DEPRECATION_WARNED] = true;
+    // eslint-disable-next-line no-console
+    console.warn('[@protocol-01/specter-js] This package is deprecated. Migrate to @protocol-01/privacy-sdk. See docs/MIGRATION.md.');
+  }
+}
 
 export { P01, Specter, type P01Config, type SpecterConfig } from './client';
 export { createPayButton, type PayButtonOptions } from './pay-button';

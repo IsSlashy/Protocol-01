@@ -2,6 +2,7 @@
   "name": "@protocol-01/specter-js",
   "version": "0.1.0",
   "description": "Protocol 01 SDK for integrating privacy-first payments and Stream Secure subscriptions",
+  "deprecated": "Use @protocol-01/privacy-sdk instead. See docs/MIGRATION.md.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -46,8 +47,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "@types/react": "^18.2.55",
-    "react": "^18.2.0",
+    "@types/react": "^19.2.9",
+    "react": "^19.2.3",
     "tsup": "^8.4.0",
     "typescript": "^5.9.0"
   },

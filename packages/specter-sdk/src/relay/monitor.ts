@@ -84,7 +84,7 @@ export async function cancelRelayJob(
   submitterKeypair: import('@solana/web3.js').Keypair,
 ): Promise<string> {
   const { Transaction, TransactionInstruction } = await import('@solana/web3.js');
-  const { sha256 } = await import('@noble/hashes/sha256');
+  const { sha256 } = await import('@noble/hashes/sha2.js');
 
   const discriminator = Buffer.from(
     sha256(Buffer.from('global:cancel_job')).slice(0, 8),

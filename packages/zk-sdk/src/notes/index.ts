@@ -3,7 +3,7 @@
  * Handles creation, encryption, and decryption of notes
  */
 
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 import nacl from 'tweetnacl';
 import {
   computeCommitment,

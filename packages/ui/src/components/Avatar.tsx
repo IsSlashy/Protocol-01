@@ -270,7 +270,7 @@ export const AvatarGroup: React.FC<AvatarGroupProps> = ({
             zIndex: visibleAvatars.length - index,
           }}
         >
-          {React.cloneElement(avatar as React.ReactElement, { size, isBordered: true })}
+          {React.cloneElement(avatar as React.ReactElement<{ size?: AvatarSize; isBordered?: boolean }>, { size, isBordered: true })}
         </div>
       ))}
 

@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Keypair, TransactionInstruction } from '@solana/web3.js';
 import * as anchor from '@coral-xyz/anchor';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 import {
   RescueCipher,
   x25519,

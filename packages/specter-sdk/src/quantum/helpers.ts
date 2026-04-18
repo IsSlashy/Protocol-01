@@ -2,8 +2,8 @@
  * Helper functions for hash-timelock vault and commit-reveal protocol
  */
 
-import { sha256 } from '@noble/hashes/sha256';
-import { randomBytes } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 
 // ── Hash-Timelock Vault ───────────────────────────────────────────
 

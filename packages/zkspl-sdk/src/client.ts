@@ -1,13 +1,10 @@
 /**
- * ZkSplClient - High-level client for the p01_zkspl Anchor program.
+ * ZkSplClient — High-level client for the p01_zkspl Anchor program.
  *
- * Provides ergonomic methods for:
- *   - initializeMint, createAccount
- *   - deposit, withdraw
- *   - confidentialTransfer, applyPending
- *   - proveBalance
- *   - addViewer, removeViewer
- *   - queries (getConfidentialAccount, getPendingCredits, getLocalBalance)
+ * STARK-only mode: proofs are generated out-of-band (WASM prover in the
+ * host app), uploaded to `p01_stark_verifier`, and the verified proof buffer
+ * pubkey is passed to each zkSPL instruction. The SDK never touches private
+ * witnesses.
  */
 
 import {
@@ -18,47 +15,30 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js';
 import { BN } from '@coral-xyz/anchor';
-import type { Wallet } from '@coral-xyz/anchor';
+import type { Wallet } from '@coral-xyz/anchor/dist/cjs/provider';
 
 import {
   ZKSPL_PROGRAM_ID,
   PDA_SEEDS,
-  VK_TYPE_BALANCE,
-  VK_TYPE_PROOF,
   TOKEN_PROGRAM_ID,
   getProgramId,
 } from './constants';
 import type { NetworkId } from './constants';
 import {
   createBalanceCommitment,
-  createAmountCommitment,
   deriveOwnerPubkey,
   deriveDeterministicSalt,
   fieldToBytes,
   pubkeyToField,
-  randomSalt,
-  zeroAmountHash,
 } from './crypto';
-import { ZkSplProver } from './prover';
 import { LocalStateManager, type StateStore } from './state';
 import type {
   FieldElement,
-  Groth16Proof,
-  ProverConfig,
   ConfidentialAccountData,
   MintConfigAccount,
   PendingCredit,
   ZkSplTxResult,
-  ConfidentialBalancePublicInputs,
-  ConfidentialBalancePrivateInputs,
-  BalanceProofPublicInputs,
-  BalanceProofPrivateInputs,
 } from './types';
-
-// We import the IDL type but load it lazily from JSON at runtime if needed
-// For now we use raw instruction building via Anchor's `program.methods`.
-// The Anchor IDL JSON should be loaded by the consumer or bundled.
-// We provide a minimal typed wrapper.
 
 // ---------------------------------------------------------------------------
 // Client config
@@ -82,16 +62,13 @@ export interface ZkSplClientConfig {
    * unless explicitly overridden by `programId` / `zkShieldedProgramId`.
    */
   network?: NetworkId;
-  /**
-   * Base URL for circuit files (WASM + zkey).
-   * Passed through to the prover. Example: `"https://cdn.example.com/circuits/"`.
-   */
-  circuitBaseUrl?: string;
-  /** Prover configuration */
-  prover?: ProverConfig;
   /** State persistence store */
   stateStore?: StateStore;
-  /** Spending key for the owner (required for operations that need proofs) */
+  /**
+   * Owner spending key. The SDK only uses it locally to derive commitments
+   * for local state bookkeeping — it is **never** sent anywhere and is
+   * **never** used for proof generation by the SDK itself.
+   */
   spendingKey?: FieldElement;
 }
 
@@ -104,7 +81,6 @@ export class ZkSplClient {
   readonly wallet: Wallet;
   readonly programId: PublicKey;
 
-  private prover: ZkSplProver;
   private stateManager: LocalStateManager;
   private _spendingKey: FieldElement | null;
 
@@ -118,7 +94,6 @@ export class ZkSplClient {
       this.connection = connectionOrConfig;
       this.wallet = wallet!;
       this.programId = programId ?? new PublicKey(ZKSPL_PROGRAM_ID);
-      this.prover = new ZkSplProver();
       this.stateManager = new LocalStateManager();
       this._spendingKey = null;
     } else {
@@ -134,13 +109,6 @@ export class ZkSplClient {
         this.programId = new PublicKey(getProgramId(network, 'zkspl'));
       }
 
-      // Merge circuitBaseUrl into prover config
-      const proverConfig: ProverConfig = {
-        ...cfg.prover,
-        circuitBaseUrl: cfg.prover?.circuitBaseUrl ?? cfg.circuitBaseUrl,
-      };
-
-      this.prover = new ZkSplProver(proverConfig);
       this.stateManager = new LocalStateManager(cfg.stateStore);
       this._spendingKey = cfg.spendingKey ?? null;
     }
@@ -165,7 +133,7 @@ export class ZkSplClient {
       throw new Error(
         'Spending key not set. Call client.setSpendingKey(key) or pass ' +
           'spendingKey in ZkSplClientConfig before calling operations that ' +
-          'require proofs (deposit, withdraw, transfer, proveBalance).'
+          'derive commitments (deposit, withdraw, transfer, applyPending).'
       );
     }
     return this._spendingKey;
@@ -198,17 +166,6 @@ export class ZkSplClient {
   deriveVaultPDA(tokenMint: PublicKey): [PublicKey, number] {
     return PublicKey.findProgramAddressSync(
       [PDA_SEEDS.VAULT, tokenMint.toBytes()],
-      this.programId
-    );
-  }
-
-  /** Derive the VK data PDA for a (mint_config, vk_type) pair */
-  deriveVkDataPDA(
-    mintConfigPDA: PublicKey,
-    vkType: number
-  ): [PublicKey, number] {
-    return PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.VK_DATA, mintConfigPDA.toBytes(), Buffer.from([vkType])],
       this.programId
     );
   }
@@ -258,12 +215,11 @@ export class ZkSplClient {
     const ata = this.deriveUserTokenAccount(owner, tokenMint);
     const info = await this.connection.getAccountInfo(ata);
     if (!info) {
-      // Create ATA using the standard create-associated-token-account instruction
       const ix = createAssociatedTokenAccountInstruction(
-        this.wallet.publicKey, // payer
-        ata,                   // associated token account
-        owner,                 // owner
-        tokenMint,             // token mint
+        this.wallet.publicKey,
+        ata,
+        owner,
+        tokenMint,
       );
       const tx = new Transaction().add(ix);
       await this.sendAndConfirm(tx);
@@ -277,11 +233,9 @@ export class ZkSplClient {
 
   /**
    * Register an SPL token for zkSPL confidential operations.
-   * Creates a MintConfig PDA with verification key hashes.
-   *
-   * @param tokenMint - The SPL token mint to enable
-   * @param balanceVkHash - Hash of the confidential_balance verification key
-   * @param proofVkHash - Hash of the balance_proof verification key
+   * Creates a MintConfig PDA. The VK-hash arguments are kept for backwards
+   * compatibility with the on-chain account layout; in STARK-only mode they
+   * can be zero-filled.
    */
   async initializeMint(
     tokenMint: PublicKey,
@@ -321,11 +275,9 @@ export class ZkSplClient {
   ): Promise<string> {
     const spendingKey = this.requireSpendingKey();
     const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    // Use deterministic salt for nonce=0 unless explicitly overridden
     const salt = initialSalt ?? deriveDeterministicSalt(spendingKey, 0n);
     const tokenMintField = pubkeyToField(tokenMint.toBytes());
 
-    // initial commitment = Poseidon(0, Poseidon(salt, nonce), owner_pubkey, token_mint)
     const commitment = createBalanceCommitment(0n, salt, 0n, ownerPubkey, tokenMintField);
     const commitmentBytes = fieldToBytes(commitment);
 
@@ -346,7 +298,6 @@ export class ZkSplClient {
 
     const signature = await this.sendAndConfirm(new Transaction().add(ix));
 
-    // Initialize local state
     await this.stateManager.initializeState(
       this.wallet.publicKey.toBase58(),
       tokenMint.toBase58(),
@@ -363,26 +314,31 @@ export class ZkSplClient {
 
   /**
    * Deposit SPL tokens into a confidential account.
-   * The deposit amount is public, but the new balance is hidden.
+   *
+   * The caller **must** upload and verify a STARK proof (circuit 4:
+   * `confidential_balance`) via `p01_stark_verifier` in prior transactions,
+   * then pass the verified proof buffer pubkey as `proofBuffer`.
    *
    * @param tokenMint - The SPL token mint
    * @param amount - Amount to deposit (in atomic units)
+   * @param proofBuffer - Verified STARK proof buffer account
+   * @param newCommitment - New balance commitment (32 bytes) — must match the
+   *   STARK proof's public inputs
    * @param userTokenAccount - Optional user's token account (for SPL tokens)
    * @param poolVaultTokenAccount - Optional pool vault token account
    */
   async deposit(
     tokenMint: PublicKey,
     amount: bigint,
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
     userTokenAccount?: PublicKey,
     poolVaultTokenAccount?: PublicKey
   ): Promise<ZkSplTxResult> {
     const spendingKey = this.requireSpendingKey();
-    const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const tokenMintField = pubkeyToField(tokenMint.toBytes());
     const ownerBase58 = this.wallet.publicKey.toBase58();
     const mintBase58 = tokenMint.toBase58();
 
-    // Load current local state
     const state = await this.stateManager.getState(ownerBase58, mintBase58);
     if (!state) {
       throw new Error(
@@ -392,60 +348,21 @@ export class ZkSplClient {
       );
     }
 
-    const oldBalance = state.balance;
-    const oldSalt = state.salt;
     const currentNonce = state.nonce;
-    const newBalance = oldBalance + amount;
-    // Deterministic salt: recoverable from (spendingKey, nonce+1) if local state is lost
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
 
-    // Compute commitments (nonce is the same for both old and new per circuit)
-    const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-    const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-
-    // For deposit: public_credit = amount, amount_hash = Poseidon(0, 0), is_debit = 0
-    const pubInputs: ConfidentialBalancePublicInputs = {
-      oldCommitment,
-      newCommitment,
-      amountHash: zeroAmountHash(),
-      publicCredit: amount,
-      publicDebit: 0n,
-      tokenMint: tokenMintField,
-      nonce: currentNonce,
-    };
-
-    const privInputs: ConfidentialBalancePrivateInputs = {
-      oldBalance,
-      oldSalt,
-      newBalance,
-      newSalt,
-      amount: 0n, // private amount is 0 for deposit
-      amountSalt: 0n,
-      spendingKey,
-      isDebit: 0,
-    };
-
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
-    const newCommitmentBytes = fieldToBytes(newCommitment);
-
-    // Build accounts
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
     const [confidentialAccountPDA] = this.deriveConfidentialAccountPDA(
       this.wallet.publicKey,
       tokenMint
     );
     const [vaultPDA] = this.deriveVaultPDA(tokenMint);
-    const [vkDataPDA] = this.deriveVkDataPDA(mintConfigPDA, VK_TYPE_BALANCE);
 
     const accounts: Record<string, PublicKey | null> = {
       depositor: this.wallet.publicKey,
       mintConfig: mintConfigPDA,
       confidentialAccount: confidentialAccountPDA,
-      vkData: vkDataPDA,
+      starkProofBuffer: proofBuffer,
       vault: vaultPDA,
       systemProgram: SystemProgram.programId,
       tokenProgram: userTokenAccount ? new PublicKey(TOKEN_PROGRAM_ID) : null,
@@ -455,14 +372,13 @@ export class ZkSplClient {
 
     const ix = await this.buildAnchorInstruction('deposit', accounts, {
       amount: new BN(amount.toString()),
-      proof: groth16ProofToAnchor(proof),
-      newCommitment: Array.from(newCommitmentBytes),
+      newCommitment: Array.from(newCommitment),
     });
 
     const signature = await this.sendAndConfirm(new Transaction().add(ix));
+    const newBalance = state.balance + amount;
     const newNonce = currentNonce + 1n;
 
-    // Update local state
     await this.stateManager.afterDeposit(
       ownerBase58,
       mintBase58,
@@ -473,7 +389,7 @@ export class ZkSplClient {
 
     return {
       signature,
-      newCommitment: newCommitmentBytes,
+      newCommitment,
       newBalance,
       newNonce,
     };
@@ -485,22 +401,25 @@ export class ZkSplClient {
 
   /**
    * Withdraw from confidential account to regular SPL tokens.
-   * The withdrawal amount is public, but the remaining balance stays hidden.
+   *
+   * Requires a pre-verified STARK proof buffer (circuit 4: `confidential_balance`).
    *
    * @param tokenMint - The SPL token mint
    * @param amount - Amount to withdraw (in atomic units)
+   * @param proofBuffer - Verified STARK proof buffer account
+   * @param newCommitment - New balance commitment (32 bytes)
    * @param userTokenAccount - Optional user's token account (for SPL tokens)
    * @param poolVaultTokenAccount - Optional pool vault token account
    */
   async withdraw(
     tokenMint: PublicKey,
     amount: bigint,
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
     userTokenAccount?: PublicKey,
     poolVaultTokenAccount?: PublicKey
   ): Promise<ZkSplTxResult> {
     const spendingKey = this.requireSpendingKey();
-    const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const tokenMintField = pubkeyToField(tokenMint.toBytes());
     const ownerBase58 = this.wallet.publicKey.toBase58();
     const mintBase58 = tokenMint.toBase58();
 
@@ -519,44 +438,8 @@ export class ZkSplClient {
       );
     }
 
-    const oldBalance = state.balance;
-    const oldSalt = state.salt;
     const currentNonce = state.nonce;
-    const newBalance = oldBalance - amount;
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
-
-    const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-    const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-
-    // For withdraw: public_debit = amount, amount_hash = Poseidon(0,0), is_debit = 0
-    // (the debit is public, not private)
-    const pubInputs: ConfidentialBalancePublicInputs = {
-      oldCommitment,
-      newCommitment,
-      amountHash: zeroAmountHash(),
-      publicCredit: 0n,
-      publicDebit: amount,
-      tokenMint: tokenMintField,
-      nonce: currentNonce,
-    };
-
-    const privInputs: ConfidentialBalancePrivateInputs = {
-      oldBalance,
-      oldSalt,
-      newBalance,
-      newSalt,
-      amount: 0n,
-      amountSalt: 0n,
-      spendingKey,
-      isDebit: 0,
-    };
-
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
-    const newCommitmentBytes = fieldToBytes(newCommitment);
 
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
     const [confidentialAccountPDA] = this.deriveConfidentialAccountPDA(
@@ -564,13 +447,12 @@ export class ZkSplClient {
       tokenMint
     );
     const [vaultPDA] = this.deriveVaultPDA(tokenMint);
-    const [vkDataPDA] = this.deriveVkDataPDA(mintConfigPDA, VK_TYPE_BALANCE);
 
     const accounts: Record<string, PublicKey | null> = {
       withdrawer: this.wallet.publicKey,
       mintConfig: mintConfigPDA,
       confidentialAccount: confidentialAccountPDA,
-      vkData: vkDataPDA,
+      starkProofBuffer: proofBuffer,
       vault: vaultPDA,
       systemProgram: SystemProgram.programId,
       tokenProgram: userTokenAccount ? new PublicKey(TOKEN_PROGRAM_ID) : null,
@@ -580,11 +462,11 @@ export class ZkSplClient {
 
     const ix = await this.buildAnchorInstruction('withdraw', accounts, {
       amount: new BN(amount.toString()),
-      proof: groth16ProofToAnchor(proof),
-      newCommitment: Array.from(newCommitmentBytes),
+      newCommitment: Array.from(newCommitment),
     });
 
     const signature = await this.sendAndConfirm(new Transaction().add(ix));
+    const newBalance = state.balance - amount;
     const newNonce = currentNonce + 1n;
 
     await this.stateManager.afterWithdraw(
@@ -597,7 +479,7 @@ export class ZkSplClient {
 
     return {
       signature,
-      newCommitment: newCommitmentBytes,
+      newCommitment,
       newBalance,
       newNonce,
     };
@@ -609,43 +491,31 @@ export class ZkSplClient {
 
   /**
    * Send a confidential (private) transfer to another user.
-   * The amount is hidden on-chain as an amount_hash.
-   * The recipient receives a pending credit they must later apply.
    *
-   * **Out-of-band communication required:** After this method returns,
-   * the recipient needs `amountHash` and `amountSaltUsed` to apply the
-   * pending credit on their side via `applyPending()`. Use a secure
-   * channel (encrypted messaging, DM, QR code, etc.) to communicate
-   * these values. Without them, the recipient cannot credit their
-   * confidential balance.
+   * The amount is hidden on-chain as an amount_hash. Requires a pre-verified
+   * STARK proof buffer (circuit 5: `transfer`). The recipient needs the
+   * plaintext amount + amountSalt out-of-band to call `applyPending`.
    *
    * @param tokenMint - The SPL token mint
    * @param recipientPubkey - Recipient's Solana wallet pubkey
-   * @param amount - Amount to transfer (in atomic units)
-   * @param amountSalt - Optional salt for the amount commitment (auto-generated if omitted)
-   * @returns Result including `amountHash` and `amountSaltUsed` that the recipient needs.
-   *
-   * @example
-   * ```ts
-   * const result = await client.confidentialTransfer(mint, recipient, 1_000_000n);
-   *
-   * // Send these to the recipient via a secure channel:
-   * console.log('amountHash:', result.amountHash.toString());
-   * console.log('amountSalt:', result.amountSaltUsed.toString());
-   *
-   * // Recipient side:
-   * await recipientClient.applyPending(mint, 1_000_000n, amountSaltFromSender);
-   * ```
+   * @param amount - Amount to transfer (in atomic units) — used only for local
+   *   state bookkeeping, NOT sent on-chain
+   * @param proofBuffer - Verified STARK proof buffer account
+   * @param newCommitment - New balance commitment (32 bytes)
+   * @param amountHash - Poseidon(amount, amountSalt) — 32 bytes
+   * @param amountSaltUsed - The salt used — returned for convenience so the
+   *   caller can forward it to the recipient over a secure channel
    */
   async confidentialTransfer(
     tokenMint: PublicKey,
     recipientPubkey: PublicKey,
     amount: bigint,
-    amountSalt?: FieldElement
-  ): Promise<ZkSplTxResult & { amountHash: FieldElement; amountSaltUsed: FieldElement }> {
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
+    amountHash: Uint8Array,
+    amountSaltUsed: FieldElement
+  ): Promise<ZkSplTxResult & { amountSaltUsed: FieldElement }> {
     const spendingKey = this.requireSpendingKey();
-    const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const tokenMintField = pubkeyToField(tokenMint.toBytes());
     const ownerBase58 = this.wallet.publicKey.toBase58();
     const mintBase58 = tokenMint.toBase58();
 
@@ -664,48 +534,9 @@ export class ZkSplClient {
       );
     }
 
-    const oldBalance = state.balance;
-    const oldSalt = state.salt;
     const currentNonce = state.nonce;
-    const newBalance = oldBalance - amount;
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
-    const aSalt = amountSalt ?? randomSalt(); // amount salt stays random (not stored long-term)
 
-    const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-    const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-    const amountHash = createAmountCommitment(amount, aSalt);
-
-    // For send: is_debit = 1, amount = transfer amount, public amounts = 0
-    const pubInputs: ConfidentialBalancePublicInputs = {
-      oldCommitment,
-      newCommitment,
-      amountHash,
-      publicCredit: 0n,
-      publicDebit: 0n,
-      tokenMint: tokenMintField,
-      nonce: currentNonce,
-    };
-
-    const privInputs: ConfidentialBalancePrivateInputs = {
-      oldBalance,
-      oldSalt,
-      newBalance,
-      newSalt,
-      amount,
-      amountSalt: aSalt,
-      spendingKey,
-      isDebit: 1,
-    };
-
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
-    const newCommitmentBytes = fieldToBytes(newCommitment);
-    const amountHashBytes = fieldToBytes(amountHash);
-
-    // Derive accounts
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
     const [senderAccountPDA] = this.deriveConfidentialAccountPDA(
       this.wallet.publicKey,
@@ -715,21 +546,20 @@ export class ZkSplClient {
       recipientPubkey,
       tokenMint
     );
-    const [vkDataPDA] = this.deriveVkDataPDA(mintConfigPDA, VK_TYPE_BALANCE);
 
     const ix = await this.buildAnchorInstruction('confidential_transfer', {
       sender: this.wallet.publicKey,
       mintConfig: mintConfigPDA,
       senderAccount: senderAccountPDA,
       recipientAccount: recipientAccountPDA,
-      vkData: vkDataPDA,
+      starkProofBuffer: proofBuffer,
     }, {
-      proof: groth16ProofToAnchor(proof),
-      newCommitment: Array.from(newCommitmentBytes),
-      amountHash: Array.from(amountHashBytes),
+      newCommitment: Array.from(newCommitment),
+      amountHash: Array.from(amountHash),
     });
 
     const signature = await this.sendAndConfirm(new Transaction().add(ix));
+    const newBalance = state.balance - amount;
     const newNonce = currentNonce + 1n;
 
     await this.stateManager.afterSend(
@@ -742,11 +572,10 @@ export class ZkSplClient {
 
     return {
       signature,
-      newCommitment: newCommitmentBytes,
+      newCommitment,
       newBalance,
       newNonce,
-      amountHash,
-      amountSaltUsed: aSalt,
+      amountSaltUsed,
     };
   }
 
@@ -756,21 +585,24 @@ export class ZkSplClient {
 
   /**
    * Apply a pending credit to update the recipient's balance.
-   * The recipient must know the plaintext amount and amount_salt
-   * (communicated out-of-band by the sender).
+   *
+   * Requires a pre-verified STARK proof buffer (circuit 4: `confidential_balance`).
    *
    * @param tokenMint - The SPL token mint
-   * @param amount - The plaintext transfer amount
-   * @param amountSalt - The amount salt used by the sender
+   * @param amount - The plaintext transfer amount (used for local state only)
+   * @param proofBuffer - Verified STARK proof buffer account
+   * @param newCommitment - New balance commitment (32 bytes)
+   * @param amountHash - Poseidon(amount, amountSalt) — 32 bytes, must match
+   *   one of the pending credits
    */
   async applyPending(
     tokenMint: PublicKey,
     amount: bigint,
-    amountSalt: FieldElement
+    proofBuffer: PublicKey,
+    newCommitment: Uint8Array,
+    amountHash: Uint8Array
   ): Promise<ZkSplTxResult> {
     const spendingKey = this.requireSpendingKey();
-    const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const tokenMintField = pubkeyToField(tokenMint.toBytes());
     const ownerBase58 = this.wallet.publicKey.toBase58();
     const mintBase58 = tokenMint.toBase58();
 
@@ -782,72 +614,41 @@ export class ZkSplClient {
       );
     }
 
-    const oldBalance = state.balance;
-    const oldSalt = state.salt;
     const currentNonce = state.nonce;
-    const newBalance = oldBalance + amount;
     const newSalt = deriveDeterministicSalt(spendingKey, currentNonce + 1n);
-
-    const oldCommitment = createBalanceCommitment(
-      oldBalance, oldSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-    const newCommitment = createBalanceCommitment(
-      newBalance, newSalt, currentNonce, ownerPubkey, tokenMintField
-    );
-    const amountHash = createAmountCommitment(amount, amountSalt);
-
-    // For receive (apply_pending): is_debit = 0, amount = transfer amount
-    const pubInputs: ConfidentialBalancePublicInputs = {
-      oldCommitment,
-      newCommitment,
-      amountHash,
-      publicCredit: 0n,
-      publicDebit: 0n,
-      tokenMint: tokenMintField,
-      nonce: currentNonce,
-    };
-
-    const privInputs: ConfidentialBalancePrivateInputs = {
-      oldBalance,
-      oldSalt,
-      newBalance,
-      newSalt,
-      amount,
-      amountSalt,
-      spendingKey,
-      isDebit: 0,
-    };
-
-    // apply_pending uses the same confidential_balance circuit as transfer (receive side)
-    const { proof } = await this.prover.generateBalanceProof(pubInputs, privInputs);
-    const newCommitmentBytes = fieldToBytes(newCommitment);
-    const amountHashBytes = fieldToBytes(amountHash);
 
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
     const [confidentialAccountPDA] = this.deriveConfidentialAccountPDA(
       this.wallet.publicKey,
       tokenMint
     );
-    const [vkDataPDA] = this.deriveVkDataPDA(mintConfigPDA, VK_TYPE_BALANCE);
 
     const ix = await this.buildAnchorInstruction('apply_pending', {
       recipient: this.wallet.publicKey,
       mintConfig: mintConfigPDA,
       confidentialAccount: confidentialAccountPDA,
-      vkData: vkDataPDA,
+      starkProofBuffer: proofBuffer,
     }, {
-      proof: groth16ProofToAnchor(proof),
-      newCommitment: Array.from(newCommitmentBytes),
-      amountHash: Array.from(amountHashBytes),
+      newCommitment: Array.from(newCommitment),
+      amountHash: Array.from(amountHash),
     });
 
     const signature = await this.sendAndConfirm(new Transaction().add(ix));
+    const newBalance = state.balance + amount;
     const newNonce = currentNonce + 1n;
+
+    // Bump amountHash to FieldElement for local state. We have it as bytes here.
+    const amountHashField = BigInt(
+      '0x' +
+        Array.from(amountHash)
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('')
+    );
 
     await this.stateManager.afterApplyPending(
       ownerBase58,
       mintBase58,
-      amountHash,
+      amountHashField,
       amount,
       newSalt,
       newNonce
@@ -855,7 +656,7 @@ export class ZkSplClient {
 
     return {
       signature,
-      newCommitment: newCommitmentBytes,
+      newCommitment,
       newBalance,
       newNonce,
     };
@@ -869,74 +670,30 @@ export class ZkSplClient {
    * Prove that the confidential balance >= threshold without revealing
    * the actual balance. Emits a BalanceProofEvent on-chain.
    *
+   * Requires a pre-verified STARK proof buffer (circuit 2: `balance_proof`).
+   *
    * @param tokenMint - The SPL token mint
    * @param threshold - Minimum balance to prove
+   * @param proofBuffer - Verified STARK proof buffer account
    */
   async proveBalance(
     tokenMint: PublicKey,
-    threshold: bigint
+    threshold: bigint,
+    proofBuffer: PublicKey
   ): Promise<string> {
-    const spendingKey = this.requireSpendingKey();
-    const ownerPubkey = deriveOwnerPubkey(spendingKey);
-    const tokenMintField = pubkeyToField(tokenMint.toBytes());
-    const ownerBase58 = this.wallet.publicKey.toBase58();
-    const mintBase58 = tokenMint.toBase58();
-
-    const state = await this.stateManager.getState(ownerBase58, mintBase58);
-    if (!state) {
-      throw new Error(
-        `No local state found for mint ${mintBase58} during proveBalance. ` +
-          'Call createAccount(tokenMint) first to initialize the confidential account.'
-      );
-    }
-    if (state.balance < threshold) {
-      throw new Error(
-        `Cannot prove balance sufficiency: balance ${state.balance} ` +
-          `is below the requested threshold ${threshold}. ` +
-          'The proof would fail on-chain. Deposit more tokens first.'
-      );
-    }
-
-    const balanceCommitment = createBalanceCommitment(
-      state.balance,
-      state.salt,
-      state.nonce,
-      ownerPubkey,
-      tokenMintField
-    );
-
-    const pubInputs: BalanceProofPublicInputs = {
-      balanceCommitment,
-      threshold,
-      tokenMint: tokenMintField,
-    };
-
-    const privInputs: BalanceProofPrivateInputs = {
-      balance: state.balance,
-      salt: state.salt,
-      spendingKey,
-    };
-
-    const { proof } = await this.prover.generateSufficiencyProof(
-      pubInputs,
-      privInputs
-    );
-
     const [mintConfigPDA] = this.deriveMintConfigPDA(tokenMint);
     const [confidentialAccountPDA] = this.deriveConfidentialAccountPDA(
       this.wallet.publicKey,
       tokenMint
     );
-    const [vkDataPDA] = this.deriveVkDataPDA(mintConfigPDA, VK_TYPE_PROOF);
 
     const ix = await this.buildAnchorInstruction('prove_balance', {
       prover: this.wallet.publicKey,
       mintConfig: mintConfigPDA,
       confidentialAccount: confidentialAccountPDA,
-      vkData: vkDataPDA,
+      starkProofBuffer: proofBuffer,
     }, {
       threshold: new BN(threshold.toString()),
-      proof: groth16ProofToAnchor(proof),
     });
 
     return this.sendAndConfirm(new Transaction().add(ix));
@@ -1086,10 +843,8 @@ export class ZkSplClient {
       };
     }
 
-    // Compare nonces
     const noncesMatch = localState.nonce === onChainAccount.nonce;
 
-    // Compute expected commitment from local state
     const ownerPubkey = deriveOwnerPubkey(localState.spendingKey);
     const tokenMintField = pubkeyToField(tokenMint.toBytes());
     const expectedCommitment = createBalanceCommitment(
@@ -1097,7 +852,6 @@ export class ZkSplClient {
     );
     const expectedBytes = fieldToBytes(expectedCommitment);
 
-    // Compare with on-chain commitment
     let commitmentMatches = true;
     for (let i = 0; i < 32; i++) {
       if (expectedBytes[i] !== onChainAccount.balanceCommitment[i]) {
@@ -1144,15 +898,12 @@ export class ZkSplClient {
 
     const onChainAccount = await this.getConfidentialAccount(tokenMint);
     if (!onChainAccount || !onChainAccount.isInitialized) {
-      // No on-chain account — just clear local state
       await this.stateManager.deleteState(ownerBase58, mintBase58);
       return null;
     }
 
-    // Delete old local state
     await this.stateManager.deleteState(ownerBase58, mintBase58);
 
-    // Re-initialize with zero balance using deterministic salt
     const newSalt = deriveDeterministicSalt(spendingKey, 0n);
     await this.stateManager.initializeState(ownerBase58, mintBase58, spendingKey, newSalt);
 
@@ -1176,24 +927,18 @@ export class ZkSplClient {
     accounts: Record<string, PublicKey | null>,
     args: Record<string, unknown>
   ): Promise<TransactionInstruction> {
-    // Compute Anchor instruction discriminator
-    const { sha256 } = await import('@noble/hashes/sha256');
+    const { sha256 } = await import('@noble/hashes/sha2.js');
     const discriminator = sha256(
       new TextEncoder().encode(`global:${instructionName}`)
     ).slice(0, 8);
 
-    // Serialize args using Anchor's borsh format
     const argsBuffer = serializeAnchorArgs(instructionName, args);
 
-    // Combine discriminator + serialized args
     const data = Buffer.concat([
       Buffer.from(discriminator),
       argsBuffer,
     ]);
 
-    // Build account keys (order matters! must match IDL ordering).
-    // For optional accounts (null), pass the program's own ID as the Anchor
-    // sentinel so the on-chain Option<> deserialises to None.
     const keys = Object.entries(accounts)
       .map(([name, pubkey]) => ({
         pubkey: pubkey ?? this.programId,
@@ -1266,22 +1011,6 @@ export class ZkSplClient {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: Groth16Proof to Anchor format
-// ---------------------------------------------------------------------------
-
-function groth16ProofToAnchor(proof: Groth16Proof): {
-  piA: number[];
-  piB: number[];
-  piC: number[];
-} {
-  return {
-    piA: Array.from(proof.pi_a),
-    piB: Array.from(proof.pi_b),
-    piC: Array.from(proof.pi_c),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Helpers: Anchor args serialization (simplified borsh)
 // ---------------------------------------------------------------------------
 
@@ -1297,26 +1026,21 @@ function serializeAnchorArgs(
 
   for (const [_key, value] of Object.entries(args)) {
     if (value instanceof BN) {
-      // u64: 8 bytes little-endian
       const buf = Buffer.alloc(8);
       buf.writeBigUInt64LE(BigInt(value.toString()));
       buffers.push(buf);
     } else if (Array.isArray(value)) {
-      // [u8; N]: raw bytes (no length prefix for fixed arrays)
       buffers.push(Buffer.from(value as number[]));
     } else if (value instanceof PublicKey) {
       buffers.push(value.toBuffer());
     } else if (typeof value === 'object' && value !== null) {
-      // Nested struct (e.g., Groth16Proof with piA, piB, piC)
       const nested = value as Record<string, unknown>;
       buffers.push(serializeAnchorArgs(_instructionName, nested));
     } else if (typeof value === 'number') {
-      // u8
       const buf = Buffer.alloc(1);
       buf.writeUInt8(value);
       buffers.push(buf);
     } else if (typeof value === 'string') {
-      // bytes (with 4-byte length prefix)
       const strBuf = Buffer.from(value, 'utf8');
       const lenBuf = Buffer.alloc(4);
       lenBuf.writeUInt32LE(strBuf.length);
@@ -1341,8 +1065,6 @@ const SIGNER_ACCOUNTS: Record<string, Set<string>> = {
   prove_balance: new Set(['prover']),
   add_viewer: new Set(['owner']),
   remove_viewer: new Set(['owner']),
-  init_vk_data: new Set(['authority']),
-  write_vk_data: new Set(['authority']),
 };
 
 const WRITABLE_ACCOUNTS: Record<string, Set<string>> = {
@@ -1371,8 +1093,6 @@ const WRITABLE_ACCOUNTS: Record<string, Set<string>> = {
   prove_balance: new Set([]),
   add_viewer: new Set(['confidentialAccount']),
   remove_viewer: new Set(['confidentialAccount']),
-  init_vk_data: new Set(['authority', 'vkData']),
-  write_vk_data: new Set(['vkData']),
 };
 
 function isSignerAccount(instruction: string, accountName: string): boolean {
@@ -1404,7 +1124,7 @@ function isWritableAccount(instruction: string, accountName: string): boolean {
 function deserializeConfidentialAccount(
   data: Buffer
 ): ConfidentialAccountData {
-  let offset = 8; // skip discriminator
+  let offset = 8;
 
   const owner = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
@@ -1418,7 +1138,6 @@ function deserializeConfidentialAccount(
   const nonce = data.readBigUInt64LE(offset);
   offset += 8;
 
-  // pending_credits: Vec<PendingCredit>
   const pendingCount = data.readUInt32LE(offset);
   offset += 4;
   const pendingCredits: PendingCredit[] = [];
@@ -1432,7 +1151,6 @@ function deserializeConfidentialAccount(
     pendingCredits.push({ amountHash, sender, timestamp });
   }
 
-  // viewer_keys: Vec<Pubkey>
   const viewerCount = data.readUInt32LE(offset);
   offset += 4;
   const viewerKeys: PublicKey[] = [];
@@ -1466,18 +1184,6 @@ function deserializeConfidentialAccount(
   };
 }
 
-/**
- * Deserialize an on-chain MintConfig from its raw data buffer.
- * Layout (after 8-byte Anchor discriminator):
- *   authority: Pubkey (32)
- *   token_mint: Pubkey (32)
- *   balance_vk_hash: [u8; 32]
- *   proof_vk_hash: [u8; 32]
- *   is_active: bool (1)
- *   account_count: u64 (8)
- *   created_at: i64 (8)
- *   bump: u8 (1)
- */
 // ---------------------------------------------------------------------------
 // Helpers: SPL Associated Token Account instruction
 // ---------------------------------------------------------------------------
@@ -1502,12 +1208,12 @@ function createAssociatedTokenAccountInstruction(
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: new PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
     ],
-    data: Buffer.alloc(0), // Create ATA instruction has no data
+    data: Buffer.alloc(0),
   });
 }
 
 function deserializeMintConfig(data: Buffer): MintConfigAccount {
-  let offset = 8; // skip discriminator
+  let offset = 8;
 
   const authority = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;

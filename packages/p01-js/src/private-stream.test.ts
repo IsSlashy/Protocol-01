@@ -427,8 +427,8 @@ describe('PrivateStream', () => {
   // ------------------------------------------------
   it('uses different stealth addresses per tick when enabled', async () => {
     // Generate valid Ed25519 public keys by importing the crypto primitives
-    const { ed25519 } = await import('@noble/curves/ed25519');
-    const { randomBytes } = await import('@noble/hashes/utils');
+    const { ed25519 } = await import('@noble/curves/ed25519.js');
+    const { randomBytes } = await import('@noble/hashes/utils.js');
 
     // Generate real key pairs for spend and view (scan)
     const spendPriv = randomBytes(32);

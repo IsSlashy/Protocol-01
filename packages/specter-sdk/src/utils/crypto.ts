@@ -1,9 +1,10 @@
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
-import { sha512 } from '@noble/hashes/sha512';
-import { hkdf } from '@noble/hashes/hkdf';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
-import { ed25519 } from '@noble/curves/ed25519';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import bs58 from 'bs58';
 import {
   SALT_SIZE,
@@ -52,10 +53,11 @@ export function deriveSharedSecret(
  */
 export function deriveKey(
   sharedSecret: Uint8Array,
-  info: string,
+  info: string | Uint8Array,
   length: number = 32
 ): Uint8Array {
-  return hkdf(sha256, sharedSecret, undefined, info, length);
+  const infoBytes = typeof info === 'string' ? utf8ToBytes(info) : info;
+  return hkdf(sha256, sharedSecret, undefined, infoBytes, length);
 }
 
 /**
@@ -118,7 +120,7 @@ export function kemDecapsulate(
   return ml_kem768.decapsulate(cipherText, kemSecretKey);
 }
 
-const HYBRID_HKDF_INFO_BYTES = new TextEncoder().encode(HYBRID_HKDF_INFO);
+const HYBRID_HKDF_INFO_BYTES = HYBRID_HKDF_INFO;
 
 /**
  * Derive a hybrid shared secret by combining classical ECDH and post-quantum KEM secrets.
@@ -462,7 +464,7 @@ export function ed25519PublicKeyToX25519(ed25519Pub: Uint8Array): Uint8Array {
   }
 
   // Decode the Ed25519 point to get the affine y-coordinate
-  const point = ed25519.ExtendedPoint.fromHex(ed25519Pub);
+  const point = ed25519.Point.fromBytes(ed25519Pub);
   const { y } = point.toAffine();
 
   const p = CURVE25519_P;

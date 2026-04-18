@@ -2,6 +2,7 @@
   "name": "@protocol-01/p01-js",
   "version": "0.1.0",
   "description": "Protocol 01 SDK for integrating privacy-first crypto payments and Stream Secure subscriptions",
+  "deprecated": "Use @protocol-01/privacy-sdk instead. See docs/MIGRATION.md.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -83,11 +84,11 @@
     "@storybook/addon-docs": "^10.1.11",
     "@storybook/react-vite": "^10.1.11",
     "@types/node": "^22.15.0",
-    "@types/react": "^18.2.48",
-    "@types/react-dom": "^18.2.18",
+    "@types/react": "^19.2.9",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.2.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "rimraf": "^5.0.5",
     "storybook": "^10.1.11",
     "tsup": "^8.4.0",
@@ -96,9 +97,9 @@
     "vitest": "^3.2.0"
   },
   "dependencies": {
-    "@noble/curves": "^1.9.0",
-    "@noble/hashes": "^1.7.1",
-    "@noble/ciphers": "^1.2.0"
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "@noble/ciphers": "^2.2.0"
   },
   "publishConfig": {
     "access": "public"

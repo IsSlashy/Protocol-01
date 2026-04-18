@@ -9,8 +9,9 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
-import { x25519 } from '@noble/curves/ed25519';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { x25519 } from '@noble/curves/ed25519.js';
 import nacl from 'tweetnacl';
 import type {
   Network,
@@ -37,10 +38,10 @@ const POLL_INTERVAL_MS = 2_000;
 // ── Utility Functions ──────────────────────────────────────────────────────────
 
 /**
- * Anchor-style 8-byte instruction discriminator: sha256("global:<name>")[0..8]
+ * Anchor-style 8-byte instruction discriminator: sha256(utf8ToBytes("global:<name>"))[0..8]
  */
 function instructionDiscriminator(name: string): Buffer {
-  return Buffer.from(sha256(`global:${name}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`)).slice(0, 8));
 }
 
 /**
@@ -314,7 +315,7 @@ export class RelayModule {
             memcmp: {
               offset: 0,
               bytes: Buffer.from(
-                sha256('account:Relayer').slice(0, 8),
+                sha256(utf8ToBytes('account:Relayer')).slice(0, 8),
               ).toString('base64'),
             },
           },

@@ -14,10 +14,10 @@ import {
   createAssociatedTokenAccountInstruction,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { sha256 } from '@noble/hashes/sha256';
-import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { hmac } from '@noble/hashes/hmac.js';
 import { poseidon2, poseidon3 } from 'poseidon-lite';
-import { groth16 } from 'snarkjs';
 import { randomFieldElement as toolkitRandomFieldElement } from '@protocol-01/privacy-toolkit';
 
 import type {
@@ -34,57 +34,20 @@ import type {
   TokenInfo,
   TxResult,
   EncryptedNote,
-  ProofResult,
-  Groth16Proof,
   WalletAdapter,
   ProverConfig,
+  StarkProofOutcome,
 } from '../types';
 import { PrivacyError, PrivacyErrorCode } from '../errors';
 import {
   SEEDS,
   COMPUTE_UNITS,
   MERKLE_TREE_DEPTH,
-  DENOMINATIONS,
-  SHIELD_FEE_BPS,
-  UNSHIELD_FEE_BPS,
   FEE_WALLET,
   STARK_CIRCUITS,
 } from '../constants';
 
 // ─── Borsh serialization helpers ─────────────────────────────────────────────
-
-/** Encode a Groth16Proof to the on-chain Anchor format: pi_a[64] + pi_b[128] + pi_c[64] */
-function encodeGroth16Proof(proof: Groth16Proof): Buffer {
-  const buf = Buffer.alloc(256);
-  // pi_a: two 32-byte big-endian field elements
-  const piA0 = BigInt(proof.pi_a[0]);
-  const piA1 = BigInt(proof.pi_a[1]);
-  writeBigUint256BE(buf, 0, piA0);
-  writeBigUint256BE(buf, 32, piA1);
-  // pi_b: two pairs of 32-byte big-endian field elements (G2 point)
-  const piB00 = BigInt(proof.pi_b[0][0]);
-  const piB01 = BigInt(proof.pi_b[0][1]);
-  const piB10 = BigInt(proof.pi_b[1][0]);
-  const piB11 = BigInt(proof.pi_b[1][1]);
-  writeBigUint256BE(buf, 64, piB00);
-  writeBigUint256BE(buf, 96, piB01);
-  writeBigUint256BE(buf, 128, piB10);
-  writeBigUint256BE(buf, 160, piB11);
-  // pi_c: two 32-byte big-endian field elements
-  const piC0 = BigInt(proof.pi_c[0]);
-  const piC1 = BigInt(proof.pi_c[1]);
-  writeBigUint256BE(buf, 192, piC0);
-  writeBigUint256BE(buf, 224, piC1);
-  return buf;
-}
-
-/** Write a BigInt as a 32-byte big-endian unsigned integer into a buffer at offset. */
-function writeBigUint256BE(buf: Buffer, offset: number, value: bigint): void {
-  for (let i = 31; i >= 0; i--) {
-    buf[offset + i] = Number(value & 0xffn);
-    value >>= 8n;
-  }
-}
 
 /** Encode a bigint as a 32-byte little-endian buffer (BN254 field element). */
 function bigintToBytes32LE(value: bigint): Buffer {
@@ -118,12 +81,24 @@ function encodeVecU8(data: Buffer): Buffer {
 
 /**
  * Compute the 8-byte Anchor instruction discriminator for a given instruction name.
- * Anchor uses: sha256("global:<instruction_name>")[0..8]
+ * Anchor uses: sha256(utf8ToBytes("global:<instruction_name>"))[0..8]
  */
 function anchorDiscriminator(name: string): Buffer {
-  const hash = sha256(`global:${name}`);
+  const hash = sha256(utf8ToBytes(`global:${name}`));
   return Buffer.from(hash.slice(0, 8));
 }
+
+/**
+ * Pre-computed Anchor discriminators for the STARK instruction family. Kept
+ * inline to match the byte values asserted by the mobile + extension clients
+ * (apps/mobile/services/zk, apps/extension/src/shared/services/zk.ts). Changes
+ * to any of these must be mirrored there.
+ */
+const STARK_DISCRIMINATORS = {
+  shield_stark:   Buffer.from([241, 184, 171, 177, 138,  30, 238, 145]),
+  transfer_stark: Buffer.from([101,  77, 136,  73,  63, 103, 214, 251]),
+  unshield_stark: Buffer.from([189,  84, 110, 154, 217, 120, 183, 239]),
+} as const;
 
 // ─── Note encryption (XChaCha20-Poly1305 style, simplified for SDK) ─────────
 
@@ -200,11 +175,14 @@ function encryptNote(
  * transfer (spend + re-commit without revealing sender/receiver).
  *
  * Supports both variable-amount pools (ShieldedPool) and fixed-denomination
- * pools (DenominatedPool, Tornado Cash model). Proof generation uses
- * snarkjs Groth16, with an optional STARK path for quantum resistance.
+ * pools (DenominatedPool, Tornado Cash model). All variable-pool operations
+ * use STARK proofs (circuit 5 for transfer/unshield, circuit 6 for shield
+ * root update) — the host supplies a prover via
+ * {@link ProverConfig.generateStarkProof}. Denominated-pool shield requires
+ * no proof; denominated-pool unshield reads a pre-verified STARK buffer.
  */
 export class ShieldModule {
-  /** Optional prover config for circuit file paths / timeout. */
+  /** Host-supplied STARK prover, timeout, and legacy Groth16 paths. */
   private proverConfig?: ProverConfig;
 
   constructor(
@@ -280,7 +258,9 @@ export class ShieldModule {
       let txResult: TxResult;
 
       if (params.denominated) {
-        // Denominated pool (fixed-amount, Tornado-style)
+        // Denominated pool (fixed-amount, Tornado-style) — shield_denominated
+        // has no Merkle-update proof requirement on-chain, so no STARK prover
+        // is involved here.
         const denomination = amount;
         const [poolPDA] = this.derivePoolPDA(tokenInfo.mint, denomination);
         const [merkleTreePDA] = this.deriveMerkleTreePDA(poolPDA);
@@ -294,11 +274,21 @@ export class ShieldModule {
           newRoot,
         );
       } else {
-        // Variable-amount pool
+        // Variable-amount pool — shield_stark requires a circuit-6
+        // (merkle_update) STARK proof already uploaded and verified on-chain.
         const [poolPDA] = this.derivePoolPDA(tokenInfo.mint);
         const [merkleTreePDA] = this.deriveMerkleTreePDA(poolPDA);
 
-        tx = await this.buildShieldTx(
+        const starkProof = await this.requestStarkProof(STARK_CIRCUITS.MERKLE_UPDATE, {
+          // Placeholder private inputs — real callers must supply old/new roots,
+          // merkle path, and the new leaf. The SDK cannot compute these without
+          // a local tree; callers pass them in via a custom Record<string,any>
+          // their prover understands.
+          commitment: commitment.toString(),
+          newRoot: Array.from(newRoot).map((b) => b.toString()),
+        });
+
+        tx = await this.buildShieldStarkTx(
           walletPubkey,
           poolPDA,
           merkleTreePDA,
@@ -306,6 +296,7 @@ export class ShieldModule {
           amount,
           commitmentBytes,
           newRoot,
+          starkProof.proofBuffer,
         );
       }
 
@@ -449,22 +440,6 @@ export class ShieldModule {
       await this.checkNullifierNotSpent(poolPDA, bigintToBytes32LE(nullifier1));
       await this.checkNullifierNotSpent(poolPDA, bigintToBytes32LE(nullifier2));
 
-      // Generate ZK proof for transfer
-      const proofResult = await this.generateTransferProof({
-        merkleRoot: poolInfo.merkleRoot,
-        nullifier1,
-        nullifier2,
-        outputCommitment1,
-        outputCommitment2,
-        amount,
-        ownerField,
-        recipientField,
-        randomness1,
-        randomness2,
-        spendingKeyHash,
-        tokenMint: tokenInfo.mint,
-      });
-
       const nullifier1Bytes = bigintToBytes32LE(nullifier1);
       const nullifier2Bytes = bigintToBytes32LE(nullifier2);
       const outCommit1Bytes = bigintToBytes32LE(outputCommitment1);
@@ -476,19 +451,28 @@ export class ShieldModule {
       const [nullifierPDA1] = this.deriveNullifierPDA(poolPDA, nullifier1Bytes);
       const [nullifierPDA2] = this.deriveNullifierPDA(poolPDA, nullifier2Bytes);
 
-      // Derive VK data PDA
-      const [vkDataPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from(SEEDS.VK_DATA), poolPDA.toBuffer()],
-        this.programIds.zkShielded,
-      );
+      // Generate + upload a circuit-5 (transfer) STARK proof. The host
+      // provides the real private inputs (spending_key, randomness, merkle
+      // paths, etc.) — the SDK only forwards the public inputs it can derive.
+      const starkProof = await this.requestStarkProof(STARK_CIRCUITS.TRANSFER, {
+        merkleRoot: poolInfo.merkleRoot.toString(),
+        nullifier1: nullifier1.toString(),
+        nullifier2: nullifier2.toString(),
+        outputCommitment1: outputCommitment1.toString(),
+        outputCommitment2: outputCommitment2.toString(),
+        publicAmount: '0',
+        tokenMint: this.pubkeyToFieldElement(tokenInfo.mint).toString(),
+        ownerField: ownerField.toString(),
+        recipientField: recipientField.toString(),
+        randomness1: randomness1.toString(),
+        randomness2: randomness2.toString(),
+        spendingKeyHash: spendingKeyHash.toString(),
+      });
 
-      // Build the transfer instruction
-      const disc = anchorDiscriminator('transfer');
-      const proofData = encodeGroth16Proof(proofResult.proof);
-
+      // Build transfer_stark instruction — must match byte layout in
+      // apps/extension/src/shared/services/zk.ts and apps/mobile/services/zk.
       const instructionData = Buffer.concat([
-        disc,
-        proofData,
+        STARK_DISCRIMINATORS.transfer_stark,
         nullifier1Bytes,
         nullifier2Bytes,
         outCommit1Bytes,
@@ -498,12 +482,12 @@ export class ShieldModule {
       ]);
 
       const keys = [
-        { pubkey: walletPubkey, isSigner: true, isWritable: true },   // payer
-        { pubkey: poolPDA, isSigner: false, isWritable: true },       // shielded_pool
-        { pubkey: merkleTreePDA, isSigner: false, isWritable: true }, // merkle_tree
-        { pubkey: nullifierPDA1, isSigner: false, isWritable: true }, // nullifier_record_1
-        { pubkey: nullifierPDA2, isSigner: false, isWritable: true }, // nullifier_record_2
-        { pubkey: vkDataPDA, isSigner: false, isWritable: false },    // verification_key_data
+        { pubkey: walletPubkey, isSigner: true, isWritable: true },         // payer
+        { pubkey: poolPDA, isSigner: false, isWritable: true },             // shielded_pool
+        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },       // merkle_tree
+        { pubkey: nullifierPDA1, isSigner: false, isWritable: true },       // nullifier_record_1
+        { pubkey: nullifierPDA2, isSigner: false, isWritable: true },       // nullifier_record_2
+        { pubkey: starkProof.proofBuffer, isSigner: false, isWritable: false }, // stark_proof_buffer
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ];
 
@@ -744,10 +728,14 @@ export class ShieldModule {
   // ─── Private: Transaction Builders ───────────────────────────────────────
 
   /**
-   * Build a shield transaction for variable-amount pools.
-   * Instruction: shield(amount, commitment, new_root)
+   * Build a `shield_stark` transaction for the variable-amount pool. Requires
+   * a circuit-6 (merkle_update) proof buffer already uploaded and verified via
+   * p01_stark_verifier.
+   *
+   * Instruction layout (matches apps/extension zk.ts and apps/mobile services):
+   *   disc || commitment[32] || old_root[32] || new_root[32] || amount[8]
    */
-  private async buildShieldTx(
+  private async buildShieldStarkTx(
     depositor: PublicKey,
     poolPDA: PublicKey,
     merkleTreePDA: PublicKey,
@@ -755,35 +743,49 @@ export class ShieldModule {
     amount: bigint,
     commitment: Buffer,
     newRoot: Buffer,
+    proofBuffer: PublicKey,
   ): Promise<Transaction> {
     const isNativeSol = tokenInfo.mint.equals(
       new PublicKey('So11111111111111111111111111111111111111112'),
     );
 
-    const disc = anchorDiscriminator('shield');
+    // Fetch the current on-chain root (the STARK proof asserted old_root ==
+    // this value). Falls back to zeros if the pool has not yet been init'd.
+    const pool = await this.connection.getAccountInfo(poolPDA);
+    const oldRootBytes = pool
+      ? Buffer.from(pool.data.subarray(8 + 32 + 32, 8 + 32 + 32 + 32))
+      : Buffer.alloc(32);
+
     const instructionData = Buffer.concat([
-      disc,
-      u64ToBuffer(amount),
+      STARK_DISCRIMINATORS.shield_stark,
       commitment,
+      oldRootBytes,
       newRoot,
+      u64ToBuffer(amount),
     ]);
 
     const keys = [
-      { pubkey: depositor, isSigner: true, isWritable: true },          // depositor
-      { pubkey: poolPDA, isSigner: false, isWritable: true },           // shielded_pool
-      { pubkey: merkleTreePDA, isSigner: false, isWritable: true },     // merkle_tree
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+      { pubkey: depositor, isSigner: true, isWritable: true },
+      { pubkey: poolPDA, isSigner: false, isWritable: true },
+      { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
+      { pubkey: proofBuffer, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ];
 
     if (!isNativeSol) {
-      // SPL token: add token_program, user_token_account, pool_vault
       const userAta = await getAssociatedTokenAddress(tokenInfo.mint, depositor);
       const poolVault = await getAssociatedTokenAddress(tokenInfo.mint, poolPDA, true);
-
       keys.push(
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: userAta, isSigner: false, isWritable: true },
         { pubkey: poolVault, isSigner: false, isWritable: true },
+      );
+    } else {
+      // Placeholders so Anchor's Option deserialization returns None.
+      keys.push(
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: this.programIds.zkShielded, isSigner: false, isWritable: false },
+        { pubkey: this.programIds.zkShielded, isSigner: false, isWritable: false },
       );
     }
 
@@ -928,7 +930,9 @@ export class ShieldModule {
   }
 
   /**
-   * Unshield from a variable-amount pool using Groth16.
+   * Unshield from a variable-amount pool via `unshield_stark` — reads a
+   * pre-verified circuit-5 (transfer) STARK proof buffer with `publicAmount =
+   * -amount` bound into the transcript.
    */
   private async unshieldVariable(
     tokenInfo: TokenInfo,
@@ -946,8 +950,8 @@ export class ShieldModule {
     const spendingKeyHash = this.computeSpendingKeyHash(walletPubkey);
     const ownerField = this.pubkeyToFieldElement(walletPubkey);
 
-    // Derive nullifiers and commitments for 2-input/2-output unshield.
-    // Input: 2 notes being spent. Output: 1 change note + 1 public withdrawal.
+    // 2-input / 2-output: two input notes consumed, one change note emitted +
+    // one public withdrawal (no second output commitment).
     const randomness1 = this.randomFieldElement();
     const randomness2 = this.randomFieldElement();
     const changeRandomness = this.randomFieldElement();
@@ -957,54 +961,43 @@ export class ShieldModule {
     const nullifier1 = await this.computeNullifier(inputCommitment1, spendingKeyHash);
     const nullifier2 = await this.computeNullifier(inputCommitment2, spendingKeyHash);
 
-    // Change note commitment (zero change for exact-amount withdrawal)
     const changeCommitment = await this.computeCommitment(0n, ownerField, changeRandomness);
 
     const nullifier1Bytes = bigintToBytes32LE(nullifier1);
     const nullifier2Bytes = bigintToBytes32LE(nullifier2);
 
-    // Check both nullifiers are not spent
     await this.checkNullifierNotSpent(poolPDA, nullifier1Bytes);
     await this.checkNullifierNotSpent(poolPDA, nullifier2Bytes);
 
-    // Fetch pool info
     const poolInfo = await this.getPoolInfo(tokenInfo.symbol);
     const merkleRootBytes = bigintToBytes32LE(poolInfo.merkleRoot);
-
-    // Output commitments: change note + empty (public withdrawal has no commitment)
     const outCommit1Bytes = bigintToBytes32LE(changeCommitment);
-    const outCommit2Bytes = Buffer.alloc(32); // zero = no second output note
-
+    const outCommit2Bytes = Buffer.alloc(32);
     const newRoot = this.computeNewRoot(outCommit1Bytes);
 
-    // Generate ZK proof
-    const proofResult = await this.generateUnshieldProof({
-      merkleRoot: poolInfo.merkleRoot,
-      nullifier1,
-      nullifier2,
-      outputCommitment1: changeCommitment,
-      outputCommitment2: 0n,
-      amount,
-      ownerField,
-      spendingKeyHash,
-      tokenMint: tokenInfo.mint,
+    // Request a circuit-5 (transfer) STARK proof with publicAmount = -amount
+    // encoded as a negative (caller's prover is responsible for the sign).
+    const starkProof = await this.requestStarkProof(STARK_CIRCUITS.TRANSFER, {
+      merkleRoot: poolInfo.merkleRoot.toString(),
+      nullifier1: nullifier1.toString(),
+      nullifier2: nullifier2.toString(),
+      outputCommitment1: changeCommitment.toString(),
+      outputCommitment2: '0',
+      publicAmount: (-amount).toString(),
+      tokenMint: this.pubkeyToFieldElement(tokenInfo.mint).toString(),
+      ownerField: ownerField.toString(),
+      spendingKeyHash: spendingKeyHash.toString(),
+      randomness1: randomness1.toString(),
+      randomness2: randomness2.toString(),
+      changeRandomness: changeRandomness.toString(),
     });
 
-    // Derive PDAs
     const [nullifierPDA1] = this.deriveNullifierPDA(poolPDA, nullifier1Bytes);
     const [nullifierPDA2] = this.deriveNullifierPDA(poolPDA, nullifier2Bytes);
-    const [vkDataPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from(SEEDS.VK_DATA), poolPDA.toBuffer()],
-      this.programIds.zkShielded,
-    );
 
-    // Build unshield instruction
-    const disc = anchorDiscriminator('unshield');
-    const proofData = encodeGroth16Proof(proofResult.proof);
-
+    // unshield_stark layout mirrors apps/extension/src/shared/services/zk.ts
     const instructionData = Buffer.concat([
-      disc,
-      proofData,
+      STARK_DISCRIMINATORS.unshield_stark,
       nullifier1Bytes,
       nullifier2Bytes,
       outCommit1Bytes,
@@ -1015,13 +1008,13 @@ export class ShieldModule {
     ]);
 
     const keys = [
-      { pubkey: walletPubkey, isSigner: true, isWritable: true },      // payer
-      { pubkey: recipient, isSigner: false, isWritable: true },         // recipient
-      { pubkey: poolPDA, isSigner: false, isWritable: true },           // shielded_pool
-      { pubkey: merkleTreePDA, isSigner: false, isWritable: true },     // merkle_tree
-      { pubkey: nullifierPDA1, isSigner: false, isWritable: true },     // nullifier_record_1
-      { pubkey: nullifierPDA2, isSigner: false, isWritable: true },     // nullifier_record_2
-      { pubkey: vkDataPDA, isSigner: false, isWritable: false },        // verification_key_data
+      { pubkey: walletPubkey, isSigner: true, isWritable: true },              // payer
+      { pubkey: recipient, isSigner: false, isWritable: true },                 // recipient
+      { pubkey: poolPDA, isSigner: false, isWritable: true },                   // shielded_pool
+      { pubkey: merkleTreePDA, isSigner: false, isWritable: true },             // merkle_tree
+      { pubkey: nullifierPDA1, isSigner: false, isWritable: true },             // nullifier_record_1
+      { pubkey: nullifierPDA2, isSigner: false, isWritable: true },             // nullifier_record_2
+      { pubkey: starkProof.proofBuffer, isSigner: false, isWritable: false },   // stark_proof_buffer
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ];
 
@@ -1029,7 +1022,6 @@ export class ShieldModule {
       const poolVault = await getAssociatedTokenAddress(tokenInfo.mint, poolPDA, true);
       const recipientAta = await getAssociatedTokenAddress(tokenInfo.mint, recipient);
 
-      // Create recipient ATA if it doesn't exist
       const recipientAtaInfo = await this.connection.getAccountInfo(recipientAta);
       const tx = new Transaction();
       tx.add(
@@ -1057,6 +1049,14 @@ export class ShieldModule {
       const txResult = await this.sendTx(tx);
       return { tx: txResult, nullifier: nullifier1, amount };
     }
+
+    // Native SOL — append placeholder token-program slots matching the
+    // extension's encoding (Anchor deserializes as Option::None).
+    keys.push(
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: this.programIds.zkShielded, isSigner: false, isWritable: false }, // pool_vault placeholder
+      { pubkey: this.programIds.zkShielded, isSigner: false, isWritable: false }, // recipient_token_account placeholder
+    );
 
     const ix = new TransactionInstruction({
       programId: this.programIds.zkShielded,
@@ -1150,113 +1150,37 @@ export class ShieldModule {
     return tx;
   }
 
-  // ─── Private: Proof Generation ───────────────────────────────────────────
+  // ─── Private: STARK Proof Request ────────────────────────────────────────
 
   /**
-   * Generate a Groth16 proof for shielded pool operations.
-   * Wraps snarkjs.groth16.fullProve with the configured circuit files.
+   * Invoke the host-supplied STARK prover. The host is responsible for
+   * generating the proof (via WASM), uploading it to p01_stark_verifier in
+   * chunks, running the two-phase DEEP-ALI verify, and returning the PDA of
+   * the verified proof buffer — see `ProverConfig.generateStarkProof`.
    */
-  private async generateShieldProof(inputs: Record<string, any>): Promise<ProofResult> {
-    if (!this.proverConfig?.wasmPath || !this.proverConfig?.zkeyPath) {
+  private async requestStarkProof(
+    circuitId: number,
+    privateInputs: Record<string, string | string[] | number[]>,
+  ): Promise<StarkProofOutcome> {
+    if (!this.proverConfig?.generateStarkProof) {
       throw new PrivacyError(
         PrivacyErrorCode.PROOF_GENERATION_FAILED,
-        'Prover not configured. Call setProverConfig() with wasmPath and zkeyPath before generating proofs.',
+        'STARK prover not configured. Call setProverConfig({ generateStarkProof }) with a host-supplied generator before shield/transfer/unshield on the variable-amount pool.',
       );
     }
 
-    const startMs = Date.now();
-
+    const timeoutMs = this.proverConfig.timeout ?? 120_000;
     try {
-      const timeoutMs = this.proverConfig.timeout ?? 120_000;
-
-      const proofPromise = groth16.fullProve(
-        inputs,
-        this.proverConfig.wasmPath,
-        this.proverConfig.zkeyPath,
-      );
-
-      const result = await Promise.race([
-        proofPromise,
+      const outcome = await Promise.race([
+        this.proverConfig.generateStarkProof(circuitId, privateInputs),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Proof generation timed out')), timeoutMs),
+          setTimeout(() => reject(new Error('STARK proof generation timed out')), timeoutMs),
         ),
       ]);
-
-      const { proof, publicSignals } = result as { proof: Groth16Proof; publicSignals: string[] };
-      const durationMs = Date.now() - startMs;
-
-      return { proof, publicSignals, durationMs };
+      return outcome;
     } catch (err) {
-      throw PrivacyError.proofFailed('shield', err as Error);
+      throw PrivacyError.proofFailed(`stark_circuit_${circuitId}`, err as Error);
     }
-  }
-
-  /**
-   * Generate a Groth16 proof for unshielding from a variable pool.
-   * Circuit: transfer (2 inputs, 2 outputs, public_amount = -amount)
-   */
-  private async generateUnshieldProof(params: {
-    merkleRoot: bigint;
-    nullifier1: bigint;
-    nullifier2: bigint;
-    outputCommitment1: bigint;
-    outputCommitment2: bigint;
-    amount: bigint;
-    ownerField: bigint;
-    spendingKeyHash: bigint;
-    tokenMint: PublicKey;
-  }): Promise<ProofResult> {
-    const circuitInputs = {
-      root: params.merkleRoot.toString(),
-      nullifierHash1: params.nullifier1.toString(),
-      nullifierHash2: params.nullifier2.toString(),
-      outputCommitment1: params.outputCommitment1.toString(),
-      outputCommitment2: params.outputCommitment2.toString(),
-      publicAmount: (-params.amount).toString(),
-      tokenMint: this.pubkeyToFieldElement(params.tokenMint).toString(),
-      // Private inputs would be filled from note database
-      secret: params.ownerField.toString(),
-      spendingKeyHash: params.spendingKeyHash.toString(),
-    };
-
-    return this.generateShieldProof(circuitInputs);
-  }
-
-  /**
-   * Generate a Groth16 proof for private transfer.
-   * Circuit: transfer (2 inputs, 2 outputs, public_amount = 0)
-   */
-  private async generateTransferProof(params: {
-    merkleRoot: bigint;
-    nullifier1: bigint;
-    nullifier2: bigint;
-    outputCommitment1: bigint;
-    outputCommitment2: bigint;
-    amount: bigint;
-    ownerField: bigint;
-    recipientField: bigint;
-    randomness1: bigint;
-    randomness2: bigint;
-    spendingKeyHash: bigint;
-    tokenMint: PublicKey;
-  }): Promise<ProofResult> {
-    const circuitInputs = {
-      root: params.merkleRoot.toString(),
-      nullifierHash1: params.nullifier1.toString(),
-      nullifierHash2: params.nullifier2.toString(),
-      outputCommitment1: params.outputCommitment1.toString(),
-      outputCommitment2: params.outputCommitment2.toString(),
-      publicAmount: '0',
-      tokenMint: this.pubkeyToFieldElement(params.tokenMint).toString(),
-      // Private inputs
-      secret: params.ownerField.toString(),
-      recipientSecret: params.recipientField.toString(),
-      randomness1: params.randomness1.toString(),
-      randomness2: params.randomness2.toString(),
-      spendingKeyHash: params.spendingKeyHash.toString(),
-    };
-
-    return this.generateShieldProof(circuitInputs);
   }
 
   // ─── Private: Transaction Sending ────────────────────────────────────────

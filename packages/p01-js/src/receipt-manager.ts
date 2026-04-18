@@ -11,9 +11,9 @@
  * @module receipt-manager
  */
 
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
-import { randomBytes } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 
 import type { ShieldReceipt } from './shielded-pool';
 

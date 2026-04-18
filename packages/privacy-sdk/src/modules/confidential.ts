@@ -10,7 +10,8 @@ import {
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import { poseidon2, poseidon3 } from 'poseidon-lite';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { randomFieldElement } from '@protocol-01/privacy-toolkit';
 import type {
   Network,
@@ -38,10 +39,10 @@ function cryptoRandomSalt(): bigint {
 }
 
 /**
- * Anchor-style 8-byte instruction discriminator: sha256("global:<name>")[0..8]
+ * Anchor-style 8-byte instruction discriminator: sha256(utf8ToBytes("global:<name>"))[0..8]
  */
 function instructionDiscriminator(name: string): Buffer {
-  return Buffer.from(sha256(`global:${name}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`)).slice(0, 8));
 }
 
 /**

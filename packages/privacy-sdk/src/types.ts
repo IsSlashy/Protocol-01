@@ -649,14 +649,56 @@ export interface ProofResult {
   durationMs?: number;
 }
 
+/**
+ * STARK proof outcome returned by a host-supplied generator.
+ *
+ * The host is responsible for:
+ *  1. Running the WASM prover (mobile/extension/Node-native).
+ *  2. Uploading the proof bytes to p01_stark_verifier (chunked writes).
+ *  3. Invoking the two-phase on-chain verify (DEEP-ALI phase 1 + phase 2).
+ *  4. Returning the PDA of the verified proof buffer so the SDK can reference
+ *     it from the zk_shielded instruction.
+ *
+ * Using a callback keeps the privacy-sdk free of Rust/WASM dependencies while
+ * still letting callers compose shield/transfer/unshield_stark instructions.
+ */
+export interface StarkProofOutcome {
+  /** PDA of the verified STARK proof buffer held by p01_stark_verifier. */
+  proofBuffer: import('@solana/web3.js').PublicKey;
+  /** Circuit identifier (0–6). Informational — callers may log / assert. */
+  circuitId: number;
+  /** Public inputs bound into the STARK transcript, for downstream checks. */
+  publicInputs?: bigint[];
+}
+
+/**
+ * Host-supplied STARK prover + verifier submitter.
+ *
+ * `circuitId` uses the values from {@link STARK_CIRCUITS}:
+ *   5 = transfer (width 6, trace 512) — used for variable-pool transfer/unshield.
+ *   6 = merkle_update (depth 15)     — used for variable-pool shield root update.
+ */
+export type StarkProofGenerator = (
+  circuitId: number,
+  privateInputs: Record<string, string | string[] | number[]>,
+) => Promise<StarkProofOutcome>;
+
 /** Configuration for the ZK prover. */
 export interface ProverConfig {
-  /** Circuit WASM file path or URL. */
-  wasmPath?: string;
-  /** Circuit zkey file path or URL. */
-  zkeyPath?: string;
+  /**
+   * Host-supplied STARK prover + verifier submitter. Required for
+   * shield/transfer/unshield on the variable-amount pool (all paths are STARK
+   * post-migration). Denominated-pool operations may still route through a
+   * pre-verified buffer supplied out-of-band.
+   */
+  generateStarkProof?: StarkProofGenerator;
   /** Use local-only proving -- no remote prover fallback (default: true). */
   localOnly?: boolean;
-  /** Proof generation timeout in ms (default: 120000). */
+  /** Proof generation + verification timeout in ms (default: 120000). */
   timeout?: number;
+
+  /** @deprecated Groth16 circuit WASM — kept for compliance.ts only. */
+  wasmPath?: string;
+  /** @deprecated Groth16 zkey — kept for compliance.ts only. */
+  zkeyPath?: string;
 }

@@ -13,7 +13,8 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { poseidon2 } from 'poseidon-lite';
 import type { Signer, Network, ProgramIds, TokenInfo, TxResult } from '../types';
 import { PrivacyError, PrivacyErrorCode } from '../errors';
@@ -228,7 +229,7 @@ export class MugenExchangeModule {
   }
 
   private anchorDiscriminator(name: string): Buffer {
-    const hash = sha256(`global:${name}`);
+    const hash = sha256(utf8ToBytes(`global:${name}`));
     return Buffer.from(hash.slice(0, 8));
   }
 

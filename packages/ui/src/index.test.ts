@@ -363,7 +363,7 @@ describe('Spacing', () => {
 
   describe('semanticSpacing', () => {
     it('should reference values from the spacing scale', () => {
-      const spacingValues = new Set(Object.values(spacing));
+      const spacingValues = new Set<number>(Object.values(spacing));
       for (const [key, value] of Object.entries(semanticSpacing)) {
         expect(
           spacingValues.has(value as number),

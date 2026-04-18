@@ -10,7 +10,7 @@ import {
   Connection,
   PublicKey,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 import type { RelayerNodeInfo, RelayerConfigInfo } from './types';
 import { RELAY_SEEDS } from './types';
 

@@ -8,7 +8,8 @@ import {
   Keypair,
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
 import { groth16 } from 'snarkjs';
 import { randomFieldElement as toolkitRandomFieldElement } from '@protocol-01/privacy-toolkit';
@@ -205,10 +206,10 @@ function i64FromLeBytes(buf: Uint8Array, offset: number): number {
 
 /**
  * Compute the 8-byte Anchor instruction discriminator for a given instruction name.
- * Anchor uses: sha256("global:<instruction_name>")[0..8]
+ * Anchor uses: sha256(utf8ToBytes("global:<instruction_name>"))[0..8]
  */
 function instructionDiscriminator(name: string): Buffer {
-  return Buffer.from(sha256(`global:${name}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`)).slice(0, 8));
 }
 
 // ─── Module ──────────────────────────────────────────────────────────────────
@@ -788,7 +789,7 @@ export class ComplianceModule {
    * for "ComplianceAttestation". Used in getProgramAccounts filters.
    */
   private attestationDiscriminatorBase58(): string {
-    const hash = sha256('account:ComplianceAttestation');
+    const hash = sha256(utf8ToBytes('account:ComplianceAttestation'));
     const disc = hash.slice(0, 8);
     // Convert to base58 via a temporary PublicKey isn't reliable for 8 bytes;
     // use bs58 encoding manually. We do it by padding to 32 bytes and using

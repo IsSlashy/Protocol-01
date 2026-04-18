@@ -173,20 +173,6 @@ export function fieldToBytes(field: bigint): Bytes32 {
 }
 
 /**
- * Convert a field element to 32 bytes (big-endian).
- * Used for G1/G2 point encoding for the alt_bn128 precompile.
- */
-export function fieldToBytesBE(field: bigint): Bytes32 {
-  const bytes = new Uint8Array(32);
-  let value = field;
-  for (let i = 31; i >= 0; i--) {
-    bytes[i] = Number(value & 0xffn);
-    value >>= 8n;
-  }
-  return bytes;
-}
-
-/**
  * Convert 32 bytes (little-endian) to a field element, reduced mod p.
  */
 export function bytesToField(bytes: Uint8Array): bigint {

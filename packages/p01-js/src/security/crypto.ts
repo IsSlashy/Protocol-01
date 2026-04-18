@@ -14,13 +14,13 @@
  * @module security/crypto
  */
 
-import { ed25519 } from '@noble/curves/ed25519';
-import { x25519 } from '@noble/curves/ed25519';
-import { sha256 } from '@noble/hashes/sha256';
-import { sha512 as realSha512 } from '@noble/hashes/sha512';
-import { blake2b } from '@noble/hashes/blake2b';
-import { hkdf } from '@noble/hashes/hkdf';
-import { randomBytes } from '@noble/hashes/utils';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { x25519 } from '@noble/curves/ed25519.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { sha512 as realSha512 } from '@noble/hashes/sha2.js';
+import { blake2b } from '@noble/hashes/blake2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 
 // ============ Constants ============
 
@@ -209,7 +209,7 @@ export function ed25519PublicKeyToX25519(ed25519PublicKey: Uint8Array): Uint8Arr
   }
 
   // Use the ExtendedPoint to convert
-  const point = ed25519.ExtendedPoint.fromHex(ed25519PublicKey);
+  const point = ed25519.Point.fromBytes(ed25519PublicKey);
 
   // Convert Ed25519 point (x, y) to X25519 u-coordinate
   // u = (1 + y) / (1 - y) mod p
@@ -560,8 +560,8 @@ const PEDERSEN_H_POINT = (() => {
   const hBytes = hashSHA256(new TextEncoder().encode('Protocol01-Pedersen-H-Generator'));
   // Use hash-to-curve to get a valid point
   // We multiply the base point by the hash to get H
-  const scalar = bytesToBigInt(hBytes) % ed25519.CURVE.n;
-  return ed25519.ExtendedPoint.BASE.multiply(scalar);
+  const scalar = bytesToBigInt(hBytes) % ed25519.Point.Fn.ORDER;
+  return ed25519.Point.BASE.multiply(scalar);
 })();
 
 /**
@@ -610,15 +610,15 @@ export function createCommitment(
   }
 
   // Convert blinding factor to scalar
-  const rScalar = bytesToBigInt(r) % ed25519.CURVE.n;
+  const rScalar = bytesToBigInt(r) % ed25519.Point.Fn.ORDER;
 
   // C = vG + rH
-  const vG = ed25519.ExtendedPoint.BASE.multiply(value % ed25519.CURVE.n);
+  const vG = ed25519.Point.BASE.multiply(value % ed25519.Point.Fn.ORDER);
   const rH = PEDERSEN_H_POINT.multiply(rScalar);
   const commitment = vG.add(rH);
 
   return {
-    commitment: commitment.toRawBytes(),
+    commitment: commitment.toBytes(),
     value,
     blindingFactor: r,
   };
@@ -676,9 +676,9 @@ export function addCommitments(
   commitment1: Uint8Array,
   commitment2: Uint8Array,
 ): Uint8Array {
-  const p1 = ed25519.ExtendedPoint.fromHex(commitment1);
-  const p2 = ed25519.ExtendedPoint.fromHex(commitment2);
-  return p1.add(p2).toRawBytes();
+  const p1 = ed25519.Point.fromBytes(commitment1);
+  const p2 = ed25519.Point.fromBytes(commitment2);
+  return p1.add(p2).toBytes();
 }
 
 /**
@@ -692,9 +692,9 @@ export function subtractCommitments(
   commitment1: Uint8Array,
   commitment2: Uint8Array,
 ): Uint8Array {
-  const p1 = ed25519.ExtendedPoint.fromHex(commitment1);
-  const p2 = ed25519.ExtendedPoint.fromHex(commitment2);
-  return p1.subtract(p2).toRawBytes();
+  const p1 = ed25519.Point.fromBytes(commitment1);
+  const p2 = ed25519.Point.fromBytes(commitment2);
+  return p1.subtract(p2).toBytes();
 }
 
 /**
@@ -706,8 +706,8 @@ export function subtractCommitments(
  * @returns Commitment to zero (0*G + r*H = r*H)
  */
 export function createZeroCommitment(blindingFactor: Uint8Array): Uint8Array {
-  const rScalar = bytesToBigInt(blindingFactor) % ed25519.CURVE.n;
-  return PEDERSEN_H_POINT.multiply(rScalar).toRawBytes();
+  const rScalar = bytesToBigInt(blindingFactor) % ed25519.Point.Fn.ORDER;
+  return PEDERSEN_H_POINT.multiply(rScalar).toBytes();
 }
 
 /**
@@ -723,8 +723,8 @@ export function isZeroCommitment(commitment: Uint8Array): boolean {
   // We can't efficiently check this without knowing r
   // But we can check if C is the identity point (r = 0)
   try {
-    const point = ed25519.ExtendedPoint.fromHex(commitment);
-    return point.equals(ed25519.ExtendedPoint.ZERO);
+    const point = ed25519.Point.fromBytes(commitment);
+    return point.equals(ed25519.Point.ZERO);
   } catch {
     return false;
   }

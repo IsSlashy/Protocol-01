@@ -16,11 +16,9 @@ import {
 } from '@solana/web3.js';
 import type { StealthMetaAddress, WalletAdapter } from '../types';
 import { encodeStealthMetaAddress } from '../utils/helpers';
+import { REGISTRY_PROGRAM_ID } from '../constants';
 
-// Program ID (matches declare_id! in p01_registry)
-export const REGISTRY_PROGRAM_ID = new PublicKey(
-  'Hz4ZULacefgJzq94YJTSq3WmQAySyYuzCRiEzNXCA2sZ'
-);
+export { REGISTRY_PROGRAM_ID };
 
 const USER_REGISTRY_SEED = Buffer.from('user_registry');
 

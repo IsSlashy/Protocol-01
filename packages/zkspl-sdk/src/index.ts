@@ -1,6 +1,13 @@
 // ==========================================================================
 // @protocol-01/zkspl-sdk — SDK for Protocol 01 zkSPL Confidential Token Balances
 // ==========================================================================
+//
+// STARK-only mode (post Groth16 migration):
+// All proofs are generated out-of-band by the caller (typically via the
+// Winterfell-backed WASM prover in apps/mobile or apps/extension), uploaded
+// to `p01_stark_verifier`, and the verified proof buffer pubkey is passed
+// to each zkSPL instruction. The SDK never generates proofs and never sees
+// private witnesses.
 
 // Core client
 export { ZkSplClient, type ZkSplClientConfig } from './client';
@@ -14,19 +21,10 @@ export {
   randomSalt,
   deriveDeterministicSalt,
   fieldToBytes,
-  fieldToBytesBE,
   bytesToField,
   pubkeyToField,
   zeroAmountHash,
 } from './crypto';
-
-// Prover
-export {
-  ZkSplProver,
-  buildBalanceCircuitInputs,
-  buildProofCircuitInputs,
-  snarkjsProofToBytes,
-} from './prover';
 
 // Local state management
 export {
@@ -41,26 +39,18 @@ export type {
   Bytes32,
   FieldElement,
 
-  // Groth16
-  Groth16Proof,
-
   // On-chain accounts
   MintConfigAccount,
   ConfidentialAccountData,
   PendingCredit,
 
-  // Circuit inputs
+  // Public inputs (for preparing STARK proofs out-of-band)
   ConfidentialBalancePublicInputs,
-  ConfidentialBalancePrivateInputs,
   BalanceProofPublicInputs,
-  BalanceProofPrivateInputs,
 
   // Local state
   LocalAccountState,
   KnownPendingCredit,
-
-  // Config
-  ProverConfig,
 
   // Results
   ZkSplTxResult,
@@ -74,23 +64,26 @@ export type {
   BalanceProofEvent,
 } from './types';
 
+// STARK circuit IDs
+export {
+  CIRCUIT_BALANCE_PROOF,
+  CIRCUIT_CONFIDENTIAL_BALANCE,
+} from './types';
+
 // Constants
 export {
   FIELD_MODULUS,
   ZKSPL_PROGRAM_ID,
   ZK_SHIELDED_PROGRAM_ID,
+  STARK_VERIFIER_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   USDC_DEVNET_MINT,
   TOKEN_DECIMALS,
   PDA_SEEDS,
   ZK_SHIELDED_PDA_SEEDS,
   USDC_DENOMINATIONS,
-  VK_TYPE_BALANCE,
-  VK_TYPE_PROOF,
   MAX_PENDING_CREDITS,
   MAX_VIEWER_KEYS,
-  PROOF_GENERATION_TIMEOUT,
-  CIRCUIT_FILES,
   PROGRAM_IDS,
   getProgramId,
   registerTokenDecimals,

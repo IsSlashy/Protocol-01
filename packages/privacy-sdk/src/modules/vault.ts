@@ -9,7 +9,8 @@ import {
   Keypair,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import type {
   Network,
   ProgramIds,
@@ -46,10 +47,10 @@ const HTL_VAULT_DISCRIMINATOR = 1;
 // ── Utility Functions ──────────────────────────────────────────────────────────
 
 /**
- * Anchor-style 8-byte instruction discriminator: sha256("global:<name>")[0..8]
+ * Anchor-style 8-byte instruction discriminator: sha256(utf8ToBytes("global:<name>"))[0..8]
  */
 function instructionDiscriminator(name: string): Buffer {
-  return Buffer.from(sha256(`global:${name}`).slice(0, 8));
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`)).slice(0, 8));
 }
 
 /**
@@ -304,20 +305,64 @@ export class VaultModule {
       const tx = new Transaction();
 
       if (vaultInfo.type === 'wots') {
-        // WOTS+ withdrawal: build signature + next key rotation
-        // The message to sign is: sha256(vault_address || amount_le_bytes)
+        // WOTS+ withdrawal requires: current seed, next seed, destination,
+        // and the current on-chain withdrawal_count (which is bound into the
+        // signed message to prevent replay across withdrawals).
+        if (!params.seed || params.seed.length !== 32) {
+          throw new PrivacyError(
+            PrivacyErrorCode.VAULT_WITHDRAW_FAILED,
+            'WOTS+ withdrawal requires a 32-byte `seed` for the current key.',
+          );
+        }
+        if (!params.nextSeed || params.nextSeed.length !== 32) {
+          throw new PrivacyError(
+            PrivacyErrorCode.VAULT_WITHDRAW_FAILED,
+            'WOTS+ withdrawal requires a 32-byte `nextSeed` for key rotation.',
+          );
+        }
+        const destination = params.destination ?? owner;
+        const withdrawalCount =
+          params.withdrawalCount !== undefined
+            ? BigInt(params.withdrawalCount)
+            : BigInt(vaultInfo.keyIndex ?? 0);
+
+        // Rebuild the current WOTS+ keypair from the seed
+        const { privateChains, publicElements } = this.deriveWotsChains(params.seed);
+        const wotsPubkey = Buffer.concat(publicElements); // 67 * 32 = 2144 bytes
+
+        // Derive the next key's pubkey hash for on-chain rotation
+        const { publicKeyHash: nextPubkeyHash } = this.generateWotsKeypair(params.nextSeed);
+
+        // Message MUST match the Rust program exactly:
+        //   SHA-256(amount_le || destination_pubkey || withdrawal_count_le)
         const message = sha256(
-          Buffer.concat([params.vault.toBuffer(), u64ToLeBytes(amount).subarray(0, 8)]),
+          Buffer.concat([
+            u64ToLeBytes(amount),
+            destination.toBuffer(),
+            u64ToLeBytes(withdrawalCount),
+          ]),
         );
 
-        // Placeholder: in production the caller provides seed + key index
-        // to reconstruct the private chains. Here we provide the instruction
-        // structure with empty signature data for the caller to fill.
+        // Build the 67-chain signature (Rust re-hashes `message` itself, but here
+        // the message IS already the final hash the program will compute — so we
+        // pass it straight into wotsSign which will NOT re-hash it).
+        const signature = this.wotsSignFromHash(message, privateChains);
+
+        // Anchor-serialize: disc || amount_u64 || vec<u8>(sig) || vec<u8>(pk) || [u8;32]
+        const sigLen = Buffer.alloc(4);
+        sigLen.writeUInt32LE(signature.length, 0);
+        const pkLen = Buffer.alloc(4);
+        pkLen.writeUInt32LE(wotsPubkey.length, 0);
+
         const disc = instructionDiscriminator('withdraw_winternitz');
         const data = Buffer.concat([
           disc,
           u64ToLeBytes(amount),
-          Buffer.from(message), // 32-byte message hash
+          sigLen,
+          signature,
+          pkLen,
+          wotsPubkey,
+          Buffer.from(nextPubkeyHash),
         ]);
 
         tx.add(
@@ -325,6 +370,7 @@ export class VaultModule {
             keys: [
               { pubkey: owner, isSigner: true, isWritable: true },
               { pubkey: params.vault, isSigner: false, isWritable: true },
+              { pubkey: destination, isSigner: false, isWritable: true },
               { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
             ],
             programId: this.programIds.quantumVault,
@@ -405,71 +451,71 @@ export class VaultModule {
   private generateWotsKeypair(seed: Uint8Array): {
     publicKeyHash: Uint8Array;
     privateChains: Uint8Array[];
+    publicElements: Uint8Array[];
+  } {
+    const { privateChains, publicElements } = this.deriveWotsChains(seed);
+    const publicKeyHash = sha256(Buffer.concat(publicElements));
+    return { publicKeyHash, privateChains, publicElements };
+  }
+
+  /**
+   * Deterministically derive the 67 private chain roots + 67 public endpoints
+   * from a 32-byte seed. Must mirror the structure used by on-chain verification:
+   *   chainRoot_i = SHA-256(seed || u32_le(i))
+   *   pubEnd_i    = hash^15(chainRoot_i)
+   *   pubkeyHash  = SHA-256(pubEnd_0 || ... || pubEnd_66)
+   */
+  private deriveWotsChains(seed: Uint8Array): {
+    privateChains: Uint8Array[];
+    publicElements: Uint8Array[];
   } {
     const privateChains: Uint8Array[] = [];
     const publicElements: Uint8Array[] = [];
-
     for (let i = 0; i < WOTS_TOTAL_CHAINS; i++) {
-      // Derive private chain root: sha256(seed || i)
       const indexBuf = new Uint8Array(4);
       new DataView(indexBuf.buffer).setUint32(0, i, true);
       const chainRoot = sha256(Buffer.concat([seed, indexBuf]));
       privateChains.push(chainRoot);
-
-      // Public key element is the chain hashed W-1 times
-      const pubElement = hashChain(chainRoot, WOTS_W - 1);
-      publicElements.push(pubElement);
+      publicElements.push(hashChain(chainRoot, WOTS_W - 1));
     }
-
-    // Public key hash = sha256(concat(all public elements))
-    const allPub = Buffer.concat(publicElements);
-    const publicKeyHash = sha256(allPub);
-
-    return { publicKeyHash, privateChains };
+    return { privateChains, publicElements };
   }
 
   /**
-   * Sign a message with WOTS+.
+   * Sign a PRE-HASHED 32-byte message digest with WOTS+ (67 chains).
    *
-   * Each nibble of the message hash determines how many times the
-   * corresponding private chain root is hashed. Checksum chains
-   * prevent existential forgery.
-   *
-   * @param message - 32-byte message to sign.
-   * @param privateChains - Array of 67 chain roots.
-   * @returns The concatenated signature (67 * 32 = 2144 bytes).
+   * Extracts 64 message nibbles from the full digest (high-then-low per byte),
+   * computes checksum = sum(15 - m_i), encodes checksum MSB-first as 3 nibbles,
+   * then for each of 67 chains outputs `hash^(15 - nibble_i)(privateChain_i)`.
    */
-  private wotsSign(
-    message: Uint8Array,
+  private wotsSignFromHash(
+    msgHash: Uint8Array,
     privateChains: Uint8Array[],
-  ): Uint8Array {
-    const msgHash = sha256(message);
-    const nibbles: number[] = [];
-
-    // Extract nibbles (4 bits each) from the message hash
-    for (let i = 0; i < msgHash.length; i++) {
-      nibbles.push((msgHash[i]! >> 4) & 0x0f);
-      nibbles.push(msgHash[i]! & 0x0f);
+  ): Buffer {
+    if (msgHash.length !== 32) {
+      throw new Error('wotsSignFromHash: expected a 32-byte digest');
     }
 
-    // Compute checksum
+    const nibbles: number[] = new Array(WOTS_TOTAL_CHAINS);
+    for (let i = 0; i < WOTS_CHAINS; i++) {
+      const byteIdx = i >> 1;
+      nibbles[i] = i % 2 === 0
+        ? (msgHash[byteIdx]! >> 4) & 0x0f
+        : msgHash[byteIdx]! & 0x0f;
+    }
+
     let checksum = 0;
-    for (const n of nibbles) {
-      checksum += WOTS_W - 1 - n;
+    for (let i = 0; i < WOTS_CHAINS; i++) {
+      checksum += WOTS_W - 1 - nibbles[i]!;
     }
+    nibbles[WOTS_CHAINS] = (checksum >> 8) & 0x0f;
+    nibbles[WOTS_CHAINS + 1] = (checksum >> 4) & 0x0f;
+    nibbles[WOTS_CHAINS + 2] = checksum & 0x0f;
 
-    // Checksum nibbles
-    for (let i = WOTS_CHECKSUM_CHAINS - 1; i >= 0; i--) {
-      nibbles.push(checksum & 0x0f);
-      checksum >>= 4;
-    }
-
-    // For each chain, hash the private root `nibble` times
     const sigParts: Uint8Array[] = [];
     for (let i = 0; i < WOTS_TOTAL_CHAINS; i++) {
-      sigParts.push(hashChain(privateChains[i]!, nibbles[i]!));
+      sigParts.push(hashChain(privateChains[i]!, WOTS_W - 1 - nibbles[i]!));
     }
-
     return Buffer.concat(sigParts);
   }
 

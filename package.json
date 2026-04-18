@@ -30,7 +30,9 @@
     "test:stress-mobile": "ts-mocha -p tsconfig.test.json tests/stress-mobile-services.test.ts --timeout 300000",
     "test:stress-all": "ts-mocha -p tsconfig.test.json tests/stress-*.test.ts --timeout 600000",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "sync-program-ids": "tsx scripts/sync-program-ids.ts --write",
+    "check-program-ids": "tsx scripts/sync-program-ids.ts --check"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",
@@ -46,6 +48,7 @@
     "poseidon-lite": "^0.3.0",
     "snarkjs": "^0.7.5",
     "ts-mocha": "^11.1.0",
+    "tsx": "^4.21.0",
     "turbo": "^2.8.20",
     "typescript": "^5.9.0"
   },
@@ -61,7 +64,13 @@
   },
   "pnpm": {
     "overrides": {
-      "zod": "3.25.76"
+      "zod": "3.25.76",
+      "@types/react": "^19.2.9",
+      "@types/react-dom": "^19.2.3",
+      "@noble/hashes": "^2.2.0",
+      "@noble/curves": "^2.2.0",
+      "@noble/ciphers": "^2.2.0",
+      "@noble/post-quantum": "^0.6.1"
     },
     "patchedDependencies": {
       "llama.rn@0.11.2": "patches/llama.rn@0.11.2.patch",

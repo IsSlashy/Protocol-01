@@ -16,7 +16,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 import type { ClaimResult, StealthPayment, WalletAdapter } from '../types';
 import { SpecterError, SpecterErrorCode } from '../types';
 import { deriveStealthPrivateKey } from '../stealth/derive';

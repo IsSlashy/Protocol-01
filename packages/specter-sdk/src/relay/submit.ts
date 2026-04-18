@@ -16,7 +16,7 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { encryptForRelayer } from './encrypt';
 import { fetchActiveRelayers, fetchRelayerConfig, selectRelayer } from './select';
 import { RELAY_SEEDS } from './types';

@@ -12,16 +12,16 @@ import type { EncryptedPayload, EncryptedMemo } from './types';
 
 // ============ Lazy Imports for Tree Shaking ============
 
-let x25519: typeof import('@noble/curves/ed25519').x25519 | null = null;
-let xsalsa20poly1305: typeof import('@noble/ciphers/salsa').xsalsa20poly1305 | null = null;
-let randomBytes: typeof import('@noble/ciphers/webcrypto').randomBytes | null = null;
+let x25519: typeof import('@noble/curves/ed25519.js').x25519 | null = null;
+let xsalsa20poly1305: typeof import('@noble/ciphers/salsa.js').xsalsa20poly1305 | null = null;
+let randomBytes: typeof import('@noble/hashes/utils.js').randomBytes | null = null;
 
 /**
  * Lazily load @noble/curves for X25519
  */
-async function getX25519(): Promise<typeof import('@noble/curves/ed25519').x25519> {
+async function getX25519(): Promise<typeof import('@noble/curves/ed25519.js').x25519> {
   if (!x25519) {
-    const mod = await import('@noble/curves/ed25519');
+    const mod = await import('@noble/curves/ed25519.js');
     x25519 = mod.x25519;
   }
   return x25519;
@@ -30,9 +30,9 @@ async function getX25519(): Promise<typeof import('@noble/curves/ed25519').x2551
 /**
  * Lazily load @noble/ciphers for XSalsa20-Poly1305
  */
-async function getXSalsa20Poly1305(): Promise<typeof import('@noble/ciphers/salsa').xsalsa20poly1305> {
+async function getXSalsa20Poly1305(): Promise<typeof import('@noble/ciphers/salsa.js').xsalsa20poly1305> {
   if (!xsalsa20poly1305) {
-    const mod = await import('@noble/ciphers/salsa');
+    const mod = await import('@noble/ciphers/salsa.js');
     xsalsa20poly1305 = mod.xsalsa20poly1305;
   }
   return xsalsa20poly1305;
@@ -41,9 +41,9 @@ async function getXSalsa20Poly1305(): Promise<typeof import('@noble/ciphers/sals
 /**
  * Lazily load random bytes generator
  */
-async function getRandomBytes(): Promise<typeof import('@noble/ciphers/webcrypto').randomBytes> {
+async function getRandomBytes(): Promise<typeof import('@noble/hashes/utils.js').randomBytes> {
   if (!randomBytes) {
-    const mod = await import('@noble/ciphers/webcrypto');
+    const mod = await import('@noble/hashes/utils.js');
     randomBytes = mod.randomBytes;
   }
   return randomBytes;

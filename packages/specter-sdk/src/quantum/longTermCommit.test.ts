@@ -6,8 +6,8 @@ import {
   generateLongTermSecret,
   verifyLongTermCommitment,
 } from './longTermCommit';
-import { sha512 } from '@noble/hashes/sha512';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { computeHashVaultCommitment } from './helpers';
 
 describe('long-term commitment (SHA-512, P4.5)', () => {

@@ -7,8 +7,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ----- Mock external dependencies -----
 
-// Mock @noble/hashes/sha256
-vi.mock('@noble/hashes/sha256', () => ({
+// Mock @noble/hashes/sha2
+vi.mock('@noble/hashes/sha2', () => ({
   sha256: vi.fn((input: Uint8Array) => {
     // Deterministic fake hash: XOR-fold input into 32 bytes
     const result = new Uint8Array(32);

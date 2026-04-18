@@ -30,9 +30,9 @@ import {
   bigIntToBytes,
 } from './crypto';
 
-import { ed25519 } from '@noble/curves/ed25519';
-import { x25519 } from '@noble/curves/ed25519';
-import { sha512 } from '@noble/hashes/sha512';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { x25519 } from '@noble/curves/ed25519.js';
+import { sha512 } from '@noble/hashes/sha2.js';
 
 // ============ Constants ============
 
@@ -192,7 +192,7 @@ export function generateStealthAddress(
   metaAddress: StealthMetaAddress
 ): StealthAddress {
   // Step 1: Generate ephemeral X25519 key pair for ECDH
-  const ephemeralPrivateKey = x25519.utils.randomPrivateKey();
+  const ephemeralPrivateKey = x25519.utils.randomSecretKey();
   const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
 
   // Convert recipient's scan public key to X25519 for ECDH
@@ -207,11 +207,11 @@ export function generateStealthAddress(
 
   // Step 4: Compute the one-time public key
   // P = spendPubKey + hash(S)*G
-  const hashPoint = ed25519.ExtendedPoint.BASE.multiply(
+  const hashPoint = ed25519.Point.BASE.multiply(
     bytesToBigInt(sharedSecretHash) % CURVE_ORDER
   );
-  const spendPoint = ed25519.ExtendedPoint.fromHex(metaAddress.spendPublicKey);
-  const oneTimePublicKey = spendPoint.add(hashPoint).toRawBytes();
+  const spendPoint = ed25519.Point.fromBytes(metaAddress.spendPublicKey);
+  const oneTimePublicKey = spendPoint.add(hashPoint).toBytes();
 
   // Step 5: Compute view tag (first byte of shared secret hash for fast filtering)
   // This allows filtering out 99.6% (255/256) of non-matching transactions quickly
@@ -480,9 +480,9 @@ export function verifyStealthAddress(
 
   // Compute expected one-time public key
   const hashScalar = bytesToBigInt(sharedSecretHash) % CURVE_ORDER;
-  const hashPoint = ed25519.ExtendedPoint.BASE.multiply(hashScalar);
-  const spendPoint = ed25519.ExtendedPoint.fromHex(metaAddress.spendPublicKey);
-  const expectedPublicKey = spendPoint.add(hashPoint).toRawBytes();
+  const hashPoint = ed25519.Point.BASE.multiply(hashScalar);
+  const spendPoint = ed25519.Point.fromBytes(metaAddress.spendPublicKey);
+  const expectedPublicKey = spendPoint.add(hashPoint).toBytes();
   const expectedAddress = base58Encode(expectedPublicKey);
 
   return expectedAddress === stealthAddress.address;
@@ -522,7 +522,7 @@ function hashToScalar(data: Uint8Array): Uint8Array {
  */
 function ed25519ToX25519PublicKey(ed25519PublicKey: Uint8Array): Uint8Array {
   // Use the ExtendedPoint to convert
-  const point = ed25519.ExtendedPoint.fromHex(ed25519PublicKey);
+  const point = ed25519.Point.fromBytes(ed25519PublicKey);
 
   // Convert Ed25519 point (x, y) to X25519 u-coordinate
   // u = (1 + y) / (1 - y) mod p
@@ -564,7 +564,7 @@ function ed25519ToX25519PrivateKey(ed25519PrivateKey: Uint8Array): Uint8Array {
   return x25519Key;
 }
 
-// sha512Simple removed — replaced by real sha512 from @noble/hashes/sha512
+// sha512Simple removed — replaced by real sha512 from @noble/hashes/sha2
 
 /**
  * Modular exponentiation: base^exp mod mod
