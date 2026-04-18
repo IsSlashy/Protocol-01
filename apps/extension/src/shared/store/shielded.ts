@@ -18,7 +18,7 @@ import {
   computeViewTag,
   generateEphemeralKeypair,
 } from '@protocol-01/specter-sdk';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 // ============= STEALTH ADDRESS UTILITIES (Unified SDK v2 + Legacy v1) =============
 

@@ -975,7 +975,7 @@ registerHandler('WALLET_SETUP_COMPLETE', async () => {
 
   for (const [id, approval] of state.pendingApprovals) {
     if (approval.type === 'connect') {
-      if (approval.resolve) approval.resolve();
+      if (approval.resolve) approval.resolve(undefined);
       await resolveApproval(id, true, { publicKey });
     }
   }

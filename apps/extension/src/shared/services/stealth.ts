@@ -18,9 +18,10 @@ import nacl from 'tweetnacl';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import { Buffer } from 'buffer';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 
 // =============================================================================
 // TYPES
@@ -100,10 +101,10 @@ const SPENDING_KEY_PATH = "m/44'/501'/0'/0'/0'";
 const VIEWING_KEY_PATH = "m/44'/501'/0'/0'/1'";
 
 /** Info string for stealth seed derivation (must match specter-sdk STEALTH_SEED_INFO) */
-const STEALTH_SEED_INFO = 'p01-stealth-seed';
+const STEALTH_SEED_INFO = utf8ToBytes('p01-stealth-seed');
 
 /** Info string for hybrid HKDF (must match specter-sdk HYBRID_HKDF_INFO) */
-const HYBRID_HKDF_INFO = 'p01-hybrid-stealth-v2';
+const HYBRID_HKDF_INFO = utf8ToBytes('p01-hybrid-stealth-v2');
 
 /** ML-KEM-768 sizes (FIPS 203) */
 const KEM_PUBLIC_KEY_SIZE = 1184;

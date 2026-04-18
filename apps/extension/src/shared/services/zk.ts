@@ -8,40 +8,34 @@
 
 import { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } from '@solana/web3.js';
 
+// Goldilocks-Poseidon: matches stark/src/poseidon/mod.rs byte-for-byte.
+// Drives the MerkleTree + shield_stark flow so roots agree with circuit 6.
+import {
+  GOLDILOCKS_MODULUS,
+  goldilocksHash2to1,
+  computeGoldilocksZeroCascade,
+} from './goldilocks-poseidon';
+
+// STARK prover singleton (Web Worker) + on-chain verifier helpers.
+import { starkProver } from './starkProver';
+import {
+  submitAndVerifyStarkProof,
+  closeStarkProofBuffer,
+  type GenericStarkProof,
+  type WalletSigner,
+} from './stark';
+
 // Constants
 const ZK_SHIELDED_PROGRAM_ID = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
-const MERKLE_TREE_DEPTH = 20;
-
-// Circuit files (bundled with extension in public/circuits/)
-const CIRCUIT_WASM_PATH = 'circuits/transfer.wasm';
-const CIRCUIT_ZKEY_PATH = 'circuits/transfer_final.zkey';
-
-// Denominated pool circuit files
-const DENOM_POOL_WASM_PATH = 'circuits/denominated_pool.wasm';
-const DENOM_POOL_ZKEY_PATH = 'circuits/denominated_pool_final.zkey';
-
-// Denominated transfer circuit files (ZK→ZK note transfers)
-const DENOM_TRANSFER_WASM_PATH = 'circuits/denominated_transfer.wasm';
-const DENOM_TRANSFER_ZKEY_PATH = 'circuits/denominated_transfer_final.zkey';
-
-// Subscriber ownership circuit files
-const SUB_OWNER_WASM_PATH = 'circuits/subscriber_ownership.wasm';
-const SUB_OWNER_ZKEY_PATH = 'circuits/subscriber_ownership_final.zkey';
-
-export type CircuitName = 'transfer' | 'denominated_pool' | 'denominated_transfer' | 'subscriber_ownership';
+// STARK migration: tree depth canonicalized to 15 (matches circuit 6 CANONICAL_DEPTH
+// and ShieldedPool::DEFAULT_TREE_DEPTH). Changing this invalidates all prior deposits.
+const MERKLE_TREE_DEPTH = 15;
 
 // PDA seeds
 const PDA_SEEDS = {
   SHIELDED_POOL: new TextEncoder().encode('shielded_pool'),
   MERKLE_TREE: new TextEncoder().encode('merkle_tree'),
-  NULLIFIER_SET: new TextEncoder().encode('nullifier_set'),
 };
-
-// BN254 field order
-const FIELD_ORDER = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
-
-// Import poseidon-lite for circom-compatible Poseidon hash
-import { poseidon1, poseidon2, poseidon3, poseidon4 } from 'poseidon-lite';
 
 /**
  * Note structure
@@ -65,15 +59,6 @@ export interface ZkAddress {
   receivingPubkey: bigint;
   viewingKey: Uint8Array;
   encoded: string;
-}
-
-/**
- * Groth16 proof
- */
-export interface Groth16Proof {
-  pi_a: Uint8Array;
-  pi_b: Uint8Array;
-  pi_c: Uint8Array;
 }
 
 /**
@@ -127,31 +112,7 @@ export function decodeP01Note(encoded: string): RecipientNoteData {
 }
 
 /**
- * Poseidon hash (BN254 field compatible)
- * Uses poseidon-lite for exact compatibility with circom circuits
- */
-function poseidonHash(...inputs: bigint[]): bigint {
-  try {
-    switch (inputs.length) {
-      case 1:
-        return poseidon1(inputs);
-      case 2:
-        return poseidon2(inputs);
-      case 3:
-        return poseidon3(inputs);
-      case 4:
-        return poseidon4(inputs);
-      default:
-        throw new Error(`Poseidon: unsupported input count ${inputs.length}`);
-    }
-  } catch (error) {
-    console.error('[ZK] Poseidon hash error:', error);
-    throw error;
-  }
-}
-
-/**
- * Convert bigint to 32-byte little-endian buffer
+ * Convert bigint to 32-byte little-endian buffer (viewingKey + note I/O).
  */
 function bigintToLeBytes(n: bigint): Uint8Array {
   const bytes = new Uint8Array(32);
@@ -163,106 +124,141 @@ function bigintToLeBytes(n: bigint): Uint8Array {
   return bytes;
 }
 
+// -----------------------------------------------------------------------
+// Goldilocks field helpers (used by STARK circuits 5 + 6)
+// -----------------------------------------------------------------------
+
+function truncateToGoldilocks(value: bigint): bigint {
+  const r = value % GOLDILOCKS_MODULUS;
+  return r < 0n ? r + GOLDILOCKS_MODULUS : r;
+}
+
 /**
- * Convert bigint to 32-byte big-endian buffer (for ZK public inputs)
- * The alt_bn128 precompile expects big-endian encoding
+ * Hash a 32-byte buffer down into the Goldilocks field. Takes the low 8 bytes
+ * as u64 LE, then reduces. Matches the on-chain layout for pubkeys/mints
+ * (bytes 0..8 = u64 LE, 8..32 = 0).
  */
-function bigintToBeBytes(n: bigint): Uint8Array {
+function bytesToGoldilocks(bytes: Uint8Array): bigint {
+  let v = 0n;
+  for (let i = 7; i >= 0; i--) {
+    v = (v << 8n) | BigInt(bytes[i] ?? 0);
+  }
+  return truncateToGoldilocks(v);
+}
+
+/**
+ * Pack a Goldilocks u64 into a 32-byte buffer (bytes 0..8 = u64 LE, 8..32 = 0).
+ * Canonical on-chain Goldilocks commitment/root layout.
+ */
+function packGoldilocksU64(n: bigint): Uint8Array {
+  const g = truncateToGoldilocks(n);
   const bytes = new Uint8Array(32);
-  let temp = n;
-  // Fill from the end (index 31) to the start (index 0)
-  for (let i = 31; i >= 0; i--) {
-    bytes[i] = Number(temp & BigInt(0xff));
-    temp = temp >> BigInt(8);
+  let temp = g;
+  for (let i = 0; i < 8; i++) {
+    bytes[i] = Number(temp & 0xffn);
+    temp >>= 8n;
   }
   return bytes;
 }
 
 /**
- * Convert LE bytes to bigint
+ * Fresh Goldilocks-field randomness (u64 reduced mod the Goldilocks modulus).
  */
-function leBytesToBigint(bytes: Uint8Array): bigint {
-  let result = BigInt(0);
-  for (let i = bytes.length - 1; i >= 0; i--) {
-    result = (result << BigInt(8)) + BigInt(bytes[i]);
+function randomGoldilocksU64(): bigint {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let v = 0n;
+  for (let i = 7; i >= 0; i--) {
+    v = (v << 8n) | BigInt(bytes[i]);
   }
-  return result;
+  return truncateToGoldilocks(v);
 }
 
 /**
- * Generate random field element
+ * Circuit 5 (transfer) commitment layout:
+ *   commitment = hash2(hash2(amount, rand), hash2(owner, mint))
+ * Inputs MUST already be Goldilocks elements.
  */
-function randomFieldElement(): bigint {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return leBytesToBigint(bytes) % FIELD_ORDER;
+function computeGoldilocksCommitment(
+  amountGl: bigint,
+  ownerPubkeyGl: bigint,
+  randomnessGl: bigint,
+  tokenMintGl: bigint,
+): bigint {
+  const leftHash = goldilocksHash2to1(amountGl, randomnessGl);
+  const rightHash = goldilocksHash2to1(ownerPubkeyGl, tokenMintGl);
+  return goldilocksHash2to1(leftHash, rightHash);
 }
 
 /**
- * Derive spending key from seed phrase
+ * Build a Goldilocks-field note. Commitment follows circuit 5 layout and
+ * can later be spent via transfer_stark. ownerPubkeyGl MUST be
+ * `hash2(spending_key_gl, 0)` — exactly what circuit 5 derives in cycle 0.
+ */
+async function createGoldilocksNote(
+  amount: bigint,
+  ownerPubkeyGl: bigint,
+  tokenMintGl: bigint,
+): Promise<Note> {
+  const randomness = randomGoldilocksU64();
+  const amountGl = truncateToGoldilocks(amount);
+  const commitment = computeGoldilocksCommitment(amountGl, ownerPubkeyGl, randomness, tokenMintGl);
+  return { amount: amountGl, ownerPubkey: ownerPubkeyGl, randomness, tokenMint: tokenMintGl, commitment };
+}
+
+/**
+ * Derive spending key pair from seed phrase.
+ *
+ * Returns the 32-byte SHA-256 seed (used as Ed25519 seed for stealth scanning)
+ * plus Goldilocks variants driving STARK circuit 5. `spendingKeyGl` is the
+ * low 8 bytes of the same seed; `ownerPubkeyGl = hash2(spending_key_gl, 0)`
+ * using Goldilocks-Poseidon — exactly what circuit 5 derives in cycle 0.
  */
 async function deriveSpendingKey(seedPhrase: string): Promise<{
-  spendingKey: bigint;
-  spendingKeyHash: bigint;
-  ownerPubkey: bigint;
+  spendingKeyBytes: Uint8Array;
+  spendingKeyGl: bigint;
+  ownerPubkeyGl: bigint;
 }> {
   const encoder = new TextEncoder();
   const data = encoder.encode(seedPhrase + ':spending_key');
 
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = new Uint8Array(hashBuffer);
+  const spendingKeyBytes = new Uint8Array(hashBuffer);
 
-  const spendingKey = leBytesToBigint(hashArray) % FIELD_ORDER;
-  // owner_pubkey = Poseidon(spending_key, 0) - matches circuit SpendingKeyDerivation (domain tag 0)
-  const ownerPubkey = poseidonHash(spendingKey, 0n);
-  // spending_key_hash = Poseidon(spending_key, 1) - matches circuit SpendingKeyHash (domain tag 1)
-  const spendingKeyHash = poseidonHash(spendingKey, 1n);
+  let spendingKeyGl = 0n;
+  for (let i = 7; i >= 0; i--) {
+    spendingKeyGl = (spendingKeyGl << 8n) | BigInt(spendingKeyBytes[i] ?? 0);
+  }
+  spendingKeyGl = truncateToGoldilocks(spendingKeyGl);
+  const ownerPubkeyGl = goldilocksHash2to1(spendingKeyGl, 0n);
 
-  return { spendingKey, spendingKeyHash, ownerPubkey };
+  return { spendingKeyBytes, spendingKeyGl, ownerPubkeyGl };
 }
 
 /**
- * Create a new note
- */
-async function createNote(
-  amount: bigint,
-  ownerPubkey: bigint,
-  tokenMint: bigint
-): Promise<Note> {
-  const randomness = randomFieldElement();
-  const commitment = poseidonHash(amount, ownerPubkey, randomness, tokenMint);
-
-  return {
-    amount,
-    ownerPubkey,
-    randomness,
-    tokenMint,
-    commitment,
-  };
-}
-
-/**
- * Compute nullifier
- */
-function computeNullifier(commitment: bigint, spendingKeyHash: bigint): bigint {
-  return poseidonHash(commitment, spendingKeyHash);
-}
-
-/**
- * Merkle tree implementation
+ * Client-side Merkle tree (matches on-chain structure).
+ *
+ * Hash: Goldilocks-Poseidon (width=3, hash2-to-1) — binary-identical to
+ *   `stark/src/poseidon/mod.rs` and the circuit 6 AIR.
+ * Leaves: Goldilocks field elements (u64 packed into bytes 0..8 of the
+ *   on-chain [u8; 32] commitment, zeros 8..32).
+ * Empty tree: `computeGoldilocksZeroCascade(depth)` starts at 0n and folds
+ *   upward with `hash(0,0), hash(h1,h1), …` — matches circuit 6's empty-tree zeros.
  */
 class MerkleTree {
   private depth: number;
   private leaves: bigint[] = [];
   private nodes: Map<string, bigint> = new Map();
-  private _root: bigint;
+  private _root: bigint | null = null;
   private _zeroValues: bigint[] | null = null;
 
   constructor(depth: number = MERKLE_TREE_DEPTH) {
     this.depth = depth;
-    this._root = this.getZeroValue(depth);
   }
 
   get root(): bigint {
+    if (this._root === null) {
+      this._root = this.getZeroValue(this.depth);
+    }
     return this._root;
   }
 
@@ -275,29 +271,8 @@ class MerkleTree {
   }
 
   private getZeroValue(level: number): bigint {
-    // Cache zero values for efficiency
-    // IMPORTANT: Base zero value must match circuit and on-chain!
-    // On-chain uses keccak256("specter") mod p = 0x6caf9948ed859624e241e7760f341b82b45da1ebb6353a34f3abacd3604ce52f
     if (!this._zeroValues) {
-      // On-chain zero value bytes (stored as [u8; 32] in Rust, little-endian)
-      const ZERO_VALUE_BYTES = [
-        0x6c, 0xaf, 0x99, 0x48, 0xed, 0x85, 0x96, 0x24,
-        0xe2, 0x41, 0xe7, 0x76, 0x0f, 0x34, 0x1b, 0x82,
-        0xb4, 0x5d, 0xa1, 0xeb, 0xb6, 0x35, 0x3a, 0x34,
-        0xf3, 0xab, 0xac, 0xd3, 0x60, 0x4c, 0xe5, 0x2f,
-      ];
-      // Convert to bigint (LITTLE-ENDIAN - matches Solana's on-chain byte order)
-      // Last byte becomes MSB when constructing the bigint
-      let baseZero = BigInt(0);
-      for (let i = ZERO_VALUE_BYTES.length - 1; i >= 0; i--) {
-        baseZero = (baseZero << BigInt(8)) | BigInt(ZERO_VALUE_BYTES[i]);
-      }
-
-      this._zeroValues = [baseZero];
-      for (let i = 1; i <= this.depth; i++) {
-        const prev = this._zeroValues[i - 1];
-        this._zeroValues.push(poseidonHash(prev, prev));
-      }
+      this._zeroValues = computeGoldilocksZeroCascade(this.depth);
     }
     return this._zeroValues[level];
   }
@@ -317,13 +292,42 @@ class MerkleTree {
       this.setNode(level, currentIndex, currentHash);
 
       currentHash = isRight
-        ? poseidonHash(sibling, currentHash)
-        : poseidonHash(currentHash, sibling);
+        ? goldilocksHash2to1(sibling, currentHash)
+        : goldilocksHash2to1(currentHash, sibling);
       currentIndex = Math.floor(currentIndex / 2);
     }
 
     this._root = currentHash;
     return this._root;
+  }
+
+  /**
+   * Extract filledSubtrees from current tree state. Replays inserts tracking
+   * subtrees (same algorithm as on-chain insert). Used to bootstrap correct
+   * subtrees after a full tree rebuild.
+   */
+  getFilledSubtrees(): bigint[] {
+    const subtrees: bigint[] = [];
+    for (let i = 0; i < this.depth; i++) {
+      subtrees.push(this.getZeroValue(i));
+    }
+
+    for (let i = 0; i < this.leaves.length; i++) {
+      let currentHash = this.leaves[i];
+      let currentIndex = i;
+
+      for (let level = 0; level < this.depth; level++) {
+        if (currentIndex % 2 === 0) {
+          subtrees[level] = currentHash;
+          currentHash = goldilocksHash2to1(currentHash, this.getZeroValue(level));
+        } else {
+          currentHash = goldilocksHash2to1(subtrees[level], currentHash);
+        }
+        currentIndex = Math.floor(currentIndex / 2);
+      }
+    }
+
+    return subtrees;
   }
 
   private getNode(level: number, index: number): bigint {
@@ -366,291 +370,6 @@ class MerkleTree {
 }
 
 /**
- * Client-side ZK Prover using Web Worker
- */
-class ClientProver {
-  private worker: Worker | null = null;
-  private pendingRequests: Map<string, {
-    resolve: (result: any) => void;
-    reject: (error: Error) => void;
-    raw?: boolean;
-  }> = new Map();
-  private circuitWasm: ArrayBuffer | null = null;
-  private circuitZkey: ArrayBuffer | null = null;
-  /** Additional circuits loaded on demand */
-  private circuits: Map<string, { wasm: ArrayBuffer; zkey: ArrayBuffer }> = new Map();
-  private _isReady: boolean = false;
-
-  get isReady(): boolean {
-    return this._isReady;
-  }
-
-  /**
-   * Load an additional circuit (on-demand, does not block initialize)
-   */
-  async loadCircuit(name: CircuitName): Promise<boolean> {
-    if (this.circuits.has(name)) return true;
-
-    const paths: Record<CircuitName, { wasm: string; zkey: string }> = {
-      transfer: { wasm: CIRCUIT_WASM_PATH, zkey: CIRCUIT_ZKEY_PATH },
-      denominated_pool: { wasm: DENOM_POOL_WASM_PATH, zkey: DENOM_POOL_ZKEY_PATH },
-      denominated_transfer: { wasm: DENOM_TRANSFER_WASM_PATH, zkey: DENOM_TRANSFER_ZKEY_PATH },
-      subscriber_ownership: { wasm: SUB_OWNER_WASM_PATH, zkey: SUB_OWNER_ZKEY_PATH },
-    };
-
-    const p = paths[name];
-    if (!p) return false;
-
-    try {
-      const [wasmResp, zkeyResp] = await Promise.all([
-        fetch(chrome.runtime.getURL(p.wasm)),
-        fetch(chrome.runtime.getURL(p.zkey)),
-      ]);
-      if (!wasmResp.ok || !zkeyResp.ok) {
-        console.error(`[Prover] Failed to load circuit "${name}"`);
-        return false;
-      }
-      this.circuits.set(name, {
-        wasm: await wasmResp.arrayBuffer(),
-        zkey: await zkeyResp.arrayBuffer(),
-      });
-      return true;
-    } catch (err) {
-      console.error(`[Prover] Error loading circuit "${name}":`, err);
-      return false;
-    }
-  }
-
-  async initialize(): Promise<void> {
-    // Load transfer circuit files (default)
-    const wasmUrl = chrome.runtime.getURL(CIRCUIT_WASM_PATH);
-    const zkeyUrl = chrome.runtime.getURL(CIRCUIT_ZKEY_PATH);
-
-    try {
-      const [wasmResponse, zkeyResponse] = await Promise.all([
-        fetch(wasmUrl),
-        fetch(zkeyUrl),
-      ]);
-
-      if (!wasmResponse.ok) {
-        console.error('[Prover] Failed to load WASM:', wasmResponse.status, wasmResponse.statusText);
-        this._isReady = false;
-        return;
-      }
-      if (!zkeyResponse.ok) {
-        console.error('[Prover] Failed to load ZKEY:', zkeyResponse.status, zkeyResponse.statusText);
-        this._isReady = false;
-        return;
-      }
-
-      this.circuitWasm = await wasmResponse.arrayBuffer();
-      this.circuitZkey = await zkeyResponse.arrayBuffer();
-      // Store as named circuit too
-      this.circuits.set('transfer', { wasm: this.circuitWasm, zkey: this.circuitZkey });
-
-      // Create Web Worker
-      this.worker = new Worker(
-        new URL('../workers/zkProver.worker.ts', import.meta.url),
-        { type: 'module' }
-      );
-
-      // Wait for worker to be ready
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Worker initialization timeout'));
-        }, 10000);
-
-        this.worker!.onmessage = (event) => {
-          const { type, id, proof, error } = event.data;
-
-          if (type === 'ready') {
-            clearTimeout(timeout);
-            this._isReady = true;
-            resolve();
-            return;
-          }
-
-          const pending = this.pendingRequests.get(id);
-          if (!pending) return;
-
-          this.pendingRequests.delete(id);
-
-          if (type === 'error') {
-            console.error('[Prover] Proof error:', error);
-            pending.reject(new Error(error));
-          } else if (type === 'proof') {
-            if (pending.raw) {
-              // Return raw snarkjs format (string arrays) for relayer
-              pending.resolve({ proof: event.data.proof, publicSignals: event.data.publicSignals });
-            } else {
-              // Convert proof to Groth16Proof format for on-chain
-              const groth16Proof = this.convertProof(proof);
-              pending.resolve(groth16Proof);
-            }
-          }
-        };
-
-        this.worker!.onerror = (error) => {
-          clearTimeout(timeout);
-          console.error('[Prover] Worker error:', error);
-          reject(error);
-        };
-      });
-    } catch (error) {
-      console.error('[Prover] Initialization failed:', error);
-      this._isReady = false;
-      throw error;
-    }
-  }
-
-  private convertProof(snarkjsProof: any): Groth16Proof {
-    // Convert snarkjs proof format to our byte format
-    // snarkjs returns strings, we need Uint8Array
-    const pi_a = this.pointToBytes(snarkjsProof.pi_a.slice(0, 2));
-    const pi_b = this.point2ToBytes(snarkjsProof.pi_b.slice(0, 2));
-    const pi_c = this.pointToBytes(snarkjsProof.pi_c.slice(0, 2));
-
-    return { pi_a, pi_b, pi_c };
-  }
-
-  private pointToBytes(point: string[]): Uint8Array {
-    const bytes = new Uint8Array(64);
-    const x = BigInt(point[0]);
-    const y = BigInt(point[1]);
-
-    // Convert to BIG-ENDIAN bytes (alt_bn128 precompile expects big-endian)
-    let temp = x;
-    for (let i = 31; i >= 0; i--) {
-      bytes[i] = Number(temp & BigInt(0xff));
-      temp = temp >> BigInt(8);
-    }
-    temp = y;
-    for (let i = 31; i >= 0; i--) {
-      bytes[32 + i] = Number(temp & BigInt(0xff));
-      temp = temp >> BigInt(8);
-    }
-
-    return bytes;
-  }
-
-  private point2ToBytes(point: string[][]): Uint8Array {
-    // G2 point: [[x0, x1], [y0, y1]] - alt_bn128 expects big-endian
-    // Note: snarkjs returns G2 as [[x_c1, x_c0], [y_c1, y_c0]] (c1 first, then c0)
-    // alt_bn128 expects: x_c0 | x_c1 | y_c0 | y_c1 (each 32 bytes, big-endian)
-    const bytes = new Uint8Array(128);
-
-    // Reorder: snarkjs [x1, x0], [y1, y0] -> alt_bn128 [x0, x1, y0, y1]
-    const coords = [
-      BigInt(point[0][1]), // x_c0
-      BigInt(point[0][0]), // x_c1
-      BigInt(point[1][1]), // y_c0
-      BigInt(point[1][0]), // y_c1
-    ];
-
-    for (let c = 0; c < 4; c++) {
-      let temp = coords[c];
-      // Big-endian encoding
-      for (let i = 31; i >= 0; i--) {
-        bytes[c * 32 + i] = Number(temp & BigInt(0xff));
-        temp = temp >> BigInt(8);
-      }
-    }
-
-    return bytes;
-  }
-
-  async generateProof(inputs: Record<string, string | string[]>, circuitName?: CircuitName): Promise<Groth16Proof> {
-    if (!this.isReady || !this.worker) {
-      throw new Error('Prover not initialized. Circuit files may be missing.');
-    }
-
-    const { wasm, zkey } = this.resolveCircuit(circuitName);
-    const id = crypto.randomUUID();
-
-    return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject });
-
-      this.worker!.postMessage({
-        type: 'prove',
-        id,
-        circuitWasm: wasm,
-        circuitZkey: zkey,
-        inputs,
-      });
-
-      // Timeout after 2 minutes
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new Error('Proof generation timed out'));
-        }
-      }, 120000);
-    });
-  }
-
-  /**
-   * Generate proof and return raw snarkjs format (for relayer verification)
-   */
-  async generateProofRaw(inputs: Record<string, string | string[]>, circuitName?: CircuitName): Promise<{
-    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
-    publicSignals: string[];
-  }> {
-    if (!this.isReady || !this.worker) {
-      throw new Error('Prover not initialized. Circuit files may be missing.');
-    }
-
-    const { wasm, zkey } = this.resolveCircuit(circuitName);
-    const id = crypto.randomUUID();
-
-    return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, { resolve, reject, raw: true });
-
-      this.worker!.postMessage({
-        type: 'prove',
-        id,
-        circuitWasm: wasm,
-        circuitZkey: zkey,
-        inputs,
-      });
-
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id);
-          reject(new Error('Proof generation timed out'));
-        }
-      }, 120000);
-    });
-  }
-
-  private resolveCircuit(circuitName?: CircuitName): { wasm: ArrayBuffer; zkey: ArrayBuffer } {
-    if (!circuitName || circuitName === 'transfer') {
-      if (!this.circuitWasm || !this.circuitZkey) {
-        throw new Error('Transfer circuit not loaded');
-      }
-      return { wasm: this.circuitWasm, zkey: this.circuitZkey };
-    }
-    const c = this.circuits.get(circuitName);
-    if (!c) {
-      throw new Error(`Circuit "${circuitName}" not loaded. Call loadCircuit("${circuitName}") first.`);
-    }
-    return c;
-  }
-
-  isCircuitLoaded(name: CircuitName): boolean {
-    return this.circuits.has(name);
-  }
-
-  terminate(): void {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
-    this.pendingRequests.clear();
-    this.circuits.clear();
-  }
-}
-
-/**
  * ZK Service for Extension
  */
 export class ZkServiceExtension {
@@ -658,19 +377,19 @@ export class ZkServiceExtension {
   private programId: PublicKey;
   private merkleTree: MerkleTree;
   private notes: Note[] = [];
-  private spendingKey: bigint | null = null;
-  private spendingKeyHash: bigint | null = null;
-  private ownerPubkey: bigint | null = null;
+  // 32-byte SHA-256 seed — Ed25519 seed for stealth scanning.
+  private spendingKeyBytes: Uint8Array | null = null;
+  // Goldilocks variants drive circuit 5 (transfer) + circuit 6 (merkle_update).
+  private spendingKeyGl: bigint | null = null;
+  private ownerPubkeyGl: bigint | null = null;
   private viewingKey: Uint8Array | null = null;
   private tokenMint: PublicKey;
   private isInitialized: boolean = false;
-  private prover: ClientProver;
 
   constructor() {
     this.programId = new PublicKey(ZK_SHIELDED_PROGRAM_ID);
     this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
     this.tokenMint = SystemProgram.programId; // SOL
-    this.prover = new ClientProver();
   }
 
   /**
@@ -685,16 +404,17 @@ export class ZkServiceExtension {
    */
   async initialize(seedPhrase: string): Promise<void> {
     const keys = await deriveSpendingKey(seedPhrase);
-    this.spendingKey = keys.spendingKey;
-    this.spendingKeyHash = keys.spendingKeyHash;
-    this.ownerPubkey = keys.ownerPubkey;
-    this.viewingKey = bigintToLeBytes(keys.ownerPubkey);
+    this.spendingKeyBytes = keys.spendingKeyBytes;
+    this.spendingKeyGl = keys.spendingKeyGl;
+    this.ownerPubkeyGl = keys.ownerPubkeyGl;
+    this.viewingKey = packGoldilocksU64(keys.ownerPubkeyGl);
 
-    // Initialize client-side prover (Web Worker)
+    // Warm up the STARK prover worker (Web Worker + WASM). Safe to ignore errors
+    // here — shield() will re-throw with context if the worker is unavailable.
     try {
-      await this.prover.initialize();
+      await starkProver.start();
     } catch (error) {
-      console.warn('[ZK] Prover initialization failed, transfer/unshield will be unavailable:', error);
+      console.warn('[ZK] STARK prover worker init failed; shield/transfer/unshield will fail until fixed:', error);
     }
 
     // Load stored notes
@@ -707,11 +427,13 @@ export class ZkServiceExtension {
    * Get ZK address
    */
   getZkAddress(): ZkAddress {
-    if (!this.ownerPubkey || !this.viewingKey) {
+    if (!this.ownerPubkeyGl || !this.viewingKey) {
       throw new Error('ZK Service not initialized');
     }
 
-    const pubkeyBytes = bigintToLeBytes(this.ownerPubkey);
+    // receivingPubkey is the Goldilocks owner pubkey so circuit 5 can
+    // reconstruct output commitments from the recipient's spending key.
+    const pubkeyBytes = bigintToLeBytes(this.ownerPubkeyGl);
     const combined = new Uint8Array(64);
     combined.set(pubkeyBytes, 0);
     combined.set(this.viewingKey, 32);
@@ -719,7 +441,7 @@ export class ZkServiceExtension {
     const encoded = `zk:${btoa(String.fromCharCode(...combined))}`;
 
     return {
-      receivingPubkey: this.ownerPubkey,
+      receivingPubkey: this.ownerPubkeyGl,
       viewingKey: this.viewingKey,
       encoded,
     };
@@ -730,13 +452,13 @@ export class ZkServiceExtension {
    * Returns viewing and spending keys in format needed for stealth address derivation
    */
   getStealthKeys(): { viewingKey: Uint8Array; spendingKey: Uint8Array } | null {
-    if (!this.viewingKey || !this.spendingKey) {
+    if (!this.viewingKey || !this.spendingKeyBytes) {
       return null;
     }
 
     return {
       viewingKey: this.viewingKey,
-      spendingKey: bigintToLeBytes(this.spendingKey),
+      spendingKey: this.spendingKeyBytes,
     };
   }
 
@@ -827,14 +549,14 @@ export class ZkServiceExtension {
         // Odd index = right child, sibling is filledSubtrees[level]
         pathElements.push(subtrees[level]);
         pathIndices.push(1);
-        currentHash = poseidonHash(subtrees[level], currentHash);
+        currentHash = goldilocksHash2to1(subtrees[level], currentHash);
       } else {
         // Even index = left child: UPDATE subtree, hash with zero
         const zeroVal = this.merkleTree.getZeroValueForLevel(level);
         pathElements.push(zeroVal);
         pathIndices.push(0);
         subtrees[level] = currentHash;
-        currentHash = poseidonHash(currentHash, zeroVal);
+        currentHash = goldilocksHash2to1(currentHash, zeroVal);
       }
       currentIndex = currentIndex >> 1;
     }
@@ -876,8 +598,8 @@ export class ZkServiceExtension {
       const sibling = pathElements[i];
       const isRight = pathIndices[i] === 1;
       verifyRoot = isRight
-        ? poseidonHash(sibling, verifyRoot)
-        : poseidonHash(verifyRoot, sibling);
+        ? goldilocksHash2to1(sibling, verifyRoot)
+        : goldilocksHash2to1(verifyRoot, sibling);
     }
 
     if (note.merkleRoot && verifyRoot !== note.merkleRoot) {
@@ -927,72 +649,183 @@ export class ZkServiceExtension {
   }
 
   /**
-   * Shield tokens (instant path using filledSubtrees)
+   * Shield SOL into the pool via circuit 6 (merkle_update) STARK proof.
+   *
+   * Flow:
+   *   1. Read on-chain subtrees + current root (pool.merkle_root).
+   *   2. Create a Goldilocks-field note for the depositor.
+   *   3. Compute (old_root, new_root, path) from filled subtrees.
+   *   4. Generate a circuit 6 (merkle_update) STARK proof in the Web Worker.
+   *   5. Upload + verify the proof on-chain (phase 1 + DEEP-ALI phase 2),
+   *      leaving the proof buffer open.
+   *   6. Call zk_shielded::shield_stark (consumes the proof buffer, performs
+   *      the deposit, inserts the commitment, updates pool root).
+   *   7. Close the proof buffer to recover rent.
+   *
+   * The STARK circuit binds (old_root → new_root) given an insertion of
+   * `commitment` at the tree's next slot. `shield_stark` enforces
+   * `pool.merkle_root == old_root`, so a malicious client cannot poison the
+   * root with an arbitrary successor.
    */
   async shield(
     amount: bigint,
     walletPublicKey: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
   ): Promise<string> {
-    if (!this.ownerPubkey || !this.connection) {
+    if (!this.ownerPubkeyGl || !this.connection) {
       throw new Error('ZK Service not initialized');
     }
 
-    // Read on-chain state
+    // -----------------------------------------------------------------
+    // 1. Read on-chain state.
+    // -----------------------------------------------------------------
+    console.log('[ZK Shield] Reading on-chain state...');
     const onChainState = await this.readOnChainFilledSubtrees();
 
-    // Prefer locally-stored correct subtrees over on-chain stale ones
+    // Prefer locally-stored correct subtrees over on-chain ones (levels > 0
+    // may be stale on-chain in historical states).
     const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
     let useSubtrees: bigint[];
     if (localSubtrees) {
       useSubtrees = localSubtrees;
+    } else if (this.merkleTree.leafCount === onChainState.leafCount && onChainState.leafCount > 0) {
+      console.log('[ZK Shield] Computing subtrees from synced tree');
+      useSubtrees = this.merkleTree.getFilledSubtrees();
+      await this.saveLocalSubtrees(useSubtrees, onChainState.leafCount);
     } else {
+      console.warn('[ZK Shield] Using on-chain subtrees (may be stale for levels > 0)');
       useSubtrees = onChainState.filledSubtrees;
     }
 
-    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
+    // -----------------------------------------------------------------
+    // 2. Create Goldilocks note. Commitment uses circuit 5's layout so this
+    //    note can later be spent via transfer_stark.
+    // -----------------------------------------------------------------
+    const tokenMintGl = bytesToGoldilocks(this.tokenMint.toBytes());
+    const note = await createGoldilocksNote(amount, this.ownerPubkeyGl, tokenMintGl);
 
-    // Create note
-    const note = await createNote(amount, this.ownerPubkey, tokenMintField);
-
-    // Compute new root + Merkle proof using subtrees (fast: ~20 hashes)
+    // -----------------------------------------------------------------
+    // 3. Compute (old_root, new_root, path) from subtrees.
+    // -----------------------------------------------------------------
     const leafIndexBeforeInsert = onChainState.leafCount;
+
+    const { newRoot: computedOldRoot } = this.computeNewRootFromSubtrees(
+      useSubtrees,
+      onChainState.leafCount,
+      0n,
+      onChainState.depth,
+    );
+
     const { newRoot, updatedSubtrees, pathElements, pathIndices } = this.computeNewRootFromSubtrees(
       useSubtrees,
       onChainState.leafCount,
       note.commitment,
-      onChainState.depth
+      onChainState.depth,
     );
-    const newRootBytes = bigintToLeBytes(newRoot);
 
-    // Save proof with note for instant unshield later
+    if (computedOldRoot !== onChainState.root) {
+      throw new Error(
+        `Shield aborted: client merkle state is out of sync with on-chain pool. ` +
+        `Expected root ${onChainState.root.toString()} but local subtrees produce ${computedOldRoot.toString()}. ` +
+        `Reset the local tree and retry.`,
+      );
+    }
+
+    const oldRootBytes = packGoldilocksU64(computedOldRoot);
+    const newRootBytes = packGoldilocksU64(newRoot);
+    const commitmentBytes = packGoldilocksU64(note.commitment);
+
+    console.log(
+      '[ZK Shield] Roots computed leaf=%d old=%s new=%s',
+      leafIndexBeforeInsert,
+      computedOldRoot.toString().slice(0, 20),
+      newRoot.toString().slice(0, 20),
+    );
+
     note.leafIndex = leafIndexBeforeInsert;
     note.merkleRoot = newRoot;
     note.merklePathElements = pathElements;
     note.merklePathIndices = pathIndices;
 
-    // Get PDAs
+    // -----------------------------------------------------------------
+    // 4. Generate circuit 6 STARK proof in the Web Worker.
+    // -----------------------------------------------------------------
+    console.log('[ZK Shield] Generating circuit 6 (merkle_update) STARK proof...');
+    const starkResult = await starkProver.generateMerkleUpdateProof(
+      '0',                              // old_leaf (empty slot)
+      note.commitment.toString(),       // new_leaf = commitment (Goldilocks u64)
+      pathElements.map((e) => e.toString()),
+      pathIndices,
+    );
+    console.log(
+      '[ZK Shield] STARK proof generated in %dms (%d bytes)',
+      starkResult.durationMs,
+      starkResult.proofSize,
+    );
+
+    const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+    const publicInputs = starkResult.publicInputs.map((s) => BigInt(s));
+
+    const starkProof: GenericStarkProof = {
+      proofBytes,
+      circuitId: 6, // CIRCUIT_MERKLE_UPDATE
+      publicInputs,
+      proofSize: starkResult.proofSize,
+    };
+
+    // -----------------------------------------------------------------
+    // 5. Pre-flight SOL balance for proof-upload + shield amount + fees.
+    // -----------------------------------------------------------------
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const shieldAmount = Number(amount);
+    const starkUploadFees = 120_000; // ~13 chunks + init + verify + deep-ali + close
+    const shieldFees = 15_000;
+    const required = shieldAmount + starkUploadFees + shieldFees;
+    if (walletBalance < required) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      const need = (required / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL. Need ${need} SOL (${(shieldAmount / 1e9).toFixed(4)} to shield + STARK upload fees), wallet has ${have} SOL.`);
+    }
+
+    // -----------------------------------------------------------------
+    // 6. Upload + verify STARK proof on-chain (buffer left open).
+    // -----------------------------------------------------------------
+    const walletSigner: WalletSigner = {
+      publicKey: walletPublicKey,
+      signTransaction,
+    };
+
+    console.log('[ZK Shield] Uploading + verifying STARK proof on-chain...');
+    const { proofBuffer } = await submitAndVerifyStarkProof(
+      starkProof,
+      walletSigner,
+      this.connection,
+      (step) => console.log('[ZK Shield][STARK]', step),
+    );
+
+    // -----------------------------------------------------------------
+    // 7. Build shield_stark instruction.
+    // -----------------------------------------------------------------
     const [poolPDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()],
-      this.programId
+      this.programId,
     );
-
     const [merkleTreePDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()],
-      this.programId
+      this.programId,
     );
 
-    // Build shield instruction
-    const discriminator = new Uint8Array([0xdc, 0xc6, 0xfd, 0xf6, 0xe7, 0x54, 0x93, 0x62]);
-    const amountBuffer = new ArrayBuffer(8);
-    new DataView(amountBuffer).setBigUint64(0, amount, true);
-    const commitmentBytes = bigintToLeBytes(note.commitment);
+    // Anchor discriminator: sha256("global:shield_stark")[0..8]
+    const SHIELD_STARK_DISCRIMINATOR = Buffer.from([241, 184, 171, 177, 138, 30, 238, 145]);
+    const amountBuffer = Buffer.alloc(8);
+    amountBuffer.writeBigUInt64LE(amount, 0);
 
-    const data = new Uint8Array([
-      ...discriminator,
-      ...new Uint8Array(amountBuffer),
-      ...commitmentBytes,
-      ...newRootBytes,
+    const ixData = Buffer.concat([
+      SHIELD_STARK_DISCRIMINATOR,
+      commitmentBytes,
+      oldRootBytes,
+      newRootBytes,
+      amountBuffer,
     ]);
 
     const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
@@ -1003,58 +836,109 @@ export class ZkServiceExtension {
         { pubkey: walletPublicKey, isSigner: true, isWritable: true },
         { pubkey: poolPDA, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
+        { pubkey: proofBuffer, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        // Optional SPL accounts — Anchor requires them as placeholders for native SOL.
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: this.programId, isSigner: false, isWritable: false },
-        { pubkey: this.programId, isSigner: false, isWritable: false },
+        { pubkey: this.programId, isSigner: false, isWritable: false }, // user_token_account
+        { pubkey: this.programId, isSigner: false, isWritable: false }, // pool_vault
       ],
-      data: Buffer.from(data),
+      data: ixData,
     });
 
-    const tx = new Transaction().add(ix);
-    tx.feePayer = walletPublicKey;
-    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
-    tx.recentBlockhash = blockhash;
+    // -----------------------------------------------------------------
+    // 8. Send shield_stark with retry on dropped tx.
+    // -----------------------------------------------------------------
+    const MAX_RETRIES = 3;
+    let signature = '';
 
-    // Pre-check wallet balance (shield needs SOL for amount + fees)
-    const walletBalance = await this.connection.getBalance(walletPublicKey);
-    const shieldAmount = Number(amount);
-    const estimatedFees = 15_000;
-    if (walletBalance < shieldAmount + estimatedFees) {
-      const have = (walletBalance / 1e9).toFixed(4);
-      const need = ((shieldAmount + estimatedFees) / 1e9).toFixed(4);
-      throw new Error(`Insufficient SOL. Need ${need} SOL (${(shieldAmount / 1e9).toFixed(4)} to shield + fees), wallet has ${have} SOL.`);
-    }
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const tx = new Transaction().add(ix);
+      tx.feePayer = walletPublicKey;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
 
-    const signedTx = await signTransaction(tx);
-    let signature: string;
-    try {
-      signature = await this.connection.sendRawTransaction(signedTx.serialize());
-      await this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
-    } catch (err: any) {
-      const msg = err?.message || err?.toString() || '';
-      if (msg.includes('insufficient lamports')) {
-        throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+      const signedTx = await signTransaction(tx);
+      console.log(`[ZK Shield] Sending shield_stark tx (attempt ${attempt}/${MAX_RETRIES})...`);
+      signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      });
+      console.log(`[ZK Shield] Tx sent: ${signature}`);
+
+      try {
+        const confirmation = await this.connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'processed',
+        );
+        if (confirmation.value.err) {
+          console.error('[ZK Shield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
+          throw new Error(`Shield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+        }
+        console.log(`[ZK Shield] Confirmed on attempt ${attempt}`);
+        break;
+      } catch (e: any) {
+        const msg = e?.message || e?.toString() || '';
+        if (msg.includes('insufficient lamports')) {
+          const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        if (msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) {
+          console.warn(`[ZK Shield] Attempt ${attempt} expired, tx dropped by network`);
+          if (attempt < MAX_RETRIES) {
+            console.log('[ZK Shield] Retrying with fresh blockhash...');
+            continue;
+          }
+          const status = await this.connection.getSignatureStatus(signature);
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+            break;
+          }
+          throw new Error(`Shield transaction dropped after ${MAX_RETRIES} attempts. Devnet may be congested — try again.`);
+        }
+        throw e;
       }
-      throw err;
     }
 
-    // Also update local Merkle tree (for transfer proof generation)
+    // -----------------------------------------------------------------
+    // 9. Close the STARK proof buffer (recover rent, best-effort).
+    // -----------------------------------------------------------------
+    try {
+      await closeStarkProofBuffer(proofBuffer, walletSigner, this.connection);
+    } catch (err) {
+      console.warn('[ZK Shield] Could not close STARK proof buffer:', err);
+    }
+
+    // -----------------------------------------------------------------
+    // 10. Post-confirmation bookkeeping.
+    // -----------------------------------------------------------------
+    // Local Merkle tree mirror (Goldilocks) for later proofs.
     this.merkleTree.insert(note.commitment);
 
-    // Save updated subtrees for next operation
     await this.saveLocalSubtrees(updatedSubtrees, onChainState.leafCount + 1);
 
-    // Store note
     this.notes.push(note);
     await this.saveNotes();
 
+    console.log('[ZK Shield] STARK shield complete');
     return signature;
   }
 
   /**
-   * Transfer shielded tokens
-   * Returns signature and recipient note data for sharing
+   * Transfer shielded tokens via circuit 5 (transfer) STARK proof.
+   *
+   * Spends up to two input notes and creates two output commitments
+   * (recipient + change). Uses `public_amount = 0` — no value enters or
+   * leaves the pool. On-chain the instruction inserts both outputs into
+   * the Merkle tree and creates nullifier PDAs for double-spend protection.
+   *
+   * Returns { signature, recipientNote } — recipientNote is emitted in the
+   * p01note-compatible shape so the sender can hand it off out-of-band.
    */
   async transfer(
     recipient: ZkAddress,
@@ -1062,180 +946,233 @@ export class ZkServiceExtension {
     walletPublicKey: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
   ): Promise<{ signature: string; recipientNote: RecipientNoteData }> {
-    if (!this.spendingKeyHash || !this.ownerPubkey || !this.connection) {
+    if (!this.spendingKeyGl || !this.ownerPubkeyGl || !this.connection) {
       throw new Error('ZK Service not initialized');
     }
 
-    // Select notes
+    // -----------------------------------------------------------------
+    // 1. Select notes covering the amount. Post-migration they are
+    //    Goldilocks-native commitments.
+    // -----------------------------------------------------------------
     const { notesToSpend, totalValue } = this.selectNotes(amount);
     if (totalValue < amount) {
       throw new Error(`Insufficient shielded balance: ${totalValue} < ${amount}`);
     }
 
-    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
-
-    // Create output notes
-    const recipientNote = await createNote(amount, recipient.receivingPubkey, tokenMintField);
+    // -----------------------------------------------------------------
+    // 2. Derive Goldilocks token_mint + allocate fresh randomness for
+    //    both output notes (recipient + change).
+    // -----------------------------------------------------------------
+    const tokenMintGl = bytesToGoldilocks(this.tokenMint.toBytes());
     const changeAmount = totalValue - amount;
-    const changeNote = await createNote(changeAmount, this.ownerPubkey, tokenMintField);
+    const amountGl = truncateToGoldilocks(amount);
+    const changeAmountGl = truncateToGoldilocks(changeAmount);
 
-    // Compute nullifiers and handle dummy input note for single-note spends
-    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
-    let nullifier2: bigint;
-    let dummyInputNote: Note | undefined;
+    const outRand1 = randomGoldilocksU64();
+    const outRand2 = randomGoldilocksU64();
 
+    const expectedRecipientCommit = computeGoldilocksCommitment(
+      amountGl,
+      recipient.receivingPubkey,
+      outRand1,
+      tokenMintGl,
+    );
+    const expectedChangeCommit = computeGoldilocksCommitment(
+      changeAmountGl,
+      this.ownerPubkeyGl,
+      outRand2,
+      tokenMintGl,
+    );
+
+    // -----------------------------------------------------------------
+    // 3. Build input-note inputs. When only one real note is available,
+    //    synthesize a dummy with amount=0 + fresh randomness so the
+    //    nullifier is unique.
+    // -----------------------------------------------------------------
+    const in1 = notesToSpend[0];
+    const inAmount1 = truncateToGoldilocks(in1.amount);
+    const inRand1 = truncateToGoldilocks(in1.randomness);
+
+    let inAmount2: bigint;
+    let inRand2: bigint;
     if (notesToSpend[1]) {
-      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
+      inAmount2 = truncateToGoldilocks(notesToSpend[1].amount);
+      inRand2 = truncateToGoldilocks(notesToSpend[1].randomness);
     } else {
-      // IMPORTANT: For dummy input note, we must use UNIQUE randomness each time!
-      const dummyRandomness = randomFieldElement();
-      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
-      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
-
-      dummyInputNote = {
-        amount: BigInt(0),
-        ownerPubkey: BigInt(0),
-        randomness: dummyRandomness,
-        tokenMint: tokenMintField,
-        commitment: dummyCommitment,
-      };
+      inAmount2 = 0n;
+      inRand2 = randomGoldilocksU64();
     }
 
-    // If any note lacks saved Merkle proofs (pre-instant-ZK notes), sync tree from blockchain
-    // so the local tree fallback produces valid proofs
-    const anyNoteMissingProof = notesToSpend.some(n => !n.merklePathElements || !n.merklePathIndices || !n.merkleRoot);
-    if (anyNoteMissingProof) {
-      console.log('[ZK Transfer] Note(s) missing saved proofs — syncing tree from blockchain...');
-      try {
-        const syncResult = await this.syncFromBlockchain();
-        console.log('[ZK Transfer] Tree synced. Root match:', syncResult.localRoot === syncResult.onChainRoot);
-      } catch (syncErr) {
-        console.warn('[ZK Transfer] Tree sync failed:', syncErr);
-      }
+    // -----------------------------------------------------------------
+    // 4. Generate circuit 5 STARK proof in the Web Worker.
+    // -----------------------------------------------------------------
+    console.log('[ZK Transfer] Generating circuit 5 (transfer) STARK proof...');
+    const starkResult = await starkProver.generateTransferProof(
+      this.spendingKeyGl.toString(),
+      tokenMintGl.toString(),
+      inAmount1.toString(),
+      inRand1.toString(),
+      inAmount2.toString(),
+      inRand2.toString(),
+      amountGl.toString(),
+      outRand1.toString(),
+      recipient.receivingPubkey.toString(),
+      changeAmountGl.toString(),
+      outRand2.toString(),
+      this.ownerPubkeyGl.toString(),
+      '0', // public_amount = 0 for private transfer
+    );
+    console.log(
+      '[ZK Transfer] STARK proof generated in %dms (%d bytes)',
+      starkResult.durationMs,
+      starkResult.proofSize,
+    );
+
+    const publicInputs = starkResult.publicInputs.map((s) => BigInt(s));
+    const n1Gl = publicInputs[0];
+    const n2Gl = publicInputs[1];
+    const oc1Gl = publicInputs[2];
+    const oc2Gl = publicInputs[3];
+
+    if (oc1Gl !== expectedRecipientCommit || oc2Gl !== expectedChangeCommit) {
+      throw new Error(
+        'Transfer aborted: circuit-computed output commitments disagree with local derivation. ' +
+        `oc1 expected=${expectedRecipientCommit} got=${oc1Gl}; ` +
+        `oc2 expected=${expectedChangeCommit} got=${oc2Gl}.`,
+      );
     }
 
-    // Use saved Merkle proofs from shield time (consistent with on-chain root)
-    // instead of local tree which diverges from on-chain state
-    const note0 = notesToSpend[0];
-    let proof1: { pathElements: bigint[]; pathIndices: number[] };
-    let merkleRoot: bigint;
+    const starkProof: GenericStarkProof = {
+      proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+      circuitId: 5, // CIRCUIT_TRANSFER
+      publicInputs,
+      proofSize: starkResult.proofSize,
+    };
 
-    if (note0.merklePathElements && note0.merklePathIndices && note0.merkleRoot) {
-      proof1 = { pathElements: note0.merklePathElements, pathIndices: note0.merklePathIndices };
-      merkleRoot = note0.merkleRoot;
-      console.log('[ZK Transfer] Using saved Merkle proof from shield time');
-    } else {
-      // Fallback: reconstruct from cached subtrees
-      try {
-        proof1 = this.reconstructProofFromSubtrees(note0);
-        merkleRoot = note0.merkleRoot || this.merkleTree.root;
-        console.log('[ZK Transfer] Reconstructed proof from subtrees');
-      } catch {
-        // Local tree was synced above — should now be valid
-        console.log('[ZK Transfer] Using synced local tree proof');
-        proof1 = this.merkleTree.generateProof(note0.leafIndex!);
-        merkleRoot = this.merkleTree.root;
-      }
-    }
-
-    let proof2: { pathElements: bigint[]; pathIndices: number[] };
-    if (notesToSpend[1]) {
-      const note1 = notesToSpend[1];
-      if (note1.merklePathElements && note1.merklePathIndices && note1.merkleRoot) {
-        proof2 = { pathElements: note1.merklePathElements, pathIndices: note1.merklePathIndices };
-        // Both notes must share same merkle root — use note0's root
-        // If note1 has a different root, the circuit will fail, but this is expected
-        // as both proofs must be against the same tree state
-      } else {
-        try {
-          proof2 = this.reconstructProofFromSubtrees(note1);
-        } catch {
-          proof2 = this.merkleTree.generateProof(note1.leafIndex!);
-        }
-      }
-    } else {
-      proof2 = { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
-    }
-
-    // Build input notes array - use dummy for second slot if only one note
-    const inputNotesForProof = notesToSpend[1]
-      ? notesToSpend
-      : [notesToSpend[0], dummyInputNote!];
-
-    // Verify proof1 locally against merkleRoot
-    let computedRoot = note0.commitment;
-    for (let i = 0; i < proof1.pathElements.length; i++) {
-      const sibling = proof1.pathElements[i];
-      const isRight = proof1.pathIndices[i] === 1;
-      computedRoot = isRight ? poseidonHash(sibling, computedRoot) : poseidonHash(computedRoot, sibling);
-    }
-    if (computedRoot !== merkleRoot) {
-      console.error('[ZK Transfer] Merkle proof verification FAILED! Root mismatch.');
-    }
-
-    // Request proof from client-side prover
-    const zkProof = await this.generateProofClientSide({
-      merkleRoot: merkleRoot,
-      nullifier1,
-      nullifier2,
-      outputCommitment1: recipientNote.commitment,
-      outputCommitment2: changeNote.commitment,
-      inputNotes: inputNotesForProof,
-      outputNotes: [recipientNote, changeNote],
-      proofs: [proof1, proof2],
-      spendingKey: this.spendingKey!,
-    });
-
-    // Compute new root from on-chain subtrees for the two new commitments
+    // -----------------------------------------------------------------
+    // 5. Read on-chain tree + compute (old_root, new_root). The circuit
+    //    does not check Merkle membership of inputs, but transfer_stark
+    //    rejects unless merkle_root is a known valid root of the pool.
+    // -----------------------------------------------------------------
     const onChainState = await this.readOnChainFilledSubtrees();
+
     const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
-    const useSubtrees = localSubtrees || onChainState.filledSubtrees;
+    let useSubtrees: bigint[];
+    if (localSubtrees) {
+      useSubtrees = localSubtrees;
+    } else if (this.merkleTree.leafCount === onChainState.leafCount && onChainState.leafCount > 0) {
+      useSubtrees = this.merkleTree.getFilledSubtrees();
+      await this.saveLocalSubtrees(useSubtrees, onChainState.leafCount);
+    } else {
+      useSubtrees = onChainState.filledSubtrees;
+    }
 
-    // Insert recipient note
-    const { newRoot: rootAfterRecipient, updatedSubtrees: subtreesAfterRecipient } =
-      this.computeNewRootFromSubtrees(useSubtrees, onChainState.leafCount, recipientNote.commitment, onChainState.depth);
-    // Insert change note
-    const { newRoot, updatedSubtrees } =
-      this.computeNewRootFromSubtrees(subtreesAfterRecipient, onChainState.leafCount + 1, changeNote.commitment, onChainState.depth);
+    const { newRoot: computedCurrentRoot } = this.computeNewRootFromSubtrees(
+      useSubtrees,
+      onChainState.leafCount,
+      0n,
+      onChainState.depth,
+    );
+    if (computedCurrentRoot !== onChainState.root) {
+      throw new Error(
+        `Transfer aborted: client merkle state is out of sync with on-chain pool. ` +
+        `Expected root ${onChainState.root.toString()} but local subtrees produce ${computedCurrentRoot.toString()}. ` +
+        `Reset the local tree and retry.`,
+      );
+    }
 
-    // Get PDAs
+    const recipientLeafIndex = onChainState.leafCount;
+    const {
+      updatedSubtrees: afterRecipientSubtrees,
+    } = this.computeNewRootFromSubtrees(
+      useSubtrees,
+      recipientLeafIndex,
+      oc1Gl,
+      onChainState.depth,
+    );
+
+    const changeLeafIndex = recipientLeafIndex + 1;
+    const {
+      newRoot: finalNewRoot,
+      updatedSubtrees: finalSubtrees,
+    } = this.computeNewRootFromSubtrees(
+      afterRecipientSubtrees,
+      changeLeafIndex,
+      oc2Gl,
+      onChainState.depth,
+    );
+
+    const merkleRootBytes = packGoldilocksU64(onChainState.root);
+    const newRootBytes = packGoldilocksU64(finalNewRoot);
+    const n1Bytes = packGoldilocksU64(n1Gl);
+    const n2Bytes = packGoldilocksU64(n2Gl);
+    const oc1Bytes = packGoldilocksU64(oc1Gl);
+    const oc2Bytes = packGoldilocksU64(oc2Gl);
+
+    // -----------------------------------------------------------------
+    // 6. Pre-flight SOL balance for proof upload + 2× nullifier PDA rent.
+    // -----------------------------------------------------------------
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const starkUploadFees = 120_000; // ~13 chunks + init + phase1 + phase2 + close
+    const nullifierRent = 2_000_000; // 2× ~980k for NullifierRecord init
+    const txFees = 15_000;
+    const required = starkUploadFees + nullifierRent + txFees;
+    if (walletBalance < required) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      const need = (required / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL. Need ~${need} SOL (STARK upload + nullifier PDAs + fees), wallet has ${have} SOL.`);
+    }
+
+    // -----------------------------------------------------------------
+    // 7. Upload + verify STARK proof on-chain (buffer left open).
+    // -----------------------------------------------------------------
+    const walletSigner: WalletSigner = {
+      publicKey: walletPublicKey,
+      signTransaction,
+    };
+
+    console.log('[ZK Transfer] Uploading + verifying STARK proof on-chain...');
+    const { proofBuffer } = await submitAndVerifyStarkProof(
+      starkProof,
+      walletSigner,
+      this.connection,
+      (step) => console.log('[ZK Transfer][STARK]', step),
+    );
+
+    // -----------------------------------------------------------------
+    // 8. Build transfer_stark instruction.
+    // -----------------------------------------------------------------
     const [poolPDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()],
-      this.programId
+      this.programId,
     );
 
     const [merkleTreePDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()],
-      this.programId
+      this.programId,
     );
 
-    const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.NULLIFIER_SET, poolPDA.toBytes()],
-      this.programId
+    const [nullifierRecord1PDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from('nullifier'), poolPDA.toBytes(), Buffer.from(n1Bytes)],
+      this.programId,
+    );
+    const [nullifierRecord2PDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from('nullifier'), poolPDA.toBytes(), Buffer.from(n2Bytes)],
+      this.programId,
     );
 
-    const [vkDataPDA] = PublicKey.findProgramAddressSync(
-      [new TextEncoder().encode('vk_data'), poolPDA.toBytes()],
-      this.programId
-    );
+    // Anchor discriminator: sha256("global:transfer_stark")[0..8]
+    const TRANSFER_STARK_DISCRIMINATOR = Buffer.from([101, 77, 136, 73, 63, 103, 214, 251]);
 
-    // Build transfer instruction - Anchor discriminator: sha256("global:transfer")[0..8]
-    // merkle_root = old root used in the ZK proof (for validation)
-    // new_root = root after inserting both commitments (for merkle tree update)
-    const discriminator = new Uint8Array([0xa3, 0x34, 0xc8, 0xe7, 0x8c, 0x03, 0x45, 0xba]);
-    const data = new Uint8Array([
-      ...discriminator,
-      ...zkProof.pi_a,
-      ...zkProof.pi_b,
-      ...zkProof.pi_c,
-      ...bigintToLeBytes(nullifier1),
-      ...bigintToLeBytes(nullifier2),
-      ...bigintToLeBytes(recipientNote.commitment),
-      ...bigintToLeBytes(changeNote.commitment),
-      ...bigintToLeBytes(merkleRoot),  // Old merkle root for proof validation
-      ...bigintToLeBytes(newRoot),     // New merkle root for tree update
+    const ixData = Buffer.concat([
+      TRANSFER_STARK_DISCRIMINATOR,
+      n1Bytes,
+      n2Bytes,
+      oc1Bytes,
+      oc2Bytes,
+      merkleRootBytes,
+      newRootBytes,
     ]);
-
 
     const ix = new TransactionInstruction({
       programId: this.programId,
@@ -1243,281 +1180,114 @@ export class ZkServiceExtension {
         { pubkey: walletPublicKey, isSigner: true, isWritable: true },
         { pubkey: poolPDA, isSigner: false, isWritable: true },
         { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-        { pubkey: nullifierSetPDA, isSigner: false, isWritable: true },
-        { pubkey: vkDataPDA, isSigner: false, isWritable: false },
+        { pubkey: nullifierRecord1PDA, isSigner: false, isWritable: true },
+        { pubkey: nullifierRecord2PDA, isSigner: false, isWritable: true },
+        { pubkey: proofBuffer, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
-      data: Buffer.from(data),
+      data: ixData,
     });
 
-    // Add compute budget instruction for Groth16 verification
-    const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+    // -----------------------------------------------------------------
+    // 9. Send with retry on dropped tx.
+    // -----------------------------------------------------------------
+    const MAX_RETRIES = 3;
+    let signature = '';
 
-    // SetComputeUnitLimit instruction (discriminator = 2)
-    const computeLimitData = new Uint8Array(5);
-    computeLimitData[0] = 2;
-    new DataView(computeLimitData.buffer).setUint32(1, 1_800_000, true); // 1.8M compute units
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const tx = new Transaction().add(ix);
+      tx.feePayer = walletPublicKey;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
 
-    // SetComputeUnitPrice instruction (discriminator = 3) - priority fee
-    const computePriceData = new Uint8Array(9);
-    computePriceData[0] = 3;
-    new DataView(computePriceData.buffer).setBigUint64(1, BigInt(1000), true); // 1000 microlamports per CU
+      const signedTx = await signTransaction(tx);
+      console.log(`[ZK Transfer] Sending transfer_stark tx (attempt ${attempt}/${MAX_RETRIES})...`);
+      signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      });
+      console.log(`[ZK Transfer] Tx sent: ${signature}`);
 
-    const computeLimitIx = new TransactionInstruction({
-      programId: COMPUTE_BUDGET_PROGRAM_ID,
-      keys: [],
-      data: Buffer.from(computeLimitData),
-    });
-
-    const computePriceIx = new TransactionInstruction({
-      programId: COMPUTE_BUDGET_PROGRAM_ID,
-      keys: [],
-      data: Buffer.from(computePriceData),
-    });
-
-    const tx = new Transaction().add(computeLimitIx).add(computePriceIx).add(ix);
-    tx.feePayer = walletPublicKey;
-    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
-    tx.recentBlockhash = blockhash;
-
-    // Pre-check wallet balance for tx fees
-    const walletBalance = await this.connection.getBalance(walletPublicKey);
-    const estimatedFee = 10_000; // ~0.00001 SOL base fee
-    const rentExempt = 890_880; // rent for nullifier accounts
-    const requiredLamports = estimatedFee + rentExempt * 2;
-    if (walletBalance < requiredLamports) {
-      const needed = (requiredLamports / 1e9).toFixed(4);
-      const have = (walletBalance / 1e9).toFixed(4);
-      throw new Error(`Insufficient SOL for transaction fees. Need ~${needed} SOL, wallet has ${have} SOL. Please fund your wallet first.`);
-    }
-
-    const signedTx = await signTransaction(tx);
-    let signature: string;
-    try {
-      signature = await this.connection.sendRawTransaction(signedTx.serialize());
-      await this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
-    } catch (err: any) {
-      const msg = err?.message || err?.toString() || '';
-      if (msg.includes('insufficient lamports')) {
-        const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
-        if (match) {
-          const have = (Number(match[1]) / 1e9).toFixed(4);
-          const need = (Number(match[2]) / 1e9).toFixed(4);
-          throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL. Please fund your wallet first.`);
+      try {
+        const confirmation = await this.connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'processed',
+        );
+        if (confirmation.value.err) {
+          console.error('[ZK Transfer] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
+          throw new Error(`Transfer transaction failed: ${JSON.stringify(confirmation.value.err)}`);
         }
-        throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        console.log(`[ZK Transfer] Confirmed on attempt ${attempt}`);
+        break;
+      } catch (e: any) {
+        const msg = e?.message || e?.toString() || '';
+        if (msg.includes('insufficient lamports')) {
+          const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        if (msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) {
+          console.warn(`[ZK Transfer] Attempt ${attempt} expired, tx dropped by network`);
+          if (attempt < MAX_RETRIES) continue;
+          const status = await this.connection.getSignatureStatus(signature);
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+            break;
+          }
+          throw new Error(`Transfer transaction dropped after ${MAX_RETRIES} attempts. Devnet may be congested — try again.`);
+        }
+        throw e;
       }
-      throw err;
     }
 
-    // Update notes
+    // -----------------------------------------------------------------
+    // 10. Close the STARK proof buffer (best-effort rent recovery).
+    // -----------------------------------------------------------------
+    try {
+      await closeStarkProofBuffer(proofBuffer, walletSigner, this.connection);
+    } catch (err) {
+      console.warn('[ZK Transfer] Could not close STARK proof buffer:', err);
+    }
+
+    // -----------------------------------------------------------------
+    // 11. Post-confirmation bookkeeping: drop spent inputs, keep change
+    //     locally (if any), mirror into local tree, export recipient note.
+    // -----------------------------------------------------------------
+    this.merkleTree.insert(oc1Gl);
+    this.merkleTree.insert(oc2Gl);
+    await this.saveLocalSubtrees(finalSubtrees, changeLeafIndex + 1);
+
     this.removeSpentNotes(notesToSpend);
-    if (changeAmount > BigInt(0)) {
-      changeNote.leafIndex = this.merkleTree.leafCount - 1;
+
+    if (changeAmount > 0n) {
+      const changeNote: Note = {
+        amount: changeAmountGl,
+        ownerPubkey: this.ownerPubkeyGl,
+        randomness: outRand2,
+        tokenMint: tokenMintGl,
+        commitment: oc2Gl,
+        leafIndex: changeLeafIndex,
+        merkleRoot: finalNewRoot,
+      };
       this.notes.push(changeNote);
     }
     await this.saveNotes();
 
-    // Return signature and recipient note data for sharing
     const recipientNoteData: RecipientNoteData = {
-      amount: recipientNote.amount.toString(),
-      ownerPubkey: recipientNote.ownerPubkey.toString(),
-      randomness: recipientNote.randomness.toString(),
-      tokenMint: recipientNote.tokenMint.toString(),
-      commitment: recipientNote.commitment.toString(),
-      leafIndex: this.merkleTree.leafCount - 2, // Recipient note was inserted before change note
+      amount: amountGl.toString(),
+      ownerPubkey: recipient.receivingPubkey.toString(),
+      randomness: outRand1.toString(),
+      tokenMint: tokenMintGl.toString(),
+      commitment: oc1Gl.toString(),
+      leafIndex: recipientLeafIndex,
     };
 
+    console.log('[ZK Transfer] STARK transfer complete');
     return { signature, recipientNote: recipientNoteData };
-  }
-
-  // Pending notes for after relayer confirms
-  private _pendingSpendNotes: Note[] = [];
-  private _pendingChangeNote: Note | null = null;
-
-  /**
-   * Generate a proof for relayer-based private transfer
-   * Returns raw snarkjs proof format (string arrays) for relayer verification
-   */
-  async generateTransferProofForRelayer(amount: bigint): Promise<{
-    proof: { pi_a: string[]; pi_b: string[][]; pi_c: string[] };
-    publicSignals: string[];
-    nullifier: string;
-  }> {
-    if (!this.spendingKey || !this.spendingKeyHash || !this.ownerPubkey) {
-      throw new Error('ZK Service not initialized');
-    }
-
-
-    // Select notes to spend
-    const { notesToSpend, totalValue } = this.selectNotes(amount);
-    if (totalValue < amount) {
-      throw new Error(`Insufficient shielded balance. Have ${Number(totalValue) / 1e9} SOL, need ${Number(amount) / 1e9} SOL`);
-    }
-
-    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
-
-    // If any note lacks saved Merkle proofs (pre-instant-ZK notes), sync tree from blockchain
-    const anyNoteMissingProof = notesToSpend.some(n => !n.merklePathElements || !n.merklePathIndices || !n.merkleRoot);
-    if (anyNoteMissingProof) {
-      console.log('[ZK TransferRelayer] Note(s) missing saved proofs — syncing tree from blockchain...');
-      try {
-        const syncResult = await this.syncFromBlockchain();
-        console.log('[ZK TransferRelayer] Tree synced. Root match:', syncResult.localRoot === syncResult.onChainRoot);
-      } catch (syncErr) {
-        console.warn('[ZK TransferRelayer] Tree sync failed:', syncErr);
-      }
-    }
-
-    // Use saved Merkle proofs from shield time (consistent with on-chain root)
-    const note0 = notesToSpend[0];
-    let proof1: { pathElements: bigint[]; pathIndices: number[] };
-    let merkleRoot: bigint;
-
-    if (note0.merklePathElements && note0.merklePathIndices && note0.merkleRoot) {
-      proof1 = { pathElements: note0.merklePathElements, pathIndices: note0.merklePathIndices };
-      merkleRoot = note0.merkleRoot;
-    } else {
-      try {
-        proof1 = this.reconstructProofFromSubtrees(note0);
-        merkleRoot = note0.merkleRoot || this.merkleTree.root;
-      } catch {
-        console.log('[ZK TransferRelayer] Using synced local tree proof');
-        proof1 = this.merkleTree.generateProof(note0.leafIndex!);
-        merkleRoot = this.merkleTree.root;
-      }
-    }
-
-    // Compute nullifiers
-    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
-    let nullifier2: bigint;
-    let dummyInputNote: Note | undefined;
-
-    if (notesToSpend[1]) {
-      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
-    } else {
-      const dummyRandomness = randomFieldElement();
-      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
-      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
-      dummyInputNote = {
-        amount: BigInt(0),
-        ownerPubkey: BigInt(0),
-        randomness: dummyRandomness,
-        tokenMint: tokenMintField,
-        commitment: dummyCommitment,
-      };
-    }
-
-    let proof2: { pathElements: bigint[]; pathIndices: number[] };
-    if (notesToSpend[1]) {
-      const note1 = notesToSpend[1];
-      if (note1.merklePathElements && note1.merklePathIndices) {
-        proof2 = { pathElements: note1.merklePathElements, pathIndices: note1.merklePathIndices };
-      } else {
-        try { proof2 = this.reconstructProofFromSubtrees(note1); }
-        catch { proof2 = this.merkleTree.generateProof(note1.leafIndex!); }
-      }
-    } else {
-      proof2 = { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
-    }
-
-    const inputNotesForCircuit = notesToSpend[1]
-      ? notesToSpend
-      : [notesToSpend[0], dummyInputNote!];
-
-    // Create change note (remaining balance stays in pool)
-    const changeAmount = totalValue - amount;
-    const changeNote = await createNote(changeAmount, this.ownerPubkey, tokenMintField);
-
-    // Create dummy output (the "spent" amount - relayer sends actual SOL)
-    const dummyOutput2Commitment = poseidonHash(BigInt(0), BigInt(0), BigInt(0), tokenMintField);
-    const dummyOutput2: Note = {
-      amount: BigInt(0),
-      ownerPubkey: BigInt(0),
-      randomness: BigInt(0),
-      tokenMint: tokenMintField,
-      commitment: dummyOutput2Commitment,
-    };
-
-    // Negative public_amount (withdrawal from pool)
-    const publicAmountField = FIELD_ORDER - amount;
-
-    // Build circuit inputs
-    const circuitInputs: Record<string, string | string[]> = {
-      merkle_root: merkleRoot.toString(),
-      nullifier_1: nullifier1.toString(),
-      nullifier_2: nullifier2.toString(),
-      output_commitment_1: changeNote.commitment.toString(),
-      output_commitment_2: dummyOutput2Commitment.toString(),
-      public_amount: publicAmountField.toString(),
-      token_mint: tokenMintField.toString(),
-
-      in_amount_1: inputNotesForCircuit[0]?.amount.toString() ?? '0',
-      in_owner_pubkey_1: inputNotesForCircuit[0]?.ownerPubkey.toString() ?? '0',
-      in_randomness_1: inputNotesForCircuit[0]?.randomness.toString() ?? '0',
-      in_path_elements_1: proof1.pathElements.map(e => e.toString()),
-      in_path_indices_1: proof1.pathIndices.map(i => i.toString()),
-
-      in_amount_2: inputNotesForCircuit[1]?.amount.toString() ?? '0',
-      in_owner_pubkey_2: inputNotesForCircuit[1]?.ownerPubkey.toString() ?? '0',
-      in_randomness_2: inputNotesForCircuit[1]?.randomness.toString() ?? '0',
-      in_path_elements_2: proof2.pathElements.map(e => e.toString()),
-      in_path_indices_2: proof2.pathIndices.map(i => i.toString()),
-
-      out_amount_1: changeNote.amount.toString(),
-      out_recipient_1: changeNote.ownerPubkey.toString(),
-      out_randomness_1: changeNote.randomness.toString(),
-      out_amount_2: dummyOutput2.amount.toString(),
-      out_recipient_2: dummyOutput2.ownerPubkey.toString(),
-      out_randomness_2: dummyOutput2.randomness.toString(),
-
-      spending_key: this.spendingKey.toString(),
-    };
-
-    // Generate raw proof via client-side prover
-    const startTime = performance.now();
-
-    if (!this.prover.isReady) {
-      throw new Error('ZK prover not initialized. Please reload the extension.');
-    }
-
-    const { proof, publicSignals } = await this.prover.generateProofRaw(circuitInputs);
-    const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-
-    // Store pending notes for later marking
-    this._pendingSpendNotes = notesToSpend;
-    this._pendingChangeNote = changeNote;
-
-    return {
-      proof,
-      publicSignals: [
-        merkleRoot.toString(),
-        nullifier1.toString(),
-        nullifier2.toString(),
-        changeNote.commitment.toString(),
-        dummyOutput2Commitment.toString(),
-        publicAmountField.toString(),
-        tokenMintField.toString(),
-      ],
-      nullifier: nullifier1.toString(),
-    };
-  }
-
-  /**
-   * Mark notes as spent after relayer confirms the transfer
-   */
-  async markNoteSpent(nullifier: string): Promise<void> {
-
-    if (this._pendingSpendNotes.length > 0) {
-      this.removeSpentNotes(this._pendingSpendNotes);
-      this._pendingSpendNotes = [];
-    }
-
-    if (this._pendingChangeNote && this._pendingChangeNote.amount > BigInt(0)) {
-      this.notes.push(this._pendingChangeNote);
-      this._pendingChangeNote = null;
-    }
-
-    await this.saveNotes();
   }
 
   /**
@@ -1529,289 +1299,389 @@ export class ZkServiceExtension {
     walletPublicKey: PublicKey,
     signTransaction: (tx: Transaction) => Promise<Transaction>
   ): Promise<string> {
-    if (!this.spendingKeyHash || !this.ownerPubkey || !this.connection) {
+    if (!this.spendingKeyGl || !this.ownerPubkeyGl || !this.connection) {
       throw new Error('ZK Service not initialized');
     }
+    if (amount <= 0n) {
+      throw new Error('Unshield amount must be > 0');
+    }
 
-    // Select notes
+    const unshieldStart = Date.now();
+    console.log('[ZK Unshield] Starting STARK unshield of', Number(amount) / 1e9, 'SOL...');
+
+    // -----------------------------------------------------------------
+    // 1. Sync + select notes.
+    // -----------------------------------------------------------------
+    try {
+      await this.syncFromBlockchain();
+    } catch (syncErr) {
+      console.warn('[ZK Unshield] Tree sync failed (continuing):', syncErr);
+    }
+
     const { notesToSpend, totalValue } = this.selectNotes(amount);
     if (totalValue < amount) {
       throw new Error(`Insufficient shielded balance: ${totalValue} < ${amount}`);
     }
 
-    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
-
-    // Create change note
+    // -----------------------------------------------------------------
+    // 2. Build circuit 5 inputs.
+    //    - Output 1 (change): amount = change, owner = self. Circuit always
+    //      produces a non-zero Poseidon commitment; the program inserts it
+    //      into the tree even for change=0 (we accept the dead 0-leaf).
+    //    - Output 2 (unshield dummy): amount = 0, recipient = 0. Never
+    //      inserted on-chain but bound in public_inputs_hash.
+    // -----------------------------------------------------------------
+    const tokenMintGl = bytesToGoldilocks(this.tokenMint.toBytes());
     const changeAmount = totalValue - amount;
-    const changeNote = changeAmount > BigInt(0)
-      ? await createNote(changeAmount, this.ownerPubkey, tokenMintField)
-      : null;
+    const changeAmountGl = truncateToGoldilocks(changeAmount);
 
-    // Compute nullifiers
-    const nullifier1 = computeNullifier(notesToSpend[0].commitment, this.spendingKeyHash);
-    let nullifier2: bigint;
-    let dummyInputNote: Note | undefined;
+    const outRand1 = randomGoldilocksU64();
+    const outRand2 = randomGoldilocksU64();
+    const dummyOwnerGl = 0n;
 
+    const expectedChangeCommit = computeGoldilocksCommitment(
+      changeAmountGl,
+      this.ownerPubkeyGl,
+      outRand1,
+      tokenMintGl,
+    );
+    const expectedDummy2Commit = computeGoldilocksCommitment(
+      0n,
+      dummyOwnerGl,
+      outRand2,
+      tokenMintGl,
+    );
+
+    // -----------------------------------------------------------------
+    // 3. Input-note inputs. Synthesize a 0-amount dummy with fresh
+    //    randomness if only one real input is available.
+    // -----------------------------------------------------------------
+    const in1 = notesToSpend[0];
+    const inAmount1 = truncateToGoldilocks(in1.amount);
+    const inRand1 = truncateToGoldilocks(in1.randomness);
+
+    let inAmount2: bigint;
+    let inRand2: bigint;
     if (notesToSpend[1]) {
-      nullifier2 = computeNullifier(notesToSpend[1].commitment, this.spendingKeyHash);
+      inAmount2 = truncateToGoldilocks(notesToSpend[1].amount);
+      inRand2 = truncateToGoldilocks(notesToSpend[1].randomness);
     } else {
-      const dummyRandomness = randomFieldElement();
-      const dummyCommitment = poseidonHash(BigInt(0), BigInt(0), dummyRandomness, tokenMintField);
-      nullifier2 = computeNullifier(dummyCommitment, this.spendingKeyHash);
-
-      dummyInputNote = {
-        amount: BigInt(0),
-        ownerPubkey: BigInt(0),
-        randomness: dummyRandomness,
-        tokenMint: tokenMintField,
-        commitment: dummyCommitment,
-      };
+      inAmount2 = 0n;
+      inRand2 = randomGoldilocksU64();
     }
 
-    // If any note lacks saved Merkle proofs (pre-instant-ZK notes), sync tree from blockchain
-    const anyNoteMissingProof = notesToSpend.some(n => !n.merklePathElements || !n.merklePathIndices || !n.merkleRoot);
-    if (anyNoteMissingProof) {
-      console.log('[ZK Unshield] Note(s) missing saved proofs — syncing tree from blockchain...');
-      try {
-        const syncResult = await this.syncFromBlockchain();
-        console.log('[ZK Unshield] Tree synced. Root match:', syncResult.localRoot === syncResult.onChainRoot);
-      } catch (syncErr) {
-        console.warn('[ZK Unshield] Tree sync failed:', syncErr);
-      }
+    // public_amount = -amount reinterpreted as u64 via two's complement.
+    // This must match `amount.wrapping_neg()` on-chain, which is what the
+    // verifier uses when reconstructing the public-inputs hash.
+    const publicAmountField = (1n << 64n) - amount;
+
+    // -----------------------------------------------------------------
+    // 4. Generate circuit 5 STARK proof.
+    // -----------------------------------------------------------------
+    console.log('[ZK Unshield] Generating circuit 5 (transfer) STARK proof with negative public_amount...');
+    const starkResult = await starkProver.generateTransferProof(
+      this.spendingKeyGl.toString(),
+      tokenMintGl.toString(),
+      inAmount1.toString(),
+      inRand1.toString(),
+      inAmount2.toString(),
+      inRand2.toString(),
+      changeAmountGl.toString(),     // out_amount_1 = change
+      outRand1.toString(),           // out_rand_1
+      this.ownerPubkeyGl.toString(), // out_recipient_1 = self
+      '0',                           // out_amount_2 = 0 (dummy)
+      outRand2.toString(),           // out_rand_2
+      dummyOwnerGl.toString(),       // out_recipient_2 = 0 (dummy)
+      publicAmountField.toString(),
+    );
+    console.log(
+      '[ZK Unshield] STARK proof generated in %dms (%d bytes)',
+      starkResult.durationMs ?? 0,
+      starkResult.proofSize,
+    );
+
+    const publicInputs = starkResult.publicInputs.map((s) => BigInt(s));
+    const n1Gl = publicInputs[0];
+    const n2Gl = publicInputs[1];
+    const oc1Gl = publicInputs[2];
+    const oc2Gl = publicInputs[3];
+    const pubAmtGl = publicInputs[4];
+
+    if (oc1Gl !== expectedChangeCommit || oc2Gl !== expectedDummy2Commit) {
+      throw new Error(
+        'Unshield aborted: circuit-computed output commitments disagree with local derivation. ' +
+        `oc1(change) expected=${expectedChangeCommit} got=${oc1Gl}; ` +
+        `oc2(dummy) expected=${expectedDummy2Commit} got=${oc2Gl}.`,
+      );
+    }
+    if (pubAmtGl !== publicAmountField) {
+      throw new Error(
+        `Unshield aborted: circuit public_amount disagrees with -amount two's complement. ` +
+        `expected=${publicAmountField} got=${pubAmtGl}.`,
+      );
     }
 
-    // INSTANT PATH: Use saved Merkle proof from shield time if available
-    let proof1: { pathElements: bigint[]; pathIndices: number[] };
-    let merkleRoot: bigint;
-
-    const note0 = notesToSpend[0];
-    if (note0.merklePathElements && note0.merklePathIndices && note0.merkleRoot) {
-      // Verify saved proof locally
-      let verifyRoot = note0.commitment;
-      for (let i = 0; i < note0.merklePathElements.length; i++) {
-        const sibling = note0.merklePathElements[i];
-        const isRight = note0.merklePathIndices![i] === 1;
-        verifyRoot = isRight ? poseidonHash(sibling, verifyRoot) : poseidonHash(verifyRoot, sibling);
-      }
-
-      if (verifyRoot === note0.merkleRoot) {
-        // Saved proof is valid - use it directly
-        proof1 = { pathElements: note0.merklePathElements, pathIndices: note0.merklePathIndices! };
-        merkleRoot = note0.merkleRoot;
-      } else {
-        // Saved proof invalid, try subtree reconstruction
-        console.warn('[ZK Unshield] Saved proof invalid, trying subtree reconstruction');
-        try {
-          proof1 = this.reconstructProofFromSubtrees(note0);
-          merkleRoot = note0.merkleRoot;
-        } catch {
-          // Local tree was synced above — should now be valid
-          console.log('[ZK Unshield] Using synced local tree proof');
-          proof1 = this.merkleTree.generateProof(note0.leafIndex!);
-          merkleRoot = this.merkleTree.root;
-        }
-      }
-    } else {
-      // No saved proof — try subtree reconstruction first
-      try {
-        proof1 = this.reconstructProofFromSubtrees(note0);
-        // Compute the root from the proof
-        let computedRoot = note0.commitment;
-        for (let i = 0; i < proof1.pathElements.length; i++) {
-          const sibling = proof1.pathElements[i];
-          const isRight = proof1.pathIndices[i] === 1;
-          computedRoot = isRight ? poseidonHash(sibling, computedRoot) : poseidonHash(computedRoot, sibling);
-        }
-        merkleRoot = computedRoot;
-      } catch {
-        // Local tree was synced above — should now be valid
-        console.log('[ZK Unshield] Using synced local tree proof');
-        proof1 = this.merkleTree.generateProof(note0.leafIndex!);
-        merkleRoot = this.merkleTree.root;
-      }
-    }
-
-    const proof2 = notesToSpend[1]
-      ? this.merkleTree.generateProof(notesToSpend[1].leafIndex!)
-      : { pathElements: Array(MERKLE_TREE_DEPTH).fill(BigInt(0)), pathIndices: Array(MERKLE_TREE_DEPTH).fill(0) };
-
-    // Create dummy output notes
-    const dummyOutputRandomness = randomFieldElement();
-    const dummyOutputNote: Note = {
-      amount: BigInt(0),
-      ownerPubkey: BigInt(0),
-      randomness: dummyOutputRandomness,
-      tokenMint: tokenMintField,
-      commitment: poseidonHash(BigInt(0), BigInt(0), dummyOutputRandomness, tokenMintField),
+    const starkProof: GenericStarkProof = {
+      proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+      circuitId: 5, // CIRCUIT_TRANSFER
+      publicInputs,
+      proofSize: starkResult.proofSize,
     };
 
-    let outputNote1: Note;
-    if (changeNote) {
-      outputNote1 = changeNote;
+    // -----------------------------------------------------------------
+    // 5. Read on-chain tree + compute (old_root, new_root). Only oc1 is
+    //    inserted on-chain; oc2 is never materialized in the tree. Since
+    //    Poseidon never produces [0;32], oc1 is always inserted.
+    // -----------------------------------------------------------------
+    const onChainState = await this.readOnChainFilledSubtrees();
+
+    const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
+    let useSubtrees: bigint[];
+    if (localSubtrees) {
+      useSubtrees = localSubtrees;
+    } else if (this.merkleTree.leafCount === onChainState.leafCount && onChainState.leafCount > 0) {
+      useSubtrees = this.merkleTree.getFilledSubtrees();
+      await this.saveLocalSubtrees(useSubtrees, onChainState.leafCount);
     } else {
-      const dummyOutput1Randomness = randomFieldElement();
-      outputNote1 = {
-        amount: BigInt(0),
-        ownerPubkey: BigInt(0),
-        randomness: dummyOutput1Randomness,
-        tokenMint: tokenMintField,
-        commitment: poseidonHash(BigInt(0), BigInt(0), dummyOutput1Randomness, tokenMintField),
-      };
+      useSubtrees = onChainState.filledSubtrees;
     }
 
-    const inputNotesForProof = notesToSpend[1]
-      ? notesToSpend
-      : [notesToSpend[0], dummyInputNote!];
-
-    // Generate ZK proof
-    const zkProof = await this.generateProofClientSide({
-      merkleRoot,
-      nullifier1,
-      nullifier2,
-      outputCommitment1: outputNote1.commitment,
-      outputCommitment2: dummyOutputNote.commitment,
-      publicAmount: -amount,
-      inputNotes: inputNotesForProof,
-      outputNotes: [outputNote1, dummyOutputNote],
-      proofs: [proof1, proof2],
-      spendingKey: this.spendingKey!,
-    });
-
-    // Compute new root for tree update using on-chain subtrees
-    const onChainState = await this.readOnChainFilledSubtrees();
-    const localSubtrees = await this.loadLocalSubtrees(onChainState.leafCount);
-    const useSubtrees = localSubtrees || onChainState.filledSubtrees;
-
-    const { newRoot: computedNewRoot, updatedSubtrees } = this.computeNewRootFromSubtrees(
+    const { newRoot: computedCurrentRoot } = this.computeNewRootFromSubtrees(
       useSubtrees,
       onChainState.leafCount,
-      outputNote1.commitment,
-      onChainState.depth
+      0n,
+      onChainState.depth,
+    );
+    if (computedCurrentRoot !== onChainState.root) {
+      throw new Error(
+        `Unshield aborted: client merkle state is out of sync with on-chain pool. ` +
+        `Expected root ${onChainState.root.toString()} but local subtrees produce ${computedCurrentRoot.toString()}. ` +
+        `Call syncFromBlockchain() or reset the local tree.`,
+      );
+    }
+
+    // Insert change commitment (oc1) at leafCount.
+    const changeLeafIndex = onChainState.leafCount;
+    const {
+      newRoot: finalNewRoot,
+      updatedSubtrees: finalSubtrees,
+      pathElements: changePathElements,
+      pathIndices: changePathIndices,
+    } = this.computeNewRootFromSubtrees(
+      useSubtrees,
+      changeLeafIndex,
+      oc1Gl,
+      onChainState.depth,
     );
 
-    // Also update local tree
-    this.merkleTree.insert(outputNote1.commitment);
+    const merkleRootBytes = packGoldilocksU64(onChainState.root);
+    const newRootBytes = packGoldilocksU64(finalNewRoot);
+    const n1Bytes = packGoldilocksU64(n1Gl);
+    const n2Bytes = packGoldilocksU64(n2Gl);
+    const oc1Bytes = packGoldilocksU64(oc1Gl);
+    const oc2Bytes = packGoldilocksU64(oc2Gl);
 
-    // Save updated subtrees
-    await this.saveLocalSubtrees(updatedSubtrees, onChainState.leafCount + 1);
+    // -----------------------------------------------------------------
+    // 6. Pre-flight SOL balance: STARK upload + 2× nullifier PDA rent.
+    // -----------------------------------------------------------------
+    const walletBalance = await this.connection.getBalance(walletPublicKey);
+    const starkUploadFees = 120_000; // ~13 chunks + init + phase1 + phase2 + close
+    const nullifierRent = 2_000_000; // 2× ~980k for NullifierRecord init
+    const txFees = 15_000;
+    const required = starkUploadFees + nullifierRent + txFees;
+    if (walletBalance < required) {
+      const have = (walletBalance / 1e9).toFixed(4);
+      const need = (required / 1e9).toFixed(4);
+      throw new Error(`Insufficient SOL. Need ~${need} SOL (STARK upload + nullifier PDAs + fees), wallet has ${have} SOL.`);
+    }
 
-    // Get PDAs
+    // -----------------------------------------------------------------
+    // 7. Upload + verify STARK proof on-chain (buffer left open).
+    // -----------------------------------------------------------------
+    const walletSigner: WalletSigner = {
+      publicKey: walletPublicKey,
+      signTransaction,
+    };
+
+    console.log('[ZK Unshield] Uploading + verifying STARK proof on-chain...');
+    const { proofBuffer } = await submitAndVerifyStarkProof(
+      starkProof,
+      walletSigner,
+      this.connection,
+      (step) => console.log('[ZK Unshield][STARK]', step),
+    );
+
+    // -----------------------------------------------------------------
+    // 8. Build unshield_stark instruction.
+    // -----------------------------------------------------------------
     const [poolPDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()],
-      this.programId
+      this.programId,
     );
-
     const [merkleTreePDA] = PublicKey.findProgramAddressSync(
       [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()],
-      this.programId
+      this.programId,
     );
-
-    const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.NULLIFIER_SET, poolPDA.toBytes()],
-      this.programId
-    );
-
-    const [vkDataPDA] = PublicKey.findProgramAddressSync(
-      [new TextEncoder().encode('vk_data'), poolPDA.toBytes()],
-      this.programId
-    );
-
-    // Build unshield instruction
-    const discriminator = new Uint8Array([0x15, 0xe4, 0x37, 0x18, 0xc2, 0x0a, 0x15, 0x16]);
-    const amountBuffer = new ArrayBuffer(8);
-    new DataView(amountBuffer).setBigUint64(0, amount, true);
-
-    const data = new Uint8Array([
-      ...discriminator,
-      ...zkProof.pi_a,
-      ...zkProof.pi_b,
-      ...zkProof.pi_c,
-      ...bigintToLeBytes(nullifier1),
-      ...bigintToLeBytes(nullifier2),
-      ...bigintToLeBytes(outputNote1.commitment),
-      ...bigintToLeBytes(dummyOutputNote.commitment),
-      ...bigintToLeBytes(merkleRoot),
-      ...new Uint8Array(amountBuffer),
-      ...bigintToLeBytes(computedNewRoot),
-    ]);
-
-    const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-
-    // Compute individual nullifier record PDAs (one per nullifier)
     const [nullifierRecord1PDA] = PublicKey.findProgramAddressSync(
-      [new TextEncoder().encode('nullifier'), poolPDA.toBytes(), bigintToLeBytes(nullifier1)],
-      this.programId
+      [new TextEncoder().encode('nullifier'), poolPDA.toBytes(), n1Bytes],
+      this.programId,
     );
     const [nullifierRecord2PDA] = PublicKey.findProgramAddressSync(
-      [new TextEncoder().encode('nullifier'), poolPDA.toBytes(), bigintToLeBytes(nullifier2)],
-      this.programId
+      [new TextEncoder().encode('nullifier'), poolPDA.toBytes(), n2Bytes],
+      this.programId,
     );
+
+    // Anchor discriminator: sha256("global:unshield_stark")[0..8]
+    const UNSHIELD_STARK_DISCRIMINATOR = Buffer.from([189, 84, 110, 154, 217, 120, 183, 239]);
+    const amountBuffer = Buffer.alloc(8);
+    amountBuffer.writeBigUInt64LE(amount, 0);
+
+    const ixData = Buffer.concat([
+      UNSHIELD_STARK_DISCRIMINATOR,
+      n1Bytes,
+      n2Bytes,
+      oc1Bytes,
+      oc2Bytes,
+      merkleRootBytes,
+      amountBuffer,
+      newRootBytes,
+    ]);
+
+    // Optional SPL accounts — always include as placeholders so Anchor's
+    // Option<> deserialization returns None for the native-SOL path.
+    const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
     const ix = new TransactionInstruction({
       programId: this.programId,
       keys: [
-        { pubkey: walletPublicKey, isSigner: true, isWritable: true },      // payer
-        { pubkey: recipient, isSigner: false, isWritable: true },            // recipient
-        { pubkey: poolPDA, isSigner: false, isWritable: true },              // shielded_pool
-        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },        // merkle_tree
-        { pubkey: nullifierRecord1PDA, isSigner: false, isWritable: true },  // nullifier_record_1
-        { pubkey: nullifierRecord2PDA, isSigner: false, isWritable: true },  // nullifier_record_2
-        { pubkey: vkDataPDA, isSigner: false, isWritable: false },           // verification_key_data
+        { pubkey: walletPublicKey, isSigner: true, isWritable: true },    // payer
+        { pubkey: recipient, isSigner: false, isWritable: true },          // recipient
+        { pubkey: poolPDA, isSigner: false, isWritable: true },            // shielded_pool
+        { pubkey: merkleTreePDA, isSigner: false, isWritable: true },      // merkle_tree
+        { pubkey: nullifierRecord1PDA, isSigner: false, isWritable: true }, // nullifier_record_1
+        { pubkey: nullifierRecord2PDA, isSigner: false, isWritable: true }, // nullifier_record_2
+        { pubkey: proofBuffer, isSigner: false, isWritable: false },        // stark_proof_buffer
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
-        // Optional accounts — for native SOL, pass program ID as None placeholder
-        { pubkey: this.programId, isSigner: false, isWritable: false },      // token_program (None)
-        { pubkey: this.programId, isSigner: false, isWritable: false },      // pool_vault (None)
-        { pubkey: this.programId, isSigner: false, isWritable: false },      // recipient_token_account (None)
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },  // token_program (optional)
+        { pubkey: this.programId, isSigner: false, isWritable: false },    // pool_vault (placeholder for None)
+        { pubkey: this.programId, isSigner: false, isWritable: false },    // recipient_token_account (placeholder for None)
       ],
-      data: Buffer.from(data),
+      data: ixData,
     });
 
-    // Compute budget for Groth16 verification
-    const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+    // -----------------------------------------------------------------
+    // 9. Send with retry on dropped tx.
+    // -----------------------------------------------------------------
+    const MAX_RETRIES = 3;
+    let signature = '';
 
-    const computeLimitData = new Uint8Array(5);
-    computeLimitData[0] = 2;
-    new DataView(computeLimitData.buffer).setUint32(1, 1_400_000, true);
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const tx = new Transaction().add(ix);
+      tx.feePayer = walletPublicKey;
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
 
-    const computeLimitIx = new TransactionInstruction({
-      programId: COMPUTE_BUDGET_PROGRAM_ID,
-      keys: [],
-      data: Buffer.from(computeLimitData),
-    });
-
-    const tx = new Transaction().add(computeLimitIx).add(ix);
-    tx.feePayer = walletPublicKey;
-    const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash();
-    tx.recentBlockhash = blockhash;
-
-    // Pre-check wallet balance for tx fees
-    const walletBalance = await this.connection.getBalance(walletPublicKey);
-    if (walletBalance < 100_000) {
-      const have = (walletBalance / 1e9).toFixed(4);
-      throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL. Please fund your wallet first.`);
-    }
-
-    const signedTx = await signTransaction(tx);
-    let signature: string;
-    try {
-      signature = await this.connection.sendRawTransaction(signedTx.serialize());
-      await this.connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
-    } catch (err: any) {
-      const msg = err?.message || err?.toString() || '';
-      if (msg.includes('insufficient lamports')) {
-        throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+      const signedTx = await signTransaction(tx);
+      console.log(`[ZK Unshield] Sending unshield_stark tx (attempt ${attempt}/${MAX_RETRIES})...`);
+      try {
+        signature = await this.connection.sendRawTransaction(signedTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'processed',
+          maxRetries: 3,
+        });
+      } catch (err: any) {
+        const errMsg = err?.message || err?.toString() || '';
+        if (errMsg.includes('insufficient lamports')) {
+          const match = errMsg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        console.error('[ZK Unshield] Preflight error:', err.message);
+        if (err.logs) console.error('[ZK Unshield] Logs:', err.logs);
+        throw err;
       }
-      throw err;
+
+      try {
+        const confirmation = await this.connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          'processed',
+        );
+        if (confirmation.value.err) {
+          console.error('[ZK Unshield] Transaction failed on-chain:', JSON.stringify(confirmation.value.err));
+          throw new Error(`Unshield transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+        }
+        console.log(`[ZK Unshield] Confirmed on attempt ${attempt}`);
+        break;
+      } catch (e: any) {
+        const msg = e?.message || e?.toString() || '';
+        if (msg.includes('insufficient lamports')) {
+          const match = msg.match(/insufficient lamports (\d+), need (\d+)/);
+          if (match) {
+            const have = (Number(match[1]) / 1e9).toFixed(4);
+            const need = (Number(match[2]) / 1e9).toFixed(4);
+            throw new Error(`Insufficient SOL for transaction fees. Wallet has ${have} SOL but needs ${need} SOL.`);
+          }
+          throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
+        }
+        if (msg.includes('timeout') || msg.includes('expired') || msg.includes('block height exceeded')) {
+          console.warn(`[ZK Unshield] Attempt ${attempt} expired, tx dropped by network`);
+          if (attempt < MAX_RETRIES) continue;
+          const status = await this.connection.getSignatureStatus(signature);
+          if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+            break;
+          }
+          throw new Error(`Unshield transaction dropped after ${MAX_RETRIES} attempts. Devnet may be congested — try again.`);
+        }
+        throw e;
+      }
     }
 
-    // Update notes
+    // -----------------------------------------------------------------
+    // 10. Close the STARK proof buffer (best-effort rent recovery).
+    // -----------------------------------------------------------------
+    try {
+      await closeStarkProofBuffer(proofBuffer, walletSigner, this.connection);
+    } catch (err) {
+      console.warn('[ZK Unshield] Could not close STARK proof buffer:', err);
+    }
+
+    // -----------------------------------------------------------------
+    // 11. Post-confirmation bookkeeping. oc1 was inserted in-order, so
+    //     we persist the updated subtrees with leafCount = changeLeafIndex+1.
+    //     We only materialize a spendable Note locally when there's real
+    //     change; a 0-amount change leaf is dead weight.
+    // -----------------------------------------------------------------
+    this.merkleTree.insert(oc1Gl);
+    await this.saveLocalSubtrees(finalSubtrees, changeLeafIndex + 1);
+
     this.removeSpentNotes(notesToSpend);
-    if (changeNote) {
-      changeNote.leafIndex = this.merkleTree.leafCount - 1;
+    if (changeAmount > 0n) {
+      const changeNote: Note = {
+        amount: changeAmountGl,
+        ownerPubkey: this.ownerPubkeyGl,
+        randomness: outRand1,
+        tokenMint: tokenMintGl,
+        commitment: oc1Gl,
+        leafIndex: changeLeafIndex,
+        merkleRoot: finalNewRoot,
+        merklePathElements: changePathElements,
+        merklePathIndices: changePathIndices,
+      };
       this.notes.push(changeNote);
     }
     await this.saveNotes();
 
+    const totalTime = Date.now() - unshieldStart;
+    console.log(
+      '[ZK Unshield] STARK unshield complete in %dms (%ss), sig=%s',
+      totalTime,
+      (totalTime / 1000).toFixed(1),
+      signature.slice(0, 20) + '...',
+    );
     return signature;
   }
 
@@ -1843,120 +1713,6 @@ export class ZkServiceExtension {
   private removeSpentNotes(spent: Note[]): void {
     const spentCommitments = new Set(spent.map(n => n.commitment.toString()));
     this.notes = this.notes.filter(n => !spentCommitments.has(n.commitment.toString()));
-  }
-
-  /**
-   * Generate proof using client-side Web Worker (no backend needed)
-   */
-  private async generateProofClientSide(inputs: {
-    merkleRoot: bigint;
-    nullifier1: bigint;
-    nullifier2: bigint;
-    outputCommitment1: bigint;
-    outputCommitment2: bigint;
-    publicAmount?: bigint;
-    inputNotes: Note[];
-    outputNotes?: Note[];
-    proofs: { pathElements: bigint[]; pathIndices: number[] }[];
-    spendingKey: bigint;
-  }): Promise<Groth16Proof> {
-    // Get token mint field
-    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
-
-    // BN254 field modulus (for negative amount handling)
-    const FIELD_MODULUS = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
-
-    // Handle negative amounts (for unshield)
-    let publicAmountField = inputs.publicAmount ?? BigInt(0);
-    if (publicAmountField < BigInt(0)) {
-      publicAmountField = FIELD_MODULUS + publicAmountField;
-    }
-
-    // Format inputs for the circuit (snake_case names to match circuit)
-    // snarkjs expects arrays as actual arrays, not JSON strings
-    const circuitInputs: Record<string, string | string[]> = {
-      // Public inputs
-      merkle_root: inputs.merkleRoot.toString(),
-      nullifier_1: inputs.nullifier1.toString(),
-      nullifier_2: inputs.nullifier2.toString(),
-      output_commitment_1: inputs.outputCommitment1.toString(),
-      output_commitment_2: inputs.outputCommitment2.toString(),
-      public_amount: publicAmountField.toString(),
-      token_mint: tokenMintField.toString(),
-
-      // Private inputs - Input note 1
-      in_amount_1: inputs.inputNotes[0]?.amount.toString() ?? '0',
-      in_owner_pubkey_1: inputs.inputNotes[0]?.ownerPubkey.toString() ?? '0',
-      in_randomness_1: inputs.inputNotes[0]?.randomness.toString() ?? '0',
-      in_path_elements_1: inputs.proofs[0].pathElements.map(e => e.toString()),
-      in_path_indices_1: inputs.proofs[0].pathIndices.map(i => i.toString()),
-
-      // Private inputs - Input note 2
-      in_amount_2: inputs.inputNotes[1]?.amount.toString() ?? '0',
-      in_owner_pubkey_2: inputs.inputNotes[1]?.ownerPubkey.toString() ?? '0',
-      in_randomness_2: inputs.inputNotes[1]?.randomness.toString() ?? '0',
-      in_path_elements_2: inputs.proofs[1].pathElements.map(e => e.toString()),
-      in_path_indices_2: inputs.proofs[1].pathIndices.map(i => i.toString()),
-
-      // Private inputs - Output notes
-      out_amount_1: inputs.outputNotes?.[0]?.amount.toString() ?? '0',
-      out_recipient_1: inputs.outputNotes?.[0]?.ownerPubkey.toString() ?? '0',
-      out_randomness_1: inputs.outputNotes?.[0]?.randomness.toString() ?? '0',
-      out_amount_2: inputs.outputNotes?.[1]?.amount.toString() ?? '0',
-      out_recipient_2: inputs.outputNotes?.[1]?.ownerPubkey.toString() ?? '0',
-      out_randomness_2: inputs.outputNotes?.[1]?.randomness.toString() ?? '0',
-
-      // Spending key
-      spending_key: inputs.spendingKey.toString(),
-    };
-
-    // DEBUG: Log ALL circuit inputs for debugging
-    const derivedOwner = poseidonHash(inputs.spendingKey, 0n);
-    const recomputedCommitment = poseidonHash(
-      inputs.inputNotes[0]?.amount ?? 0n,
-      inputs.inputNotes[0]?.ownerPubkey ?? 0n,
-      inputs.inputNotes[0]?.randomness ?? 0n,
-      leBytesToBigint(this.tokenMint.toBytes())
-    );
-    console.log('[ZK DEBUG] === FULL CIRCUIT INPUT DUMP ===');
-    console.log('[ZK DEBUG] spending_key:', inputs.spendingKey.toString().slice(0, 20) + '...');
-    console.log('[ZK DEBUG] derived ownerPubkey:', derivedOwner.toString());
-    console.log('[ZK DEBUG] note1 ownerPubkey:', inputs.inputNotes[0]?.ownerPubkey?.toString() ?? 'UNDEFINED');
-    console.log('[ZK DEBUG] note1 amount:', inputs.inputNotes[0]?.amount?.toString() ?? 'UNDEFINED');
-    console.log('[ZK DEBUG] note1 randomness:', inputs.inputNotes[0]?.randomness?.toString()?.slice(0, 20) ?? 'UNDEFINED');
-    console.log('[ZK DEBUG] note1 tokenMint:', inputs.inputNotes[0]?.tokenMint?.toString()?.slice(0, 20) ?? 'UNDEFINED');
-    console.log('[ZK DEBUG] note1 commitment (stored):', inputs.inputNotes[0]?.commitment?.toString()?.slice(0, 20) ?? 'UNDEFINED');
-    console.log('[ZK DEBUG] note1 commitment (recomputed):', recomputedCommitment.toString().slice(0, 20));
-    console.log('[ZK DEBUG] commitment match:', recomputedCommitment === inputs.inputNotes[0]?.commitment);
-    console.log('[ZK DEBUG] ownerPubkey match:', derivedOwner === inputs.inputNotes[0]?.ownerPubkey);
-    console.log('[ZK DEBUG] tokenMint (from wallet):', tokenMintField.toString());
-    console.log('[ZK DEBUG] tokenMint (from note):', inputs.inputNotes[0]?.tokenMint?.toString() ?? 'UNDEFINED');
-    console.log('[ZK DEBUG] merkleRoot:', inputs.merkleRoot.toString().slice(0, 20));
-    console.log('[ZK DEBUG] publicAmount:', publicAmountField.toString());
-    console.log('[ZK DEBUG] pathElements[0]:', inputs.proofs[0]?.pathElements?.[0]?.toString()?.slice(0, 20) ?? 'NONE');
-    console.log('[ZK DEBUG] pathIndices:', JSON.stringify(inputs.proofs[0]?.pathIndices?.slice(0, 5)));
-    console.log('[ZK DEBUG] === ACTUAL circuitInputs sent ===');
-    console.log('[ZK DEBUG] in_owner_pubkey_1:', circuitInputs.in_owner_pubkey_1);
-    console.log('[ZK DEBUG] spending_key:', (circuitInputs.spending_key as string).slice(0, 20) + '...');
-    console.log('[ZK DEBUG] token_mint:', circuitInputs.token_mint);
-
-    const startTime = performance.now();
-
-    try {
-      // Check if prover is ready
-      if (!this.prover.isReady) {
-        console.error('[ZK] Prover not ready - circuit files may not be loaded');
-        throw new Error('ZK prover not initialized. Please reload the extension.');
-      }
-
-      const proof = await this.prover.generateProof(circuitInputs);
-      const duration = ((performance.now() - startTime) / 1000).toFixed(2);
-      return proof;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('[ZK] Client-side proof generation failed:', errorMsg);
-      throw new Error(`ZK proof failed: ${errorMsg}`);
-    }
   }
 
   /**
@@ -1997,13 +1753,20 @@ export class ZkServiceExtension {
     try {
       const result = await chrome.storage.local.get(['zk_notes', 'zk_tree_leaves']);
 
-      // First, rebuild the full Merkle tree from saved leaves
+      // First, rebuild the full Merkle tree from saved leaves. Legacy BN254
+      // leaves (> 2^64) are dropped — the on-chain format is Goldilocks u64
+      // since the STARK migration and any pre-migration notes cannot be spent.
       if (result.zk_tree_leaves) {
-        const treeLeaves = JSON.parse(result.zk_tree_leaves);
-
-        // DEBUG: Dump all commitments for comparison with mobile
-        for (let i = 0; i < treeLeaves.length; i++) {
-        }
+        const rawTreeLeaves = JSON.parse(result.zk_tree_leaves) as string[];
+        const U64_MAX = 1n << 64n;
+        const treeLeaves = rawTreeLeaves.filter((s) => {
+          const v = BigInt(s);
+          if (v >= U64_MAX) {
+            console.warn('[ZK] Dropping legacy BN254 tree leaf (re-shield required):', s);
+            return false;
+          }
+          return true;
+        });
 
         for (const leafStr of treeLeaves) {
           this.merkleTree.insert(BigInt(leafStr));
@@ -2017,12 +1780,15 @@ export class ZkServiceExtension {
           treeLeavesSet.set(treeLeaves[i], i);
         }
 
-        // Then load our notes (they reference positions in the tree)
+        // Then load our notes (they reference positions in the tree).
+        // Legacy BN254 notes (commitment ≥ 2^64) are dropped — they can't
+        // be spent under the new Goldilocks circuit and must be re-shielded.
         if (result.zk_notes) {
           const parsed = JSON.parse(result.zk_notes);
+          const U64_MAX = 1n << 64n;
 
-          this.notes = parsed.map((noteData: any) => {
-            const note: Note = {
+          this.notes = parsed
+            .map((noteData: any): Note => ({
               amount: BigInt(noteData.amount),
               ownerPubkey: BigInt(noteData.ownerPubkey),
               randomness: BigInt(noteData.randomness),
@@ -2032,39 +1798,54 @@ export class ZkServiceExtension {
               merklePathElements: noteData.merklePathElements?.map((e: string) => BigInt(e)),
               merklePathIndices: noteData.merklePathIndices,
               merkleRoot: noteData.merkleRoot ? BigInt(noteData.merkleRoot) : undefined,
-            };
-
-            // Only correct leaf index from local tree if note has NO saved proof
-            // Notes with saved merklePathElements have proofs consistent with their
-            // original leafIndex — overwriting it would break the proof
-            if (!note.merklePathElements) {
-              const commitmentStr = note.commitment.toString();
-              const correctIndex = treeLeavesSet.get(commitmentStr);
-              if (correctIndex !== undefined && correctIndex !== note.leafIndex) {
-                console.warn(`[ZK] Correcting note leaf index: ${note.leafIndex} -> ${correctIndex}`);
-                note.leafIndex = correctIndex;
+            }))
+            .filter((note: Note) => {
+              if (note.commitment >= U64_MAX) {
+                console.warn('[ZK] Dropping legacy BN254 note (re-shield required):', note.commitment.toString());
+                return false;
               }
-            }
-
-            return note;
-          });
+              return true;
+            })
+            .map((note: Note) => {
+              // Only correct leaf index from local tree if note has NO saved proof.
+              // Notes with saved merklePathElements have proofs consistent with their
+              // original leafIndex — overwriting it would break the proof.
+              if (!note.merklePathElements) {
+                const commitmentStr = note.commitment.toString();
+                const correctIndex = treeLeavesSet.get(commitmentStr);
+                if (correctIndex !== undefined && correctIndex !== note.leafIndex) {
+                  console.warn(`[ZK] Correcting note leaf index: ${note.leafIndex} -> ${correctIndex}`);
+                  note.leafIndex = correctIndex;
+                }
+              }
+              return note;
+            });
         }
       } else {
-        // No tree leaves stored - just load notes
+        // No tree leaves stored — just load notes, filtering legacy BN254.
         if (result.zk_notes) {
           const parsed = JSON.parse(result.zk_notes);
+          const U64_MAX = 1n << 64n;
 
-          this.notes = parsed.map((noteData: any) => ({
-            amount: BigInt(noteData.amount),
-            ownerPubkey: BigInt(noteData.ownerPubkey),
-            randomness: BigInt(noteData.randomness),
-            tokenMint: BigInt(noteData.tokenMint),
-            commitment: BigInt(noteData.commitment),
-            leafIndex: noteData.leafIndex,
-            merklePathElements: noteData.merklePathElements?.map((e: string) => BigInt(e)),
-            merklePathIndices: noteData.merklePathIndices,
-            merkleRoot: noteData.merkleRoot ? BigInt(noteData.merkleRoot) : undefined,
-          }));
+          this.notes = parsed
+            .map((noteData: any): Note => ({
+              amount: BigInt(noteData.amount),
+              ownerPubkey: BigInt(noteData.ownerPubkey),
+              randomness: BigInt(noteData.randomness),
+              tokenMint: BigInt(noteData.tokenMint),
+              commitment: BigInt(noteData.commitment),
+              leafIndex: noteData.leafIndex,
+              merklePathElements: noteData.merklePathElements?.map((e: string) => BigInt(e)),
+              merklePathIndices: noteData.merklePathIndices,
+              merkleRoot: noteData.merkleRoot ? BigInt(noteData.merkleRoot) : undefined,
+            }))
+            .filter((note: Note) => {
+              if (note.commitment >= U64_MAX) {
+                console.warn('[ZK] Dropping legacy BN254 note (re-shield required):', note.commitment.toString());
+                return false;
+              }
+              return true;
+            });
         }
       }
 
@@ -2425,164 +2206,17 @@ export class ZkServiceExtension {
   }
 
   /**
-   * Scan blockchain for incoming shielded notes
-   * Looks for ShieldEvent logs that contain commitments we can decrypt
+   * Sync the local Merkle tree from the chain. The shielded pool never
+   * publishes note plaintexts on-chain — incoming notes arrive via
+   * `importNotes` or stealth-payment scanning. This is a thin wrapper over
+   * `syncFromBlockchain` so legacy call sites keep working.
    */
-  async scanIncomingNotes(fromSignature?: string): Promise<{ found: number; newBalance: bigint }> {
-    if (!this.connection || !this.ownerPubkey || !this.spendingKeyHash) {
+  async scanIncomingNotes(_fromSignature?: string): Promise<{ found: number; newBalance: bigint }> {
+    if (!this.connection || !this.ownerPubkeyGl) {
       throw new Error('ZK Service not initialized');
     }
-
-
-    // Get the pool PDA to find relevant transactions
-    const [poolPDA] = PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.SHIELDED_POOL, this.tokenMint.toBytes()],
-      this.programId
-    );
-
-    const [merkleTreePDA] = PublicKey.findProgramAddressSync(
-      [PDA_SEEDS.MERKLE_TREE, poolPDA.toBytes()],
-      this.programId
-    );
-
-    try {
-      // Fetch recent signatures for the merkle tree account
-      const signatures = await this.connection.getSignaturesForAddress(
-        merkleTreePDA,
-        {
-          limit: 100,
-          until: fromSignature,
-        }
-      );
-
-
-      let foundCount = 0;
-      const existingCommitments = new Set(this.notes.map(n => n.commitment.toString()));
-
-      for (const sigInfo of signatures) {
-        if (sigInfo.err) continue;
-
-        try {
-          // Get transaction details
-          const tx = await this.connection.getParsedTransaction(sigInfo.signature, {
-            maxSupportedTransactionVersion: 0,
-          });
-
-          if (!tx?.meta?.logMessages) continue;
-
-          // Look for ShieldEvent in logs
-          for (const log of tx.meta.logMessages) {
-            // Parse shield event: "Program log: ShieldEvent { commitment: <hex>, leaf_index: <num>, amount: <num> }"
-            const shieldMatch = log.match(/ShieldEvent\s*\{\s*commitment:\s*([0-9a-fA-Fx]+),\s*leaf_index:\s*(\d+),\s*amount:\s*(\d+)/);
-
-            if (shieldMatch) {
-              const commitmentHex = shieldMatch[1];
-              const leafIndex = parseInt(shieldMatch[2]);
-              const amount = BigInt(shieldMatch[3]);
-
-              // Convert hex to bigint
-              const commitment = BigInt(commitmentHex);
-
-              // Skip if we already have this note
-              if (existingCommitments.has(commitment.toString())) {
-                continue;
-              }
-
-              // Try to determine if this note is ours
-              // For encrypted notes, we would decrypt using viewing key
-              // For now, check if commitment matches any of our expected commitments
-              const isOurNote = await this.tryDecryptNote(commitment, amount, leafIndex);
-
-              if (isOurNote) {
-                foundCount++;
-                existingCommitments.add(commitment.toString());
-              }
-            }
-
-            // Also look for transfer events with output commitments
-            const transferMatch = log.match(/TransferEvent\s*\{\s*.*output_commitment_1:\s*([0-9a-fA-Fx]+).*output_commitment_2:\s*([0-9a-fA-Fx]+)/);
-
-            if (transferMatch) {
-              for (let i = 1; i <= 2; i++) {
-                const commitmentHex = transferMatch[i];
-                if (commitmentHex === '0x0' || commitmentHex === '0') continue;
-
-                const commitment = BigInt(commitmentHex);
-
-                if (existingCommitments.has(commitment.toString())) {
-                  continue;
-                }
-
-                // Check if this output is for us
-                const isOurNote = await this.checkOutputCommitment(commitment);
-
-                if (isOurNote) {
-                  foundCount++;
-                  existingCommitments.add(commitment.toString());
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.debug('[ZK] Error parsing transaction:', error);
-        }
-      }
-
-      // Save updated notes
-      if (foundCount > 0) {
-        await this.saveNotes();
-      }
-
-      const newBalance = this.getShieldedBalance();
-
-      return { found: foundCount, newBalance };
-    } catch (error) {
-      console.error('[ZK] Scan error:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Try to decrypt a note commitment to see if it belongs to us
-   * In a full implementation, notes would be encrypted with viewing key
-   */
-  private async tryDecryptNote(
-    commitment: bigint,
-    amount: bigint,
-    leafIndex: number
-  ): Promise<boolean> {
-    if (!this.ownerPubkey) return false;
-
-    // In the current implementation, shield events include the amount publicly
-    // We need to check if we can derive the same commitment
-    // This requires knowing the randomness, which would be encrypted
-
-    // For now, we assume any shield to the pool *might* be ours
-    // In production, the note data would be encrypted with our viewing key
-
-    // Check if we can reconstruct the commitment with our pubkey
-    // Try common randomness values (for testing) or scan encrypted note data
-    const tokenMintField = leBytesToBigint(this.tokenMint.toBytes());
-
-    // In a real implementation, the randomness would be encrypted in the tx data
-    // For now, we store notes we create ourselves and can't detect external ones
-    // without proper note encryption
-
-    // This is a placeholder that returns false - proper implementation would:
-    // 1. Find encrypted note data in transaction
-    // 2. Decrypt using viewing key
-    // 3. Verify commitment matches
-
-    return false;
-  }
-
-  /**
-   * Check if an output commitment from a transfer belongs to us
-   */
-  private async checkOutputCommitment(commitment: bigint): Promise<boolean> {
-    // Similar to tryDecryptNote - would need encrypted note data
-    // For now, return false as we can't determine ownership without encryption
-    return false;
+    await this.syncFromBlockchain();
+    return { found: 0, newBalance: this.getShieldedBalance() };
   }
 
   /**
@@ -2609,7 +2243,7 @@ export class ZkServiceExtension {
    * Returns a JSON string containing all notes and metadata
    */
   exportNotes(): string {
-    if (!this.ownerPubkey) {
+    if (!this.ownerPubkeyGl) {
       throw new Error('ZK Service not initialized');
     }
 
@@ -2636,7 +2270,7 @@ export class ZkServiceExtension {
    * Merges imported notes with existing notes, skipping duplicates
    */
   async importNotes(data: string): Promise<{ imported: number; skipped: number }> {
-    if (!this.ownerPubkey) {
+    if (!this.ownerPubkeyGl) {
       throw new Error('ZK Service not initialized');
     }
 
@@ -2738,12 +2372,13 @@ export class ZkServiceExtension {
           leafIndex: noteData.leafIndex,
         };
 
-        // Verify commitment matches computed value
-        const computedCommitment = poseidonHash(
-          note.amount,
-          note.ownerPubkey,
-          note.randomness,
-          note.tokenMint
+        // Verify commitment matches circuit-5 Goldilocks layout:
+        //   commitment = hash2(hash2(amount, rand), hash2(owner, mint))
+        const computedCommitment = computeGoldilocksCommitment(
+          truncateToGoldilocks(note.amount),
+          truncateToGoldilocks(note.ownerPubkey),
+          truncateToGoldilocks(note.randomness),
+          truncateToGoldilocks(note.tokenMint),
         );
 
         if (computedCommitment !== note.commitment) {
@@ -2829,17 +2464,13 @@ export class ZkServiceExtension {
    * Reset service
    */
   async reset(): Promise<void> {
-    this.spendingKey = null;
-    this.spendingKeyHash = null;
-    this.ownerPubkey = null;
+    this.spendingKeyBytes = null;
+    this.spendingKeyGl = null;
+    this.ownerPubkeyGl = null;
     this.viewingKey = null;
     this.notes = [];
     this.merkleTree = new MerkleTree(MERKLE_TREE_DEPTH);
     this.isInitialized = false;
-
-    // Clean up prover
-    this.prover.terminate();
-    this.prover = new ClientProver();
 
     this._cachedSubtrees = null;
     await chrome.storage.local.remove(['zk_notes', 'zk_tree_leaves', 'zk_last_scan_signature', 'zk_local_subtrees']);

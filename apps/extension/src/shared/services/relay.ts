@@ -17,9 +17,10 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js';
 import nacl from 'tweetnacl';
-import { sha256 } from '@noble/hashes/sha256';
-import { hkdf } from '@noble/hashes/hkdf';
-import { ml_kem768 } from '@noble/post-quantum/ml-kem';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 
 // ── Program Constants ──────────────────────────────────────────────────
 
@@ -96,9 +97,9 @@ export function encryptForRelayer(
     const combined = new Uint8Array(classicSecret.length + kem.sharedSecret.length);
     combined.set(classicSecret);
     combined.set(kem.sharedSecret, classicSecret.length);
-    symmetricKey = hkdf(sha256, combined, undefined, 'p01_relay_job_hybrid_v2', 32);
+    symmetricKey = hkdf(sha256, combined, undefined, utf8ToBytes('p01_relay_job_hybrid_v2'), 32);
   } else {
-    symmetricKey = hkdf(sha256, classicSecret, undefined, 'p01_relay_job_v1', 32);
+    symmetricKey = hkdf(sha256, classicSecret, undefined, utf8ToBytes('p01_relay_job_v1'), 32);
   }
 
   const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);

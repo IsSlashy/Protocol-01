@@ -7,17 +7,13 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { SystemProgram, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import {
   getZkSplClient,
   resetZkSplClient,
-  hasConfidentialAccount,
-  getNativeSolMint,
   NATIVE_SOL_MINT_STR,
-  USDC_DEVNET_MINT_STR,
   SUPPORTED_TOKENS,
   getTokenDecimals,
-  getTokenSymbol,
 } from '../services/zkspl';
 
 // ---------------------------------------------------------------------------
@@ -225,120 +221,45 @@ export const useConfidentialStore = create<ConfidentialState>()(
 
       // -------------------------------------------------------------------
       // Deposit (shield tokens into confidential account)
+      //
+      // STARK-ONLY: the SDK no longer generates proofs. The extension needs
+      // to wire a STARK WASM prover (circuit 4: confidential_balance), upload
+      // the proof via `p01_stark_verifier`, and pass the verified proof
+      // buffer + newCommitment here. Until that wiring lands, this throws.
       // -------------------------------------------------------------------
-      deposit: async (amount: number) => {
-        set({ isLoading: true, error: null });
-
-        try {
-          const client = await getZkSplClient();
-          const { selectedToken } = get();
-          const mint = new PublicKey(selectedToken);
-          const decimals = getTokenDecimals(selectedToken);
-          const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-
-          // If no account yet, create one first
-          if (!get().accounts[selectedToken]) {
-            console.log(`[Confidential] Creating on-chain account for ${getTokenSymbol(selectedToken)}...`);
-            await client.createAccount(mint);
-            set((state) => ({
-              accounts: { ...state.accounts, [selectedToken]: true },
-              hasAccount: selectedToken === NATIVE_SOL_MINT_STR ? true : state.hasAccount,
-            }));
-          }
-
-          // For SPL tokens, derive and pass token accounts
-          const isNativeSol = selectedToken === NATIVE_SOL_MINT_STR;
-          const userTokenAccount = isNativeSol ? undefined : client.deriveUserTokenAccount(client.wallet.publicKey, mint);
-          const poolVaultTokenAccount = isNativeSol ? undefined : client.derivePoolVaultTokenAccount(mint);
-
-          const result = await client.deposit(mint, amountAtomic, userTokenAccount, poolVaultTokenAccount);
-
-          const newBal = Number(result.newBalance);
-          set((state) => ({
-            balances: { ...state.balances, [selectedToken]: newBal },
-            displayBalances: { ...state.displayBalances, [selectedToken]: newBal / Math.pow(10, decimals) },
-            ...(selectedToken === NATIVE_SOL_MINT_STR ? { balance: newBal, displayBalance: newBal / LAMPORTS_PER_SOL } : {}),
-            isLoading: false,
-          }));
-
-          return result.signature;
-        } catch (error) {
-          console.error('[Confidential] Deposit error:', error);
-          set({ isLoading: false, error: (error as Error).message });
-          throw error;
-        }
+      deposit: async (_amount: number) => {
+        const msg =
+          'zkSPL deposit requires a STARK proof. The extension STARK prover ' +
+          'is not wired yet — use the mobile app (which runs the WASM prover) ' +
+          'or check back after the extension STARK prover integration lands.';
+        set({ isLoading: false, error: msg });
+        throw new Error(msg);
       },
 
       // -------------------------------------------------------------------
       // Withdraw (unshield from confidential account)
+      //
+      // STARK-ONLY: see deposit comment above.
       // -------------------------------------------------------------------
-      withdraw: async (amount: number) => {
-        set({ isLoading: true, error: null });
-
-        try {
-          const client = await getZkSplClient();
-          const { selectedToken } = get();
-          const mint = new PublicKey(selectedToken);
-          const decimals = getTokenDecimals(selectedToken);
-          const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-
-          // For SPL tokens, ensure user ATA exists and pass token accounts
-          const isNativeSol = selectedToken === NATIVE_SOL_MINT_STR;
-          let userTokenAccount: PublicKey | undefined;
-          let poolVaultTokenAccount: PublicKey | undefined;
-          if (!isNativeSol) {
-            userTokenAccount = await client.ensureTokenAccountExists(client.wallet.publicKey, mint);
-            poolVaultTokenAccount = client.derivePoolVaultTokenAccount(mint);
-          }
-
-          const result = await client.withdraw(mint, amountAtomic, userTokenAccount, poolVaultTokenAccount);
-
-          const newBal = Number(result.newBalance);
-          set((state) => ({
-            balances: { ...state.balances, [selectedToken]: newBal },
-            displayBalances: { ...state.displayBalances, [selectedToken]: newBal / Math.pow(10, decimals) },
-            ...(selectedToken === NATIVE_SOL_MINT_STR ? { balance: newBal, displayBalance: newBal / LAMPORTS_PER_SOL } : {}),
-            isLoading: false,
-          }));
-
-          return result.signature;
-        } catch (error) {
-          console.error('[Confidential] Withdraw error:', error);
-          set({ isLoading: false, error: (error as Error).message });
-          throw error;
-        }
+      withdraw: async (_amount: number) => {
+        const msg =
+          'zkSPL withdraw requires a STARK proof. The extension STARK prover ' +
+          'is not wired yet — use the mobile app.';
+        set({ isLoading: false, error: msg });
+        throw new Error(msg);
       },
 
       // -------------------------------------------------------------------
       // Transfer (confidential send to another wallet)
+      //
+      // STARK-ONLY: see deposit comment above.
       // -------------------------------------------------------------------
-      transfer: async (recipient: string, amount: number) => {
-        set({ isLoading: true, error: null });
-
-        try {
-          const client = await getZkSplClient();
-          const { selectedToken } = get();
-          const mint = new PublicKey(selectedToken);
-          const decimals = getTokenDecimals(selectedToken);
-          const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-          const recipientPubkey = new PublicKey(recipient);
-
-          const result = await client.confidentialTransfer(mint, recipientPubkey, amountAtomic);
-
-          const newBal = Number(result.newBalance);
-          set((state) => ({
-            balances: { ...state.balances, [selectedToken]: newBal },
-            displayBalances: { ...state.displayBalances, [selectedToken]: newBal / Math.pow(10, decimals) },
-            ...(selectedToken === NATIVE_SOL_MINT_STR ? { balance: newBal, displayBalance: newBal / LAMPORTS_PER_SOL } : {}),
-            isLoading: false,
-          }));
-
-          return result.signature;
-        } catch (error) {
-          console.error('[Confidential] Transfer error:', error);
-          set({ isLoading: false, error: (error as Error).message });
-          throw error;
-        }
+      transfer: async (_recipient: string, _amount: number) => {
+        const msg =
+          'zkSPL confidential transfer requires a STARK proof. The extension ' +
+          'STARK prover is not wired yet — use the mobile app.';
+        set({ isLoading: false, error: msg });
+        throw new Error(msg);
       },
 
       // -------------------------------------------------------------------

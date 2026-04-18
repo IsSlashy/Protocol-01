@@ -10,9 +10,10 @@ import {
   Connection,
   PublicKey,
   Transaction,
+  VersionedTransaction,
   SystemProgram,
 } from '@solana/web3.js';
-import type { Wallet } from '@coral-xyz/anchor';
+import type { Wallet } from '@coral-xyz/anchor/dist/cjs/provider';
 import {
   ZkSplClient,
   type ZkSplClientConfig,
@@ -195,23 +196,29 @@ function createWalletAdapter(): {
   // Build Anchor-compatible wallet
   const wallet: Wallet = {
     publicKey: walletPublicKey,
-    signTransaction: async (tx: Transaction): Promise<Transaction> => {
+    signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+      if (!(tx instanceof Transaction)) {
+        throw new Error('VersionedTransaction signing not supported in this path');
+      }
       if (walletState.isPrivyWallet && privySigner) {
-        return await privySigner(tx);
+        return (await privySigner(tx)) as unknown as T;
       } else if (keypair) {
         tx.sign(keypair);
-        return tx;
+        return tx as unknown as T;
       }
       throw new Error('No signing method available');
     },
-    signAllTransactions: async (txs: Transaction[]): Promise<Transaction[]> => {
-      const signed: Transaction[] = [];
+    signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]> => {
+      const signed: T[] = [];
       for (const tx of txs) {
+        if (!(tx instanceof Transaction)) {
+          throw new Error('VersionedTransaction signing not supported in this path');
+        }
         if (walletState.isPrivyWallet && privySigner) {
-          signed.push(await privySigner(tx));
+          signed.push((await privySigner(tx)) as unknown as T);
         } else if (keypair) {
           tx.sign(keypair);
-          signed.push(tx);
+          signed.push(tx as unknown as T);
         } else {
           throw new Error('No signing method available');
         }
@@ -260,19 +267,14 @@ export async function getZkSplClient(): Promise<ZkSplClient> {
   const { wallet, connection, spendingKeyPromise } = createWalletAdapter();
   const spendingKey = await spendingKeyPromise;
 
-  // TRUSTLESS MODE: All proofs generated locally via snarkjs WASM.
-  // The spending_key NEVER leaves the browser. No relayer dependency.
+  // STARK-ONLY MODE: the SDK never generates proofs. Callers must upload +
+  // verify a STARK proof buffer via `p01_stark_verifier` and pass its pubkey
+  // to each mutation. The spending key is used locally only to derive
+  // commitments for bookkeeping — it never leaves this process.
   const config: ZkSplClientConfig = {
     connection,
     wallet,
     programId: new PublicKey(ZKSPL_PROGRAM_ID),
-    prover: {
-      localOnly: true,
-      balanceWasmPath: chrome.runtime.getURL('circuits/confidential_balance.wasm'),
-      balanceZkeyPath: chrome.runtime.getURL('circuits/confidential_balance_final.zkey'),
-      proofWasmPath: chrome.runtime.getURL('circuits/balance_proof.wasm'),
-      proofZkeyPath: chrome.runtime.getURL('circuits/balance_proof_final.zkey'),
-    },
     stateStore: new ChromeStateStore(),
     spendingKey,
   };

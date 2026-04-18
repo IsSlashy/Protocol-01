@@ -15,7 +15,7 @@ const IS_BROWSER_ENV = typeof window !== 'undefined';
 
 // Only import browser-specific test utilities in jsdom
 if (IS_BROWSER_ENV) {
-  await import('@testing-library/jest-dom');
+  await import('@testing-library/jest-dom/vitest');
 }
 
 // ---------------------------------------------------------------------------

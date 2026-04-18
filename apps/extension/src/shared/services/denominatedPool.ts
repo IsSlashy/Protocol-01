@@ -30,7 +30,6 @@ import {
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import { poseidon2, poseidon4 } from 'poseidon-lite';
-import type { Groth16Proof, CircuitName } from './zk';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,8 +62,6 @@ export const DENOMINATIONS = [1, 10, 100, 1000] as const;
 
 /** Native SOL uses SystemProgram ID as token_mint */
 const NATIVE_SOL_MINT = SystemProgram.programId;
-
-const CIRCUIT_NAME: CircuitName = 'denominated_pool';
 
 // ---------------------------------------------------------------------------
 // Types
