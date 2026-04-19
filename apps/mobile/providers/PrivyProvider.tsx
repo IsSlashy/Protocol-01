@@ -15,7 +15,7 @@ import React, {
 } from 'react';
 import Constants from 'expo-constants';
 import { PRIVY_APP_ID, PRIVY_ENABLED, privyConfig } from '../config/privy';
-import { useWalletStore, setPrivySigner } from '../stores/walletStore';
+import { useWalletStore, setPrivySigner, setPrivyMessageSigner } from '../stores/walletStore';
 
 // Static import of Privy SDK
 import {
@@ -188,9 +188,11 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
       }
       // Always update signer (cheap, no state change)
       setPrivySigner(createSignTransaction);
+      setPrivyMessageSigner(createSignMessage);
     } else {
       lastSyncedAddress.current = null;
       setPrivySigner(null);
+      setPrivyMessageSigner(null);
     }
   }, [solanaWalletFromArray?.address]);
 

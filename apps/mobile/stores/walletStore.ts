@@ -32,6 +32,7 @@ import { scheduleLocalNotification } from '../services/notifications';
 
 // Store Privy signer for transactions
 let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
+let privyMessageSigner: ((message: Uint8Array) => Promise<Uint8Array>) | null = null;
 
 // Track WS listener cleanup so we can remove it on logout/re-init
 let _wsAccountChangeCleanup: (() => void) | null = null;
@@ -43,6 +44,12 @@ export function setPrivySigner(signer: ((tx: Transaction) => Promise<Transaction
 }
 export function getPrivySigner(): ((tx: Transaction) => Promise<Transaction>) | null {
   return privySigner;
+}
+export function setPrivyMessageSigner(signer: ((message: Uint8Array) => Promise<Uint8Array>) | null) {
+  privyMessageSigner = signer;
+}
+export function getPrivyMessageSigner(): ((message: Uint8Array) => Promise<Uint8Array>) | null {
+  return privyMessageSigner;
 }
 import { requestAirdrop, isDevnet, initializeConnection } from '../services/solana/connection';
 

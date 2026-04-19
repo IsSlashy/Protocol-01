@@ -645,6 +645,80 @@ export function deriveNullifierPDA(poolKey: PublicKey, nullifierBytes: Uint8Arra
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
+  /**
+   * Sign an arbitrary message — used by {@link deriveSeedFromSigner} to derive
+   * a deterministic 32-byte note seed for Privy-wallet users (who have no
+   * local mnemonic to seed-derive from).
+   */
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+}
+
+// ---------------------------------------------------------------------------
+// Note seed derivation for Privy wallets (P11.D-style ceremony)
+// ---------------------------------------------------------------------------
+
+/** Canonical message signed once per session to derive the note seed. */
+export const NOTE_SEED_DOMAIN = 'protocol01:note-seed:v1' as const;
+
+const noteSeedCache = new Map<string, Uint8Array>();
+
+/**
+ * Derive a 32-byte note seed from a wallet that exposes signMessage. The
+ * signature over a fixed, domain-separated message is hashed to produce a
+ * deterministic seed: any device holding the same wallet can reproduce it,
+ * so notes shielded under that seed are recoverable on reinstall.
+ *
+ * Cached in-memory per pubkey for the session — the user is prompted to
+ * sign once, not on every shield. Cache is cleared on logout via
+ * {@link clearNoteSeedCache}.
+ */
+export async function deriveSeedFromSigner(signer: WalletSigner): Promise<Uint8Array> {
+  if (typeof signer.signMessage !== 'function') {
+    throw new Error('Wallet signer does not expose signMessage — cannot derive note seed');
+  }
+  const cacheKey = signer.publicKey.toBase58();
+  const cached = noteSeedCache.get(cacheKey);
+  if (cached) return cached;
+
+  const message = utf8ToBytes(NOTE_SEED_DOMAIN);
+  const signature = await signer.signMessage(message);
+  if (!(signature instanceof Uint8Array) || signature.length === 0) {
+    throw new Error('Wallet signMessage returned an invalid signature');
+  }
+  const seed = sha256(signature);
+  noteSeedCache.set(cacheKey, seed);
+  return seed;
+}
+
+/** Clear the in-memory note-seed cache (call on logout). */
+export function clearNoteSeedCache(): void {
+  noteSeedCache.clear();
+}
+
+/**
+ * Read a cached note seed without triggering the signMessage prompt. Used by
+ * background flows (e.g. auto-shield) that must NOT pop a signature dialog —
+ * if the cache is cold, the caller should accept a non-recoverable note for
+ * this run and let the next interactive shield warm the cache.
+ */
+export function getCachedNoteSeed(pubkey: PublicKey): Uint8Array | null {
+  return noteSeedCache.get(pubkey.toBase58()) ?? null;
+}
+
+/**
+ * Derive output-note secrets for a split, transitively recoverable from the
+ * parent note. If a user recovers the parent note via {@link rescanPoolFromSeed},
+ * they can also reconstruct every child split that was ever produced from it,
+ * because each child secret is `poseidon2(parentSecret, index)`.
+ *
+ * Use this for any caller of `splitNoteStark` instead of `randomFieldElement()`.
+ */
+export function deriveSplitOutputSecrets(parentSecret: bigint, count: number): bigint[] {
+  const secrets: bigint[] = new Array(count);
+  for (let i = 0; i < count; i++) {
+    secrets[i] = poseidon2([parentSecret, BigInt(i)]);
+  }
+  return secrets;
 }
 
 /**

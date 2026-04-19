@@ -38,7 +38,8 @@ import {
   bigintToLeBytes32,
   deriveNullifierPDA,
 } from '../services/denominatedPool';
-import { useWalletStore, getPrivySigner } from './walletStore';
+import { useWalletStore, getPrivySigner, getPrivyMessageSigner } from './walletStore';
+import { deriveSeedFromSigner } from '../services/denominatedPool';
 import { scheduleLocalNotification } from '../services/notifications';
 import { getOrCreateStealthKeys, getMetaAddress } from '../services/stealth/keys';
 import { generateStealthAddress as genStealth, parseMetaAddress, scanStealthPayment } from '../utils/crypto/stealth';
@@ -277,7 +278,12 @@ function getWalletSignerIfPrivy(): WalletSigner | undefined {
   if (!isPrivyWallet || !publicKey) return undefined;
   const signer = getPrivySigner();
   if (!signer) return undefined;
-  return { publicKey: new PublicKey(publicKey), signTransaction: signer };
+  const messageSigner = getPrivyMessageSigner() ?? undefined;
+  return {
+    publicKey: new PublicKey(publicKey),
+    signTransaction: signer,
+    signMessage: messageSigner,
+  };
 }
 
 function noteIdFromReceipt(receipt: ShieldReceipt): string {
@@ -586,14 +592,20 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
             // Deterministic note derivation — tied to USER's seed, not the
             // ephemeral stealthKp, so the receipt is recoverable on any phone
-            // that imports the same seed.
+            // that imports the same seed. For Privy users (no local mnemonic)
+            // the seed is derived from a one-per-session signed message.
             const poolKey = pool.poolPDA.toBase58();
             const counter = get().shieldCounters[poolKey] ?? 0;
-            const deterministic = localKp
-              ? { walletSeed: localKp.secretKey.slice(0, 32), counter }
-              : undefined;
+            let walletSeed: Uint8Array | null = null;
+            if (localKp) {
+              walletSeed = localKp.secretKey.slice(0, 32);
+            } else if (walletSigner?.signMessage) {
+              set({ progress: 'Authorizing note recovery key...' });
+              walletSeed = await deriveSeedFromSigner(walletSigner);
+            }
+            const deterministic = walletSeed ? { walletSeed, counter } : undefined;
             if (!deterministic) {
-              console.warn('[DenomStore] No local keypair — note will NOT be seed-recoverable');
+              console.warn('[DenomStore] No seed source available — note will NOT be seed-recoverable');
             }
 
             // Now shield from the stealth keypair (not the user's wallet)
@@ -617,9 +629,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const poolKey = pool.poolPDA.toBase58();
             const counter = get().shieldCounters[poolKey] ?? 0;
             const directKp = walletSigner ? null : await getKeypair();
-            const deterministic = directKp
-              ? { walletSeed: directKp.secretKey.slice(0, 32), counter }
-              : undefined;
+            let walletSeed: Uint8Array | null = null;
+            if (directKp) {
+              walletSeed = directKp.secretKey.slice(0, 32);
+            } else if (walletSigner?.signMessage) {
+              set({ progress: 'Authorizing note recovery key...' });
+              walletSeed = await deriveSeedFromSigner(walletSigner);
+            }
+            const deterministic = walletSeed ? { walletSeed, counter } : undefined;
             receipt = await shield(pool, (step) => {
               console.log('[DenomStore] progress:', step);
               set({ progress: step });
