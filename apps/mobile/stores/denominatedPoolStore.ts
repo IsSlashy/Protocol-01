@@ -39,7 +39,7 @@ import {
   deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner, getPrivyMessageSigner } from './walletStore';
-import { deriveSeedFromSigner } from '../services/denominatedPool';
+import { deriveSeedFromSigner, rescanPoolFromSeed, fetchPoolCommitments } from '../services/denominatedPool';
 import { scheduleLocalNotification } from '../services/notifications';
 import { getOrCreateStealthKeys, getMetaAddress } from '../services/stealth/keys';
 import { generateStealthAddress as genStealth, parseMetaAddress, scanStealthPayment } from '../utils/crypto/stealth';
@@ -70,6 +70,8 @@ export interface StoredNote {
    * secrets) but the UI should not display them either.
    */
   ownerPubkey?: string;
+  /** Set when this note was reconstructed by `rescanPool` rather than freshly shielded. */
+  recoveredAt?: number;
 }
 
 interface PoolCacheEntry {
@@ -142,6 +144,14 @@ interface DenominatedPoolState {
   getNotesForPool: (poolPDA: string) => StoredNote[];
   getActiveNotes: () => StoredNote[];
   recoverTransferredNotes: () => number;
+  /**
+   * Reconstruct shielded notes for one pool (or every pool when `poolPDA` is
+   * omitted) by deriving candidate (secret, nullifier) pairs from the wallet
+   * seed and matching them against on-chain ShieldDenominatedEvents. Notes
+   * that are already in the store are left untouched. Returns the number of
+   * recovered notes.
+   */
+  rescanPool: (poolPDA?: string, opts?: { maxCounter?: number; epochsBack?: number; maxSignatures?: number }) => Promise<number>;
   reset: () => void;
 }
 
@@ -1156,6 +1166,129 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found');
         return encodeShareableNote(serviceExportNote(receipt, pool));
+      },
+
+      rescanPool: async (poolPDA, opts) => {
+        const cluster = getCluster();
+        const targetPools = poolPDA
+          ? ALL_POOLS.filter(p => p.poolPDA.toBase58() === poolPDA)
+          : ALL_POOLS;
+        if (targetPools.length === 0) {
+          throw new Error('No pool to rescan');
+        }
+
+        // Resolve seed: local kp first, otherwise prompt Privy signMessage
+        // (rescan is user-initiated, so a signature dialog is acceptable).
+        const localKp = await getKeypair().catch(() => null);
+        let walletSeed: Uint8Array | null = null;
+        if (localKp) {
+          walletSeed = localKp.secretKey.slice(0, 32);
+        } else {
+          const signer = getWalletSignerIfPrivy();
+          if (signer?.signMessage) {
+            set({ progress: 'Authorizing note recovery key...' });
+            walletSeed = await deriveSeedFromSigner(signer);
+          }
+        }
+        if (!walletSeed) {
+          throw new Error('No wallet seed available — cannot rescan');
+        }
+
+        const connection = getConnection();
+        const slot = await connection.getSlot('confirmed');
+        const currentEpoch = slotToEpoch(slot);
+        const epochsBack = BigInt(opts?.epochsBack ?? 50);
+        const epochs: bigint[] = [];
+        for (let e = 0n; e <= epochsBack; e++) {
+          const ep = currentEpoch - e;
+          if (ep >= 0n) epochs.push(ep);
+        }
+        const maxCounter = opts?.maxCounter ?? 256;
+        const maxSignatures = opts?.maxSignatures ?? 1000;
+
+        let totalRecovered = 0;
+
+        for (const pool of targetPools) {
+          set({ progress: `Scanning ${pool.token} ${pool.denomination} pool...` });
+          const onChain = await fetchPoolCommitments(connection, pool.poolPDA, {
+            maxSignatures,
+            onProgress: (scanned, total) => {
+              set({ progress: `Scanning ${pool.token} ${pool.denomination}: ${scanned}/${total} txs` });
+            },
+          });
+          if (onChain.size === 0) continue;
+
+          const matches = rescanPoolFromSeed({
+            walletSeed,
+            poolPDA: pool.poolPDA,
+            tokenMints: [pool.tokenMint],
+            epochs,
+            maxCounter,
+            knownCommitments: new Set(onChain.keys()),
+          });
+          if (matches.length === 0) continue;
+
+          const tokenMintField = (() => {
+            const bytes = pool.tokenMint.toBytes();
+            let n = 0n;
+            for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
+            return n;
+          })();
+
+          const existingIds = new Set(get().notes.map(n => n.id));
+          const newNotes: StoredNote[] = [];
+          let highestCounter = get().shieldCounters[pool.poolPDA.toBase58()] ?? 0;
+
+          for (const m of matches) {
+            const onChainEntry = onChain.get(m.commitment.toString());
+            if (!onChainEntry) continue;
+            const receipt: ShieldReceipt = {
+              secret: m.secret,
+              nullifierPreimage: m.nullifierPreimage,
+              depositEpoch: m.depositEpoch,
+              tokenMint: tokenMintField,
+              commitment: m.commitment,
+              leafIndex: onChainEntry.leafIndex,
+              denomination: pool.denominationAtomic,
+              pool: pool.poolPDA.toBase58(),
+              token: pool.token,
+              denominationHuman: pool.denomination,
+              shieldedAt: Date.now(),
+            };
+            const id = noteIdFromReceipt(receipt);
+            if (existingIds.has(id)) continue;
+            newNotes.push({
+              id,
+              receiptJSON: secureReceipt(receipt),
+              token: pool.token,
+              denomination: pool.denomination,
+              poolPDA: pool.poolPDA.toBase58(),
+              shieldedAt: Date.now(),
+              status: 'pending' as NoteStatus,
+              source: 'shielded' as NoteSource,
+              cluster,
+              recoveredAt: Date.now(),
+            });
+            if (m.counter + 1 > highestCounter) highestCounter = m.counter + 1;
+          }
+
+          if (newNotes.length > 0) {
+            set(state => ({
+              notes: [...newNotes, ...state.notes],
+              shieldCounters: {
+                ...state.shieldCounters,
+                [pool.poolPDA.toBase58()]: highestCounter,
+              },
+            }));
+            totalRecovered += newNotes.length;
+            console.log(`[DenomStore] Rescan recovered ${newNotes.length} note(s) for ${pool.token} ${pool.denomination}`);
+          }
+        }
+
+        set({ progress: null });
+        // Promote any rescued notes that are already past maturity
+        try { await get().refreshNoteStatuses(); } catch {}
+        return totalRecovered;
       },
 
       reset: () => {

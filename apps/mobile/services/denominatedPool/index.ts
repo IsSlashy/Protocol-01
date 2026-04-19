@@ -365,6 +365,98 @@ function pubkeyToField(pubkey: PublicKey): bigint {
   return n % FIELD_ORDER;
 }
 
+// ---------------------------------------------------------------------------
+// On-chain shield event fetcher (used by rescanPool)
+// ---------------------------------------------------------------------------
+
+/** Anchor event discriminator: first 8 bytes of sha256("event:<Name>"). */
+function anchorEventDiscriminator(name: string): Uint8Array {
+  return sha256(utf8ToBytes(`event:${name}`)).slice(0, 8);
+}
+
+const SHIELD_EVENT_DISC = anchorEventDiscriminator('ShieldDenominatedEvent');
+
+/**
+ * One on-chain shield event, decoded from a `Program data:` log line.
+ * Layout (Anchor + Borsh, after the 8-byte discriminator):
+ *   pool: Pubkey         (32)
+ *   depositor: Pubkey    (32)
+ *   denomination: u64    (8)
+ *   protocol_fee: u64    (8)
+ *   commitment: [u8; 32] (32)  ← offset 88
+ *   leaf_index: u64      (8)   ← offset 120
+ *   ...                        (rest unused for rescan)
+ */
+export interface OnChainCommitment {
+  commitment: bigint;
+  leafIndex: number;
+}
+
+function leBytes32ToBigint(buf: Uint8Array | Buffer, offset: number): bigint {
+  let n = 0n;
+  for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(buf[offset + i]);
+  return n;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * Fetch every ShieldDenominatedEvent commitment for a given pool by walking
+ * recent transactions and decoding Anchor event logs. Used as the
+ * `knownCommitments` input to {@link rescanPoolFromSeed}.
+ *
+ * Bounded by `maxSignatures` (default 1000) so the scan stays linear in the
+ * pool's recent activity rather than its full history. For a pool the user
+ * has used personally, recent activity is more than enough — their notes
+ * were created in their own session window.
+ */
+export async function fetchPoolCommitments(
+  connection: Connection,
+  poolPDA: PublicKey,
+  options: { maxSignatures?: number; batchSize?: number; onProgress?: (scanned: number, total: number) => void } = {},
+): Promise<Map<string, OnChainCommitment>> {
+  const maxSignatures = options.maxSignatures ?? 1000;
+  const batchSize = options.batchSize ?? 25;
+
+  const sigs = await connection.getSignaturesForAddress(poolPDA, { limit: maxSignatures });
+  const out = new Map<string, OnChainCommitment>();
+
+  for (let i = 0; i < sigs.length; i += batchSize) {
+    const batch = sigs.slice(i, i + batchSize);
+    const txs = await Promise.all(
+      batch.map((s) =>
+        connection
+          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+          .catch(() => null),
+      ),
+    );
+
+    for (const tx of txs) {
+      const logs = tx?.meta?.logMessages;
+      if (!logs) continue;
+      for (const log of logs) {
+        const m = log.match(/^Program data: (.+)$/);
+        if (!m) continue;
+        let data: Buffer;
+        try { data = Buffer.from(m[1], 'base64'); } catch { continue; }
+        if (data.length < 128) continue;
+        if (!bytesEqual(data.subarray(0, 8), SHIELD_EVENT_DISC)) continue;
+        const commitment = leBytes32ToBigint(data, 88);
+        const leafIndex = Number(data.readBigUInt64LE(120));
+        out.set(commitment.toString(), { commitment, leafIndex });
+      }
+    }
+
+    options.onProgress?.(Math.min(i + batchSize, sigs.length), sigs.length);
+  }
+
+  return out;
+}
+
 export function bigintToLeBytes32(n: bigint): number[] {
   const bytes: number[] = new Array(32);
   let tmp = n;

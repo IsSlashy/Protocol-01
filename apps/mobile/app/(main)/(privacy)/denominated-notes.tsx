@@ -10,6 +10,7 @@ import * as Clipboard from 'expo-clipboard';
 // Animations removed — staggered FadeInDown on each note caused tearing during navigation transitions
 
 import { useDenominatedPoolStore, useActiveNotes, type StoredNote, type NoteStatus } from '@/stores/denominatedPoolStore';
+import { useBatchUnshieldStore } from '@/stores/batchUnshieldStore';
 import { receiptFromJSON, slotToEpoch } from '@/services/denominatedPool';
 import { getCluster } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
@@ -43,11 +44,18 @@ export default function DenominatedNotesScreen() {
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
   const [routeProgress, setRouteProgress] = useState<Record<string, RouteProgress>>({});
   const [slotMs, setSlotMs] = useState(DEFAULT_SLOT_MS);
+  const [batchMode, setBatchMode] = useState(false);
+
+  const batchSelectedIds = useBatchUnshieldStore((s) => s.selectedIds);
+  const batchToggle = useBatchUnshieldStore((s) => s.toggle);
+  const batchSetSelection = useBatchUnshieldStore((s) => s.setSelection);
+  const batchClearSelection = useBatchUnshieldStore((s) => s.clearSelection);
 
   const {
     isLoading, refreshAllPools, refreshNoteStatuses,
-    exportAllNotes, exportNote, poolCache, recoverTransferredNotes,
+    exportAllNotes, exportNote, poolCache, recoverTransferredNotes, rescanPool,
   } = useDenominatedPoolStore();
+  const [isRescanning, setIsRescanning] = useState(false);
   const notes = useActiveNotes();
 
   // Dedup + refresh on mount
@@ -190,6 +198,96 @@ export default function DenominatedNotesScreen() {
       [{ text: t('common.cancel'), style: 'cancel' },
        { text: t('privacy.recover'), onPress: () => { recoverTransferredNotes(); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } }]);
   };
+  const handleRescanFromSeed = () => {
+    if (isRescanning) return;
+    p01Alert(
+      t('privacy.rescanFromSeed'),
+      t('privacy.rescanFromSeedDesc'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('privacy.rescanFromSeed'),
+          onPress: async () => {
+            setIsRescanning(true);
+            try {
+              const recovered = await rescanPool();
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              p01Alert(
+                t('privacy.rescanFromSeed'),
+                recovered > 0
+                  ? t('privacy.rescanFound', { count: recovered })
+                  : t('privacy.rescanNothingFound'),
+              );
+            } catch (e: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              p01Alert(t('privacy.rescanFailed'), e?.message ?? String(e));
+            } finally {
+              setIsRescanning(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // ── Batch multi-select handlers ────────────────────────────
+
+  const matureActive = activeNotes.filter(n => n.status === 'mature');
+  const selectedCount = batchSelectedIds.length;
+  const selectedSum = batchSelectedIds.reduce((acc, id) => {
+    const n = matureActive.find(x => x.id === id);
+    return acc + (n?.denomination ?? 0);
+  }, 0);
+  // Only allow single-token batches — mixing SOL + USDC in one sweep doesn't
+  // make sense and the sequential loop would need two different recipients.
+  const selectedTokens = new Set(
+    batchSelectedIds
+      .map(id => matureActive.find(x => x.id === id)?.token)
+      .filter((x): x is NonNullable<typeof x> => !!x),
+  );
+  const mixedTokens = selectedTokens.size > 1;
+
+  const toggleBatchMode = () => {
+    Haptics.selectionAsync();
+    setBatchMode(m => {
+      const next = !m;
+      if (!next) batchClearSelection();
+      return next;
+    });
+    setExpandedNote(null);
+  };
+
+  const onNoteTap = (note: StoredNote) => {
+    if (batchMode) {
+      if (note.status !== 'mature') return; // silently ignore non-mature selection
+      Haptics.selectionAsync();
+      batchToggle(note.id);
+      return;
+    }
+    setExpandedNote(expandedNote === note.id ? null : note.id);
+  };
+
+  const handleSelectAllMature = () => {
+    if (!matureActive.length) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // If everything of the first token is already selected, clear; else select
+    // all of the dominant token to keep the batch homogeneous.
+    const firstToken = matureActive[0].token;
+    const sameToken = matureActive.filter(n => n.token === firstToken);
+    const allSelected = sameToken.every(n => batchSelectedIds.includes(n.id));
+    if (allSelected) batchClearSelection();
+    else batchSetSelection(sameToken.map(n => n.id));
+  };
+
+  const handleBatchProceed = () => {
+    if (!selectedCount) return;
+    if (mixedTokens) {
+      p01Alert(t('common.error'), t('privacy.batchMixedTokens'));
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push({ pathname: '/(main)/(privacy)/denominated-unshield-batch' as any });
+  };
 
   // ── Status config ──────────────────────────────────────────
 
@@ -209,18 +307,36 @@ export default function DenominatedNotesScreen() {
 
   const renderNote = (note: StoredNote, index: number) => {
     const cfg = statusCfg(note.status);
-    const expanded = expandedNote === note.id;
+    const expanded = !batchMode && expandedNote === note.id;
     const maturity = getMaturity(note);
+    const isSelected = batchMode && batchSelectedIds.includes(note.id);
+    const isSelectable = batchMode && note.status === 'mature';
 
     return (
       <View key={note.id}>
         <TouchableOpacity
           activeOpacity={0.7}
-          onPress={() => setExpandedNote(expanded ? null : note.id)}
-          style={st.noteCard}
+          onPress={() => onNoteTap(note)}
+          disabled={batchMode && !isSelectable}
+          style={[
+            st.noteCard,
+            isSelected && st.noteCardSelected,
+            batchMode && !isSelectable && st.noteCardDimmed,
+          ]}
         >
           {/* Main row */}
           <View style={st.noteRow}>
+            {batchMode && (
+              <View
+                style={[
+                  st.checkbox,
+                  isSelected && st.checkboxChecked,
+                  !isSelectable && st.checkboxDisabled,
+                ]}
+              >
+                {isSelected && <Ionicons name="checkmark" size={14} color="#000" />}
+              </View>
+            )}
             <View style={[st.noteIcon, { backgroundColor: `${cfg.color}15` }]}>
               <Ionicons name={cfg.icon} size={18} color={cfg.color} />
             </View>
@@ -246,7 +362,9 @@ export default function DenominatedNotesScreen() {
               </View>
             )}
 
-            <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} />
+            {!batchMode && (
+              <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} />
+            )}
           </View>
 
           {/* Locked route progress */}
@@ -323,20 +441,55 @@ export default function DenominatedNotesScreen() {
         <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
           <Ionicons name="arrow-back" size={22} color={Colors.text} />
         </TouchableOpacity>
-        <Text style={st.headerTitle}>{t('privacy.myNotes')}</Text>
+        <Text style={st.headerTitle}>
+          {batchMode ? t('privacy.selectNotes') : t('privacy.myNotes')}
+        </Text>
         <View style={{ flexDirection: 'row', gap: 6 }}>
-          {clusterNotes.some(n => n.status === 'transferred' && !n.spentTxSig) && (
-            <TouchableOpacity onPress={handleRecover} style={st.headerBtn}>
-              <Ionicons name="refresh-circle-outline" size={18} color={P01Colors.yellow} />
-            </TouchableOpacity>
+          {batchMode ? (
+            <>
+              <TouchableOpacity
+                onPress={handleSelectAllMature}
+                style={st.headerBtn}
+                disabled={!matureActive.length}
+              >
+                <Ionicons
+                  name="checkmark-done-outline"
+                  size={18}
+                  color={matureActive.length ? P01Colors.cyan : Colors.textTertiary}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={toggleBatchMode} style={st.headerBtn}>
+                <Ionicons name="close" size={20} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              {matureActive.length >= 2 && (
+                <TouchableOpacity onPress={toggleBatchMode} style={st.headerBtn}>
+                  <Ionicons name="list-outline" size={18} color={P01Colors.cyan} />
+                </TouchableOpacity>
+              )}
+              {clusterNotes.some(n => n.status === 'transferred' && !n.spentTxSig) && (
+                <TouchableOpacity onPress={handleRecover} style={st.headerBtn}>
+                  <Ionicons name="refresh-circle-outline" size={18} color={P01Colors.yellow} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={handleRescanFromSeed} disabled={isRescanning} style={st.headerBtn}>
+                <Ionicons
+                  name={isRescanning ? 'sync' : 'key-outline'}
+                  size={18}
+                  color={isRescanning ? P01Colors.cyanDim : P01Colors.cyan}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleBackup} style={st.headerBtn}>
+                <Ionicons name="cloud-upload-outline" size={18} color={Colors.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+                style={[st.headerBtn, { backgroundColor: P01Colors.cyanDim }]}>
+                <Ionicons name="add" size={20} color={P01Colors.cyan} />
+              </TouchableOpacity>
+            </>
           )}
-          <TouchableOpacity onPress={handleBackup} style={st.headerBtn}>
-            <Ionicons name="cloud-upload-outline" size={18} color={Colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-            style={[st.headerBtn, { backgroundColor: P01Colors.cyanDim }]}>
-            <Ionicons name="add" size={20} color={P01Colors.cyan} />
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -419,6 +572,40 @@ export default function DenominatedNotesScreen() {
           <Text style={st.footerText}>{t('privacy.notesStoredLocally')}</Text>
         </View>
       </ScrollView>
+
+      {/* Batch action bar — sticky bottom */}
+      {batchMode && (
+        <View style={[st.batchBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={st.batchBarCount}>
+              {selectedCount === 0
+                ? t('privacy.batchTapToSelect')
+                : t('privacy.batchSelectedCount', { count: selectedCount })}
+            </Text>
+            {selectedCount > 0 && !mixedTokens && (
+              <Text style={st.batchBarSum}>
+                {selectedSum} {matureActive.find(n => n.id === batchSelectedIds[0])?.token ?? ''}
+              </Text>
+            )}
+            {mixedTokens && (
+              <Text style={[st.batchBarSum, { color: Colors.error }]}>
+                {t('privacy.batchMixedTokens')}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity
+            onPress={handleBatchProceed}
+            disabled={!selectedCount || mixedTokens}
+            style={[
+              st.batchBarCta,
+              (!selectedCount || mixedTokens) && { opacity: 0.4 },
+            ]}
+          >
+            <Ionicons name="wallet-outline" size={16} color="#000" />
+            <Text style={st.batchBarCtaText}>{t('privacy.withdraw')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -522,4 +709,30 @@ const st = StyleSheet.create({
     marginTop: Spacing.xl, padding: Spacing.md,
   },
   footerText: { flex: 1, fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, lineHeight: 17 },
+
+  // Batch multi-select
+  checkbox: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5,
+    borderColor: Colors.textTertiary, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  checkboxChecked: { backgroundColor: P01Colors.cyan, borderColor: P01Colors.cyan },
+  checkboxDisabled: { borderColor: Colors.surfaceTertiary },
+  noteCardSelected: { borderWidth: 1, borderColor: P01Colors.cyan },
+  noteCardDimmed: { opacity: 0.5 },
+  batchBar: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: Spacing.xl, paddingTop: 14,
+    backgroundColor: Colors.surfaceSecondary,
+    borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary,
+  },
+  batchBarCount: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text },
+  batchBarSum: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2 },
+  batchBarCta: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 18, paddingVertical: 10,
+    borderRadius: BorderRadius.md, backgroundColor: P01Colors.cyan,
+  },
+  batchBarCtaText: { fontSize: 14, fontFamily: FontFamily.bold, color: '#000' },
 });
