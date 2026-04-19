@@ -369,6 +369,11 @@ export async function prepareShield(
   const depositEpoch = slotToEpoch(slot);
   const tokenMintField = pubkeyToField(tokenMint);
 
+  // TODO(P11.D / note-secret): port mobile's HKDF deterministic derivation
+  // (apps/mobile/services/denominatedPool/index.ts → deriveNoteMaterial) when
+  // the extension's STARK rework wires this scaffolding to a real tx builder.
+  // Random secrets here = uninstall wipes funds; safe today only because no
+  // caller in the extension reaches this path.
   const secret = randomFieldElement();
   const nullifierPreimage = randomFieldElement();
 
