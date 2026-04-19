@@ -13,19 +13,25 @@ import {
   UNSHIELD_FEE_BPS,
   STARK_CIRCUITS,
   COMPUTE_UNITS,
+  LiquidityModule,
+  P01_LIQUIDITY_PROGRAM_ID,
 } from '../src';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────────
 
 const DEVNET_URL = 'https://api.devnet.solana.com';
 const mockConnection = new Connection(DEVNET_URL, 'confirmed');
 const testKeypair = Keypair.generate();
+const testSpendingKey = new Uint8Array(32).fill(7);
 
 function createSDK(overrides: Partial<Parameters<typeof PrivacySDK>[0]> = {}) {
   return new PrivacySDK({
     connection: mockConnection,
     wallet: testKeypair,
     network: 'devnet',
+    spendingKey: testSpendingKey,
     ...overrides,
   } as any);
 }
@@ -45,6 +51,7 @@ describe('PrivacySDK', () => {
       expect(() => new PrivacySDK({
         connection: null as any,
         wallet: testKeypair,
+        spendingKey: testSpendingKey,
       })).toThrow(PrivacyError);
     });
 
@@ -52,19 +59,51 @@ describe('PrivacySDK', () => {
       expect(() => new PrivacySDK({
         connection: mockConnection,
         wallet: null as any,
+        spendingKey: testSpendingKey,
       })).toThrow();
+    });
+
+    it('should throw on missing spendingKey', () => {
+      expect(() => new PrivacySDK({
+        connection: mockConnection,
+        wallet: testKeypair,
+      } as any)).toThrow(PrivacyError);
+    });
+
+    it('should throw on spendingKey with wrong length', () => {
+      expect(() => new PrivacySDK({
+        connection: mockConnection,
+        wallet: testKeypair,
+        spendingKey: new Uint8Array(16),
+      })).toThrow(PrivacyError);
     });
 
     it('should default to devnet', () => {
       const sdk = new PrivacySDK({
         connection: mockConnection,
         wallet: testKeypair,
+        spendingKey: testSpendingKey,
       });
       expect(sdk.network).toBe('devnet');
     });
 
     it('should accept mainnet config', () => {
-      const sdk = createSDK({ network: 'mainnet' });
+      // Mainnet rejects placeholder program IDs, so supply custom IDs for all
+      // modules that aren't yet deployed on mainnet.
+      const dummy = Keypair.generate().publicKey;
+      const sdk = createSDK({
+        network: 'mainnet',
+        programIds: {
+          trustless: dummy,
+          relayer: dummy,
+          registry: dummy,
+          quantumVault: dummy,
+          starkVerifier: dummy,
+          arcium: dummy,
+          mugenExchange: dummy,
+          bundler: dummy,
+        },
+      });
       expect(sdk.network).toBe('mainnet');
     });
 
@@ -209,7 +248,20 @@ describe('PrivacySDK', () => {
     });
 
     it('should resolve mainnet tokens', () => {
-      const mainnetSdk = createSDK({ network: 'mainnet' });
+      const dummy = Keypair.generate().publicKey;
+      const mainnetSdk = createSDK({
+        network: 'mainnet',
+        programIds: {
+          trustless: dummy,
+          relayer: dummy,
+          registry: dummy,
+          quantumVault: dummy,
+          starkVerifier: dummy,
+          arcium: dummy,
+          mugenExchange: dummy,
+          bundler: dummy,
+        },
+      });
       const usdc = mainnetSdk.resolveToken('USDC');
       expect(usdc.mint.toBase58()).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
     });
@@ -387,6 +439,7 @@ describe('WalletAdapter compatibility', () => {
       connection: mockConnection,
       wallet: mockAdapter,
       network: 'devnet',
+      spendingKey: testSpendingKey,
     });
 
     expect(sdk.publicKey).toEqual(mockAdapter.publicKey);
@@ -422,5 +475,221 @@ describe('Exports', () => {
     expect(mod.TOKENS).toBeDefined();
     expect(mod.SEEDS).toBeDefined();
     expect(mod.DENOMINATIONS).toBeDefined();
+  });
+
+  it('should export LiquidityModule', async () => {
+    const mod = await import('../src');
+    expect(mod.LiquidityModule).toBeDefined();
+    expect(mod.P01_LIQUIDITY_PROGRAM_ID).toBeDefined();
+  });
+});
+
+// ─── LiquidityModule ─────────────────────────────────────────────────────────
+
+function disc(name: string): Buffer {
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`))).subarray(0, 8);
+}
+
+describe('LiquidityModule', () => {
+  const liquidity = new LiquidityModule(mockConnection);
+
+  describe('PDAs', () => {
+    it('should derive pool PDA deterministically', () => {
+      const [a, bumpA] = liquidity.getPoolPDA();
+      const [b, bumpB] = liquidity.getPoolPDA();
+      expect(a.toBase58()).toBe(b.toBase58());
+      expect(bumpA).toBe(bumpB);
+    });
+
+    it('should derive prefund record PDA from denom_pool + nullifier', () => {
+      const denomPool = Keypair.generate().publicKey;
+      const nullifier = new Uint8Array(32).fill(1);
+      const [pda1] = liquidity.getPrefundRecordPDA(denomPool, nullifier);
+      const [pda2] = liquidity.getPrefundRecordPDA(denomPool, nullifier);
+      expect(pda1.toBase58()).toBe(pda2.toBase58());
+
+      const other = new Uint8Array(32).fill(2);
+      const [pda3] = liquidity.getPrefundRecordPDA(denomPool, other);
+      expect(pda1.toBase58()).not.toBe(pda3.toBase58());
+    });
+
+    it('should derive lp share PDA per (owner, pool)', () => {
+      const owner = Keypair.generate().publicKey;
+      const [poolPda] = liquidity.getPoolPDA();
+      const [sharePda1] = liquidity.getLpSharePDA(owner, poolPda);
+      const [sharePda2] = liquidity.getLpSharePDA(owner, poolPda);
+      expect(sharePda1.toBase58()).toBe(sharePda2.toBase58());
+
+      const other = Keypair.generate().publicKey;
+      const [sharePda3] = liquidity.getLpSharePDA(other, poolPda);
+      expect(sharePda1.toBase58()).not.toBe(sharePda3.toBase58());
+    });
+
+    it('should use the default p01_liquidity program ID', () => {
+      expect(liquidity.programId.toBase58()).toBe(
+        P01_LIQUIDITY_PROGRAM_ID.toBase58(),
+      );
+    });
+  });
+
+  describe('instruction discriminators', () => {
+    it('buildInitPoolIx → sha256("global:init_pool")[..8]', () => {
+      const ix = liquidity.buildInitPoolIx(testKeypair.publicKey, 80, 20);
+      expect(ix.data.subarray(0, 8).equals(disc('init_pool'))).toBe(true);
+      expect(ix.data.readUInt16LE(8)).toBe(80);
+      expect(ix.data.readUInt16LE(10)).toBe(20);
+      expect(ix.data.length).toBe(12);
+    });
+
+    it('buildDepositIx → disc + amount LE', () => {
+      const amount = 1_500_000_000n;
+      const ix = liquidity.buildDepositIx(testKeypair.publicKey, amount);
+      expect(ix.data.subarray(0, 8).equals(disc('deposit'))).toBe(true);
+      expect(ix.data.readBigUInt64LE(8)).toBe(amount);
+    });
+
+    it('buildWithdrawIx → disc + shares (u128 LE)', () => {
+      const shares = 42n;
+      const ix = liquidity.buildWithdrawIx(testKeypair.publicKey, shares);
+      expect(ix.data.subarray(0, 8).equals(disc('withdraw'))).toBe(true);
+      expect(ix.data.readBigUInt64LE(8)).toBe(shares); // lo
+      expect(ix.data.readBigUInt64LE(16)).toBe(0n);    // hi
+    });
+
+    it('buildPrefundIx → disc + nullifier + root + minEpoch + starkCommitment + amount', () => {
+      const nullifier = new Uint8Array(32).fill(0xaa);
+      const merkleRoot = new Uint8Array(32).fill(0xbb);
+      const minEpoch = 123n;
+      const starkCommitment = 0xDEADBEEFn;
+      const amount = 1_000_000_000n;
+
+      const ix = liquidity.buildPrefundIx({
+        ephemeralSigner:  Keypair.generate().publicKey,
+        recipient:        Keypair.generate().publicKey,
+        denominatedPool:  Keypair.generate().publicKey,
+        starkProofBuffer: Keypair.generate().publicKey,
+        nullifier,
+        merkleRoot,
+        minEpoch,
+        starkCommitment,
+        amount,
+      });
+
+      expect(ix.data.subarray(0, 8).equals(disc('prefund'))).toBe(true);
+      expect(ix.data.subarray(8, 40).equals(Buffer.from(nullifier))).toBe(true);
+      expect(ix.data.subarray(40, 72).equals(Buffer.from(merkleRoot))).toBe(true);
+      expect(ix.data.readBigUInt64LE(72)).toBe(minEpoch);
+      expect(ix.data.readBigUInt64LE(80)).toBe(starkCommitment);
+      expect(ix.data.readBigUInt64LE(88)).toBe(amount);
+      expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 8);
+      expect(ix.keys).toHaveLength(7);
+      expect(ix.keys[0]!.isSigner).toBe(true);
+    });
+
+    it('buildSettleIx → disc only, 10 accounts', () => {
+      const ix = liquidity.buildSettleIx({
+        settler:           testKeypair.publicKey,
+        denominatedPool:   Keypair.generate().publicKey,
+        merkleTree:        Keypair.generate().publicKey,
+        nullifierRecord:   Keypair.generate().publicKey,
+        starkProofBuffer:  Keypair.generate().publicKey,
+        nullifier:         new Uint8Array(32),
+        zkShieldedProgram: PROGRAM_IDS.devnet.zkShielded,
+        protocolFeeWallet: Keypair.generate().publicKey,
+      });
+      expect(ix.data.equals(disc('settle'))).toBe(true);
+      expect(ix.keys).toHaveLength(10);
+      expect(ix.keys[0]!.isSigner).toBe(true);
+    });
+  });
+
+  describe('parsers', () => {
+    it('parsePoolState round-trips admin + fees + flags', () => {
+      const admin = Keypair.generate().publicKey;
+      const data = Buffer.alloc(70);
+      // skip disc (bytes 0..8)
+      admin.toBuffer().copy(data, 8);
+      data.writeBigUInt64LE(500_000_000n, 40); // total_shares lo
+      data.writeBigUInt64LE(0n,            48); // total_shares hi
+      data.writeBigUInt64LE(BigInt(LAMPORTS_PER_SOL), 56); // reserve
+      data.writeUInt16LE(80, 64); // prefund_fee
+      data.writeUInt16LE(20, 66); // settler_reward
+      data[68] = 1;               // is_active
+      data[69] = 254;             // bump
+
+      const s = LiquidityModule.parsePoolState(data);
+      expect(s.admin.toBase58()).toBe(admin.toBase58());
+      expect(s.totalShares).toBe(500_000_000n);
+      expect(s.reserveLamports).toBe(BigInt(LAMPORTS_PER_SOL));
+      expect(s.prefundFeeBps).toBe(80);
+      expect(s.settlerRewardBps).toBe(20);
+      expect(s.isActive).toBe(true);
+      expect(s.bump).toBe(254);
+    });
+
+    it('parsePrefundRecord round-trips the 273-byte layout', () => {
+      const pool = Keypair.generate().publicKey;
+      const denomPool = Keypair.generate().publicKey;
+      const proofBuffer = Keypair.generate().publicKey;
+      const ephemeral = Keypair.generate().publicKey;
+      const nullifier = new Uint8Array(32).fill(1);
+      const root = new Uint8Array(32).fill(2);
+      const inputsHash = new Uint8Array(32).fill(3);
+
+      const data = Buffer.alloc(273);
+      pool.toBuffer().copy(data, 8);
+      denomPool.toBuffer().copy(data, 40);
+      Buffer.from(nullifier).copy(data, 72);
+      Buffer.from(root).copy(data, 104);
+      Buffer.from(inputsHash).copy(data, 136);
+      data.writeBigUInt64LE(999n, 168);            // commitment
+      data.writeBigUInt64LE(1_000_000_000n, 176);  // amount
+      data.writeBigUInt64LE(42n, 184);             // min_epoch
+      proofBuffer.toBuffer().copy(data, 192);
+      ephemeral.toBuffer().copy(data, 224);
+      data.writeBigUInt64LE(2_000_000n, 256);      // settler_reward
+      data.writeBigUInt64LE(1234567n, 264);        // opened_at_slot
+      data[272] = 253;
+
+      const r = LiquidityModule.parsePrefundRecord(data);
+      expect(r.pool.toBase58()).toBe(pool.toBase58());
+      expect(r.denominatedPool.toBase58()).toBe(denomPool.toBase58());
+      expect(Buffer.from(r.nullifier).equals(Buffer.from(nullifier))).toBe(true);
+      expect(Buffer.from(r.merkleRoot).equals(Buffer.from(root))).toBe(true);
+      expect(Buffer.from(r.publicInputsHash).equals(Buffer.from(inputsHash))).toBe(true);
+      expect(r.starkCommitment).toBe(999n);
+      expect(r.amount).toBe(1_000_000_000n);
+      expect(r.minEpoch).toBe(42n);
+      expect(r.proofBuffer.toBase58()).toBe(proofBuffer.toBase58());
+      expect(r.ephemeralSigner.toBase58()).toBe(ephemeral.toBase58());
+      expect(r.settlerReward).toBe(2_000_000n);
+      expect(r.openedAtSlot).toBe(1234567n);
+      expect(r.bump).toBe(253);
+    });
+  });
+
+  describe('computePrefundFees', () => {
+    it('matches on-chain fee math (80/20 bps on 1 SOL)', () => {
+      const oneSol = BigInt(LAMPORTS_PER_SOL);
+      const { prefundFee, settlerReward, recipientAmount } =
+        LiquidityModule.computePrefundFees(oneSol, 80, 20);
+      expect(prefundFee).toBe(8_000_000n);      // 0.8% of 1e9
+      expect(settlerReward).toBe(2_000_000n);   // 0.2% of 1e9
+      expect(recipientAmount).toBe(oneSol - prefundFee - settlerReward);
+    });
+
+    it('handles zero fees', () => {
+      const { prefundFee, settlerReward, recipientAmount } =
+        LiquidityModule.computePrefundFees(1_000_000n, 0, 0);
+      expect(prefundFee).toBe(0n);
+      expect(settlerReward).toBe(0n);
+      expect(recipientAmount).toBe(1_000_000n);
+    });
+
+    it('floors via integer bigint division', () => {
+      // 999 * 80 / 10000 = 7.992 → 7
+      const { prefundFee } = LiquidityModule.computePrefundFees(999n, 80, 0);
+      expect(prefundFee).toBe(7n);
+    });
   });
 });

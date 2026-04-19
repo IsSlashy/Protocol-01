@@ -25,6 +25,17 @@ export interface PrivacySDKConfig {
   connection: Connection;
   /** Wallet used to sign transactions. Accepts Keypair or WalletAdapter. */
   wallet: Signer;
+  /**
+   * 32-byte spending key used to derive the Goldilocks owner identity for
+   * shielded notes. The SDK never derives this implicitly. Integrators may
+   * either:
+   *   - call `deriveSpendingKeyFromSignature(signer, { domain })` and pass
+   *     the result here (recommended default, cross-app portable), or
+   *   - supply their own 32-byte material (hardware wallet, seed derivation,
+   *     user-imported key) wrapped with `asSpendingKey(bytes)`.
+   * See P11.D decision (2026-04-18).
+   */
+  spendingKey: Uint8Array;
   /** Target network. Defaults to 'devnet' with a console warning if omitted. */
   network?: Network;
   /** Override default program IDs (e.g., for custom deployments or localnet). */

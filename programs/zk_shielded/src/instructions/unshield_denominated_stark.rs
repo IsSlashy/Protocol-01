@@ -18,6 +18,36 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0xb3, 0x7a, 0x18, 0x7d, 0xe6, 0x39, 0xce, 0xd8,
 ]);
 
+// 6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg — p01_liquidity program.
+// When a `prefund_record` account is passed and owned by this program, we
+// accept a non-authority payer because the PDA proves a valid prefund is in
+// flight (see settle() in p01_liquidity for the full flow).
+const P01_LIQUIDITY_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+    0x50, 0x18, 0x77, 0x84, 0x39, 0xb4, 0xd7, 0x63,
+    0xe6, 0xa7, 0xf7, 0x5b, 0x7a, 0x71, 0x9f, 0x9e,
+    0x51, 0x8e, 0xe3, 0x24, 0x17, 0xca, 0xff, 0x96,
+    0xcc, 0x35, 0xd4, 0xc7, 0x3b, 0xf4, 0x17, 0x9b,
+]);
+
+/// Anchor discriminator: sha256("account:PrefundRecord")[..8]
+const PREFUND_RECORD_DISCRIMINATOR: [u8; 8] =
+    [0xeb, 0x5a, 0x2e, 0xa5, 0x0e, 0xb1, 0x65, 0x15];
+
+/// PrefundRecord offsets (mirror p01_liquidity::state::PrefundRecord).
+/// Layout:
+///   0   disc (8) | 8   pool (32) | 40  denominated_pool (32)
+///   72  nullifier (32) | 104 merkle_root (32) | 136 public_inputs_hash (32)
+///   168 stark_commitment (8) | 176 amount (8) | 184 min_epoch (8)
+///   192 proof_buffer (32) | 224 ephemeral_signer (32)
+///   256 settler_reward (8) | 264 opened_at_slot (8) | 272 bump (1) = 273
+const PREFUND_DENOM_POOL_OFF: usize = 40;
+const PREFUND_NULLIFIER_OFF: usize = 72;
+const PREFUND_INPUTS_HASH_OFF: usize = 136;
+const PREFUND_PROOF_BUFFER_OFF: usize = 192;
+const PREFUND_EPHEMERAL_OFF: usize = 224;
+const PREFUND_MIN_LEN: usize = 273;
+const PREFUND_SEED_PREFIX: &[u8] = b"prefund";
+
 /// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
 /// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash = 82
 const PROOF_BUF_AUTHORITY: usize = 8;
@@ -53,6 +83,11 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
 ///
 /// The caller must verify the STARK proof BEFORE calling this instruction.
 /// This instruction only checks that proof_buffer.verified == true.
+///
+/// `min_epoch` is no longer enforced on-chain — all paths (mature, emergency,
+/// prefund/settle) pass `current_epoch` so the tx args and event shape are
+/// identical. Maturity is a UX/SDK concern; anonymity derives from the
+/// uniform on-chain footprint + the pool's merkle anonymity set.
 #[derive(Accounts)]
 #[instruction(
     nullifier: [u8; 32],
@@ -132,6 +167,15 @@ pub struct UnshieldDenominatedStark<'info> {
         constraint = protocol_fee_wallet.key() == PROTOCOL_FEE_WALLET @ ZkShieldedError::InvalidFeeWallet
     )]
     pub protocol_fee_wallet: AccountInfo<'info>,
+
+    /// Optional `PrefundRecord` from p01_liquidity. When present, the payer no
+    /// longer needs to equal the proof buffer's authority — the PDA's
+    /// existence + stored ephemeral_signer match is a sufficient proof that
+    /// a valid prefund is in flight. If omitted, the classic
+    /// `payer == authority` check applies.
+    /// CHECK: Validated manually in the handler (owner, discriminator, PDA seeds,
+    /// stored ephemeral_signer match, stored public_inputs_hash match).
+    pub prefund_record: Option<AccountInfo<'info>>,
 }
 
 pub fn handler(
@@ -142,6 +186,10 @@ pub fn handler(
     stark_commitment: u64,
 ) -> Result<()> {
     let clock = Clock::get()?;
+    // Snapshot the denominated_pool key before taking the mutable borrow —
+    // the prefund-path checks below need it and cannot re-borrow through
+    // `ctx.accounts.denominated_pool` while `pool` is alive.
+    let denominated_pool_key = ctx.accounts.denominated_pool.key();
     let pool = &mut ctx.accounts.denominated_pool;
     let amount = pool.denomination;
     let is_native_sol = pool.token_mint == system_program::ID;
@@ -152,15 +200,18 @@ pub fn handler(
         ZkShieldedError::InsufficientBalance
     );
 
-    // Dynamic delay
+    // Dynamic delay accounting is still updated for anonymity metrics, but we no
+    // longer enforce `current_epoch >= min_epoch + dynamic_delay` on-chain.
+    // Rationale: the previous emergency path used `min_epoch == 0` as a
+    // bypass sentinel, which made the emergency tx trivially distinguishable
+    // from a mature one (arg visible in tx data). To unify the on-chain
+    // footprint, clients now always pass `min_epoch = current_epoch` and
+    // maturity becomes an off-chain/UX concern (the SDK warns users who try
+    // to unshield an immature note). This preserves the anonymity set size
+    // and keeps the event shape identical across both paths.
     let current_epoch = DenominatedPool::current_epoch(clock.slot);
     pool.update_maturity(current_epoch);
     let dynamic_delay = pool.get_dynamic_delay();
-    let effective_min_epoch = min_epoch.checked_add(dynamic_delay).unwrap_or(u64::MAX);
-    require!(
-        current_epoch >= effective_min_epoch,
-        ZkShieldedError::EpochDelayNotMet
-    );
 
     // Initialize nullifier record (double-spend protection)
     let nullifier_record = &mut ctx.accounts.nullifier_record;
@@ -181,11 +232,67 @@ pub fn handler(
     let proof_data = proof_info.try_borrow_data()?;
     let (authority, circuit_id, verified, stored_inputs_hash) = parse_stark_proof_buffer(&proof_data)?;
 
-    // Authority must be the payer (prevents using someone else's proof)
-    require!(
-        authority == ctx.accounts.payer.key(),
-        ZkShieldedError::InvalidProof
-    );
+    // Two auth paths:
+    //   A) Classic: payer == proof.authority — user-driven unshield.
+    //   B) Prefund: payer is any wallet, but a `PrefundRecord` PDA owned by
+    //      p01_liquidity proves a valid prefund is in flight. The PDA's
+    //      stored ephemeral_signer must match the proof's authority, and
+    //      the stored public_inputs_hash must match the proof buffer's.
+    if let Some(prefund_info) = &ctx.accounts.prefund_record {
+        require!(
+            *prefund_info.owner == P01_LIQUIDITY_PROGRAM_ID,
+            ZkShieldedError::InvalidProof
+        );
+        let prefund_data = prefund_info.try_borrow_data()?;
+        require!(
+            prefund_data.len() >= PREFUND_MIN_LEN,
+            ZkShieldedError::InvalidProof
+        );
+        require!(
+            prefund_data[..8] == PREFUND_RECORD_DISCRIMINATOR,
+            ZkShieldedError::InvalidProof
+        );
+        // PDA seeds: [b"prefund", denominated_pool.key(), nullifier]
+        let stored_denom_pool = Pubkey::try_from(
+            &prefund_data[PREFUND_DENOM_POOL_OFF..PREFUND_DENOM_POOL_OFF + 32],
+        ).unwrap();
+        require!(
+            stored_denom_pool == denominated_pool_key,
+            ZkShieldedError::InvalidProof
+        );
+        let stored_nullifier: &[u8] =
+            &prefund_data[PREFUND_NULLIFIER_OFF..PREFUND_NULLIFIER_OFF + 32];
+        require!(stored_nullifier == nullifier.as_ref(), ZkShieldedError::InvalidProof);
+        let stored_proof_buffer = Pubkey::try_from(
+            &prefund_data[PREFUND_PROOF_BUFFER_OFF..PREFUND_PROOF_BUFFER_OFF + 32],
+        ).unwrap();
+        require!(
+            stored_proof_buffer == proof_info.key(),
+            ZkShieldedError::InvalidProof
+        );
+        let stored_ephemeral = Pubkey::try_from(
+            &prefund_data[PREFUND_EPHEMERAL_OFF..PREFUND_EPHEMERAL_OFF + 32],
+        ).unwrap();
+        require!(stored_ephemeral == authority, ZkShieldedError::InvalidProof);
+        let stored_inputs_hash_prefund: &[u8] =
+            &prefund_data[PREFUND_INPUTS_HASH_OFF..PREFUND_INPUTS_HASH_OFF + 32];
+        require!(
+            stored_inputs_hash_prefund == stored_inputs_hash.as_ref(),
+            ZkShieldedError::InvalidProof
+        );
+        let expected_pda = Pubkey::find_program_address(
+            &[PREFUND_SEED_PREFIX, stored_denom_pool.as_ref(), nullifier.as_ref()],
+            &P01_LIQUIDITY_PROGRAM_ID,
+        ).0;
+        require!(expected_pda == prefund_info.key(), ZkShieldedError::InvalidProof);
+        drop(prefund_data);
+    } else {
+        // Classic path: payer must own the proof buffer.
+        require!(
+            authority == ctx.accounts.payer.key(),
+            ZkShieldedError::InvalidProof
+        );
+    }
 
     // Must be pool_commitment circuit (ID 1)
     require!(circuit_id == 1, ZkShieldedError::InvalidProof);
@@ -291,6 +398,8 @@ pub fn handler(
     pool.note_count = pool.note_count.checked_sub(1)
         .ok_or(ZkShieldedError::ArithmeticOverflow)?;
     pool.last_tx_at = clock.unix_timestamp;
+    // saturating_sub absorbs the emergency case where an immature note is withdrawn and
+    // mature_note_count is already 0 — cannot panic, and keeps the state consistent.
     pool.mature_note_count = pool.mature_note_count.saturating_sub(1);
 
     emit!(UnshieldDenominatedStarkEvent {

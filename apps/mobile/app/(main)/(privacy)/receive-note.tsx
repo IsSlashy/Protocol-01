@@ -139,7 +139,7 @@ export default function ReceiveNoteScreen() {
                   {t('nearby.noteImported', { type: importedNote.type === 'zk-shielded' ? 'ZK Shielded' : 'Denominated Pool' })}
                 </Text>
                 <View style={{ width: '100%', gap: 8, marginTop: 24 }}>
-                  <TouchableOpacity style={s.primaryBtn} onPress={() => {
+                  <TouchableOpacity style={[s.primaryBtn, s.stackedBtn]} onPress={() => {
                     cancelSession();
                     router.push(importedNote.type === 'denominated-pool'
                       ? '/(main)/(privacy)/denominated-notes' as any
@@ -148,7 +148,7 @@ export default function ReceiveNoteScreen() {
                     <Ionicons name="eye" size={18} color="#000" />
                     <Text style={s.primaryBtnText}>{t('nearby.viewNotes')}</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={s.secondaryBtn} onPress={() => { cancelSession(); router.back(); }}>
+                  <TouchableOpacity style={[s.secondaryBtn, s.stackedBtn]} onPress={() => { cancelSession(); router.back(); }}>
                     <Text style={s.secondaryBtnText}>{t('common.done')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -467,6 +467,11 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
   },
   secondaryBtnText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
+  // Override `flex: 1` when these buttons are stacked vertically (success CTAs).
+  // Without this, flex:1 in a column parent with no fixed height collapses the
+  // button to zero height — the rounded background shows but the icon+text
+  // render with no vertical room, so the button looks "empty inside".
+  stackedBtn: { flex: 0 },
 });
 
 const ms = StyleSheet.create({

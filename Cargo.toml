@@ -15,6 +15,7 @@ members = [
     "programs/p01_arcium/encrypted-ixs",
     "programs/p01_bundler",
     "programs/p01_mugen",
+    "programs/p01_liquidity",
     "stark",
 ]
 

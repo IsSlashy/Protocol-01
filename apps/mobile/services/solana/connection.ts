@@ -23,42 +23,107 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // even if the relay is compromised, client-side protection remains.
 // ---------------------------------------------------------------------------
 
-/**
- * Privacy-preserving fetch middleware for @solana/web3.js Connection.
- *
- * Intercepts every RPC call to strip fingerprinting headers and add
- * random timing jitter. Uses the callback-based middleware pattern
- * expected by Connection({ fetchMiddleware }).
- */
-function privacyFetchMiddleware(
-  url: Parameters<typeof fetch>[0],
-  options: Parameters<typeof fetch>[1],
-  fetchFn: (url: Parameters<typeof fetch>[0], options: Parameters<typeof fetch>[1]) => void,
-): void {
-  // Whitelist ONLY the headers Solana RPC needs — drop everything else
-  const cleanHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  // Preserve Solana-specific headers if present
+function stripIdentifyingHeaders(options: Parameters<typeof fetch>[1]): Parameters<typeof fetch>[1] {
+  const cleanHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (options?.headers) {
     const h = options.headers as Record<string, string>;
     for (const [key, value] of Object.entries(h)) {
       const lk = key.toLowerCase();
-      if (lk === 'content-length' || lk === 'solana-client') {
-        cleanHeaders[key] = value;
-      }
-      // Drop: user-agent, origin, referer, cookie, authorization,
-      // x-forwarded-for, x-real-ip, and any other identifying headers
+      if (lk === 'content-length' || lk === 'solana-client') cleanHeaders[key] = value;
     }
   }
+  return { ...options, headers: cleanHeaders };
+}
 
-  const sanitizedOptions = { ...options, headers: cleanHeaders };
+async function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
+}
 
-  // Random jitter: 30-120ms — small enough to not degrade UX,
-  // large enough to decorrelate timing between user tap and RPC call
-  const jitter = 30 + Math.floor(Math.random() * 90);
-  setTimeout(() => fetchFn(url, sanitizedOptions), jitter);
+/**
+ * Resilient fetch with privacy-relay fallback.
+ *
+ * 1. Strip identifying headers + random jitter (privacy baseline).
+ * 2. Primary attempt through the configured endpoint (relay if set, else direct).
+ * 3. On timeout/network failure against the *relay*, fall back to direct Helius/public RPC
+ *    so STARK uploads (15-20 sequential calls) don't blow the 60s blockhash window through Tor.
+ * 4. Direct-RPC failures are surfaced as-is (no infinite fallback loop).
+ */
+async function resilientFetch(
+  url: Parameters<typeof fetch>[0],
+  options: Parameters<typeof fetch>[1],
+): Promise<Response> {
+  const sanitizedOptions = stripIdentifyingHeaders(options);
+  await sleep(30 + Math.floor(Math.random() * 90));
+
+  const urlStr = typeof url === 'string' ? url : String(url);
+  const isRelayCall = P01_RPC_RELAY !== '' && urlStr.startsWith(P01_RPC_RELAY);
+  const timeoutMs = isRelayCall ? 8000 : 30000;
+
+  // STARK chunk upload fires 100+ sequential TXs; Helius free tier (~10 RPS) will
+  // 429 a fraction of them. Retry transparently so web3.js never sees the error.
+  const MAX_429_RETRIES = 10;
+  const BACKOFF_MAX_MS = 5000;
+
+  try {
+    for (let attempt = 0; attempt <= MAX_429_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let resp: Response;
+      try {
+        resp = await fetch(url as any, { ...sanitizedOptions, signal: controller.signal } as any);
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // HTTP-level 429
+      if (resp.status === 429 && attempt < MAX_429_RETRIES) {
+        const backoff = Math.min(BACKOFF_MAX_MS, 250 * Math.pow(2, attempt)) + Math.floor(Math.random() * 200);
+        console.warn(`[RPC] HTTP 429, retry ${attempt + 1}/${MAX_429_RETRIES} in ${backoff}ms`);
+        await sleep(backoff);
+        continue;
+      }
+
+      // JSON-RPC level rate limit: Helius returns HTTP 200 with body
+      // {"jsonrpc":"2.0","error":{"code":-32429,"message":"rate limited"}}.
+      // We peek at a clone so the original body stream stays consumable by web3.js.
+      if (resp.ok && attempt < MAX_429_RETRIES) {
+        let peeked: string | null = null;
+        try {
+          peeked = await resp.clone().text();
+        } catch {
+          peeked = null;
+        }
+        if (peeked && (/"code"\s*:\s*-32429/.test(peeked) || /"message"\s*:\s*"rate limited"/i.test(peeked))) {
+          const backoff = Math.min(BACKOFF_MAX_MS, 250 * Math.pow(2, attempt)) + Math.floor(Math.random() * 200);
+          console.warn(`[RPC] JSON-RPC -32429, retry ${attempt + 1}/${MAX_429_RETRIES} in ${backoff}ms`);
+          await sleep(backoff);
+          continue;
+        }
+      }
+
+      if (!resp.ok && isRelayCall && resp.status >= 500) {
+        throw new Error(`relay HTTP ${resp.status}`);
+      }
+      return resp;
+    }
+    // Unreachable under normal flow — loop always returns or continues.
+    throw new Error('[RPC] resilientFetch exhausted 429 retries');
+  } catch (primaryErr) {
+    if (!isRelayCall) throw primaryErr;
+
+    const fallback = HELIUS_API_KEY
+      ? (currentCluster === 'mainnet-beta'
+          ? `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`
+          : `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`)
+      : (currentCluster === 'mainnet-beta'
+          ? 'https://api.mainnet-beta.solana.com'
+          : currentCluster === 'testnet'
+          ? 'https://api.testnet.solana.com'
+          : 'https://api.devnet.solana.com');
+    const msg = (primaryErr as Error)?.message ?? String(primaryErr);
+    console.warn(`[RPC] Relay failed (${msg}) — falling back to direct RPC`);
+    return fetch(fallback, sanitizedOptions as any);
+  }
 }
 
 // Solana network configuration
@@ -200,7 +265,8 @@ export function getConnection(): Connection {
         confirmTransactionInitialTimeout: 60000,
         disableRetryOnRateLimit: true,
         // Tier 1 privacy: strip headers + timing jitter on every RPC call
-        fetchMiddleware: privacyFetchMiddleware,
+        // Auto-fallback to direct RPC if relay fails/times out (STARK uploads need ~15 sequential calls)
+        fetch: resilientFetch as any,
       }
     );
   }
@@ -222,7 +288,7 @@ export function switchEndpoint(): void {
       wsEndpoint: endpoint.ws || undefined,
       confirmTransactionInitialTimeout: 60000,
       disableRetryOnRateLimit: true,
-      fetchMiddleware: privacyFetchMiddleware,
+      fetch: resilientFetch as any,
     }
   );
 }

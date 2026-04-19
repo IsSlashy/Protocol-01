@@ -116,6 +116,14 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
 
       const exists = await walletExists();
+      if (!exists) {
+        // No local wallet on disk. Any notes currently hydrated from zustand-persist
+        // can only belong to a prior abandoned session (e.g. Privy closed without logout).
+        // Wipe them so a freshly-created wallet never inherits stale notes.
+        try {
+          await resetAllPrivacyStores(undefined);
+        } catch {}
+      }
       if (exists) {
         const publicKey = await getPublicKey();
 
@@ -239,6 +247,14 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       // Initialize connection
       await initializeConnection();
 
+      // If the incoming Privy address differs from the currently-loaded wallet,
+      // archive outgoing notes + reset privacy stores before restoring for the new one.
+      // Prevents stale notes from a previous session/identity leaking across wallets.
+      const oldPublicKey = get().publicKey;
+      if (oldPublicKey !== address) {
+        await resetAllPrivacyStores(oldPublicKey ?? undefined);
+      }
+
       // Load cached data for this address
       const [cachedBalance, cachedTransactions] = await Promise.all([
         getCachedBalance(address),
@@ -307,11 +323,20 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     try {
       set({ loading: true, error: null });
 
+      // Archive notes for outgoing wallet (if any), then reset privacy stores.
+      // Prevents stale notes from a prior Privy/local session leaking into the new identity.
+      const oldPublicKey = get().publicKey;
+      await resetAllPrivacyStores(oldPublicKey ?? undefined);
+
       const wallet = await createWallet();
       set({
         hasWallet: true,
         publicKey: wallet.publicKey,
+        isPrivyWallet: false,
+        balance: { sol: 0, tokens: [], totalUsd: 0 },
+        transactions: [],
         loading: false,
+        error: null,
       });
 
       // Refresh balance

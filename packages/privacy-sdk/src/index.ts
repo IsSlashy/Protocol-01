@@ -1,6 +1,14 @@
 // ─── Main Client ──────────────────────────────────────────────────────────────
 export { PrivacySDK } from './client';
 
+// ─── Identity (spending-key helpers) ──────────────────────────────────────────
+export {
+  asSpendingKey,
+  deriveSpendingKeyFromSignature,
+  SPENDING_KEY_DOMAIN,
+  type SpendingKey,
+} from './identity/spendingKey';
+
 // ─── Modules ──────────────────────────────────────────────────────────────────
 export { ShieldModule } from './modules/shield';
 export { StealthModule } from './modules/stealth';
@@ -56,6 +64,14 @@ export type {
   TreasurySolvencyProof,
 } from './modules/treasury';
 export { MugenExchangeModule } from './modules/exchange';
+export { LiquidityModule, P01_LIQUIDITY_PROGRAM_ID } from './modules/liquidity';
+export type {
+  LiquidityPoolState,
+  PrefundRecordState,
+  PrefundIxArgs,
+  SettleIxArgs,
+  PrefundFeeBreakdown,
+} from './modules/liquidity';
 export {
   splitAmount,
   CANONICAL_DENOMINATIONS,

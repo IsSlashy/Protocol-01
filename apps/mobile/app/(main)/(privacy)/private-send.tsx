@@ -12,7 +12,7 @@ import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constant
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
 import { useWalletStore } from '@/stores/walletStore';
-import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
+import { useDenominatedPoolStore, useActiveNotes } from '@/stores/denominatedPoolStore';
 import { getConnection } from '@/services/solana/connection';
 import { deriveRouteStealthKeypair } from '@/services/privacyRouter/stealthManager';
 import { estimateFees } from '@/services/privacyRouter/routePlanner';
@@ -28,7 +28,7 @@ export default function PrivateSendScreen() {
   const insets = useSafeAreaInsets();
   const params = require('expo-router').useLocalSearchParams() as { address?: string };
   const { balance, publicKey } = useWalletStore();
-  const notes = useDenominatedPoolStore(s => s.notes);
+  const notes = useActiveNotes();
   const shieldNote = useDenominatedPoolStore(s => s.shieldNote);
 
   const [source, setSource] = useState<SendSource>('wallet');

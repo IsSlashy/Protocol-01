@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { PrivacyError, PrivacyErrorCode } from './errors';
 import { PROGRAM_IDS, TOKENS } from './constants';
+import { asSpendingKey, type SpendingKey } from './identity/spendingKey';
 
 import { ShieldModule } from './modules/shield';
 import { StealthModule } from './modules/stealth';
@@ -55,6 +56,7 @@ import { MugenExchangeModule } from './modules/exchange';
 export class PrivacySDK {
   readonly connection: Connection;
   readonly wallet: Signer;
+  readonly spendingKey: SpendingKey;
   readonly network: Network;
   readonly programIds: ProgramIds;
 
@@ -99,9 +101,16 @@ export class PrivacySDK {
     if (!config.wallet) {
       throw PrivacyError.walletNotConnected();
     }
+    if (!config.spendingKey) {
+      throw new PrivacyError(
+        PrivacyErrorCode.INVALID_CONFIG,
+        'spendingKey is required. Derive one with `deriveSpendingKeyFromSignature(signer, { domain })` or wrap your own 32-byte material via `asSpendingKey(bytes)`.',
+      );
+    }
 
     this.connection = config.connection;
     this.wallet = config.wallet;
+    this.spendingKey = asSpendingKey(config.spendingKey);
 
     if (!config.network) {
       console.warn(
@@ -135,7 +144,7 @@ export class PrivacySDK {
 
     const resolveToken = this.resolveToken.bind(this);
 
-    this.shield = new ShieldModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
+    this.shield = new ShieldModule(this.connection, this.wallet, this.network, this.programIds, resolveToken, this.spendingKey);
     this.stealth = new StealthModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.confidential = new ConfidentialModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.streams = new StreamsModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
@@ -148,7 +157,7 @@ export class PrivacySDK {
     this.airdrop = new AirdropModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.otc = new OTCModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.payroll = new PayrollModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.treasury = new TreasuryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
+    this.treasury = new TreasuryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken, this.spendingKey);
     this.exchange = new MugenExchangeModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
   }
 

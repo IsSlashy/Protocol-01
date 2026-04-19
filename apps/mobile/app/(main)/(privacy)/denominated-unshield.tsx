@@ -33,7 +33,7 @@ export default function DenominatedUnshieldScreen() {
 
   const {
     notes, isLoading, isProving, error, progress,
-    unshieldNoteStark, emergencyUnshieldNoteStark, refreshNoteStatuses,
+    unshieldNoteStark, refreshNoteStatuses,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
@@ -58,12 +58,14 @@ export default function DenominatedUnshieldScreen() {
   }, [params.noteId]);
 
   useEffect(() => {
+    if (!useOwnWallet) return;
+    if (walletPublicKey) {
+      setRecipient(walletPublicKey);
+      return;
+    }
     (async () => {
-      if (useOwnWallet) {
-        const keypair = await getKeypair();
-        if (keypair) setRecipient(keypair.publicKey.toBase58());
-        else if (walletPublicKey) setRecipient(walletPublicKey);
-      }
+      const keypair = await getKeypair();
+      if (keypair) setRecipient(keypair.publicKey.toBase58());
     })();
   }, [useOwnWallet, walletPublicKey]);
 
@@ -72,9 +74,26 @@ export default function DenominatedUnshieldScreen() {
       p01Alert(t('shieldUnshield.selectNote'), t('shieldUnshield.selectNoteFirst'));
       return;
     }
-    let isValid = false;
-    try { new PublicKey(recipient); isValid = true; } catch {}
-    if (!recipient || !isValid) {
+    // Resolve recipient. Accepts either a raw Solana pubkey OR a stealth
+    // meta-address (`st:01...`). Meta-addresses are expanded into a one-time
+    // stealth pubkey so the on-chain unshield tx doesn't link to a known
+    // wallet — see private-send.tsx for the same pattern.
+    let finalRecipient = recipient.trim();
+    let stealthUsed = false;
+    try {
+      const { isMetaAddress, deriveStealthForRecipient } = require('@/services/stealth/keys');
+      if (isMetaAddress(finalRecipient)) {
+        const stealth = deriveStealthForRecipient(finalRecipient);
+        finalRecipient = stealth.address;
+        stealthUsed = true;
+      } else {
+        new PublicKey(finalRecipient);
+      }
+    } catch {
+      p01Alert(t('common.error'), t('shieldUnshield.invalidRecipient'));
+      return;
+    }
+    if (!finalRecipient) {
       p01Alert(t('common.error'), t('shieldUnshield.invalidRecipient'));
       return;
     }
@@ -98,29 +117,32 @@ export default function DenominatedUnshieldScreen() {
       );
       const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
       const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
-      const sig = emergency
-        ? await emergencyUnshieldNoteStark(selectedNote.id, recipient, {
-            proofBytes, publicInputs, proofSize: starkResult.proofSize,
-          })
-        : await unshieldNoteStark(selectedNote.id, recipient, {
-            proofBytes, publicInputs, proofSize: starkResult.proofSize,
-          }, false);
+      // Single unified call — `emergency` only flips min_epoch=0 on-chain; the
+      // privacy posture (ephemeral signer + ECDH stealth recipient + random sweep)
+      // is identical for both paths.
+      const sig = await unshieldNoteStark(
+        selectedNote.id,
+        finalRecipient,
+        { proofBytes, publicInputs, proofSize: starkResult.proofSize },
+        emergency,
+      );
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       useWalletStore.getState().refreshBalance();
       setTimeout(() => useWalletStore.getState().refreshTransactions(), 5000);
       const proofLabel = isMpcActive ? 'STARK + MPC' : 'STARK';
       const mpcNote = isMpcActive ? `\n\n${t('shieldUnshield.nullifierHidden')}` : '';
+      const stealthNote = stealthUsed ? `\n\nStealth → ${finalRecipient.slice(0, 8)}...` : '';
       p01Alert(
         emergency ? t('shieldUnshield.emergencyComplete') : `${t('shieldUnshield.unshieldComplete')} (${proofLabel})`,
-        `${selectedNote.denomination} ${selectedNote.token} → ${recipient.slice(0, 8)}...${mpcNote}\n\nTx: ${sig.slice(0, 16)}...`,
+        `${selectedNote.denomination} ${selectedNote.token} → ${finalRecipient.slice(0, 8)}...${mpcNote}${stealthNote}\n\nTx: ${sig.slice(0, 16)}...`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('common.error'), err.message);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, emergencyUnshieldNoteStark, starkReady, generatePoolCommitmentProof, router, t, isMpcActive]);
+  }, [selectedNote, recipient, unshieldNoteStark, starkReady, generatePoolCommitmentProof, router, t, isMpcActive]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {
@@ -329,6 +351,7 @@ export default function DenominatedUnshieldScreen() {
               </>
             )}
           </TouchableOpacity>
+          {isLoading && <UnshieldProgressBar progress={progress} />}
         </Animated.View>
 
         {/* ── Privacy Footer ── */}
@@ -364,6 +387,40 @@ function ToggleBtn({ label, icon, active, color, onPress }: {
       {icon && <Ionicons name={icon as any} size={14} color={active ? color : Colors.textTertiary} />}
       <Text style={[st.toggleText, active && { color }]}>{label}</Text>
     </TouchableOpacity>
+  );
+}
+
+function UnshieldProgressBar({ progress }: { progress: string | null }) {
+  const text = progress || '';
+  const batchMatch = text.match(/batch\s+(\d+)\s*\/\s*(\d+)/i);
+  const resizeMatch = text.match(/resize|Resizing/i);
+  const provingMatch = text.match(/proof|commitment|STARK/i);
+
+  let current = 0;
+  let total = 0;
+  let label = text;
+
+  if (batchMatch) {
+    current = parseInt(batchMatch[1], 10);
+    total = parseInt(batchMatch[2], 10);
+    label = `Uploading proof · batch ${current}/${total}`;
+  } else if (resizeMatch) {
+    label = 'Resizing proof buffer';
+  } else if (provingMatch) {
+    label = text;
+  }
+
+  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : (text ? 8 : 0);
+  return (
+    <View style={st.progressWrap}>
+      <View style={st.progressRow}>
+        <Text style={st.progressLabel} numberOfLines={1}>{label}</Text>
+        {total > 0 && <Text style={st.progressCount}>{current}/{total}</Text>}
+      </View>
+      <View style={st.progressTrack}>
+        <View style={[st.progressFill, { width: `${pct}%` }]} />
+      </View>
+    </View>
   );
 }
 
@@ -475,6 +532,28 @@ const st = StyleSheet.create({
   confirmBtnEmergency: { backgroundColor: '#FF6B35' },
   confirmBtnDisabled: { opacity: 0.4 },
   confirmText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
+
+  // Progress bar (chunk upload)
+  progressWrap: { marginTop: 12, paddingHorizontal: 2 },
+  progressRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 6,
+  },
+  progressLabel: {
+    flex: 1, fontSize: 11, fontFamily: FontFamily.mono,
+    color: Colors.textSecondary, letterSpacing: 0.3,
+  },
+  progressCount: {
+    fontSize: 11, fontFamily: FontFamily.bold,
+    color: P01Colors.cyan, marginLeft: 8,
+  },
+  progressTrack: {
+    height: 4, borderRadius: 2, overflow: 'hidden',
+    backgroundColor: 'rgba(0,224,255,0.12)',
+  },
+  progressFill: {
+    height: '100%', backgroundColor: P01Colors.cyan, borderRadius: 2,
+  },
 
   // Privacy footer
   privacyFooter: {

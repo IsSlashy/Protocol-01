@@ -25,11 +25,13 @@ import {
 } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
+  createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { poseidon2, poseidon4 } from 'poseidon-lite';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
 
@@ -281,6 +283,79 @@ function randomFieldElement(): bigint {
   let n = 0n;
   for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
   return n % FIELD_ORDER;
+}
+
+/**
+ * Derive (secret, nullifierPreimage) deterministically from the user's wallet
+ * seed + (pool, counter). Makes shielded notes recoverable from seed alone:
+ * the same seed on any device produces the same commitments, so a rescan of
+ * the pool's leaves can reconstruct every receipt the user ever created.
+ *
+ * The nullifier derivation uses a distinct info tag to guarantee domain
+ * separation from the secret (they must be independent field elements, or a
+ * single compromised one would leak the other).
+ */
+export function deriveNoteMaterial(
+  walletSeed: Uint8Array,
+  poolPDA: PublicKey,
+  counter: number,
+): { secret: bigint; nullifierPreimage: bigint } {
+  const salt = utf8ToBytes('p01-note-v1');
+  const base = concatBytes(
+    utf8ToBytes(poolPDA.toBase58() + ':'),
+    utf8ToBytes(String(counter)),
+  );
+  const secretBytes = hkdf(sha256, walletSeed, salt, concatBytes(base, utf8ToBytes(':secret')), 32);
+  const nullifierBytes = hkdf(sha256, walletSeed, salt, concatBytes(base, utf8ToBytes(':nullifier')), 32);
+  const toField = (bs: Uint8Array) => {
+    let n = 0n;
+    for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bs[i]);
+    return n % FIELD_ORDER;
+  };
+  return { secret: toField(secretBytes), nullifierPreimage: toField(nullifierBytes) };
+}
+
+export interface RescannedReceipt {
+  counter: number;
+  depositEpoch: bigint;
+  secret: bigint;
+  nullifierPreimage: bigint;
+  commitment: bigint;
+}
+
+/**
+ * Reconstruct seed-derived receipts by matching candidate commitments against
+ * a caller-supplied set of known on-chain commitments. Pure — no network or
+ * wallet access. The caller fetches leaves however it wants (program logs,
+ * transaction history, indexer) and passes the commitment set in.
+ *
+ * Counter range is inclusive. Epoch range is inclusive. The same (counter,
+ * epoch) pair is tried against every token mint provided — usually the pool's
+ * single mint, but takes a list so a future multi-mint pool still works.
+ */
+export function rescanPoolFromSeed(params: {
+  walletSeed: Uint8Array;
+  poolPDA: PublicKey;
+  tokenMints: PublicKey[];
+  epochs: bigint[];
+  maxCounter: number;
+  knownCommitments: Set<string>;
+}): RescannedReceipt[] {
+  const { walletSeed, poolPDA, tokenMints, epochs, maxCounter, knownCommitments } = params;
+  const matches: RescannedReceipt[] = [];
+  const mintFields = tokenMints.map(pubkeyToField);
+  for (let counter = 0; counter <= maxCounter; counter++) {
+    const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolPDA, counter);
+    for (const epoch of epochs) {
+      for (const mintField of mintFields) {
+        const commitment = createCommitment(nullifierPreimage, secret, epoch, mintField);
+        if (knownCommitments.has(commitment.toString())) {
+          matches.push({ counter, depositEpoch: epoch, secret, nullifierPreimage, commitment });
+        }
+      }
+    }
+  }
+  return matches;
 }
 
 function pubkeyToField(pubkey: PublicKey): bigint {
@@ -607,6 +682,7 @@ export async function shield(
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
   overrideKeypair?: import('@solana/web3.js').Keypair,
+  deterministic?: { walletSeed: Uint8Array; counter: number },
 ): Promise<ShieldReceipt> {
   onProgress?.('Reading wallet...');
   const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
@@ -630,8 +706,9 @@ export async function shield(
   const tokenMintField = pubkeyToField(poolConfig.tokenMint);
 
   onProgress?.('Computing commitment...');
-  const secret = randomFieldElement();
-  const nullifierPreimage = randomFieldElement();
+  const { secret, nullifierPreimage } = deterministic
+    ? deriveNoteMaterial(deterministic.walletSeed, poolConfig.poolPDA, deterministic.counter)
+    : { secret: randomFieldElement(), nullifierPreimage: randomFieldElement() };
 
   const commitment = createCommitment(nullifierPreimage, secret, depositEpoch, tokenMintField);
 
@@ -668,7 +745,21 @@ export async function shield(
   );
 
   onProgress?.('Sending transaction...');
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+
+  // For SPL pools, ensure user ATA exists (idempotent — no-op if present)
+  if (!isNativeSOL && userTokenAccount) {
+    tx.add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        walletPubkey,       // payer
+        userTokenAccount,   // ATA address
+        walletPubkey,       // owner
+        poolConfig.tokenMint
+      )
+    );
+  }
+
+  tx.add(ix);
 
   // Privacy: commit nullifier via Arcium MPC (hides the spent-note link)
   // The shield TX itself goes through direct submit — the wallet link is
@@ -750,7 +841,7 @@ function buildUnshieldDenominatedStarkIx(
   // Account ordering must match on-chain UnshieldDenominatedStark struct:
   // payer, recipient, denominated_pool, merkle_tree, nullifier_record,
   // stark_proof_buffer, system_program, token_program?, pool_vault?,
-  // recipient_token_account?, protocol_fee_wallet
+  // recipient_token_account?, protocol_fee_wallet, prefund_record?
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
     { pubkey: recipient, isSigner: false, isWritable: true },
@@ -765,6 +856,8 @@ function buildUnshieldDenominatedStarkIx(
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
     // Protocol fee wallet (0.5% unshield fee)
     { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
+    // Optional prefund_record — always None for user-driven unshield (prefund is used by p01_liquidity::settle only)
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -788,8 +881,9 @@ export async function unshieldStark(
   walletSigner?: WalletSigner,
   emergency?: boolean,
   overrideKeypair?: import('@solana/web3.js').Keypair,
+  instant?: boolean,
 ): Promise<string> {
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT } = await import('../stark');
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT, getProofBufferPDA } = await import('../stark');
 
   onProgress?.('Reading wallet...');
   const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
@@ -842,8 +936,13 @@ export async function unshieldStark(
     _nv >>= 8n;
   }
   const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
-  // Emergency: min_epoch=0 bypasses maturity (on-chain check: current_epoch >= 0 + dynamic_delay → always true)
-  const minEpoch = emergency ? 0n : currentEpoch - (poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay));
+  // Phase 1 indistinguishability: zk_shielded no longer enforces `min_epoch`
+  // on-chain (see programs/zk_shielded/src/instructions/unshield_denominated_stark.rs).
+  // Mature, emergency, and prefund paths all pass `current_epoch` so tx args
+  // and event shape are identical on every unshield.
+  void emergency;
+  void poolInfo;
+  const minEpoch = currentEpoch;
 
   // MPC: Try hidden nullifier commitment (prevents on-chain nullifier linkage)
   let mpcNullifierResult: any = null;
@@ -877,273 +976,145 @@ export async function unshieldStark(
   // so signAndSend and closeProofBuffer use the stealth keypair too
   const effectiveWalletSigner = starkSigner;
   const effectiveKeypair = null; // Force walletSigner path in signAndSend
-  const { proofBuffer } = await submitAndVerifyStarkProof(
-    {
-      proofBytes: starkProofData.proofBytes,
-      circuitId: CIRCUIT_POOL_COMMITMENT,
-      publicInputs: starkProofData.publicInputs,
-      proofSize: starkProofData.proofSize,
-    },
-    starkSigner,
-    onProgress,
-    connection,
-  );
 
-  // Step 2: Build + send unshield_denominated_stark instruction
-  onProgress?.('Building unshield transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+  // Derive proof buffer PDA upfront so finally block can close it even if submit throws mid-flight.
+  const [proofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
 
-  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
-  let tokenProgram: PublicKey | undefined;
-  let recipientTokenAccount: PublicKey | undefined;
-  let poolVault: PublicKey | undefined;
-
-  if (!isNativeSOL) {
-    tokenProgram = TOKEN_PROGRAM_ID;
-    recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
-    poolVault = poolConfig.vaultATA;
-  }
-
-  // Extract STARK commitment (second public input from the proof)
-  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
-
-  const ix = buildUnshieldDenominatedStarkIx(
-    walletPubkey,
-    recipient,
-    poolConfig.poolPDA,
-    poolConfig.treePDA,
-    nullifierPDA,
-    proofBuffer,
-    Array.from(nullifierBytes),
-    merkleRootBytes,
-    minEpoch,
-    starkCommitment,
-    tokenProgram,
-    poolVault,
-    recipientTokenAccount
-  );
-
-  onProgress?.('Sending unshield transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-
-  // Simulate first to catch errors with detailed logs
+  // Always close buffer on exit (success or failure) — stealth signer is lost after return.
   try {
-    const { blockhash: simBh } = await connection.getLatestBlockhash();
-    const simTx = new Transaction();
-    simTx.add(...buildComputeBudgetIxs(300_000));
-    simTx.add(ix);
-    simTx.recentBlockhash = simBh;
-    simTx.feePayer = effectiveWalletSigner?.publicKey || walletPubkey;
-    const simResult = await connection.simulateTransaction(simTx);
-    if (simResult.value.err) {
-      console.error(`[DenomPool] Simulation FAILED:`, JSON.stringify(simResult.value.err));
-      console.error(`[DenomPool] Simulation logs:`, simResult.value.logs?.join('\n'));
-      const signerBal = await connection.getBalance(effectiveWalletSigner?.publicKey || walletPubkey);
-      console.error(`[DenomPool] Signer balance at failure: ${signerBal / 1e9} SOL`);
-    } else {
-      console.log(`[DenomPool] Simulation OK — CU used: ${simResult.value.unitsConsumed}`);
-    }
-  } catch (simErr: any) {
-    console.warn(`[DenomPool] Simulation error (non-fatal):`, simErr.message?.slice(0, 100));
-  }
-
-  const sig = await signAndSend(connection, tx, effectiveKeypair, effectiveWalletSigner);
-
-  // Step 3: Close proof buffer (recover rent)
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, effectiveWalletSigner, connection);
-
-  onProgress?.('Done!');
-  return sig;
-}
-
-// ---------------------------------------------------------------------------
-// STARK Emergency Unshield (bypass maturity, quantum-resistant)
-// ---------------------------------------------------------------------------
-
-/**
- * Build emergency_unshield_denominated_stark instruction.
- * Same on-chain layout as unshield_denominated_stark, but the handler skips
- * the epoch delay check and emits is_emergency=true.
- */
-function buildEmergencyUnshieldDenominatedStarkIx(
-  payer: PublicKey,
-  recipient: PublicKey,
-  poolPDA: PublicKey,
-  treePDA: PublicKey,
-  nullifierPDA: PublicKey,
-  starkProofBuffer: PublicKey,
-  nullifierBytes: number[],
-  merkleRootBytes: number[],
-  minEpoch: bigint,
-  starkCommitment: bigint,
-  tokenProgram?: PublicKey,
-  poolVault?: PublicKey,
-  recipientTokenAccount?: PublicKey
-): TransactionInstruction {
-  const disc = getDiscriminator('emergency_unshield_denominated_stark');
-
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
-  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
-  data.writeBigUInt64LE(starkCommitment, offset);
-
-  const keys = [
-    { pubkey: payer, isSigner: true, isWritable: true },
-    { pubkey: recipient, isSigner: false, isWritable: true },
-    { pubkey: poolPDA, isSigner: false, isWritable: true },
-    { pubkey: treePDA, isSigner: false, isWritable: false },
-    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
-    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
-    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
-/**
- * Emergency unshield from a denominated pool using STARK proof (bypasses maturity).
- *
- * PRIVACY WARNING: Emergency unshields are distinguishable on-chain
- * (is_emergency=true in the emitted event), weakening the anonymity set
- * for this withdrawal.
- *
- * Flow:
- * 1. Generate pool_commitment STARK proof (circuit 1)
- * 2. Submit + verify STARK proof on-chain
- * 3. Call emergency_unshield_denominated_stark (no epoch delay enforcement)
- * 4. Close proof buffer (recover rent)
- */
-export async function emergencyUnshieldStark(
-  receipt: ShieldReceipt,
-  poolConfig: PoolConfig,
-  recipient: PublicKey,
-  starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-  overrideKeypair?: import('@solana/web3.js').Keypair,
-): Promise<string> {
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT } = await import('../stark');
-
-  onProgress?.('Reading wallet...');
-  const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Preparing emergency unshield...');
-  const slot = await connection.getSlot('confirmed');
-  const currentEpoch = slotToEpoch(slot);
-
-  const poolInfo = await fetchPoolInfo(connection, poolConfig);
-  if (!poolInfo) throw new Error('Pool not found');
-
-  // Reconstruct Merkle proof if missing
-  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
-    onProgress?.('Reconstructing Merkle proof from on-chain...');
-    const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
-    if (!treeAccount) throw new Error('Merkle tree account not found');
-    const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
-
-    if (receipt.leafIndex >= leafCount) {
-      throw new Error(`Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}`);
-    }
-
-    const { newRoot, pathElements, pathIndices } = computeNewRootFromSubtrees(
-      receipt.commitment, receipt.leafIndex, subtrees
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: starkProofData.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: starkProofData.publicInputs,
+        proofSize: starkProofData.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
     );
-    receipt.merklePathElements = pathElements;
-    receipt.merklePathIndices = pathIndices;
 
-    let onChainRoot = 0n;
-    for (let i = 31; i >= 0; i--) {
-      onChainRoot = (onChainRoot << 8n) | BigInt(poolInfo.currentRoot[i]);
+    // Step 2a: Instant path — route through p01_liquidity.prefund. The STARK
+    // proof buffer remains open; settle() (keeper or later UI action) will
+    // consume it via CPI into zk_shielded.unshield_denominated_stark.
+    if (instant) {
+      onProgress?.('Requesting instant liquidity prefund...');
+      const { buildPrefundIx } = await import('../liquidity');
+      const starkCommitmentForPrefund = starkProofData.publicInputs[1] ?? 0n;
+      const prefundIx = buildPrefundIx({
+        ephemeralSigner: starkSigner.publicKey,
+        recipient,
+        denominatedPool: poolConfig.poolPDA,
+        starkProofBuffer: proofBuffer,
+        nullifier: nullifierBytes,
+        merkleRoot: merkleRootBytes,
+        minEpoch,
+        starkCommitment: starkCommitmentForPrefund,
+        amount: poolConfig.denominationAtomic,
+      });
+
+      const prefundTx = new Transaction();
+      prefundTx.add(...buildComputeBudgetIxs(200_000));
+      prefundTx.add(prefundIx);
+
+      onProgress?.('Sending prefund transaction...');
+      const prefundSig = await signAndSend(connection, prefundTx, effectiveKeypair, effectiveWalletSigner);
+      onProgress?.('Prefunded!');
+      // Do NOT close the proof buffer — settle() needs it. Caller should
+      // surface the ephemeral signer + buffer PDA if they want to reclaim
+      // rent after settlement.
+      return prefundSig;
     }
 
-    receipt.merkleRoot = newRoot === onChainRoot ? onChainRoot : newRoot;
+    // Step 2b: Classic unshield — direct CPI-free call into zk_shielded.
+    onProgress?.('Building unshield transaction...');
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+    let tokenProgram: PublicKey | undefined;
+    let recipientTokenAccount: PublicKey | undefined;
+    let poolVault: PublicKey | undefined;
+
+    if (!isNativeSOL) {
+      tokenProgram = TOKEN_PROGRAM_ID;
+      recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+      poolVault = poolConfig.vaultATA;
+    }
+
+    // Extract STARK commitment (second public input from the proof)
+    const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
+
+    const ix = buildUnshieldDenominatedStarkIx(
+      walletPubkey,
+      recipient,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      proofBuffer,
+      Array.from(nullifierBytes),
+      merkleRootBytes,
+      minEpoch,
+      starkCommitment,
+      tokenProgram,
+      poolVault,
+      recipientTokenAccount
+    );
+
+    onProgress?.('Sending unshield transaction...');
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+
+    // For SPL pools, ensure recipient ATA exists (idempotent — no-op if present)
+    if (!isNativeSOL && recipientTokenAccount) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          walletPubkey,            // payer (the STARK payer covers ATA rent)
+          recipientTokenAccount,   // ATA address
+          recipient,               // owner
+          poolConfig.tokenMint
+        )
+      );
+    }
+
+    tx.add(ix);
+
+    // Simulate first to catch errors with detailed logs
+    try {
+      const { blockhash: simBh } = await connection.getLatestBlockhash();
+      const simTx = new Transaction();
+      simTx.add(...buildComputeBudgetIxs(300_000));
+      simTx.add(ix);
+      simTx.recentBlockhash = simBh;
+      simTx.feePayer = effectiveWalletSigner?.publicKey || walletPubkey;
+      const simResult = await connection.simulateTransaction(simTx);
+      if (simResult.value.err) {
+        console.error(`[DenomPool] Simulation FAILED:`, JSON.stringify(simResult.value.err));
+        console.error(`[DenomPool] Simulation logs:`, simResult.value.logs?.join('\n'));
+        const signerBal = await connection.getBalance(effectiveWalletSigner?.publicKey || walletPubkey);
+        console.error(`[DenomPool] Signer balance at failure: ${signerBal / 1e9} SOL`);
+      } else {
+        console.log(`[DenomPool] Simulation OK — CU used: ${simResult.value.unitsConsumed}`);
+      }
+    } catch (simErr: any) {
+      console.warn(`[DenomPool] Simulation error (non-fatal):`, simErr.message?.slice(0, 100));
+    }
+
+    const sig = await signAndSend(connection, tx, effectiveKeypair, effectiveWalletSigner);
+    onProgress?.('Done!');
+    return sig;
+  } finally {
+    // Close proof buffer EXCEPT on the instant path, where settle() still
+    // needs to read it via CPI. Classic/emergency paths always close —
+    // refunds ~0.08-0.85 SOL rent to the signer.
+    if (!instant) {
+      try {
+        onProgress?.('Closing proof buffer...');
+        await closeStarkProofBuffer(proofBuffer, effectiveWalletSigner, connection);
+      } catch (closeErr: any) {
+        console.warn('[DenomPool] closeStarkProofBuffer failed (rent may be stranded):', closeErr.message);
+      }
+    }
   }
-
-  // Goldilocks nullifier (u64) placed in bytes 0..8 of the 32-byte nullifier arg
-  const goldilocksNullifier = starkProofData.publicInputs[0] ?? 0n;
-  const nullifierBytes: number[] = new Array(32).fill(0);
-  let _nv = goldilocksNullifier;
-  for (let i = 0; i < 8; i++) {
-    nullifierBytes[i] = Number(_nv & 0xFFn);
-    _nv >>= 8n;
-  }
-  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
-  // min_epoch is informational for the event — no on-chain delay check in emergency
-  const minEpoch = currentEpoch;
-
-  onProgress?.('Submitting STARK proof on-chain...');
-  const starkSigner: WalletSigner = keypair
-    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
-    : walletSigner!;
-
-  const { proofBuffer } = await submitAndVerifyStarkProof(
-    {
-      proofBytes: starkProofData.proofBytes,
-      circuitId: CIRCUIT_POOL_COMMITMENT,
-      publicInputs: starkProofData.publicInputs,
-      proofSize: starkProofData.proofSize,
-    },
-    starkSigner,
-    onProgress,
-    connection,
-  );
-
-  onProgress?.('Building emergency unshield transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-
-  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
-  let tokenProgram: PublicKey | undefined;
-  let recipientTokenAccount: PublicKey | undefined;
-  let poolVault: PublicKey | undefined;
-  if (!isNativeSOL) {
-    tokenProgram = TOKEN_PROGRAM_ID;
-    recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
-    poolVault = poolConfig.vaultATA;
-  }
-
-  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
-
-  const ix = buildEmergencyUnshieldDenominatedStarkIx(
-    walletPubkey,
-    recipient,
-    poolConfig.poolPDA,
-    poolConfig.treePDA,
-    nullifierPDA,
-    proofBuffer,
-    nullifierBytes,
-    merkleRootBytes,
-    minEpoch,
-    starkCommitment,
-    tokenProgram,
-    poolVault,
-    recipientTokenAccount
-  );
-
-  onProgress?.('Sending emergency unshield transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner ?? starkSigner);
-
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, starkSigner, connection);
-
-  onProgress?.('Done!');
-  return sig;
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,7 +1188,7 @@ export async function transferNoteStark(
   walletSigner?: WalletSigner,
   stealthKeypair?: Keypair,
 ): Promise<{ txSig: string; recipientNote: ShareableNote }> {
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT } = await import('../stark');
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT, getProofBufferPDA } = await import('../stark');
 
   onProgress?.('Reading wallet...');
   const keypair = stealthKeypair ?? (walletSigner ? null : await getKeypair());
@@ -1267,63 +1238,72 @@ export async function transferNoteStark(
     ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
     : walletSigner!;
 
-  const { proofBuffer } = await submitAndVerifyStarkProof(
-    {
-      proofBytes: starkProofData.proofBytes,
-      circuitId: CIRCUIT_POOL_COMMITMENT,
-      publicInputs: starkProofData.publicInputs,
-      proofSize: starkProofData.proofSize,
-    },
-    starkSigner,
-    onProgress,
-    connection,
-  );
+  // Derive PDA upfront so finally can close even if submit throws mid-flight.
+  const [proofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
 
-  onProgress?.('Building transfer transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
+  try {
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: starkProofData.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: starkProofData.publicInputs,
+        proofSize: starkProofData.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
 
-  const ix = buildTransferDenominatedStarkIx(
-    signerPubkey,
-    poolConfig.poolPDA,
-    poolConfig.treePDA,
-    nullifierPDA,
-    proofBuffer,
-    nullifierBytes,
-    merkleRootBytes,
-    minEpoch,
-    starkCommitment,
-    Array.from(newCommitmentBytes),
-    Array.from(newRootBytes),
-  );
+    onProgress?.('Building transfer transaction...');
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+    const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
 
-  onProgress?.('Sending transfer transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  const txSig = stealthKeypair
-    ? await signAndSend(connection, tx, stealthKeypair, undefined)
-    : await signAndSend(connection, tx, keypair, walletSigner);
+    const ix = buildTransferDenominatedStarkIx(
+      signerPubkey,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      proofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      starkCommitment,
+      Array.from(newCommitmentBytes),
+      Array.from(newRootBytes),
+    );
 
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, starkSigner, connection);
+    onProgress?.('Sending transfer transaction...');
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    tx.add(ix);
+    const txSig = stealthKeypair
+      ? await signAndSend(connection, tx, stealthKeypair, undefined)
+      : await signAndSend(connection, tx, keypair, walletSigner);
 
-  onProgress?.('Done!');
+    onProgress?.('Done!');
 
-  const recipientNote: ShareableNote = {
-    version: 1,
-    pool: poolConfig.poolPDA.toBase58(),
-    secret: newSecret.toString(),
-    nullifier_preimage: newNullifierPreimage.toString(),
-    deposit_epoch: newDepositEpoch.toString(),
-    token_mint: receipt.tokenMint.toString(),
-    commitment: newCommitment.toString(),
-    leafIndex: leafCount,
-    token: poolConfig.token,
-    denominationHuman: poolConfig.denomination,
-  };
+    const recipientNote: ShareableNote = {
+      version: 1,
+      pool: poolConfig.poolPDA.toBase58(),
+      secret: newSecret.toString(),
+      nullifier_preimage: newNullifierPreimage.toString(),
+      deposit_epoch: newDepositEpoch.toString(),
+      token_mint: receipt.tokenMint.toString(),
+      commitment: newCommitment.toString(),
+      leafIndex: leafCount,
+      token: poolConfig.token,
+      denominationHuman: poolConfig.denomination,
+    };
 
-  return { txSig, recipientNote };
+    return { txSig, recipientNote };
+  } finally {
+    try {
+      onProgress?.('Closing proof buffer...');
+      await closeStarkProofBuffer(proofBuffer, starkSigner, connection);
+    } catch (closeErr: any) {
+      console.warn('[DenomPool] closeStarkProofBuffer (transfer) failed (rent may be stranded):', closeErr.message);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1420,7 +1400,7 @@ export async function splitNoteStark(
   onProgress?: (step: string) => void,
   stealthKeypair?: Keypair,
 ): Promise<{ txSignature: string; outputCommitments: bigint[]; outputNullifierPreimages: bigint[] }> {
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT } = await import('../stark');
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT, getProofBufferPDA } = await import('../stark');
   const connection = getConnection();
 
   onProgress?.('Validating split parameters...');
@@ -1493,50 +1473,59 @@ export async function splitNoteStark(
     ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
     : walletSigner!;
 
-  const { proofBuffer } = await submitAndVerifyStarkProof(
-    {
-      proofBytes: starkProofData.proofBytes,
-      circuitId: CIRCUIT_POOL_COMMITMENT,
-      publicInputs: starkProofData.publicInputs,
-      proofSize: starkProofData.proofSize,
-    },
-    starkSigner,
-    onProgress,
-    connection,
-  );
+  // Derive PDA upfront so finally can close even if submit throws mid-flight.
+  const [proofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
 
-  onProgress?.('Building split transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(sourcePool.poolPDA, nullifierBytes);
-  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
+  try {
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: starkProofData.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: starkProofData.publicInputs,
+        proofSize: starkProofData.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
 
-  const ix = buildSplitNoteStarkIx(
-    signerPubkey,
-    sourcePool,
-    targetPool,
-    nullifierPDA,
-    proofBuffer,
-    nullifierBytes,
-    Array.from(merkleRootBytes),
-    minEpoch,
-    starkCommitment,
-    numOutputs,
-    outputCommitmentBytes,
-    newRootBytes,
-  );
+    onProgress?.('Building split transaction...');
+    const [nullifierPDA] = deriveNullifierPDA(sourcePool.poolPDA, nullifierBytes);
+    const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
 
-  onProgress?.('Sending split transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(500_000));
-  tx.add(ix);
-  const txSignature = stealthKeypair
-    ? await signAndSend(connection, tx, stealthKeypair, undefined)
-    : await signAndSend(connection, tx, keypair, walletSigner);
+    const ix = buildSplitNoteStarkIx(
+      signerPubkey,
+      sourcePool,
+      targetPool,
+      nullifierPDA,
+      proofBuffer,
+      nullifierBytes,
+      Array.from(merkleRootBytes),
+      minEpoch,
+      starkCommitment,
+      numOutputs,
+      outputCommitmentBytes,
+      newRootBytes,
+    );
 
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, starkSigner, connection);
+    onProgress?.('Sending split transaction...');
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(500_000));
+    tx.add(ix);
+    const txSignature = stealthKeypair
+      ? await signAndSend(connection, tx, stealthKeypair, undefined)
+      : await signAndSend(connection, tx, keypair, walletSigner);
 
-  onProgress?.('Split confirmed!');
-  return { txSignature, outputCommitments, outputNullifierPreimages };
+    onProgress?.('Split confirmed!');
+    return { txSignature, outputCommitments, outputNullifierPreimages };
+  } finally {
+    try {
+      onProgress?.('Closing proof buffer...');
+      await closeStarkProofBuffer(proofBuffer, starkSigner, connection);
+    } catch (closeErr: any) {
+      console.warn('[DenomPool] closeStarkProofBuffer (split) failed (rent may be stranded):', closeErr.message);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

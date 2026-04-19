@@ -1769,14 +1769,18 @@ export class ZkService {
     }
 
     // -----------------------------------------------------------------
-    // 1. Budget the ephemeral funding. init + 13 chunks + phase1/2 +
-    //    close ≈ 120k in tx fees, 2× NullifierRecord ≈ 2M rent (never
-    //    refunded), 10k for the unshield + close txs. ~80k buffer rent
-    //    is refunded on close, plus a 1M cushion for proof resize /
-    //    extra chunks. Sweep-back at the end returns the cushion.
+    // 1. Budget the ephemeral funding. Circuit-5 STARK proof ≈ 120KB;
+    //    buffer rent ~0.84 SOL and is refunded on close. init + 121
+    //    chunks + phase1/2 + unshield + close ≈ 650k tx fees. 2×
+    //    NullifierRecord ≈ 2M rent (never refunded). Sweep at the end
+    //    returns buffer rent + cushion.
     // -----------------------------------------------------------------
-    const BUFFER_RENT = 80_000;
-    const UPLOAD_FEES = 120_000;
+    const PROOF_DATA_OFFSET = 83;
+    const MAX_STARK_PROOF_SIZE = 140_000;
+    const BUFFER_RENT = await this.connection.getMinimumBalanceForRentExemption(
+      PROOF_DATA_OFFSET + MAX_STARK_PROOF_SIZE,
+    );
+    const UPLOAD_FEES = 1_000_000;
     const NULLIFIER_RENT = 2_000_000;
     const UNSHIELD_FEE = 10_000;
     const SWEEP_FEE = 5_000;

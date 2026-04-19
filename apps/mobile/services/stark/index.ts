@@ -52,6 +52,7 @@ const DISCRIMINATORS = {
 
 const PROOF_DATA_OFFSET = 83; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified
 const MAX_INIT_SIZE = 10_240; // Solana create_account limit
+const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per realloc call
 
 // ---------------------------------------------------------------------------
 // Types
@@ -313,6 +314,207 @@ async function signSendConfirm(
 }
 
 /**
+ * Resize the proof buffer from MAX_INIT_SIZE up to targetSize.
+ *
+ * Anchor's realloc grows by MAX_REALLOC_STEP (10 KB) per call, so large proofs
+ * require multiple iterations. All resize TXs are signed with one blockhash,
+ * fired without awaiting confirmations, then confirmed in parallel at the end.
+ * Solana serializes writes to the same account, so each TX sees the previous
+ * TX's size and advances by STEP (capped at target).
+ */
+/**
+ * Send pre-signed TXs in staggered waves. Tuned for Helius free tier (~10 RPS)
+ * with resilientFetch handling residual 429s transparently. Within a wave, sends
+ * are parallel via Promise.allSettled so one 429 (post-retry-exhaustion) doesn't
+ * take down the whole batch — failed sends bubble up as thrown errors with the
+ * failed index so the caller can decide whether to abort or retry.
+ */
+async function sendTxsInWaves(
+  conn: Connection,
+  signedTxs: Transaction[],
+  waveSize = 3,
+  waveDelayMs = 700,
+): Promise<string[]> {
+  const sigs: string[] = new Array(signedTxs.length);
+  for (let w = 0; w < signedTxs.length; w += waveSize) {
+    const waveEnd = Math.min(w + waveSize, signedTxs.length);
+    const results = await Promise.allSettled(
+      signedTxs.slice(w, waveEnd).map(tx =>
+        conn.sendRawTransaction(tx.serialize(), { skipPreflight: true })
+      )
+    );
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (r.status === 'fulfilled') {
+        sigs[w + i] = r.value;
+      } else {
+        throw new Error(`sendRawTransaction failed for tx[${w + i}]: ${r.reason?.message ?? String(r.reason)}`);
+      }
+    }
+    if (waveEnd < signedTxs.length) {
+      await new Promise(r => setTimeout(r, waveDelayMs));
+    }
+  }
+  return sigs;
+}
+
+/**
+ * Poll getSignatureStatuses in a single batch call for all signatures, instead
+ * of N parallel confirmTransaction polls. One RPC call per poll interval keeps
+ * us well under rate limits. Errors out on first on-chain tx error or timeout.
+ */
+async function confirmAllBatched(
+  conn: Connection,
+  sigs: string[],
+  label: string,
+  timeoutMs = 180_000,
+  pollMs = 1500,
+): Promise<void> {
+  if (sigs.length === 0) return;
+  const start = Date.now();
+  const confirmed = new Set<number>();
+  while (confirmed.size < sigs.length) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `${label} confirmation timeout: ${confirmed.size}/${sigs.length} confirmed after ${timeoutMs}ms`
+      );
+    }
+    const { value: statuses } = await conn.getSignatureStatuses(sigs);
+    for (let i = 0; i < statuses.length; i++) {
+      const s = statuses[i];
+      if (!s) continue;
+      if (s.err) {
+        throw new Error(`${label} failed: ${JSON.stringify(s.err)} (sig=${sigs[i]})`);
+      }
+      if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') {
+        confirmed.add(i);
+      }
+    }
+    if (confirmed.size < sigs.length) {
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+  }
+}
+
+async function resizeToTarget(
+  conn: Connection,
+  targetSize: number,
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+  onProgress?: (step: string) => void,
+): Promise<void> {
+  if (targetSize <= MAX_INIT_SIZE) return;
+  const resizesNeeded = Math.ceil((targetSize - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
+  console.log(`[STARK] Resizing proof buffer 10KB → ${targetSize}B in ${resizesNeeded} steps`);
+  const { blockhash } = await conn.getLatestBlockhash('confirmed');
+  // Each TX gets a UNIQUE ComputeUnitPrice (microLamports = i+1) so the
+  // serialized bytes differ — otherwise ed25519 deterministic signing would
+  // produce identical signatures and Solana would dedupe all resize TXs to
+  // one, leaving the buffer at 10KB and chunks past that offset panicking.
+  const signedTxs = await Promise.all(
+    Array.from({ length: resizesNeeded }, async (_, i) => {
+      onProgress?.(`Resizing proof buffer (${i + 1}/${resizesNeeded})...`);
+      let tx = new Transaction()
+        .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: i + 1 }))
+        .add(buildResizeProofBufferIx(proofBuffer, authority));
+      tx.recentBlockhash = blockhash;
+      if (keypair) {
+        tx.feePayer = keypair.publicKey;
+        tx.sign(keypair);
+      } else if (walletSigner) {
+        tx.feePayer = walletSigner.publicKey;
+        tx = await walletSigner.signTransaction(tx);
+      } else {
+        throw new Error('No wallet available for signing');
+      }
+      return tx;
+    })
+  );
+  const sigs = await sendTxsInWaves(conn, signedTxs);
+  console.log(`[STARK] All ${resizesNeeded} resize TXs sent, awaiting batch confirm`);
+  await confirmAllBatched(conn, sigs, 'Resize');
+  console.log(`[STARK] Resize complete`);
+}
+
+/**
+ * Build + sign + send + batch-confirm all chunk upload TXs. Chunks are
+ * naturally unique (different offset/data) so no dedup hack needed.
+ *
+ * Chunks are processed in BATCHES so each batch uses a fresh blockhash. A single
+ * blockhash only stays valid ~60-90s on Solana, and rate-limited sends + 121
+ * chunks can easily exceed that window — the late-arriving TXs would get
+ * silently dropped, causing the whole flow to time out.
+ *
+ * PIPELINED: batch N+1 prepares + sends WHILE batch N is still confirming. Cuts
+ * the per-batch confirm wait (~2s) out of the critical path for all batches
+ * except the last one. Chunks are order-independent writes so interleaving is safe.
+ */
+async function uploadChunksParallel(
+  conn: Connection,
+  proofBytes: Uint8Array,
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+  onProgress?: (step: string) => void,
+): Promise<void> {
+  const totalChunks = Math.ceil(proofBytes.length / MAX_CHUNK_SIZE);
+  const BATCH_SIZE = 20; // chunks per blockhash window — smaller batch survives heavy 429 retries
+  const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
+  console.log(`[STARK] Uploading ${proofBytes.length}B in ${totalChunks} chunks (${totalBatches} batches, pipelined)`);
+
+  let prevConfirm: Promise<void> | null = null;
+
+  for (let batchStart = 0; batchStart < totalChunks; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, totalChunks);
+    const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
+    onProgress?.(`Uploading proof batch ${batchNum}/${totalBatches}...`);
+
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    const signedTxs = await Promise.all(
+      Array.from({ length: batchEnd - batchStart }, async (_, j) => {
+        const i = batchStart + j;
+        const offset = i * MAX_CHUNK_SIZE;
+        const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
+        const chunk = proofBytes.slice(offset, end);
+        let tx = new Transaction().add(
+          buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
+        );
+        tx.recentBlockhash = blockhash;
+        if (keypair) {
+          tx.feePayer = keypair.publicKey;
+          tx.sign(keypair);
+        } else if (walletSigner) {
+          tx.feePayer = walletSigner.publicKey;
+          tx = await walletSigner.signTransaction(tx);
+        } else {
+          throw new Error('No wallet available for signing');
+        }
+        return tx;
+      })
+    );
+    const sigs = await sendTxsInWaves(conn, signedTxs);
+    console.log(`[STARK] Batch ${batchNum}/${totalBatches}: ${sigs.length} TXs sent`);
+
+    // Pipeline: start this batch's confirm in the background, wait for the
+    // PREVIOUS batch's confirm before starting the NEXT batch's signing.
+    // This overlaps confirm of N with signing+sending of N+1.
+    const thisConfirm = confirmAllBatched(conn, sigs, `Chunk batch ${batchNum}`)
+      .then(() => { console.log(`[STARK] Batch ${batchNum}/${totalBatches} confirmed`); });
+    if (prevConfirm) {
+      await prevConfirm;
+    }
+    prevConfirm = thisConfirm;
+  }
+
+  // Wait for the final batch's confirm
+  if (prevConfirm) await prevConfirm;
+  console.log(`[STARK] All ${totalChunks} chunks confirmed`);
+}
+
+/**
  * Submit and verify a STARK proof on-chain.
  *
  * Flow:
@@ -359,53 +561,19 @@ export async function submitStarkProof(
   );
   await signSendConfirm(conn, initTx, keypair, walletSigner);
 
-  // Step 1b: Resize if proof > 10KB
-  if (proof.proofSize + PROOF_DATA_OFFSET > MAX_INIT_SIZE) {
-    onProgress?.('Resizing proof buffer...');
-    const resizeTx = new Transaction().add(
-      buildResizeProofBufferIx(proofBuffer, authority)
-    );
-    await signSendConfirm(conn, resizeTx, keypair, walletSigner);
-  }
-
-  // Step 2: Upload proof in chunks (fire-and-forget, confirm all at end)
-  const { blockhash: chunkBlockhash } = await conn.getLatestBlockhash('confirmed');
-  const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
-  const chunkSigs: string[] = [];
-
-  for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
-    onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
-    const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
-    const chunk = proof.proofBytes.slice(offset, end);
-    let chunkTx = new Transaction().add(
-      buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
-    );
-    chunkTx.recentBlockhash = chunkBlockhash;
-
-    if (keypair) {
-      chunkTx.feePayer = keypair.publicKey;
-      chunkTx.sign(keypair);
-    } else if (walletSigner) {
-      chunkTx.feePayer = walletSigner.publicKey;
-      chunkTx = await walletSigner.signTransaction(chunkTx);
-    }
-
-    const sig = await conn.sendRawTransaction(chunkTx.serialize(), {
-      skipPreflight: true,
-    });
-    chunkSigs.push(sig);
-  }
-
-  // Confirm all chunk uploads
-  onProgress?.('Confirming chunk uploads...');
-  await Promise.all(
-    chunkSigs.map(async (sig) => {
-      const result = await conn.confirmTransaction(sig, 'confirmed');
-      if (result.value.err) {
-        throw new Error(`Chunk upload failed: ${JSON.stringify(result.value.err)}`);
-      }
-    })
+  // Step 1b: Resize iteratively — Anchor realloc grows 10 KB per call
+  await resizeToTarget(
+    conn,
+    proof.proofSize + PROOF_DATA_OFFSET,
+    proofBuffer,
+    authority,
+    keypair,
+    walletSigner,
+    onProgress,
   );
+
+  // Step 2: Upload proof chunks in parallel
+  await uploadChunksParallel(conn, proof.proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
 
   // Step 3: Verify (requires ~900K CU for STARK verification)
   onProgress?.('Verifying STARK proof on-chain...');
@@ -493,27 +661,19 @@ export async function submitGenericStarkProof(
   );
   await signSendConfirm(conn, initTx, keypair, walletSigner);
 
-  // Step 1b: Resize if proof > 10KB
-  if (proof.proofSize + PROOF_DATA_OFFSET > MAX_INIT_SIZE) {
-    onProgress?.('Resizing proof buffer...');
-    const resizeTx = new Transaction().add(
-      buildResizeProofBufferIx(proofBuffer, authority)
-    );
-    await signSendConfirm(conn, resizeTx, keypair, walletSigner);
-  }
+  // Step 1b: Resize iteratively — Anchor realloc grows 10 KB per call
+  await resizeToTarget(
+    conn,
+    proof.proofSize + PROOF_DATA_OFFSET,
+    proofBuffer,
+    authority,
+    keypair,
+    walletSigner,
+    onProgress,
+  );
 
-  // Step 2: Upload proof in chunks
-  const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
-  for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
-    onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
-    const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
-    const chunk = proof.proofBytes.slice(offset, end);
-
-    const chunkTx = new Transaction().add(
-      buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
-    );
-    await signSendConfirm(conn, chunkTx, keypair, walletSigner);
-  }
+  // Step 2: Upload proof chunks in parallel
+  await uploadChunksParallel(conn, proof.proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
 
   // Step 3a: Phase 1 — verify_stark_proof_v2 (FRI + trace-aligned + boundary)
   onProgress?.('Verifying STARK proof phase 1...');
@@ -596,59 +756,19 @@ export async function submitAndVerifyStarkProof(
   );
   await signSendConfirm(conn, initTx, keypair, walletSigner);
 
-  // Step 1b: Resize if proof > 10KB
-  if (proof.proofSize + PROOF_DATA_OFFSET > MAX_INIT_SIZE) {
-    onProgress?.('Resizing proof buffer...');
-    const resizeTx = new Transaction().add(
-      buildResizeProofBufferIx(proofBuffer, authority)
-    );
-    await signSendConfirm(conn, resizeTx, keypair, walletSigner);
-  }
-
-  // Step 2: Upload proof in chunks (fire-and-forget, confirm all at end)
-  // Reuse one blockhash for all chunk txs to avoid N getLatestBlockhash RPCs.
-  // Send each tx immediately after signing without waiting for confirmation.
-  // This eliminates ~2s confirmation wait per chunk from the signing loop.
-  const { blockhash: chunkBlockhash } = await conn.getLatestBlockhash('confirmed');
-  const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
-  const chunkSigs: string[] = [];
-
-  for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
-    onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
-    const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
-    const chunk = proof.proofBytes.slice(offset, end);
-    let chunkTx = new Transaction().add(
-      buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
-    );
-    chunkTx.recentBlockhash = chunkBlockhash;
-
-    if (keypair) {
-      chunkTx.feePayer = keypair.publicKey;
-      chunkTx.sign(keypair);
-    } else if (walletSigner) {
-      chunkTx.feePayer = walletSigner.publicKey;
-      chunkTx = await walletSigner.signTransaction(chunkTx);
-    }
-
-    // Send with rate-limit protection — 500ms delay between chunks
-    // Devnet public RPC rate-limits at ~5 req/s
-    if (i > 0) await new Promise(r => setTimeout(r, 500));
-    const sig = await conn.sendRawTransaction(chunkTx.serialize(), {
-      skipPreflight: true,
-    });
-    chunkSigs.push(sig);
-  }
-
-  // Confirm all chunk uploads before verifying
-  onProgress?.('Confirming chunk uploads...');
-  await Promise.all(
-    chunkSigs.map(async (sig) => {
-      const result = await conn.confirmTransaction(sig, 'confirmed');
-      if (result.value.err) {
-        throw new Error(`Chunk upload failed: ${JSON.stringify(result.value.err)}`);
-      }
-    })
+  // Step 1b: Resize iteratively — Anchor realloc grows 10 KB per call
+  await resizeToTarget(
+    conn,
+    proof.proofSize + PROOF_DATA_OFFSET,
+    proofBuffer,
+    authority,
+    keypair,
+    walletSigner,
+    onProgress,
   );
+
+  // Step 2: Upload proof chunks in parallel
+  await uploadChunksParallel(conn, proof.proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
 
   // Step 3a: Phase 1 — verify_stark_proof_v2 (FRI + trace-aligned + boundary)
   onProgress?.('Verifying STARK proof phase 1...');

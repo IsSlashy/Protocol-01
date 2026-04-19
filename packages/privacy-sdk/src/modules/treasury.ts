@@ -16,6 +16,7 @@ import { ShieldModule } from './shield';
 import { MPCModule } from './mpc';
 import { ComplianceModule } from './compliance';
 import { RelayModule } from './relay';
+import type { SpendingKey } from '../identity/spendingKey';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -158,6 +159,7 @@ export class TreasuryModule {
     network: Network,
     programIds: ProgramIds,
     resolveToken: (symbol: string) => TokenInfo,
+    spendingKey: SpendingKey,
   ) {
     this.connection = connection;
     this.wallet = wallet;
@@ -165,7 +167,7 @@ export class TreasuryModule {
     this.programIds = programIds;
     this.resolveToken = resolveToken;
 
-    this.shield = new ShieldModule(connection, wallet, network, programIds, resolveToken);
+    this.shield = new ShieldModule(connection, wallet, network, programIds, resolveToken, spendingKey);
     this.mpc = new MPCModule(connection, wallet, network, programIds, resolveToken);
     this.compliance = new ComplianceModule(connection, wallet, network, programIds, resolveToken);
     this.relay = new RelayModule(connection, wallet, network, programIds, resolveToken);

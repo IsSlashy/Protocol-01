@@ -9,7 +9,7 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 // Animations removed — staggered FadeInDown on each note caused tearing during navigation transitions
 
-import { useDenominatedPoolStore, type StoredNote, type NoteStatus } from '@/stores/denominatedPoolStore';
+import { useDenominatedPoolStore, useActiveNotes, type StoredNote, type NoteStatus } from '@/stores/denominatedPoolStore';
 import { receiptFromJSON, slotToEpoch } from '@/services/denominatedPool';
 import { getCluster } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
@@ -45,9 +45,10 @@ export default function DenominatedNotesScreen() {
   const [slotMs, setSlotMs] = useState(DEFAULT_SLOT_MS);
 
   const {
-    notes, isLoading, refreshAllPools, refreshNoteStatuses,
+    isLoading, refreshAllPools, refreshNoteStatuses,
     exportAllNotes, exportNote, poolCache, recoverTransferredNotes,
   } = useDenominatedPoolStore();
+  const notes = useActiveNotes();
 
   // Dedup + refresh on mount
   useEffect(() => {

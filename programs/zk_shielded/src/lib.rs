@@ -126,6 +126,10 @@ pub mod zk_shielded {
     /// Unshield from denominated pool using STARK proof (quantum-resistant).
     /// Requires a pre-verified STARK proof buffer from p01_stark_verifier.
     /// The STARK proof replaces Groth16 — no elliptic curve pairings needed.
+    ///
+    /// `min_epoch == 0` bypasses the maturity check (emergency-like behavior).
+    /// Event shape is identical for both paths so on-chain observers cannot
+    /// distinguish emergency withdrawals from mature ones.
     pub fn unshield_denominated_stark(
         ctx: Context<UnshieldDenominatedStark>,
         nullifier: [u8; 32],
@@ -213,25 +217,6 @@ pub mod zk_shielded {
             stark_commitment,
             new_commitment,
             new_root,
-        )
-    }
-
-    /// Emergency unshield from a denominated pool using STARK (quantum-resistant).
-    /// Bypasses the on-chain maturity check. Emits is_emergency=true — reduces
-    /// anonymity set for this withdrawal.
-    pub fn emergency_unshield_denominated_stark(
-        ctx: Context<EmergencyUnshieldDenominatedStark>,
-        nullifier: [u8; 32],
-        merkle_root: [u8; 32],
-        min_epoch: u64,
-        stark_commitment: u64,
-    ) -> Result<()> {
-        instructions::emergency_unshield_denominated_stark::handler(
-            ctx,
-            nullifier,
-            merkle_root,
-            min_epoch,
-            stark_commitment,
         )
     }
 

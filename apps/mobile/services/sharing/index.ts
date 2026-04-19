@@ -230,6 +230,13 @@ export class ShareService {
     if (!this.bleTransport || !this.ephemeralKeyPair || !this.remotePubKey) {
       throw new Error('BLE session not ready');
     }
+    // Gate: only proceed from the explicit fingerprint-verification state so
+    // the send is impossible without the user's affirmative tap on the modal.
+    if (this.currentSession?.state !== 'verifying-fingerprint') {
+      throw new Error(
+        `Fingerprint not verified (state=${this.currentSession?.state ?? 'none'})`,
+      );
+    }
 
     this.updateSession({ state: 'encrypting', notePayload: payload });
 
@@ -268,8 +275,12 @@ export class ShareService {
   }
 
   async confirmFingerprintAndReceive(): Promise<void> {
-    // Fingerprint verified — just wait for the encrypted note
-    // The BLE callback onEncryptedNoteReceived will handle the rest
+    // Gate: receiver must also tap "Codes Match" before we accept the note.
+    if (this.currentSession?.state !== 'verifying-fingerprint') {
+      throw new Error(
+        `Fingerprint not verified (state=${this.currentSession?.state ?? 'none'})`,
+      );
+    }
     this.updateSession({ state: 'receiving' });
   }
 

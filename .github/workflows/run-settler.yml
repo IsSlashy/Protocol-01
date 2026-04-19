@@ -1,0 +1,44 @@
+name: Settler Keeper
+
+# Permissionless keeper that scans PrefundRecord PDAs owned by p01_liquidity
+# and fires settle() for any whose min_epoch has elapsed. Pays ~0.2 bps of the
+# prefund amount as `settler_reward` on success.
+#
+# Runs every 10 minutes. Manual trigger is also available for one-off runs.
+#
+# Required repo secrets:
+#   SETTLER_KEYPAIR_JSON — raw 64-byte Solana keypair JSON (e.g. contents of
+#     `~/.config/solana/id.json`). Must be funded with a small amount of SOL
+#     on the target network to cover tx fees; reward income is paid to the
+#     same pubkey on every successful settle.
+#   SETTLER_RPC_URL      — RPC endpoint (prefer Helius; public devnet throttles).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: settler-keeper
+  cancel-in-progress: false
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install tsx + web3.js
+        run: npm install --no-save tsx @solana/web3.js@^1.98.4
+
+      - name: Run settler
+        env:
+          SETTLER_KEYPAIR_JSON: ${{ secrets.SETTLER_KEYPAIR_JSON }}
+          RPC_URL: ${{ secrets.SETTLER_RPC_URL }}
+        run: npx tsx scripts/run-settler.ts

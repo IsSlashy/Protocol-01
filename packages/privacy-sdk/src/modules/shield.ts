@@ -17,8 +17,6 @@ import {
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { hmac } from '@noble/hashes/hmac.js';
-import { poseidon2, poseidon3 } from 'poseidon-lite';
-import { randomFieldElement as toolkitRandomFieldElement } from '@protocol-01/privacy-toolkit';
 
 import type {
   ShieldParams,
@@ -46,6 +44,16 @@ import {
   FEE_WALLET,
   STARK_CIRCUITS,
 } from '../constants';
+import { goldilocksHash2to1, computeGoldilocksZeroCascade } from '../crypto/goldilocks-poseidon';
+import {
+  bytesToGoldilocks,
+  packGoldilocksU64,
+  computeGoldilocksCommitment,
+  computeGoldilocksNullifier,
+  randomGoldilocksU64,
+  truncateToGoldilocks,
+} from '../crypto/goldilocks';
+import type { SpendingKey } from '../identity/spendingKey';
 
 // ─── Borsh serialization helpers ─────────────────────────────────────────────
 
@@ -185,13 +193,22 @@ export class ShieldModule {
   /** Host-supplied STARK prover, timeout, and legacy Groth16 paths. */
   private proverConfig?: ProverConfig;
 
+  /** Goldilocks spending-key element (low 8 bytes of the caller-supplied key). */
+  private readonly spendingKeyGl: bigint;
+  /** Circuit-5 owner identity: Poseidon(spending_key_gl, 0) — the cycle-0 derivation. */
+  private readonly ownerPubkeyGl: bigint;
+
   constructor(
     private connection: Connection,
     private wallet: Signer,
     private network: Network,
     private programIds: ProgramIds,
     private resolveToken: (symbol: string) => TokenInfo,
-  ) {}
+    spendingKey: SpendingKey,
+  ) {
+    this.spendingKeyGl = bytesToGoldilocks(spendingKey);
+    this.ownerPubkeyGl = goldilocksHash2to1(this.spendingKeyGl, 0n);
+  }
 
   /**
    * Configure the prover (circuit WASM / zkey paths, timeout).
@@ -234,17 +251,24 @@ export class ShieldModule {
       );
     }
 
-    // Generate random field element for commitment blinding
+    // Generate Goldilocks-field randomness for commitment blinding
     const randomness = this.randomFieldElement();
 
-    // Owner field: the wallet's public key as a field element
-    const ownerField = this.pubkeyToFieldElement(walletPubkey);
+    // Circuit-5 owner identity: hash2(spending_key_gl, 0), derived at construct
+    const ownerField = this.ownerPubkeyGl;
 
-    // Compute commitment = Poseidon3(amount, ownerPubkey, randomness)
-    const commitment = await this.computeCommitment(amount, ownerField, randomness);
+    // Compute commitment matching circuit 5:
+    //   hash2(hash2(amount, randomness), hash2(owner, mint))
+    const tokenMintGl = this.tokenMintToGoldilocks(tokenInfo.mint);
+    const commitment = this.computeCommitment(
+      truncateToGoldilocks(amount),
+      ownerField,
+      randomness,
+      tokenMintGl,
+    );
 
-    // Encode commitment as 32-byte LE buffer
-    const commitmentBytes = bigintToBytes32LE(commitment);
+    // Encode commitment as 32-byte LE buffer (bytes 0..8 = u64 LE, 8..32 = 0)
+    const commitmentBytes = Buffer.from(packGoldilocksU64(commitment));
 
     // Compute the new Merkle root off-chain after inserting this commitment.
     // For now we compute a placeholder root from the commitment since full
@@ -414,37 +438,54 @@ export class ShieldModule {
       const [poolPDA] = this.derivePoolPDA(tokenInfo.mint);
       const [merkleTreePDA] = this.deriveMerkleTreePDA(poolPDA);
 
-      // Derive fields for the ZK proof
-      const ownerField = this.pubkeyToFieldElement(walletPubkey);
-      const spendingKeyHash = this.computeSpendingKeyHash(walletPubkey);
-      const recipientField = this.pubkeyToFieldElement(recipientPubkey);
+      // Sender's circuit-5 owner identity (derived from the supplied spendingKey).
+      const ownerField = this.ownerPubkeyGl;
+      // Recipient's owner identity as circuit 5 would derive it — `hash2(X, 0)`
+      // where X is the recipient's Goldilocks field. NOTE: a real external
+      // recipient cannot spend notes produced this way; shielded transfers to
+      // third parties must instead go through stealth-address flows. This
+      // placeholder matches the existing dev-only structure so the transfer
+      // builder stays wired and same-wallet self-transfers still work.
+      const recipientGl = bytesToGoldilocks(recipientPubkey.toBytes());
+      const recipientField = goldilocksHash2to1(recipientGl, 0n);
 
-      // Generate randomness for output notes
+      // Goldilocks-field randomness for output notes
       const randomness1 = this.randomFieldElement(); // recipient note
       const randomness2 = this.randomFieldElement(); // change note
 
       // Fetch pool to get current merkle root
       const poolInfo = await this.getPoolInfo(params.token);
 
-      // Output commitments
-      const outputCommitment1 = await this.computeCommitment(amount, recipientField, randomness1);
-      const outputCommitment2 = await this.computeCommitment(0n, ownerField, randomness2); // change placeholder
+      const tokenMintGl = this.tokenMintToGoldilocks(tokenInfo.mint);
 
-      // Compute nullifiers for the input notes.
-      // In a real implementation, these would be derived from the actual input notes
-      // selected from the user's local note set. Here we show the structure.
-      const nullifier1 = await this.computeNullifier(outputCommitment1, spendingKeyHash);
-      const nullifier2 = await this.computeNullifier(outputCommitment2, spendingKeyHash);
+      // Output commitments — circuit-5 layout
+      const outputCommitment1 = this.computeCommitment(
+        truncateToGoldilocks(amount),
+        recipientField,
+        randomness1,
+        tokenMintGl,
+      );
+      const outputCommitment2 = this.computeCommitment(
+        0n,
+        ownerField,
+        randomness2,
+        tokenMintGl,
+      ); // change placeholder
+
+      // Input nullifiers — placeholder (real impl picks from the user's note db).
+      // Sender spends notes owned by `ownerField`, so nullifiers bind to it.
+      const nullifier1 = this.computeNullifier(outputCommitment1, ownerField);
+      const nullifier2 = this.computeNullifier(outputCommitment2, ownerField);
 
       // Check nullifiers are not already spent
-      await this.checkNullifierNotSpent(poolPDA, bigintToBytes32LE(nullifier1));
-      await this.checkNullifierNotSpent(poolPDA, bigintToBytes32LE(nullifier2));
+      await this.checkNullifierNotSpent(poolPDA, packGoldilocksU64(nullifier1));
+      await this.checkNullifierNotSpent(poolPDA, packGoldilocksU64(nullifier2));
 
-      const nullifier1Bytes = bigintToBytes32LE(nullifier1);
-      const nullifier2Bytes = bigintToBytes32LE(nullifier2);
-      const outCommit1Bytes = bigintToBytes32LE(outputCommitment1);
-      const outCommit2Bytes = bigintToBytes32LE(outputCommitment2);
-      const merkleRootBytes = bigintToBytes32LE(poolInfo.merkleRoot);
+      const nullifier1Bytes = Buffer.from(packGoldilocksU64(nullifier1));
+      const nullifier2Bytes = Buffer.from(packGoldilocksU64(nullifier2));
+      const outCommit1Bytes = Buffer.from(packGoldilocksU64(outputCommitment1));
+      const outCommit2Bytes = Buffer.from(packGoldilocksU64(outputCommitment2));
+      const merkleRootBytes = Buffer.from(packGoldilocksU64(poolInfo.merkleRoot));
       const newRoot = this.computeNewRoot(outCommit1Bytes);
 
       // Derive nullifier PDAs
@@ -455,18 +496,18 @@ export class ShieldModule {
       // provides the real private inputs (spending_key, randomness, merkle
       // paths, etc.) — the SDK only forwards the public inputs it can derive.
       const starkProof = await this.requestStarkProof(STARK_CIRCUITS.TRANSFER, {
+        spendingKeyGl: this.spendingKeyGl.toString(),
         merkleRoot: poolInfo.merkleRoot.toString(),
         nullifier1: nullifier1.toString(),
         nullifier2: nullifier2.toString(),
         outputCommitment1: outputCommitment1.toString(),
         outputCommitment2: outputCommitment2.toString(),
         publicAmount: '0',
-        tokenMint: this.pubkeyToFieldElement(tokenInfo.mint).toString(),
+        tokenMint: tokenMintGl.toString(),
         ownerField: ownerField.toString(),
         recipientField: recipientField.toString(),
         randomness1: randomness1.toString(),
         randomness2: randomness2.toString(),
-        spendingKeyHash: spendingKeyHash.toString(),
       });
 
       // Build transfer_stark instruction — must match byte layout in
@@ -632,8 +673,9 @@ export class ShieldModule {
     // For now, we scan transaction signatures on the pool PDA and parse events.
     // A production SDK would maintain a local SQLite note database.
 
-    const walletPubkey = this.getWalletPublicKey();
-    const ownerField = this.pubkeyToFieldElement(walletPubkey);
+    // Note: owner identity derived from supplied spendingKey; used below
+    // when a real scan matches commitments against the wallet's note set.
+    const _ownerField = this.ownerPubkeyGl;
 
     // Fetch recent confirmed signatures for the pool
     const signatures = await this.connection.getSignaturesForAddress(poolPDA, {
@@ -883,23 +925,28 @@ export class ShieldModule {
       new PublicKey('So11111111111111111111111111111111111111112'),
     );
 
-    // Derive nullifier from spending key and commitment
-    const spendingKeyHash = this.computeSpendingKeyHash(walletPubkey);
-    const ownerField = this.pubkeyToFieldElement(walletPubkey);
+    // Derive nullifier from the supplied spending key + the note commitment.
+    const ownerField = this.ownerPubkeyGl;
+    const tokenMintGl = this.tokenMintToGoldilocks(tokenInfo.mint);
 
-    // The nullifier is derived from the note's secret + the commitment.
-    // In a full implementation, these come from the local note database.
-    const noteRandomness = this.randomFieldElement(); // placeholder
-    const noteCommitment = await this.computeCommitment(denomination, ownerField, noteRandomness);
-    const nullifier = await this.computeNullifier(noteCommitment, spendingKeyHash);
-    const nullifierBytes = bigintToBytes32LE(nullifier);
+    // Placeholder note: real implementations pick an existing unspent note
+    // from the local note database.
+    const noteRandomness = this.randomFieldElement();
+    const noteCommitment = this.computeCommitment(
+      truncateToGoldilocks(denomination),
+      ownerField,
+      noteRandomness,
+      tokenMintGl,
+    );
+    const nullifier = this.computeNullifier(noteCommitment, ownerField);
+    const nullifierBytes = Buffer.from(packGoldilocksU64(nullifier));
 
     // Check nullifier not already spent
     await this.checkNullifierNotSpent(poolPDA, nullifierBytes);
 
     // Fetch pool info to get current merkle root
     const poolInfo = await this.getPoolInfo(tokenInfo.symbol, true, denomination);
-    const merkleRootBytes = bigintToBytes32LE(poolInfo.merkleRoot);
+    const merkleRootBytes = Buffer.from(packGoldilocksU64(poolInfo.merkleRoot));
 
     // min_epoch: the epoch at which the note was deposited + epoch_delay
     const minEpoch = 0n; // In production, retrieved from note metadata
@@ -947,8 +994,8 @@ export class ShieldModule {
       new PublicKey('So11111111111111111111111111111111111111112'),
     );
 
-    const spendingKeyHash = this.computeSpendingKeyHash(walletPubkey);
-    const ownerField = this.pubkeyToFieldElement(walletPubkey);
+    const ownerField = this.ownerPubkeyGl;
+    const tokenMintGl = this.tokenMintToGoldilocks(tokenInfo.mint);
 
     // 2-input / 2-output: two input notes consumed, one change note emitted +
     // one public withdrawal (no second output commitment).
@@ -956,37 +1003,43 @@ export class ShieldModule {
     const randomness2 = this.randomFieldElement();
     const changeRandomness = this.randomFieldElement();
 
-    const inputCommitment1 = await this.computeCommitment(amount, ownerField, randomness1);
-    const inputCommitment2 = await this.computeCommitment(0n, ownerField, randomness2);
-    const nullifier1 = await this.computeNullifier(inputCommitment1, spendingKeyHash);
-    const nullifier2 = await this.computeNullifier(inputCommitment2, spendingKeyHash);
+    const inputCommitment1 = this.computeCommitment(
+      truncateToGoldilocks(amount),
+      ownerField,
+      randomness1,
+      tokenMintGl,
+    );
+    const inputCommitment2 = this.computeCommitment(0n, ownerField, randomness2, tokenMintGl);
+    const nullifier1 = this.computeNullifier(inputCommitment1, ownerField);
+    const nullifier2 = this.computeNullifier(inputCommitment2, ownerField);
 
-    const changeCommitment = await this.computeCommitment(0n, ownerField, changeRandomness);
+    const changeCommitment = this.computeCommitment(0n, ownerField, changeRandomness, tokenMintGl);
 
-    const nullifier1Bytes = bigintToBytes32LE(nullifier1);
-    const nullifier2Bytes = bigintToBytes32LE(nullifier2);
+    const nullifier1Bytes = Buffer.from(packGoldilocksU64(nullifier1));
+    const nullifier2Bytes = Buffer.from(packGoldilocksU64(nullifier2));
 
     await this.checkNullifierNotSpent(poolPDA, nullifier1Bytes);
     await this.checkNullifierNotSpent(poolPDA, nullifier2Bytes);
 
     const poolInfo = await this.getPoolInfo(tokenInfo.symbol);
-    const merkleRootBytes = bigintToBytes32LE(poolInfo.merkleRoot);
-    const outCommit1Bytes = bigintToBytes32LE(changeCommitment);
+    const merkleRootBytes = Buffer.from(packGoldilocksU64(poolInfo.merkleRoot));
+    const outCommit1Bytes = Buffer.from(packGoldilocksU64(changeCommitment));
     const outCommit2Bytes = Buffer.alloc(32);
     const newRoot = this.computeNewRoot(outCommit1Bytes);
 
     // Request a circuit-5 (transfer) STARK proof with publicAmount = -amount
-    // encoded as a negative (caller's prover is responsible for the sign).
+    // (mod Goldilocks, since the field is positive). Host provers are
+    // responsible for the two's-complement-style sign encoding.
     const starkProof = await this.requestStarkProof(STARK_CIRCUITS.TRANSFER, {
+      spendingKeyGl: this.spendingKeyGl.toString(),
       merkleRoot: poolInfo.merkleRoot.toString(),
       nullifier1: nullifier1.toString(),
       nullifier2: nullifier2.toString(),
       outputCommitment1: changeCommitment.toString(),
       outputCommitment2: '0',
-      publicAmount: (-amount).toString(),
-      tokenMint: this.pubkeyToFieldElement(tokenInfo.mint).toString(),
+      publicAmount: truncateToGoldilocks(-amount).toString(),
+      tokenMint: tokenMintGl.toString(),
       ownerField: ownerField.toString(),
-      spendingKeyHash: spendingKeyHash.toString(),
       randomness1: randomness1.toString(),
       randomness2: randomness2.toString(),
       changeRandomness: changeRandomness.toString(),
@@ -1242,84 +1295,68 @@ export class ShieldModule {
   // ─── Private: Cryptographic Helpers ──────────────────────────────────────
 
   /**
-   * Generate a random field element suitable for BN254 scalar field.
-   * Delegates to @protocol-01/privacy-toolkit which uses rejection sampling
-   * to avoid modular bias.
+   * Generate fresh Goldilocks-field randomness (u64 reduced mod 2^64 - 2^32 + 1).
+   * Used as the blinding factor in note commitments.
    */
   private randomFieldElement(): bigint {
-    return toolkitRandomFieldElement();
+    return randomGoldilocksU64();
   }
 
   /**
-   * Compute a note commitment: Poseidon3(amount, owner, randomness)
-   * This matches the on-chain commitment scheme used by zk_shielded.
-   */
-  private async computeCommitment(
-    amount: bigint,
-    owner: bigint,
-    randomness: bigint,
-  ): Promise<bigint> {
-    return poseidon3([amount, owner, randomness]);
-  }
-
-  /**
-   * Compute a nullifier: Poseidon2(commitment, spendingKeyHash)
-   * The nullifier uniquely identifies a spent note without revealing which note.
-   */
-  private async computeNullifier(
-    commitment: bigint,
-    spendingKeyHash: bigint,
-  ): Promise<bigint> {
-    return poseidon2([commitment, spendingKeyHash]);
-  }
-
-  /**
-   * Convert a PublicKey to a BN254 field element.
-   * Takes the first 31 bytes of the pubkey (big-endian) to stay within field range.
-   */
-  private pubkeyToFieldElement(pubkey: PublicKey): bigint {
-    const bytes = pubkey.toBytes();
-    let result = 0n;
-    // Use first 31 bytes to ensure we're within BN254 scalar field
-    for (let i = 0; i < 31; i++) {
-      result = (result << 8n) | BigInt(bytes[i]!);
-    }
-    return result;
-  }
-
-  /**
-   * Compute the spending key hash from the wallet's public key.
-   * H = Poseidon2(pubkey_field, pubkey_field) — matches circuit convention.
-   */
-  private computeSpendingKeyHash(walletPubkey: PublicKey): bigint {
-    const field = this.pubkeyToFieldElement(walletPubkey);
-    return poseidon2([field, field]);
-  }
-
-  /**
-   * Compute a new Merkle root after inserting a leaf.
-   * This is a simplified off-chain computation. A production implementation
-   * would maintain a full local Merkle tree and compute exact roots.
+   * Compute a circuit-5 (transfer) note commitment:
+   *   commitment = hash2(hash2(amount, randomness), hash2(ownerPubkeyGl, tokenMintGl))
    *
-   * The on-chain program uses insert_with_root() which accepts client-computed
-   * roots since the Poseidon syscall is not yet enabled on Solana.
+   * All inputs must already be Goldilocks elements. The resulting commitment
+   * packs into bytes 0..8 of the on-chain [u8; 32] leaf.
+   */
+  private computeCommitment(
+    amountGl: bigint,
+    ownerPubkeyGl: bigint,
+    randomnessGl: bigint,
+    tokenMintGl: bigint,
+  ): bigint {
+    return computeGoldilocksCommitment(amountGl, ownerPubkeyGl, randomnessGl, tokenMintGl);
+  }
+
+  /**
+   * Compute a circuit-5 nullifier: `hash2(commitment, ownerPubkeyGl)`.
+   * The owner identity is `hash2(spending_key_gl, 0)` — the cycle-0
+   * derivation performed by circuit 5 inside the trace.
+   */
+  private computeNullifier(
+    commitmentGl: bigint,
+    ownerPubkeyGl: bigint,
+  ): bigint {
+    return computeGoldilocksNullifier(commitmentGl, ownerPubkeyGl);
+  }
+
+  /**
+   * Derive the Goldilocks mint field from a SPL token mint public key.
+   * Takes the low 8 bytes of the pubkey as a LE u64 and reduces mod Goldilocks.
+   * Matches the on-chain convention used by circuit 5.
+   */
+  private tokenMintToGoldilocks(mint: PublicKey): bigint {
+    return bytesToGoldilocks(mint.toBytes());
+  }
+
+  /**
+   * Compute the Merkle root that results from inserting a single leaf into an
+   * otherwise-empty tree (the "zero cascade" starting point).
+   *
+   * The SDK does not maintain a stateful local Merkle tree — callers that need
+   * an accurate root after multiple insertions must manage their own tree and
+   * override this via the higher-level note manager. For new pools / smoke
+   * tests the zero-cascade root is correct.
    */
   private computeNewRoot(leafBytes: Buffer): Buffer {
-    // Hash the leaf with the zero sibling at each level to compute root.
-    // This assumes the leaf is inserted at the next available position.
-    let current = new Uint8Array(leafBytes);
+    const zeros = computeGoldilocksZeroCascade(MERKLE_TREE_DEPTH);
+    // Interpret the leaf as a Goldilocks u64 (bytes 0..8 LE).
+    const leafGl = bytesToGoldilocks(new Uint8Array(leafBytes));
+    let current = leafGl;
     for (let level = 0; level < MERKLE_TREE_DEPTH; level++) {
-      // At each level, hash(current, zero_sibling) using Poseidon
-      // For SDK purposes, we use SHA-256 as a stand-in since we can't
-      // call Poseidon synchronously in all environments. The actual root
-      // must be computed by the calling application's Merkle tree manager.
-      const pair = Buffer.alloc(64);
-      Buffer.from(current).copy(pair, 0);
-      // Zero sibling at this level would come from the precomputed zeros
-      pair.fill(0, 32); // simplified
-      current = new Uint8Array(sha256(pair));
+      current = goldilocksHash2to1(current, zeros[level]!);
     }
-    return Buffer.from(current);
+    return Buffer.from(packGoldilocksU64(current));
   }
 
   // ─── Private: On-chain Queries ───────────────────────────────────────────

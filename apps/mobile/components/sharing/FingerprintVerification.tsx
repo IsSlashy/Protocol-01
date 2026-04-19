@@ -43,7 +43,14 @@ export default function FingerprintVerification({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      // Android back button must NOT silently dismiss — treat as reject so the
+      // session is torn down cleanly and the user can't fall through to send.
+      onRequestClose={handleReject}
+    >
       <View style={styles.overlay}>
         <View style={styles.card}>
           {/* Header */}
