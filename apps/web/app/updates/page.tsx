@@ -34,10 +34,18 @@ const updates: WeekUpdate[] = [
   },
   {
     week: 2,
-    title: "Coming Soon",
+    title: "Post-Quantum STARK Migration",
     date: "April 13 - 19, 2026",
-    status: "coming-soon",
-    highlights: [],
+    status: "published",
+    video: "/videos/week2.mp4",
+    highlights: [
+      "Migrated all 6 ZK circuits from Groth16 to hash-based STARKs",
+      "Custom FRI verifier running natively on Solana — no trusted setup",
+      "DEEP-ALI composition across every circuit, 124-bit soundness",
+      "Merkle-Update AIR verifies on-chain at 1.32M compute units",
+      "p01_liquidity program live — instant unshield pool on devnet",
+      "Mobile WASM prover, extension, and SDK v2 all migrated — 138 tests green",
+    ],
   },
 ];
 
