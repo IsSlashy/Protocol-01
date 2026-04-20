@@ -4,7 +4,6 @@ import { memo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useT } from "@/i18n";
-import GlitchLogo01 from "./GlitchLogo01";
 import PhoneMockup from "./PhoneMockup";
 
 /**
@@ -64,31 +63,23 @@ const SystemStatus = memo(function SystemStatus() {
         }
       `}} />
 
-      {/* System status label */}
-      <span
-        className="text-[#ff2d7a] text-xs font-bold tracking-[6px] mb-3 font-mono"
-        style={{ letterSpacing: "0.4em" }}
-      >
-        {t('hero.systemStatus')}
-      </span>
-
-      {/* SUBSCRIBE PRIVATELY - with chromatic glitch */}
-      <div className="relative h-[60px] flex items-center">
+      {/* Headline — chromatic glitch */}
+      <div className="relative h-[72px] sm:h-[80px] lg:h-[96px] flex items-center">
         {/* Cyan ghost layer - CSS animated */}
         <span
-          className="absolute text-[#39c5bb] text-3xl sm:text-4xl font-black tracking-wider status-glitch"
+          className="absolute text-[#39c5bb] text-4xl sm:text-5xl lg:text-6xl font-black tracking-wider status-glitch"
           style={{
             fontFamily: "var(--font-display)",
             animation: "chromatic-cyan 2.5s steps(1) infinite",
             willChange: "opacity, transform",
           }}
         >
-          {t('hero.subscribePrivately')}
+          {t('hero.headline')}
         </span>
 
         {/* Pink ghost layer - CSS animated */}
         <span
-          className="absolute text-[#ff2d7a] text-3xl sm:text-4xl font-black tracking-wider status-glitch"
+          className="absolute text-[#ff2d7a] text-4xl sm:text-5xl lg:text-6xl font-black tracking-wider status-glitch"
           style={{
             fontFamily: "var(--font-display)",
             animation: "chromatic-pink 2.5s steps(1) infinite",
@@ -96,19 +87,19 @@ const SystemStatus = memo(function SystemStatus() {
             willChange: "opacity, transform",
           }}
         >
-          {t('hero.subscribePrivately')}
+          {t('hero.headline')}
         </span>
 
         {/* Main text - CSS animated */}
         <span
-          className="text-white text-3xl sm:text-4xl font-black tracking-wider status-glitch"
+          className="text-white text-4xl sm:text-5xl lg:text-6xl font-black tracking-wider status-glitch"
           style={{
             fontFamily: "var(--font-display)",
             animation: "text-glitch-status 2.5s steps(1) infinite",
             willChange: "transform",
           }}
         >
-          {t('hero.subscribePrivately')}
+          {t('hero.headline')}
         </span>
       </div>
 
@@ -231,7 +222,7 @@ function Hero() {
             src="/Miku.png"
             alt=""
             fill
-            className="object-contain opacity-[0.15] mix-blend-lighten"
+            className="object-contain opacity-[0.07] mix-blend-lighten"
             style={{
               filter: 'grayscale(30%) contrast(1.1)',
               maskImage: 'radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 70%)',
@@ -261,22 +252,26 @@ function Hero() {
               </span>
             </div>
 
-            {/* Massive 01 - PNG image with cinematic glitch */}
+            {/* Kicker line — sets up the headline */}
             <div
-              className="mb-2 hero-animate"
+              className="mb-4 hero-animate"
               style={{
-                animation: "fade-in-scale 0.8s ease-out 0.2s forwards",
+                animation: "fade-in-left 0.5s ease-out 0.2s forwards",
                 opacity: 0,
               }}
             >
-              <GlitchLogo01 />
+              <span
+                className="text-white/60 text-sm sm:text-base font-mono uppercase tracking-[0.3em]"
+              >
+                {t('hero.kicker')}
+              </span>
             </div>
 
-            {/* Terminal-style system status */}
+            {/* Headline — terminal-style system status with chromatic glitch */}
             <div
               className="hero-animate"
               style={{
-                animation: "fade-in-up 0.5s ease-out 0.4s forwards",
+                animation: "fade-in-up 0.5s ease-out 0.3s forwards",
                 opacity: 0,
               }}
             >

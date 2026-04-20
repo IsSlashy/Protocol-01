@@ -22,6 +22,7 @@ import {
   Network,
   Download,
   FileText,
+  Archive,
 } from "lucide-react";
 
 // ============ P-01 Theme Constants ============
@@ -68,16 +69,13 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
     i18nKey: "zkProofs",
     icon: <Shield className="w-6 h-6" />,
     detailCount: 9,
-    codeExample: `// Groth16 proof (BN254, compact, fast verification)
-const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-  { inputs, merkle_path, nullifiers },
-  "transfer.wasm", "transfer.zkey"
-);
-
-// STARK proof (quantum-resistant, hash-based)
+    codeExample: `// STARK proof (quantum-resistant, hash-based, no trusted setup)
 const starkProof = await starkProver.generateProof(secret);
-// Upload proof buffer → verify on-chain → ~889K CU
-await submitStarkProof(program, proofBuffer, commitment, circuitId);`,
+
+// Upload proof buffer → on-chain FRI verifier → ~889K CU
+await submitStarkProof(program, proofBuffer, commitment, circuitId);
+// 6 AIRs over Goldilocks field, 124-bit soundness with DEEP-ALI
+// Replaces legacy Groth16/BN254 (see "Legacy / Migration History")`,
   },
   {
     id: "shielded-pool",
@@ -453,6 +451,23 @@ const balance = await executeTool("wallet_balance", {});
 // Agent responds and calls shield tool:
 await executeTool("privacy_shield", { amount: 0.1 });
 // → Redirects to Privacy → Shield screen`,
+  },
+  {
+    id: "migration-history",
+    i18nKey: "migrationHistory",
+    icon: <Archive className="w-6 h-6" />,
+    detailCount: 6,
+    codeExample: `// BEFORE — Groth16 / BN254 (retired April 2026)
+// const { proof } = await snarkjs.groth16.fullProve(
+//   inputs, "transfer.wasm", "transfer.zkey"
+// );
+// → BN254 pairings (Shor-vulnerable), 30 MB .ptau trusted setup,
+//   snarkjs + circomlib runtime, alt_bn128 syscalls
+
+// AFTER — Winterfell STARKs over Goldilocks (current)
+const proof = await starkProver.generateProof(secret);
+// → Hash-based (Blake3 + Poseidon), no trusted setup,
+//   custom on-chain FRI verifier, 6 AIRs, ~9-15 KB proofs`,
   },
 ];
 
