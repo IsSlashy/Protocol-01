@@ -73,6 +73,29 @@ export type {
   PrefundFeeBreakdown,
 } from './modules/liquidity';
 export {
+  InstantUnshieldFlow,
+  buildInstantUnshield,
+  buildCloseStarkProofBufferIx,
+  goldilocksU64ToNullifierBytes,
+  keypairSigner,
+  adapterSigner,
+  P01_STARK_VERIFIER_PROGRAM_ID,
+  CIRCUIT_POOL_COMMITMENT,
+  STARK_MAX_CHUNK_SIZE,
+  STARK_PROOF_DATA_OFFSET,
+  STARK_MAX_INIT_SIZE,
+  STARK_MAX_REALLOC_STEP,
+  STARK_VERIFY_CU,
+  PREFUND_CU,
+  SLOTS_PER_EPOCH,
+} from './modules/instantUnshield';
+export type {
+  GenericSigner,
+  InstantUnshieldInput,
+  InstantUnshieldPlan,
+  InstantUnshieldInstructionList,
+} from './modules/instantUnshield';
+export {
   splitAmount,
   CANONICAL_DENOMINATIONS,
   CANONICAL_DENOMINATIONS_SOL,

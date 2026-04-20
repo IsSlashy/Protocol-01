@@ -17,6 +17,7 @@ export default defineConfig({
     'modules/otc': 'src/modules/otc.ts',
     'modules/payroll': 'src/modules/payroll.ts',
     'modules/treasury': 'src/modules/treasury.ts',
+    'modules/instantUnshield': 'src/modules/instantUnshield.ts',
     'react/index': 'src/react/index.ts',
   },
   format: ['cjs', 'esm'],
