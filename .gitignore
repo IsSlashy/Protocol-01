@@ -225,6 +225,7 @@ p01/
 !apps/mobile/assets/**/*.png
 !apps/extension/public/**/*.png
 !apps/web/public/**/*.png
+!apps/mugen/public/**/*.png
 
 # Internal project planning docs (keep local only)
 /AGENT_SYNC.md
