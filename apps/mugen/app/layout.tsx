@@ -7,11 +7,37 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains' });
 
+const SITE_URL = 'https://mugen-exchange.vercel.app';
+const SITE_TITLE = 'Mugen Exchange | 無限 — No KYC, ZK-Powered P2P Exchange';
+const SITE_DESCRIPTION =
+  'Fiat-to-crypto exchange with zero-knowledge compliance. No KYC required. Untraceable stealth settlement. Quantum-proof infrastructure.';
+
 export const metadata: Metadata = {
-  title: 'Mugen Exchange | 無限 — No KYC, ZK-Powered P2P Exchange',
-  description:
-    'Fiat-to-crypto exchange with zero-knowledge compliance. No KYC required. Untraceable stealth settlement. Quantum-proof infrastructure.',
+  metadataBase: new URL(SITE_URL),
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
   keywords: ['exchange', 'no kyc', 'zk', 'privacy', 'solana', 'p2p', 'fiat', 'crypto'],
+  openGraph: {
+    type: 'website',
+    url: SITE_URL,
+    siteName: 'Mugen Exchange',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: [
+      {
+        url: '/mugen-icon.png',
+        width: 1024,
+        height: 1024,
+        alt: 'Mugen Exchange — 無限',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: ['/mugen-icon.png'],
+  },
 };
 
 export default function RootLayout({
