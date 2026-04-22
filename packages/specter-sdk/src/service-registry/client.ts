@@ -108,18 +108,48 @@ export async function fetchAllServices(
     filters,
   });
 
+  // Debug hook — lets the mobile app surface why N raw accounts turned into
+  // 0 decoded entries (common cause: base64/Buffer shape differences across
+  // web3.js runtimes). Keep logs cheap; no-op when no accounts come back.
+  const first = accounts[0];
+  if (!first) {
+    console.log(
+      `[fetchAllServices] getProgramAccounts returned 0 accounts for ${programId.toBase58()} ` +
+        `(filters: discriminator memcmp at offset 0)`,
+    );
+  } else {
+    console.log(
+      `[fetchAllServices] got ${accounts.length} raw accounts. ` +
+        `First data: type=${typeof first.account.data} ` +
+        `isBuffer=${Buffer.isBuffer(first.account.data)} ` +
+        `length=${(first.account.data as { length?: number }).length ?? 'n/a'}`,
+    );
+  }
+
   const entries: ServiceEntry[] = [];
+  let decodeFailures = 0;
   for (const acc of accounts) {
     let decoded: ServiceRegistryAccount;
     try {
       decoded = decodeServiceRegistryAccount(acc.account.data);
-    } catch {
+    } catch (err) {
+      decodeFailures += 1;
+      if (decodeFailures <= 3) {
+        console.warn(
+          `[fetchAllServices] decode failed for ${acc.pubkey.toBase58()}: ${(err as Error).message}`,
+        );
+      }
       continue;
     }
     if (activeOnly && !decoded.active) continue;
     if (verifiedOnly && !decoded.verified) continue;
     if (category && decoded.category !== category) continue;
     entries.push({ ...decoded, pda: acc.pubkey });
+  }
+  if (decodeFailures > 0) {
+    console.warn(
+      `[fetchAllServices] ${decodeFailures}/${accounts.length} accounts failed to decode`,
+    );
   }
 
   entries.sort((a, b) => {
