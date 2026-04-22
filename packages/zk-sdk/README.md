@@ -2,6 +2,9 @@
 
 Zero-knowledge privacy SDK for Solana. Shield, transfer, and unshield tokens with mathematical privacy guarantees using Groth16 proofs and Poseidon hashing.
 
+> **⚠️ Legacy — Groth16 was retired from the shipping Protocol 01 stack in March 2026.**
+> This SDK still works with the original Circom + snarkjs pipeline for callers that need it, but the mobile app, extension, and on-chain programs (`zk_shielded`, `p01_zkspl`) now run on **ZK-STARKs** via [`@protocol-01/privacy-sdk`](../privacy-sdk/) and the custom FRI verifier in [`programs/p01_stark_verifier`](../../programs/p01_stark_verifier/). Use this SDK only for migration / backfill work — new integrations should target the STARK path.
+
 ## Install
 
 ```bash

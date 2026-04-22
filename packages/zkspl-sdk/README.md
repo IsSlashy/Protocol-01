@@ -2,6 +2,9 @@
 
 Confidential SPL token operations for Solana. Private balances, shielded transfers, and zero-knowledge balance proofs powered by Groth16 ZK-SNARKs and Poseidon hashing.
 
+> **⚠️ Legacy — Groth16 was retired from the shipping Protocol 01 stack in March 2026.**
+> The `p01_zkspl` on-chain program now verifies **STARK proofs** via the shared FRI verifier. This SDK's Groth16 path still compiles and runs for anyone auditing the historical pipeline, but new integrations should target the STARK path. See the root [README](../../README.md) for the current architecture.
+
 ## Install
 
 ```bash

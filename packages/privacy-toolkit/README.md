@@ -10,6 +10,8 @@
 
 TypeScript primitives for building privacy protocols on Solana. Merkle trees, Poseidon commitments, nullifiers, and proof format conversion.
 
+> **Status — Groth16 helpers are legacy.** The `alt_bn128` proof-formatting helpers in this package targeted the Circom + snarkjs pipeline that was retired from the shipping stack in March 2026. The Goldilocks-Poseidon primitives (Merkle, commitment, nullifier) are still the foundation for the current STARK path — see [`apps/mobile/services/zk/goldilocks-poseidon.ts`](../../apps/mobile/services/zk/goldilocks-poseidon.ts) for the mobile port.
+
 ## Why This Package
 
 `@protocol-01/privacy-toolkit` is the **foundation layer** of the Protocol 01 stack. It provides the core cryptographic building blocks that every higher-level SDK depends on: note commitments, nullifier derivation, Merkle tree operations, and proof format conversion.

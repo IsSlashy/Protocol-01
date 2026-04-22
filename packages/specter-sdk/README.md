@@ -304,6 +304,55 @@ const paymentData = generatePrivatePaymentData('st:01abc...', 9.99);
 // Send to paymentData.stealthAddress via ZK unshield
 ```
 
+### Service Registry (on-chain merchant directory)
+
+Any wallet can publish a subscription-accepting service as a `ServiceRegistry` PDA, and every Protocol 01 client picks it up automatically. This is the client-side read surface — merchants should use [`@protocol-01/merchant-sdk`](../merchant-sdk/) for server-side registration, payment polling, and access-token issuance.
+
+```typescript
+import {
+  fetchAllServices,
+  fetchService,
+  getServicePDA,
+  buildRegisterServiceIx,
+  buildAttestServiceIx,
+} from '@protocol-01/specter-sdk';
+import { SystemProgram } from '@solana/web3.js';
+
+// List every verified service on-chain (what the mobile UI shows by default)
+const services = await fetchAllServices(connection, {
+  verifiedOnly: true,
+  activeOnly: true,
+});
+
+for (const s of services) {
+  console.log(`${s.name} — ${Number(s.priceAtomic) / 1e9} SOL / ${s.intervalSlots} slots`);
+  console.log(`  retailer: ${s.retailer.toBase58()}`);
+  console.log(`  slug:     ${s.slug}`);
+  console.log(`  icon:     ${s.iconKey}`);
+}
+
+// Fetch a specific service by (owner, slug)
+const netflix = await fetchService(connection, merchantOwner, 'netflix-standard');
+
+// Low-level: build the register ix yourself
+const [pda] = getServicePDA(merchantOwner, 'my-saas-pro');
+const ix = buildRegisterServiceIx(merchantOwner, {
+  slug: 'my-saas-pro',
+  name: 'My SaaS — Pro',
+  iconKey: 'chatgpt',
+  category: 'saas',
+  metadataUri: '',
+  retailer: merchantRetailer,
+  tokenMint: SystemProgram.programId,  // native SOL
+  priceAtomic: 50_000_000n,            // 0.05 SOL
+  intervalSlots: 6_480_000n,           // 30 days
+  supportsOneshot: true,
+  supportsVault: true,
+});
+```
+
+The `verified` flag can only be flipped by the `PROTOCOL_VERIFIED_AUTHORITY` (hardcoded in the program). Unverified services still appear behind a filter.
+
 ### Relay (Transaction Privacy)
 
 Submit transactions through encrypted relay jobs so your wallet address never appears on-chain. An ephemeral keypair posts the job; a staked relayer executes it.

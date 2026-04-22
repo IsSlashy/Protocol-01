@@ -10,6 +10,8 @@
 
 Client-side Groth16 ZK proof generation for React Native apps using a hidden WebView. No backend required.
 
+> **⚠️ Legacy — the Protocol 01 mobile app migrated to ZK-STARKs in March 2026.** The shipping app no longer calls this library at runtime; the STARK prover runs in a comparable hidden WebView but uses a Winterfell-built WASM module over the Goldilocks field. This package is still published for teams that want the Groth16 / BN254 reference pattern.
+
 ## The Problem
 
 React Native does not support WebAssembly or the cryptographic primitives that snarkjs requires. Native modules like `react-native-rapidsnark` exist but require complex native build steps, platform-specific C++ toolchains, and often break across React Native versions.
