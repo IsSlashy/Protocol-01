@@ -4,17 +4,17 @@ name: Settler Keeper
 # and fires settle() for any whose min_epoch has elapsed. Pays ~0.2 bps of the
 # prefund amount as `settler_reward` on success.
 #
-# Runs every 10 minutes. Manual trigger is also available for one-off runs.
+# Manual trigger only. The cron schedule is disabled until mainnet traffic
+# justifies a keeper — on devnet there are typically zero PrefundRecords to
+# settle, and the scheduled runs were only producing failure emails.
 #
-# Required repo secrets:
+# Required repo secrets (before re-enabling the schedule):
 #   SETTLER_KEYPAIR_JSON — raw 64-byte Solana keypair JSON (e.g. contents of
 #     `~/.config/solana/id.json`). Must be funded with a small amount of SOL
 #     on the target network to cover tx fees; reward income is paid to the
 #     same pubkey on every successful settle.
 #   SETTLER_RPC_URL      — RPC endpoint (prefer Helius; public devnet throttles).
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 concurrency:
