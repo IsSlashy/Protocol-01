@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "remotion studio",
-    "build": "remotion render WeeklyUpdate out/week1.mp4",
+    "build": "echo 'weekly-update: build is a no-op; use pnpm render to produce the video' && exit 0",
     "render": "remotion render WeeklyUpdate out/week1.mp4"
   },
   "dependencies": {
