@@ -357,3 +357,49 @@ export function computeGoldilocksZeroCascade(depth: number): bigint[] {
   }
   return out;
 }
+
+// =============================================================================
+// Pool-commitment nullifier helper (pure JS mirror of WASM circuit 1)
+// =============================================================================
+
+const U64_MASK = (1n << 64n) - 1n;
+
+/**
+ * Compute the Goldilocks nullifier for a denominated-pool note WITHOUT running
+ * the STARK prover.
+ *
+ * Mirrors the first hash cycle of `stark/src/air/denominated_pool.rs`:
+ *   nullifier = Poseidon(nullifier_preimage, secret)  // Goldilocks, t=3, cap=0
+ *
+ * WASM boundary: `wasm_bindgen` casts JS `BigInt` → `u64` via low-64-bit
+ * truncation. Receipts store BN254 field elements (254-bit), so we reproduce
+ * that exact truncation here before hashing — otherwise the nullifier the
+ * scanner derives would not match what the WASM prover embedded in the proof.
+ *
+ * The on-chain `unshield_denominated_stark` / `subscribe_private_stark`
+ * handlers read the nullifier as `u64::from_le_bytes(nullifier[0..8])` and
+ * hash it for the PDA seed, so callers should also pass the 32-byte form
+ * returned by {@link goldilocksNullifierToBytes} to `deriveNullifierPDA`.
+ */
+export function computeGoldilocksPoolNullifier(
+  nullifierPreimage: bigint,
+  secret: bigint,
+): bigint {
+  const np = nullifierPreimage & U64_MASK;
+  const sec = secret & U64_MASK;
+  return goldilocksHash2to1(np, sec);
+}
+
+/**
+ * Pack a Goldilocks u64 nullifier into the 32-byte little-endian form
+ * expected by on-chain instructions: bytes 0..8 = u64 LE, bytes 8..32 = 0.
+ */
+export function goldilocksNullifierToBytes(nullifier: bigint): number[] {
+  const bytes: number[] = new Array(32).fill(0);
+  let v = nullifier & U64_MASK;
+  for (let i = 0; i < 8; i++) {
+    bytes[i] = Number(v & 0xFFn);
+    v >>= 8n;
+  }
+  return bytes;
+}

@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 // Animations removed — staggered FadeInDown on each note caused tearing during navigation transitions
 
 import { useDenominatedPoolStore, useActiveNotes, type StoredNote, type NoteStatus } from '@/stores/denominatedPoolStore';
@@ -209,8 +210,14 @@ export default function DenominatedNotesScreen() {
           text: t('privacy.rescanFromSeed'),
           onPress: async () => {
             setIsRescanning(true);
+            const KEEP_AWAKE_TAG = 'p01-rescan';
             try {
-              const recovered = await rescanPool();
+              await activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+              const recovered = await rescanPool(undefined, {
+                epochsBack: 50,
+                maxCounter: 256,
+                maxSignatures: 1000,
+              });
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               p01Alert(
                 t('privacy.rescanFromSeed'),
@@ -222,6 +229,7 @@ export default function DenominatedNotesScreen() {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
               p01Alert(t('privacy.rescanFailed'), e?.message ?? String(e));
             } finally {
+              deactivateKeepAwake(KEEP_AWAKE_TAG);
               setIsRescanning(false);
             }
           },

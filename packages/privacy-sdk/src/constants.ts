@@ -12,10 +12,10 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
   devnet: {
     zkShielded: new PublicKey('2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms'),
     specter: new PublicKey('8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh'),
-    trustless: new PublicKey('5x8qr9UwF6BTN4ySb4gPwL4TYgZiiLCzg4mKDmQrnjyJ'),
+    trustless: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'),
     relayer: new PublicKey('Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw'),
-    registry: new PublicKey('ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr'),
+    registry: new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
     feeSplitter: new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM'),
     stream: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),
     subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),

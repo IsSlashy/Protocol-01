@@ -123,14 +123,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       }
 
       const exists = await walletExists();
-      if (!exists) {
-        // No local wallet on disk. Any notes currently hydrated from zustand-persist
-        // can only belong to a prior abandoned session (e.g. Privy closed without logout).
-        // Wipe them so a freshly-created wallet never inherits stale notes.
-        try {
-          await resetAllPrivacyStores(undefined);
-        } catch {}
-      }
       if (exists) {
         const publicKey = await getPublicKey();
 

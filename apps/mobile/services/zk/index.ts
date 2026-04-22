@@ -3377,7 +3377,6 @@ export class ZkService {
         return { found: 0, amount: 0, payments: [] };
       }
 
-      // @ts-expect-error -- @protocol-01/specter-sdk is a workspace package not yet linked in mobile
       const { scanForPayments: sdkScanForPayments } = await import('@protocol-01/specter-sdk');
 
       const viewingKeyBytes = this.viewingKey!;

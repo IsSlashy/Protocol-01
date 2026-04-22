@@ -7,7 +7,7 @@ import { useShieldedStore, archiveShieldedForWallet, restoreShieldedForWallet } 
 import { useDenominatedPoolStore, archiveNotesForWallet, restoreNotesForWallet } from './denominatedPoolStore';
 import { useConfidentialStore } from './confidentialStore';
 import { useStreamStore } from './streamStore';
-import { useSubscriptionVaultStore } from './subscriptionVaultStore';
+import { useSubscriptionVaultStore, archiveVaultsForWallet, restoreVaultsForWallet } from './subscriptionVaultStore';
 import { useSharingStore } from './sharingStore';
 import { clearNoteSeedCache } from '../services/denominatedPool';
 
@@ -16,10 +16,11 @@ import { clearNoteSeedCache } from '../services/denominatedPool';
  * Call this BEFORE switching wallets so notes are not lost.
  */
 export async function resetAllPrivacyStores(outgoingWalletAddress?: string): Promise<void> {
-  // Archive notes for the outgoing wallet before wiping
+  // Archive notes and vaults for the outgoing wallet before wiping
   if (outgoingWalletAddress) {
     await archiveNotesForWallet(outgoingWalletAddress);
     await archiveShieldedForWallet(outgoingWalletAddress);
+    await archiveVaultsForWallet(outgoingWalletAddress);
   }
 
   // Reset shielded notes (ZK)
@@ -34,8 +35,8 @@ export async function resetAllPrivacyStores(outgoingWalletAddress?: string): Pro
   // Reset streams
   try { await useStreamStore.getState().resetAll(); } catch {}
 
-  // Reset subscription vaults (also clears SecureStore secrets)
-  try { useSubscriptionVaultStore.getState().reset(); } catch {}
+  // Soft-reset subscription vaults (preserves SecureStore secrets for archive/restore)
+  try { useSubscriptionVaultStore.getState().softReset(); } catch {}
 
   // Cancel any active sharing session
   try { useSharingStore.getState().cancelSession(); } catch {}
@@ -52,4 +53,5 @@ export async function restorePrivacyStoresForWallet(walletAddress: string): Prom
   if (!walletAddress) return;
   await restoreNotesForWallet(walletAddress);
   await restoreShieldedForWallet(walletAddress);
+  await restoreVaultsForWallet(walletAddress);
 }

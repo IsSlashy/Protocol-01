@@ -15,6 +15,7 @@ import {
   executeReadyPayouts,
   getBufferKeypairForRunner,
   pollForIncomingFunds,
+  recordRunnerTick,
 } from './treasury-buffer';
 
 /** Cadence that used to drive the setInterval loop — preserved in a const so the
@@ -39,6 +40,7 @@ export interface TreasuryBufferTickResult {
 export async function runTreasuryBufferTick(): Promise<TreasuryBufferTickResult> {
   const connection = new Connection(resolveRpcUrl(), 'confirmed');
   try {
+    await recordRunnerTick();
     const funded = await pollForIncomingFunds(connection);
     const paid = await executeReadyPayouts(
       connection,

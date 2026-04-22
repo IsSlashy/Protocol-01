@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import { withKeepAwake } from '@/utils/keepAwakeDuring';
 
 function GlassCard({ children, style }: { children: React.ReactNode; style?: any }) {
   return (
@@ -49,6 +50,8 @@ export default function SubscribePrivateScreen() {
     subscribePrivateStarkAction,
     isLoading,
     progress,
+    setProgress,
+    resetOperationState,
   } = useSubscriptionVaultStore();
   const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof } = useStarkProver();
 
@@ -56,7 +59,11 @@ export default function SubscribePrivateScreen() {
   const [retailer, setRetailer] = useState('');
   const [rate, setRate] = useState('');
   const [intervalSlots, setIntervalSlots] = useState('7200');
-  const [starkStatus, setStarkStatus] = useState<string | null>(null);
+  const [starkStatus, setStarkStatusLocal] = useState<string | null>(null);
+  const setStarkStatus = useCallback((s: string | null) => {
+    setStarkStatusLocal(s);
+    setProgress(s);
+  }, [setProgress]);
 
   const matureNotes = notes.filter(n => n.status === 'mature');
 
@@ -65,25 +72,64 @@ export default function SubscribePrivateScreen() {
       p01Alert('Select Note', 'Please select a mature note to use for the private subscription.');
       return;
     }
-    if (!retailer.trim()) {
+
+    const trimmedRetailer = retailer.trim();
+    if (!trimmedRetailer) {
       p01Alert('Missing Retailer', 'Please enter a retailer address.');
       return;
     }
+    let retailerKey: PublicKey;
+    try {
+      retailerKey = new PublicKey(trimmedRetailer);
+    } catch {
+      p01Alert('Invalid Retailer', 'The retailer address is not a valid Solana public key.');
+      return;
+    }
+
+    const rateFloat = parseFloat(rate || '0');
+    if (!Number.isFinite(rateFloat) || rateFloat <= 0) {
+      p01Alert('Invalid Rate', 'Please enter a positive payment rate in SOL.');
+      return;
+    }
+    const rateLamports = BigInt(Math.floor(rateFloat * 1e9));
+    if (rateLamports <= 0n) {
+      p01Alert('Invalid Rate', 'Rate must be greater than zero after lamport conversion.');
+      return;
+    }
+
+    const intervalSlotsInt = parseInt(intervalSlots, 10);
+    if (!Number.isFinite(intervalSlotsInt) || intervalSlotsInt <= 0) {
+      p01Alert('Invalid Interval', 'Interval must be a positive number of slots.');
+      return;
+    }
+    const intervalSlotsNum = BigInt(intervalSlotsInt);
+
+    const note = notes.find(n => n.id === selectedNoteId);
+    if (!note) {
+      p01Alert('Note Not Found', 'Selected note could not be located — try selecting another.');
+      return;
+    }
+    const poolConfig = findPool(note.token, note.denomination);
+    if (!poolConfig) {
+      p01Alert('Pool Unavailable', `No pool registered for ${note.token} ${note.denomination}.`);
+      return;
+    }
+    if (rateLamports > poolConfig.denominationAtomic) {
+      p01Alert(
+        'Rate Exceeds Note',
+        `Per-period rate (${rateFloat} ${note.token}) cannot be larger than the note denomination (${note.denomination} ${note.token}).`,
+      );
+      return;
+    }
+
     try {
       if (!starkReady) {
         p01Alert('Prover initializing', 'STARK prover not ready yet — try again in a moment.');
         return;
       }
 
-      const retailerKey = new PublicKey(retailer);
-      const rateLamports = BigInt(Math.floor(parseFloat(rate || '0') * 1e9));
-      const intervalSlotsNum = BigInt(parseInt(intervalSlots, 10));
-
-      const note = notes.find(n => n.id === selectedNoteId);
-      if (!note) throw new Error('Selected note not found');
+      await withKeepAwake('p01-subscribe-private', async () => {
       const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
-      const poolConfig = findPool(note.token, note.denomination);
-      if (!poolConfig) throw new Error(`Pool not found for ${note.token} ${note.denomination}`);
 
       const vaultConfig = {
         retailer: retailerKey,
@@ -114,6 +160,7 @@ export default function SubscribePrivateScreen() {
         poolConfig,
         vaultConfig,
         subscriberSecret,
+        BigInt(ownershipResult.commitment),
         vkHashSubscriber,
         {
           proofBytes,
@@ -125,6 +172,7 @@ export default function SubscribePrivateScreen() {
       setStarkStatus(null);
       p01Alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
       router.back();
+      });
     } catch (err) {
       setStarkStatus(null);
       p01Alert('Error', (err as Error).message);
@@ -141,6 +189,26 @@ export default function SubscribePrivateScreen() {
         <Text style={styles.headerTitle}>Private Subscription</Text>
         <View style={{ width: 40 }} />
       </Animated.View>
+
+      {(isLoading || starkStatus) && (
+        <View style={styles.stickyProgress}>
+          <ActivityIndicator size="small" color={P01Colors.cyan} />
+          <Text style={styles.stickyProgressText} numberOfLines={2}>
+            {starkStatus ?? progress ?? 'Processing...'}
+          </Text>
+          <TouchableOpacity
+            style={styles.stickyCancel}
+            onPress={() => {
+              setStarkStatus(null);
+              resetOperationState();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel stuck operation"
+          >
+            <Ionicons name="close" size={16} color={Colors.text} />
+          </TouchableOpacity>
+        </View>
+      )}
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* STARK status badge */}
@@ -299,7 +367,7 @@ export default function SubscribePrivateScreen() {
           <View style={styles.privacyNote}>
             <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
             <Text style={styles.privacyNoteText}>
-              Groth16 + STARK proofs generated on-device. No private data leaves your phone.
+              STARK proofs generated on-device. No private data leaves your phone.
             </Text>
           </View>
         </Animated.View>
@@ -448,6 +516,35 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 14,
     padding: 0,
+  },
+
+  // Sticky progress (below header, always visible during long flow)
+  stickyProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: 12,
+    backgroundColor: 'rgba(57, 197, 187, 0.15)',
+    borderWidth: 1,
+    borderColor: P01Colors.cyan,
+    gap: Spacing.sm,
+  },
+  stickyProgressText: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+  },
+  stickyCancel: {
+    width: 28,
+    height: 28,
+    borderRadius: 9999,
+    backgroundColor: Colors.surfaceSecondary,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // Progress

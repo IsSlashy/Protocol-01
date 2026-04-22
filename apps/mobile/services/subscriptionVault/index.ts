@@ -22,17 +22,33 @@ import {
   getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { poseidon2 } from 'poseidon-lite';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
 import type { PoolConfig, ShieldReceipt } from '../denominatedPool';
 import {
-  createNullifier,
   bigintToLeBytes32,
   deriveNullifierPDA,
 } from '../denominatedPool';
+
+/**
+ * Encode a Goldilocks u64 commitment into the 32-byte `subscriber_commitment`
+ * field expected by the vault. The on-chain pause/resume/cancel handlers read
+ * `commitment[..8]` as a little-endian u64 and compare it against the
+ * circuit-0 STARK proof's stored inputs hash (sha256(u64_le_bytes)).
+ * Bytes 8..32 must be zero so the vault PDA derivation matches the one used
+ * during subscribe.
+ */
+export function goldilocksU64To32(commitment: bigint): Uint8Array {
+  const out = new Uint8Array(32);
+  let v = commitment & 0xFFFFFFFFFFFFFFFFn;
+  for (let i = 0; i < 8; i++) {
+    out[i] = Number(v & 0xFFn);
+    v >>= 8n;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -469,7 +485,7 @@ export async function subscribePrivateStark(
   receipt: ShieldReceipt,
   poolConfig: PoolConfig,
   vaultConfig: SubscribePrivateConfig,
-  subscriberSecret: bigint,
+  subscriberOwnershipCommitment: bigint,
   vkHashSubscriber: Uint8Array,
   starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   onProgress?: (step: string) => void,
@@ -488,14 +504,13 @@ export async function subscribePrivateStark(
   const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
   const connection = getConnection();
 
-  onProgress?.('Computing subscriber commitment...');
-  const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
-  const subscriberCommitmentBytes = bigintToLeBytes32(subscriberCommitment);
+  onProgress?.('Encoding subscriber commitment...');
+  const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);
 
   onProgress?.('Deriving vault PDA...');
   const [vaultPDA] = deriveVaultPDA(
     vaultConfig.retailer,
-    new Uint8Array(subscriberCommitmentBytes),
+    subscriberCommitmentBytes,
     poolConfig.tokenMint
   );
 
@@ -507,8 +522,14 @@ export async function subscribePrivateStark(
     throw new Error('Receipt missing Merkle proof data');
   }
 
-  const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
-  const nullifierBytes = bigintToLeBytes32(nullifier);
+  // subscribe_private_stark on-chain reads the nullifier as a Goldilocks u64
+  // in bytes[0..8] and hashes it together with stark_commitment to match the
+  // STARK verifier's stored inputs hash. Using a Groth16/BN254 Poseidon
+  // nullifier here (all 32 bytes non-zero) would always fail that hash check
+  // with InvalidProof. The proof's public_inputs[0] IS the Goldilocks u64
+  // nullifier — take it directly.
+  const goldilocksNullifier = starkProofData.publicInputs[0] ?? 0n;
+  const nullifierBytes = Array.from(goldilocksU64To32(goldilocksNullifier));
   const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
   const minEpoch = currentEpoch - 1n;
 
@@ -543,7 +564,7 @@ export async function subscribePrivateStark(
     Array.from(nullifierBytes),
     merkleRootBytes,
     minEpoch,
-    subscriberCommitmentBytes,
+    Array.from(subscriberCommitmentBytes),
     vaultConfig.rate,
     vaultConfig.intervalSlots,
     vkHashSubscriber,
@@ -782,6 +803,136 @@ function buildResumePrivateStarkIx(
 }
 
 /**
+ * Build cancel_private_stark instruction.
+ * The on-chain program reads the pre-verified STARK proof buffer (circuit 0: subscriber_ownership),
+ * re-shields `notes_to_reshield = refundable / denomination` outputs into the source pool,
+ * pays `claimable_periods * rate` to the retailer, and closes the vault to the payer.
+ */
+function buildCancelPrivateStarkIx(
+  payer: PublicKey,
+  retailer: PublicKey,
+  vaultPDA: PublicKey,
+  denominatedPoolPDA: PublicKey,
+  merkleTreePDA: PublicKey,
+  starkProofBuffer: PublicKey,
+  newCommitments: number[][],
+  newRoots: number[][],
+): TransactionInstruction {
+  const disc = getDiscriminator('cancel_private_stark');
+
+  // Args: new_commitments: Vec<[u8;32]>, new_roots: Vec<[u8;32]>
+  const n = newCommitments.length;
+  if (newRoots.length !== n) {
+    throw new Error('new_commitments and new_roots must have the same length');
+  }
+  const data = Buffer.alloc(8 + 4 + n * 32 + 4 + n * 32);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  data.writeUInt32LE(n, offset); offset += 4;
+  for (const c of newCommitments) {
+    Buffer.from(c).copy(data, offset); offset += 32;
+  }
+  data.writeUInt32LE(n, offset); offset += 4;
+  for (const r of newRoots) {
+    Buffer.from(r).copy(data, offset); offset += 32;
+  }
+
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: retailer, isSigner: false, isWritable: true },
+    { pubkey: vaultPDA, isSigner: false, isWritable: true },
+    { pubkey: denominatedPoolPDA, isSigner: false, isWritable: true },
+    { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+/**
+ * Cancel a private (ZK-authenticated) subscription using STARK proof (quantum-resistant).
+ *
+ * Flow:
+ *   1. Generate subscriber_ownership STARK proof (circuit 0) on-device
+ *   2. Submit + verify STARK proof on-chain (buffer stays open)
+ *   3. Call cancel_private_stark which:
+ *        - pays claimable periods to the retailer
+ *        - re-shields the remaining refundable balance as `new_commitments` into
+ *          the source denominated pool (dust below one denomination is forfeited)
+ *        - closes the vault to the payer
+ *   4. Close proof buffer and recover rent
+ *
+ * SOL-only. SPL support requires additional token accounts (not wired).
+ */
+export async function cancelPrivateStark(
+  vaultPDA: PublicKey,
+  retailer: PublicKey,
+  sourcePool: { poolPDA: PublicKey; treePDA: PublicKey },
+  newCommitmentBytes: Uint8Array[],
+  newRootBytes: Uint8Array[],
+  starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+): Promise<string> {
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_SUBSCRIBER_OWNERSHIP,
+  } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const connection = getConnection();
+
+  // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
+  onProgress?.('Submitting STARK proof on-chain...');
+  const { proofBuffer } = await submitAndVerifyStarkProof(
+    {
+      proofBytes: starkProofData.proofBytes,
+      circuitId: CIRCUIT_SUBSCRIBER_OWNERSHIP,
+      publicInputs: [starkProofData.commitment],
+      proofSize: starkProofData.proofSize,
+    },
+    walletSigner,
+    onProgress,
+    connection,
+  );
+
+  // Step 2: Build + send cancel_private_stark instruction
+  onProgress?.('Building cancel transaction...');
+  const payerPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const commitmentArrays = newCommitmentBytes.map(b => Array.from(b));
+  const rootArrays = newRootBytes.map(b => Array.from(b));
+
+  const ix = buildCancelPrivateStarkIx(
+    payerPubkey,
+    retailer,
+    vaultPDA,
+    sourcePool.poolPDA,
+    sourcePool.treePDA,
+    proofBuffer,
+    commitmentArrays,
+    rootArrays,
+  );
+
+  onProgress?.('Sending cancel transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(400_000));
+  tx.add(ix);
+  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+
+  // Step 3: Close proof buffer (recover rent)
+  onProgress?.('Closing proof buffer...');
+  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+
+  onProgress?.('Done!');
+  return sig;
+}
+
+/**
  * Fetch a vault account from on-chain.
  */
 export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null> {
@@ -899,4 +1050,60 @@ export function computeClaimableAmount(vault: VaultInfo, currentSlot: number): b
   const totalOwed = vault.claimedPeriods * vault.rate;
   const available = vault.totalDeposited - totalOwed;
   return amount < available ? amount : available;
+}
+
+/**
+ * Breakdown of what a cancel will produce, computed client-side so the UI
+ * can show the user what they're about to do before they sign.
+ *
+ * The math mirrors the on-chain handler in
+ * `programs/zk_shielded/src/instructions/cancel_private_stark.rs`:
+ *   retailer_amount  = (claimed + claimable) * rate − already_paid
+ *   refundable       = total_deposited − (claimed + claimable) * rate
+ *   notes_to_reshield = floor(refundable / denomination)
+ *   dust              = refundable − notes_to_reshield * denomination
+ *
+ * `dustAmount` is the residual below one full denomination — currently
+ * returned to the payer in clear when the vault PDA is closed. A follow-up
+ * routes it to a self-stealth address for privacy.
+ */
+export interface CancelPreview {
+  /** Periods accrued but not yet claimed by the retailer. */
+  claimablePeriods: bigint;
+  /** Atomic units owed to the retailer on cancel. */
+  claimableAmount: bigint;
+  /** Total atomic units the retailer has been / will be paid. */
+  totalConsumed: bigint;
+  /** Atomic units available to refund after paying the retailer. */
+  refundable: bigint;
+  /** How many full-denomination notes we can re-shield. */
+  notesToReshield: bigint;
+  /** Atomic units below one denomination — routed to stealth. */
+  dustAmount: bigint;
+}
+
+export function computeCancelPreview(
+  vault: VaultInfo,
+  currentSlot: number,
+  denominationAtomic: bigint,
+): CancelPreview {
+  const claimablePeriods = BigInt(computeClaimable(vault, currentSlot));
+  const claimableAmount = claimablePeriods * vault.rate;
+  const totalConsumed = (vault.claimedPeriods + claimablePeriods) * vault.rate;
+  const refundable = vault.totalDeposited > totalConsumed
+    ? vault.totalDeposited - totalConsumed
+    : 0n;
+  const notesToReshield = denominationAtomic > 0n
+    ? refundable / denominationAtomic
+    : 0n;
+  const dustAmount = refundable - notesToReshield * denominationAtomic;
+
+  return {
+    claimablePeriods,
+    claimableAmount,
+    totalConsumed,
+    refundable,
+    notesToReshield,
+    dustAmount,
+  };
 }

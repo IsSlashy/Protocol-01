@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 pub mod state;
 use state::*;
 
-declare_id!("ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr");
+declare_id!("QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB");
 
 #[program]
 pub mod p01_registry {
@@ -146,6 +146,180 @@ pub mod p01_registry {
         msg!("Registry: entry closed for {}", ctx.accounts.entry.owner);
         Ok(())
     }
+
+    // =========================================================================
+    // Service Registry
+    // =========================================================================
+
+    /// Register a new service (merchant) in the on-chain service registry.
+    ///
+    /// Any wallet can register. The `verified` flag starts as `false` and can
+    /// only be flipped by the protocol authority via `attest_service`.
+    ///
+    /// # Arguments
+    /// * `slug` — URL-safe identifier, unique per owner (max 32 bytes).
+    ///   Used in the PDA seed.
+    /// * `name` — Display name (max 32 bytes).
+    /// * `icon_key` — Icon identifier (max 32 bytes).
+    /// * `category` — Category slug (max 24 bytes).
+    /// * `metadata_uri` — Off-chain metadata URI (max 128 bytes, may be empty).
+    /// * `retailer` — Pubkey that receives payments.
+    /// * `token_mint` — Token mint (System Program ID for native SOL).
+    /// * `price_atomic` — Price per period in smallest token unit.
+    /// * `interval_slots` — Billing period in Solana slots.
+    /// * `supports_oneshot` — Accept one-shot unshield payments.
+    /// * `supports_vault` — Accept recurring subscription vaults.
+    pub fn register_service(
+        ctx: Context<RegisterService>,
+        slug: String,
+        name: String,
+        icon_key: String,
+        category: String,
+        metadata_uri: String,
+        retailer: Pubkey,
+        token_mint: Pubkey,
+        price_atomic: u64,
+        interval_slots: u64,
+        supports_oneshot: bool,
+        supports_vault: bool,
+    ) -> Result<()> {
+        require!(!slug.is_empty() && slug.len() <= MAX_SLUG_LEN, RegistryError::InvalidSlug);
+        require!(!name.is_empty() && name.len() <= MAX_SERVICE_NAME_LEN, RegistryError::NameTooLong);
+        require!(icon_key.len() <= MAX_ICON_KEY_LEN, RegistryError::IconKeyTooLong);
+        require!(category.len() <= MAX_CATEGORY_LEN, RegistryError::CategoryTooLong);
+        require!(metadata_uri.len() <= MAX_METADATA_URI_LEN, RegistryError::MetadataUriTooLong);
+        require!(price_atomic > 0, RegistryError::InvalidPrice);
+        require!(interval_slots > 0, RegistryError::InvalidInterval);
+        require!(
+            supports_oneshot || supports_vault,
+            RegistryError::NoPaymentModeSelected
+        );
+
+        let clock = Clock::get()?;
+        let service = &mut ctx.accounts.service;
+
+        service.owner = ctx.accounts.owner.key();
+        service.retailer = retailer;
+        service.token_mint = token_mint;
+        service.price_atomic = price_atomic;
+        service.interval_slots = interval_slots;
+        service.subscriber_count = 0;
+        service.supports_oneshot = supports_oneshot;
+        service.supports_vault = supports_vault;
+        service.verified = false;
+        service.active = true;
+        service.bump = ctx.bumps.service;
+        service.created_at = clock.unix_timestamp;
+        service.updated_at = clock.unix_timestamp;
+        service.slug = slug;
+        service.name = name;
+        service.icon_key = icon_key;
+        service.category = category;
+        service.metadata_uri = metadata_uri;
+
+        msg!(
+            "ServiceRegistry: '{}' registered by {} (retailer {})",
+            service.name,
+            service.owner,
+            service.retailer,
+        );
+        Ok(())
+    }
+
+    /// Update mutable fields on an existing service. Pass `None` for any
+    /// field you do not want to change. `retailer` and `token_mint` are
+    /// intentionally immutable — migrating either requires deregistering
+    /// and re-registering so subscribers can audit the change.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_service(
+        ctx: Context<UpdateService>,
+        name: Option<String>,
+        icon_key: Option<String>,
+        category: Option<String>,
+        metadata_uri: Option<String>,
+        price_atomic: Option<u64>,
+        interval_slots: Option<u64>,
+        supports_oneshot: Option<bool>,
+        supports_vault: Option<bool>,
+        active: Option<bool>,
+    ) -> Result<()> {
+        let service = &mut ctx.accounts.service;
+
+        if let Some(n) = name {
+            require!(!n.is_empty() && n.len() <= MAX_SERVICE_NAME_LEN, RegistryError::NameTooLong);
+            service.name = n;
+        }
+        if let Some(i) = icon_key {
+            require!(i.len() <= MAX_ICON_KEY_LEN, RegistryError::IconKeyTooLong);
+            service.icon_key = i;
+        }
+        if let Some(c) = category {
+            require!(c.len() <= MAX_CATEGORY_LEN, RegistryError::CategoryTooLong);
+            service.category = c;
+        }
+        if let Some(m) = metadata_uri {
+            require!(m.len() <= MAX_METADATA_URI_LEN, RegistryError::MetadataUriTooLong);
+            service.metadata_uri = m;
+        }
+        if let Some(p) = price_atomic {
+            require!(p > 0, RegistryError::InvalidPrice);
+            service.price_atomic = p;
+        }
+        if let Some(s) = interval_slots {
+            require!(s > 0, RegistryError::InvalidInterval);
+            service.interval_slots = s;
+        }
+        if supports_oneshot.is_some() || supports_vault.is_some() {
+            let next_one = supports_oneshot.unwrap_or(service.supports_oneshot);
+            let next_vault = supports_vault.unwrap_or(service.supports_vault);
+            require!(next_one || next_vault, RegistryError::NoPaymentModeSelected);
+            service.supports_oneshot = next_one;
+            service.supports_vault = next_vault;
+        }
+        if let Some(a) = active {
+            service.active = a;
+        }
+
+        service.updated_at = Clock::get()?.unix_timestamp;
+        msg!("ServiceRegistry: '{}' updated", service.name);
+        Ok(())
+    }
+
+    /// Protocol authority attests or revokes verification for a service.
+    /// The signer must equal `PROTOCOL_VERIFIED_AUTHORITY`.
+    pub fn attest_service(ctx: Context<AttestService>, verified: bool) -> Result<()> {
+        let service = &mut ctx.accounts.service;
+        service.verified = verified;
+        service.updated_at = Clock::get()?.unix_timestamp;
+
+        msg!(
+            "ServiceRegistry: '{}' verified={} by protocol authority",
+            service.name,
+            verified,
+        );
+        Ok(())
+    }
+
+    /// Increment `subscriber_count` — trust-light bookkeeping callable by
+    /// the service owner only. The merchant SDK bumps this after a new
+    /// subscription is observed (via SubscribePrivateStark event or an
+    /// incoming unshield TX with the service's invoice memo). Callers
+    /// should not treat the counter as a security-relevant value.
+    pub fn bump_subscriber_count(ctx: Context<UpdateService>) -> Result<()> {
+        let service = &mut ctx.accounts.service;
+        service.subscriber_count = service.subscriber_count.saturating_add(1);
+        service.updated_at = Clock::get()?.unix_timestamp;
+        Ok(())
+    }
+
+    /// Close the service PDA and return rent to the owner.
+    pub fn deregister_service(ctx: Context<DeregisterService>) -> Result<()> {
+        msg!(
+            "ServiceRegistry: '{}' deregistered by owner",
+            ctx.accounts.service.name,
+        );
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -198,6 +372,63 @@ pub struct Deregister<'info> {
     pub entry: Account<'info, UserRegistry>,
 }
 
+#[derive(Accounts)]
+#[instruction(slug: String)]
+pub struct RegisterService<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        init,
+        payer = owner,
+        space = ServiceRegistry::SIZE,
+        seeds = [ServiceRegistry::SEED_PREFIX, owner.key().as_ref(), slug.as_bytes()],
+        bump,
+    )]
+    pub service: Account<'info, ServiceRegistry>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateService<'info> {
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [ServiceRegistry::SEED_PREFIX, owner.key().as_ref(), service.slug.as_bytes()],
+        bump = service.bump,
+        has_one = owner,
+    )]
+    pub service: Account<'info, ServiceRegistry>,
+}
+
+#[derive(Accounts)]
+pub struct AttestService<'info> {
+    #[account(
+        constraint = authority.key() == PROTOCOL_VERIFIED_AUTHORITY @ RegistryError::NotProtocolAuthority
+    )]
+    pub authority: Signer<'info>,
+
+    #[account(mut)]
+    pub service: Account<'info, ServiceRegistry>,
+}
+
+#[derive(Accounts)]
+pub struct DeregisterService<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [ServiceRegistry::SEED_PREFIX, owner.key().as_ref(), service.slug.as_bytes()],
+        bump = service.bump,
+        has_one = owner,
+        close = owner,
+    )]
+    pub service: Account<'info, ServiceRegistry>,
+}
+
 // ============================================================================
 // Errors
 // ============================================================================
@@ -210,4 +441,20 @@ pub enum RegistryError {
     InvalidKemKey,
     #[msg("Display name exceeds 32 bytes")]
     NameTooLong,
+    #[msg("Slug must be 1..=32 bytes")]
+    InvalidSlug,
+    #[msg("Icon key exceeds 32 bytes")]
+    IconKeyTooLong,
+    #[msg("Category exceeds 24 bytes")]
+    CategoryTooLong,
+    #[msg("Metadata URI exceeds 128 bytes")]
+    MetadataUriTooLong,
+    #[msg("Price must be greater than zero")]
+    InvalidPrice,
+    #[msg("Interval must be greater than zero slots")]
+    InvalidInterval,
+    #[msg("Service must accept at least one payment mode")]
+    NoPaymentModeSelected,
+    #[msg("Signer is not the protocol verification authority")]
+    NotProtocolAuthority,
 }

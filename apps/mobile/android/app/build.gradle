@@ -2,6 +2,10 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+// Redirect buildDir to avoid NTFS corruption in the original build/ tree after PC crash.
+// Remove this once `build/` can be fully deleted (needs chkdsk /f D:).
+buildDir = file("build2")
+
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
 // Load signing passwords from gitignored signing.properties (if present)
@@ -103,8 +107,8 @@ android {
         applicationId 'com.protocol01.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 20
-        versionName "0.9.8"
+        versionCode 22
+        versionName "0.9.9"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
 

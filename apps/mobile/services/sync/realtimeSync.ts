@@ -402,6 +402,8 @@ export class RealtimeSyncService {
         return '2 weeks';
       case 'monthly':
         return 'month';
+      case 'yearly':
+        return 'year';
       case 'custom':
         return `${customDays || 1} days`;
       default:

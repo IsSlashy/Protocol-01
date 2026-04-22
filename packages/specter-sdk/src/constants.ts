@@ -20,7 +20,7 @@ export const PROGRAM_IDS: Record<Cluster, PublicKey> = {
 export const REGISTRY_PROGRAM_IDS: Record<Cluster, PublicKey> = {
   'mainnet-beta': PublicKey.default,
   'testnet': PublicKey.default,
-  'devnet': new PublicKey('ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr'),
+  'devnet': new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
   'localnet': new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
 };
 
@@ -32,7 +32,7 @@ export const RELAYER_PROGRAM_IDS: Record<Cluster, PublicKey> = {
 };
 
 /** Registry program ID (devnet). Convenience alias for REGISTRY_PROGRAM_IDS.devnet. */
-export const REGISTRY_PROGRAM_ID = new PublicKey('ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr');
+export const REGISTRY_PROGRAM_ID = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
 // </auto-generated-program-ids>
 
 /**

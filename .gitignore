@@ -33,6 +33,11 @@ docs/pitch-entrepreneur-go-2026.md
 *.apk
 *.apk.idsig
 *.exe
+*.mp4
+
+# Android build artifacts (build/ redirected to build2/ after NTFS corruption)
+apps/mobile/android/app/build2/
+apps/mobile/android/app/build/
 *.png
 !docs/assets/**/*.png
 !apps/mobile/assets/**/*.png
@@ -246,3 +251,6 @@ docs/migration-plan.md
 docs/on-chain-migration.md
 docs/stark-migration-assessment.md
 docs/assets/screenshots/SCREENSHOTS_A_PRENDRE.md
+
+# Demo service retailer keypairs — regenerated per env, never commit
+scripts/seed-services/keypairs/

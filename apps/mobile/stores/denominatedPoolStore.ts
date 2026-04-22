@@ -43,6 +43,10 @@ import { deriveSeedFromSigner, rescanPoolFromSeed, fetchPoolCommitments } from '
 import { scheduleLocalNotification } from '../services/notifications';
 import { getOrCreateStealthKeys, getMetaAddress } from '../services/stealth/keys';
 import { generateStealthAddress as genStealth, parseMetaAddress, scanStealthPayment } from '../utils/crypto/stealth';
+import {
+  computeGoldilocksPoolNullifier,
+  goldilocksNullifierToBytes,
+} from '../services/zk/goldilocks-poseidon';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,6 +141,13 @@ interface DenominatedPoolState {
     outputSecrets: bigint[],
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   ) => Promise<{ txSignature: string; outputCommitments: bigint[] }>;
+  /**
+   * Import fresh notes re-shielded during subscription cancellation. Takes
+   * already-computed receipts (secrets + nullifier preimages + commitments)
+   * and the pool they landed in; constructs StoredNote entries matching the
+   * same shape used by `splitNoteStark` so the UI surfaces them immediately.
+   */
+  addReshieldedNotes: (receipts: ShieldReceipt[], pool: PoolConfig) => void;
   importNote: (encodedNote: string, source?: NoteSource) => void;
   exportAllNotes: () => string[];
   exportNote: (noteId: string) => string;
@@ -152,6 +163,8 @@ interface DenominatedPoolState {
    * recovered notes.
    */
   rescanPool: (poolPDA?: string, opts?: { maxCounter?: number; epochsBack?: number; maxSignatures?: number }) => Promise<number>;
+  /** Force-clear a stuck operation (isLoading/progress/isProving/_starkOpInFlight). Use when a shield/unshield promise was interrupted and the guard refuses new ops. */
+  resetOperationState: () => void;
   reset: () => void;
 }
 
@@ -405,8 +418,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const slot = await connection.getSlot('confirmed');
           const currentEpoch = slotToEpoch(slot);
 
-          // Check nullifier PDAs on-chain for non-terminal notes (current cluster only)
-          // If a nullifier PDA exists, the note was already spent (possibly on another device)
+          // Check nullifier PDAs on-chain for non-terminal notes (current cluster only).
+          // A note can be spent via two paths that write DIFFERENT PDAs:
+          //   - Groth16 unshield / transfer: Poseidon(np, sec) → 32-byte BN254 → PDA
+          //   - STARK unshield / subscribe:  Goldilocks Poseidon(np_u64, sec_u64) →
+          //                                  8-byte LE + 24 zeros → PDA
+          // The scanner MUST probe both — checking only the Groth16 PDA leaves
+          // STARK-spent notes marked "mature", causing the next STARK spend to
+          // fail with `already in use` after a 60s proof run.
           const cluster = getCluster();
           const activeNotes = notes.filter(n =>
             n.status !== 'spent' && n.status !== 'transferred' && n.status !== 'locked' &&
@@ -417,11 +436,20 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           for (const note of activeNotes) {
             try {
               const receipt = readReceipt(note.receiptJSON);
-              const nullifier = createNullifier(receipt.nullifierPreimage, receipt.secret);
-              const nullifierBytes = bigintToLeBytes32(nullifier);
               const poolKey = new PublicKey(note.poolPDA);
-              const [pda] = deriveNullifierPDA(poolKey, nullifierBytes);
-              nullifierPDAs.push({ noteId: note.id, pda });
+
+              // Groth16 / Poseidon PDA (BN254 form)
+              const g16Null = createNullifier(receipt.nullifierPreimage, receipt.secret);
+              const [g16Pda] = deriveNullifierPDA(poolKey, bigintToLeBytes32(g16Null));
+              nullifierPDAs.push({ noteId: note.id, pda: g16Pda });
+
+              // STARK / Goldilocks PDA (u64 in bytes[0..8], zero tail)
+              const starkNull = computeGoldilocksPoolNullifier(
+                receipt.nullifierPreimage,
+                receipt.secret,
+              );
+              const [starkPda] = deriveNullifierPDA(poolKey, goldilocksNullifierToBytes(starkNull));
+              nullifierPDAs.push({ noteId: note.id, pda: starkPda });
             } catch {
               // skip notes with invalid receipts
             }
@@ -717,6 +745,35 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const receipt = readReceipt(note.receiptJSON);
         const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found for this note');
+
+        // Pre-flight: abort before stealth setup if the note's STARK PDA is
+        // already on-chain. Saves a few seconds of wasted work and — more
+        // importantly — flips the local status to 'spent' so the UI reflects
+        // reality. The proof was generated from starkProofData.publicInputs[0]
+        // which IS the Goldilocks nullifier; probe its PDA directly.
+        try {
+          const preStarkNull = starkProofData.publicInputs?.[0] ?? 0n;
+          if (preStarkNull !== 0n) {
+            const [prePda] = deriveNullifierPDA(
+              pool.poolPDA,
+              goldilocksNullifierToBytes(preStarkNull),
+            );
+            const preConn = getConnection();
+            const preAcct = await preConn.getAccountInfo(prePda);
+            if (preAcct !== null) {
+              set(state => ({
+                notes: state.notes.map(n =>
+                  n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n,
+                ),
+              }));
+              throw new Error('Note already spent on-chain');
+            }
+          }
+        } catch (e) {
+          if ((e as Error).message === 'Note already spent on-chain') throw e;
+          // Network glitch — fall through; the on-chain `init` constraint is
+          // still the authoritative double-spend guard.
+        }
 
         _starkOpInFlight = true;
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK unshield...' });
@@ -1096,6 +1153,26 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       // ------------------------------------------------------------------
+      // Re-shielded notes (from subscription cancel)
+      // ------------------------------------------------------------------
+
+      addReshieldedNotes: (receipts, pool) => {
+        if (receipts.length === 0) return;
+        const newNotes: StoredNote[] = receipts.map(receipt => ({
+          id: noteIdFromReceipt(receipt),
+          receiptJSON: secureReceipt(receipt),
+          token: pool.token,
+          denomination: pool.denomination,
+          poolPDA: pool.poolPDA.toBase58(),
+          shieldedAt: receipt.shieldedAt || Date.now(),
+          status: 'pending' as NoteStatus,
+          source: 'shielded' as NoteSource,
+          cluster: getCluster(),
+        }));
+        set(state => ({ notes: [...newNotes, ...state.notes], error: null }));
+      },
+
+      // ------------------------------------------------------------------
       // Note import/export (backup & sharing)
       // ------------------------------------------------------------------
 
@@ -1208,25 +1285,32 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         let totalRecovered = 0;
 
-        for (const pool of targetPools) {
-          set({ progress: `Scanning ${pool.token} ${pool.denomination} pool...` });
-          const onChain = await fetchPoolCommitments(connection, pool.poolPDA, {
-            maxSignatures,
-            onProgress: (scanned, total) => {
-              set({ progress: `Scanning ${pool.token} ${pool.denomination}: ${scanned}/${total} txs` });
-            },
-          });
-          if (onChain.size === 0) continue;
+        console.log(`[Rescan] start — pools=${targetPools.length} epochs=${epochs.length} maxCounter=${maxCounter} maxSignatures=${maxSignatures}`);
 
-          const matches = rescanPoolFromSeed({
-            walletSeed,
-            poolPDA: pool.poolPDA,
-            tokenMints: [pool.tokenMint],
-            epochs,
-            maxCounter,
-            knownCommitments: new Set(onChain.keys()),
-          });
-          if (matches.length === 0) continue;
+        for (const pool of targetPools) {
+          const label = `${pool.token} ${pool.denomination}`;
+          try {
+            set({ progress: `Scanning ${label} pool...` });
+            console.log(`[Rescan] ${label} — fetching on-chain commitments`);
+            const onChain = await fetchPoolCommitments(connection, pool.poolPDA, {
+              maxSignatures,
+              onProgress: (scanned, total) => {
+                set({ progress: `Scanning ${label}: ${scanned}/${total} txs` });
+              },
+            });
+            console.log(`[Rescan] ${label} — ${onChain.size} commitments on-chain`);
+            if (onChain.size === 0) continue;
+
+            const matches = rescanPoolFromSeed({
+              walletSeed,
+              poolPDA: pool.poolPDA,
+              tokenMints: [pool.tokenMint],
+              epochs,
+              maxCounter,
+              knownCommitments: new Set(onChain.keys()),
+            });
+            console.log(`[Rescan] ${label} — ${matches.length} seed matches`);
+            if (matches.length === 0) continue;
 
           const tokenMintField = (() => {
             const bytes = pool.tokenMint.toBytes();
@@ -1281,17 +1365,27 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               },
             }));
             totalRecovered += newNotes.length;
-            console.log(`[DenomStore] Rescan recovered ${newNotes.length} note(s) for ${pool.token} ${pool.denomination}`);
+            console.log(`[Rescan] ${label} — recovered ${newNotes.length} note(s)`);
+          }
+          } catch (err: any) {
+            console.warn(`[Rescan] ${label} — FAILED:`, err?.message ?? String(err));
           }
         }
 
+        console.log(`[Rescan] done — totalRecovered=${totalRecovered}`);
         set({ progress: null });
         // Promote any rescued notes that are already past maturity
         try { await get().refreshNoteStatuses(); } catch {}
         return totalRecovered;
       },
 
+      resetOperationState: () => {
+        _starkOpInFlight = false;
+        set({ isLoading: false, isProving: false, progress: null, error: null });
+      },
+
       reset: () => {
+        _starkOpInFlight = false;
         set({
           notes: [],
           selectedToken: 'SOL',

@@ -11,10 +11,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PublicKey, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import { withKeepAwake } from '@/utils/keepAwakeDuring';
+
+const NORMAL_VAULT_VK_SENTINEL = sha256(
+  new TextEncoder().encode('p01:subscription:normal:wallet-auth:v1'),
+);
 
 export default function SubscribeNormalScreen() {
   const router = useRouter();
@@ -30,24 +36,42 @@ export default function SubscribeNormalScreen() {
       p01Alert('Missing Retailer', 'Please enter a retailer address.');
       return;
     }
-    if (!amount.trim() || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    let retailerKey: PublicKey;
+    try {
+      retailerKey = new PublicKey(retailer.trim());
+    } catch {
+      p01Alert('Invalid Retailer', 'Retailer address is not a valid Solana public key.');
+      return;
+    }
+    const amountFloat = parseFloat(amount);
+    if (!amount.trim() || isNaN(amountFloat) || amountFloat <= 0) {
       p01Alert('Invalid Amount', 'Please enter a valid amount.');
       return;
     }
-    if (!rate.trim() || isNaN(parseFloat(rate)) || parseFloat(rate) <= 0) {
+    const rateFloat = parseFloat(rate);
+    if (!rate.trim() || isNaN(rateFloat) || rateFloat <= 0) {
       p01Alert('Invalid Rate', 'Please enter a valid rate per period.');
       return;
     }
+    if (rateFloat > amountFloat) {
+      p01Alert('Invalid Rate', 'Per-period rate cannot exceed total deposit.');
+      return;
+    }
+    const intervalSlotsNumRaw = parseInt(intervalSlots, 10);
+    if (!Number.isFinite(intervalSlotsNumRaw) || intervalSlotsNumRaw <= 0) {
+      p01Alert('Invalid Interval', 'Interval must be a positive number of slots.');
+      return;
+    }
     try {
-      const retailerKey = new PublicKey(retailer);
-      const amountLamports = BigInt(Math.floor(parseFloat(amount) * LAMPORTS_PER_SOL));
-      const rateLamports = BigInt(Math.floor(parseFloat(rate) * LAMPORTS_PER_SOL));
-      const intervalSlotsNum = BigInt(parseInt(intervalSlots, 10));
+      const amountLamports = BigInt(Math.floor(amountFloat * LAMPORTS_PER_SOL));
+      const rateLamports = BigInt(Math.floor(rateFloat * LAMPORTS_PER_SOL));
+      const intervalSlotsNum = BigInt(intervalSlotsNumRaw);
+      if (amountLamports <= 0n || rateLamports <= 0n) {
+        p01Alert('Invalid Amount', 'Amount and rate must resolve to non-zero lamports.');
+        return;
+      }
 
-      // Placeholder VK hash — replace with actual VK hash from circuit
-      const vkHashSubscriber = new Uint8Array(32);
-
-      const sig = await subscribeNormalAction(
+      const sig = await withKeepAwake('p01-subscribe-normal', () => subscribeNormalAction(
         {
           retailer: retailerKey,
           tokenMint: SystemProgram.programId,
@@ -55,8 +79,8 @@ export default function SubscribeNormalScreen() {
           rate: rateLamports,
           intervalSlots: intervalSlotsNum,
         },
-        vkHashSubscriber,
-      );
+        NORMAL_VAULT_VK_SENTINEL,
+      ));
 
       p01Alert('Success', `Subscription created! Tx: ${sig.slice(0, 16)}...`);
       router.back();

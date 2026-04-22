@@ -16,6 +16,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
+import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useArcium } from '@/providers/ArciumProvider';
 import { useArciumStore } from '@/stores/arciumStore';
@@ -50,7 +51,27 @@ export default function PrivacyDashboard() {
     balances: confidentialBalances,
     pendingCredits,
   } = useConfidentialStore();
-  const { notes: denomNotes, getActiveNotes, isLoading, refreshAllPools } = useDenominatedPoolStore();
+  const {
+    notes: denomNotes,
+    getActiveNotes,
+    isLoading: denomLoading,
+    progress: denomProgress,
+    isProving,
+    refreshAllPools,
+    resetOperationState: resetDenomOp,
+  } = useDenominatedPoolStore();
+  const {
+    isLoading: subLoading,
+    progress: subProgress,
+    resetOperationState: resetSubOp,
+  } = useSubscriptionVaultStore();
+
+  const isLoading = denomLoading || subLoading;
+  const progress = denomProgress ?? subProgress;
+  const resetAnyStuckOp = useCallback(() => {
+    resetDenomOp();
+    resetSubOp();
+  }, [resetDenomOp, resetSubOp]);
   const {
     shieldedWalletEnabled,
     confidentialBalanceEnabled,
@@ -94,6 +115,26 @@ export default function PrivacyDashboard() {
           <Ionicons name="settings-outline" size={20} color={Colors.text} />
         </TouchableOpacity>
       </View>
+
+      {isLoading && progress && (
+        <View style={s.progressBanner}>
+          <View style={s.progressDot} />
+          <Text style={s.progressText} numberOfLines={2}>
+            {isProving ? `${progress} (proving…)` : progress}
+          </Text>
+          <TouchableOpacity
+            style={s.progressCancel}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              resetAnyStuckOp();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel stuck operation"
+          >
+            <Ionicons name="close" size={16} color={Colors.text} />
+          </TouchableOpacity>
+        </View>
+      )}
 
       <ScrollView
         style={s.scroll}
@@ -206,67 +247,69 @@ export default function PrivacyDashboard() {
         </Animated.View>
 
         {/* ─── 4. YOUR NOTES (collapsible) ─────────────── */}
-        {activeNotes.length > 0 && (
-          <Animated.View entering={FadeInDown.delay(300).duration(300)}>
-            <TouchableOpacity
-              style={s.notesHeader}
-              onPress={() => {
-                Haptics.selectionAsync();
+        <Animated.View entering={FadeInDown.delay(300).duration(300)}>
+          <TouchableOpacity
+            style={s.notesHeader}
+            onPress={() => {
+              Haptics.selectionAsync();
+              if (activeNotes.length === 0) {
+                router.push('/(main)/(privacy)/denominated-notes' as any);
+              } else {
                 setNotesExpanded(!notesExpanded);
-              }}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`Your notes, ${activeNotes.length} total`}
-            >
-              <Text style={s.sectionTitle}>{t('privacy.myNotes')}</Text>
-              <View style={s.notesHeaderRight}>
-                <Text style={s.notesCount}>{activeNotes.length}</Text>
-                <Ionicons
-                  name={notesExpanded ? 'chevron-up' : 'chevron-down'}
-                  size={16}
-                  color={Colors.textTertiary}
-                />
-              </View>
-            </TouchableOpacity>
+              }
+            }}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={activeNotes.length === 0 ? 'Open notes vault' : `Your notes, ${activeNotes.length} total`}
+          >
+            <Text style={s.sectionTitle}>{t('privacy.myNotes')}</Text>
+            <View style={s.notesHeaderRight}>
+              <Text style={s.notesCount}>{activeNotes.length}</Text>
+              <Ionicons
+                name={activeNotes.length === 0 ? 'chevron-forward' : (notesExpanded ? 'chevron-up' : 'chevron-down')}
+                size={16}
+                color={Colors.textTertiary}
+              />
+            </View>
+          </TouchableOpacity>
 
-            {notesExpanded && (
-              <View style={s.notesList}>
-                {activeNotes.slice(0, 8).map((note, i) => (
-                  <View key={note.id} style={s.noteRow}>
-                    <View style={[
-                      s.noteStatus,
-                      { backgroundColor: note.status === 'mature' ? P01Colors.cyanDim : P01Colors.yellowDim },
-                    ]}>
-                      <Ionicons
-                        name={note.status === 'mature' ? 'checkmark-circle' : 'time'}
-                        size={14}
-                        color={note.status === 'mature' ? P01Colors.cyan : P01Colors.yellow}
-                      />
-                    </View>
-                    <View style={s.noteInfo}>
-                      <Text style={s.noteAmount}>{note.denomination} SOL</Text>
-                      <Text style={s.noteStatusText}>
-                        {note.status === 'mature' ? 'Ready to use' : 'Maturing...'}
-                      </Text>
-                    </View>
+          {activeNotes.length > 0 && notesExpanded && (
+            <View style={s.notesList}>
+              {activeNotes.slice(0, 8).map((note, i) => (
+                <View key={note.id} style={s.noteRow}>
+                  <View style={[
+                    s.noteStatus,
+                    { backgroundColor: note.status === 'mature' ? P01Colors.cyanDim : P01Colors.yellowDim },
+                  ]}>
+                    <Ionicons
+                      name={note.status === 'mature' ? 'checkmark-circle' : 'time'}
+                      size={14}
+                      color={note.status === 'mature' ? P01Colors.cyan : P01Colors.yellow}
+                    />
                   </View>
-                ))}
-                {activeNotes.length > 8 && (
-                  <Text style={s.notesMore}>+{activeNotes.length - 8} more</Text>
-                )}
-                <TouchableOpacity
-                  style={s.notesViewAll}
-                  onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
-                  accessibilityRole="button"
-                  accessibilityLabel="View all notes"
-                >
-                  <Text style={s.notesViewAllText}>{t('privacy.viewAllNotes')}</Text>
-                  <Ionicons name="chevron-forward" size={14} color={P01Colors.cyan} />
-                </TouchableOpacity>
-              </View>
-            )}
-          </Animated.View>
-        )}
+                  <View style={s.noteInfo}>
+                    <Text style={s.noteAmount}>{note.denomination} SOL</Text>
+                    <Text style={s.noteStatusText}>
+                      {note.status === 'mature' ? 'Ready to use' : 'Maturing...'}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+              {activeNotes.length > 8 && (
+                <Text style={s.notesMore}>+{activeNotes.length - 8} more</Text>
+              )}
+              <TouchableOpacity
+                style={s.notesViewAll}
+                onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
+                accessibilityRole="button"
+                accessibilityLabel="View all notes"
+              >
+                <Text style={s.notesViewAllText}>{t('privacy.viewAllNotes')}</Text>
+                <Ionicons name="chevron-forward" size={14} color={P01Colors.cyan} />
+              </TouchableOpacity>
+            </View>
+          )}
+        </Animated.View>
 
         {/* ─── 5. PROTECTION STATUS ────────────────────── */}
         <Animated.View entering={FadeInDown.delay(400).duration(300)}>
@@ -337,6 +380,41 @@ const s = StyleSheet.create({
   headerBtn: {
     width: 40,
     height: 40,
+    borderRadius: 9999,
+    backgroundColor: Colors.surfaceSecondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Progress banner (shield/unshield/subscribe in flight)
+  progressBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: 12,
+    backgroundColor: P01Colors.cyanDim,
+    borderWidth: 1,
+    borderColor: P01Colors.cyan,
+    gap: Spacing.sm,
+  },
+  progressDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 9999,
+    backgroundColor: P01Colors.cyan,
+  },
+  progressText: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+  },
+  progressCancel: {
+    width: 28,
+    height: 28,
     borderRadius: 9999,
     backgroundColor: Colors.surfaceSecondary,
     justifyContent: 'center',

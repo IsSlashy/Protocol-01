@@ -14,7 +14,7 @@
 
 import { MaterialIcons } from '@expo/vector-icons';
 import { Keypair } from '@solana/web3.js';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -117,14 +117,28 @@ export default function BuyP2PScreen(): React.ReactElement {
   const { publicKey } = useWalletStore();
   const client = useMemo(() => getMugenEncryptedClient(), []);
 
+  // Prefill from buy.tsx hand-off (P-01 rail). All optional.
+  const params = useLocalSearchParams<{
+    desiredSol?: string;
+    maxFiat?: string;
+    fiatCurrency?: string;
+    stealth?: string;
+  }>();
+  const prefillCurrency: FiatCurrency =
+    params.fiatCurrency === 'USD' ? 'USD' : 'EUR';
+
   // Taker-nonce for this session
   const { takerNoncePubkey, regenerate: regenerateNonce } = useNewTakerNonce();
 
-  // Form state
-  const [formOpen, setFormOpen] = useState(false);
-  const [desiredSol, setDesiredSol] = useState<string>('0.01');
-  const [maxFiat, setMaxFiat] = useState<string>('100');
-  const [fiatCurrency, setFiatCurrency] = useState<FiatCurrency>('EUR');
+  // Form state — prefilled from params when present
+  const [formOpen, setFormOpen] = useState<boolean>(
+    Boolean(params.desiredSol || params.maxFiat),
+  );
+  const [desiredSol, setDesiredSol] = useState<string>(
+    params.desiredSol ?? '0.01',
+  );
+  const [maxFiat, setMaxFiat] = useState<string>(params.maxFiat ?? '100');
+  const [fiatCurrency, setFiatCurrency] = useState<FiatCurrency>(prefillCurrency);
   const [paymentMask, setPaymentMask] = useState<number>(1); // SEPA default
 
   // Submit state machine

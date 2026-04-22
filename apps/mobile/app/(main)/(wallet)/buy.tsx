@@ -24,8 +24,6 @@ import { p01Alert } from '@/stores/alertStore';
 import { isMainnet } from '@/services/solana/connection';
 import {
   getCryptoPrices,
-  getPaymentQuote,
-  createPaymentSession,
   P01_NETWORK_FEE_BPS,
 } from '@/services/payments/p01-payments';
 import {
@@ -37,8 +35,10 @@ import { splitAmount, type SplitResult } from '@/services/payments/denomination'
 import {
   registerTreasuryRoute,
   getTreasuryRouteStatus,
+  getTreasuryHealth,
   type TreasuryBufferRoute,
   type TreasuryBufferStatus,
+  type TreasuryHealth,
   type TreasuryRouteStatus,
 } from '@/services/payments/treasury-buffer-client';
 import { GojoColors } from '@/components/mugen/SharedStyles';
@@ -153,6 +153,8 @@ export default function BuyScreen() {
   const [treasuryStatus, setTreasuryStatus] = useState<TreasuryBufferStatus | null>(null);
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
   const [treasuryFellBack, setTreasuryFellBack] = useState(false);
+  // Pre-tap health snapshot — refreshed on mount + when MoonPay rail picked.
+  const [treasuryHealth, setTreasuryHealth] = useState<TreasuryHealth | null>(null);
 
   // Derived values
   const tier = SOL_TIERS[selectedTier];
@@ -180,6 +182,37 @@ export default function BuyScreen() {
 
   // Network info (devnet allowed for testing, badge shown)
   const isDevnet = !isOnMainnet;
+
+  // ── Treasury health probe (pre-tap) ───────────────────────────────
+  // Fired on mount and again whenever the user switches to the MoonPay rail.
+  // We swallow errors → treat as healthy:false so the UI can show the
+  // "buffer offline" warning *before* the user commits.
+  useEffect(() => {
+    if (selectedRail !== 'moonpay') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const h = await getTreasuryHealth();
+        if (!cancelled) setTreasuryHealth(h);
+      } catch (err) {
+        if (!cancelled) {
+          setTreasuryHealth({
+            bufferAddress: '',
+            bufferBalanceLamports: 0,
+            minBalanceLamports: 0,
+            healthy: false,
+            reason: err instanceof Error ? err.message : String(err),
+            lastTickAt: null,
+            lastPayoutAt: null,
+            queue: { pending: 0, funded: 0, paid: 0, failed: 0, expired: 0 },
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRail]);
 
   // Fetch SOL price
   useEffect(() => {
@@ -340,20 +373,19 @@ export default function BuyScreen() {
         setPaymentUrl(widgetUrl);
         setShowPaymentModal(true);
       } else {
-        // P-01 Network (Mugen) — get quote first, then create session
-        const quote = await getPaymentQuote({
-          fiatAmount: fiatRounded / 100,
-          fiatCurrency: 'USD',
-          cryptoSymbol: 'SOL',
-          paymentMethodId: 'bank',
+        // P-01 Network (Mugen P2P) — hand off to buy-p2p screen.
+        // The P2P flow is FROST 2/3 + Arcium MPC encrypted; it owns its own
+        // taker-nonce + receipt + lifecycle UI, so we simply prefill the
+        // form with the tier amount the user already chose here.
+        router.push({
+          pathname: '/(main)/(wallet)/buy-p2p',
+          params: {
+            desiredSol: String(tier.sol),
+            maxFiat: String(fiatRounded),
+            fiatCurrency,
+            stealth: receiveAddress,
+          },
         });
-        const session = await createPaymentSession({
-          quote,
-          walletAddress: receiveAddress, // stealth address, not main wallet
-          paymentMethodId: 'bank',
-        });
-        setPaymentUrl(session.paymentUrl);
-        setShowPaymentModal(true);
       }
     } catch (error) {
       console.error('Payment error:', error);
@@ -523,6 +555,33 @@ export default function BuyScreen() {
           })}
         </Animated.View>
 
+        {/* ── Pre-tap buffer health warning (MoonPay rail only) ── */}
+        {selectedRail === 'moonpay' &&
+          treasuryHealth &&
+          !treasuryHealth.healthy &&
+          !treasuryRoute && (
+          <Animated.View
+            entering={FadeInUp.delay(280)}
+            style={[
+              styles.treasuryCard,
+              { borderColor: GojoColors.borderError, backgroundColor: 'rgba(239,68,68,0.06)' },
+            ]}
+          >
+            <View style={styles.treasuryHeader}>
+              <View style={[styles.treasuryIcon, { backgroundColor: 'rgba(239,68,68,0.18)' }]}>
+                <Ionicons name="warning" size={18} color={GojoColors.errorLight} />
+              </View>
+              <Text style={[styles.treasuryTitle, { color: GojoColors.errorLight }]}>
+                Buffer Offline {'\u2014'} Direct Stealth Payout
+              </Text>
+            </View>
+            <Text style={styles.treasuryStatus}>
+              {treasuryHealth.reason ?? 'Buffer wallet not ready.'}
+              {' '}MoonPay will deliver SOL directly to your stealth address; the timing-decorrelation hop is skipped this time.
+            </Text>
+          </Animated.View>
+        )}
+
         {/* ── Treasury Buffer status (MoonPay rail only) ── */}
         {selectedRail === 'moonpay' && (treasuryRoute || treasuryFellBack) && (
           <Animated.View entering={FadeInUp.delay(300)} style={styles.treasuryCard}>
@@ -587,6 +646,15 @@ export default function BuyScreen() {
                 );
               }
               if (s === 'funded') {
+                const cohort = treasuryStatus?.cohort;
+                if (cohort && !cohort.cohortReady && cohort.cohortWaitMsRemaining > 0) {
+                  const cohortSecs = Math.ceil(cohort.cohortWaitMsRemaining / 1000);
+                  return (
+                    <Text style={[styles.treasuryStatus, { color: GojoColors.violetLight }]}>
+                      Funded {'\u00b7'} waiting for cohort ({cohort.cohortCandidatesCount}/{cohort.minCohortSize}) {'\u00b7'} max wait {cohortSecs}s
+                    </Text>
+                  );
+                }
                 return (
                   <Text style={[styles.treasuryStatus, { color: GojoColors.blueLight }]}>
                     Payment received by buffer {'\u00b7'} forwarding to stealth in ~{secs}s...

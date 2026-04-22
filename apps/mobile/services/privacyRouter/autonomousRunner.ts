@@ -1,21 +1,19 @@
 /**
  * Autonomous Privacy Router Runner
  *
- * Self-initializing service that runs the full privacy pipeline without
- * user intervention. Call `startAutonomousRunner()` once at app startup
- * (after auth) and everything works automatically:
+ * Self-initializing service that runs the full privacy pipeline. Started once
+ * at app launch (after auth) by `startAutonomousRunner()`. Hops are picked up
+ * from encrypted SecureStore and executed via injected callbacks.
  *
- * 1. Initializes the privacy router with real callbacks
- * 2. Resumes any pending routes from previous sessions
- * 3. Polls for mature notes and executes due hops
- * 4. Auto-refreshes note maturity status
- * 5. Handles errors with retry logic
- *
- * This replaces the lazy initialization in private-send.tsx
- * and ensures the background task is always registered.
+ * STARK proofs require the foreground WebView prover. When the app is
+ * foregrounded, the StarkProverProvider calls `setForegroundProver()` to
+ * register itself; unshield + split hops then run end-to-end. When backgrounded,
+ * the callbacks throw `RETRY:` so the scheduler reschedules the hop and a local
+ * notification nudges the user to reopen the app.
  */
 
 import { AppState, AppStateStatus, NativeModules, Platform } from 'react-native';
+import { Buffer } from 'buffer';
 import {
   initPrivacyRouter,
   resumeRoutes,
@@ -27,6 +25,72 @@ import { useDenominatedPoolStore } from '../../stores/denominatedPoolStore';
 import { useWalletStore } from '../../stores/walletStore';
 import type { HopExecutionCallbacks } from './types';
 import { useAutoShieldStore } from '../../stores/autoShieldStore';
+import { deriveSplitOutputSecrets } from '../denominatedPool';
+
+// ---------------------------------------------------------------------------
+// Foreground STARK prover injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Subset of `StarkProverContextType` (providers/StarkProverProvider) the runner
+ * needs. The provider registers itself via `setForegroundProver` on mount and
+ * clears via `clearForegroundProver` on unmount, so the runner reads the live
+ * prover at hop execution time rather than capturing a stale closure.
+ */
+export interface RouterProverFacade {
+  isReady: boolean;
+  generatePoolCommitmentProof: (
+    np: string,
+    secret: string,
+    epoch: string,
+    mint: string,
+  ) => Promise<{
+    proofHex: string;
+    proofSize: number;
+    publicInputs: string[];
+  }>;
+}
+
+let _foregroundProver: RouterProverFacade | null = null;
+
+export function setForegroundProver(prover: RouterProverFacade): void {
+  _foregroundProver = prover;
+}
+
+export function clearForegroundProver(): void {
+  _foregroundProver = null;
+}
+
+function getReadyProver(): RouterProverFacade | null {
+  if (_foregroundProver && _foregroundProver.isReady) return _foregroundProver;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Local notification throttling — one nudge per hour across all routes
+// ---------------------------------------------------------------------------
+
+let _lastNudgeAt = 0;
+const NUDGE_THROTTLE_MS = 60 * 60_000;
+
+async function nudgeUserOpenApp(): Promise<void> {
+  const now = Date.now();
+  if (now - _lastNudgeAt < NUDGE_THROTTLE_MS) return;
+  _lastNudgeAt = now;
+
+  try {
+    const Notifications = await import('expo-notifications');
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Privacy route ready',
+        body: 'Open Protocol 01 to advance your private send.',
+      },
+      trigger: null,
+    });
+  } catch {
+    // expo-notifications optional — silently skip if unavailable
+  }
+}
 
 // ---------------------------------------------------------------------------
 // State
@@ -36,19 +100,14 @@ let _running = false;
 let _pollInterval: ReturnType<typeof setInterval> | null = null;
 let _appStateListener: any = null;
 
-/** How often to check for pending hops (ms) */
-const POLL_INTERVAL_MS = 60_000; // 1 minute
-
-/** How often to refresh note maturity (ms) */
-const MATURITY_REFRESH_MS = 5 * 60_000; // 5 minutes
-
+const POLL_INTERVAL_MS = 60_000;
+const MATURITY_REFRESH_MS = 5 * 60_000;
 let _lastMaturityRefresh = 0;
 
 // ---------------------------------------------------------------------------
 // Real execution callbacks
 // ---------------------------------------------------------------------------
 
-/** Send a local push notification when a hop completes */
 async function notifyHopComplete(hopType: string, hopIndex: number, totalHops: number, denomination: number): Promise<void> {
   try {
     const { p01Alert } = require('@/stores/alertStore');
@@ -62,6 +121,9 @@ async function notifyHopComplete(hopType: string, hopIndex: number, totalHops: n
 function buildCallbacks(): HopExecutionCallbacks {
   return {
     shield: async (params) => {
+      // Shield uses the user's main-wallet HKDF derivation through the store —
+      // no STARK proof required (commitment-only inclusion). Works in both fg
+      // and bg as long as the wallet signer is mounted.
       console.log(`[AutoRunner] 🛡️ SHIELD: ${params.amount} SOL → ${params.denomination} SOL pool`);
 
       const pool = findPool('SOL', params.denomination);
@@ -82,7 +144,14 @@ function buildCallbacks(): HopExecutionCallbacks {
       if (!sourcePool) throw new Error(`No source pool for ${params.sourceDenomination} SOL`);
       if (!targetPool) throw new Error(`No target pool for ${params.targetDenomination} SOL`);
 
-      // Find a mature note in the source pool
+      const prover = getReadyProver();
+      if (!prover) {
+        // Background or prover not yet ready — bounce off so the scheduler
+        // retries when the user reopens the app.
+        nudgeUserOpenApp();
+        throw new Error('RETRY: STARK prover unavailable (open app to advance route)');
+      }
+
       const store = useDenominatedPoolStore.getState();
       const matureNote = store.notes.find(
         n => n.denomination === params.sourceDenomination &&
@@ -94,22 +163,55 @@ function buildCallbacks(): HopExecutionCallbacks {
         throw new Error(`RETRY: No mature note for ${params.sourceDenomination} SOL split`);
       }
 
-      console.log(`[AutoRunner] ✂️ Split note ${matureNote.id.slice(0, 8)}... into ${params.numOutputs} outputs`);
-      // Note: actual ZK proof generation requires WebView prover (not available in background)
-      // For now, mark as RETRY — the split will execute when the app is in foreground
-      throw new Error(`RETRY: Split proof generation requires foreground WebView prover`);
+      // Derive deterministic output secrets from the parent note's secret so
+      // the user can recover the children from seed alone (Phase 2 of the
+      // note-secret fix — see bug-note-secret-nondeterministic memory).
+      const { receiptFromJSON } = await import('../denominatedPool');
+      const { vaultDecrypt } = await import('../../utils/crypto/noteVault');
+      const receipt = receiptFromJSON(vaultDecrypt(matureNote.receiptJSON));
+      const outputSecrets = deriveSplitOutputSecrets(receipt.secret, params.numOutputs);
+
+      const proofResult = await prover.generatePoolCommitmentProof(
+        receipt.nullifierPreimage.toString(),
+        receipt.secret.toString(),
+        receipt.depositEpoch.toString(),
+        receipt.tokenMint.toString(),
+      );
+
+      const proofBytes = Buffer.from(proofResult.proofHex, 'hex');
+      const publicInputs = proofResult.publicInputs.map((s: string) => BigInt(s));
+
+      try {
+        const { txSignature, outputCommitments } = await store.splitNoteStark(
+          matureNote.id,
+          targetPool.poolPDA.toBase58(),
+          outputSecrets,
+          { proofBytes, publicInputs, proofSize: proofResult.proofSize },
+        );
+        console.log(`[AutoRunner] ✂️ Split confirmed: ${txSignature.slice(0, 16)}...`);
+        return {
+          txSignature,
+          outputCommitments: outputCommitments.map((c) => c.toString()),
+        };
+      } catch (err: any) {
+        console.warn(`[AutoRunner] ✂️ Split failed:`, err.message?.slice(0, 100));
+        throw err;
+      }
     },
 
     unshield: async (params) => {
       console.log(`[AutoRunner] 🔓 UNSHIELD: ${params.denomination} SOL → ${params.toAddress.slice(0, 8)}...`);
 
-      const store = useDenominatedPoolStore.getState();
-      const notes = store.notes;
+      const prover = getReadyProver();
+      if (!prover) {
+        nudgeUserOpenApp();
+        throw new Error('RETRY: STARK prover unavailable (open app to advance route)');
+      }
 
-      // Find a mature note matching this denomination
-      const matureNote = notes.find(
+      const store = useDenominatedPoolStore.getState();
+      const matureNote = store.notes.find(
         n => n.denomination === params.denomination &&
-             (n.status === 'mature' || n.status === 'pending') &&
+             n.status === 'mature' &&
              n.token === 'SOL'
       );
 
@@ -118,20 +220,32 @@ function buildCallbacks(): HopExecutionCallbacks {
         throw new Error(`RETRY: No mature note available for ${params.denomination} SOL`);
       }
 
-      // Use STARK unshield (quantum-resistant)
+      const { receiptFromJSON } = await import('../denominatedPool');
+      const { vaultDecrypt } = await import('../../utils/crypto/noteVault');
+      const receipt = receiptFromJSON(vaultDecrypt(matureNote.receiptJSON));
+
+      const proofResult = await prover.generatePoolCommitmentProof(
+        receipt.nullifierPreimage.toString(),
+        receipt.secret.toString(),
+        receipt.depositEpoch.toString(),
+        receipt.tokenMint.toString(),
+      );
+
+      const proofBytes = Buffer.from(proofResult.proofHex, 'hex');
+      const publicInputs = proofResult.publicInputs.map((s: string) => BigInt(s));
+
       try {
         const sig = await store.unshieldNoteStark(
           matureNote.id,
           params.toAddress,
-          // STARK proof data — generate from WebView prover
-          { proofBytes: new Uint8Array(0), publicInputs: [], proofSize: 0 },
-          false, // not emergency
+          { proofBytes, publicInputs, proofSize: proofResult.proofSize },
+          false, // not emergency — Phase-1 indistinguishability handles min_epoch
         );
         console.log(`[AutoRunner] 🔓 STARK unshield confirmed: ${sig.slice(0, 16)}...`);
         return { txSignature: sig };
       } catch (starkErr: any) {
         console.warn(`[AutoRunner] 🔓 STARK unshield failed:`, starkErr.message?.slice(0, 80));
-        throw new Error(`RETRY: Proof generation not available in background — ${starkErr.message}`);
+        throw starkErr;
       }
     },
   };
@@ -150,18 +264,16 @@ async function pollPendingHops(): Promise<void> {
     const { bytesToHex } = require('@noble/hashes/utils');
     const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey)));
 
-    // Check for due hops
     const pending = await checkPendingRoutes(spendingKeyHash);
     if (pending.length > 0) {
       console.log(`[AutoRunner] ⏰ ${pending.length} hops due for execution`);
 
       const callbacks = buildCallbacks();
-      for (const { hop, route } of pending.slice(0, 3)) { // max 3 per cycle
+      for (const { hop, route } of pending.slice(0, 3)) {
         try {
           const result = await executeHop(hop, route, spendingKeyHash, callbacks);
           if (result.success) {
             console.log(`[AutoRunner] ✅ Hop ${hop.id.slice(0, 8)}... completed: ${result.txSignature?.slice(0, 16)}...`);
-            // Notify user of hop completion
             const completedCount = route.hops.filter((h: any) => h.status === 'completed').length + 1;
             notifyHopComplete(hop.type, completedCount, route.hops.length, hop.amount);
           } else {
@@ -172,16 +284,13 @@ async function pollPendingHops(): Promise<void> {
         }
       }
 
-      // Refresh wallet balance after executing hops
       useWalletStore.getState().refreshBalance?.();
 
-      // Update foreground service notification
       if (Platform.OS === 'android') {
         try {
           const { PrivacyRouterModule } = NativeModules;
           const remainingHops = await checkPendingRoutes(spendingKeyHash);
           if (remainingHops.length === 0) {
-            // All hops done — stop the service
             await PrivacyRouterModule?.stopService();
             console.log('[AutoRunner] All hops completed — foreground service stopped');
           } else {
@@ -191,24 +300,18 @@ async function pollPendingHops(): Promise<void> {
       }
     }
 
-    // Auto-refresh note maturity periodically
     const now = Date.now();
     if (now - _lastMaturityRefresh > MATURITY_REFRESH_MS) {
       _lastMaturityRefresh = now;
       try {
         await useDenominatedPoolStore.getState().refreshAllPools?.();
         console.log('[AutoRunner] 🔄 Note maturity refreshed');
-      } catch {
-        // Non-critical
-      }
+      } catch {}
 
-      // Auto-shield: check pending receive addresses for incoming funds
       try {
         await useAutoShieldStore.getState().checkAndAutoShield();
         useAutoShieldStore.getState().cleanup();
-      } catch {
-        // Non-critical — retries next cycle
-      }
+      } catch {}
     }
   } catch (err: any) {
     console.error('[AutoRunner] Poll error:', err.message?.slice(0, 100));
@@ -223,15 +326,12 @@ function handleAppStateChange(nextState: AppStateStatus): void {
   if (!_running) return;
 
   if (nextState === 'active') {
-    // Resume polling when app comes to foreground
     if (!_pollInterval) {
       console.log('[AutoRunner] App foregrounded — resuming polling');
       _pollInterval = setInterval(pollPendingHops, POLL_INTERVAL_MS);
     }
-    // Immediately check for pending hops
     pollPendingHops();
   } else if (nextState === 'background') {
-    // Pause polling when app goes to background to prevent OOM/ANR
     if (_pollInterval) {
       console.log('[AutoRunner] App backgrounded — pausing polling');
       clearInterval(_pollInterval);
@@ -244,12 +344,6 @@ function handleAppStateChange(nextState: AppStateStatus): void {
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Start the autonomous privacy router.
- *
- * Call once after user authentication (wallet available).
- * Idempotent — safe to call multiple times.
- */
 export async function startAutonomousRunner(): Promise<void> {
   if (_running) {
     console.log('[AutoRunner] Already running');
@@ -269,10 +363,8 @@ export async function startAutonomousRunner(): Promise<void> {
     const { bytesToHex } = require('@noble/hashes/utils');
     const spendingKeyHash = bytesToHex(sha256(new TextEncoder().encode(publicKey)));
 
-    // Load auto-shield receive addresses from SecureStore
     await useAutoShieldStore.getState().load();
 
-    // Initialize the router if not already done
     if (!isPrivacyRouterAvailable()) {
       await initPrivacyRouter({
         spendingKeyHash,
@@ -281,29 +373,18 @@ export async function startAutonomousRunner(): Promise<void> {
       console.log('[AutoRunner] Privacy router initialized');
     }
 
-    // Resume any routes from previous sessions
     await resumeRoutes(spendingKeyHash);
 
-    // Note locking is handled at Private Send time via lockNote().
-    // The persist middleware saves the locked status across sessions.
-
-    // Start foreground polling
     _pollInterval = setInterval(pollPendingHops, POLL_INTERVAL_MS);
-
-    // Listen for app state changes
     _appStateListener = AppState.addEventListener('change', handleAppStateChange);
-
     _running = true;
 
-    // Start Android foreground service to survive app closure
     if (Platform.OS === 'android') {
       try {
         const { PrivacyRouterModule } = NativeModules;
         if (PrivacyRouterModule) {
-          // Count pending hops for notification
           const pending = await checkPendingRoutes(spendingKeyHash);
-          const totalHops = pending.length;
-          await PrivacyRouterModule.startService(totalHops, '');
+          await PrivacyRouterModule.startService(pending.length, '');
           console.log('[AutoRunner] Android foreground service started');
         }
       } catch (fgErr: any) {
@@ -312,17 +393,12 @@ export async function startAutonomousRunner(): Promise<void> {
     }
 
     console.log('[AutoRunner] ✅ Autonomous runner active — polling every 60s');
-
-    // Immediately check for pending hops
     pollPendingHops();
   } catch (err: any) {
     console.error('[AutoRunner] Failed to start:', err.message);
   }
 }
 
-/**
- * Stop the autonomous runner (e.g., on logout).
- */
 export async function stopAutonomousRunner(): Promise<void> {
   if (!_running) return;
 
@@ -336,7 +412,6 @@ export async function stopAutonomousRunner(): Promise<void> {
     _appStateListener = null;
   }
 
-  // Stop Android foreground service
   if (Platform.OS === 'android') {
     try {
       const { PrivacyRouterModule } = NativeModules;
@@ -348,9 +423,6 @@ export async function stopAutonomousRunner(): Promise<void> {
   console.log('[AutoRunner] Stopped');
 }
 
-/**
- * Check if the runner is active.
- */
 export function isRunnerActive(): boolean {
   return _running;
 }

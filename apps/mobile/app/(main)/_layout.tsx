@@ -13,6 +13,7 @@ import { useSecuritySettings } from '../../hooks/useSecuritySettings';
 import { useRealtimeSync } from '../../hooks/sync';
 import { LiquidGlassTabBar } from '../../components/navigation/LiquidGlassTabBar';
 import { checkForUpdate } from '../../services/updates/versionCheck';
+import RecoveryBootModal from '../../components/privacy/RecoveryBootModal';
 
 export default function MainLayout() {
   const { initialize, initialized } = useWalletStore();
@@ -189,6 +190,7 @@ export default function MainLayout() {
         }}
       />
     </Tabs>
+    <RecoveryBootModal />
     </View>
   );
 }

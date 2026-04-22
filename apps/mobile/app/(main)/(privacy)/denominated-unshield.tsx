@@ -21,6 +21,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { PublicKey } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
+import { withKeepAwake } from '@/utils/keepAwakeDuring';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
 
@@ -33,7 +34,7 @@ export default function DenominatedUnshieldScreen() {
 
   const {
     notes, isLoading, isProving, error, progress,
-    unshieldNoteStark, refreshNoteStatuses,
+    unshieldNoteStark, refreshNoteStatuses, resetOperationState,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
@@ -44,18 +45,36 @@ export default function DenominatedUnshieldScreen() {
   const [recipient, setRecipient] = useState('');
   const [useOwnWallet, setUseOwnWallet] = useState(true);
   const [emergencyToggle, setEmergencyToggle] = useState(isEmergencyMode);
+  const [refreshing, setRefreshing] = useState(false);
 
   const matureNotes = notes.filter(n => n.status === 'mature');
   const pendingNotes = notes.filter(n => n.status === 'pending');
+  const usedNotes = notes.filter(n => n.status === 'spent' || n.status === 'transferred');
   const selectableNotes = emergencyToggle ? [...matureNotes, ...pendingNotes] : matureNotes;
+
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshNoteStatuses();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshNoteStatuses]);
 
   useEffect(() => {
     if (params.noteId) {
       const note = notes.find(n => n.id === params.noteId);
       if (note) setSelectedNote(note);
     }
-    refreshNoteStatuses();
+    doRefresh();
   }, [params.noteId]);
+
+  // If the currently-selected note got marked spent during refresh, deselect it.
+  useEffect(() => {
+    if (selectedNote && (selectedNote.status === 'spent' || selectedNote.status === 'transferred')) {
+      setSelectedNote(null);
+    }
+  }, [selectedNote, notes]);
 
   useEffect(() => {
     if (!useOwnWallet) return;
@@ -108,24 +127,26 @@ export default function DenominatedUnshieldScreen() {
         p01Alert(t('common.error'), t('shieldUnshield.starkNotReady'));
         return;
       }
-      const receipt = receiptFromJSON(vaultDecrypt(selectedNote.receiptJSON));
-      const starkResult = await generatePoolCommitmentProof(
-        receipt.nullifierPreimage.toString(),
-        receipt.secret.toString(),
-        receipt.depositEpoch.toString(),
-        receipt.tokenMint.toString(),
-      );
-      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-      const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
-      // Single unified call — `emergency` only flips min_epoch=0 on-chain; the
-      // privacy posture (ephemeral signer + ECDH stealth recipient + random sweep)
-      // is identical for both paths.
-      const sig = await unshieldNoteStark(
-        selectedNote.id,
-        finalRecipient,
-        { proofBytes, publicInputs, proofSize: starkResult.proofSize },
-        emergency,
-      );
+      const sig = await withKeepAwake(emergency ? 'p01-emergency-unshield' : 'p01-unshield', async () => {
+        const receipt = receiptFromJSON(vaultDecrypt(selectedNote.receiptJSON));
+        const starkResult = await generatePoolCommitmentProof(
+          receipt.nullifierPreimage.toString(),
+          receipt.secret.toString(),
+          receipt.depositEpoch.toString(),
+          receipt.tokenMint.toString(),
+        );
+        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+        const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
+        // Single unified call — `emergency` only flips min_epoch=0 on-chain; the
+        // privacy posture (ephemeral signer + ECDH stealth recipient + random sweep)
+        // is identical for both paths.
+        return unshieldNoteStark(
+          selectedNote.id,
+          finalRecipient,
+          { proofBytes, publicInputs, proofSize: starkResult.proofSize },
+          emergency,
+        );
+      });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       useWalletStore.getState().refreshBalance();
@@ -180,6 +201,23 @@ export default function DenominatedUnshieldScreen() {
         <View style={{ width: 40 }} />
       </View>
 
+      {isLoading && (
+        <View style={st.stickyProgress}>
+          <ActivityIndicator size="small" color={P01Colors.cyan} />
+          <Text style={st.stickyProgressText} numberOfLines={2}>
+            {isProving ? `${progress ?? 'Processing'} (proving…)` : (progress ?? 'Processing…')}
+          </Text>
+          <TouchableOpacity
+            style={st.stickyCancel}
+            onPress={resetOperationState}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel stuck operation"
+          >
+            <Ionicons name="close" size={16} color={Colors.text} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: insets.bottom + 100 }}
@@ -216,9 +254,25 @@ export default function DenominatedUnshieldScreen() {
 
         {/* ── Section: Select Note ── */}
         <Animated.View entering={FadeInDown.delay(60).duration(250)}>
-          <Text style={st.sectionLabel}>
-            {emergencyToggle ? t('shieldUnshield.selectANote') : t('shieldUnshield.selectMatureNote')}
-          </Text>
+          <View style={st.sectionLabelRow}>
+            <Text style={[st.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>
+              {emergencyToggle ? t('shieldUnshield.selectANote') : t('shieldUnshield.selectMatureNote')}
+            </Text>
+            <TouchableOpacity
+              onPress={doRefresh}
+              disabled={refreshing}
+              style={st.refreshBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh note statuses"
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color={P01Colors.cyan} />
+              ) : (
+                <Ionicons name="refresh" size={16} color={P01Colors.cyan} />
+              )}
+              <Text style={st.refreshBtnText}>{refreshing ? 'Checking…' : 'Refresh'}</Text>
+            </TouchableOpacity>
+          </View>
 
           {selectableNotes.length === 0 && notes.filter(n => n.status !== 'spent').length === 0 && (
             <View style={st.emptyCard}>
@@ -240,6 +294,15 @@ export default function DenominatedUnshieldScreen() {
               <Ionicons name="time-outline" size={16} color={P01Colors.yellow} />
               <Text style={st.infoText}>
                 {t('shieldUnshield.notesMaturing', { count: pendingNotes.length })}
+              </Text>
+            </View>
+          )}
+
+          {usedNotes.length > 0 && (
+            <View style={st.usedHint}>
+              <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
+              <Text style={st.usedHintText}>
+                {usedNotes.length} note{usedNotes.length === 1 ? '' : 's'} already used (shown below, can't be reused)
               </Text>
             </View>
           )}
@@ -278,6 +341,25 @@ export default function DenominatedUnshieldScreen() {
               );
             })}
           </View>
+
+          {usedNotes.length > 0 && (
+            <View style={{ gap: 6, marginTop: Spacing.lg }}>
+              <Text style={st.usedSectionLabel}>USED NOTES</Text>
+              {usedNotes.map((note) => (
+                <View key={note.id} style={st.usedNoteCard}>
+                  <View style={[st.noteIcon, { backgroundColor: 'rgba(255,255,255,0.04)' }]}>
+                    <Ionicons name="checkmark-done" size={18} color={Colors.textTertiary} />
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={st.usedNoteAmount}>{note.denomination} {note.token}</Text>
+                    <Text style={st.usedNoteTime}>
+                      {note.status === 'spent' ? 'Spent' : 'Transferred'} · {new Date(note.shieldedAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
         </Animated.View>
 
         {/* ── Section: Recipient ── */}
@@ -448,6 +530,35 @@ const st = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
 
+  // Sticky progress (below header, always visible during long flow)
+  stickyProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: 12,
+    backgroundColor: 'rgba(57, 197, 187, 0.15)',
+    borderWidth: 1,
+    borderColor: P01Colors.cyan,
+    gap: Spacing.sm,
+  },
+  stickyProgressText: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 13,
+    fontFamily: FontFamily.medium,
+  },
+  stickyCancel: {
+    width: 28,
+    height: 28,
+    borderRadius: 9999,
+    backgroundColor: Colors.surfaceSecondary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
   // Toggle
   toggle: {
     flexDirection: 'row', gap: 4, padding: 4,
@@ -479,6 +590,34 @@ const st = StyleSheet.create({
     fontSize: 12, fontFamily: FontFamily.semibold, color: Colors.textSecondary,
     letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: Spacing.md, marginTop: Spacing.lg,
   },
+  sectionLabelRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: Spacing.md, marginTop: Spacing.lg,
+  },
+  refreshBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+    backgroundColor: `${P01Colors.cyan}14`,
+  },
+  refreshBtnText: {
+    fontSize: 12, fontFamily: FontFamily.semibold, color: P01Colors.cyan,
+  },
+  usedHint: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 8, marginBottom: Spacing.sm,
+  },
+  usedHintText: { flex: 1, fontSize: 11, color: Colors.textTertiary, fontFamily: FontFamily.regular },
+  usedSectionLabel: {
+    fontSize: 10, fontFamily: FontFamily.semibold, color: Colors.textTertiary,
+    letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4,
+  },
+  usedNoteCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 12, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: BorderRadius.lg,
+    opacity: 0.6,
+  },
+  usedNoteAmount: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.textSecondary },
+  usedNoteTime: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 2 },
 
   // Note cards
   noteCard: {

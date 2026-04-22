@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRouteById } from '@/lib/treasury-buffer';
+import { getCohortInfoForRoute, getRouteById } from '@/lib/treasury-buffer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,5 +24,8 @@ export async function GET(
   if (!entry) {
     return NextResponse.json({ error: 'route not found' }, { status: 404 });
   }
-  return NextResponse.json({ route: entry });
+  // Inline cohort context: tells the mobile UI whether this route is being
+  // held by the k-anonymity gate vs. genuinely waiting on its own delay.
+  const cohort = await getCohortInfoForRoute(entry);
+  return NextResponse.json({ route: { ...entry, cohort } });
 }

@@ -29,6 +29,7 @@ import {
   USDC_POOLS,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
+import { withKeepAwake } from '@/utils/keepAwakeDuring';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 type TokenTab = 'SOL' | 'USDC';
@@ -120,7 +121,7 @@ export default function DenominatedShieldScreen() {
     }
 
     try {
-      await shieldNote(selectedPool);
+      await withKeepAwake('p01-shield', () => shieldNote(selectedPool));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const pool = selectedPool;
       setSelectedPool(null);

@@ -18,12 +18,29 @@ import {
   resumeNormal,
   resumePrivateStark,
   cancelNormal,
+  cancelPrivateStark,
   fetchVault,
   computeClaimable,
   computeClaimableAmount,
+  goldilocksU64To32,
+  ZK_SHIELDED_PROGRAM_ID,
 } from '../services/subscriptionVault';
-import type { ShieldReceipt, PoolConfig } from '../services/denominatedPool';
+import {
+  receiptFromJSON,
+  type ShieldReceipt,
+  type PoolConfig,
+  ALL_POOLS,
+  createCommitment,
+  deriveSplitOutputSecrets,
+  computeNewRootFromSubtrees,
+  slotToEpoch,
+  bigintToLeBytes32,
+  parseFilledSubtrees,
+  pubkeyToField,
+} from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner } from './walletStore';
+import { useDenominatedPoolStore } from './denominatedPoolStore';
+import { vaultDecrypt } from '../utils/crypto/noteVault';
 import { scheduleLocalNotification } from '../services/notifications';
 
 // ---------------------------------------------------------------------------
@@ -62,14 +79,31 @@ interface SubscriptionVaultState {
     config: SubscribeNormalConfig,
     vkHashSubscriber: Uint8Array,
   ) => Promise<string>;
-  /** STARK variant: quantum-resistant subscribe_private using pre-verified proof buffer */
+  /** STARK variant: quantum-resistant subscribe_private using pre-verified proof buffer.
+   *
+   * `subscriberOwnershipCommitment` is the Goldilocks u64 Poseidon commitment of the
+   * subscriber secret — same value returned by `StarkProverProvider.generateProof`
+   * (circuit 0: subscriber_ownership). It is encoded as [u64_le, 24 zero bytes] and
+   * stored on-chain in `vault.subscriber_commitment`; pause/resume/cancel re-derive
+   * the sha256 hash from those first 8 bytes to match the circuit-0 proof. */
   subscribePrivateStarkAction: (
     receipt: ShieldReceipt,
     poolConfig: PoolConfig,
     vaultConfig: SubscribePrivateConfig,
     subscriberSecret: bigint,
+    subscriberOwnershipCommitment: bigint,
     vkHashSubscriber: Uint8Array,
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<string>;
+  /** STARK variant: quantum-resistant cancel_private_stark using pre-verified proof buffer.
+   *
+   * Re-shields the refundable balance back into the source pool as fresh notes owned
+   * by the subscriber, pays claimable periods to the retailer, and closes the vault.
+   * Dust below one denomination is forfeited (privacy tradeoff). */
+  cancelPrivateStarkAction: (
+    vaultAddress: string,
+    subscriberSecret: bigint,
+    starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
   claimPeriodAction: (vaultAddress: string) => Promise<string>;
   pauseNormalAction: (vaultAddress: string) => Promise<string>;
@@ -85,6 +119,12 @@ interface SubscriptionVaultState {
     starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
   cancelNormalAction: (vaultAddress: string, retailer: string) => Promise<string>;
+  /** Force-clear a stuck subscribe/pause/resume/claim. Use when a flow was interrupted and isLoading refuses to release. */
+  resetOperationState: () => void;
+  /** Soft reset for wallet switches — clears the in-memory vault list but PRESERVES SecureStore secrets so archive/restore can rehydrate. */
+  softReset: () => void;
+  /** Scan on-chain for vaults whose subscriber commitment matches any of our spent/transferred notes (recover orphaned subscriptions). */
+  recoverOrphanedVaults: () => Promise<{ recovered: number; scanned: number }>;
   reset: () => void;
 }
 
@@ -108,6 +148,51 @@ async function loadSecretSecurely(vaultAddress: string): Promise<string | null> 
 
 async function deleteSecretSecurely(vaultAddress: string): Promise<void> {
   await SecureStore.deleteItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`);
+}
+
+// ---------------------------------------------------------------------------
+// Wallet-scoped vault archival (prevents subscription loss on wallet switch)
+// ---------------------------------------------------------------------------
+
+const VAULT_ARCHIVE_PREFIX = 'p01_vaults_archive_';
+
+/**
+ * Archive current vault list for a specific wallet address before switching.
+ * SecureStore secrets (keyed by vaultPDA) are NOT touched — they survive the switch
+ * so restore can rehydrate full vault state.
+ */
+export async function archiveVaultsForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  const { vaults } = useSubscriptionVaultStore.getState();
+  if (vaults.length === 0) return;
+  try {
+    await AsyncStorage.setItem(`${VAULT_ARCHIVE_PREFIX}${walletAddress}`, JSON.stringify(vaults));
+  } catch (err) {
+    console.error('[VaultStore] Failed to archive vaults:', (err as Error).message);
+  }
+}
+
+/**
+ * Restore archived vaults for a wallet address after switching back.
+ * Merges with any existing vaults (deduplicates by vaultAddress).
+ */
+export async function restoreVaultsForWallet(walletAddress: string): Promise<void> {
+  if (!walletAddress) return;
+  try {
+    const raw = await AsyncStorage.getItem(`${VAULT_ARCHIVE_PREFIX}${walletAddress}`);
+    if (!raw) return;
+    const archived: StoredVaultInfo[] = JSON.parse(raw);
+    if (!Array.isArray(archived) || archived.length === 0) return;
+
+    const { vaults: currentVaults } = useSubscriptionVaultStore.getState();
+    const existing = new Set(currentVaults.map(v => v.vaultAddress));
+    const newVaults = archived.filter(v => !existing.has(v.vaultAddress));
+    if (newVaults.length > 0) {
+      useSubscriptionVaultStore.setState({ vaults: [...currentVaults, ...newVaults] });
+    }
+  } catch (err) {
+    console.error('[VaultStore] Failed to restore vaults:', (err as Error).message);
+  }
 }
 
 /** Format lamports as SOL for notification display */
@@ -255,6 +340,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         poolConfig,
         vaultConfig,
         subscriberSecret,
+        subscriberOwnershipCommitment,
         vkHashSubscriber,
         starkProofData,
       ) => {
@@ -266,7 +352,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             receipt,
             poolConfig,
             vaultConfig,
-            subscriberSecret,
+            subscriberOwnershipCommitment,
             vkHashSubscriber,
             starkProofData,
             (step) => {
@@ -275,14 +361,9 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             walletSigner,
           );
 
-          // Add vault to store
-          const subscriberCommitment = poseidon2([subscriberSecret, 1234567890n]);
-          const subscriberCommitmentBytes = new Uint8Array(32);
-          let tmpCommitment = subscriberCommitment;
-          for (let i = 0; i < 32; i++) {
-            subscriberCommitmentBytes[i] = Number(tmpCommitment & 0xFFn);
-            tmpCommitment >>= 8n;
-          }
+          // Add vault to store — PDA keyed by the Goldilocks subscriber commitment,
+          // same encoding used on-chain (`u64_le || 24 zero bytes`).
+          const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);
 
           const { deriveVaultPDA } = await import('../services/subscriptionVault');
           const [vaultPDA] = deriveVaultPDA(
@@ -306,8 +387,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
 
           set(state => ({
-            isLoading: false,
-            progress: null,
             vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
 
@@ -320,8 +399,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
+          set({ error: (err as Error).message });
           throw err;
+        } finally {
+          // Always clear transient spinner — prevents a stuck UI if the STARK
+          // flow throws mid-step (prover, RPC, signer, notification, etc.).
+          set({ isLoading: false, progress: null });
         }
       },
 
@@ -414,8 +497,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             walletSigner,
           );
 
-          set({ isLoading: false, progress: null });
-
           notifySubscriptionEvent(
             'Subscription Paused',
             'Your subscription has been paused',
@@ -425,8 +506,10 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] pausePrivateStark error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
+          set({ error: (err as Error).message });
           throw err;
+        } finally {
+          set({ isLoading: false, progress: null });
         }
       },
 
@@ -483,8 +566,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             walletSigner,
           );
 
-          set({ isLoading: false, progress: null });
-
           notifySubscriptionEvent(
             'Subscription Resumed',
             'Your subscription has been resumed',
@@ -494,8 +575,132 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return sig;
         } catch (err) {
           console.error('[SubscriptionVault] resumePrivateStark error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
+          set({ error: (err as Error).message });
           throw err;
+        } finally {
+          set({ isLoading: false, progress: null });
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // Cancel Private (STARK — quantum-resistant, re-shields refundable)
+      // ------------------------------------------------------------------
+
+      cancelPrivateStarkAction: async (vaultAddress, subscriberSecret, starkProofData) => {
+        set({ isLoading: true, error: null, progress: 'Cancelling (STARK)...' });
+
+        try {
+          const vaultPDA = new PublicKey(vaultAddress);
+          const connection = getConnection();
+
+          // 1. Fetch vault state to compute claimable/refundable
+          const vault = await fetchVault(vaultPDA);
+          if (!vault) throw new Error('Vault not found on-chain');
+          if (!vault.isPrivateMode) throw new Error('Vault is not in private mode');
+          if (!vault.sourcePool) throw new Error('Vault has no source pool');
+
+          // 2. Resolve source pool config
+          const sourcePool = ALL_POOLS.find(p => p.poolPDA.toBase58() === vault.sourcePool);
+          if (!sourcePool) throw new Error(`Source pool not found: ${vault.sourcePool}`);
+
+          // 3. Compute refundable amount (matches on-chain handler math exactly)
+          const currentSlot = await connection.getSlot('confirmed');
+          const claimable = BigInt(computeClaimable(vault, currentSlot));
+          const totalOwed = (vault.claimedPeriods + claimable) * vault.rate;
+          const refundable = vault.totalDeposited > totalOwed
+            ? vault.totalDeposited - totalOwed
+            : 0n;
+          const notesToReshield = Number(refundable / sourcePool.denominationAtomic);
+
+          // 4. Derive deterministic output secrets from subscriber secret
+          const outputSecrets = deriveSplitOutputSecrets(subscriberSecret, notesToReshield);
+
+          // 5. Compute commitments + sequential new Merkle roots
+          set({ progress: 'Computing re-shield commitments...' });
+          const currentEpoch = slotToEpoch(currentSlot);
+          const tokenMintField = pubkeyToField(sourcePool.tokenMint);
+
+          const outputCommitments: bigint[] = [];
+          const newReceipts: ShieldReceipt[] = [];
+
+          for (let i = 0; i < notesToReshield; i++) {
+            const secret = outputSecrets[i];
+            const nullifierPreimage = poseidon2([secret, BigInt(i)]);
+            const commitment = createCommitment(
+              nullifierPreimage, secret, currentEpoch, tokenMintField,
+            );
+            outputCommitments.push(commitment);
+            newReceipts.push({
+              secret,
+              nullifierPreimage,
+              depositEpoch: currentEpoch,
+              tokenMint: tokenMintField,
+              commitment,
+              leafIndex: -1,
+              denomination: sourcePool.denominationAtomic,
+              pool: sourcePool.poolPDA.toBase58(),
+              token: sourcePool.token,
+              denominationHuman: sourcePool.denomination,
+              shieldedAt: Date.now(),
+            });
+          }
+
+          let commitmentBytes: Uint8Array[] = [];
+          let rootBytes: Uint8Array[] = [];
+          if (notesToReshield > 0) {
+            const treeAccount = await connection.getAccountInfo(sourcePool.treePDA);
+            if (!treeAccount) throw new Error('Source Merkle tree account not found');
+            let { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+
+            commitmentBytes = outputCommitments.map(c => new Uint8Array(bigintToLeBytes32(c)));
+            for (let i = 0; i < notesToReshield; i++) {
+              const { newRoot, updatedSubtrees } = computeNewRootFromSubtrees(
+                outputCommitments[i], leafCount, subtrees,
+              );
+              rootBytes.push(new Uint8Array(bigintToLeBytes32(newRoot)));
+              subtrees = updatedSubtrees;
+              leafCount += 1;
+            }
+          }
+
+          // 6. Call on-chain cancel (STARK verify → cancel → close buffer)
+          const walletSigner = getWalletSignerIfPrivy();
+          const sig = await cancelPrivateStark(
+            vaultPDA,
+            new PublicKey(vault.retailer),
+            { poolPDA: sourcePool.poolPDA, treePDA: sourcePool.treePDA },
+            commitmentBytes,
+            rootBytes,
+            starkProofData,
+            (step) => { set({ progress: step }); },
+            walletSigner,
+          );
+
+          // 7. Save re-shielded notes to denom pool store + remove vault
+          if (newReceipts.length > 0) {
+            useDenominatedPoolStore.getState().addReshieldedNotes(newReceipts, sourcePool);
+          }
+          await deleteSecretSecurely(vaultAddress);
+
+          set(state => ({
+            vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
+          }));
+
+          notifySubscriptionEvent(
+            'Subscription Cancelled',
+            notesToReshield > 0
+              ? `Cancelled and re-shielded ${notesToReshield} note${notesToReshield === 1 ? '' : 's'}`
+              : 'Your subscription has been cancelled',
+            { transactionId: sig },
+          );
+
+          return sig;
+        } catch (err) {
+          console.error('[SubscriptionVault] cancelPrivateStark error:', err);
+          set({ error: (err as Error).message });
+          throw err;
+        } finally {
+          set({ isLoading: false, progress: null });
         }
       },
 
@@ -538,6 +743,107 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set({ isLoading: false, progress: null, error: (err as Error).message });
           throw err;
         }
+      },
+
+      resetOperationState: () => {
+        set({ isLoading: false, progress: null, error: null });
+      },
+
+      recoverOrphanedVaults: async () => {
+        // Legacy BN254-era recovery. STARK vaults store a Goldilocks u64 commitment
+        // derived off-device by the STARK prover (circuit 0), which this store cannot
+        // reproduce from receipt data alone — only subscribe-private.tsx knows the
+        // Goldilocks hash at subscription time and stashes it via saveSecretSecurely.
+        // This scanner will still find pre-STARK legacy vaults if any remain on-chain.
+        const connection = getConnection();
+        const { notes } = useDenominatedPoolStore.getState();
+
+        // Candidate notes — anything we have a receipt for, even if marked spent.
+        // Pre-compute commitment bytes per note so we can match against on-chain vault data.
+        const candidates: { commitmentHex: string; secret: bigint; note: typeof notes[number] }[] = [];
+        for (const n of notes) {
+          try {
+            const receipt = receiptFromJSON(vaultDecrypt(n.receiptJSON));
+            const subscriberSecret = receipt.secret;
+            const commitment = poseidon2([subscriberSecret, 1234567890n]);
+            const bytes = new Uint8Array(32);
+            let tmp = commitment;
+            for (let i = 0; i < 32; i++) { bytes[i] = Number(tmp & 0xFFn); tmp >>= 8n; }
+            const hex = Buffer.from(bytes).toString('hex');
+            candidates.push({ commitmentHex: hex, secret: subscriberSecret, note: n });
+          } catch {
+            // skip notes whose receipt can't be decrypted (different wallet etc.)
+          }
+        }
+
+        if (candidates.length === 0) return { recovered: 0, scanned: 0 };
+
+        // Fetch all subscription vault accounts owned by the program.
+        // Anchor accounts start with an 8-byte discriminator; we filter further in-memory.
+        let allAccounts: Awaited<ReturnType<typeof connection.getProgramAccounts>>;
+        try {
+          allAccounts = await connection.getProgramAccounts(ZK_SHIELDED_PROGRAM_ID, {
+            commitment: 'confirmed',
+          });
+        } catch (err) {
+          throw new Error(`On-chain scan failed: ${(err as Error).message}`);
+        }
+
+        // The vault layout places the Option<[u8;32]> subscriber_commitment at offset 41
+        // (8 disc + 1 opt + 32 pubkey = 41). Bytes 41 = Some/None tag, 42..74 = commitment.
+        const COMMITMENT_TAG_OFFSET = 41;
+        const COMMITMENT_BYTES_OFFSET = 42;
+
+        let recovered = 0;
+        const newVaults: StoredVaultInfo[] = [];
+        const { vaults: existing } = get();
+        const existingAddrs = new Set(existing.map(v => v.vaultAddress));
+
+        for (const acc of allAccounts) {
+          const data = acc.account.data;
+          if (data.length < COMMITMENT_BYTES_OFFSET + 32) continue;
+          if (data[COMMITMENT_TAG_OFFSET] !== 1) continue; // not a private-mode vault
+
+          const onchainHex = data.slice(COMMITMENT_BYTES_OFFSET, COMMITMENT_BYTES_OFFSET + 32).toString('hex');
+          const match = candidates.find(c => c.commitmentHex === onchainHex);
+          if (!match) continue;
+
+          const vaultPDA = acc.pubkey;
+          const vaultAddress = vaultPDA.toBase58();
+          if (existingAddrs.has(vaultAddress)) continue;
+
+          const info = await fetchVault(vaultPDA).catch(() => null);
+          if (!info) continue;
+
+          await saveSecretSecurely(vaultAddress, match.secret.toString());
+
+          newVaults.push({
+            vaultAddress,
+            retailer: info.retailer,
+            tokenMint: info.tokenMint,
+            rate: info.rate.toString(),
+            intervalSlots: info.intervalSlots.toString(),
+            isNormalMode: false,
+            isPrivateMode: true,
+            createdAt: Date.now(),
+          });
+          recovered += 1;
+        }
+
+        if (newVaults.length > 0) {
+          set(state => ({ vaults: [...newVaults, ...state.vaults] }));
+        }
+
+        return { recovered, scanned: allAccounts.length };
+      },
+
+      softReset: () => {
+        set({
+          vaults: [],
+          isLoading: false,
+          error: null,
+          progress: null,
+        });
       },
 
       reset: () => {

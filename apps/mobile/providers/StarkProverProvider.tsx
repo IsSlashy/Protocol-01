@@ -278,6 +278,31 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     [sendRequestRaw],
   );
 
+  // Register this prover with the privacy-router autonomous runner so
+  // unshield/split hops can generate real STARK proofs while the app is
+  // foregrounded. Cleared on unmount so background ticks fall back to the
+  // RETRY+local-notification path.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { setForegroundProver, clearForegroundProver } = await import('../services/privacyRouter/autonomousRunner');
+        if (cancelled) return;
+        setForegroundProver({
+          isReady,
+          generatePoolCommitmentProof: async (np, secret, epoch, mint) => {
+            const r = await generatePoolCommitmentProof(np, secret, epoch, mint);
+            return { proofHex: r.proofHex, proofSize: r.proofSize, publicInputs: r.publicInputs };
+          },
+        });
+        return () => clearForegroundProver();
+      } catch {
+        // privacy-router optional in this build
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isReady, generatePoolCommitmentProof]);
+
   // Wire circuit 6 (merkle_update) + circuit 5 (transfer) provers into
   // ZkService so shield/transfer/unshield can generate STARK proofs without
   // threading the hook through every caller.

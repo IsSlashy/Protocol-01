@@ -15,7 +15,7 @@ import {
 
 // Stream status types
 export type StreamStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
-export type StreamFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
+export type StreamFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly' | 'custom';
 export type StreamDirection = 'outgoing' | 'incoming';
 
 // Stream interface
@@ -190,6 +190,8 @@ function getIntervalMs(frequency: StreamFrequency, customDays?: number): number 
       return 14 * DAY_MS;
     case 'monthly':
       return 30 * DAY_MS;
+    case 'yearly':
+      return 365 * DAY_MS;
     case 'custom':
       return (customDays || 1) * DAY_MS;
     default:
@@ -876,6 +878,8 @@ export function formatFrequency(frequency: StreamFrequency, customDays?: number)
       return 'Every 2 weeks';
     case 'monthly':
       return 'Monthly';
+    case 'yearly':
+      return 'Yearly';
     case 'custom':
       return `Every ${customDays} days`;
     default:

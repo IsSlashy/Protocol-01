@@ -88,7 +88,7 @@ const INTERVAL_MAP: Record<string, StreamFrequency> = {
   d: 'daily',
   w: 'weekly',
   m: 'monthly',
-  y: 'monthly', // Map yearly to monthly for mobile
+  y: 'yearly',
 };
 
 const STATUS_MAP: Record<string, StreamStatus> = {

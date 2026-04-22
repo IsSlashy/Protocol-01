@@ -19,21 +19,18 @@ import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { Stream, formatFrequency } from '../../../services/solana/streams';
+import {
+  useServiceRegistry,
+  formatInterval,
+  formatPriceSOL,
+  iconKeyToIonicons,
+  type ServiceEntry,
+} from '../../../services/solana/serviceRegistry';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
 
 const TAB_BAR_HEIGHT = 85;
-
-// SDK Services catalog
-const SDK_SERVICES = [
-  { id: 'netflix', name: 'Netflix', icon: 'play-circle', price: 0.15, frequency: 'monthly' as const, category: 'Entertainment' },
-  { id: 'spotify', name: 'Spotify', icon: 'musical-notes', price: 0.08, frequency: 'monthly' as const, category: 'Music' },
-  { id: 'chatgpt', name: 'ChatGPT Plus', icon: 'chatbubbles', price: 0.18, frequency: 'monthly' as const, category: 'AI' },
-  { id: 'github', name: 'GitHub Pro', icon: 'logo-github', price: 0.04, frequency: 'monthly' as const, category: 'Dev Tools' },
-  { id: 'figma', name: 'Figma', icon: 'color-palette', price: 0.12, frequency: 'monthly' as const, category: 'Design' },
-  { id: 'notion', name: 'Notion', icon: 'document-text', price: 0.07, frequency: 'monthly' as const, category: 'Productivity' },
-];
 
 type SectionType = 'personal' | 'services';
 
@@ -49,6 +46,12 @@ export default function StreamsDashboard() {
     initialize, refresh, syncFromChain,
   } = useStreamStore();
   const { notes: denomNotes } = useDenominatedPoolStore();
+  const {
+    services: registryServices,
+    loading: registryLoading,
+    refreshing: registryRefreshing,
+    refresh: refreshRegistry,
+  } = useServiceRegistry({ verifiedOnly: false });
 
   const availableNotes = denomNotes.filter(n => n.status === 'mature' || n.status === 'pending');
   const privateBalance = availableNotes.reduce((sum, n) => sum + n.denomination, 0);
@@ -73,7 +76,10 @@ export default function StreamsDashboard() {
 
   const onRefresh = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await refresh(publicKey || undefined);
+    await Promise.all([
+      refresh(publicKey || undefined),
+      refreshRegistry(),
+    ]);
   };
 
   const handleSync = async () => {
@@ -94,11 +100,11 @@ export default function StreamsDashboard() {
 
   const serviceStreams = streams.filter(s =>
     s.status !== 'cancelled' && s.status !== 'completed' &&
-    SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
+    registryServices.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
   const personalStreams = streams.filter(s =>
     s.status !== 'cancelled' && s.status !== 'completed' &&
-    !SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
+    !registryServices.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   ).sort((a, b) => a.nextPaymentDate - b.nextPaymentDate);
 
   return (
@@ -107,7 +113,7 @@ export default function StreamsDashboard() {
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: TAB_BAR_HEIGHT + insets.bottom + 24 }}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={P01Colors.cyan} />}
+        refreshControl={<RefreshControl refreshing={refreshing || registryRefreshing} onRefresh={onRefresh} tintColor={P01Colors.cyan} />}
       >
         {/* ── Header ── */}
         <View style={st.header}>
@@ -228,25 +234,57 @@ export default function StreamsDashboard() {
               </TouchableOpacity>
             </View>
 
-            {/* Services list */}
+            {/* Services list (loaded from on-chain Service Registry) */}
             <View style={{ gap: 8, marginTop: 16 }}>
-              {SDK_SERVICES.map((svc, i) => {
-                const subscribed = serviceStreams.some(s =>
-                  s.name.toLowerCase().includes(svc.name.toLowerCase()) && s.status === 'active'
-                );
-                return (
-                  <ServiceCard key={svc.id} service={svc} index={i} subscribed={subscribed}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      if (subscribed) {
-                        const stream = serviceStreams.find(s => s.name.toLowerCase().includes(svc.name.toLowerCase()));
-                        if (stream) router.push({ pathname: '/(main)/(streams)/[id]', params: { id: stream.id } });
-                      } else {
-                        router.push({ pathname: '/(main)/(streams)/subscribe', params: { serviceId: svc.id, serviceName: svc.name, price: svc.price.toString(), frequency: svc.frequency } });
-                      }
-                    }} />
-                );
-              })}
+              {registryLoading && registryServices.length === 0 ? (
+                <ActivityIndicator size="large" color={P01Colors.pink} style={{ marginTop: 48 }} />
+              ) : registryServices.length === 0 ? (
+                <View style={st.empty}>
+                  <View style={st.emptyIcon}>
+                    <Ionicons name="cube-outline" size={28} color={P01Colors.pink} />
+                  </View>
+                  <Text style={st.emptyTitle}>{t('streams.noServices', { defaultValue: 'No services available' })}</Text>
+                  <Text style={st.emptyDesc}>
+                    {t('streams.noServicesDesc', { defaultValue: 'Pull down to refresh the registry.' })}
+                  </Text>
+                </View>
+              ) : (
+                registryServices.map((svc, i) => {
+                  const subscribed = serviceStreams.some(s =>
+                    s.name.toLowerCase().includes(svc.name.toLowerCase()) && s.status === 'active'
+                  );
+                  return (
+                    <ServiceCard key={svc.pda.toBase58()} service={svc} index={i} subscribed={subscribed}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        if (subscribed) {
+                          const stream = serviceStreams.find(s => s.name.toLowerCase().includes(svc.name.toLowerCase()));
+                          if (stream) router.push({ pathname: '/(main)/(streams)/[id]', params: { id: stream.id } });
+                        } else {
+                          router.push({
+                            pathname: '/(main)/(streams)/subscribe',
+                            params: {
+                              serviceId: svc.slug,
+                              serviceName: svc.name,
+                              servicePda: svc.pda.toBase58(),
+                              retailer: svc.retailer.toBase58(),
+                              priceLamports: svc.priceAtomic.toString(),
+                              intervalSlots: svc.intervalSlots.toString(),
+                              supportsOneshot: svc.supportsOneshot ? '1' : '0',
+                              supportsVault: svc.supportsVault ? '1' : '0',
+                              verified: svc.verified ? '1' : '0',
+                              iconKey: svc.iconKey,
+                              category: svc.category,
+                              // Legacy keys kept for backward compat with subscribe.tsx.
+                              price: (Number(svc.priceAtomic) / 1e9).toString(),
+                              frequency: formatInterval(svc.intervalSlots),
+                            },
+                          });
+                        }
+                      }} />
+                  );
+                })
+              )}
             </View>
           </Animated.View>
         )}
@@ -298,25 +336,37 @@ function StreamCard({ stream: s, index, accent, onPress }: {
 // ─── Service Card ────────────────────────────────────────────────────────────
 
 function ServiceCard({ service: svc, index, subscribed, onPress }: {
-  service: typeof SDK_SERVICES[0]; index: number; subscribed: boolean; onPress: () => void;
+  service: ServiceEntry; index: number; subscribed: boolean; onPress: () => void;
 }) {
   const t = useT();
+  const iconName = iconKeyToIonicons(svc.iconKey);
+  const priceLabel = `${formatPriceSOL(svc.priceAtomic)} SOL`;
+  const intervalLabel = formatInterval(svc.intervalSlots);
+  const ageMs = Date.now() - svc.createdAt * 1000;
+  const isNew = ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000;
   return (
     <Animated.View entering={FadeInDown.delay(index * 40).duration(250)}>
       <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={st.card}>
         <View style={[st.cardIcon, { backgroundColor: subscribed ? P01Colors.greenDim : P01Colors.pinkDim }]}>
-          <Ionicons name={svc.icon as any} size={20} color={subscribed ? P01Colors.green : P01Colors.pink} />
+          <Ionicons name={iconName as any} size={20} color={subscribed ? P01Colors.green : P01Colors.pink} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={st.cardName} numberOfLines={1}>{svc.name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={st.cardName} numberOfLines={1}>{svc.name}</Text>
+            {svc.verified && (
+              <Ionicons name="checkmark-circle" size={14} color={P01Colors.cyan} />
+            )}
+            {isNew && <Badge text="NEW" color={P01Colors.cyan} />}
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
             {subscribed && <Badge text={t('common.active').toUpperCase()} color={P01Colors.green} />}
-            <Text style={st.cardSub}>{svc.category}</Text>
+            {!svc.verified && <Badge text="UNVERIFIED" color={P01Colors.yellow} />}
+            <Text style={st.cardSub}>{svc.category || '—'}</Text>
           </View>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={st.cardAmount}>{svc.price} SOL</Text>
-          <Text style={st.cardFreq}>/{svc.frequency}</Text>
+          <Text style={st.cardAmount}>{priceLabel}</Text>
+          <Text style={st.cardFreq}>/{intervalLabel}</Text>
         </View>
         {!subscribed && (
           <View style={st.subscribeChip}>

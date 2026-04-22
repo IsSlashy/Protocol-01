@@ -1,0 +1,19 @@
+{
+  "name": "@protocol-01/example-merchant-netflix",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable example: a Netflix-style merchant backend using @protocol-01/merchant-sdk.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@protocol-01/merchant-sdk": "workspace:*",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.0"
+  }
+}

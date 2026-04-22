@@ -26,7 +26,26 @@ export default function SubscriptionVaultsScreen() {
   const [vaultInfos, setVaultInfos] = useState<Record<string, VaultInfo>>({});
   const [refreshing, setRefreshing] = useState(false);
 
-  const { vaults, refreshVault } = useSubscriptionVaultStore();
+  const { vaults, refreshVault, recoverOrphanedVaults } = useSubscriptionVaultStore();
+  const [recovering, setRecovering] = useState(false);
+
+  const handleRecover = useCallback(async () => {
+    if (recovering) return;
+    setRecovering(true);
+    try {
+      const { recovered, scanned } = await recoverOrphanedVaults();
+      Alert.alert(
+        'Recovery scan complete',
+        recovered > 0
+          ? `Recovered ${recovered} subscription${recovered === 1 ? '' : 's'} from ${scanned} on-chain account${scanned === 1 ? '' : 's'}.`
+          : `Scanned ${scanned} vault${scanned === 1 ? '' : 's'} on-chain. No orphaned subscriptions found that match your notes.`
+      );
+    } catch (err) {
+      Alert.alert('Recovery failed', (err as Error).message);
+    } finally {
+      setRecovering(false);
+    }
+  }, [recovering, recoverOrphanedVaults]);
 
   useEffect(() => {
     const init = async () => {
@@ -246,6 +265,17 @@ export default function SubscriptionVaultsScreen() {
                   <Text style={styles.emptyActionText}>Private</Text>
                 </TouchableOpacity>
               </View>
+              <TouchableOpacity
+                style={styles.recoverBtn}
+                onPress={handleRecover}
+                disabled={recovering}
+                accessibilityRole="button"
+              >
+                <Ionicons name={recovering ? 'sync' : 'cloud-download-outline'} size={14} color={P01Colors.cyan} />
+                <Text style={styles.recoverBtnText}>
+                  {recovering ? 'Scanning on-chain…' : 'Scan for orphaned subscriptions'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </Animated.View>
         )}
@@ -255,6 +285,17 @@ export default function SubscriptionVaultsScreen() {
           <>
             <Text style={styles.sectionTitle}>My Subscriptions</Text>
             {vaults.map((vault, i) => renderVault(vault, i))}
+            <TouchableOpacity
+              style={styles.recoverBtn}
+              onPress={handleRecover}
+              disabled={recovering}
+              accessibilityRole="button"
+            >
+              <Ionicons name={recovering ? 'sync' : 'cloud-download-outline'} size={14} color={P01Colors.cyan} />
+              <Text style={styles.recoverBtnText}>
+                {recovering ? 'Scanning on-chain…' : 'Scan for orphaned subscriptions'}
+              </Text>
+            </TouchableOpacity>
           </>
         )}
 
@@ -372,6 +413,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: FontFamily.bold,
     color: '#000',
+  },
+  recoverBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: Spacing.md,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: `${P01Colors.cyan}40`,
+    backgroundColor: `${P01Colors.cyan}10`,
+  },
+  recoverBtnText: {
+    fontSize: 12,
+    fontFamily: FontFamily.semibold,
+    color: P01Colors.cyan,
   },
   sectionTitle: {
     fontSize: 15,

@@ -52,6 +52,8 @@ export interface BufferRoutingEntry {
   expectedSolAmount: number; // lamports
   registeredAt: number; // ms epoch
   scheduledPayoutAt: number; // ms epoch (random 20–120s after register)
+  /** Hard deadline after which the cohort gate is bypassed for this route. */
+  cohortGateExpiry: number;
   status: RouteStatus;
   fundingTx?: string;
   payoutTx?: string;
@@ -66,10 +68,26 @@ const ROUTE_EXPIRY_MS = 30 * 60 * 1000; // 30 min — drop unfunded routes
 const FUNDING_SCAN_LIMIT = 50;
 const LAMPORTS_TOLERANCE_BPS = 100; // 1% — cover tiny fee variations from on-ramp
 
+// k-anonymity floor: a funded route is held until either (a) cohort size of
+// concurrent ready routes ≥ MIN_COHORT_SIZE, or (b) the route's individual
+// cohortGateExpiry (registeredAt + MAX_COHORT_WAIT_MS) is reached. Both are
+// env-overridable so prod can tighten without redeploys.
+const MIN_COHORT_SIZE = Math.max(
+  1,
+  Number.parseInt(process.env.MUGEN_TREASURY_MIN_COHORT ?? '3', 10) || 3,
+);
+const MAX_COHORT_WAIT_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.MUGEN_TREASURY_MAX_COHORT_WAIT_MS ?? '600000', 10) ||
+    600_000,
+);
+
 // Storage keys
 const KEY_ROUTE = (id: string) => `mugen:treasury:route:${id}`;
 const KEY_ACTIVE_LIST = 'mugen:treasury:active';
 const KEY_CURSOR = 'mugen:treasury:last-scanned-signature';
+const KEY_LAST_TICK = 'mugen:treasury:last-tick-at';
+const KEY_LAST_PAYOUT = 'mugen:treasury:last-payout-at';
 
 // In-process cache for the buffer keypair (cheap — only loaded once per
 // Node instance; persistence is owned by env/fs via loadKeypair()).
@@ -140,6 +158,7 @@ export async function registerPendingRoute(args: {
     expectedSolAmount: Math.floor(args.expectedSolAmount),
     registeredAt: now,
     scheduledPayoutAt: now + randomDelayMs(),
+    cohortGateExpiry: now + MAX_COHORT_WAIT_MS,
     status: 'pending',
   };
   const storage = getStorage();
@@ -182,8 +201,74 @@ export async function getRouteById(
   return (await getStorage().get<BufferRoutingEntry>(KEY_ROUTE(id))) ?? null;
 }
 
+export interface CohortInfo {
+  /** Configured minimum members before any release. */
+  minCohortSize: number;
+  /** Currently funded + scheduled-time-passed routes (the live cohort). */
+  cohortCandidatesCount: number;
+  /** True when the next runner pass would release the cohort. */
+  cohortReady: boolean;
+  /** Per-route deadline after which the gate is bypassed. */
+  cohortGateExpiry: number;
+  /** Convenience — ms remaining on this route's deadline. */
+  cohortWaitMsRemaining: number;
+}
+
+/** Compute live cohort context for a single route. */
+export async function getCohortInfoForRoute(
+  entry: BufferRoutingEntry,
+): Promise<CohortInfo> {
+  const all = await loadAllActiveRoutes();
+  const now = Date.now();
+  const candidates = all.filter(
+    (e) => e.status === 'funded' && e.scheduledPayoutAt <= now,
+  );
+  return {
+    minCohortSize: MIN_COHORT_SIZE,
+    cohortCandidatesCount: candidates.length,
+    cohortReady: candidates.length >= MIN_COHORT_SIZE,
+    cohortGateExpiry: entry.cohortGateExpiry,
+    cohortWaitMsRemaining: Math.max(0, entry.cohortGateExpiry - now),
+  };
+}
+
 async function saveRoute(entry: BufferRoutingEntry): Promise<void> {
   await getStorage().set(KEY_ROUTE(entry.id), entry);
+}
+
+/**
+ * Find the most recent pending route for a given destination stealth address.
+ * Used by the MoonPay webhook (which carries our externalTransactionId =
+ * destStealthAddress) to reconcile incoming funds without a chain scan.
+ */
+export async function findPendingRouteByStealth(
+  destStealthAddress: string,
+): Promise<BufferRoutingEntry | null> {
+  const all = await loadAllActiveRoutes();
+  const matches = all.filter(
+    (e) => e.status === 'pending' && e.destStealthAddress === destStealthAddress,
+  );
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => b.registeredAt - a.registeredAt);
+  return matches[0]!;
+}
+
+/**
+ * Mark a pending route as funded WITHOUT requiring a chain scan. Called by
+ * the MoonPay webhook once MoonPay confirms the on-ramp transaction. The
+ * runner will still pay it out via the usual cohort gate.
+ */
+export async function markRouteFundedFromWebhook(
+  id: string,
+  fundingTx: string,
+): Promise<BufferRoutingEntry | null> {
+  const entry = await getRouteById(id);
+  if (!entry) return null;
+  if (entry.status !== 'pending') return entry;
+  entry.status = 'funded';
+  entry.fundingTx = fundingTx;
+  await saveRoute(entry);
+  return entry;
 }
 
 // ─── Funding detection ──────────────────────────────────────────────────────
@@ -280,10 +365,24 @@ export async function executeReadyPayouts(
     }
   }
 
-  // 2. Payout ready funded routes.
+  // 2. k-anonymity cohort gate. A funded route past `scheduledPayoutAt` is
+  // a "cohort candidate". We only release candidates if the cohort has at
+  // least MIN_COHORT_SIZE members — otherwise a single user paying alone
+  // would expose a 1:1 timing link from buffer-in to buffer-out. Each route
+  // also carries a `cohortGateExpiry` so a low-traffic period eventually
+  // releases stuck routes (better an honest 1-of-1 forward than indefinite
+  // hold of user funds).
+  const cohortCandidates = all.filter(
+    (e) => e.status === 'funded' && e.scheduledPayoutAt <= now,
+  );
+  const cohortReady = cohortCandidates.length >= MIN_COHORT_SIZE;
+
+  // 3. Payout ready funded routes.
   for (const entry of all) {
     if (entry.status !== 'funded') continue;
     if (entry.scheduledPayoutAt > now) continue;
+    // Hold unless cohort gate passes OR this route's wait deadline has passed.
+    if (!cohortReady && now < entry.cohortGateExpiry) continue;
 
     try {
       const dest = new PublicKey(entry.destStealthAddress);
@@ -312,6 +411,7 @@ export async function executeReadyPayouts(
       entry.status = 'paid';
       entry.payoutTx = sig;
       await saveRoute(entry);
+      await getStorage().set(KEY_LAST_PAYOUT, Date.now());
       paid += 1;
     } catch (err) {
       entry.status = 'failed';
@@ -326,6 +426,78 @@ export async function executeReadyPayouts(
 
 /** Diagnostic — lamports per SOL re-exported for UI. */
 export const LAMPORTS_PER_SOL_CONST = LAMPORTS_PER_SOL;
+
+/**
+ * Health snapshot for the buffer wallet + runner. Read by the mobile UI
+ * BEFORE the user taps Buy so we can clearly show "buffer offline — direct
+ * stealth payout" instead of letting them register a route that will never
+ * forward.
+ */
+export interface TreasuryHealth {
+  bufferAddress: string;
+  bufferBalanceLamports: number;
+  /** Min balance below which forwarding will fail (signature fee + rent). */
+  minBalanceLamports: number;
+  healthy: boolean;
+  reason?: string;
+  lastTickAt: number | null;
+  lastPayoutAt: number | null;
+  /** Active routes broken down by status. */
+  queue: Record<RouteStatus, number>;
+}
+
+const HEALTH_MIN_BALANCE_LAMPORTS = 10_000_000; // 0.01 SOL — enough for ~2000 fwds
+const HEALTH_TICK_STALE_MS = 5 * 60 * 1000; // tick should run every 60s by cron
+
+export async function getTreasuryHealth(
+  connection: Connection,
+): Promise<TreasuryHealth> {
+  const storage = getStorage();
+  const bufferPubkey = getBufferWalletPubkey();
+  const [balance, lastTickAt, lastPayoutAt, all] = await Promise.all([
+    connection.getBalance(bufferPubkey, 'confirmed'),
+    storage.get<number>(KEY_LAST_TICK),
+    storage.get<number>(KEY_LAST_PAYOUT),
+    loadAllActiveRoutes(),
+  ]);
+  const queue: Record<RouteStatus, number> = {
+    pending: 0,
+    funded: 0,
+    paid: 0,
+    failed: 0,
+    expired: 0,
+  };
+  for (const e of all) queue[e.status] = (queue[e.status] ?? 0) + 1;
+
+  const reasons: string[] = [];
+  if (balance < HEALTH_MIN_BALANCE_LAMPORTS) {
+    reasons.push(
+      `buffer balance ${balance} lamports < ${HEALTH_MIN_BALANCE_LAMPORTS}`,
+    );
+  }
+  if (lastTickAt && Date.now() - lastTickAt > HEALTH_TICK_STALE_MS) {
+    const ageSecs = Math.round((Date.now() - lastTickAt) / 1000);
+    reasons.push(`runner last tick ${ageSecs}s ago (stale > 5m)`);
+  }
+  if (!lastTickAt) {
+    reasons.push('runner has not ticked yet');
+  }
+  return {
+    bufferAddress: bufferPubkey.toBase58(),
+    bufferBalanceLamports: balance,
+    minBalanceLamports: HEALTH_MIN_BALANCE_LAMPORTS,
+    healthy: reasons.length === 0,
+    reason: reasons.length > 0 ? reasons.join('; ') : undefined,
+    lastTickAt: lastTickAt ?? null,
+    lastPayoutAt: lastPayoutAt ?? null,
+    queue,
+  };
+}
+
+/** Called by the runner each tick so /api/treasury/health can report freshness. */
+export async function recordRunnerTick(): Promise<void> {
+  await getStorage().set(KEY_LAST_TICK, Date.now());
+}
 
 /**
  * Test/debug helper — clears the active list and cursor. Does NOT delete

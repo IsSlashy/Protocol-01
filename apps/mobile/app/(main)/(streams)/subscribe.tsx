@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet,
 } from 'react-native';
@@ -8,25 +8,41 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
-import { PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, SystemProgram, TransactionInstruction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
+import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
 import { StreamFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
 import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
 import { sendSolWithSigner, sendSolPrivate } from '../../../services/solana/transactions';
 import { deriveStealthAddressSimple } from '../../../utils/crypto/stealth';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
-import { receiptFromJSON } from '../../../services/denominatedPool';
+import { receiptFromJSON, findPool } from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
+import { iconKeyToIonicons, formatPriceSOL, formatInterval } from '../../../services/solana/serviceRegistry';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
 
-const SERVICE_ICONS: Record<string, string> = {
-  netflix: 'play-circle', spotify: 'musical-notes', chatgpt: 'chatbubbles',
-  github: 'logo-github', figma: 'color-palette', notion: 'document-text',
-};
+/**
+ * SPL Memo program — used to attach an invoice tag to one-shot unshield
+ * payments so merchants can map incoming payments to their service.
+ * `MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr` is the v2 memo program
+ * (supports multiple signers); the mobile app always hits v2.
+ */
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+
+function buildMemoIx(memo: string): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: MEMO_PROGRAM_ID,
+    keys: [],
+    data: Buffer.from(memo, 'utf-8'),
+  });
+}
+
+type PaymentMode = 'wallet' | 'zk-oneshot' | 'zk-vault';
 
 export default function SubscribeScreen() {
   return <SubscribeContent />;
@@ -37,13 +53,31 @@ function SubscribeContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
-    serviceId: string; serviceName: string; price: string; frequency: string;
+    serviceId: string;
+    serviceName: string;
+    servicePda?: string;
+    retailer?: string;
+    priceLamports?: string;
+    intervalSlots?: string;
+    supportsOneshot?: string;
+    supportsVault?: string;
+    verified?: string;
+    iconKey?: string;
+    category?: string;
+    // Legacy params (older screens still pass these).
+    price: string;
+    frequency: string;
   }>();
 
   const { createNewStream, refresh } = useStreamStore();
   const { publicKey, isPrivyWallet } = useWalletStore();
   const { notes: denomNotes } = useDenominatedPoolStore();
-  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
+  const {
+    isReady: starkReady,
+    generatePoolCommitmentProof,
+    generateProof: starkGenerate,
+  } = useStarkProver();
+  const { subscribePrivateStarkAction } = useSubscriptionVaultStore();
 
   const availableNotes = denomNotes.filter(n => n.status === 'mature' || n.status === 'pending');
   const privateBalance = availableNotes.reduce((sum, n) => sum + n.denomination, 0);
@@ -51,32 +85,130 @@ function SubscribeContent() {
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [enablePrivacy, setEnablePrivacy] = useState(false);
-  const [useZkPool, setUseZkPool] = useState(false);
   const [duration, setDuration] = useState<1 | 6 | 12>(1);
 
+  // Resolve service metadata — prefer on-chain fields passed via router
+  // params; fall back to legacy `price`/`frequency` strings.
   const serviceName = params.serviceName || 'Service';
   const serviceId = params.serviceId || '';
-  const price = parseFloat(params.price || '0');
-  const frequency = (params.frequency || 'monthly') as StreamFrequency;
-  const icon = SERVICE_ICONS[serviceId] || 'cube';
-  const totalPrice = price * duration;
-  const discount = duration > 1;
+  const retailerPubkey = useMemo<PublicKey | null>(() => {
+    if (!params.retailer) return null;
+    try {
+      return new PublicKey(params.retailer);
+    } catch {
+      return null;
+    }
+  }, [params.retailer]);
+  const priceLamports: bigint = params.priceLamports
+    ? BigInt(params.priceLamports)
+    : BigInt(Math.round(parseFloat(params.price || '0') * 1e9));
+  const intervalSlotsBig: bigint = params.intervalSlots
+    ? BigInt(params.intervalSlots)
+    : 6_480_000n; // monthly default
+  const supportsOneshot = params.supportsOneshot !== '0';
+  const supportsVault = params.supportsVault === '1';
+  const verified = params.verified === '1';
+  const price = Number(priceLamports) / 1e9;
+  const frequency = (params.frequency || formatInterval(intervalSlotsBig)) as StreamFrequency;
+  const icon = iconKeyToIonicons(params.iconKey || serviceId);
+
+  // Default payment mode: vault if supported, else wallet.
+  const [paymentMode, setPaymentMode] = useState<PaymentMode>(
+    supportsVault ? 'zk-vault' : 'wallet',
+  );
+  const useZkPool = paymentMode === 'zk-oneshot';
+  const useZkVault = paymentMode === 'zk-vault';
+
+  // Duration only applies to one-shot flows; vault is open-ended.
+  const totalPrice = useZkVault ? price : price * duration;
+  const discount = !useZkVault && duration > 1;
 
   const handleSubscribe = async () => {
     if (!publicKey) return p01Alert(t('alerts.walletRequired'), t('alerts.walletRequiredDesc'), undefined, 'warning');
+    if (!retailerPubkey) {
+      return p01Alert(
+        t('common.error'),
+        'Service is missing a retailer address. Re-open the services list.',
+        undefined,
+        'error',
+      );
+    }
     try {
       setIsSubscribing(true); setProgress(null);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       const now = Date.now();
       const endDate = now + duration * 30 * 86_400_000;
-      const devAddr = 'GJyrdH4xBKjQiWspGUqfwHR1Mqn2pgXMxpXsE3M2aGS6';
-      let sig: string; let paid = price;
+      const retailerAddr = retailerPubkey.toBase58();
+      const invoiceMemo = `p01:${serviceId || 'svc'}:${duration}m`;
+      let sig: string;
+      let paid = price;
 
-      if (useZkPool) {
+      if (useZkVault) {
+        // ───────── Recurring private vault (subscribe_private_stark) ─────────
+        if (!starkReady) throw new Error('STARK prover not ready — try again in a moment');
+        setProgress(t('common.loading'));
+
+        const store = useDenominatedPoolStore.getState();
+        await store.refreshNoteStatuses();
+        const matureNotes = store.getActiveNotes()
+          .filter(n => n.token === 'SOL' && n.status === 'mature')
+          .sort((a, b) => a.denomination - b.denomination);
+        const note = matureNotes.find(n => n.denomination >= price);
+        if (!note) throw new Error(t('subscribe.noMatureNote'));
+
+        const poolConfig = findPool(note.token, note.denomination);
+        if (!poolConfig) throw new Error(`Pool not found for ${note.token} ${note.denomination}`);
+        if (priceLamports > poolConfig.denominationAtomic) {
+          throw new Error(
+            `Rate ${price} SOL exceeds note denomination (${note.denomination} SOL)`,
+          );
+        }
+
+        const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
+        const subscriberSecret = receipt.secret;
+
+        setProgress(t('shieldUnshield.generatingProof'));
+        const ownershipResult = await starkGenerate(subscriberSecret.toString());
+        const vkHashSubscriber = sha256(Buffer.from(ownershipResult.commitment, 'hex'));
+
+        setProgress(t('shieldUnshield.generatingProof'));
+        const poolProof = await generatePoolCommitmentProof(
+          receipt.nullifierPreimage.toString(),
+          receipt.secret.toString(),
+          receipt.depositEpoch.toString(),
+          receipt.tokenMint.toString(),
+        );
+
+        setProgress(t('shieldUnshield.sendingTransaction'));
+        sig = await subscribePrivateStarkAction(
+          receipt,
+          poolConfig,
+          {
+            retailer: retailerPubkey,
+            rate: priceLamports,
+            intervalSlots: intervalSlotsBig,
+          },
+          subscriberSecret,
+          BigInt(ownershipResult.commitment),
+          vkHashSubscriber,
+          {
+            proofBytes: Buffer.from(poolProof.proofHex, 'hex'),
+            publicInputs: poolProof.publicInputs.map((s: string) => BigInt(s)),
+            proofSize: poolProof.proofSize,
+          },
+        );
+        paid = note.denomination;
+      } else if (useZkPool) {
+        // ───────── One-shot ZK unshield to retailer ─────────
         if (!starkReady) throw new Error('STARK prover not ready — try again in a moment');
         setProgress(t('common.loading'));
         const store = useDenominatedPoolStore.getState();
+        // Refresh note statuses before picking: drops any stale "mature" rows
+        // whose STARK nullifier PDA is already on-chain (e.g. spent on another
+        // device). Otherwise the user waits ~60s for a proof that will fail
+        // with `already in use` on submit.
+        await store.refreshNoteStatuses();
         const note = store.getActiveNotes()
           .filter(n => n.token === 'SOL' && n.status === 'mature')
           .sort((a, b) => a.denomination - b.denomination)
@@ -90,14 +222,14 @@ function SubscribeContent() {
           receipt.depositEpoch.toString(),
           receipt.tokenMint.toString(),
         );
-        sig = await store.unshieldNoteStark(note.id, devAddr, {
+        sig = await store.unshieldNoteStark(note.id, retailerAddr, {
           proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
           publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
           proofSize: starkResult.proofSize,
         }, false);
         paid = note.denomination;
       } else if (enablePrivacy) {
-        // Privacy Shield: stealth recipient + ephemeral feePayer via relay
+        // ───────── Wallet + Privacy Shield (stealth + ephemeral) ─────────
         setProgress(t('shieldUnshield.sendingTransaction'));
         const privySigner = getPrivySigner();
         const kp = await getKeypair();
@@ -107,7 +239,7 @@ function SubscribeContent() {
         const { getOrCreateStealthKeys } = await import('../../../services/stealth/keys');
         const stealthKeys = await getOrCreateStealthKeys();
         const senderSecret = stealthKeys.spendingKey.secretKey.slice(0, 32);
-        const { stealthAddress } = deriveStealthAddressSimple(devAddr, senderSecret, 0);
+        const { stealthAddress } = deriveStealthAddressSimple(retailerAddr, senderSecret, 0);
 
         let walletPub: PublicKey;
         let signTx: (tx: Transaction) => Promise<Transaction>;
@@ -125,30 +257,38 @@ function SubscribeContent() {
         if (!r.success || !r.signature) throw new Error(r.error || 'Private transaction failed');
         sig = r.signature;
       } else {
+        // ───────── Plain wallet transfer (+ invoice memo) ─────────
         setProgress(t('shieldUnshield.sendingTransaction'));
         const privySigner = getPrivySigner();
+        const conn = getConnection();
+        const lamports = Math.round(price * 1e9);
         if (isPrivyWallet && privySigner && publicKey) {
-          const r = await sendSolWithSigner(devAddr, price, new PublicKey(publicKey), privySigner);
+          // sendSolWithSigner doesn't expose a memo hook; add a follow-up
+          // memo-only TX so the merchant still sees the invoice tag.
+          const r = await sendSolWithSigner(retailerAddr, price, new PublicKey(publicKey), privySigner);
           if (!r.success || !r.signature) throw new Error(r.error || 'Transaction failed');
           sig = r.signature;
         } else {
           const kp = await getKeypair();
           if (!kp) throw new Error('Wallet keypair not found');
-          const conn = getConnection();
-          const tx = new Transaction().add(SystemProgram.transfer({
-            fromPubkey: kp.publicKey, toPubkey: new PublicKey(devAddr),
-            lamports: Math.round(price * 1e9),
-          }));
+          const tx = new Transaction().add(
+            SystemProgram.transfer({
+              fromPubkey: kp.publicKey,
+              toPubkey: retailerPubkey,
+              lamports,
+            }),
+            buildMemoIx(invoiceMemo),
+          );
           sig = await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
         }
       }
 
       setProgress(t('common.processing'));
       const stream = await createNewStream({
-        name: serviceName, recipientAddress: devAddr, totalAmount: totalPrice,
+        name: serviceName, recipientAddress: retailerAddr, totalAmount: totalPrice,
         frequency, endDate, serviceId, serviceName,
         amountNoise: enablePrivacy ? 10 : 0, timingNoise: enablePrivacy ? 4 : 0,
-        useStealthAddress: enablePrivacy, useZkPool,
+        useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault,
       });
       await updateStreamRecord(stream.id, {
         amountStreamed: paid, paymentsCompleted: 1,
@@ -156,19 +296,24 @@ function SubscribeContent() {
       });
       refresh(publicKey || undefined).catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      p01Alert(useZkPool ? t('subscribe.privatelySubscribed') : t('subscribe.subscribed'),
+      const successTitle = useZkVault
+        ? 'Vault subscription active'
+        : (useZkPool ? t('subscribe.privatelySubscribed') : t('subscribe.subscribed'));
+      p01Alert(
+        successTitle,
         `${paid} SOL confirmed. Tx: ${sig.slice(0, 8)}...`,
         [{ text: t('createStream.viewStream'), onPress: () => router.replace(`/(main)/(streams)/${stream.id}`) },
          { text: t('common.done'), style: 'cancel', onPress: () => router.replace('/(main)/(streams)') }],
-        'success');
+        'success',
+      );
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('common.error'), e.message || t('alerts.subscriptionFailed'), undefined, 'error');
     } finally { setIsSubscribing(false); setProgress(null); }
   };
 
-  const accent = useZkPool ? P01Colors.pink : P01Colors.cyan;
-  const accentDim = useZkPool ? P01Colors.pinkDim : P01Colors.cyanDim;
+  const accent = (useZkPool || useZkVault) ? P01Colors.pink : P01Colors.cyan;
+  const accentDim = (useZkPool || useZkVault) ? P01Colors.pinkDim : P01Colors.cyanDim;
 
   return (
     <View style={st.container}>
@@ -194,38 +339,40 @@ function SubscribeContent() {
           </View>
         </Animated.View>
 
-        {/* Duration */}
-        <Animated.View entering={FadeInDown.delay(80).duration(250)} style={{ marginTop: 24 }}>
-          <Text style={st.sectionLabel}>{t('subscribe.duration')}</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {([1, 6, 12] as const).map(m => {
-              const sel = duration === m;
-              return (
-                <TouchableOpacity key={m} onPress={() => { Haptics.selectionAsync(); setDuration(m); }}
-                  style={[st.durationBtn, sel && { backgroundColor: accent }]} activeOpacity={0.7}>
-                  <Text style={[st.durationNum, sel && { color: '#000' }]}>{m}</Text>
-                  <Text style={[st.durationUnit, sel && { color: '#000' }]}>{m === 1 ? t('subscribe.month') : t('subscribe.months')}</Text>
-                  {m > 1 && (
-                    <View style={[st.saveBadge, sel && { backgroundColor: 'rgba(0,0,0,0.2)' }]}>
-                      <Text style={[st.saveText, sel && { color: '#000' }]}>-10%</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </Animated.View>
+        {/* Duration (hidden in vault mode — vault is open-ended) */}
+        {!useZkVault && (
+          <Animated.View entering={FadeInDown.delay(80).duration(250)} style={{ marginTop: 24 }}>
+            <Text style={st.sectionLabel}>{t('subscribe.duration')}</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {([1, 6, 12] as const).map(m => {
+                const sel = duration === m;
+                return (
+                  <TouchableOpacity key={m} onPress={() => { Haptics.selectionAsync(); setDuration(m); }}
+                    style={[st.durationBtn, sel && { backgroundColor: accent }]} activeOpacity={0.7}>
+                    <Text style={[st.durationNum, sel && { color: '#000' }]}>{m}</Text>
+                    <Text style={[st.durationUnit, sel && { color: '#000' }]}>{m === 1 ? t('subscribe.month') : t('subscribe.months')}</Text>
+                    {m > 1 && (
+                      <View style={[st.saveBadge, sel && { backgroundColor: 'rgba(0,0,0,0.2)' }]}>
+                        <Text style={[st.saveText, sel && { color: '#000' }]}>-10%</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Animated.View>
+        )}
 
         {/* Payment Method */}
         <Animated.View entering={FadeInDown.delay(160).duration(250)} style={{ marginTop: 24 }}>
           <Text style={st.sectionLabel}>{t('subscribe.payWith')}</Text>
           <View style={{ gap: 8 }}>
-            {/* Wallet */}
-            <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setUseZkPool(false); }}
-              style={[st.methodCard, !useZkPool && { backgroundColor: P01Colors.cyanDim }]} activeOpacity={0.7}>
-              <Radio selected={!useZkPool} color={P01Colors.cyan} />
-              <View style={[st.methodIcon, { backgroundColor: !useZkPool ? 'rgba(57,197,187,0.2)' : Colors.surfaceTertiary }]}>
-                <Ionicons name="wallet" size={20} color={!useZkPool ? P01Colors.cyan : Colors.textSecondary} />
+            {/* Wallet (one-shot) */}
+            <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setPaymentMode('wallet'); }}
+              style={[st.methodCard, paymentMode === 'wallet' && { backgroundColor: P01Colors.cyanDim }]} activeOpacity={0.7}>
+              <Radio selected={paymentMode === 'wallet'} color={P01Colors.cyan} />
+              <View style={[st.methodIcon, { backgroundColor: paymentMode === 'wallet' ? 'rgba(57,197,187,0.2)' : Colors.surfaceTertiary }]}>
+                <Ionicons name="wallet" size={20} color={paymentMode === 'wallet' ? P01Colors.cyan : Colors.textSecondary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={st.methodTitle}>{t('subscribe.wallet')}</Text>
@@ -233,25 +380,47 @@ function SubscribeContent() {
               </View>
             </TouchableOpacity>
 
-            {/* ZK Private */}
-            <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setUseZkPool(true); setEnablePrivacy(true); }}
-              style={[st.methodCard, useZkPool && { backgroundColor: P01Colors.pinkDim }]} activeOpacity={0.7}>
-              <Radio selected={useZkPool} color={P01Colors.pink} />
-              <View style={[st.methodIcon, { backgroundColor: useZkPool ? 'rgba(255,119,168,0.2)' : Colors.surfaceTertiary }]}>
-                <Ionicons name="eye-off" size={20} color={useZkPool ? P01Colors.pink : Colors.textSecondary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={st.methodTitle}>{t('subscribe.privateWallet')}</Text>
-                <Text style={st.methodDesc}>{t('subscribe.anonymousViaZK')}</Text>
-              </View>
-              <View style={[st.zkBadge, useZkPool && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>
-                <Text style={[st.zkBadgeText, useZkPool && { color: P01Colors.pink }]}>ZK</Text>
-              </View>
-            </TouchableOpacity>
+            {/* ZK one-shot (unshield note → retailer) */}
+            {supportsOneshot && (
+              <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setPaymentMode('zk-oneshot'); setEnablePrivacy(true); }}
+                style={[st.methodCard, paymentMode === 'zk-oneshot' && { backgroundColor: P01Colors.pinkDim }]} activeOpacity={0.7}>
+                <Radio selected={paymentMode === 'zk-oneshot'} color={P01Colors.pink} />
+                <View style={[st.methodIcon, { backgroundColor: paymentMode === 'zk-oneshot' ? 'rgba(255,119,168,0.2)' : Colors.surfaceTertiary }]}>
+                  <Ionicons name="eye-off" size={20} color={paymentMode === 'zk-oneshot' ? P01Colors.pink : Colors.textSecondary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={st.methodTitle}>{t('subscribe.privateWallet')}</Text>
+                  <Text style={st.methodDesc}>One-shot, no vault. Re-pay next period.</Text>
+                </View>
+                <View style={[st.zkBadge, paymentMode === 'zk-oneshot' && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>
+                  <Text style={[st.zkBadgeText, paymentMode === 'zk-oneshot' && { color: P01Colors.pink }]}>ZK</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* ZK recurring vault (subscribe_private_stark) */}
+            {supportsVault && (
+              <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setPaymentMode('zk-vault'); }}
+                style={[st.methodCard, paymentMode === 'zk-vault' && { backgroundColor: P01Colors.pinkDim }]} activeOpacity={0.7}>
+                <Radio selected={paymentMode === 'zk-vault'} color={P01Colors.pink} />
+                <View style={[st.methodIcon, { backgroundColor: paymentMode === 'zk-vault' ? 'rgba(255,119,168,0.2)' : Colors.surfaceTertiary }]}>
+                  <Ionicons name="lock-closed" size={20} color={paymentMode === 'zk-vault' ? P01Colors.pink : Colors.textSecondary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={st.methodTitle}>Private recurring vault</Text>
+                  <Text style={st.methodDesc}>
+                    Retailer pulls {formatPriceSOL(priceLamports)} SOL every {formatInterval(intervalSlotsBig)} — fully on-chain, quantum-safe.
+                  </Text>
+                </View>
+                <View style={[st.zkBadge, paymentMode === 'zk-vault' && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>
+                  <Text style={[st.zkBadgeText, paymentMode === 'zk-vault' && { color: P01Colors.pink }]}>VAULT</Text>
+                </View>
+              </TouchableOpacity>
+            )}
           </View>
 
-          {/* ZK balance info */}
-          {useZkPool && (
+          {/* ZK balance info (both zk-oneshot and zk-vault need a note ≥ price) */}
+          {(useZkPool || useZkVault) && (
             <Animated.View entering={FadeIn.duration(200)} style={st.zkInfo}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View>
@@ -271,7 +440,7 @@ function SubscribeContent() {
           )}
 
           {/* Privacy toggle for normal wallet */}
-          {!useZkPool && (
+          {paymentMode === 'wallet' && (
             <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setEnablePrivacy(!enablePrivacy); }}
               style={[st.privacyToggle, enablePrivacy && { backgroundColor: P01Colors.cyanDim }]} activeOpacity={0.8}>
               <Ionicons name="shield-checkmark" size={18} color={enablePrivacy ? P01Colors.cyan : Colors.textSecondary} />
@@ -288,30 +457,46 @@ function SubscribeContent() {
 
         {/* Summary */}
         <Animated.View entering={FadeInDown.delay(240).duration(250)} style={st.summaryCard}>
-          <View style={st.summaryRow}>
-            <Text style={st.summaryLabel}>{serviceName} x {duration}mo</Text>
-            <Text style={st.summaryValue}>{(price * duration).toFixed(4)} SOL</Text>
-          </View>
-          {discount && (
-            <View style={st.summaryRow}>
-              <Text style={[st.summaryLabel, { color: P01Colors.green }]}>{t('subscribe.discount')}</Text>
-              <Text style={[st.summaryValue, { color: P01Colors.green }]}>-{(price * duration * 0.1).toFixed(4)}</Text>
-            </View>
+          {useZkVault ? (
+            <>
+              <View style={st.summaryRow}>
+                <Text style={st.summaryLabel}>{serviceName} — recurring vault</Text>
+                <Text style={st.summaryValue}>{price.toFixed(4)} SOL / {formatInterval(intervalSlotsBig)}</Text>
+              </View>
+              <View style={st.summaryDivider} />
+              <View style={st.summaryRow}>
+                <Text style={st.summaryTotal}>Initial deposit</Text>
+                <Text style={[st.summaryTotal, { color: accent }]}>≥ {price.toFixed(4)} SOL</Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={st.summaryRow}>
+                <Text style={st.summaryLabel}>{serviceName} x {duration}mo</Text>
+                <Text style={st.summaryValue}>{(price * duration).toFixed(4)} SOL</Text>
+              </View>
+              {discount && (
+                <View style={st.summaryRow}>
+                  <Text style={[st.summaryLabel, { color: P01Colors.green }]}>{t('subscribe.discount')}</Text>
+                  <Text style={[st.summaryValue, { color: P01Colors.green }]}>-{(price * duration * 0.1).toFixed(4)}</Text>
+                </View>
+              )}
+              <View style={st.summaryDivider} />
+              <View style={st.summaryRow}>
+                <Text style={st.summaryTotal}>{t('subscribe.firstPayment')}</Text>
+                <Text style={[st.summaryTotal, { color: accent }]}>{price.toFixed(4)} SOL</Text>
+              </View>
+            </>
           )}
-          <View style={st.summaryDivider} />
-          <View style={st.summaryRow}>
-            <Text style={st.summaryTotal}>{t('subscribe.firstPayment')}</Text>
-            <Text style={[st.summaryTotal, { color: accent }]}>{price.toFixed(4)} SOL</Text>
-          </View>
         </Animated.View>
       </ScrollView>
 
       {/* CTA */}
       <View style={[st.cta, { paddingBottom: insets.bottom + 90 }]}>
         <TouchableOpacity onPress={handleSubscribe}
-          disabled={isSubscribing || (useZkPool && privateBalance < price)}
+          disabled={isSubscribing || ((useZkPool || useZkVault) && privateBalance < price)}
           style={[st.ctaBtn, { backgroundColor: isSubscribing ? Colors.surfaceTertiary : accent },
-            (useZkPool && privateBalance < price) && { opacity: 0.4 }]}
+            ((useZkPool || useZkVault) && privateBalance < price) && { opacity: 0.4 }]}
           activeOpacity={0.8}>
           {isSubscribing ? (
             <View style={{ alignItems: 'center', gap: 4 }}>
@@ -320,8 +505,16 @@ function SubscribeContent() {
             </View>
           ) : (
             <>
-              <Ionicons name={useZkPool ? 'eye-off' : 'checkmark-circle'} size={20} color="#000" />
-              <Text style={st.ctaText}>{useZkPool ? t('subscribe.subscribePrivately') : t('subscribe.subscribe')}</Text>
+              <Ionicons
+                name={useZkVault ? 'lock-closed' : useZkPool ? 'eye-off' : 'checkmark-circle'}
+                size={20}
+                color="#000"
+              />
+              <Text style={st.ctaText}>
+                {useZkVault
+                  ? 'Create private vault'
+                  : (useZkPool ? t('subscribe.subscribePrivately') : t('subscribe.subscribe'))}
+              </Text>
             </>
           )}
         </TouchableOpacity>

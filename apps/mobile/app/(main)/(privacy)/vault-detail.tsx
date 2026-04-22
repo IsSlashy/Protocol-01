@@ -13,10 +13,19 @@ import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
-import { type VaultInfo } from '@/services/subscriptionVault';
+import {
+  type VaultInfo,
+  type CancelPreview,
+  computeCancelPreview,
+} from '@/services/subscriptionVault';
+import { ALL_POOLS } from '@/services/denominatedPool';
+import { getConnection } from '@/services/solana/connection';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import CancelConfirmModal, {
+  type CancelPhase,
+} from '@/components/privacy/CancelConfirmModal';
 
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 
@@ -31,6 +40,7 @@ export default function VaultDetailScreen() {
     cancelNormalAction,
     pausePrivateStarkAction,
     resumePrivateStarkAction,
+    cancelPrivateStarkAction,
     isLoading,
     progress,
   } = useSubscriptionVaultStore();
@@ -38,6 +48,15 @@ export default function VaultDetailScreen() {
 
   const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
   const [starkStatus, setStarkStatus] = useState<string | null>(null);
+
+  // Cancel modal state ──────────────────────────────────────────────────────
+  const [cancelVisible, setCancelVisible] = useState(false);
+  const [cancelPhase, setCancelPhase] = useState<CancelPhase>('preview');
+  const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
+  const [cancelProgress, setCancelProgress] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelTx, setCancelTx] = useState<string | null>(null);
+  const [cancelPoolLabel, setCancelPoolLabel] = useState<string>('');
 
   const storedVault = vaults.find(v => v.vaultAddress === vaultAddress);
   const isPrivate = storedVault?.isPrivateMode ?? false;
@@ -122,37 +141,68 @@ export default function VaultDetailScreen() {
     }
   };
 
-  const handleCancel = async () => {
+  const openCancelModal = async () => {
     if (!vaultAddress || !vaultInfo) return;
-    p01Alert(
-      'Cancel Subscription',
-      'This will refund the remaining balance and close the vault.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (isPrivate) {
-                // Private cancel requires re-shielding — not yet fully wired
-                // (needs new commitments + new root from the pool)
-                p01Alert(
-                  'Not Available',
-                  'Private subscription cancellation requires pool re-shielding which is not yet implemented. Contact support.',
-                );
-                return;
-              }
-              await cancelNormalAction(vaultAddress, vaultInfo.retailer);
-              p01Alert('Success', 'Subscription cancelled');
-              router.back();
-            } catch (err) {
-              p01Alert('Error', (err as Error).message);
-            }
-          },
-        },
-      ]
-    );
+    try {
+      const connection = getConnection();
+      const slot = await connection.getSlot('confirmed');
+      const pool = ALL_POOLS.find(
+        p => p.poolPDA.toBase58() === vaultInfo.sourcePool,
+      );
+      const denom = pool?.denominationAtomic ?? 0n;
+      setCancelPreview(computeCancelPreview(vaultInfo, slot, denom));
+      setCancelPoolLabel(pool ? `${pool.denomination} ${pool.token}` : '—');
+      setCancelPhase('preview');
+      setCancelProgress(null);
+      setCancelError(null);
+      setCancelTx(null);
+      setCancelVisible(true);
+    } catch (err) {
+      p01Alert('Error', (err as Error).message);
+    }
+  };
+
+  const confirmCancel = async () => {
+    if (!vaultAddress || !vaultInfo) return;
+    setCancelPhase('processing');
+    setCancelProgress('Preparing…');
+
+    try {
+      let sig = '';
+      if (isPrivate) {
+        if (!starkReady) {
+          throw new Error('STARK prover not ready yet — try again in a moment.');
+        }
+        const secret = await loadSecret();
+        setCancelProgress('Generating STARK ownership proof…');
+        const starkResult = await starkGenerate(secret.toString());
+
+        setCancelProgress('Submitting cancel transaction…');
+        sig = await cancelPrivateStarkAction(vaultAddress, secret, {
+          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+          commitment: BigInt(starkResult.commitment),
+          proofSize: starkResult.proofSize,
+        });
+      } else {
+        setCancelProgress('Submitting cancel transaction…');
+        sig = await cancelNormalAction(vaultAddress, vaultInfo.retailer);
+      }
+
+      setCancelTx(sig);
+      setCancelPhase('success');
+    } catch (err) {
+      setCancelError((err as Error).message);
+      setCancelPhase('error');
+    }
+  };
+
+  const closeCancelModal = () => {
+    const wasSuccess = cancelPhase === 'success';
+    setCancelVisible(false);
+    // Slight delay so the modal fades out cleanly before we pop the screen.
+    if (wasSuccess) {
+      setTimeout(() => router.back(), 150);
+    }
   };
 
   if (!vaultInfo) {
@@ -262,7 +312,7 @@ export default function VaultDetailScreen() {
           {vaultInfo.isActive && (
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
-              onPress={handleCancel}
+              onPress={openCancelModal}
               disabled={isLoading}
             >
               <Text style={[styles.actionText, { color: Colors.error }]}>Cancel</Text>
@@ -278,6 +328,23 @@ export default function VaultDetailScreen() {
           </View>
         )}
       </ScrollView>
+
+      <CancelConfirmModal
+        visible={cancelVisible}
+        preview={cancelPreview}
+        denominationLabel={cancelPoolLabel}
+        retailerLabel={
+          vaultInfo?.retailer
+            ? `${vaultInfo.retailer.slice(0, 6)}…${vaultInfo.retailer.slice(-4)}`
+            : 'Retailer'
+        }
+        phase={cancelPhase}
+        progress={cancelProgress ?? progress ?? null}
+        errorMessage={cancelError}
+        txSignature={cancelTx}
+        onConfirm={confirmCancel}
+        onClose={closeCancelModal}
+      />
     </SafeAreaView>
   );
 }

@@ -358,7 +358,7 @@ export function rescanPoolFromSeed(params: {
   return matches;
 }
 
-function pubkeyToField(pubkey: PublicKey): bigint {
+export function pubkeyToField(pubkey: PublicKey): bigint {
   const bytes = pubkey.toBytes();
   let n = 0n;
   for (let i = 0; i < 32; i++) n = (n << 8n) | BigInt(bytes[i]);
@@ -620,7 +620,7 @@ export async function fetchPoolInfo(
   };
 }
 
-function parseFilledSubtrees(treeData: Buffer): { leafCount: number; subtrees: bigint[] } {
+export function parseFilledSubtrees(treeData: Buffer): { leafCount: number; subtrees: bigint[] } {
   const leafCount = Number(treeData.readBigUInt64LE(8 + 32 + 32));
   const depth = treeData[8 + 32 + 32 + 8];
   const vecLen = treeData.readUInt32LE(8 + 32 + 32 + 8 + 1);

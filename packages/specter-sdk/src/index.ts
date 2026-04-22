@@ -466,3 +466,42 @@ export {
   // Types
   type RegistryEntry,
 } from './registry';
+
+// ============================================================================
+// Service Registry Module (On-Chain Merchant Directory)
+// ============================================================================
+//
+// Merchants publish a `ServiceRegistry` PDA per service (Netflix, Spotify,
+// self-hosted SaaS, ...). Every Protocol 01 client picks up the entry so
+// the service appears in the subscription UI automatically.
+//
+export {
+  // PDA
+  getServicePDA,
+  SERVICE_REGISTRY_SEED,
+  MAX_SLUG_LEN,
+
+  // Account
+  decodeServiceRegistryAccount,
+  SERVICE_REGISTRY_DISCRIMINATOR,
+  SERVICE_REGISTRY_MAX_SIZE,
+  type ServiceRegistryAccount,
+
+  // Instructions
+  buildRegisterServiceIx,
+  buildUpdateServiceIx,
+  buildAttestServiceIx,
+  buildBumpSubscriberCountIx,
+  buildDeregisterServiceIx,
+  PROTOCOL_VERIFIED_AUTHORITY,
+  SERVICE_IX_DISCRIMINATORS,
+  type RegisterServiceArgs,
+  type UpdateServiceArgs,
+
+  // Client
+  fetchService,
+  fetchServiceByPda,
+  fetchAllServices,
+  type ServiceEntry,
+  type FetchServicesOptions,
+} from './service-registry';

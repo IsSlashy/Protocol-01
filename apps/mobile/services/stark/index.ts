@@ -396,6 +396,47 @@ async function confirmAllBatched(
   }
 }
 
+/**
+ * Poll signature statuses and return which indices are unconfirmed on timeout,
+ * instead of throwing. Lets the caller resend dropped TXs with a fresh blockhash.
+ *
+ * Rejects only on on-chain tx error (deterministic failure — resending won't help).
+ */
+async function confirmAllBatchedSoft(
+  conn: Connection,
+  sigs: string[],
+  label: string,
+  timeoutMs = 60_000,
+  pollMs = 1500,
+): Promise<number[]> {
+  if (sigs.length === 0) return [];
+  const start = Date.now();
+  const confirmed = new Set<number>();
+  while (confirmed.size < sigs.length) {
+    if (Date.now() - start > timeoutMs) {
+      const unconfirmed: number[] = [];
+      for (let i = 0; i < sigs.length; i++) if (!confirmed.has(i)) unconfirmed.push(i);
+      console.warn(`[STARK] ${label} soft timeout: ${confirmed.size}/${sigs.length} confirmed, ${unconfirmed.length} will retry`);
+      return unconfirmed;
+    }
+    const { value: statuses } = await conn.getSignatureStatuses(sigs);
+    for (let i = 0; i < statuses.length; i++) {
+      const s = statuses[i];
+      if (!s) continue;
+      if (s.err) {
+        throw new Error(`${label} failed: ${JSON.stringify(s.err)} (sig=${sigs[i]})`);
+      }
+      if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') {
+        confirmed.add(i);
+      }
+    }
+    if (confirmed.size < sigs.length) {
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+  }
+  return [];
+}
+
 async function resizeToTarget(
   conn: Connection,
   targetSize: number,
@@ -465,52 +506,71 @@ async function uploadChunksParallel(
   const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
   console.log(`[STARK] Uploading ${proofBytes.length}B in ${totalChunks} chunks (${totalBatches} batches, pipelined)`);
 
-  let prevConfirm: Promise<void> | null = null;
+  const MAX_BATCH_RETRIES = 4;
 
   for (let batchStart = 0; batchStart < totalChunks; batchStart += BATCH_SIZE) {
     const batchEnd = Math.min(batchStart + BATCH_SIZE, totalChunks);
     const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
-    onProgress?.(`Uploading proof batch ${batchNum}/${totalBatches}...`);
 
-    const { blockhash } = await conn.getLatestBlockhash('confirmed');
-    const signedTxs = await Promise.all(
-      Array.from({ length: batchEnd - batchStart }, async (_, j) => {
-        const i = batchStart + j;
-        const offset = i * MAX_CHUNK_SIZE;
-        const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
-        const chunk = proofBytes.slice(offset, end);
-        let tx = new Transaction().add(
-          buildWriteProofChunkIx(offset, chunk, proofBuffer, authority)
+    // Chunks to send in this batch. After each retry round, trimmed to
+    // only the chunks whose signatures didn't confirm in time (phone-sleep,
+    // blockhash expired, RPC dropped the TX, etc).
+    let remaining = Array.from({ length: batchEnd - batchStart }, (_, j) => {
+      const i = batchStart + j;
+      const offset = i * MAX_CHUNK_SIZE;
+      const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
+      return { offset, data: proofBytes.slice(offset, end) };
+    });
+
+    for (let attempt = 0; attempt < MAX_BATCH_RETRIES; attempt++) {
+      onProgress?.(
+        attempt === 0
+          ? `Uploading proof batch ${batchNum}/${totalBatches}...`
+          : `Retrying batch ${batchNum}/${totalBatches} (${remaining.length} chunks, attempt ${attempt + 1}/${MAX_BATCH_RETRIES})...`,
+      );
+
+      const { blockhash } = await conn.getLatestBlockhash('confirmed');
+      const signedTxs = await Promise.all(
+        remaining.map(async ({ offset, data }) => {
+          let tx = new Transaction().add(
+            buildWriteProofChunkIx(offset, data, proofBuffer, authority)
+          );
+          tx.recentBlockhash = blockhash;
+          if (keypair) {
+            tx.feePayer = keypair.publicKey;
+            tx.sign(keypair);
+          } else if (walletSigner) {
+            tx.feePayer = walletSigner.publicKey;
+            tx = await walletSigner.signTransaction(tx);
+          } else {
+            throw new Error('No wallet available for signing');
+          }
+          return tx;
+        })
+      );
+      const sigs = await sendTxsInWaves(conn, signedTxs);
+      console.log(
+        `[STARK] Batch ${batchNum}/${totalBatches} attempt ${attempt + 1}: ${sigs.length} TXs sent`
+      );
+
+      const unconfirmed = await confirmAllBatchedSoft(
+        conn,
+        sigs,
+        `Chunk batch ${batchNum} attempt ${attempt + 1}`,
+      );
+      if (unconfirmed.length === 0) {
+        console.log(`[STARK] Batch ${batchNum}/${totalBatches} confirmed`);
+        break;
+      }
+      remaining = unconfirmed.map(i => remaining[i]);
+      if (attempt === MAX_BATCH_RETRIES - 1) {
+        throw new Error(
+          `Chunk batch ${batchNum} failed after ${MAX_BATCH_RETRIES} attempts: ${remaining.length} chunks still unconfirmed`
         );
-        tx.recentBlockhash = blockhash;
-        if (keypair) {
-          tx.feePayer = keypair.publicKey;
-          tx.sign(keypair);
-        } else if (walletSigner) {
-          tx.feePayer = walletSigner.publicKey;
-          tx = await walletSigner.signTransaction(tx);
-        } else {
-          throw new Error('No wallet available for signing');
-        }
-        return tx;
-      })
-    );
-    const sigs = await sendTxsInWaves(conn, signedTxs);
-    console.log(`[STARK] Batch ${batchNum}/${totalBatches}: ${sigs.length} TXs sent`);
-
-    // Pipeline: start this batch's confirm in the background, wait for the
-    // PREVIOUS batch's confirm before starting the NEXT batch's signing.
-    // This overlaps confirm of N with signing+sending of N+1.
-    const thisConfirm = confirmAllBatched(conn, sigs, `Chunk batch ${batchNum}`)
-      .then(() => { console.log(`[STARK] Batch ${batchNum}/${totalBatches} confirmed`); });
-    if (prevConfirm) {
-      await prevConfirm;
+      }
     }
-    prevConfirm = thisConfirm;
   }
 
-  // Wait for the final batch's confirm
-  if (prevConfirm) await prevConfirm;
   console.log(`[STARK] All ${totalChunks} chunks confirmed`);
 }
 

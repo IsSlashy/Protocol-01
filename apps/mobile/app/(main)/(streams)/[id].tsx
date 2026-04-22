@@ -89,7 +89,8 @@ function DetailContent() {
 
   const handlePayNow = async () => {
     const intervalMs = stream.frequency === 'daily' ? 86_400_000 : stream.frequency === 'weekly' ? 604_800_000
-      : stream.frequency === 'biweekly' ? 1_209_600_000 : 2_592_000_000;
+      : stream.frequency === 'biweekly' ? 1_209_600_000
+      : stream.frequency === 'yearly' ? 31_536_000_000 : 2_592_000_000;
 
     const doPayment = async () => {
       try {
