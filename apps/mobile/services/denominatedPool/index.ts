@@ -600,7 +600,25 @@ export async function ensureMerkleProof(
   currentOnChainRoot: Uint8Array,
   onProgress?: (step: string) => void,
 ): Promise<void> {
-  if (receipt.merklePathElements && receipt.merklePathIndices && receipt.merkleRoot) return;
+  // Happy path: the receipt already carries a path AND its stored root
+  // matches the pool's CURRENT on-chain root. Anything else is not safe to
+  // trust:
+  //   - A root saved at shield time may have drifted out of the pool's
+  //     100-slot historical ring once enough newer shields landed.
+  //   - A prior failing attempt could have mutated the receipt with a
+  //     bogus root and persisted it. `is_valid_root` on-chain would then
+  //     reject every retry with InvalidMerkleRoot.
+  // Recomputing from the full leaf set always yields the current root,
+  // which is by definition the freshest valid root.
+  let onChainRootBig = 0n;
+  for (let i = 31; i >= 0; i--) {
+    onChainRootBig = (onChainRootBig << 8n) | BigInt(currentOnChainRoot[i]);
+  }
+  if (
+    receipt.merklePathElements &&
+    receipt.merklePathIndices &&
+    receipt.merkleRoot === onChainRootBig
+  ) return;
 
   onProgress?.('Reconstructing Merkle proof from on-chain...');
   const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
@@ -633,17 +651,19 @@ export async function ensureMerkleProof(
     targetLeafIndex: receipt.leafIndex,
   });
 
-  let onChainRoot = 0n;
-  for (let i = 31; i >= 0; i--) {
-    onChainRoot = (onChainRoot << 8n) | BigInt(currentOnChainRoot[i]);
+  if (computedRoot !== onChainRootBig) {
+    // Divergence — typically a concurrent shield landed between our scan and
+    // simulation, or maxSignatures missed a leaf. The submitted root would
+    // need to live in the pool's 100-slot historical ring for is_valid_root
+    // to pass, which is fragile. Log and still proceed with the computed
+    // root; caller can retry if it fails.
+    console.warn(
+      `[DenomPool] Merkle rebuild root ≠ on-chain current root. ` +
+      `computed=${computedRoot.toString(16)} onChain=${onChainRootBig.toString(16)}. ` +
+      `A concurrent shield may have landed; retrying usually picks it up.`
+    );
   }
-
-  // Prefer the current on-chain root if it matches our rebuild. Otherwise
-  // submit the computed root — it must live in the pool's historical ring
-  // buffer (100 entries) for `is_valid_root` to pass. A divergence with no
-  // ring-buffer hit usually means a concurrent shield landed between scan
-  // and simulation; retrying picks it up.
-  receipt.merkleRoot = computedRoot === onChainRoot ? onChainRoot : computedRoot;
+  receipt.merkleRoot = computedRoot;
   receipt.merklePathElements = pathElements;
   receipt.merklePathIndices = pathIndices;
 }
