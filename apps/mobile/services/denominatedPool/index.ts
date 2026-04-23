@@ -573,9 +573,20 @@ export async function fetchPoolLeavesByIndex(
     maxSignatures: opts.maxSignatures ?? 1000,
     onProgress: opts.onProgress,
   });
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
   let maxIdx = -1;
-  for (const e of onChain.values()) if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
-  const leavesByIndex: bigint[] = new Array(maxIdx + 1).fill(ZERO_VALUE);
+  for (const e of onChain.values()) {
+    if (!Number.isInteger(e.leafIndex) || e.leafIndex < 0 || e.leafIndex >= MAX_LEAVES) {
+      throw new Error(
+        `Decoded leaf_index ${e.leafIndex} is out of bounds [0, ${MAX_LEAVES}). ` +
+        `A pool event log is malformed or the decoder drifted. Skipping rebuild.`
+      );
+    }
+    if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
+  }
+  // `new Array(N)` throws RangeError if N > 2^32-1. MAX_LEAVES is far below
+  // that, but the guard above also protects callers from noisy data.
+  const leavesByIndex: bigint[] = maxIdx >= 0 ? new Array(maxIdx + 1).fill(ZERO_VALUE) : [];
   for (const e of onChain.values()) leavesByIndex[e.leafIndex] = e.commitment;
   const missing: number[] = [];
   for (let i = 0; i <= maxIdx; i++) if (leavesByIndex[i] === ZERO_VALUE) missing.push(i);
@@ -621,15 +632,34 @@ export async function ensureMerkleProof(
   ) return;
 
   onProgress?.('Reconstructing Merkle proof from on-chain...');
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+
+  if (
+    !Number.isInteger(receipt.leafIndex) ||
+    receipt.leafIndex < 0 ||
+    receipt.leafIndex >= MAX_LEAVES
+  ) {
+    throw new Error(
+      `Note leafIndex ${receipt.leafIndex} is out of bounds [0, ${MAX_LEAVES}). ` +
+      `The stored note is likely corrupt or belongs to a different tree.`
+    );
+  }
+
   const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
   if (!treeAccount) throw new Error('Merkle tree account not found');
   const { leafCount } = parseFilledSubtrees(treeAccount.data);
+  console.log(`[DenomPool] Merkle rebuild: pool tree leafCount=${leafCount}, target leafIndex=${receipt.leafIndex}`);
 
   if (receipt.leafIndex >= leafCount) {
-    throw new Error(`Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}`);
+    throw new Error(
+      `Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}. ` +
+      `This note references a leaf that doesn't exist in the current pool — ` +
+      `the pool was likely re-deployed (devnet reset) since the note was shielded.`
+    );
   }
 
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA);
+  console.log(`[DenomPool] Merkle rebuild: scanned ${leavesByIndex.length} leaves, ${missing.length} missing`);
   if (missing.length > 0) {
     console.warn(
       `[DenomPool] Merkle rebuild: ${missing.length} leaf(s) missing from scan ` +
