@@ -378,6 +378,74 @@ const SHIELD_EVENT_DISC = anchorEventDiscriminator('ShieldDenominatedEvent');
 const MERKLE_ROOT_CHANGED_DISC = anchorEventDiscriminator('MerkleRootChanged');
 
 /**
+ * Every zk_shielded event that can insert a leaf into the pool's Merkle
+ * tree, with the byte offsets of the (commitment, leaf_index) pair inside
+ * the event payload (including the 8-byte discriminator).
+ *
+ * Needed because until the security-hardening commit MerkleRootChanged
+ * wasn't emitted, so the only record of those early insertions lives in
+ * each instruction's flavored event. Any new event type that inserts a
+ * leaf should be registered here too.
+ */
+const LEAF_INSERTION_EVENTS: Array<{
+  name: string;
+  disc: Uint8Array;
+  commitmentOffset: number;
+  leafIndexOffset: number;
+  minLength: number;
+}> = [
+  // Every leaf insertion emits this (post-hardening). Ordered first so it
+  // wins the disc match on modern events without a layout lookup.
+  {
+    name: 'MerkleRootChanged',
+    disc: MERKLE_ROOT_CHANGED_DISC,
+    commitmentOffset: 112, // `leaf: [u8; 32]`
+    leafIndexOffset: 104,
+    minLength: 144,
+  },
+  // ShieldDenominatedEvent V2 (current): includes protocol_fee
+  {
+    name: 'ShieldDenominatedEvent/V2',
+    disc: SHIELD_EVENT_DISC,
+    commitmentOffset: 88,
+    leafIndexOffset: 120,
+    minLength: 128,
+  },
+  // ShieldDenominatedEvent V1 (pre-protocol_fee)
+  {
+    name: 'ShieldDenominatedEvent/V1',
+    disc: SHIELD_EVENT_DISC,
+    commitmentOffset: 80,
+    leafIndexOffset: 112,
+    minLength: 120,
+  },
+  // ShieldStarkEvent — same shape as ShieldDenominated V1
+  {
+    name: 'ShieldStarkEvent',
+    disc: anchorEventDiscriminator('ShieldStarkEvent'),
+    commitmentOffset: 80,
+    leafIndexOffset: 112,
+    minLength: 120,
+  },
+  // TransferDenominatedStarkEvent
+  {
+    name: 'TransferDenominatedStarkEvent',
+    disc: anchorEventDiscriminator('TransferDenominatedStarkEvent'),
+    commitmentOffset: 72,  // new_commitment
+    leafIndexOffset: 104,
+    minLength: 112,
+  },
+  // EscrowReleaseEvent
+  {
+    name: 'EscrowReleaseEvent',
+    disc: anchorEventDiscriminator('EscrowReleaseEvent'),
+    commitmentOffset: 105,
+    leafIndexOffset: 137,
+    minLength: 145,
+  },
+];
+
+/**
  * On-chain ShieldDenominatedEvent layouts. The struct grew by 8 bytes when
  * `protocol_fee: u64` was inserted after `denomination`, which shifted both
  * `commitment` and `leaf_index` downstream. Pools with a long history emit
@@ -519,17 +587,26 @@ export async function fetchPoolCommitments(
         if (data.length < 8) continue;
         const disc = data.subarray(0, 8);
 
-        // Primary: MerkleRootChanged covers every leaf insertion (shield,
-        // transfer, split, escrow). Fallback to ShieldDenominatedEvent
-        // (V1 or V2) so we're robust even if MerkleRootChanged emission
-        // ever changes.
+        // Try every known leaf-inserting event shape. Pre-hardening pools
+        // have insertions from shield/transfer/split/escrow that never
+        // emitted MerkleRootChanged, so we need every flavored event
+        // registered in LEAF_INSERTION_EVENTS.
         let decoded: { commitment: bigint; leafIndex: number } | null = null;
-        if (bytesEqual(disc, MERKLE_ROOT_CHANGED_DISC)) {
-          decoded = tryDecodeMerkleRootChanged(data);
-        } else if (bytesEqual(disc, SHIELD_EVENT_DISC)) {
-          decoded = tryDecodeShieldEvent(data);
+        const MAX_LEAVES = 1 << MERKLE_DEPTH;
+        for (const layout of LEAF_INSERTION_EVENTS) {
+          if (!bytesEqual(disc, layout.disc)) continue;
+          if (data.length < layout.minLength) continue;
+          const rawIdx = data.readBigUInt64LE(layout.leafIndexOffset);
+          if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+          const leafIndex = Number(rawIdx);
+          if (leafIndex < 0 || leafIndex >= MAX_LEAVES) continue;
+          const commitment = leBytes32ToBigint(data, layout.commitmentOffset);
+          decoded = { commitment, leafIndex };
+          break;
         }
         if (!decoded) continue;
+        // Key by leafIndex so competing events for the same position
+        // (shouldn't happen, but defensive) don't silently lose data.
         out.set(decoded.commitment.toString(), decoded);
       }
     }
