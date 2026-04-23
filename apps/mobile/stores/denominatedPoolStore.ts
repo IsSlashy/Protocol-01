@@ -5,7 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 import bs58 from 'bs58';
-import { PublicKey, Keypair as SolKeypair, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { PublicKey, Keypair as SolKeypair, SystemProgram, Transaction, sendAndConfirmTransaction, type Connection } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { hmac } from '@noble/hashes/hmac.js';
@@ -39,7 +39,48 @@ import {
   deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner, getPrivyMessageSigner } from './walletStore';
-import { deriveSeedFromSigner, rescanPoolFromSeed, fetchPoolCommitments } from '../services/denominatedPool';
+import { deriveSeedFromSigner, rescanPoolFromSeed, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
+
+/**
+ * Walk the counter forward until we find one whose derived nullifier PDAs
+ * (both Groth16 and STARK forms) are NOT already on-chain. Protects against
+ * shieldCounters being wiped (encrypted storage decrypt failure, wallet
+ * switch, fresh install) which would otherwise re-use a counter that was
+ * previously spent — producing a fresh commitment but a colliding nullifier
+ * that would reject any future spend of the new note via `init` constraint.
+ *
+ * Returns the first safe counter. Throws if no free counter is found within
+ * `maxAttempts`.
+ */
+async function findSafeShieldCounter(
+  connection: Connection,
+  walletSeed: Uint8Array,
+  poolPDA: PublicKey,
+  startCounter: number,
+  maxAttempts = 1024,
+): Promise<number> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const candidate = startCounter + i;
+    const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolPDA, candidate);
+    const g16Null = createNullifier(nullifierPreimage, secret);
+    const [g16Pda] = deriveNullifierPDA(poolPDA, bigintToLeBytes32(g16Null));
+    const starkNull = computeGoldilocksPoolNullifier(nullifierPreimage, secret);
+    const [starkPda] = deriveNullifierPDA(poolPDA, goldilocksNullifierToBytes(starkNull));
+    const accs = await connection.getMultipleAccountsInfo([g16Pda, starkPda]);
+    if (!accs[0] && !accs[1]) {
+      if (i > 0) {
+        console.warn(
+          `[findSafeShieldCounter] counter rewound — start=${startCounter}, safe=${candidate} ` +
+            `(skipped ${i} collided counters on pool ${poolPDA.toBase58().slice(0, 8)})`,
+        );
+      }
+      return candidate;
+    }
+  }
+  throw new Error(
+    `No free counter found after ${maxAttempts} attempts starting from ${startCounter} on pool ${poolPDA.toBase58()}`,
+  );
+}
 import { scheduleLocalNotification } from '../services/notifications';
 import { getOrCreateStealthKeys, getMetaAddress } from '../services/stealth/keys';
 import { generateStealthAddress as genStealth, parseMetaAddress, scanStealthPayment } from '../utils/crypto/stealth';
@@ -220,9 +261,17 @@ const encryptedStorage: StateStorage = {
     try {
       const key = await getNoteEncryptionKey();
       return decryptData(raw, key);
-    } catch {
-      // Fallback: if decryption fails, data may be unencrypted (migration from old format)
-      return raw;
+    } catch (err) {
+      // Migration path (v0 → v1): data may be plaintext JSON if produced
+      // before the encryption layer existed. Sniff for a leading `{`.
+      if (raw.startsWith('{')) return raw;
+      // Encrypted blob but the key rotated (fresh install / SecureStore wipe) —
+      // returning `raw` would hand zustand garbage bytes, silently parse as
+      // empty, and wipe critical state (shieldCounters → nullifier collisions
+      // on next shield). Return null so persist re-inits with defaults; the
+      // user can recover notes from seed via rescanPool.
+      console.warn(`[encryptedStorage] decrypt failed for ${name} — returning null to avoid corrupted state:`, (err as Error).message);
+      return null;
     }
   },
   setItem: async (name: string, value: string): Promise<void> => {
@@ -411,6 +460,17 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
       refreshNoteStatuses: async () => {
         const { notes } = get();
+        if (__DEV__) {
+          console.log(`[refreshNoteStatuses] entry — ${notes.length} notes in store:`,
+            notes.slice(0, 5).map(n => ({
+              id: n.id,
+              status: n.status,
+              denom: n.denomination,
+              owner: n.ownerPubkey?.slice(0, 8) ?? 'none',
+              cluster: n.cluster,
+            })),
+          );
+        }
         if (notes.length === 0) return;
 
         try {
@@ -433,6 +493,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           );
           const nullifierPDAs: { noteId: string; pda: PublicKey }[] = [];
 
+          const nullifierMeta: { noteId: string; kind: 'g16' | 'stark'; pda: string }[] = [];
           for (const note of activeNotes) {
             try {
               const receipt = readReceipt(note.receiptJSON);
@@ -442,6 +503,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               const g16Null = createNullifier(receipt.nullifierPreimage, receipt.secret);
               const [g16Pda] = deriveNullifierPDA(poolKey, bigintToLeBytes32(g16Null));
               nullifierPDAs.push({ noteId: note.id, pda: g16Pda });
+              nullifierMeta.push({ noteId: note.id, kind: 'g16', pda: g16Pda.toBase58() });
 
               // STARK / Goldilocks PDA (u64 in bytes[0..8], zero tail)
               const starkNull = computeGoldilocksPoolNullifier(
@@ -450,10 +512,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               );
               const [starkPda] = deriveNullifierPDA(poolKey, goldilocksNullifierToBytes(starkNull));
               nullifierPDAs.push({ noteId: note.id, pda: starkPda });
-            } catch {
-              // skip notes with invalid receipts
+              nullifierMeta.push({ noteId: note.id, kind: 'stark', pda: starkPda.toBase58() });
+            } catch (err) {
+              if (__DEV__) console.warn(`[refreshNoteStatuses] skip invalid receipt ${note.id}:`, (err as Error).message);
             }
           }
+
+          if (__DEV__) console.log(`[refreshNoteStatuses] checking ${nullifierPDAs.length} nullifier PDAs for ${activeNotes.length} active notes`);
 
           // Batch fetch nullifier accounts
           const spentNoteIds = new Set<string>();
@@ -464,6 +529,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             for (let i = 0; i < accounts.length; i++) {
               if (accounts[i] !== null) {
                 spentNoteIds.add(nullifierPDAs[i].noteId);
+                if (__DEV__) {
+                  const meta = nullifierMeta[i];
+                  console.log(
+                    `[refreshNoteStatuses] SPENT noteId=${meta.noteId} kind=${meta.kind} pda=${meta.pda} ` +
+                      `owner=${accounts[i]?.owner.toBase58() ?? 'null'} lamports=${accounts[i]?.lamports ?? 0}`,
+                  );
+                }
               }
             }
           }
@@ -633,13 +705,32 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             // that imports the same seed. For Privy users (no local mnemonic)
             // the seed is derived from a one-per-session signed message.
             const poolKey = pool.poolPDA.toBase58();
-            const counter = get().shieldCounters[poolKey] ?? 0;
+            const storedCounter = get().shieldCounters[poolKey] ?? 0;
             let walletSeed: Uint8Array | null = null;
             if (localKp) {
               walletSeed = localKp.secretKey.slice(0, 32);
             } else if (walletSigner?.signMessage) {
               set({ progress: 'Authorizing note recovery key...' });
               walletSeed = await deriveSeedFromSigner(walletSigner);
+            }
+            // If the counter was wiped (AsyncStorage decrypt failure, wallet
+            // switch, fresh install) it could collide with a previously-spent
+            // note's nullifier. Walk forward until we find a counter whose
+            // nullifier PDAs are unused on-chain.
+            let counter = storedCounter;
+            if (walletSeed) {
+              set({ progress: 'Verifying counter is free...' });
+              counter = await findSafeShieldCounter(
+                connection,
+                walletSeed,
+                pool.poolPDA,
+                storedCounter,
+              );
+              if (counter !== storedCounter) {
+                set(state => ({
+                  shieldCounters: { ...state.shieldCounters, [poolKey]: counter },
+                }));
+              }
             }
             const deterministic = walletSeed ? { walletSeed, counter } : undefined;
             if (!deterministic) {
@@ -665,7 +756,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             // Stealth failed — fallback to direct (e.g., local keypair, no Privy signer)
             console.warn('[DenomStore] Stealth shield failed, using direct:', stealthErr.message);
             const poolKey = pool.poolPDA.toBase58();
-            const counter = get().shieldCounters[poolKey] ?? 0;
+            const storedCounter = get().shieldCounters[poolKey] ?? 0;
             const directKp = walletSigner ? null : await getKeypair();
             let walletSeed: Uint8Array | null = null;
             if (directKp) {
@@ -673,6 +764,20 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             } else if (walletSigner?.signMessage) {
               set({ progress: 'Authorizing note recovery key...' });
               walletSeed = await deriveSeedFromSigner(walletSigner);
+            }
+            let counter = storedCounter;
+            if (walletSeed) {
+              counter = await findSafeShieldCounter(
+                getConnection(),
+                walletSeed,
+                pool.poolPDA,
+                storedCounter,
+              );
+              if (counter !== storedCounter) {
+                set(state => ({
+                  shieldCounters: { ...state.shieldCounters, [poolKey]: counter },
+                }));
+              }
             }
             const deterministic = walletSeed ? { walletSeed, counter } : undefined;
             receipt = await shield(pool, (step) => {
@@ -778,6 +883,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         _starkOpInFlight = true;
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK unshield...' });
 
+        // Hoisted so the catch handler can sweep the ephemeral signer back
+        // to the user's wallet if the unshield crashes after funding. See
+        // the catch block at the bottom of this try/catch for the recovery path.
+        let stealthKp: SolKeypair | null = null;
+
         try {
           const walletSigner = getWalletSignerIfPrivy();
           const PK = PublicKey;
@@ -807,10 +917,15 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const stealthRecipient = new PK(stealthResult.address);
           console.log(`[DenomStore] Stealth recipient: ${stealthRecipient.toBase58().slice(0, 12)}... (wallet hidden)`);
 
-          // Generate ephemeral signer (for fees — NOT linked to wallet on-chain)
+          // Generate ephemeral signer (for fees — NOT linked to wallet on-chain).
+          // Seeded deterministically from (walletAddr, noteId) so a crashed
+          // attempt can always be resumed/swept — without Date.now() the
+          // keypair is reproducible across app launches. Privacy is preserved
+          // because each noteId is used at most once (the nullifier enforces
+          // this on-chain), so no two unshields ever share a stealth signer.
           const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${Date.now()}`));
-          const stealthKp = SolKeypair.fromSeed(seed);
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${noteId}`));
+          stealthKp = SolKeypair.fromSeed(seed);
           console.log(`[DenomStore] Stealth signer: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
 
           // Fund signer for STARK buffer rent + tx fees (dynamic from actual proof size).
@@ -943,6 +1058,44 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           return sig;
         } catch (err) {
           console.error('[DenomPool] STARK unshield error:', err);
+
+          // Recovery sweep: if the ephemeral signer was funded but the
+          // flow crashed before (or during) proof submission, any leftover
+          // SOL is trapped on an ephemeral pubkey. With the deterministic
+          // seed above the keypair is still in memory here, so sweep the
+          // balance back to the user's wallet before surfacing the error.
+          // A close_proof_buffer call inside unshieldStark already reclaims
+          // the buffer rent on clean paths; this covers the crash case.
+          if (stealthKp) {
+            try {
+              const connection = getConnection();
+              const stealthBal = await connection.getBalance(stealthKp.publicKey);
+              const FEE_RESERVE = 5000;
+              if (stealthBal > FEE_RESERVE) {
+                const sweepAmount = stealthBal - FEE_RESERVE;
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({
+                    fromPubkey: stealthKp.publicKey,
+                    toPubkey: new PublicKey(recipientAddress),
+                    lamports: sweepAmount,
+                  }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthKp.publicKey;
+                sweepTx.sign(stealthKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore] 🛟 crash-sweep: ${(sweepAmount / 1e9).toFixed(4)} SOL recovered → ${recipientAddress.slice(0, 12)}… sig=${sweepSig.slice(0, 16)}…`);
+              }
+            } catch (sweepErr: any) {
+              console.error(
+                `[DenomStore] ❌ crash-sweep FAILED — funds stuck at ${stealthKp.publicKey.toBase58()}:`,
+                sweepErr.message,
+              );
+            }
+          }
+
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
 
           scheduleLocalNotification(
@@ -978,13 +1131,19 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK transfer...' });
 
+        // Hoisted for crash-sweep (see catch block).
+        let stealthKp: SolKeypair | null = null;
+
         try {
           const walletSigner = getWalletSignerIfPrivy();
           const walletAddr = walletSigner?.publicKey.toBase58()
             || useWalletStore.getState().publicKey || '';
 
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_stark_${Date.now()}`));
-          const stealthKp = SolKeypair.fromSeed(seed);
+          // Deterministic per-note seed — reproducible after a crash so the
+          // ephemeral signer can be recovered. Privacy holds because each
+          // note is transferred at most once (nullifier enforced on-chain).
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_stark_${noteId}`));
+          stealthKp = SolKeypair.fromSeed(seed);
 
           // Fund stealth for STARK buffer rent + tx fees (dynamic from proof size).
           // Buffer rent refunded on close_proof_buffer; leftover swept back. Net ~0.002 SOL.
@@ -1053,6 +1212,41 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           return { txSig, shareableNote: encoded };
         } catch (err) {
           console.error('[DenomPool] STARK transfer error:', err);
+
+          // Crash-sweep — same rationale as the unshield path.
+          const walletAddrForSweep =
+            getWalletSignerIfPrivy()?.publicKey.toBase58()
+            || useWalletStore.getState().publicKey;
+          if (stealthKp && walletAddrForSweep) {
+            try {
+              const connection = getConnection();
+              const stealthBal = await connection.getBalance(stealthKp.publicKey);
+              const FEE_RESERVE = 5000;
+              if (stealthBal > FEE_RESERVE) {
+                const sweepAmount = stealthBal - FEE_RESERVE;
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({
+                    fromPubkey: stealthKp.publicKey,
+                    toPubkey: new PublicKey(walletAddrForSweep),
+                    lamports: sweepAmount,
+                  }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthKp.publicKey;
+                sweepTx.sign(stealthKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore] 🛟 crash-sweep (transfer): ${(sweepAmount / 1e9).toFixed(4)} SOL recovered → ${walletAddrForSweep.slice(0, 12)}… sig=${sweepSig.slice(0, 16)}…`);
+              }
+            } catch (sweepErr: any) {
+              console.error(
+                `[DenomStore] ❌ transfer crash-sweep FAILED — funds stuck at ${stealthKp.publicKey.toBase58()}:`,
+                sweepErr.message,
+              );
+            }
+          }
+
           set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
           throw err;
         }
@@ -1434,6 +1628,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 export function useActiveNotes(): StoredNote[] {
   const notes = useDenominatedPoolStore(s => s.notes);
   const publicKey = useWalletStore(s => s.publicKey);
-  if (!publicKey) return notes.filter(n => !n.ownerPubkey);
-  return notes.filter(n => !n.ownerPubkey || n.ownerPubkey === publicKey);
+  const filtered = !publicKey
+    ? notes.filter(n => !n.ownerPubkey)
+    : notes.filter(n => !n.ownerPubkey || n.ownerPubkey === publicKey);
+  if (__DEV__ && notes.length > 0 && filtered.length === 0) {
+    console.warn(
+      `[useActiveNotes] store has ${notes.length} notes but 0 visible — publicKey=${publicKey?.slice(0, 8) ?? 'none'}, note owners:`,
+      notes.map(n => n.ownerPubkey?.slice(0, 8) ?? 'none'),
+    );
+  }
+  return filtered;
 }
