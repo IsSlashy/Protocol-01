@@ -574,20 +574,33 @@ export async function fetchPoolLeavesByIndex(
     onProgress: opts.onProgress,
   });
   const MAX_LEAVES = 1 << MERKLE_DEPTH;
+
+  // Filter out malformed events (wrong offset, discriminator collision,
+  // old program version with a different layout). A bad single event used
+  // to nuke the whole rebuild with a RangeError; we now just skip and
+  // warn so one corrupt log doesn't block the user.
+  let skipped = 0;
   let maxIdx = -1;
+  const valid: Array<{ commitment: bigint; leafIndex: number }> = [];
   for (const e of onChain.values()) {
     if (!Number.isInteger(e.leafIndex) || e.leafIndex < 0 || e.leafIndex >= MAX_LEAVES) {
-      throw new Error(
-        `Decoded leaf_index ${e.leafIndex} is out of bounds [0, ${MAX_LEAVES}). ` +
-        `A pool event log is malformed or the decoder drifted. Skipping rebuild.`
-      );
+      skipped += 1;
+      continue;
     }
+    valid.push(e);
     if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
   }
+  if (skipped > 0) {
+    console.warn(
+      `[DenomPool] fetchPoolLeavesByIndex: skipped ${skipped} event(s) with invalid leaf_index — ` +
+      `likely a decoder drift or a log unrelated to shield events.`
+    );
+  }
+
   // `new Array(N)` throws RangeError if N > 2^32-1. MAX_LEAVES is far below
-  // that, but the guard above also protects callers from noisy data.
+  // that, so the guard above protects callers from noisy data.
   const leavesByIndex: bigint[] = maxIdx >= 0 ? new Array(maxIdx + 1).fill(ZERO_VALUE) : [];
-  for (const e of onChain.values()) leavesByIndex[e.leafIndex] = e.commitment;
+  for (const e of valid) leavesByIndex[e.leafIndex] = e.commitment;
   const missing: number[] = [];
   for (let i = 0; i <= maxIdx; i++) if (leavesByIndex[i] === ZERO_VALUE) missing.push(i);
   return { leavesByIndex, scannedLeafCount: maxIdx + 1, missing };
