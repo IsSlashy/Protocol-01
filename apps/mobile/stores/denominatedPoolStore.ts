@@ -154,6 +154,14 @@ interface DenominatedPoolState {
   refreshNoteStatuses: () => Promise<void>;
   /** Lock a note — prevents withdrawal while in an active privacy route */
   lockNote: (noteId: string) => void;
+  /**
+   * Hide a local note from the UI by marking it `spent` even though it's
+   * still live on-chain. Use only when a note is known-unrecoverable (e.g.
+   * pre-hardening pool with gaps in the event history that make Merkle
+   * rebuild impossible). The on-chain funds remain trapped in the pool —
+   * this is a UI-only cleanup.
+   */
+  abandonNote: (noteId: string) => void;
   setSelectedToken: (token: TokenFilter) => void;
   setSelectedDenomination: (denom: number | null) => void;
   shieldNote: (pool: PoolConfig) => Promise<string>;
@@ -581,6 +589,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         );
         set({ notes });
         console.log(`[DenomPool] Note ${noteId.slice(0, 8)}... LOCKED`);
+      },
+
+      abandonNote: (noteId: string) => {
+        const notes = get().notes.map(n =>
+          n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n
+        );
+        set({ notes });
+        console.log(`[DenomPool] Note ${noteId.slice(0, 8)}... ABANDONED (hidden from UI; still on-chain)`);
       },
 
       // ------------------------------------------------------------------
