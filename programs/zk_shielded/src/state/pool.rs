@@ -289,7 +289,11 @@ impl DenominatedPool {
         + 32; // vk_hash_escrow
 
     /// Seeds for PDA derivation: [b"denominated_pool", token_mint, denomination]
-    pub const SEED_PREFIX: &'static [u8] = b"denominated_pool";
+    // Bumped from "denominated_pool" after the pre-hardening event layout gap
+    // left some on-chain trees impossible to rebuild client-side (see
+    // bug-merkle-rebuild-event-decoding). New PDAs = fresh tree history
+    // where every leaf is decodable via MerkleRootChanged.
+    pub const SEED_PREFIX: &'static [u8] = b"denominated_pool_v2";
 
     /// Default tree depth (2^15 = 32,768 notes per pool)
     /// 32K notes per denomination is sufficient for launch.

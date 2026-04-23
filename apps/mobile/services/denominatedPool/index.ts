@@ -102,42 +102,46 @@ export interface PoolConfig {
   vaultATA?: PublicKey; // only for SPL tokens
 }
 
+// v2 pools — fresh PDAs after program seed bump to `denominated_pool_v2`
+// on 2026-04-23 to escape the pre-hardening event-decoding gap. The
+// previous pools (JDVr…, BoCT…, 2ZTW…, 4t5n…, 2Eza…, 5XaB…) are orphaned
+// on-chain; any notes still inside them are unrecoverable via event scan.
 export const SOL_POOLS: PoolConfig[] = [
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
     denominationAtomic: 100_000_000n,
-    poolPDA: new PublicKey('JDVrKu9cKZMKaxxVeC8QUBRTnkC81LcbNHFDcrbyZ2iv'),
-    treePDA: new PublicKey('FGrmPausuBJTV7V2VS2XjpfwGHYrUt79t5E3e3EvjrZ5'),
+    poolPDA: new PublicKey('FVhp2SXVZcTaRH1EwhG1yK8qAcVXy4pwQUCa8WajCEM'),
+    treePDA: new PublicKey('6ykB6WoRc82AuxWLjqZL9UeAuSM9C82xf33KjZ3bUNZw'),
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
     denominationAtomic: 1_000_000_000n,
-    poolPDA: new PublicKey('BoCTorE7dDyFTaK4oCEw8K3w7F6FxrKCSqbAGVv4cxXL'),
-    treePDA: new PublicKey('JCRDNgcXieJmjazUnAxo81SsqPQ2XcF38wvgfpjYgSco'),
+    poolPDA: new PublicKey('7D4mz7anzq98Y6mUFdQ63gsQWuNv7UrhrrkawP7m2r14'),
+    treePDA: new PublicKey('66bDiyMZmCzs7acejBPjq5xGXMKk7tCYFPK925Rkp4He'),
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 10, decimals: 9,
     denominationAtomic: 10_000_000_000n,
-    poolPDA: new PublicKey('2ZTWWSjnzAjEXxeK5PXF5hjvxixqTnnFyZt7Dd4vfFDJ'),
-    treePDA: new PublicKey('Ha3Ls6adGbJzEwqLcF4Y7x3T7vLtVyFhtc1aCas5C5GT'),
+    poolPDA: new PublicKey('3xRhroKYJPmTVHZYBBNvMThC3B2Q6uwpsTKB8qkteh9n'),
+    treePDA: new PublicKey('9s2ixmK55fHSH3Wdo4xTTmfCUQ4qNXxVwG33xZoHJUZg'),
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 100, decimals: 9,
     denominationAtomic: 100_000_000_000n,
-    poolPDA: new PublicKey('4t5nFqX9Xw1Bcv9kp2RQJF4vC8xPnbNZPViZjFWA9KQa'),
-    treePDA: new PublicKey('5bGshmezFLkUDZgex5xQEEiXaKaHHo7Xxnum9qumeQyJ'),
+    poolPDA: new PublicKey('tGqA7ZBncsnrfMnDBqfyqdqLZQuJh5HBaNodn3Q9JYT'),
+    treePDA: new PublicKey('2v4d1ScQ1YtyKkmn8WLXNy6fjqUoGiHU23uMRv8xkkgT'),
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 500, decimals: 9,
     denominationAtomic: 500_000_000_000n,
-    poolPDA: new PublicKey('2EzaXUxVdNdBgsv3woAe3DkqnY9aY9NdqqKyPbbbnF7t'),
-    treePDA: new PublicKey('BvbM2Z2fJc6NkHdwuL97cNgjuxcJ8RVdAKbtngLPHsuY'),
+    poolPDA: new PublicKey('4jik3WKfpDkYqZWAYbpQgNDzfqNVC13vzPBP2y5unUoD'),
+    treePDA: new PublicKey('Cfk1HXGjhseeC7YoKzH4LbzBBumSXwBE4gFgtFofe6pt'),
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1000, decimals: 9,
     denominationAtomic: 1_000_000_000_000n,
-    poolPDA: new PublicKey('5XaB2x77DYRx7sPWKdUpUUCE9QrgR8Lfgm1DmWy2notb'),
-    treePDA: new PublicKey('CKY1dDhboZhzgr7BS1ZtLh5XxQFfqFUNyokkCLP82oaC'),
+    poolPDA: new PublicKey('Afyxtxp4zbt33Dit4By3QeUw6ymV8ghqS99LuikqmNYx'),
+    treePDA: new PublicKey('CwzkNbubTo1kgvB9KCX5hCeB91bCX6kpJQgL8nCxNof5'),
   },
 ];
 
@@ -145,48 +149,51 @@ export const USDC_POOLS: PoolConfig[] = [
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1, decimals: 6,
     denominationAtomic: 1_000_000n,
-    poolPDA: new PublicKey('GH2MCghPgZBqHoHaSqGpzQTwY9gw7V1cwMkd67ofp3w6'),
-    treePDA: new PublicKey('29Zc9jqVoEtKKmhV769dWZBj957U95pxJpyWDkbLsTb3'),
-    vaultATA: new PublicKey('8QKdMJbSukL8fkHjU3xw8kFU9jZryPQmXmfvHEpZjTKa'),
+    poolPDA: new PublicKey('AMvtg8yd4PstQn6gZv4bMqU2mtxH1qBsTWzqD5vyiAUw'),
+    treePDA: new PublicKey('FNqC4MHarRmFZtdcBej8k9arVfyKDidk6hM4KzY1r6HW'),
+    vaultATA: new PublicKey('2pPY438F6zmtVRh3aSzYB9vc7zDS9qXwG95bcDspPaDk'),
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10, decimals: 6,
     denominationAtomic: 10_000_000n,
-    poolPDA: new PublicKey('zmaKYBQFpRkan5UrKrCxAjw1oDrtiu7X2AMGue843Kp'),
-    treePDA: new PublicKey('4bv2gyfdMTi46fjmU5ccSk21bW2cEr6NKQyH3NAxosdh'),
-    vaultATA: new PublicKey('4EuSghk6zWzkLqzmxugTmEpchxYKyNmqZ8xBytzvgGsm'),
+    poolPDA: new PublicKey('FAMYb1Zmhfk8iZ2KTmgybxfRSWYz9YLhqBA3BHPjmE6W'),
+    treePDA: new PublicKey('5CvbSqSmcdwMF23iGHzwMwkr4YQxM2Fq5E65BaQut34k'),
+    vaultATA: new PublicKey('76uWnHtZPWExcuaft5UFArghsTdK3qHYPNBbJ1Ws55JH'),
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 100, decimals: 6,
     denominationAtomic: 100_000_000n,
-    poolPDA: new PublicKey('BixDeows6MrqXpxH9RZghnQi4ZihzevFagcq9HvW4sVS'),
-    treePDA: new PublicKey('2JSzffuT8f3dUZBEcZrMungLqmHFS21kZSRbdQ6tBbuT'),
-    vaultATA: new PublicKey('Hybuu8qYN1HJ9Gk6gkJftGXjGQdiY1DFSrxUXm2k2BUY'),
+    poolPDA: new PublicKey('9vd5r2EtNdNzePWUrNjMukkPAgzUpMXU5PmX6vTFqC4c'),
+    treePDA: new PublicKey('HMiNXiepnaaGeaqdt2n4uctXD7rr8oKt5c37y3yXZzmz'),
+    vaultATA: new PublicKey('GsWUAxhGgDURT6aKeaEgWcpjTB8TxHu3FiPUTYPhvPoH'),
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1000, decimals: 6,
     denominationAtomic: 1_000_000_000n,
-    poolPDA: new PublicKey('Dq7CHfsasR7VU3cVgDsyGnWmwBH3LtT4gTBBHEMDHvFF'),
-    treePDA: new PublicKey('EAicVNr5qitSzP7Dc1Z7DZUzV3Pidoqt21Lk7fBWfmtn'),
-    vaultATA: new PublicKey('GmiMpZfWSUKsvvJeirZSnYuhcvkbs2GfrN1jfCDmxE2H'),
+    poolPDA: new PublicKey('Fy1AzmvXQDRtUZBPbxrDrhi81UasRf5AzXAEJqfy6afc'),
+    treePDA: new PublicKey('FanL6QVGE1GmFNb55SuKXQqfwHRkzZ43ogg6Zrs39s6d'),
+    vaultATA: new PublicKey('5XsJzjhqPuXnYBQYLTBbRENyH7PfpBgj85DEo17TuSC5'),
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10_000, decimals: 6,
     denominationAtomic: 10_000_000_000n,
-    poolPDA: new PublicKey('AbSw23KXkQ9d8a28XsYMxjnWqsB7cBxhFNS9bNy1DMy3'),
-    treePDA: new PublicKey('R6X8uUZJyPX9Xp1cLJ5JVJYYBXgjZGnB2qCacFRbM1x'),
+    poolPDA: new PublicKey('Hnmp8yGvHyjtxPwPLkpZ8LJq1sv8iQJMQ4ci7mo6B1eT'),
+    treePDA: new PublicKey('5b9GSKpSi5nPvXqqAXw7DCiigTGFiJWtUf7xVNsV1n9U'),
+    vaultATA: new PublicKey('GWWiNNBL1oMz7WJ1wjuZPcS2p9Ei8D3ZPpqZcbbFG5Mw'),
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 20_000, decimals: 6,
     denominationAtomic: 20_000_000_000n,
-    poolPDA: new PublicKey('8hJN8JypFPA3389sb8b9kTQ7Ck9QHWUm8ACXmEcfkJ3C'),
-    treePDA: new PublicKey('7vvJG5WP77sesQUMEz29PH91y1VWfA4Pmrxv3RbazFF6'),
+    poolPDA: new PublicKey('F1aK81X8TXTazehiWdGcTixxHJALvrsjnSqiZHEeXyer'),
+    treePDA: new PublicKey('eV3G5WvLydNwCUR5Jx1At6ugBF8Ws36Am334gDrsrF5'),
+    vaultATA: new PublicKey('HC2nXah3qWdWRuc9BtsCwfPjcf3otCRr9gphWZm89hDU'),
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 50_000, decimals: 6,
     denominationAtomic: 50_000_000_000n,
-    poolPDA: new PublicKey('EgJFHJv6frVsLUrzqxZpa9wGTACjTLWMRzm8xCKJuP9K'),
-    treePDA: new PublicKey('4UjapT1xSbjQNGqrXn86vFBNYa9JiMgN2fNqCpaJZsEv'),
+    poolPDA: new PublicKey('6jgvKWo7Fvm4XqDTRHJues55xm15RN55hoVs6ktpYihD'),
+    treePDA: new PublicKey('9sGSk7o8cFgsBfHrzzbP2to2CUTzRijEeVY3pX5VKE7h'),
+    vaultATA: new PublicKey('5VWgVf7Y2yUeFRSTdgfrnAPD87cH32ZmeWFucSBp6TV3'),
   },
 ];
 
