@@ -338,6 +338,17 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         error: null,
       });
 
+      // Pre-stamp the recovery-scan flag for this brand-new pubkey so the
+      // boot-time RecoveryBootModal doesn't fire. There is nothing to
+      // recover — the user just minted this keypair. (Seed-import + cross
+      // -device flows intentionally leave the flag unset.)
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        await AsyncStorage.setItem(`p01_auto_recovery_v1_${wallet.publicKey}`, Date.now().toString());
+      } catch {
+        // Non-fatal — worst case the modal fires once, finds nothing, and self-silences.
+      }
+
       // Refresh balance
       get().refreshBalance();
 
