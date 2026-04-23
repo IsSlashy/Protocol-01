@@ -377,19 +377,44 @@ function anchorEventDiscriminator(name: string): Uint8Array {
 const SHIELD_EVENT_DISC = anchorEventDiscriminator('ShieldDenominatedEvent');
 
 /**
- * One on-chain shield event, decoded from a `Program data:` log line.
- * Layout (Anchor + Borsh, after the 8-byte discriminator):
- *   pool: Pubkey         (32)
- *   depositor: Pubkey    (32)
- *   denomination: u64    (8)
- *   protocol_fee: u64    (8)
- *   commitment: [u8; 32] (32)  ← offset 88
- *   leaf_index: u64      (8)   ← offset 120
- *   ...                        (rest unused for rescan)
+ * On-chain ShieldDenominatedEvent layouts. The struct grew by 8 bytes when
+ * `protocol_fee: u64` was inserted after `denomination`, which shifted both
+ * `commitment` and `leaf_index` downstream. Pools with a long history emit
+ * both variants, so we try each and pick the one whose `leaf_index` falls
+ * inside the tree's [0, 2^MERKLE_DEPTH) capacity.
+ *
+ *   V1 (original):  pool(32) | depositor(32) | denomination(8) |
+ *                   commitment(32)@80 | leaf_index(u64)@112 | …
+ *
+ *   V2 (current):   pool(32) | depositor(32) | denomination(8) |
+ *                   protocol_fee(8) | commitment(32)@88 | leaf_index(u64)@120 | …
+ *
+ * All offsets are relative to the start of the raw event data (including
+ * the 8-byte discriminator).
  */
+const EVENT_LAYOUTS: Array<{ commitmentOffset: number; leafIndexOffset: number }> = [
+  { commitmentOffset: 88, leafIndexOffset: 120 }, // V2 — try first (most events)
+  { commitmentOffset: 80, leafIndexOffset: 112 }, // V1 — pre-protocol_fee
+];
+
 export interface OnChainCommitment {
   commitment: bigint;
   leafIndex: number;
+}
+
+function tryDecodeShieldEvent(data: Buffer): { commitment: bigint; leafIndex: number } | null {
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+  for (const layout of EVENT_LAYOUTS) {
+    if (data.length < layout.leafIndexOffset + 8) continue;
+    const rawIdx = data.readBigUInt64LE(layout.leafIndexOffset);
+    // Guard against Number() overflow on u64 that exceeds 2^53.
+    if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+    const leafIndex = Number(rawIdx);
+    if (leafIndex < 0 || leafIndex >= MAX_LEAVES) continue;
+    const commitment = leBytes32ToBigint(data, layout.commitmentOffset);
+    return { commitment, leafIndex };
+  }
+  return null;
 }
 
 function leBytes32ToBigint(buf: Uint8Array | Buffer, offset: number): bigint {
@@ -465,9 +490,9 @@ export async function fetchPoolCommitments(
         try { data = Buffer.from(m[1], 'base64'); } catch { continue; }
         if (data.length < 128) continue;
         if (!bytesEqual(data.subarray(0, 8), SHIELD_EVENT_DISC)) continue;
-        const commitment = leBytes32ToBigint(data, 88);
-        const leafIndex = Number(data.readBigUInt64LE(120));
-        out.set(commitment.toString(), { commitment, leafIndex });
+        const decoded = tryDecodeShieldEvent(data);
+        if (!decoded) continue;
+        out.set(decoded.commitment.toString(), decoded);
       }
     }
 
