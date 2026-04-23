@@ -375,6 +375,7 @@ function anchorEventDiscriminator(name: string): Uint8Array {
 }
 
 const SHIELD_EVENT_DISC = anchorEventDiscriminator('ShieldDenominatedEvent');
+const MERKLE_ROOT_CHANGED_DISC = anchorEventDiscriminator('MerkleRootChanged');
 
 /**
  * On-chain ShieldDenominatedEvent layouts. The struct grew by 8 bytes when
@@ -415,6 +416,33 @@ function tryDecodeShieldEvent(data: Buffer): { commitment: bigint; leafIndex: nu
     return { commitment, leafIndex };
   }
   return null;
+}
+
+/**
+ * Decode a MerkleRootChanged event. This is the canonical source of leaf
+ * insertions — it's emitted by `MerkleTree::insert_with_root` on every
+ * leaf added to the tree, regardless of which instruction caused it
+ * (shield, transfer_stark, split_note_stark, escrow_shield, etc.). Using
+ * it as a universal fallback catches leaves that specific "flavored"
+ * events (ShieldDenominatedEvent, TransferDenominatedEvent, …) would miss.
+ *
+ * Layout (Anchor + Borsh, after the 8-byte discriminator):
+ *   pool: Pubkey         (32) @ 8
+ *   old_root: [u8; 32]   (32) @ 40
+ *   new_root: [u8; 32]   (32) @ 72
+ *   leaf_index: u64      (8)  @ 104
+ *   leaf: [u8; 32]       (32) @ 112
+ * Total: 144 bytes.
+ */
+function tryDecodeMerkleRootChanged(data: Buffer): { commitment: bigint; leafIndex: number } | null {
+  if (data.length < 144) return null;
+  const rawIdx = data.readBigUInt64LE(104);
+  if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  const leafIndex = Number(rawIdx);
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+  if (leafIndex < 0 || leafIndex >= MAX_LEAVES) return null;
+  const commitment = leBytes32ToBigint(data, 112);
+  return { commitment, leafIndex };
 }
 
 function leBytes32ToBigint(buf: Uint8Array | Buffer, offset: number): bigint {
@@ -488,9 +516,19 @@ export async function fetchPoolCommitments(
         if (!m) continue;
         let data: Buffer;
         try { data = Buffer.from(m[1], 'base64'); } catch { continue; }
-        if (data.length < 128) continue;
-        if (!bytesEqual(data.subarray(0, 8), SHIELD_EVENT_DISC)) continue;
-        const decoded = tryDecodeShieldEvent(data);
+        if (data.length < 8) continue;
+        const disc = data.subarray(0, 8);
+
+        // Primary: MerkleRootChanged covers every leaf insertion (shield,
+        // transfer, split, escrow). Fallback to ShieldDenominatedEvent
+        // (V1 or V2) so we're robust even if MerkleRootChanged emission
+        // ever changes.
+        let decoded: { commitment: bigint; leafIndex: number } | null = null;
+        if (bytesEqual(disc, MERKLE_ROOT_CHANGED_DISC)) {
+          decoded = tryDecodeMerkleRootChanged(data);
+        } else if (bytesEqual(disc, SHIELD_EVENT_DISC)) {
+          decoded = tryDecodeShieldEvent(data);
+        }
         if (!decoded) continue;
         out.set(decoded.commitment.toString(), decoded);
       }
