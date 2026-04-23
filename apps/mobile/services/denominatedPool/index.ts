@@ -422,7 +422,27 @@ export async function fetchPoolCommitments(
   const maxSignatures = options.maxSignatures ?? 1000;
   const batchSize = options.batchSize ?? 25;
 
-  const sigs = await connection.getSignaturesForAddress(poolPDA, { limit: maxSignatures });
+  // Paginate — `getSignaturesForAddress` caps at 1000 per call on most RPCs.
+  // We walk backwards in time using `before` until we reach `maxSignatures`
+  // or the pool's full history. A long-lived pool can easily exceed 1000
+  // signatures (pool init + every shield/unshield/transfer/settle emits
+  // one), and without pagination the Merkle rebuild misses the earliest
+  // leaves and produces a root that no historical root matches.
+  const PAGE = 1000;
+  const sigs: Array<{ signature: string }> = [];
+  let before: string | undefined = undefined;
+  while (sigs.length < maxSignatures) {
+    const remaining = maxSignatures - sigs.length;
+    const page = await connection.getSignaturesForAddress(poolPDA, {
+      limit: Math.min(PAGE, remaining),
+      before,
+    });
+    if (page.length === 0) break;
+    sigs.push(...page);
+    if (page.length < PAGE) break;
+    before = page[page.length - 1].signature;
+  }
+
   const out = new Map<string, OnChainCommitment>();
 
   for (let i = 0; i < sigs.length; i += batchSize) {
@@ -671,7 +691,13 @@ export async function ensureMerkleProof(
     );
   }
 
-  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA);
+  // A pool with a long history (many shields + non-shield activity) can
+  // overshoot the default 1000-signature window. Pull 10k so historical
+  // leaves that would otherwise be treated as ZERO (yielding a bogus root)
+  // are actually captured. Bounded by the pool's depth-15 tree capacity.
+  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+    maxSignatures: 10000,
+  });
   console.log(`[DenomPool] Merkle rebuild: scanned ${leavesByIndex.length} leaves, ${missing.length} missing`);
   if (missing.length > 0) {
     console.warn(
