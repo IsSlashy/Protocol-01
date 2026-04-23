@@ -505,6 +505,149 @@ export function createNullifier(
 // Merkle tree from filledSubtrees
 // ---------------------------------------------------------------------------
 
+/**
+ * Build the Merkle proof for a historical leaf by rebuilding the full tree
+ * from every commitment we can enumerate on-chain. Necessary whenever the
+ * target leaf is NOT the rightmost — {@link computeNewRootFromSubtrees}
+ * assumes the leaf is the next-to-be-inserted (so siblings come from
+ * `filled_subtrees` / zero hashes) and silently returns garbage otherwise,
+ * which is exactly how recovered notes broke unshield.
+ *
+ * Runtime is O(leafCount) hashes; at depth 15 with a fully-pruned chain of
+ * ~100 leaves that's trivial. The returned root matches the pool's current
+ * on-chain root iff the client's commitment view is up-to-date; callers
+ * should still check against the pool's historical roots when there's a
+ * race with a concurrent shield.
+ */
+export function buildMerkleProofFromLeaves(params: {
+  leavesByIndex: bigint[]; // leavesByIndex[i] = commitment at leafIndex i; gaps filled with ZERO_VALUE
+  targetLeafIndex: number;
+}): {
+  root: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+} {
+  const { leavesByIndex, targetLeafIndex } = params;
+  const zeros = getZeroHashes();
+
+  // Start from leaves padded to an even count per level
+  let nodes: bigint[] = leavesByIndex.length > 0 ? [...leavesByIndex] : [zeros[0]];
+  const pathElements: bigint[] = [];
+  const pathIndices: number[] = [];
+  let idx = targetLeafIndex;
+
+  for (let level = 0; level < MERKLE_DEPTH; level++) {
+    // Record sibling at this level for the target path
+    const siblingIdx = idx ^ 1;
+    const sibling = siblingIdx < nodes.length ? nodes[siblingIdx] : zeros[level];
+    pathElements.push(sibling);
+    pathIndices.push(idx & 1);
+
+    // Hash up the whole level so we compute the true root too
+    const next: bigint[] = [];
+    for (let i = 0; i < nodes.length; i += 2) {
+      const left = nodes[i];
+      const right = i + 1 < nodes.length ? nodes[i + 1] : zeros[level];
+      next.push(poseidon2([left, right]));
+    }
+    nodes = next.length > 0 ? next : [zeros[level + 1]];
+    idx >>= 1;
+  }
+
+  return { root: nodes[0], pathElements, pathIndices };
+}
+
+/**
+ * Fetch every commitment for a pool (bounded by `maxSignatures`) and
+ * materialize a dense leaves-by-index array. Gaps (if the scan missed an
+ * insertion) are filled with the Merkle zero value so the tree shape is
+ * preserved; the returned root will diverge from on-chain in that case and
+ * the caller can fall back to an indexer / bump `maxSignatures`.
+ */
+export async function fetchPoolLeavesByIndex(
+  connection: Connection,
+  poolPDA: PublicKey,
+  opts: { maxSignatures?: number; onProgress?: (scanned: number, total: number) => void } = {},
+): Promise<{ leavesByIndex: bigint[]; scannedLeafCount: number; missing: number[] }> {
+  const onChain = await fetchPoolCommitments(connection, poolPDA, {
+    maxSignatures: opts.maxSignatures ?? 1000,
+    onProgress: opts.onProgress,
+  });
+  let maxIdx = -1;
+  for (const e of onChain.values()) if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
+  const leavesByIndex: bigint[] = new Array(maxIdx + 1).fill(ZERO_VALUE);
+  for (const e of onChain.values()) leavesByIndex[e.leafIndex] = e.commitment;
+  const missing: number[] = [];
+  for (let i = 0; i <= maxIdx; i++) if (leavesByIndex[i] === ZERO_VALUE) missing.push(i);
+  return { leavesByIndex, scannedLeafCount: maxIdx + 1, missing };
+}
+
+/**
+ * Populate a receipt's Merkle path + root in-place if absent. Used by every
+ * spend path (unshield / transfer / split / subscribe) — without this,
+ * notes reconstructed via `rescanPoolFromSeed` have no path data and the
+ * downstream `bigintToLeBytes32(receipt.merkleRoot!)` would serialize
+ * `undefined`, producing a malformed instruction that the on-chain program
+ * rejects with InvalidMerkleRoot.
+ *
+ * Rebuilds the proof from the full leaf set (see {@link buildMerkleProofFromLeaves})
+ * so it works for any historical leaf, not just the rightmost one.
+ */
+export async function ensureMerkleProof(
+  receipt: ShieldReceipt,
+  connection: Connection,
+  poolConfig: PoolConfig,
+  currentOnChainRoot: Uint8Array,
+  onProgress?: (step: string) => void,
+): Promise<void> {
+  if (receipt.merklePathElements && receipt.merklePathIndices && receipt.merkleRoot) return;
+
+  onProgress?.('Reconstructing Merkle proof from on-chain...');
+  const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
+  if (!treeAccount) throw new Error('Merkle tree account not found');
+  const { leafCount } = parseFilledSubtrees(treeAccount.data);
+
+  if (receipt.leafIndex >= leafCount) {
+    throw new Error(`Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}`);
+  }
+
+  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA);
+  if (missing.length > 0) {
+    console.warn(
+      `[DenomPool] Merkle rebuild: ${missing.length} leaf(s) missing from scan ` +
+      `(indices: ${missing.slice(0, 8).join(',')}${missing.length > 8 ? '…' : ''}). ` +
+      `Raise maxSignatures if this persists.`
+    );
+  }
+  while (leavesByIndex.length < leafCount) leavesByIndex.push(0n);
+
+  if (leavesByIndex[receipt.leafIndex] !== receipt.commitment) {
+    throw new Error(
+      `Merkle rebuild mismatch at leafIndex ${receipt.leafIndex}: ` +
+      `scanned commitment ≠ receipt commitment. Rescan the pool or bump maxSignatures.`
+    );
+  }
+
+  const { root: computedRoot, pathElements, pathIndices } = buildMerkleProofFromLeaves({
+    leavesByIndex,
+    targetLeafIndex: receipt.leafIndex,
+  });
+
+  let onChainRoot = 0n;
+  for (let i = 31; i >= 0; i--) {
+    onChainRoot = (onChainRoot << 8n) | BigInt(currentOnChainRoot[i]);
+  }
+
+  // Prefer the current on-chain root if it matches our rebuild. Otherwise
+  // submit the computed root — it must live in the pool's historical ring
+  // buffer (100 entries) for `is_valid_root` to pass. A divergence with no
+  // ring-buffer hit usually means a concurrent shield landed between scan
+  // and simulation; retrying picks it up.
+  receipt.merkleRoot = computedRoot === onChainRoot ? onChainRoot : computedRoot;
+  receipt.merklePathElements = pathElements;
+  receipt.merklePathIndices = pathIndices;
+}
+
 export function computeNewRootFromSubtrees(
   leaf: bigint,
   leafIndex: number,
@@ -1065,30 +1208,8 @@ export async function unshieldStark(
   const poolInfo = await fetchPoolInfo(connection, poolConfig);
   if (!poolInfo) throw new Error('Pool not found');
 
-  // Reconstruct Merkle proof if missing
-  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
-    onProgress?.('Reconstructing Merkle proof from on-chain...');
-    const treeAccount = await connection.getAccountInfo(poolConfig.treePDA);
-    if (!treeAccount) throw new Error('Merkle tree account not found');
-    const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
-
-    if (receipt.leafIndex >= leafCount) {
-      throw new Error(`Note leafIndex ${receipt.leafIndex} >= tree leafCount ${leafCount}`);
-    }
-
-    const { newRoot, pathElements, pathIndices } = computeNewRootFromSubtrees(
-      receipt.commitment, receipt.leafIndex, subtrees
-    );
-    receipt.merklePathElements = pathElements;
-    receipt.merklePathIndices = pathIndices;
-
-    let onChainRoot = 0n;
-    for (let i = 31; i >= 0; i--) {
-      onChainRoot = (onChainRoot << 8n) | BigInt(poolInfo.currentRoot[i]);
-    }
-
-    receipt.merkleRoot = newRoot === onChainRoot ? onChainRoot : newRoot;
-  }
+  // Reconstruct Merkle proof if missing (see ensureMerkleProof).
+  await ensureMerkleProof(receipt, connection, poolConfig, poolInfo.currentRoot, onProgress);
 
   // For STARK unshield: use the Goldilocks nullifier from the STARK proof (publicInputs[0]).
   // The on-chain hash check extracts u64 from nullifier[..8] and compares against the
@@ -1370,6 +1491,9 @@ export async function transferNoteStark(
   const poolInfo = await fetchPoolInfo(connection, poolConfig);
   if (!poolInfo) throw new Error('Pool not found');
 
+  // Populate source note's Merkle path/root if missing (e.g. recovered notes)
+  await ensureMerkleProof(receipt, connection, poolConfig, poolInfo.currentRoot, onProgress);
+
   const totalDelay = poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay);
   const minEpoch = currentEpoch - totalDelay;
 
@@ -1585,6 +1709,11 @@ export async function splitNoteStark(
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
   const signerPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
 
+  // Populate source note's Merkle path/root if missing (e.g. recovered notes)
+  const sourcePoolInfo = await fetchPoolInfo(connection, sourcePool);
+  if (!sourcePoolInfo) throw new Error('Source pool not found');
+  await ensureMerkleProof(receipt, connection, sourcePool, sourcePoolInfo.currentRoot, onProgress);
+
   onProgress?.('Computing output commitments...');
   const outputCommitments: bigint[] = [];
   const outputNullifierPreimages: bigint[] = [];
@@ -1629,9 +1758,7 @@ export async function splitNoteStark(
 
   const slot = await connection.getSlot('confirmed');
   const currentEpoch = slotToEpoch(slot);
-  const sourceInfo = await fetchPoolInfo(connection, sourcePool);
-  if (!sourceInfo) throw new Error('Source pool not found');
-  const totalDelay = sourceInfo.epochDelay + BigInt(sourceInfo.dynamicDelay);
+  const totalDelay = sourcePoolInfo.epochDelay + BigInt(sourcePoolInfo.dynamicDelay);
   const minEpoch = currentEpoch - totalDelay;
 
   onProgress?.('Submitting STARK proof on-chain...');
