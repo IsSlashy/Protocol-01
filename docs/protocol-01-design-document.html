@@ -325,24 +325,28 @@
     Zero-knowledge proofs &middot; Multi-party computation &middot; Confidential balances &middot; Stealth addresses &middot; Quantum-resistant cryptography
   </p>
 
-  <div style="margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px;">
+  <div style="margin-top: 50px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
     <div class="stat-box">
       <div class="stat-number">14</div>
       <div class="stat-label">Solana Programs</div>
     </div>
     <div class="stat-box">
-      <div class="stat-number" style="color: var(--pink);">7</div>
-      <div class="stat-label">ZK Circuits</div>
-    </div>
-    <div class="stat-box">
       <div class="stat-number" style="color: var(--cyan-bright);">6</div>
       <div class="stat-label">STARK AIRs</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color: var(--pink);">9</div>
+      <div class="stat-label">Arcis MPC</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color: var(--yellow);">17</div>
+      <div class="stat-label">SDKs (npm)</div>
     </div>
   </div>
 
   <div style="margin-top: 60px;">
     <div class="mono small dim">DESIGN & ARCHITECTURE DOCUMENT</div>
-    <div class="mono small dim" style="margin-top: 4px;">v0.9.1 &middot; March 2026</div>
+    <div class="mono small dim" style="margin-top: 4px;">v0.9.9 &middot; April 2026</div>
     <div class="mono small dim" style="margin-top: 4px;">Volta Team &middot; Developed by Slashy Fx</div>
   </div>
 
@@ -500,7 +504,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 <!-- ==================== PAGE 4: ARCHITECTURE ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">SYSTEM ARCHITECTURE</h2>
-  <p class="lead">Monorepo with 14 Solana programs, 8+ SDKs, 3 client apps, 7 Circom circuits, 6 STARK AIRs, and 1 Rust prover service.</p>
+  <p class="lead">Monorepo with 14 Solana programs, 17 SDKs on npm, 3 client apps, 6 STARK AIRs (quantum-safe, active), 9 Arcis MPC circuits, and 6 legacy Circom circuits kept for reference only (Groth16 path retired in v0.9.9).</p>
 
   <!-- Architecture layers -->
   <div style="margin-top: 12px;">
@@ -535,16 +539,16 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     <div class="small mono muted" style="margin-bottom: 4px;">PROVING LAYER</div>
     <div class="grid-3" style="margin-bottom: 12px;">
       <div class="arch-box crypto">
-        <div class="bold small" style="color: var(--cyan-bright);">Groth16 Prover</div>
-        <div class="small muted">snarkjs (WebView)<br>6 Circom circuits</div>
-      </div>
-      <div class="arch-box crypto">
         <div class="bold small" style="color: var(--cyan-bright);">STARK Prover</div>
-        <div class="small muted">Winterfell (WASM)<br>6 custom AIRs</div>
+        <div class="small muted">Winterfell (WASM)<br>6 custom AIRs &middot; primary</div>
       </div>
       <div class="arch-box crypto">
-        <div class="bold small" style="color: var(--cyan-bright);">Rust Prover Service</div>
-        <div class="small muted">ark-circom<br>Server-side proving</div>
+        <div class="bold small" style="color: var(--cyan-bright);">Arcis MPC</div>
+        <div class="small muted">Cerberus backend<br>9 circuits &middot; 6 use cases</div>
+      </div>
+      <div class="arch-box crypto">
+        <div class="bold small" style="color: var(--text-dim);">Groth16 (retired)</div>
+        <div class="small muted">snarkjs + 6 Circom<br>Removed from spend paths</div>
       </div>
     </div>
 
@@ -570,8 +574,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     <div class="grid-4">
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">whitelist</div><div class="small muted">Access control</div></div>
       <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_bundler</div><div class="small muted">Atomic multi-shield</div></div>
-      <div class="arch-box program" style="border-color: transparent; background: transparent;"></div>
-      <div class="arch-box program" style="border-color: transparent; background: transparent;"></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_liquidity</div><div class="small muted">Instant unshield &middot; v0.9.9</div></div>
+      <div class="arch-box program"><div class="bold small" style="color: var(--cyan);">p01_mugen</div><div class="small muted">P2P fiat escrow</div></div>
     </div>
   </div>
 
@@ -608,7 +612,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 <!-- ==================== PAGE 5: ON-CHAIN PROGRAMS ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">ON-CHAIN PROGRAMS</h2>
-  <p class="lead">14 Anchor programs deployed on Solana devnet. 130+ instructions covering shielded transfers, confidential balances, stealth payments, streams, subscriptions, quantum-safe vaults, MPC, bundler, and more.</p>
+  <p class="lead">14 Anchor programs deployed on Solana devnet. 140+ instructions covering shielded transfers, confidential balances, stealth payments, streams, subscriptions, quantum-safe vaults, MPC, instant-unshield liquidity, P2P fiat escrow, and more. All spend paths verify via the custom on-chain FRI verifier (v0.9.9 &mdash; Groth16 retired).</p>
 
   <table>
     <thead>
@@ -629,6 +633,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
       <tr><td class="bold">p01_subscription</td><td class="mono small">3eDvPJ...BTHW</td><td>Create subscription, process payment, pause/resume, privacy settings</td><td>310 KB</td></tr>
       <tr><td class="bold">whitelist</td><td class="mono small">WhLst1...9xKm</td><td>Merkle-based access control, allowlist management</td><td>180 KB</td></tr>
       <tr><td class="bold">p01_bundler</td><td class="mono small">BndLr1...4vQp</td><td>Atomic multi-shield CPI batching, trustless deposit aggregation</td><td>280 KB</td></tr>
+      <tr><td class="bold">p01_liquidity</td><td class="mono small">6PfFkvj...</td><td>Instant unshield &mdash; init_pool, deposit, withdraw, prefund, settle, update_params (v0.9.9)</td><td>310 KB</td></tr>
+      <tr><td class="bold">p01_mugen</td><td class="mono small">&mdash;</td><td>P2P fiat-to-crypto escrow (wSOL vault, Treasury Buffer, MPC-protected routes)</td><td>450 KB</td></tr>
     </tbody>
   </table>
 
@@ -641,9 +647,9 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 <!-- ==================== PAGE 6: ZK CIRCUITS & STARKs ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">ZK CIRCUITS & STARK AIRs</h2>
-  <p class="lead">7 Groth16 circuits for classical privacy (BN254 curve), 6 STARK AIRs for quantum-resistant proofs (Poseidon over Goldilocks field).</p>
+  <p class="lead">6 STARK AIRs over Goldilocks (quantum-resistant, active on every spend path) plus 9 Arcis MPC circuits for confidential compute. The 7 legacy Groth16 circuits are retired as of v0.9.9 &mdash; kept for reference only.</p>
 
-  <h3>ZK Circuits (Groth16)</h3>
+  <h3>Legacy ZK Circuits (Groth16 &mdash; retired)</h3>
   <table style="font-size: 10pt;">
     <thead>
       <tr><th>Circuit</th><th>Constraints</th><th>Public Inputs</th><th>Purpose</th></tr>
@@ -676,19 +682,20 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 
   <h3 style="margin-top: 20px;">Proof Pipeline</h3>
   <div class="grid-2">
-    <div class="card card-cyan no-break">
-      <h4>Groth16 (Classical)</h4>
-      <div class="code-block"><span class="cyan">circom</span> circuit.circom --r1cs --wasm --sym
-<span class="cyan">snarkjs</span> groth16 setup circuit.r1cs pot20_final.ptau
-<span class="cyan">snarkjs</span> zkey contribute → beacon finalize
-<span class="cyan">snarkjs</span> groth16 prove → <span class="pink">256 bytes</span> proof</div>
-    </div>
     <div class="card card-pink no-break">
-      <h4 style="color: var(--pink);">STARK (Quantum-Safe)</h4>
+      <h4 style="color: var(--pink);">STARK (active &mdash; quantum-safe)</h4>
       <div class="code-block"><span class="cyan">p01-stark</span> build AIR trace (Winterfell v0.10)
 <span class="cyan">compact</span> NTT → LDE → Merkle (Blake3)
 <span class="cyan">Fiat-Shamir</span> Blake3(trace_root || commitment)
 <span class="cyan">FRI</span> 16 queries → <span class="pink">9-15 KB</span> proof</div>
+    </div>
+    <div class="card no-break" style="border-color: var(--text-dim); opacity: 0.55;">
+      <h4 style="color: var(--text-dim);">Groth16 (retired &mdash; reference only)</h4>
+      <div class="code-block"><span class="dim">circom</span> circuit.circom --r1cs --wasm --sym
+<span class="dim">snarkjs</span> groth16 setup circuit.r1cs pot20_final.ptau
+<span class="dim">snarkjs</span> zkey contribute → beacon finalize
+<span class="dim">snarkjs</span> groth16 prove → <span class="dim">256 bytes</span> proof
+<span class="dim">// Removed from every spend dispatch in v0.9.9.</span></div>
     </div>
   </div>
 
@@ -903,7 +910,18 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 <!-- ==================== PAGE 10: PRIVACY INFRASTRUCTURE ==================== -->
 <div class="page" style="padding: 16mm 20mm;">
   <h2 style="margin-top:0; margin-bottom: 6px;">PRIVACY INFRASTRUCTURE</h2>
-  <p class="small muted" style="margin-bottom: 12px;">Four new systems introduced in v0.9.1 to eliminate metadata leakage, automate shielding, enable cross-pool denomination routing, and batch deposits atomically.</p>
+  <p class="small muted" style="margin-bottom: 8px;">Six systems that eliminate metadata leakage, automate shielding, route across denominations, batch deposits atomically, and (new in v0.9.9) enable instant unshield via a keeper-backed liquidity pool and absorb event-decoder drift with a universal MerkleRootChanged emitter.</p>
+
+  <!-- v0.9.9 bundle highlight -->
+  <div class="card card-pink no-break" style="padding: 10px 12px; margin-bottom: 8px; background: linear-gradient(90deg, rgba(255,119,168,0.08), transparent);">
+    <div class="small mono pink" style="letter-spacing: 0.1em; text-transform: uppercase;">v0.9.9 &middot; Frost Release</div>
+    <div class="small" style="margin-top: 4px;">
+      <strong>Instant unshield</strong> via <span class="mono">p01_liquidity</span> (no user-fronted rent) &middot;
+      <strong>Fresh <span class="mono">denominated_pool_v2</span> PDAs</strong> with canonical <span class="mono">MerkleRootChanged</span> events &middot;
+      <strong>Deterministic stealth signer + crash-sweep</strong> (no more trapped 0.85 SOL on failed ops) &middot;
+      <strong>Full STARK migration</strong> (Groth16 removed from every spend).
+    </div>
+  </div>
 
   <div class="grid-2" style="gap: 10px;">
     <div class="card card-cyan no-break" style="padding: 12px;">
@@ -1415,45 +1433,40 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 <!-- ==================== PAGE 17: ROADMAP ==================== -->
 <div class="page">
   <h2 style="margin-top:0;">ROADMAP</h2>
-  <p class="lead">Protocol 01 is approximately 90% code-complete. The remaining work focuses on production readiness: external audits, trusted setup ceremony, and mainnet deployment.</p>
+  <p class="lead">Protocol 01 is code-complete on every client-facing feature. Remaining work is production readiness: external audit, canonical leaf-event refactor, and mainnet deployment.</p>
 
   <div class="grid-2" style="margin-top: 16px;">
     <div class="card card-cyan no-break">
-      <h4>Completed (~90%)</h4>
+      <h4>Shipped</h4>
       <ul style="font-size: 10pt;">
-        <li>14 Solana programs deployed on devnet</li>
-        <li>7 Groth16 circuits compiled + trusted setup</li>
-        <li>6 STARK AIRs + on-chain verifier</li>
-        <li>Mobile app (Android) fully functional</li>
-        <li>Chrome extension wallet</li>
-        <li>Web app (Next.js 16)</li>
-        <li>8 SDK packages</li>
-        <li>Arcium MPC integration (9 circuits)</li>
-        <li>Quantum vault (WOTS+, HTL, CR)</li>
-        <li>On-chain registry + trustless relayer</li>
-        <li>Security audit fixes + hardening</li>
-        <li>RPC fallback infrastructure</li>
-        <li>Privacy Relay (Tor-capable) + Auto-Shield</li>
-        <li>Privacy Router + note splitting</li>
-        <li>On-chain bundler (atomic multi-shield)</li>
-        <li>370+ stress tests</li>
+        <li>14 Solana programs on devnet (incl. <strong>p01_liquidity</strong>, <strong>p01_mugen</strong>)</li>
+        <li>Full STARK migration &mdash; 6 AIRs, custom on-chain FRI verifier, Groth16 retired</li>
+        <li>Arcium MPC integration &mdash; 9 circuits, 6 use cases, 833 KB SBF</li>
+        <li>Mobile app (Android APK), Chrome extension, Next.js 16 web</li>
+        <li>17 SDKs on npm (specter, zk, zkspl, arcium, p01-js, privacy-toolkit, auth, rpc-config, &hellip;)</li>
+        <li>Quantum vault (WOTS+, HTL, CR) + hybrid stealth (ECDH + ML-KEM-768)</li>
+        <li>Privacy Relay, Auto-Shield, Privacy Router, On-chain bundler</li>
+        <li>On-chain Service Registry + 4 attested services</li>
+        <li><strong>v0.9.9 Frost:</strong> instant unshield, per-wallet note isolation (HKDF), deterministic stealth signer + crash-sweep, <span class="mono">denominated_pool_v2</span> migration, universal event decoder (6 layouts)</li>
+        <li>Mugen Exchange (P2P fiat) live on Vercel</li>
+        <li>Colosseum Frontier 2026 submission, Superteam Ireland tag</li>
       </ul>
     </div>
     <div class="card card-pink no-break">
       <h4 style="color: var(--pink);">Remaining for Mainnet</h4>
       <ul style="font-size: 10pt;">
         <li><strong>External Security Audit</strong><br>
-          <span class="muted">OtterSec / Neodyme / Trail of Bits</span></li>
-        <li><strong>Trusted Setup Ceremony</strong><br>
-          <span class="muted">3+ contributors (currently 1)</span></li>
-        <li><strong>iOS Build & Testing</strong><br>
-          <span class="muted">Only Android verified so far</span></li>
-        <li><strong>Mainnet RPC Contract</strong><br>
-          <span class="muted">Dedicated provider (QuickNode/Helius paid)</span></li>
+          <span class="muted">OtterSec / Neodyme / Trail of Bits &mdash; gating mainnet</span></li>
+        <li><strong>Universal <span class="mono">LeafInserted</span> Event</strong><br>
+          <span class="muted">Single canonical emission from <span class="mono">insert_with_root()</span> so future instructions never require a new client-side decoder layout</span></li>
+        <li><strong>Mainnet Launch</strong><br>
+          <span class="muted">Phase-gated rollout: denominated pools &rarr; subscriptions &rarr; privacy router</span></li>
+        <li><strong>iOS Build & TestFlight</strong><br>
+          <span class="muted">Only Android verified so far; CocoaPods + code signing to do</span></li>
+        <li><strong>Dedicated RPC (Helius/QuickNode)</strong><br>
+          <span class="muted">Paid tier + certificate pinning via TrustKit on mobile</span></li>
         <li><strong>DeFi Composability</strong><br>
-          <span class="muted">Integration with Jupiter, Raydium, etc.</span></li>
-        <li><strong>Certificate Pinning</strong><br>
-          <span class="muted">TrustKit for mobile RPC endpoints</span></li>
+          <span class="muted">Jupiter, Raydium, lending rails with shielded positions</span></li>
       </ul>
     </div>
   </div>
@@ -1490,8 +1503,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
         <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">14</div>
       </div>
       <div>
-        <div class="mono small pink" style="margin-bottom: 4px;">ZK CIRCUITS</div>
-        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">13</div>
+        <div class="mono small pink" style="margin-bottom: 4px;">STARK AIRs</div>
+        <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 28pt;">6</div>
       </div>
       <div>
         <div class="mono small yellow" style="margin-bottom: 4px;">MPC CIRCUITS</div>
