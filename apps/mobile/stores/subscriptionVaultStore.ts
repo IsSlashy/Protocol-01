@@ -94,7 +94,7 @@ interface SubscriptionVaultState {
     subscriberOwnershipCommitment: bigint,
     vkHashSubscriber: Uint8Array,
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
-  ) => Promise<string>;
+  ) => Promise<{ signature: string; vaultAddress: string }>;
   /** STARK variant: quantum-resistant cancel_private_stark using pre-verified proof buffer.
    *
    * Re-shields the refundable balance back into the source pool as fresh notes owned
@@ -123,8 +123,15 @@ interface SubscriptionVaultState {
   resetOperationState: () => void;
   /** Soft reset for wallet switches — clears the in-memory vault list but PRESERVES SecureStore secrets so archive/restore can rehydrate. */
   softReset: () => void;
-  /** Scan on-chain for vaults whose subscriber commitment matches any of our spent/transferred notes (recover orphaned subscriptions). */
-  recoverOrphanedVaults: () => Promise<{ recovered: number; scanned: number }>;
+  /** Scan on-chain for vaults whose subscriber commitment matches any of our spent/transferred notes (recover orphaned subscriptions).
+   *
+   * When `computeStarkCommitment` is supplied, STARK vaults (Goldilocks u64 commitment)
+   * are also matched alongside legacy BN254 vaults — this is the cross-device recovery
+   * path (seed → notes → subscriptions). Returns the newly-recovered `VaultInfo`s so the
+   * caller can synthesize local Stream records. */
+  recoverOrphanedVaults: (
+    computeStarkCommitment?: (secretDecimal: string) => Promise<string>,
+  ) => Promise<{ recovered: number; scanned: number; newVaults: VaultInfo[] }>;
   reset: () => void;
 }
 
@@ -396,7 +403,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             { transactionId: sig },
           );
 
-          return sig;
+          return { signature: sig, vaultAddress: vaultPDA.toBase58() };
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
           set({ error: (err as Error).message });
@@ -749,37 +756,55 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         set({ isLoading: false, progress: null, error: null });
       },
 
-      recoverOrphanedVaults: async () => {
-        // Legacy BN254-era recovery. STARK vaults store a Goldilocks u64 commitment
-        // derived off-device by the STARK prover (circuit 0), which this store cannot
-        // reproduce from receipt data alone — only subscribe-private.tsx knows the
-        // Goldilocks hash at subscription time and stashes it via saveSecretSecurely.
-        // This scanner will still find pre-STARK legacy vaults if any remain on-chain.
+      recoverOrphanedVaults: async (computeStarkCommitment) => {
+        // Matches two commitment families:
+        //  • BN254/legacy: poseidon2([secret, 1234567890]) — pre-STARK vaults
+        //  • STARK: Goldilocks u64 returned by circuit 0, packed via goldilocksU64To32
+        //    (u64 little-endian in bytes[0..8], zero-padded to 32). Requires the STARK
+        //    prover — pass `computeStarkCommitment` from `useStarkProver().computeCommitment`.
         const connection = getConnection();
         const { notes } = useDenominatedPoolStore.getState();
 
-        // Candidate notes — anything we have a receipt for, even if marked spent.
-        // Pre-compute commitment bytes per note so we can match against on-chain vault data.
-        const candidates: { commitmentHex: string; secret: bigint; note: typeof notes[number] }[] = [];
+        // Candidate notes — anything we have a receipt for, even if marked spent. On a
+        // new device the seed-based `rescanPool` reconstructs spent notes too, which is
+        // how we find subscriptions that consumed a note on another device.
+        type Candidate = { secret: bigint; legacyHex: string; starkHex?: string };
+        const candidates: Candidate[] = [];
         for (const n of notes) {
           try {
             const receipt = receiptFromJSON(vaultDecrypt(n.receiptJSON));
-            const subscriberSecret = receipt.secret;
-            const commitment = poseidon2([subscriberSecret, 1234567890n]);
-            const bytes = new Uint8Array(32);
-            let tmp = commitment;
-            for (let i = 0; i < 32; i++) { bytes[i] = Number(tmp & 0xFFn); tmp >>= 8n; }
-            const hex = Buffer.from(bytes).toString('hex');
-            candidates.push({ commitmentHex: hex, secret: subscriberSecret, note: n });
+            const secret = receipt.secret;
+            const legacyCommitment = poseidon2([secret, 1234567890n]);
+            const legacyBytes = new Uint8Array(32);
+            let tmp = legacyCommitment;
+            for (let i = 0; i < 32; i++) { legacyBytes[i] = Number(tmp & 0xFFn); tmp >>= 8n; }
+            candidates.push({
+              secret,
+              legacyHex: Buffer.from(legacyBytes).toString('hex'),
+            });
           } catch {
             // skip notes whose receipt can't be decrypted (different wallet etc.)
           }
         }
 
-        if (candidates.length === 0) return { recovered: 0, scanned: 0 };
+        if (candidates.length === 0) return { recovered: 0, scanned: 0, newVaults: [] };
 
-        // Fetch all subscription vault accounts owned by the program.
-        // Anchor accounts start with an 8-byte discriminator; we filter further in-memory.
+        // STARK commitments: computed lazily via the prover (WebView round-trip per
+        // note, ~200-400ms each). Skipped if no prover supplied.
+        if (computeStarkCommitment) {
+          for (const c of candidates) {
+            try {
+              const hexU64 = await computeStarkCommitment(c.secret.toString());
+              const bytes = goldilocksU64To32(BigInt(hexU64.startsWith('0x') ? hexU64 : '0x' + hexU64));
+              c.starkHex = Buffer.from(bytes).toString('hex');
+            } catch (err) {
+              console.warn('[recoverOrphanedVaults] STARK commitment failed for candidate:', (err as Error).message);
+            }
+          }
+        }
+
+        // Fetch all subscription vault accounts owned by the program. Anchor accounts
+        // start with an 8-byte discriminator; we filter further in-memory.
         let allAccounts: Awaited<ReturnType<typeof connection.getProgramAccounts>>;
         try {
           allAccounts = await connection.getProgramAccounts(ZK_SHIELDED_PROGRAM_ID, {
@@ -789,13 +814,14 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           throw new Error(`On-chain scan failed: ${(err as Error).message}`);
         }
 
-        // The vault layout places the Option<[u8;32]> subscriber_commitment at offset 41
-        // (8 disc + 1 opt + 32 pubkey = 41). Bytes 41 = Some/None tag, 42..74 = commitment.
+        // Vault layout: 8 disc + 1 opt_tag + 32 subscriber_pubkey = 41. Bytes 41 =
+        // subscriber_commitment Some/None tag, 42..74 = commitment bytes.
         const COMMITMENT_TAG_OFFSET = 41;
         const COMMITMENT_BYTES_OFFSET = 42;
 
         let recovered = 0;
-        const newVaults: StoredVaultInfo[] = [];
+        const newStoredVaults: StoredVaultInfo[] = [];
+        const newVaults: VaultInfo[] = [];
         const { vaults: existing } = get();
         const existingAddrs = new Set(existing.map(v => v.vaultAddress));
 
@@ -805,7 +831,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           if (data[COMMITMENT_TAG_OFFSET] !== 1) continue; // not a private-mode vault
 
           const onchainHex = data.slice(COMMITMENT_BYTES_OFFSET, COMMITMENT_BYTES_OFFSET + 32).toString('hex');
-          const match = candidates.find(c => c.commitmentHex === onchainHex);
+          const match = candidates.find(c => c.legacyHex === onchainHex || c.starkHex === onchainHex);
           if (!match) continue;
 
           const vaultPDA = acc.pubkey;
@@ -817,7 +843,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
           await saveSecretSecurely(vaultAddress, match.secret.toString());
 
-          newVaults.push({
+          newStoredVaults.push({
             vaultAddress,
             retailer: info.retailer,
             tokenMint: info.tokenMint,
@@ -827,14 +853,15 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             isPrivateMode: true,
             createdAt: Date.now(),
           });
+          newVaults.push(info);
           recovered += 1;
         }
 
-        if (newVaults.length > 0) {
-          set(state => ({ vaults: [...newVaults, ...state.vaults] }));
+        if (newStoredVaults.length > 0) {
+          set(state => ({ vaults: [...newStoredVaults, ...state.vaults] }));
         }
 
-        return { recovered, scanned: allAccounts.length };
+        return { recovered, scanned: allAccounts.length, newVaults };
       },
 
       softReset: () => {

@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'react-native';
 import Constants from 'expo-constants';
 import { Colors, FontFamily, P01Colors } from '@/constants/theme';
+import { RELEASE_CODENAME } from '@/constants/release';
 import { checkForUpdate } from '@/services/updates/versionCheck';
 import { useT } from '@/i18n';
 
@@ -141,6 +142,12 @@ export default function AboutScreen() {
           />
           <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: '700' }}>Protocol 01</Text>
           <Text style={{ color: P01Colors.cyan, fontSize: 16, marginTop: 4 }}>P-01 Wallet</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+            <Ionicons name="snow-outline" size={14} color={P01Colors.pink} />
+            <Text style={{ color: P01Colors.pink, fontSize: 13, marginLeft: 4, letterSpacing: 1, fontWeight: '600' }}>
+              {RELEASE_CODENAME.toUpperCase()}
+            </Text>
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}>
             <Text style={{ color: Colors.textSecondary, fontSize: 14 }}>{t('settings.version')} {APP_VERSION}</Text>
             <Text style={{ color: Colors.textTertiary, fontSize: 14, marginHorizontal: 8 }}>|</Text>

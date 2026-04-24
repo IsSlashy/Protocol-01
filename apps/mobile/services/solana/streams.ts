@@ -52,6 +52,11 @@ export interface Stream {
   timingNoise: number;       // Timing variation +/- hours (0-24)
   useStealthAddress: boolean; // Use unique derived address per payment
   useZkPool?: boolean; // Pay from ZK shielded pool (fully untraceable)
+  /** True when this stream is backed by an on-chain SubscriptionVault (zk-vault mode).
+   *  Distinguishes vault-backed subscriptions from one-shot ZK unshields (both set
+   *  `useZkPool=true`) so vaultAddress backfill does not wire one-shots to unrelated
+   *  vaults. Absent on legacy records — check explicitly with `=== true`. */
+  useZkVault?: boolean;
 
   // Amount noise tracking (for balancing over time)
   noiseAdjustment?: NoiseAdjustment; // Tracks cumulative overpay/underpay from noise
@@ -68,6 +73,10 @@ export interface Stream {
     subscriptionId: string;   // Unique subscription ID on-chain
     mint: string;             // Token mint (for delegation)
   };
+
+  // Set when this stream is backed by a ZK subscription vault (subscribe_private_stark).
+  // Used to route pause/resume/cancel from the Streams UI to the STARK actions on-chain.
+  vaultAddress?: string;
 
   // Metadata
   createdAt: number;
@@ -92,6 +101,10 @@ export interface StreamPayment {
 }
 
 export interface CreateStreamParams {
+  /** Optional pre-generated stream id. Use when the subscribe flow also writes
+   *  an on-chain memo referencing this id, so both sides stay in sync and
+   *  memo-scan recovery reconstructs the same record id. */
+  id?: string;
   name: string;
   description?: string;
   recipientAddress: string;
@@ -106,6 +119,7 @@ export interface CreateStreamParams {
   timingNoise?: number;
   useStealthAddress?: boolean;
   useZkPool?: boolean;
+  useZkVault?: boolean;
   // Service info (optional)
   serviceId?: string;
   serviceName?: string;
@@ -339,7 +353,7 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
   }
 
   const stream: Stream = {
-    id: generateId(),
+    id: params.id ?? generateId(),
     name: params.name,
     description: params.description,
     recipientAddress: params.recipientAddress,
@@ -362,6 +376,7 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     timingNoise,
     useStealthAddress: params.useStealthAddress ?? false,
     useZkPool: params.useZkPool ?? false,
+    useZkVault: params.useZkVault,
     // Service info
     serviceId: params.serviceId,
     serviceName: params.serviceName,
@@ -400,6 +415,91 @@ export async function updateStream(streamId: string, updates: Partial<Stream>): 
 
   await saveStreams(streams);
   return streams[index];
+}
+
+/**
+ * Synthesize a local Stream record from an on-chain SubscriptionVault.
+ *
+ * Cross-device recovery: when we discover a vault on a new device by scanning
+ * on-chain commitments, the Streams tab needs a local record to display and
+ * manage it. Dedupes by `vaultAddress` — no-ops if a Stream already exists.
+ */
+export async function upsertStreamFromVault(
+  vault: import('../subscriptionVault').VaultInfo,
+  opts?: { retailerName?: string; currentSlot?: number },
+): Promise<Stream | null> {
+  const streams = await loadStreams();
+  if (streams.some(s => s.vaultAddress === vault.address)) return null;
+
+  const intervalSlotsNum = Number(vault.intervalSlots);
+  const { frequency, customIntervalDays } = inferFrequencyFromSlots(intervalSlotsNum);
+
+  // Approximate start timestamp from start_slot. Solana slot ≈ 400ms — good enough
+  // for the "started N days ago" display in the Streams list.
+  let startDate = Date.now();
+  try {
+    const currentSlot = opts?.currentSlot ?? await getConnection().getSlot('confirmed');
+    const slotsElapsed = currentSlot - Number(vault.startSlot);
+    if (slotsElapsed > 0) startDate = Date.now() - slotsElapsed * 400;
+  } catch {
+    // keep Date.now()
+  }
+
+  const rateSOL = Number(vault.rate) / LAMPORTS_PER_SOL;
+  const depositedSOL = Number(vault.totalDeposited) / LAMPORTS_PER_SOL;
+  const claimedPeriods = Number(vault.claimedPeriods);
+  const intervalMs = getIntervalMs(frequency, customIntervalDays);
+  const now = Date.now();
+  const status: StreamStatus = vault.isPaused
+    ? 'paused'
+    : vault.isActive
+    ? 'active'
+    : 'cancelled';
+
+  const stream: Stream = {
+    id: generateId(),
+    name: opts?.retailerName ?? `Subscription ${vault.address.slice(0, 6)}`,
+    recipientAddress: vault.retailer,
+    recipientName: opts?.retailerName,
+    totalAmount: depositedSOL,
+    amountPerPayment: rateSOL,
+    frequency,
+    customIntervalDays,
+    startDate,
+    nextPaymentDate: now + intervalMs,
+    amountStreamed: rateSOL * claimedPeriods,
+    paymentsCompleted: claimedPeriods,
+    status,
+    direction: 'outgoing',
+    amountNoise: 0,
+    timingNoise: 0,
+    useStealthAddress: false,
+    useZkPool: true,
+    useZkVault: true,
+    vaultAddress: vault.address,
+    createdAt: now,
+    updatedAt: now,
+    paymentHistory: [],
+  };
+
+  streams.push(stream);
+  await saveStreams(streams);
+  return stream;
+}
+
+function inferFrequencyFromSlots(
+  slots: number,
+): { frequency: StreamFrequency; customIntervalDays?: number } {
+  const SLOTS_PER_DAY = (24 * 60 * 60 * 1000) / 400;
+  if (slots <= SLOTS_PER_DAY * 1.5) return { frequency: 'daily' };
+  if (slots <= SLOTS_PER_DAY * 7 * 1.5) return { frequency: 'weekly' };
+  if (slots <= SLOTS_PER_DAY * 14 * 1.5) return { frequency: 'biweekly' };
+  if (slots <= SLOTS_PER_DAY * 30 * 1.5) return { frequency: 'monthly' };
+  if (slots <= SLOTS_PER_DAY * 365 * 1.5) return { frequency: 'yearly' };
+  return {
+    frequency: 'custom',
+    customIntervalDays: Math.max(1, Math.round(slots / SLOTS_PER_DAY)),
+  };
 }
 
 // Pause a stream (local only)

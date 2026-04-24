@@ -18,6 +18,7 @@ import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { useT, t as tStatic } from '@/i18n';
+import RecoveryBootModal from '@/components/privacy/RecoveryBootModal';
 
 const SLOTS_PER_EPOCH = 7200;
 const DEFAULT_SLOT_MS = 500;
@@ -57,6 +58,25 @@ export default function DenominatedNotesScreen() {
     exportAllNotes, exportNote, poolCache, recoverTransferredNotes, rescanPool,
   } = useDenominatedPoolStore();
   const [isRescanning, setIsRescanning] = useState(false);
+  const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
+
+  const onRecoveryModalClose = (success: boolean) => {
+    setRecoveryModalOpen(false);
+    setIsRescanning(false);
+    deactivateKeepAwake('p01-rescan');
+    const hapticType = success
+      ? Haptics.NotificationFeedbackType.Success
+      : Haptics.NotificationFeedbackType.Warning;
+    Haptics.notificationAsync(hapticType).catch(() => {});
+  };
+
+  // Guard against the user navigating away while the rescan modal is still
+  // open — without this, the keep-awake tag would leak until the process
+  // dies (battery drain, no correctness break).
+  useEffect(() => () => {
+    deactivateKeepAwake('p01-rescan');
+  }, []);
+
   const notes = useActiveNotes();
 
   // Dedup + refresh on mount
@@ -209,29 +229,13 @@ export default function DenominatedNotesScreen() {
         {
           text: t('privacy.rescanFromSeed'),
           onPress: async () => {
+            // Flip the RecoveryBootModal into manual mode — it handles the
+            // scan UI + success/error display and calls us back on close.
             setIsRescanning(true);
             const KEEP_AWAKE_TAG = 'p01-rescan';
-            try {
-              await activateKeepAwakeAsync(KEEP_AWAKE_TAG);
-              const recovered = await rescanPool(undefined, {
-                epochsBack: 50,
-                maxCounter: 256,
-                maxSignatures: 1000,
-              });
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              p01Alert(
-                t('privacy.rescanFromSeed'),
-                recovered > 0
-                  ? t('privacy.rescanFound', { count: recovered })
-                  : t('privacy.rescanNothingFound'),
-              );
-            } catch (e: any) {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-              p01Alert(t('privacy.rescanFailed'), e?.message ?? String(e));
-            } finally {
-              deactivateKeepAwake(KEEP_AWAKE_TAG);
-              setIsRescanning(false);
-            }
+            await activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+            setRecoveryModalOpen(true);
+            // The keep-awake is released in onRecoveryModalClose below.
           },
         },
       ],
@@ -614,6 +618,9 @@ export default function DenominatedNotesScreen() {
           </TouchableOpacity>
         </View>
       )}
+      {/* Manual rescan modal — reuses the boot-time scanner with a visible
+          blocking UI. Closes via user action; releases keep-awake + rescanning state. */}
+      <RecoveryBootModal manualOpen={recoveryModalOpen} onManualClose={onRecoveryModalClose} />
     </View>
   );
 }

@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Linking, StyleSheet,
 } from 'react-native';
 import { PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
+import * as SecureStore from 'expo-secure-store';
 import { p01Alert } from '../../../stores/alertStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -18,11 +19,23 @@ import { getKeypair } from '../../../services/solana/wallet';
 import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
 import { sendSolWithSigner } from '../../../services/solana/transactions';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
-import { receiptFromJSON } from '../../../services/denominatedPool';
+import { receiptFromJSON, ALL_POOLS } from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { getServiceById, CATEGORY_CONFIG, ServiceCategory } from '../../../services/subscriptions/serviceRegistry';
+import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
+import {
+  computeCancelPreview,
+  fetchVault,
+  type CancelPreview,
+} from '../../../services/subscriptionVault';
+import CancelConfirmModal, { type CancelPhase } from '../../../components/privacy/CancelConfirmModal';
+import { withKeepAwake } from '../../../utils/keepAwakeDuring';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
+
+/** Prefix used by vault-detail.tsx + subscriptionVaultStore to save the
+ * subscriber secret in SecureStore, keyed by vault PDA. Must match. */
+const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 
 export default function StreamDetailScreen() {
   return <DetailContent />;
@@ -34,15 +47,62 @@ function DetailContent() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { streams, processingPayment, refresh, pauseStream, resumeStream, cancelStream, deleteStream } = useStreamStore();
-  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
+  const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof } = useStarkProver();
+  const {
+    pausePrivateStarkAction,
+    resumePrivateStarkAction,
+    cancelPrivateStarkAction,
+  } = useSubscriptionVaultStore();
   const { publicKey, isPrivyWallet } = useWalletStore();
 
   const [stream, setStream] = useState<Stream | null>(null);
   const [copied, setCopied] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payProgress, setPayProgress] = useState<string | null>(null);
+  const [starkStatus, setStarkStatus] = useState<string | null>(null);
+
+  // Cancel modal state (ZK vault path) ────────────────────────────
+  const [cancelVisible, setCancelVisible] = useState(false);
+  const [cancelPhase, setCancelPhase] = useState<CancelPhase>('preview');
+  const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
+  const [cancelProgress, setCancelProgress] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelTx, setCancelTx] = useState<string | null>(null);
+  const [cancelPoolLabel, setCancelPoolLabel] = useState<string>('');
 
   useEffect(() => { setStream(streams.find(s => s.id === id) || null); }, [streams, id]);
+
+  // Reactive subscription to the vault store so this effect re-runs when the
+  // persisted vaults hydrate from AsyncStorage (cold boot race).
+  const vaults = useSubscriptionVaultStore(s => s.vaults);
+
+  // Auto-backfill vaultAddress for streams created before the field existed.
+  //   - Only fires on `useZkVault === true` — one-shot ZK streams (useZkPool
+  //     without useZkVault) have no on-chain vault, so they must never be wired
+  //     to an unrelated recurring vault.
+  //   - Requires an unambiguous single match — if the user has two private
+  //     vaults to the same retailer (e.g. SOL + USDC) we refuse to guess.
+  useEffect(() => {
+    if (!stream) return;
+    if (stream.vaultAddress) return;
+    if (stream.useZkVault !== true) return;
+    const matches = vaults.filter(
+      v => v.retailer === stream.recipientAddress && v.isPrivateMode,
+    );
+    if (matches.length !== 1) {
+      if (__DEV__ && matches.length > 1) {
+        console.warn(
+          `[Streams] Skipping backfill for ${stream.id} — ${matches.length} vaults match retailer ${stream.recipientAddress}`,
+        );
+      }
+      return;
+    }
+    const match = matches[0];
+    updateStreamRecord(stream.id, { vaultAddress: match.vaultAddress })
+      .then(() => refresh().catch(() => {}))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream?.id, stream?.vaultAddress, stream?.useZkVault, vaults]);
 
   const serviceInfo = stream?.serviceId ? getServiceById(stream.serviceId) : null;
   const accent = stream?.useZkPool ? P01Colors.pink : P01Colors.cyan;
@@ -73,18 +133,134 @@ function DetailContent() {
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
+  /** Load the subscriber secret from SecureStore for a given vault PDA. */
+  const loadVaultSecret = async (vaultAddress: string): Promise<bigint> => {
+    const s = await SecureStore.getItemAsync(`${SECURE_SECRET_PREFIX}${vaultAddress}`);
+    if (!s) throw new Error('Subscriber secret not found — was this vault created on this device?');
+    return BigInt(s);
+  };
+
   const handlePauseResume = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    // ZK vault path — pause/resume on-chain via STARK proof
+    if (stream.vaultAddress) {
+      if (!starkReady) {
+        p01Alert('Prover initializing', 'STARK prover not ready — try again in a moment.');
+        return;
+      }
+      try {
+        await withKeepAwake('p01-vault-pause-resume', async () => {
+          const secret = await loadVaultSecret(stream.vaultAddress!);
+          setStarkStatus('Generating STARK ownership proof...');
+          const starkResult = await starkGenerate(secret.toString());
+          const proofData = {
+            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+            commitment: BigInt(starkResult.commitment),
+            proofSize: starkResult.proofSize,
+          };
+          if (stream.status === 'active') {
+            setStarkStatus('Submitting STARK pause...');
+            await pausePrivateStarkAction(stream.vaultAddress!, proofData);
+            await updateStreamRecord(stream.id, { status: 'paused' });
+          } else {
+            setStarkStatus('Submitting STARK resume...');
+            await resumePrivateStarkAction(stream.vaultAddress!, proofData);
+            await updateStreamRecord(stream.id, { status: 'active' });
+          }
+        });
+        setStarkStatus(null);
+        await refresh();
+      } catch (err) {
+        setStarkStatus(null);
+        p01Alert('Error', (err as Error).message);
+      }
+      return;
+    }
+
+    // Local fallback — non-ZK streams
     stream.status === 'active' ? await pauseStream(stream.id) : await resumeStream(stream.id);
     await refresh();
   };
 
-  const handleCancel = () => {
-    p01Alert(t('streams.cancelStream'), t('streams.cancelStreamConfirm', { name: stream.name }),
-      [{ text: t('streams.cancelStream'), style: 'destructive', onPress: async () => {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        await cancelStream(stream.id); await deleteStream(stream.id); router.back();
-      }}, { text: t('streams.keepStream'), style: 'cancel' }], 'warning');
+  const openCancelModal = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    // Local fallback — non-ZK streams keep the old confirm alert
+    if (!stream.vaultAddress) {
+      p01Alert(t('streams.cancelStream'), t('streams.cancelStreamConfirm', { name: stream.name }),
+        [{ text: t('streams.cancelStream'), style: 'destructive', onPress: async () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          await cancelStream(stream.id); await deleteStream(stream.id); router.back();
+        }}, { text: t('streams.keepStream'), style: 'cancel' }], 'warning');
+      return;
+    }
+
+    // ZK vault path — compute preview + open CancelConfirmModal
+    try {
+      const vaultPDA = new PublicKey(stream.vaultAddress);
+      const vault = await fetchVault(vaultPDA);
+      if (!vault) throw new Error('Vault not found on-chain — may have been closed already.');
+      const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === vault.sourcePool);
+      // Bail before opening the preview — the cancel action does the same
+      // ALL_POOLS lookup and throws, so without this guard the user waits
+      // ~60s for a STARK proof before seeing "Source pool not found", and
+      // the preview UI misleadingly shows "0 notes re-shielded, all dust".
+      if (!pool) {
+        p01Alert(
+          'Pool config missing',
+          `Source pool ${vault.sourcePool ?? 'unknown'} is not in this build. Update the app or contact support.`,
+        );
+        return;
+      }
+      const connection = getConnection();
+      const slot = await connection.getSlot('confirmed');
+      setCancelPreview(computeCancelPreview(vault, slot, pool.denominationAtomic));
+      setCancelPoolLabel(`${pool.denomination} ${pool.token}`);
+      setCancelPhase('preview');
+      setCancelProgress(null);
+      setCancelError(null);
+      setCancelTx(null);
+      setCancelVisible(true);
+    } catch (err) {
+      p01Alert('Error', (err as Error).message);
+    }
+  };
+
+  const confirmCancel = async () => {
+    if (!stream.vaultAddress) return;
+    setCancelPhase('processing');
+    setCancelProgress('Preparing...');
+    try {
+      if (!starkReady) throw new Error('STARK prover not ready — try again in a moment.');
+      await withKeepAwake('p01-vault-cancel', async () => {
+        const secret = await loadVaultSecret(stream.vaultAddress!);
+        setCancelProgress('Generating STARK ownership proof...');
+        const starkResult = await starkGenerate(secret.toString());
+        setCancelProgress('Submitting cancel transaction...');
+        const sig = await cancelPrivateStarkAction(stream.vaultAddress!, secret, {
+          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+          commitment: BigInt(starkResult.commitment),
+          proofSize: starkResult.proofSize,
+        });
+        setCancelTx(sig);
+      });
+      setCancelPhase('success');
+      // Mirror the state locally so the Streams UI reflects the cancellation
+      await updateStreamRecord(stream.id, { status: 'cancelled' });
+      await refresh();
+    } catch (err) {
+      setCancelError((err as Error).message);
+      setCancelPhase('error');
+    }
+  };
+
+  const closeCancelModal = () => {
+    const wasSuccess = cancelPhase === 'success';
+    setCancelVisible(false);
+    if (wasSuccess) {
+      setTimeout(() => router.back(), 150);
+    }
   };
 
   const handlePayNow = async () => {
@@ -283,11 +459,20 @@ function DetailContent() {
               <Ionicons name={stream.status === 'active' ? 'pause' : 'play'} size={18} color={accent} />
               <Text style={[st.actionText, { color: accent }]}>{stream.status === 'active' ? t('streams.pause') : t('streams.resume')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleCancel}
+            <TouchableOpacity onPress={openCancelModal}
               style={[st.actionBtn, { backgroundColor: 'rgba(255,51,102,0.12)' }]}>
               <Ionicons name="close-circle" size={18} color={Colors.error} />
               <Text style={[st.actionText, { color: Colors.error }]}>{t('common.cancel')}</Text>
             </TouchableOpacity>
+          </Animated.View>
+        )}
+
+        {/* STARK pause/resume progress — visible during on-chain ZK actions */}
+        {starkStatus && (
+          <Animated.View entering={FadeIn.duration(200)}
+            style={[st.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+            <ActivityIndicator size="small" color={P01Colors.cyan} />
+            <Text style={[st.smallWhite, { color: P01Colors.cyan }]}>{starkStatus}</Text>
           </Animated.View>
         )}
 
@@ -313,6 +498,20 @@ function DetailContent() {
           </Animated.View>
         )}
       </ScrollView>
+
+      {/* Cancel modal — only active when stream.vaultAddress is set (ZK path) */}
+      <CancelConfirmModal
+        visible={cancelVisible}
+        preview={cancelPreview}
+        denominationLabel={cancelPoolLabel}
+        retailerLabel={`${stream.recipientAddress.slice(0, 6)}…${stream.recipientAddress.slice(-4)}`}
+        phase={cancelPhase}
+        progress={cancelProgress}
+        errorMessage={cancelError}
+        txSignature={cancelTx}
+        onConfirm={confirmCancel}
+        onClose={closeCancelModal}
+      />
     </View>
   );
 }

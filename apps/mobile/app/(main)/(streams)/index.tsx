@@ -18,12 +18,15 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
-import { Stream, formatFrequency } from '../../../services/solana/streams';
+import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
+import { useStarkProver } from '../../../providers/StarkProverProvider';
+import { Stream, formatFrequency, upsertStreamFromVault } from '../../../services/solana/streams';
 import {
   useServiceRegistry,
   formatInterval,
   formatPriceSOL,
   iconKeyToIonicons,
+  readCachedServices,
   type ServiceEntry,
 } from '../../../services/solana/serviceRegistry';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -46,6 +49,8 @@ export default function StreamsDashboard() {
     initialize, refresh, syncFromChain,
   } = useStreamStore();
   const { notes: denomNotes } = useDenominatedPoolStore();
+  const recoverOrphanedVaults = useSubscriptionVaultStore(s => s.recoverOrphanedVaults);
+  const { isReady: starkReady, computeCommitment } = useStarkProver();
   const {
     services: registryServices,
     loading: registryLoading,
@@ -85,11 +90,45 @@ export default function StreamsDashboard() {
   const handleSync = async () => {
     if (!publicKey) return p01Alert(t('alerts.walletRequired'), t('alerts.walletRequiredDesc'));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    let walletNew = 0;
+    let walletUpdated = 0;
+    let vaultRecovered = 0;
     try {
+      // (1) Wallet classic subscriptions via memo-scan of tx history
       const r = await syncFromChain(publicKey);
-      if (r.newStreams > 0 || r.updatedStreams > 0)
-        p01Alert(t('alerts.syncComplete'), `${r.newStreams} new, ${r.updatedStreams} updated`);
-    } catch {}
+      walletNew = r.newStreams;
+      walletUpdated = r.updatedStreams;
+    } catch (err) {
+      console.warn('[Streams] memo sync failed:', (err as Error).message);
+    }
+    try {
+      // (2) zk-vault subscriptions via SubscriptionVault PDA scan. Requires the
+      // STARK prover (Goldilocks commitment); silently skipped if not ready.
+      const starkFn = starkReady ? computeCommitment : undefined;
+      const { newVaults } = await recoverOrphanedVaults(starkFn);
+      if (newVaults.length > 0) {
+        const services = await readCachedServices().catch(() => []);
+        const retailerToName = new Map<string, string>();
+        for (const s of services) retailerToName.set(s.retailer.toBase58(), s.name);
+        for (const vault of newVaults) {
+          const retailerName = retailerToName.get(vault.retailer);
+          const created = await upsertStreamFromVault(vault, { retailerName });
+          if (created) vaultRecovered += 1;
+        }
+        await refresh(publicKey || undefined).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[Streams] vault recovery failed:', (err as Error).message);
+    }
+    const totalNew = walletNew + vaultRecovered;
+    if (totalNew > 0 || walletUpdated > 0) {
+      const parts: string[] = [];
+      if (totalNew > 0) parts.push(`${totalNew} recovered`);
+      if (walletUpdated > 0) parts.push(`${walletUpdated} updated`);
+      p01Alert(t('alerts.syncComplete'), parts.join(', '));
+    } else {
+      p01Alert(t('alerts.syncComplete'), 'Nothing to recover — your state matches the chain.');
+    }
   };
 
   // Counts & stats
@@ -118,10 +157,15 @@ export default function StreamsDashboard() {
         {/* ── Header ── */}
         <View style={st.header}>
           <Text style={st.headerTitle}>{t('streams.title')}</Text>
-          <TouchableOpacity onPress={handleSync} disabled={syncing} style={st.syncBtn}>
+          <TouchableOpacity
+            onPress={handleSync}
+            disabled={syncing}
+            style={st.syncBtn}
+            accessibilityLabel="Recover subscriptions from chain"
+          >
             {syncing
               ? <ActivityIndicator size={16} color={P01Colors.cyan} />
-              : <Ionicons name="sync" size={18} color={P01Colors.cyan} />}
+              : <Ionicons name="cloud-download-outline" size={20} color={P01Colors.cyan} />}
           </TouchableOpacity>
         </View>
 

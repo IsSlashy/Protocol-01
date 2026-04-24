@@ -155,7 +155,7 @@ export default function SubscribePrivateScreen() {
       const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
 
       setStarkStatus('Submitting STARK subscription...');
-      const sig = await subscribePrivateStarkAction(
+      const { signature: sig } = await subscribePrivateStarkAction(
         receipt,
         poolConfig,
         vaultConfig,

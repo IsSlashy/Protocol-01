@@ -140,9 +140,36 @@ function SubscribeContent() {
       const now = Date.now();
       const endDate = now + duration * 30 * 86_400_000;
       const retailerAddr = retailerPubkey.toBase58();
-      const invoiceMemo = `p01:${serviceId || 'svc'}:${duration}m`;
+      // Pre-generate the Stream id so the on-chain memo references the same
+      // record we're about to persist locally. This lets memo-scan recovery
+      // (onchainSync.ts) find and reconstruct the Stream on re-install /
+      // cross-device boot. Format matches `generateId()` in streams.ts.
+      const streamId = `stream_${now}_${Math.random().toString(36).slice(2, 11)}`;
+      // Map mobile StreamFrequency → single-letter code expected by scanner.
+      const freqCode: 'd' | 'w' | 'm' | 'y' = frequency === 'daily' ? 'd'
+        : frequency === 'weekly' ? 'w'
+        : frequency === 'yearly' ? 'y' : 'm';
+      // P01_SUB_V1 compact JSON — matches `OnChainSubscription` interface in
+      // onchainSync.ts. Kept small to fit in a single memo (<566 bytes).
+      const subMemoPayload = {
+        v: 1,
+        id: streamId,
+        n: serviceName.slice(0, 32),
+        r: retailerAddr,
+        a: Math.round(price * 1e9),
+        i: freqCode,
+        s: 'a',
+        np: Math.floor((now + duration * 30 * 86_400_000) / 1000),
+        mp: duration > 0 ? duration : 0,
+        pm: 0,
+        c: Math.floor(now / 1000),
+      };
+      const invoiceMemo = `P01_SUB_V1:${JSON.stringify(subMemoPayload)}`;
       let sig: string;
       let paid = price;
+      // Set when the subscribe uses the on-chain ZK vault path so we can route
+      // pause/resume/cancel from the Streams UI straight to the STARK actions.
+      let vaultAddress: string | undefined;
 
       if (useZkVault) {
         // ───────── Recurring private vault (subscribe_private_stark) ─────────
@@ -181,7 +208,7 @@ function SubscribeContent() {
         );
 
         setProgress(t('shieldUnshield.sendingTransaction'));
-        sig = await subscribePrivateStarkAction(
+        const subscribeResult = await subscribePrivateStarkAction(
           receipt,
           poolConfig,
           {
@@ -198,6 +225,8 @@ function SubscribeContent() {
             proofSize: poolProof.proofSize,
           },
         );
+        sig = subscribeResult.signature;
+        vaultAddress = subscribeResult.vaultAddress;
         paid = note.denomination;
       } else if (useZkPool) {
         // ───────── One-shot ZK unshield to retailer ─────────
@@ -285,14 +314,16 @@ function SubscribeContent() {
 
       setProgress(t('common.processing'));
       const stream = await createNewStream({
+        id: streamId,
         name: serviceName, recipientAddress: retailerAddr, totalAmount: totalPrice,
         frequency, endDate, serviceId, serviceName,
         amountNoise: enablePrivacy ? 10 : 0, timingNoise: enablePrivacy ? 4 : 0,
-        useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault,
+        useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault, useZkVault,
       });
       await updateStreamRecord(stream.id, {
         amountStreamed: paid, paymentsCompleted: 1,
         paymentHistory: [{ id: `pay-${stream.id}-0`, amount: paid, actualAmount: paid, signature: sig, timestamp: now, status: 'success' }],
+        ...(vaultAddress ? { vaultAddress } : {}),
       });
       refresh(publicKey || undefined).catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -389,8 +420,10 @@ function SubscribeContent() {
                   <Ionicons name="eye-off" size={20} color={paymentMode === 'zk-oneshot' ? P01Colors.pink : Colors.textSecondary} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={st.methodTitle}>{t('subscribe.privateWallet')}</Text>
-                  <Text style={st.methodDesc}>One-shot, no vault. Re-pay next period.</Text>
+                  <Text style={st.methodTitle}>Private one-shot</Text>
+                  <Text style={st.methodDesc}>
+                    Single payment. Change returns to your visible wallet. No cancel / no refund — re-pay manually next period.
+                  </Text>
                 </View>
                 <View style={[st.zkBadge, paymentMode === 'zk-oneshot' && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>
                   <Text style={[st.zkBadgeText, paymentMode === 'zk-oneshot' && { color: P01Colors.pink }]}>ZK</Text>
@@ -409,7 +442,7 @@ function SubscribeContent() {
                 <View style={{ flex: 1 }}>
                   <Text style={st.methodTitle}>Private recurring vault</Text>
                   <Text style={st.methodDesc}>
-                    Retailer pulls {formatPriceSOL(priceLamports)} SOL every {formatInterval(intervalSlotsBig)} — fully on-chain, quantum-safe.
+                    Retailer pulls {formatPriceSOL(priceLamports)} SOL every {formatInterval(intervalSlotsBig)}. Pause / cancel anytime — unused balance refunds as fresh shielded notes. Recoverable across devices via seed.
                   </Text>
                 </View>
                 <View style={[st.zkBadge, paymentMode === 'zk-vault' && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>

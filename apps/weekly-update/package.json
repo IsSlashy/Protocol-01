@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "remotion studio",
     "build": "echo 'weekly-update: build is a no-op; use pnpm render to produce the video' && exit 0",
-    "render": "remotion render WeeklyUpdate out/week1.mp4"
+    "render": "remotion render WeeklyUpdate out/week1.mp4",
+    "render:frost": "node scripts/render-chunked.mjs FrostIntro out/frost-intro.mp4 --total=1500",
+    "render:pitch": "node scripts/render-chunked.mjs PitchVideo out/pitch.mp4 --total=7200",
+    "render:weekly": "node scripts/render-chunked.mjs WeeklyUpdate out/weekly.mp4 --total=3240",
+    "render:chunked": "node scripts/render-chunked.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.294",

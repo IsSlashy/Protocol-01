@@ -28,6 +28,7 @@ import { lockVault } from '../../../utils/crypto/noteVault';
 import { getCluster } from '../../../services/solana/connection';
 import { useAuth } from '../../../providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { RELEASE_CODENAME } from '@/constants/release';
 import { useT, LANGUAGES, useLangStore } from '@/i18n';
 
 /* ──────────────────────── Glass Card ──────────────────────── */
@@ -407,7 +408,7 @@ export default function SettingsScreen() {
         <GlassCard delay={400}>
           <SettingsRow
             label={t('settings.about')}
-            value={`v${Constants.expoConfig?.version ?? '0.0.0'}`}
+            value={`v${Constants.expoConfig?.version ?? '0.0.0'} · ${RELEASE_CODENAME}`}
             leftIcon="information-circle-outline"
             onPress={() => router.push('/(main)/(settings)/about')}
           />
@@ -472,7 +473,7 @@ export default function SettingsScreen() {
 
         {/* Version Footer */}
         <Animated.View entering={FadeInDown.delay(540).duration(300)} style={styles.footer}>
-          <Text style={styles.footerVersion}>Protocol 01 v{Constants.expoConfig?.version ?? '0.0.0'}</Text>
+          <Text style={styles.footerVersion}>Protocol 01 v{Constants.expoConfig?.version ?? '0.0.0'} · {RELEASE_CODENAME}</Text>
           <Text style={styles.footerBuilt}>Built on Solana</Text>
         </Animated.View>
       </ScrollView>
