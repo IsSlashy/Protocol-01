@@ -61,8 +61,8 @@ function DepthBackground() {
         }
 
         @keyframes shimmer {
-          0% { background-position: -200% -200%; }
-          100% { background-position: 200% 200%; }
+          0% { background-position: 200% 0%; }
+          100% { background-position: -200% 0%; }
         }
 
         @keyframes pulse-point {
@@ -187,6 +187,28 @@ function DepthBackground() {
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `radial-gradient(ellipse 120% 80% at 50% 50%, transparent 30%, rgba(10, 10, 12, 0.4) 70%, rgba(10, 10, 12, 0.7) 100%)`,
+        }}
+      />
+
+      {/* LAYER 7 - Diagonal shimmer. Restored — on quieter pages (founder,
+          docs, updates) it passes over the cards and photo frames and
+          reads as a subtle "premium reflection" pass. On the homepage
+          it's imperceptible under the other content. Kept at alpha 0.02
+          and a slow 20s loop so it never becomes the focal point. */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: `linear-gradient(
+            135deg,
+            transparent 40%,
+            rgba(57, 197, 187, 0.02) 45%,
+            rgba(255, 119, 168, 0.02) 50%,
+            rgba(57, 197, 187, 0.02) 55%,
+            transparent 60%
+          )`,
+          backgroundSize: "200% 200%",
+          animation: "shimmer 20s linear infinite",
+          willChange: "background-position",
         }}
       />
 
