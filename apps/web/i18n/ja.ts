@@ -345,13 +345,49 @@ const ja: Translations = {
         title: 'Privacy SDK (npm)',
         desc: '@protocol-01/privacy-sdkをnpmに公開。14モジュール：shield、stealth、confidential、streams、subscriptions、vault、registry、relay、MPC、compliance、airdrop、OTC、payroll、treasury。Reactフック付き。',
       },
+      instantUnshield: {
+        title: 'インスタント・アンシールド（p01_liquidity）',
+        desc: '新しいオンチェーン流動性プログラム。ユーザーは約0.85 SOLのプルーフバッファ家賃を前払いすることなくアンシールド可能。キーパーネットワーク（10分ごとのGitHub Actions cron）によるprefund/settleフロー。DevnetでLive（6PfFkvj…）、モバイルSTARKアンシールドパスに`instant`フラグで接続済み。',
+      },
+      perWalletNotes: {
+        title: 'ウォレット別ノート分離',
+        desc: 'HKDF(walletSeed, poolPDA, counter)による決定論的ノート派生 — シードのみからクロスデバイスリカバリー可能。StoredNoteにownerPubkeyを追加し、マルチウォレットセッションで表示可能なノートが混在しません。シードベースのrescanで任意のデバイス上のすべてのノートを再構築。',
+      },
+      deterministicStealth: {
+        title: '決定論的ステルスシグナー + クラッシュスイープ',
+        desc: 'エフェメラルシグナーのシードをDate.now()ではなく(walletSeed, noteId)で生成 — STARK操作が失敗した場合、事前入金されたSOLを再開またはユーザーに回収可能。回復不可能なエフェメラルpubkeyに0.85 SOLがトラップされることは二度とありません。',
+      },
+      poolV2Migration: {
+        title: 'Denominated Pool v2マイグレーション',
+        desc: 'DenominatedPool::SEED_PREFIXを`denominated_pool_v2`にバンプしたプログラムアップグレード + 13の新プールPDA（6 SOL + 7 USDC）。将来のすべてのリーフ挿入は正規のMerkleRootChangedイベントを発行 — クライアントのMerkle再構築で100%デコード可能なツリー履歴を保証。',
+      },
+      multiLayoutDecoder: {
+        title: 'ユニバーサル・イベントデコーダー',
+        desc: 'クライアントのMerkle再構築は6つのイベントレイアウト（MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease）のレジストリを走査 + 署名のページネーション。pre-hardeningプールを回復不能にしていたデコーダードリフトを克服。',
+      },
+      mugenExchange: {
+        title: 'Mugen Exchange（P2Pフィアット）',
+        desc: '呪術廻戦（五条）をテーマにしたP2Pフィアット-to-crypto マーケットプレイス — KYCなし、オンチェーンwSOL vaultによるエスクロー、Treasury Bufferレイヤー、MagicBlock PER + Arcium + FROST + Nymプライバシースタック。プライバシーレシート + トレードライフサイクルUIのモバイルネイティブ統合。Vercelにデプロイ済み。',
+      },
+      colosseumFrontier: {
+        title: 'Colosseum Frontier 2026',
+        desc: '2026年4月23日、アイルランドチームリージョン（Superteam IEアフィリエーション）で提出。アクセラレータートラック有効。Superteam Irelandから、Arcium上で活動中のアイルランドの5チームの一つとして公に認識されました。',
+      },
       networkMapping: {
         title: 'P-01\u5185\u90e8\u30cd\u30c3\u30c8\u30ef\u30fc\u30af\u30de\u30c3\u30d4\u30f3\u30b0',
         desc: '\u5185\u90e8\u53d6\u5f15\u30d5\u30ed\u30fc\u3092\u30de\u30c3\u30d4\u30f3\u30b0\u3057\u3066\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u30eb\u30fc\u30c6\u30a3\u30f3\u30b0\u3092\u6700\u9069\u5316\u3057\u3001P-01\u30cd\u30c3\u30c8\u30ef\u30fc\u30af\u5168\u4f53\u306e\u30aa\u30f3\u30c1\u30a7\u30fc\u30f3\u30d5\u30a3\u30f3\u30ac\u30fc\u30d7\u30ea\u30f3\u30c6\u30a3\u30f3\u30b0\u3092\u524a\u6e1b\u3002',
       },
       fiatOnRamp: {
-        title: '\u30d5\u30a3\u30a2\u30c3\u30c8\u30aa\u30f3\u30e9\u30f3\u30d7\uff08\u6697\u53f7\u8cc7\u7523\u8cfc\u5165\uff09',
-        desc: '\u30af\u30ec\u30b8\u30c3\u30c8\u30ab\u30fc\u30c9\u307e\u305f\u306f\u9280\u884c\u632f\u8fbc\u3067SOL\u3001USDC\u3001USDT\u3092\u8cfc\u5165\u3002\u30a2\u30d7\u30ea\u3092\u96e2\u308c\u305a\u306b\u30d5\u30a3\u30a2\u30c3\u30c8\u304b\u3089\u6697\u53f7\u8cc7\u7523\u3078\u76f4\u63a5\u5909\u63db\u3002',
+        title: '\u30d5\u30a3\u30a2\u30c3\u30c8\u30aa\u30f3\u30e9\u30f3\u30d7\uff08\u30ab\u30fc\u30c9 + MoonPay\uff09',
+        desc: '\u30ab\u30fc\u30c9\u6c7a\u6e08\u3068MoonPay\u306e\u30a2\u30d7\u30ea\u5185\u7d71\u5408\u3001Mugen P2P\u30eb\u30fc\u30c8\u3068\u4e26\u884c\u3057\u3066\u63d0\u4f9b\u3002\u30d5\u30a3\u30a2\u30c3\u30c8-to-crypto\u5909\u63db\u3092\u30a2\u30d7\u30ea\u3092\u96e2\u308c\u305a\u306b\u76f4\u63a5\u5b9f\u884c\u3001P2P\u30d1\u30b9\u306f\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u91cd\u8996\u306e\u30e6\u30fc\u30b6\u30fc\u5411\u3051\u306bKYC\u30d5\u30ea\u30fc\u3092\u7dad\u6301\u3002',
+      },
+      leafInsertedCanonical: {
+        title: '\u30e6\u30cb\u30d0\u30fc\u30b5\u30eb`LeafInserted`\u30a4\u30d9\u30f3\u30c8',
+        desc: '\u547c\u3073\u51fa\u3057\u5143\uff08shield\u3001transfer\u3001split\u3001escrow\u3001\u5c06\u6765\u306e\u547d\u4ee4\uff09\u306b\u95a2\u4fc2\u306a\u304f\u3001`MerkleTree::insert_with_root()`\u304b\u3089\u767a\u884c\u3055\u308c\u308b\u5358\u4e00\u306e\u6b63\u898f\u30a4\u30d9\u30f3\u30c8\u3002\u30af\u30e9\u30a4\u30a2\u30f3\u30c8\u5074\u306e\u30c7\u30b3\u30fc\u30c0\u30fc\u30c9\u30ea\u30d5\u30c8\u30d0\u30b0\u306e\u30af\u30e9\u30b9\u5168\u4f53\u3092\u6c38\u4e45\u306b\u6392\u9664 \u2014 1\u3064\u306e\u30ec\u30a4\u30a2\u30a6\u30c8\u30011\u65e5\u76ee\u30821000\u65e5\u76ee\u3082\u30c7\u30b3\u30fc\u30c9\u53ef\u80fd\u3002',
+      },
+      mainnetLaunch: {
+        title: '\u30e1\u30a4\u30f3\u30cd\u30c3\u30c8\u30ed\u30fc\u30f3\u30c1',
+        desc: '\u5916\u90e8\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u76e3\u67fb\u5b8c\u4e86\u5f8c\u306e\u30d5\u30eb\u30e1\u30a4\u30f3\u30cd\u30c3\u30c8\u30c7\u30d7\u30ed\u30a4\u3002denominated pools\u304b\u3089\u958b\u59cb\u3057\u3001TVL\u3068\u30aa\u30d6\u30b6\u30fc\u30d0\u30d3\u30ea\u30c6\u30a3\u30b7\u30b0\u30ca\u30eb\u304c\u5b89\u5b9a\u3057\u305f\u3089 subscriptions \u3068 privacy router \u306b\u62e1\u5f35\u3059\u308b\u30d5\u30a7\u30fc\u30ba\u30b2\u30fc\u30c8\u65b9\u5f0f\u306e\u30ed\u30fc\u30eb\u30a2\u30a6\u30c8\u3002',
       },
       securityAudit: {
         title: '\u5916\u90e8\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u76e3\u67fb',
