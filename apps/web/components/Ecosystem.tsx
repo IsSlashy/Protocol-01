@@ -218,7 +218,7 @@ function Ecosystem() {
 
   return (
     <section className="py-20 relative overflow-hidden" ref={ref}>
-      <div className="absolute inset-0 bg-gradient-to-b from-p01-void via-p01-surface/10 to-p01-void" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-p01-surface/10 to-transparent" />
 
       <div className="relative z-10">
         {/* Header */}

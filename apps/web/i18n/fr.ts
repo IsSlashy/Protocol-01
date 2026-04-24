@@ -345,13 +345,49 @@ const fr: Translations = {
         title: 'Privacy SDK (npm)',
         desc: '@protocol-01/privacy-sdk publié sur npm. 14 modules : shield, stealth, confidential, streams, subscriptions, vault, registry, relay, MPC, compliance, airdrop, OTC, payroll, treasury. Hooks React inclus.',
       },
+      instantUnshield: {
+        title: 'Unshield instantané (p01_liquidity)',
+        desc: 'Nouveau programme de liquidité on-chain qui permet d’unshielder sans avancer les ~0.85 SOL de rent du proof buffer. Flux prefund/settle avec un réseau de keepers (GitHub Actions cron toutes les 10 min). Live devnet (6PfFkvj…), câblé dans le flow STARK unshield mobile via un flag `instant`.',
+      },
+      perWalletNotes: {
+        title: 'Isolation des notes par wallet',
+        desc: 'Notes dérivées de manière déterministe via HKDF(walletSeed, poolPDA, counter) — recovery cross-device depuis le seed uniquement. StoredNote porte ownerPubkey pour que les sessions multi-wallet ne mélangent jamais les notes visibles. Un rescan seed-only reconstruit chaque note sur n’importe quel appareil.',
+      },
+      deterministicStealth: {
+        title: 'Signer furtif déterministe + crash-sweep',
+        desc: 'Les signers éphémères sont désormais dérivés de (walletSeed, noteId) au lieu de Date.now() — toute opération STARK échouée peut reprendre ou rapatrier les SOL déjà prefundés vers l’utilisateur. Plus jamais 0.85 SOL piégés sur une pubkey éphémère irrécupérable.',
+      },
+      poolV2Migration: {
+        title: 'Migration Denominated Pool v2',
+        desc: 'Upgrade programme avec bump de SEED_PREFIX vers `denominated_pool_v2` + 13 nouvelles PDAs de pools (6 SOL + 7 USDC). Chaque insertion de leaf émet désormais l’event canonique MerkleRootChanged — garantit un historique d’arbre 100 % décodable côté client.',
+      },
+      multiLayoutDecoder: {
+        title: 'Décodeur d’événements universel',
+        desc: 'La reconstruction Merkle côté client parcourt maintenant un registre de 6 layouts d’events (MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease) + pagination signatures. Neutralise la dérive de décodeur qui rendait les pools pre-hardening irrécupérables.',
+      },
+      mugenExchange: {
+        title: 'Mugen Exchange (P2P fiat)',
+        desc: 'Marketplace P2P fiat-to-crypto à thème Gojo — sans KYC, escrow via wSOL on-chain, couche Treasury Buffer, stack privacy MagicBlock PER + Arcium + FROST + Nym. Intégration mobile native avec reçu privé + UI cycle de vie des trades. Déployé sur Vercel.',
+      },
+      colosseumFrontier: {
+        title: 'Colosseum Frontier 2026',
+        desc: 'Soumis le 23/04/2026 dans la région Irlande (affiliation Superteam IE). Track accelerator activé. Tagged publiquement par Superteam Ireland comme une des 5 équipes irlandaises actives sur Arcium.',
+      },
       networkMapping: {
         title: 'Cartographie du r\u00e9seau interne P-01',
         desc: 'Cartographiez les flux de transactions internes pour optimiser le routage de confidentialit\u00e9 et r\u00e9duire l\u2019empreinte on-chain \u00e0 travers le r\u00e9seau P-01.',
       },
       fiatOnRamp: {
-        title: 'Rampe d\u2019acc\u00e8s fiat (Acheter des cryptos)',
-        desc: 'Achetez du SOL, de l\u2019USDC et de l\u2019USDT par carte bancaire ou virement. Conversion fiat-crypto directe sans quitter l\u2019application.',
+        title: 'Rampe fiat (Cartes + MoonPay)',
+        desc: 'Int\u00e9gration carte et MoonPay dans l\u2019app, en plus du flow P2P Mugen. Conversion fiat-crypto directe sans quitter l\u2019application, tout en gardant la voie P2P sans KYC pour les users privacy-first.',
+      },
+      leafInsertedCanonical: {
+        title: '\u00c9v\u00e9nement canonique `LeafInserted`',
+        desc: 'Un seul event \u00e9mis depuis `MerkleTree::insert_with_root()`, peu importe le caller (shield, transfer, split, escrow, futures instructions). \u00c9limine d\u00e9finitivement toute la classe de bugs de d\u00e9rive de d\u00e9codeur c\u00f4t\u00e9 client \u2014 un seul layout, d\u00e9codable au jour 1 comme au jour 1000.',
+      },
+      mainnetLaunch: {
+        title: 'Mainnet Launch',
+        desc: 'D\u00e9ploiement mainnet complet apr\u00e8s cl\u00f4ture de l\u2019audit de s\u00e9curit\u00e9 externe. Rollout par phases, en commen\u00e7ant par les denominated pools, puis subscriptions et privacy router une fois la TVL et l\u2019observabilit\u00e9 stabilis\u00e9es.',
       },
       securityAudit: {
         title: 'Audit de s\u00e9curit\u00e9 externe',

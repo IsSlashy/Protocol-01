@@ -253,6 +253,43 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.privacySdkNpm.desc",
         icon: <Code className="w-5 h-5" />,
       },
+      // ── v0.9.9 Frost release (2026-04-23) ─────────────────────
+      {
+        title: "roadmap.items.instantUnshield.title",
+        description: "roadmap.items.instantUnshield.desc",
+        icon: <Zap className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.perWalletNotes.title",
+        description: "roadmap.items.perWalletNotes.desc",
+        icon: <Wallet className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.deterministicStealth.title",
+        description: "roadmap.items.deterministicStealth.desc",
+        icon: <Eye className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.poolV2Migration.title",
+        description: "roadmap.items.poolV2Migration.desc",
+        icon: <Layers className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.multiLayoutDecoder.title",
+        description: "roadmap.items.multiLayoutDecoder.desc",
+        icon: <Code className="w-5 h-5" />,
+      },
+      // ── Ecosystem / product surface ───────────────────────────
+      {
+        title: "roadmap.items.mugenExchange.title",
+        description: "roadmap.items.mugenExchange.desc",
+        icon: <CreditCard className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.colosseumFrontier.title",
+        description: "roadmap.items.colosseumFrontier.desc",
+        icon: <Globe className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -277,9 +314,14 @@ const roadmap: RoadmapPhase[] = [
         icon: <Shield className="w-5 h-5" />,
       },
       {
-        title: "roadmap.items.trustedSetup.title",
-        description: "roadmap.items.trustedSetup.desc",
-        icon: <Lock className="w-5 h-5" />,
+        title: "roadmap.items.leafInsertedCanonical.title",
+        description: "roadmap.items.leafInsertedCanonical.desc",
+        icon: <Code className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.mainnetLaunch.title",
+        description: "roadmap.items.mainnetLaunch.desc",
+        icon: <Zap className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.iosBuild.title",

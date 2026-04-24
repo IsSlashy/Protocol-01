@@ -108,7 +108,7 @@ export default function Problem() {
   return (
     <section className="section relative overflow-hidden" ref={ref}>
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-p01-void via-p01-surface/30 to-p01-void" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-p01-surface/30 to-transparent" />
 
       <div className="relative z-10 max-w-7xl mx-auto">
         {/* Section Header */}

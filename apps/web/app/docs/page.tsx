@@ -82,16 +82,18 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);
     i18nKey: "shieldedPool",
     icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Private transfer flow via relayer
-// 1. User generates ZK proof client-side
-const { proof, publicSignals } = await generateProof(inputs);
+    codeExample: `// Shielded pool flow (v0.9.9 — STARK, quantum-safe)
+// 1. User generates a STARK proof locally (no remote prover)
+const starkProof = await starkProver.generateProof(noteInputs);
 
-// 2. User funds relayer (amount + fee + gas)
-await fundRelayer(amount, feeBps: 50, gasCost);
+// 2. Optional: instant path via p01_liquidity prefund so the user
+//    doesn't have to front ~0.85 SOL of proof-buffer rent
+await liquidity.prefund({ ephemeralSigner, proofBuffer, amount });
 
-// 3. Relayer verifies & sends to stealth address
-// On-chain: only "Relayer → StealthAddress" is visible
-const tx = await relayer.privateSend(proof, stealthAddress);`,
+// 3. Buffer verifies on-chain → funds release to a one-time
+//    ECDH + ML-KEM-768 stealth recipient. Observer sees only
+//    "ephemeral signer → stealth recipient" — never the user's wallet.
+const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });`,
   },
   {
     id: "poseidon-hash",
@@ -141,34 +143,45 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     i18nKey: "solanaIntegration",
     icon: <Cpu className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// On-chain Groth16 verification (BN254)
-let pairing_result = sol_alt_bn128_pairing(&[...]);
-require!(pairing_result == 1, "Invalid Groth16 proof");
-
-// On-chain STARK verification (Goldilocks + Blake3)
+    codeExample: `// v0.9.9 — Every spend verifies through the custom on-chain
+// FRI verifier (no Winterfell dep, Goldilocks + Blake3, ~889K CU).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
     verify_merkle_path(proof, pos, trace_root)?;
     verify_poseidon_round(trace_row, round_constants)?;
-}`,
+}
+
+// LEGACY (pre-April 2026, now retired from every spend path) —
+// BN254 Groth16 pairing via the sol_alt_bn128 syscall. Kept here
+// only for historical reference; the code still exists in the
+// repo history but no instruction dispatches to it in v0.9.9+.
+//
+//   let pairing_result = sol_alt_bn128_pairing(&[...]);
+//   require!(pairing_result == 1, "Invalid Groth16 proof");`,
   },
   {
     id: "private-relay",
     i18nKey: "privateRelay",
     icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// Trustless on-chain relay flow
-// 1. User generates ZK proof locally (spending key stays on device)
-const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-  { inputs, merkle_path, nullifiers },
-  "transfer.wasm", "transfer.zkey"
-);
+    codeExample: `// Trustless on-chain relay flow (v0.9.9 — STARK-only)
+// 1. Client generates a STARK proof locally via the WASM prover
+//    (spending key stays on device; no remote prover fallback)
+const starkProof = await starkProver.generateProof({
+  secret, nullifierPreimage, merklePath, pathIndices,
+});
 
-// 2. Submit proof to on-chain relayer program
-await program.methods.relayTransfer(proof, publicSignals, stealthAddress)
-  .accounts({ relayerPda, pool, recipient: stealthAddress })
+// 2. Upload the proof to a buffer account (~120 KB, ~9–15 KB compact)
+//    then call the on-chain FRI verifier (no Winterfell dep,
+//    custom Goldilocks + Blake3 implementation, ~889K CU)
+await submitStarkProof(program, proofBuffer, circuitId);
+
+// 3. Instruction reads the verified buffer and releases funds
+//    to a one-time stealth recipient (ECDH + ML-KEM-768 hybrid)
+await program.methods.unshieldDenominatedStark(...)
+  .accounts({ pool, recipient: stealthAddress, nullifierPda })
   .rpc();
-// On-chain: relayer verifies proof → transfers to stealth address`,
+// Legacy snarkjs.groth16 path fully retired — see Migration History`,
   },
   {
     id: "arcium-mpc",

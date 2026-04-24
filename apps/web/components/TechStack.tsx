@@ -152,7 +152,7 @@ export default function TechStack() {
   return (
     <section className="section relative overflow-hidden" ref={ref}>
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-p01-void via-p01-surface/20 to-p01-void" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-p01-surface/20 to-transparent" />
       <div className="absolute inset-0 grid-pattern opacity-20" />
 
       <div className="relative z-10 max-w-7xl mx-auto">

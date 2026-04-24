@@ -44,7 +44,7 @@ export default function HowItWorks() {
   return (
     <section className="section relative overflow-hidden" ref={ref}>
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-p01-void via-p01-surface/10 to-p01-void" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-p01-surface/10 to-transparent" />
 
       {/* Subtle grid */}
       <div

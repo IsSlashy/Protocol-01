@@ -168,7 +168,11 @@ function DepthBackground() {
         </span>
       ))}
 
-      {/* LAYER 5 - Single scanline (CSS animation) */}
+      {/* LAYER 5 - Single cyan scanline sweeping top → bottom. Previously
+          removed together with the diagonal shimmer, but kept being liked
+          on the quieter pages (founder, docs) where it reads as a subtle
+          terminal-style scan rather than TV-style surveillance. 2px tall,
+          10s period, opacity ~0.1 — barely visible but gives life. */}
       <div
         className="absolute left-0 right-0 h-[2px] pointer-events-none"
         style={{
@@ -183,24 +187,6 @@ function DepthBackground() {
         className="absolute inset-0 pointer-events-none"
         style={{
           background: `radial-gradient(ellipse 120% 80% at 50% 50%, transparent 30%, rgba(10, 10, 12, 0.4) 70%, rgba(10, 10, 12, 0.7) 100%)`,
-        }}
-      />
-
-      {/* LAYER 7 - Shimmer effect (single CSS animation) */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `linear-gradient(
-            135deg,
-            transparent 40%,
-            rgba(57, 197, 187, 0.02) 45%,
-            rgba(255, 119, 168, 0.02) 50%,
-            rgba(57, 197, 187, 0.02) 55%,
-            transparent 60%
-          )`,
-          backgroundSize: "200% 200%",
-          animation: "shimmer 20s linear infinite",
-          willChange: "background-position",
         }}
       />
 

@@ -344,13 +344,49 @@ const en = {
         title: 'Privacy SDK (npm)',
         desc: '@protocol-01/privacy-sdk published on npm. 14 modules: shield, stealth, confidential, streams, subscriptions, vault, registry, relay, MPC, compliance, airdrop, OTC, payroll, treasury. React hooks included.',
       },
+      instantUnshield: {
+        title: 'Instant Unshield (p01_liquidity)',
+        desc: 'New on-chain liquidity program that lets users unshield without fronting ~0.85 SOL of proof-buffer rent. Prefund/settle flow with a keeper network (GitHub Actions cron every 10 min). Live devnet at 6PfFkvj…, wired into the mobile STARK unshield path via an `instant` flag.',
+      },
+      perWalletNotes: {
+        title: 'Per-Wallet Note Isolation',
+        desc: 'Notes deterministically derived from HKDF(walletSeed, poolPDA, counter) — cross-device recovery works from seed alone. StoredNote carries ownerPubkey so multi-wallet sessions never mix visible notes. Seed-only rescan reconstructs every note across any device.',
+      },
+      deterministicStealth: {
+        title: 'Deterministic Stealth Signer + Crash-Sweep',
+        desc: 'Ephemeral signers are now seeded from (walletSeed, noteId) instead of Date.now() — any failed STARK op can resume or sweep the pre-funded SOL back to the user. Never again traps 0.85 SOL on an unrecoverable ephemeral pubkey.',
+      },
+      poolV2Migration: {
+        title: 'Denominated Pool v2 Migration',
+        desc: 'Program upgrade bumping DenominatedPool::SEED_PREFIX to `denominated_pool_v2` + 13 fresh pool PDAs (6 SOL + 7 USDC). Every future leaf insertion emits the canonical MerkleRootChanged event — guarantees 100% decodable tree history for the client Merkle rebuild.',
+      },
+      multiLayoutDecoder: {
+        title: 'Universal Event Decoder',
+        desc: 'Client Merkle rebuild now walks a registry of 6 event layouts (MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease) + signature pagination. Defeats the decoder drift that made pre-hardening pools unrecoverable.',
+      },
+      mugenExchange: {
+        title: 'Mugen Exchange (P2P Fiat)',
+        desc: 'Gojo-themed P2P fiat-to-crypto marketplace — no KYC, escrow via wSOL on-chain vault, Treasury Buffer layer, MagicBlock PER + Arcium + FROST + Nym privacy stack. Mobile-native integration with privacy receipt + trade lifecycle UI. Deployed on Vercel.',
+      },
+      colosseumFrontier: {
+        title: 'Colosseum Frontier 2026',
+        desc: 'Submitted on 2026-04-23 under Ireland team region (Superteam IE affiliation). Accelerator track enabled. Publicly tagged by Superteam Ireland as one of 5 Irish teams actively building on Arcium.',
+      },
       networkMapping: {
         title: 'P-01 Internal Network Mapping',
         desc: 'Map internal transaction flows to optimize privacy routing and reduce on-chain fingerprinting across the P-01 network.',
       },
       fiatOnRamp: {
-        title: 'Fiat On-Ramp (Buy Crypto)',
-        desc: 'Buy SOL, USDC, and USDT with credit card or bank transfer. Direct fiat-to-crypto without leaving the app.',
+        title: 'Fiat On-Ramp (Cards + MoonPay)',
+        desc: 'Card and MoonPay integration in-app, alongside the Mugen P2P route. Direct fiat-to-crypto without leaving the app, with the P2P path staying KYC-free for privacy-first users.',
+      },
+      leafInsertedCanonical: {
+        title: 'Universal `LeafInserted` Event',
+        desc: 'Single canonical event emitted from `MerkleTree::insert_with_root()` regardless of caller (shield, transfer, split, escrow, future instructions). Eliminates the entire class of client-side decoder drift bugs forever — one layout, decodable on day 1 and day 1000.',
+      },
+      mainnetLaunch: {
+        title: 'Mainnet Launch',
+        desc: 'Full mainnet deployment after the external security audit closes. Phase-gated rollout starting with denominated pools, expanding to subscriptions and the privacy router once TVL and observability signals stabilize.',
       },
       securityAudit: {
         title: 'External Security Audit',

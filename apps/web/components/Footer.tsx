@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import { Github, MessageCircle } from "lucide-react";
 import { useT } from "@/i18n";
 
+// Hides the progressive-glitch easter egg that routes to /void. Flip back to
+// `true` to reactivate it (used for a prior event campaign). All the glitch
+// engine below stays compiled so reactivation is a single boolean flip.
+const SHOW_VOID_EGG = false;
+
 // ─── Easter egg glitch engine ───────────────────────────────────────────────
 const ZA = '\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308\u030A\u030B\u030C\u030D\u030E\u030F\u0310\u0311\u0312\u0313\u0314\u0315\u031A\u033D\u034A\u034B\u034C';
 const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u0349';
@@ -169,8 +174,11 @@ export default function Footer() {
                     </a>
                   </li>
                 ))}
-                {/* Easter egg — only in community column, under GitHub */}
-                {section.title === 'community' && (
+                {/* Easter egg — only in community column, under GitHub.
+                    Gated on SHOW_VOID_EGG so the whole progressive-glitch
+                    mechanism + /void route stay wired in; flip the flag
+                    at the top of this file to re-enable the campaign. */}
+                {SHOW_VOID_EGG && section.title === 'community' && (
                   <li className="mt-2">
                     <button
                       onClick={(e) => {

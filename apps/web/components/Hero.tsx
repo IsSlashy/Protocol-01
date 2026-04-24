@@ -153,7 +153,12 @@ const CorruptionNoise = memo(function CorruptionNoise() {
 function Hero() {
   const t = useT();
   return (
-    <section className="relative min-h-screen flex items-center overflow-hidden">
+    <section className="relative min-h-screen flex items-center">
+      {/* No overflow-hidden on purpose — the phone's cyan halo and the Miku
+          radial are meant to bleed softly past the section boundary into
+          the Demo section below, so the cyan "bubble" reopens instead of
+          closing hard at the cut. The Miku container and the corner data
+          streams keep their own local overflow-hidden for their own needs. */}
       {/* CSS Animations for Hero elements */}
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes fade-in {
