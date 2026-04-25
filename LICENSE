@@ -25,8 +25,38 @@ TERMS AND CONDITIONS
    only. Public visibility does NOT constitute a grant of any license or right
    to use the Software.
 
-4. PROHIBITED ACTIVITIES
-   Without explicit written consent from Volta Team, you may NOT:
+4. COLOSSEUM FRONTIER HACKATHON EVALUATION GRANT
+   Notwithstanding Sections 2, 3, and 5, Volta Team grants Colosseum
+   (colosseum.org), and its officially designated judges, reviewers, mentors,
+   operators, and contractors (collectively, "Colosseum Evaluators"), a
+   limited, non-exclusive, non-transferable, non-sublicensable, revocable
+   license to:
+     (a) clone and download this repository,
+     (b) read and inspect the source code, documentation, and assets,
+     (c) build, install, and run the Software in private, non-production
+         environments, and
+     (d) evaluate, score, and provide feedback on the Software,
+   solely for the purpose of reviewing this submission as part of the
+   Colosseum Frontier Hackathon ("the Hackathon").
+
+   This grant is strictly limited to the Hackathon's official evaluation
+   period and the activities listed in (a)-(d) above. It does NOT permit:
+     - public redistribution, publication, or mirroring of the Software,
+     - creation of derivative works beyond what is strictly necessary to
+       build and run the Software locally for evaluation,
+     - commercial use, deployment to production, or use by any third party
+       outside the Colosseum Evaluators,
+     - retention or continued use of the Software after the Hackathon's
+       evaluation period concludes, except as required by Colosseum's
+       internal record-keeping obligations.
+
+   Volta Team may revoke this grant at any time by written notice. Any use
+   of the Software outside the scope defined in this Section 4 is governed
+   by the remainder of this License.
+
+5. PROHIBITED ACTIVITIES
+   Without explicit written consent from Volta Team (or, for Colosseum
+   Evaluators, beyond the scope of Section 4), you may NOT:
    - Copy, fork, or clone this repository for any purpose other than viewing
    - Use any portion of the code in your own projects
    - Deploy, host, or run the Software or any derivative thereof
@@ -34,28 +64,28 @@ TERMS AND CONDITIONS
    - Use the Software for commercial or non-commercial purposes
    - Incorporate any part of the Software into other software
 
-5. OPEN SOURCE COMPONENTS
+6. OPEN SOURCE COMPONENTS
    Certain reusable libraries under the packages/ directory (react-native-zk,
    solana-verifier, privacy-toolkit, zk-pipeline) may be released separately
    under permissive licenses at Volta Team's sole discretion. Unless explicitly
    stated in a separate LICENSE file within those packages, no such license
    is granted.
 
-6. PRIOR MIT LICENSE PERIOD
+7. PRIOR MIT LICENSE PERIOD
    This repository was temporarily licensed under MIT for the Privacy Hack
    Hackathon evaluation period (ending February 10, 2026). That license has
    expired. Forks created during the MIT period retain MIT rights only for
    the code as it existed at the time of forking. All subsequent code is
    proprietary.
 
-7. INVESTMENT & PARTNERSHIP INQUIRIES
+8. INVESTMENT & PARTNERSHIP INQUIRIES
    For licensing, investment, partnership, or collaboration inquiries,
    contact Volta Team:
    - Twitter/X: @Protocol01_
    - Discord: discord.gg/KfmhPFAHNH
    - GitHub: github.com/IsSlashy
 
-8. DISCLAIMER
+9. DISCLAIMER
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
@@ -63,7 +93,7 @@ TERMS AND CONDITIONS
    AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
    CONNECTION WITH THE SOFTWARE.
 
-9. ENFORCEMENT
+10. ENFORCEMENT
    Volta Team reserves the right to pursue legal action against any
    unauthorized use, reproduction, or distribution of the Software.
 

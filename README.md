@@ -26,6 +26,16 @@
 > Public visibility does **not** constitute a grant of any license.
 > No permission is granted to use, copy, modify, fork, or distribute this code.
 >
+> **Colosseum Frontier Hackathon Evaluation Grant.**
+> Solely for the duration of the Colosseum Frontier Hackathon judging period, Colosseum,
+> its designated judges, reviewers, mentors, and operators are granted a limited,
+> non-exclusive, non-transferable, revocable right to **clone, read, build, run, and
+> evaluate** this repository for the sole purpose of reviewing and scoring the project
+> in the context of the hackathon. This grant **does not** authorize redistribution,
+> publication, derivative works, commercial use, or any use outside the official
+> Colosseum Frontier Hackathon evaluation. All other parties are bound by the
+> proprietary terms below.
+>
 > For licensing, investment, or partnership inquiries &mdash; [reach out](https://x.com/Protocol01_).
 >
 > See [LICENSE](./LICENSE) for full terms.
