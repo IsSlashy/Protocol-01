@@ -58,6 +58,9 @@ interface DenominatedPoolState {
   error: string | null;
   progress: string | null;
   poolCache: Record<string, PoolCacheEntry>;
+  /** Last `confirmed` slot observed by `refreshNotes`. Drives the
+   *  per-note maturity countdown in the UI. `null` until the first refresh. */
+  currentSlot: number | null;
 
   // Actions
   shieldNote: (token: 'SOL' | 'USDC', denomination: number) => Promise<void>;
@@ -102,6 +105,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
     (set, get) => ({
       notes: [],
       selectedToken: 'ALL',
+      currentSlot: null,
       isLoading: false,
       isProving: false,
       error: null,
@@ -183,6 +187,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const currentEpoch = slotToEpoch(slot);
 
           set(state => ({
+            currentSlot: slot,
             notes: state.notes.map(note => {
               if (note.status === 'spent') return note;
               try {

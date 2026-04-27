@@ -6,7 +6,11 @@ import { cn } from '@/shared/utils';
 const navItems = [
   { path: '/', icon: Wallet, label: 'Wallet' },
   { path: '/subscriptions', icon: Repeat, label: 'Streams' },
-  { path: '/shielded', icon: Shield, label: 'Shield' },
+  // Route to the denominated-pools landing page so users land on the STARK
+  // path (fixed denominations 0.1/1/10/100 SOL + 1/10/100/1000 USDC) by default.
+  // The legacy `/shielded` route still resolves for code that navigates to it
+  // directly, but it's a Groth16-era flow without denominations.
+  { path: '/denominated', icon: Shield, label: 'Shield' },
   { path: '/agent', icon: Sparkles, label: 'Agent' },
 ];
 
@@ -30,7 +34,11 @@ export default function MainLayout() {
       {!hideNav && (
         <nav className="flex items-center justify-around border-t border-p01-border bg-p01-void">
           {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive =
+              item.path === '/'
+                ? location.pathname === '/'
+                : location.pathname === item.path ||
+                  location.pathname.startsWith(`${item.path}/`);
             const Icon = item.icon;
 
             return (

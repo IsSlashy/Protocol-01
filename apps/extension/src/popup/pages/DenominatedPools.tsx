@@ -17,7 +17,38 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useDenominatedPoolStore, type StoredNote } from '@/shared/store/denominatedPool';
+import { receiptFromJSON } from '@/shared/services/denominatedPool';
 import { cn } from '@/shared/utils';
+
+// Maturity math — kept identical to mobile for visual / numerical parity:
+//   apps/mobile/app/(main)/(privacy)/denominated-notes.tsx :: fmtTime / getMaturity
+// Slots are ~500ms on devnet, an "epoch" here is a 7200-slot rolling window the
+// pool program enforces as the deposit anonymity floor.
+const SLOTS_PER_EPOCH = 7200;
+const SLOT_MS = 500;
+const EPOCH_DELAY = 2; // matches the value in `refreshNotes` above
+
+function fmtTime(ms: number): string {
+  if (ms <= 0) return 'ready';
+  const mins = Math.ceil(ms / 60_000);
+  if (mins < 60) return `~${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const rm = mins % 60;
+  return rm > 0 ? `~${hrs}h ${rm}m` : `~${hrs}h`;
+}
+
+/** Compute time-until-mature for a pending note. -1 if currentSlot unknown. */
+function maturityRemainingMs(note: StoredNote, currentSlot: number | null): number {
+  if (note.status === 'mature') return 0;
+  if (currentSlot === null) return -1;
+  try {
+    const receipt = receiptFromJSON(note.receiptJSON);
+    const matSlot = Number(receipt.depositEpoch + BigInt(EPOCH_DELAY)) * SLOTS_PER_EPOCH;
+    return Math.max(0, matSlot - currentSlot) * SLOT_MS;
+  } catch {
+    return -1;
+  }
+}
 
 export default function DenominatedPools() {
   const navigate = useNavigate();
@@ -26,6 +57,7 @@ export default function DenominatedPools() {
     notes,
     isLoading,
     error,
+    currentSlot,
     refreshNotes,
     getActiveNotes,
     getMatureNotes,
@@ -41,6 +73,17 @@ export default function DenominatedPools() {
       refreshNotes();
     }
   }, [publicKey]);
+
+  // Tick the countdown by re-fetching the slot every 3 s while pending notes
+  // exist. Matches the mobile UX where users see the maturity timer count
+  // down live without having to pull-to-refresh.
+  useEffect(() => {
+    if (!publicKey) return;
+    const hasPending = notes.some(n => n.status === 'pending');
+    if (!hasPending) return;
+    const id = setInterval(() => { refreshNotes(); }, 3000);
+    return () => clearInterval(id);
+  }, [publicKey, notes]);
 
   const activeNotes = getActiveNotes();
   const matureNotes = getMatureNotes();
@@ -205,20 +248,31 @@ export default function DenominatedPools() {
               PENDING ({filteredPending.length})
             </p>
             <div className="bg-p01-surface rounded-xl overflow-hidden divide-y divide-p01-border/50">
-              {filteredPending.map(note => (
-                <div key={note.id} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                      <Clock className="w-5 h-5 text-yellow-400" />
+              {filteredPending.map(note => {
+                const remainingMs = maturityRemainingMs(note, currentSlot);
+                const label =
+                  remainingMs < 0
+                    ? '...'
+                    : remainingMs === 0
+                      ? 'Ready soon'
+                      : `Matures in ${fmtTime(remainingMs)}`;
+                return (
+                  <div key={note.id} className="p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                        <Clock className="w-5 h-5 text-yellow-400" />
+                      </div>
+                      <div>
+                        <p className="text-white font-medium text-sm">{formatDenomination(note)}</p>
+                        <p className="text-yellow-400 text-xs">{label}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-white font-medium text-sm">{formatDenomination(note)}</p>
-                      <p className="text-yellow-400 text-xs">Waiting for maturity</p>
-                    </div>
+                    <span className="text-yellow-400 text-xs font-mono tabular-nums">
+                      {remainingMs < 0 ? '—' : fmtTime(remainingMs)}
+                    </span>
                   </div>
-                  <Lock className="w-4 h-4 text-p01-chrome/40" />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
