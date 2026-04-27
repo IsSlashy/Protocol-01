@@ -12,7 +12,8 @@
     "prebuild": "expo prebuild",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "eas-build-post-install": "cd ../.. && pnpm --filter \"./packages/*\" run --if-present build"
   },
   "dependencies": {
     "@babel/runtime": "^7.28.6",
