@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol 01 — Economic Charter</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 0; }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --dark: #0f0f12;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --green: #4ade80;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 10pt;
+    line-height: 1.6;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    max-height: 297mm;
+    padding: 18mm 20mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  .page::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(to right, rgba(57,197,187,0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(57,197,187,0.03) 1px, transparent 1px);
+    background-size: 30px 30px;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .page > * { position: relative; z-index: 1; }
+
+  .page-footer {
+    position: absolute;
+    bottom: 10mm;
+    left: 20mm;
+    right: 20mm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 28pt;
+    letter-spacing: 0.05em;
+    line-height: 1.1;
+    margin-bottom: 12px;
+  }
+  h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 16pt;
+    letter-spacing: 0.03em;
+    color: var(--cyan);
+    margin-bottom: 10px;
+    margin-top: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 11pt;
+    letter-spacing: 0.02em;
+    color: var(--pink);
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+  h4 {
+    font-weight: 700;
+    font-size: 10pt;
+    color: var(--cyan);
+    margin-bottom: 4px;
+    margin-top: 10px;
+  }
+
+  p { margin-bottom: 8px; }
+  .lead { font-size: 12pt; color: var(--text-muted); line-height: 1.5; margin-bottom: 16px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .small { font-size: 8pt; }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .bold { font-weight: 700; }
+  .center { text-align: center; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .card-cyan { border-color: rgba(57,197,187,0.3); background: linear-gradient(135deg, rgba(57,197,187,0.05), transparent); }
+  .card-pink { border-color: rgba(255,119,168,0.3); background: linear-gradient(135deg, rgba(255,119,168,0.05), transparent); }
+  .card-yellow { border-color: rgba(255,204,0,0.3); background: linear-gradient(135deg, rgba(255,204,0,0.05), transparent); }
+  .card-green { border-color: rgba(74,222,128,0.3); background: linear-gradient(135deg, rgba(74,222,128,0.05), transparent); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+    font-size: 9pt;
+  }
+  th {
+    background: var(--surface);
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td {
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(42,42,48,0.5);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+
+  .code-block {
+    background: var(--dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge-cyan { background: rgba(57,197,187,0.15); color: var(--cyan); border: 1px solid rgba(57,197,187,0.3); }
+  .badge-pink { background: rgba(255,119,168,0.15); color: var(--pink); border: 1px solid rgba(255,119,168,0.3); }
+  .badge-yellow { background: rgba(255,204,0,0.15); color: var(--yellow); border: 1px solid rgba(255,204,0,0.3); }
+  .badge-green { background: rgba(74,222,128,0.15); color: var(--green); border: 1px solid rgba(74,222,128,0.3); }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+  }
+
+  ul, ol { padding-left: 18px; margin-bottom: 8px; }
+  li { margin-bottom: 3px; }
+
+  .cover-logo {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 120pt;
+    letter-spacing: 0.08em;
+    background: linear-gradient(135deg, var(--cyan), var(--pink), var(--cyan-bright));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+  }
+  .cover-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10pt;
+    color: var(--text-muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .stat-box { text-align: center; padding: 12px; }
+  .stat-number {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 24pt;
+    color: var(--cyan);
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 8pt;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .flow-bar {
+    display: flex;
+    height: 28px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    margin: 6px 0 12px 0;
+  }
+  .flow-bar > div {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    color: var(--void);
+    font-weight: 700;
+  }
+
+  .no-break { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<!-- =================== PAGE 1: COVER =================== -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+  <div style="margin-bottom: 30px;">
+    <div class="cover-logo">01</div>
+    <div style="font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 24pt; letter-spacing: 0.12em; margin-top: -10px;">PROTOCOL</div>
+  </div>
+  <div style="font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 22pt; letter-spacing: 0.06em; color: var(--cyan); margin-bottom: 8px;">
+    ECONOMIC CHARTER
+  </div>
+  <div class="cover-subtitle" style="margin-bottom: 28px;">
+    Fee schedule &middot; system costs &middot; revenue model
+  </div>
+  <div style="font-family: 'JetBrains Mono', monospace; font-size: 9pt; color: var(--text-muted); letter-spacing: 0.08em; line-height: 1.8;">
+    v0.9.9 &middot; FROST RELEASE<br>
+    Devnet live &middot; Mainnet pending audit<br>
+    Effective 2026-04-27
+  </div>
+
+  <div style="position: absolute; bottom: 60px; left: 0; right: 0; text-align: center;">
+    <div class="cover-subtitle">Volta Team &middot; Slashy Fx &middot; Built on Solana</div>
+  </div>
+</div>
+
+<!-- =================== PAGE 2: ONE-PAGE SUMMARY =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>The numbers.</h1>
+    <span class="badge badge-cyan">01 / 09</span>
+  </div>
+  <p class="lead">
+    Protocol 01 is a privacy layer for Solana. Merchants integrate via SDK
+    and receive payments at their own retailer wallet. The protocol takes a
+    small fixed fee on shield and unshield. There are no platform commissions,
+    no rev-share locks, no exclusivity clauses.
+  </p>
+
+  <div class="grid-3" style="margin-top: 14px;">
+    <div class="card card-cyan stat-box">
+      <div class="stat-number">0.30%</div>
+      <div class="stat-label">Shield fee</div>
+    </div>
+    <div class="card card-pink stat-box">
+      <div class="stat-number">0.50%</div>
+      <div class="stat-label">Unshield fee</div>
+    </div>
+    <div class="card card-yellow stat-box">
+      <div class="stat-number">0.80%</div>
+      <div class="stat-label">Total round-trip</div>
+    </div>
+  </div>
+
+  <div class="grid-3" style="margin-top: 8px;">
+    <div class="card stat-box">
+      <div class="stat-number" style="color: var(--text);">0%</div>
+      <div class="stat-label">Subscription cut</div>
+    </div>
+    <div class="card stat-box">
+      <div class="stat-number" style="color: var(--text);">0%</div>
+      <div class="stat-label">Merchant signup</div>
+    </div>
+    <div class="card stat-box">
+      <div class="stat-number" style="color: var(--text);">5.00%</div>
+      <div class="stat-label">Hard cap on protocol fee</div>
+    </div>
+  </div>
+
+  <h2>What this document covers</h2>
+  <table>
+    <tr><th style="width: 12%">Page</th><th>Section</th></tr>
+    <tr><td class="mono cyan">03</td><td>Core protocol fees &mdash; shield, unshield, transfer</td></tr>
+    <tr><td class="mono cyan">04</td><td>Solana network cost &mdash; compute units &amp; rent paid by the user</td></tr>
+    <tr><td class="mono cyan">05</td><td>Liquidity pool fee &mdash; optional instant unshield</td></tr>
+    <tr><td class="mono cyan">06</td><td>Mugen exchange fee &mdash; fiat &lt;&gt; crypto P2P (separate product)</td></tr>
+    <tr><td class="mono cyan">07</td><td>Revenue split &mdash; where every basis point flows</td></tr>
+    <tr><td class="mono cyan">08</td><td>Worked example &mdash; SaaS subscription, 12-month cohort</td></tr>
+    <tr><td class="mono cyan">09</td><td>Caps, governance, change policy</td></tr>
+  </table>
+
+  <h2>What we do NOT charge</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4 class="green">Free always</h4>
+      <ul class="small muted">
+        <li>Service registration on-chain</li>
+        <li>Subscription vault creation</li>
+        <li>Vault pause / resume</li>
+        <li>Stealth address generation</li>
+        <li>SDK access &amp; API calls</li>
+        <li>Push notifications, webhooks</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 class="green">Pass-through only</h4>
+      <ul class="small muted">
+        <li>Solana base tx fee &mdash; 5,000 lamports per signature</li>
+        <li>Account rent &mdash; reclaimable on close</li>
+        <li>Priority fees &mdash; user-controlled, market-driven</li>
+        <li>RPC calls &mdash; merchant uses their own endpoint</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 01</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 3: CORE PROTOCOL FEES =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Core protocol fees.</h1>
+    <span class="badge badge-cyan">02 / 09</span>
+  </div>
+  <p class="lead">
+    Three on-chain operations carry a fee. Every other operation is free.
+    Fees are deducted in the same token as the operation (SOL or SPL),
+    routed atomically to the protocol fee wallet, and recorded as part of
+    the transaction signature.
+  </p>
+
+  <h2>Fee schedule</h2>
+  <table>
+    <tr>
+      <th>Operation</th>
+      <th class="num">BPS</th>
+      <th class="num">% rate</th>
+      <th>When charged</th>
+      <th>Source</th>
+    </tr>
+    <tr>
+      <td><span class="badge badge-cyan">SHIELD</span> deposit into the shielded pool</td>
+      <td class="num cyan">30</td>
+      <td class="num cyan">0.30 %</td>
+      <td>At deposit, before pool credit</td>
+      <td class="mono small dim">SHIELD_FEE_BPS</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-pink">UNSHIELD</span> withdraw from the shielded pool</td>
+      <td class="num pink">50</td>
+      <td class="num pink">0.50 %</td>
+      <td>At withdrawal, deducted from amount out</td>
+      <td class="mono small dim">UNSHIELD_FEE_BPS</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-cyan">TRANSFER</span> private 2-in-2-out shielded transfer</td>
+      <td class="num cyan">30</td>
+      <td class="num cyan">0.30 %</td>
+      <td>At each transfer, on the input notes</td>
+      <td class="mono small dim">SHIELD_FEE_BPS</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">SUBSCRIBE</span> lock note into a vault</td>
+      <td class="num green">0</td>
+      <td class="num green">0.00 %</td>
+      <td>Free &mdash; vault uses an existing shielded note</td>
+      <td class="mono small dim">&mdash;</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">CLAIM</span> retailer pulls a vault period</td>
+      <td class="num green">0</td>
+      <td class="num green">0.00 %</td>
+      <td>Free &mdash; the unshield at claim already taxed at 0.50%</td>
+      <td class="mono small dim">&mdash;</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">CANCEL</span> close vault, re-shield refund</td>
+      <td class="num green">0</td>
+      <td class="num green">0.00 %</td>
+      <td>Free &mdash; reshield uses existing pool, no new shield</td>
+      <td class="mono small dim">&mdash;</td>
+    </tr>
+  </table>
+
+  <h2>Worked numbers</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>1 SOL one-shot payment</h4>
+      <table style="margin-bottom: 0;">
+        <tr><td class="muted small">Buyer shields 1.000 SOL</td><td class="num mono">-0.003 SOL</td></tr>
+        <tr><td class="muted small">Net into pool</td><td class="num mono cyan">0.997 SOL</td></tr>
+        <tr><td class="muted small">Subscription claim (no fee)</td><td class="num mono">&mdash;</td></tr>
+        <tr><td class="muted small">Retailer unshields 0.997 SOL</td><td class="num mono">-0.005 SOL</td></tr>
+        <tr><td class="bold">Net to retailer</td><td class="num mono pink bold">0.992 SOL</td></tr>
+        <tr><td class="muted small">Effective take</td><td class="num mono yellow">0.80 %</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h4>50 SOL recurring vault</h4>
+      <table style="margin-bottom: 0;">
+        <tr><td class="muted small">Subscriber shields 50.000 SOL</td><td class="num mono">-0.150 SOL</td></tr>
+        <tr><td class="muted small">Locked in vault</td><td class="num mono cyan">49.850 SOL</td></tr>
+        <tr><td class="muted small">12 monthly claims at 4.154 SOL</td><td class="num mono">12 &times; 0.021</td></tr>
+        <tr><td class="muted small">Total unshield fee over year</td><td class="num mono">-0.249 SOL</td></tr>
+        <tr><td class="bold">Net to retailer over year</td><td class="num mono pink bold">49.601 SOL</td></tr>
+        <tr><td class="muted small">Effective take</td><td class="num mono yellow">0.80 %</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card card-yellow" style="margin-top: 10px;">
+    <h4 class="yellow">Fee floor for tiny amounts</h4>
+    <p class="small muted">
+      For payments below 0.01 SOL, the 0.5% unshield fee can round to zero
+      (0.5% &times; 0.01 = 50,000 lamports = 0.00005 SOL). The Solana base
+      transaction fee (5,000 lamports per signature) becomes the dominant
+      cost. Below ~0.001 SOL, the network fee exceeds the protocol fee &mdash;
+      meaningful only for micropayments.
+    </p>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 02</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 4: SOLANA NETWORK COST =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Solana network cost.</h1>
+    <span class="badge badge-cyan">03 / 09</span>
+  </div>
+  <p class="lead">
+    Every Solana operation carries a base transaction fee plus a compute
+    budget for on-chain execution. Protocol 01 sets explicit compute unit
+    limits per operation so users know the upper bound. These costs go to
+    Solana validators &mdash; not to the protocol.
+  </p>
+
+  <h2>Compute units per operation</h2>
+  <table>
+    <tr>
+      <th>Operation</th>
+      <th class="num">Compute units</th>
+      <th class="num">Min. priority fee*</th>
+      <th>Source</th>
+    </tr>
+    <tr><td>Shield</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">COMPUTE_UNITS.SHIELD</td></tr>
+    <tr><td>Unshield (with STARK verify)</td><td class="num mono pink">1,400,000</td><td class="num mono">0.000035 SOL</td><td class="small dim">COMPUTE_UNITS.STARK_VERIFY</td></tr>
+    <tr><td>Private transfer</td><td class="num mono cyan">400,000</td><td class="num mono">0.000010 SOL</td><td class="small dim">COMPUTE_UNITS.TRANSFER</td></tr>
+    <tr><td>Stealth send / claim</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">COMPUTE_UNITS.STEALTH_*</td></tr>
+    <tr><td>Stream create</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">COMPUTE_UNITS.STREAM_CREATE</td></tr>
+    <tr><td>Subscription create</td><td class="num mono cyan">300,000</td><td class="num mono">0.000008 SOL</td><td class="small dim">COMPUTE_UNITS.SUBSCRIPTION_CREATE</td></tr>
+    <tr><td>MPC vote (Arcium)</td><td class="num mono cyan">300,000</td><td class="num mono">0.000008 SOL</td><td class="small dim">COMPUTE_UNITS.MPC_VOTE</td></tr>
+    <tr><td>Instant unshield prefund</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">PREFUND_CU</td></tr>
+  </table>
+  <p class="small dim">
+    *Minimum priority fee assumes 25,000 micro-lamports per CU (a common
+    devnet/mainnet baseline). Real fees fluctuate with network congestion;
+    the SDK exposes a <span class="mono cyan">priorityFeeMultiplier</span>
+    knob so callers can scale.
+  </p>
+
+  <h2>Account rent &mdash; reclaimable</h2>
+  <p>
+    Some operations create new on-chain accounts which must be rent-exempt.
+    The user funds the rent up-front and gets it back when the account is
+    closed. None of this rent goes to the protocol.
+  </p>
+  <table>
+    <tr>
+      <th>Account</th>
+      <th class="num">Size</th>
+      <th class="num">Rent</th>
+      <th>Reclaimed by</th>
+    </tr>
+    <tr><td>Shielded note nullifier PDA</td><td class="num mono">~64 B</td><td class="num mono">~0.00098 SOL</td><td class="small">Permanent (anti double-spend)</td></tr>
+    <tr><td>Subscription vault</td><td class="num mono">~190 B</td><td class="num mono">~0.00146 SOL</td><td class="small">Cancel returns rent</td></tr>
+    <tr><td>Service registry entry</td><td class="num mono">~417 B</td><td class="num mono">~0.00302 SOL</td><td class="small">Deregister returns rent</td></tr>
+    <tr><td>STARK proof buffer</td><td class="num mono">~120 KB</td><td class="num mono">~0.85 SOL</td><td class="small">Auto-closed at unshield (or on crash-sweep)</td></tr>
+    <tr><td>Liquidity pool prefund record</td><td class="num mono">~80 B</td><td class="num mono">~0.00111 SOL</td><td class="small">Settle returns rent</td></tr>
+  </table>
+
+  <div class="card card-cyan no-break">
+    <h4 class="cyan">Total network cost &mdash; typical 1 SOL unshield</h4>
+    <div class="flow-bar">
+      <div style="background: var(--cyan); flex-grow: 5;">0.005 SOL protocol</div>
+      <div style="background: var(--pink); flex-grow: 0.4;">priority</div>
+      <div style="background: var(--yellow); flex-grow: 0.05;">base</div>
+    </div>
+    <p class="small muted">
+      0.005 SOL protocol fee + ~0.000035 SOL priority + 0.000005 SOL base.
+      The proof buffer rent (~0.85 SOL) is a transient placeholder &mdash; auto-closed
+      on the same transaction. The user sees one net debit of ~0.005045 SOL.
+    </p>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 03</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 5: LIQUIDITY POOL =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Liquidity pool fee.</h1>
+    <span class="badge badge-cyan">04 / 09</span>
+  </div>
+  <p class="lead">
+    Optional instant-unshield path: the liquidity pool prefunds the user's
+    withdrawal so they get funds in the same block, in exchange for a small
+    fee paid to LP providers. Standard unshield (free of LP fee) requires
+    waiting for full proof finalization.
+  </p>
+
+  <h2>Two unshield paths</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4>Standard unshield</h4>
+      <ul class="small muted">
+        <li>STARK proof generated on device (~6&ndash;10 s)</li>
+        <li>Submitted to chain, verified, executed</li>
+        <li>Funds at retailer wallet on next block</li>
+        <li>Fee: 0.50% protocol, no LP fee</li>
+      </ul>
+      <div style="margin-top: 8px;"><span class="badge badge-cyan">FREE OF LP FEE</span></div>
+    </div>
+    <div class="card card-yellow">
+      <h4>Instant unshield (prefund)</h4>
+      <ul class="small muted">
+        <li>LP advances funds at retailer wallet immediately</li>
+        <li>User completes the chain side asynchronously</li>
+        <li>LP collects from the pool when proof lands</li>
+        <li>Fee: 0.50% protocol + LP fee (variable, capped 3.00%)</li>
+      </ul>
+      <div style="margin-top: 8px;"><span class="badge badge-yellow">UP TO 3.00% LP FEE</span></div>
+    </div>
+  </div>
+
+  <h2>Liquidity pool parameters</h2>
+  <table>
+    <tr><th>Parameter</th><th class="num">Default</th><th class="num">Maximum</th><th>Setter</th></tr>
+    <tr><td>Prefund fee (per pool)</td><td class="num mono cyan">~0.50%</td><td class="num mono pink">3.00%</td><td class="small dim">LP authority via update_params</td></tr>
+    <tr><td>Min prefund amount</td><td class="num mono">0.01 SOL</td><td class="num mono">&mdash;</td><td class="small dim">Pool init</td></tr>
+    <tr><td>Max prefund amount</td><td class="num mono">100 SOL</td><td class="num mono">&mdash;</td><td class="small dim">Pool init</td></tr>
+    <tr><td>Settlement window</td><td class="num mono">1 epoch</td><td class="num mono">5 epochs</td><td class="small dim">Pool init</td></tr>
+  </table>
+
+  <div class="card no-break" style="margin-top: 10px;">
+    <h4>Where the LP fee goes</h4>
+    <div class="flow-bar">
+      <div style="background: var(--green); flex-grow: 8;">80% LP providers (yield)</div>
+      <div style="background: var(--cyan); flex-grow: 1.5;">15% protocol</div>
+      <div style="background: var(--pink); flex-grow: 0.5;">5% treasury</div>
+    </div>
+    <p class="small muted">
+      The LP fee compensates capital providers who lock liquidity for
+      instant settlement. Eight in ten basis points flow to LPs as yield.
+      The split is enforced on-chain at settlement time and is not
+      negotiable per-trade.
+    </p>
+  </div>
+
+  <h2>When does instant unshield make sense?</h2>
+  <table>
+    <tr><th>Scenario</th><th>Recommended path</th><th>Reason</th></tr>
+    <tr><td>Subscription claim, retailer ops</td><td><span class="badge badge-cyan">Standard</span></td><td class="small">Block-level latency is fine, save the LP fee</td></tr>
+    <tr><td>Live commerce checkout (~10 s budget)</td><td><span class="badge badge-yellow">Instant</span></td><td class="small">UX matters more than 1&ndash;3% LP fee</td></tr>
+    <tr><td>High-value treasury sweep</td><td><span class="badge badge-cyan">Standard</span></td><td class="small">3% on a large amount = real money</td></tr>
+    <tr><td>Mobile user, poor connectivity</td><td><span class="badge badge-yellow">Instant</span></td><td class="small">Fall back to LP path on RPC retry / proof timeout</td></tr>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 04</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 6: MUGEN EXCHANGE =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Mugen exchange fee.</h1>
+    <span class="badge badge-cyan">05 / 09</span>
+  </div>
+  <p class="lead">
+    Mugen is the reference fiat &lt;&gt; crypto P2P exchange built on Protocol
+    01. It is a separate product line with its own fee schedule. Merchants
+    using only Protocol 01 SDK do not pay Mugen fees. Documented here so
+    integrators know the full surface.
+  </p>
+
+  <h2>Mugen fee structure</h2>
+  <p class="small muted">
+    Two-tier model: a visible fee shown at checkout, plus a small spread
+    baked into the exchange rate. The spread covers FX risk and the
+    fiat-rail counterparty premium. Total effective take varies by payment
+    method.
+  </p>
+  <table>
+    <tr>
+      <th>Method</th>
+      <th class="num">Visible fee</th>
+      <th class="num">Hidden spread</th>
+      <th class="num">Total effective</th>
+      <th>Settlement</th>
+    </tr>
+    <tr><td>SEPA / IBAN bank transfer</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">0.80 %</td><td class="num mono pink">1.30 %</td><td class="small">1&ndash;2 days</td></tr>
+    <tr><td>Wise</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">0.80 %</td><td class="num mono pink">1.30 %</td><td class="small">1&ndash;2 hours</td></tr>
+    <tr><td>Revolut</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">0.80 %</td><td class="num mono pink">1.30 %</td><td class="small">Instant</td></tr>
+    <tr><td>Cash (escrowed)</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">1.20 %</td><td class="num mono pink">1.70 %</td><td class="small">Same day</td></tr>
+    <tr><td>Card (Visa / Mastercard)</td><td class="num mono cyan">1.90 %</td><td class="num mono dim">1.00 %</td><td class="num mono pink">2.90 %</td><td class="small">Instant</td></tr>
+  </table>
+
+  <div class="card card-cyan">
+    <h4 class="cyan">Why card is the highest tier</h4>
+    <p class="small muted">
+      Card processors charge 1.5&ndash;2.0% interchange to merchants, plus
+      chargeback exposure of typically 0.3&ndash;0.5% for crypto-adjacent
+      flows. The 1.90% visible fee is set to break even on processor cost,
+      not as protocol revenue. The 1.00% spread covers chargeback reserve
+      and FX volatility on the card-to-SOL leg.
+    </p>
+  </div>
+
+  <h2>Revenue split &mdash; Mugen on-chain fees</h2>
+  <p class="small muted">
+    The total on-chain Mugen fee is ~1.50% averaged across methods. At
+    escrow release, this fee is split atomically between three wallets:
+  </p>
+  <div class="flow-bar">
+    <div style="background: var(--cyan); flex-grow: 20;">20% Protocol 01</div>
+    <div style="background: var(--pink); flex-grow: 65;">65% Mugen ops</div>
+    <div style="background: var(--yellow); flex-grow: 15;">15% Treasury</div>
+  </div>
+  <table>
+    <tr><th>Recipient</th><th class="num">Share</th><th>Use</th></tr>
+    <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan">20 %</td><td class="small">SDK, mobile, extension, infra hosting, audits</td></tr>
+    <tr><td><span class="badge badge-pink">Mugen</span></td><td class="num mono pink">65 %</td><td class="small">Fiat rail ops, escrow management, KYC partner, support</td></tr>
+    <tr><td><span class="badge badge-yellow">Treasury</span></td><td class="num mono yellow">15 %</td><td class="small">DAO grants, governance staking, community programs</td></tr>
+  </table>
+
+  <div class="card card-pink no-break">
+    <h4 class="pink">Layer 1 &mdash; Natural Variance Fiat</h4>
+    <p class="small muted">
+      Mugen splits user payments into canonical SOL denominations
+      (0.1 / 1 / 10 / 100) internally. The bank counterparty sees a
+      natural-looking amount (e.g., &euro;847.32). The chain sees a uniform
+      pool entry. Residual fiat (&lt; 0.50%) is tracked in a separate sub-wallet
+      and reconciled in the next batch &mdash; not lost, not extra fee.
+    </p>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 05</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 7: REVENUE FLOW =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Where every basis point flows.</h1>
+    <span class="badge badge-cyan">06 / 09</span>
+  </div>
+  <p class="lead">
+    Single source of truth: the on-chain fee splitter program. Each fee
+    type is routed to exactly one wallet, then sub-split atomically by the
+    splitter. The protocol fee wallet address is hardcoded across all P-01
+    programs.
+  </p>
+
+  <h2>Single fee wallet (current)</h2>
+  <div class="card card-cyan">
+    <p class="mono small">
+      <span class="cyan">PROTOCOL_FEE_WALLET</span> = BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN
+    </p>
+    <p class="small muted">
+      Hardcoded in <span class="mono">programs/p01-fee-splitter/src/lib.rs</span> and
+      mirrored across <span class="mono">@protocol-01/privacy-sdk</span>.
+      All shield / unshield / transfer fees converge here, then redistribute.
+    </p>
+  </div>
+
+  <h2>Distribution from the fee wallet</h2>
+  <p class="small muted">
+    The fee splitter applies a fixed-ratio routing to four downstream
+    accounts. Splits are configurable but capped on-chain:
+  </p>
+
+  <div class="flow-bar">
+    <div style="background: var(--cyan); flex-grow: 50;">50% Engineering &amp; infra</div>
+    <div style="background: var(--pink); flex-grow: 25;">25% Audits &amp; security</div>
+    <div style="background: var(--yellow); flex-grow: 15;">15% Treasury</div>
+    <div style="background: var(--green); flex-grow: 10;">10% Founder</div>
+  </div>
+
+  <table>
+    <tr><th>Recipient</th><th class="num">Share</th><th>Mandate</th></tr>
+    <tr>
+      <td><span class="badge badge-cyan">Engineering &amp; infrastructure</span></td>
+      <td class="num mono cyan">50 %</td>
+      <td class="small">Devs, RPC nodes, prover compute, MPC clusters, CI / CD, mobile / extension upkeep</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-pink">Audit &amp; security</span></td>
+      <td class="num mono pink">25 %</td>
+      <td class="small">Recurring audits (OtterSec / Neodyme / Trail of Bits), bug bounties, formal verification</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-yellow">Treasury reserve</span></td>
+      <td class="num mono yellow">15 %</td>
+      <td class="small">12-month operating runway, emergency response, slashing escrow for relayer dispute</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-green">Founder allocation</span></td>
+      <td class="num mono green">10 %</td>
+      <td class="small">Volta Team / Slashy Fx &mdash; the sole party building the protocol</td>
+    </tr>
+  </table>
+
+  <h2>Why these splits</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h4 class="cyan">50% to engineering</h4>
+      <p class="small muted">
+        Solana-native crypto infra is compute-expensive. The shielded pool
+        program alone spans ~14 Anchor programs and ~340 tests. STARK proof
+        generation runs on user devices but the verifier and prover state
+        live on chain. The 50% cut keeps the build velocity sustainable
+        through mainnet and beyond.
+      </p>
+    </div>
+    <div class="card">
+      <h4 class="pink">25% to audits</h4>
+      <p class="small muted">
+        Privacy primitives without audit are theatre. We pre-allocate 25%
+        of every basis point to recurring audits, not just a single
+        pre-launch review. Mainnet deployment is gated on at least one
+        complete audit cycle.
+      </p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 06</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 8: WORKED EXAMPLE =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Worked example.</h1>
+    <span class="badge badge-cyan">07 / 09</span>
+  </div>
+  <p class="lead">
+    A SaaS subscription, monthly billing at &euro;19.99 USDC equivalent, 12-month
+    cohort of 1,000 paying users. End-to-end protocol economics, before the
+    merchant's own COGS / refunds / churn assumptions.
+  </p>
+
+  <h2>Cohort assumptions</h2>
+  <div class="grid-3">
+    <div class="card stat-box"><div class="stat-number">1,000</div><div class="stat-label">Subscribers month 1</div></div>
+    <div class="card stat-box"><div class="stat-number">&euro;19.99</div><div class="stat-label">Monthly price</div></div>
+    <div class="card stat-box"><div class="stat-number">12</div><div class="stat-label">Months tracked</div></div>
+    <div class="card stat-box"><div class="stat-number">10 %</div><div class="stat-label">Monthly churn (illustrative)</div></div>
+    <div class="card stat-box"><div class="stat-number">&euro;0.025</div><div class="stat-label">Avg priority + base fee</div></div>
+    <div class="card stat-box"><div class="stat-number">100 %</div><div class="stat-label">Standard path (no LP)</div></div>
+  </div>
+
+  <h2>Cash flow over 12 months</h2>
+  <table>
+    <tr>
+      <th>Month</th>
+      <th class="num">Active subs</th>
+      <th class="num">Gross revenue</th>
+      <th class="num">Shield fee*</th>
+      <th class="num">Unshield fee</th>
+      <th class="num">Net to merchant</th>
+    </tr>
+    <tr><td>1</td><td class="num mono">1,000</td><td class="num mono">&euro;19,990</td><td class="num mono pink">&euro;59.97</td><td class="num mono pink">&euro;99.95</td><td class="num mono cyan bold">&euro;19,830.08</td></tr>
+    <tr><td>2</td><td class="num mono">900</td><td class="num mono">&euro;17,991</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;89.96</td><td class="num mono cyan bold">&euro;17,901.04</td></tr>
+    <tr><td>3</td><td class="num mono">810</td><td class="num mono">&euro;16,192</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;80.96</td><td class="num mono cyan bold">&euro;16,111.04</td></tr>
+    <tr><td>4</td><td class="num mono">729</td><td class="num mono">&euro;14,573</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;72.86</td><td class="num mono cyan bold">&euro;14,499.84</td></tr>
+    <tr><td>5</td><td class="num mono">656</td><td class="num mono">&euro;13,116</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;65.58</td><td class="num mono cyan bold">&euro;13,049.86</td></tr>
+    <tr><td>6</td><td class="num mono">590</td><td class="num mono">&euro;11,805</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;59.02</td><td class="num mono cyan bold">&euro;11,745.87</td></tr>
+    <tr><td>7</td><td class="num mono">531</td><td class="num mono">&euro;10,624</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;53.12</td><td class="num mono cyan bold">&euro;10,570.78</td></tr>
+    <tr><td>8</td><td class="num mono">478</td><td class="num mono">&euro;9,562</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;47.81</td><td class="num mono cyan bold">&euro;9,513.70</td></tr>
+    <tr><td>9</td><td class="num mono">430</td><td class="num mono">&euro;8,606</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;43.03</td><td class="num mono cyan bold">&euro;8,562.33</td></tr>
+    <tr><td>10</td><td class="num mono">387</td><td class="num mono">&euro;7,745</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;38.73</td><td class="num mono cyan bold">&euro;7,706.10</td></tr>
+    <tr><td>11</td><td class="num mono">348</td><td class="num mono">&euro;6,971</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;34.85</td><td class="num mono cyan bold">&euro;6,935.49</td></tr>
+    <tr><td>12</td><td class="num mono">313</td><td class="num mono">&euro;6,274</td><td class="num mono dim">&euro;0</td><td class="num mono pink">&euro;31.37</td><td class="num mono cyan bold">&euro;6,241.94</td></tr>
+    <tr><td class="bold">Total</td><td class="num mono">&mdash;</td><td class="num mono yellow">&euro;143,449</td><td class="num mono pink">&euro;59.97</td><td class="num mono pink">&euro;717.24</td><td class="num mono cyan bold">&euro;142,668</td></tr>
+  </table>
+  <p class="small dim">
+    *Shield fee is paid by the subscriber when funding their vault &mdash;
+    once per subscription. Subsequent monthly claims hit only the unshield
+    fee. Months 2-12 show <span class="mono">&euro;0</span> shield because no
+    new vault is created.
+  </p>
+
+  <h2>Bottom line</h2>
+  <div class="grid-3">
+    <div class="card card-yellow stat-box">
+      <div class="stat-number" style="color: var(--yellow);">&euro;143,449</div>
+      <div class="stat-label">Gross revenue</div>
+    </div>
+    <div class="card card-pink stat-box">
+      <div class="stat-number" style="color: var(--pink);">&euro;777</div>
+      <div class="stat-label">Total fees (0.54%)</div>
+    </div>
+    <div class="card card-cyan stat-box">
+      <div class="stat-number" style="color: var(--cyan);">&euro;142,668</div>
+      <div class="stat-label">Net to merchant</div>
+    </div>
+  </div>
+  <p class="small muted center" style="margin-top: 8px;">
+    Compare: Stripe at 2.90% + &euro;0.30 = ~&euro;5,460 fee on the same revenue, no privacy.
+  </p>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 07</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 9: BENCHMARK + GOVERNANCE =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>Benchmark &amp; governance.</h1>
+    <span class="badge badge-cyan">08 / 09</span>
+  </div>
+  <p class="lead">
+    Where Protocol 01 sits in the merchant-rail landscape, and the rules
+    governing how these fees can change.
+  </p>
+
+  <h2>Comparison table</h2>
+  <table>
+    <tr>
+      <th>Provider</th>
+      <th class="num">Take rate</th>
+      <th class="num">Per-tx fix</th>
+      <th>Privacy</th>
+      <th>Settlement</th>
+    </tr>
+    <tr>
+      <td><span class="badge badge-cyan">Protocol 01</span></td>
+      <td class="num mono cyan bold">0.80 %</td>
+      <td class="num mono">&euro;0.025</td>
+      <td><span class="badge badge-green">Native ZK</span></td>
+      <td class="small">~10 s on-chain</td>
+    </tr>
+    <tr>
+      <td>Stripe (cards)</td>
+      <td class="num mono">2.90 %</td>
+      <td class="num mono">&euro;0.30</td>
+      <td><span class="badge" style="background: rgba(255,51,102,0.15); color: var(--red); border: 1px solid rgba(255,51,102,0.3);">None</span></td>
+      <td class="small">2&ndash;7 days</td>
+    </tr>
+    <tr>
+      <td>Patreon</td>
+      <td class="num mono">8&ndash;12 %</td>
+      <td class="num mono">+ payout fees</td>
+      <td><span class="badge" style="background: rgba(255,51,102,0.15); color: var(--red); border: 1px solid rgba(255,51,102,0.3);">None</span></td>
+      <td class="small">Monthly</td>
+    </tr>
+    <tr>
+      <td>BTCPay self-host</td>
+      <td class="num mono">0 %</td>
+      <td class="num mono">on-chain BTC fee</td>
+      <td><span class="badge badge-yellow">L1 pseudonymous</span></td>
+      <td class="small">10&ndash;60 min</td>
+    </tr>
+    <tr>
+      <td>Coinbase Commerce</td>
+      <td class="num mono">1.00 %</td>
+      <td class="num mono">network fee</td>
+      <td><span class="badge" style="background: rgba(255,51,102,0.15); color: var(--red); border: 1px solid rgba(255,51,102,0.3);">None</span></td>
+      <td class="small">~30 min finality</td>
+    </tr>
+    <tr>
+      <td>Solana Pay (raw)</td>
+      <td class="num mono">0 %</td>
+      <td class="num mono">~&euro;0.0001</td>
+      <td><span class="badge" style="background: rgba(255,51,102,0.15); color: var(--red); border: 1px solid rgba(255,51,102,0.3);">None</span></td>
+      <td class="small">~1 s on-chain</td>
+    </tr>
+  </table>
+
+  <p class="small muted">
+    Protocol 01 sits between raw chain rails (zero fee, zero privacy) and
+    fiat processors (high fee, no privacy). The premium of 0.80% over Solana
+    Pay buys ZK privacy + STARK post-quantum + native subscription rails.
+  </p>
+
+  <h2>Fee change governance</h2>
+  <table>
+    <tr><th>Mechanism</th><th>Authority</th><th>Constraint</th></tr>
+    <tr>
+      <td>Protocol fee BPS</td>
+      <td class="small">Multisig (Volta core)</td>
+      <td class="small">Hard cap 5.00% on-chain (<span class="mono">MAX_FEE_BPS</span>)</td>
+    </tr>
+    <tr>
+      <td>Fee wallet address</td>
+      <td class="small">Multisig + 7-day timelock</td>
+      <td class="small">Public announcement before activation</td>
+    </tr>
+    <tr>
+      <td>LP prefund fee per pool</td>
+      <td class="small">Pool authority (per-LP)</td>
+      <td class="small">Hard cap 3.00% on-chain (<span class="mono">MAX_PREFUND_FEE_BPS</span>)</td>
+    </tr>
+    <tr>
+      <td>Mugen fee split</td>
+      <td class="small">Mugen team multisig</td>
+      <td class="small">Splits sum-checked on-chain at every release</td>
+    </tr>
+    <tr>
+      <td>Splitter recipient ratios</td>
+      <td class="small">Multisig + 30-day timelock</td>
+      <td class="small">Treasury share cannot drop below 10% per protocol bylaws</td>
+    </tr>
+  </table>
+
+  <h2>Public commitments</h2>
+  <div class="grid-2">
+    <div class="card card-green">
+      <h4 class="green">We commit to</h4>
+      <ul class="small muted">
+        <li>Never raise the protocol fee above 1.00% without 30-day notice + community vote</li>
+        <li>Publish quarterly fee revenue + recipient breakdown on-chain</li>
+        <li>Open-source all fee accounting code &amp; on-chain programs</li>
+        <li>Honor pre-existing service agreements at the fee rate at signup</li>
+      </ul>
+    </div>
+    <div class="card card-pink">
+      <h4 class="pink">We do not</h4>
+      <ul class="small muted">
+        <li>Take any percentage of the merchant's actual revenue</li>
+        <li>Charge platform / listing / verification fees</li>
+        <li>Sell merchant data &mdash; we cannot, the chain hides it</li>
+        <li>Enforce exclusivity &mdash; merchants can use other rails freely</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; PAGE 08</span>
+  </div>
+</div>
+
+<!-- =================== PAGE 10: SUMMARY =================== -->
+<div class="page">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
+    <h1>One page summary.</h1>
+    <span class="badge badge-cyan">09 / 09</span>
+  </div>
+
+  <div class="card card-cyan">
+    <h3 class="cyan">Headline numbers</h3>
+    <div class="grid-3">
+      <div class="stat-box"><div class="stat-number">0.30 %</div><div class="stat-label">Shield</div></div>
+      <div class="stat-box"><div class="stat-number">0.50 %</div><div class="stat-label">Unshield</div></div>
+      <div class="stat-box"><div class="stat-number">0.80 %</div><div class="stat-label">Round-trip</div></div>
+    </div>
+  </div>
+
+  <div class="card card-pink">
+    <h3 class="pink">What you, the merchant, pay</h3>
+    <ul class="small">
+      <li>0.30% on every shield (paid by subscriber, not by you)</li>
+      <li>0.50% on every unshield (deducted from amount you receive)</li>
+      <li>~0.000010 SOL Solana priority + 0.000005 SOL base per claim</li>
+      <li>0% merchant signup, 0% subscription cut, 0% platform commission</li>
+      <li>Optional 0&ndash;3% LP fee if you opt into instant unshield path</li>
+    </ul>
+  </div>
+
+  <div class="card card-yellow">
+    <h3 class="yellow">What the system burns</h3>
+    <ul class="small">
+      <li>Compute units paid to Solana validators &mdash; 200K to 1.4M per op</li>
+      <li>Account rent (mostly reclaimable on close) &mdash; 0.001&ndash;0.85 SOL per account</li>
+      <li>RPC bandwidth &mdash; user / merchant pay their own RPC provider</li>
+    </ul>
+  </div>
+
+  <div class="card card-green">
+    <h3 class="green">What we, Protocol 01, take</h3>
+    <ul class="small">
+      <li>0.30% shield + 0.50% unshield &rarr; protocol fee wallet</li>
+      <li>15% of LP fee on instant unshield &rarr; protocol fee wallet</li>
+      <li>20% of Mugen on-chain fee (only if Mugen rail used)</li>
+      <li>Of which: 50% engineering, 25% audit, 15% treasury, 10% founder</li>
+    </ul>
+  </div>
+
+  <div style="margin-top: 30px; text-align: center;">
+    <div class="cover-subtitle" style="font-size: 9pt; line-height: 1.8;">
+      Volta Team &middot; Slashy Fx<br>
+      Built on Solana &middot; Devnet live &middot; Mainnet pending audit<br>
+      protocol-01.dev &middot; v0.9.9 FROST &middot; 2026-04-27
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
+    <span>v0.9.9 FROST &middot; END</span>
+  </div>
+</div>
+
+</body>
+</html>
