@@ -183,8 +183,9 @@
   <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:28pt; letter-spacing:0.14em; margin-top:-6mm;">
     PROTOCOL
   </div>
-  <div style="font-family:'JetBrains Mono',monospace; font-size:11pt; color:var(--text-muted); letter-spacing:0.18em; text-transform:uppercase; margin-top:10mm;">
-    Private recurring crypto subscriptions for Solana
+  <div style="font-family:'JetBrains Mono',monospace; font-size:11pt; color:var(--text-muted); letter-spacing:0.16em; text-transform:uppercase; margin-top:10mm; line-height:1.6;">
+    Privacy infrastructure for Solana.<br>
+    Recurring payments built in.
   </div>
   <div style="margin-top:18mm; font-family:'JetBrains Mono',monospace; font-size:9pt; color:var(--text-dim); letter-spacing:0.1em; line-height:1.8;">
     v0.9.9 &middot; FROST RELEASE<br>
@@ -396,11 +397,11 @@ setInterval(<span class="kw">async</span> () =&gt; {
     </div>
   </div>
 
-  <h3 style="margin-top: 7mm;">What the merchant never sees</h3>
-  <div class="grid-3" style="margin-top: 3mm;">
-    <div class="card"><p class="small"><span class="badge badge-red">HIDDEN</span> The customer's wallet identity</p></div>
-    <div class="card"><p class="small"><span class="badge badge-red">HIDDEN</span> The customer's transaction history</p></div>
-    <div class="card"><p class="small"><span class="badge badge-red">HIDDEN</span> Any link between two subscribers</p></div>
+  <h3 style="margin-top: 5mm;">What the merchant never sees</h3>
+  <div class="grid-3" style="margin-top: 2mm;">
+    <div class="card" style="padding: 4mm 5mm;"><p class="micro"><span class="badge badge-red">HIDDEN</span><br>The customer's wallet identity</p></div>
+    <div class="card" style="padding: 4mm 5mm;"><p class="micro"><span class="badge badge-red">HIDDEN</span><br>The customer's transaction history</p></div>
+    <div class="card" style="padding: 4mm 5mm;"><p class="micro"><span class="badge badge-red">HIDDEN</span><br>Any link between two subscribers</p></div>
   </div>
 
   <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 06 / 11</span></div>
@@ -520,11 +521,12 @@ setInterval(<span class="kw">async</span> () =&gt; {
     <tr><td>Solana Pay (raw)</td><td class="num mono">0.00%</td><td><span class="badge badge-red">None</span></td><td class="small">~1s</td></tr>
   </table>
 
-  <div class="card card-green" style="margin-top: 5mm;">
+  <div class="card card-green" style="margin-top: 4mm;">
     <p class="small">
-      <span class="cyan bold">Worked example:</span> SaaS at &euro;19.99/mo &middot; 1,000 subs &middot; 12 months &middot; 10% churn &middot;
-      gross &euro;143,449 &rarr; net to merchant <span class="mono cyan bold">&euro;142,668</span>.
-      Same revenue on Stripe: ~&euro;5,460 fee &middot; on Patreon: &euro;14,345 to &euro;17,214 fee.
+      <span class="cyan bold">Worked example.</span><br>
+      SaaS at &euro;19.99/mo, 1,000 subs, 12 months, 10% churn.<br>
+      Gross &euro;143,449 &rarr; net to merchant <span class="mono cyan bold">&euro;142,668</span> on Protocol 01.<br>
+      Same revenue costs ~&euro;5,460 on Stripe, &euro;14k&ndash;17k on Patreon.
     </p>
   </div>
 
@@ -606,13 +608,13 @@ setInterval(<span class="kw">async</span> () =&gt; {
     </div>
   </div>
 
-  <div style="margin-top: 12mm; text-align: center;">
-    <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:42pt; letter-spacing:0.04em; line-height:1.1;">
+  <div style="margin-top: 8mm; text-align: center;">
+    <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:30pt; letter-spacing:0.04em; line-height:1.15;">
       <span class="cyan">Privacy</span> is a right.<br>
       <span class="pink">Recurring</span> is the rail.<br>
       <span class="yellow">Solana</span> is the chain.
     </div>
-    <div style="margin-top: 8mm; font-family:'JetBrains Mono',monospace; font-size:9pt; color:var(--text-muted); letter-spacing:0.12em; text-transform:uppercase; line-height:1.8;">
+    <div style="margin-top: 6mm; font-family:'JetBrains Mono',monospace; font-size:8pt; color:var(--text-muted); letter-spacing:0.1em; text-transform:uppercase; line-height:1.7;">
       protocol-01.dev &middot; @Protocol01_<br>
       Volta Team &middot; Slashy Fx &middot; Solo, full-time<br>
       v0.9.9 Frost &middot; 2026-04-27
