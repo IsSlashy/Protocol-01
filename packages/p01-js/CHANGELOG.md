@@ -4,6 +4,17 @@ All notable changes to the `p-01` SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-04-27
+
+### Changed
+
+- **Repositioned as the merchant entry-point.** `p01-js` is now the dedicated drop-in surface for retailers (pay buttons, subscription widgets, webhook helpers). The full privacy stack lives in `@protocol-01/privacy-sdk`; both packages can be used together.
+- Removed the runtime deprecation warning emitted by `import '@protocol-01/p01-js'`.
+
+### Notes
+
+- The internal `RelayerClient` (centralized HTTP relayer) remains marked `@deprecated` at the symbol level — prefer `@protocol-01/specter-sdk` for on-chain relay via the `p01_relayer` program.
+
 ## [0.1.0] - 2026-01-31
 
 ### Added

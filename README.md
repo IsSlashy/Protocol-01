@@ -343,18 +343,24 @@ await client.sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 ```typescript
 // @protocol-01/merchant-sdk — server-side for retailers
 import {
-  registerService, fetchService, pollPaymentsForRetailer,
-  listVaultsForRetailer, issueAccessToken,
+  registerServiceOnChain, fetchService, pollPaymentsForRetailer,
+  listVaultsForRetailer, issueAccessToken, NATIVE_SOL_MINT,
 } from '@protocol-01/merchant-sdk';
 
-// Register the service (one-shot)
-await registerService(connection, merchantKp, {
+// Register the service (idempotent — boot-time)
+await registerServiceOnChain(connection, merchantKp, {
   slug: 'my-saas-pro',
   name: 'My SaaS — Pro tier',
-  priceSol: 0.05,
-  intervalDays: 30,
+  iconKey: 'chatgpt',
+  category: 'saas',
+  metadataUri: '',
+  retailer: merchantKp.publicKey,
+  tokenMint: NATIVE_SOL_MINT,    // or USDC SPL mint
+  priceAtomic: 50_000_000n,      // 0.05 SOL in lamports
+  intervalSlots: 6_480_000n,     // ~30 days
   supportsOneshot: true,
   supportsVault: true,
+  skipIfExists: true,
 });
 
 // Poll for incoming payments

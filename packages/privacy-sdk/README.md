@@ -30,13 +30,19 @@ npm install react
 
 ```typescript
 import { Connection, Keypair } from '@solana/web3.js';
-import { PrivacySDK } from '@protocol-01/privacy-sdk';
+import { PrivacySDK, deriveSpendingKeyFromSignature } from '@protocol-01/privacy-sdk';
+
+// Derive the 32-byte spending key from a wallet signature (recommended default).
+// Cross-app portable: re-signing the same domain on another device yields the
+// same key, so notes created in app A remain spendable in app B.
+const spendingKey = await deriveSpendingKeyFromSignature(myKeypair);
 
 // Initialize
 const sdk = new PrivacySDK({
   connection: new Connection('https://api.devnet.solana.com'),
-  wallet: myKeypair, // or any WalletAdapter
-  network: 'devnet', // always specify explicitly
+  wallet: myKeypair,    // Keypair, or any WalletAdapter exposing signMessage
+  spendingKey,          // required — see `asSpendingKey()` for custom derivations
+  network: 'devnet',    // always specify explicitly
 });
 
 // Shield 1 SOL into the privacy pool
@@ -103,12 +109,19 @@ sdk.exchange.createOrder(...)
 ## Configuration
 
 ```typescript
-import { PrivacySDK } from '@protocol-01/privacy-sdk';
+import { PrivacySDK, asSpendingKey, deriveSpendingKeyFromSignature } from '@protocol-01/privacy-sdk';
+
+// Option A — derive from a wallet signature (recommended)
+const spendingKey = await deriveSpendingKeyFromSignature(myWallet);
+
+// Option B — supply your own 32-byte material (hardware wallet, BIP-32 path, ...)
+//   const spendingKey = asSpendingKey(myCustomBytes32);
 
 const sdk = new PrivacySDK({
   // Required
   connection: myConnection,  // @solana/web3.js Connection
   wallet: myWallet,          // Keypair or WalletAdapter
+  spendingKey,               // required — see helpers above
 
   // Optional
   network: 'devnet',         // 'devnet' | 'mainnet' (warns if omitted)

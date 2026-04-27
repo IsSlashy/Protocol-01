@@ -19,12 +19,13 @@ Requires Node.js >= 22.
 ```typescript
 import { Connection, Keypair } from '@solana/web3.js';
 import {
-  registerService,
+  registerServiceOnChain,
   fetchService,
   pollPaymentsForRetailer,
   listVaultsForRetailer,
   issueAccessToken,
   verifyAccessToken,
+  NATIVE_SOL_MINT,
 } from '@protocol-01/merchant-sdk';
 
 const connection = new Connection('https://api.devnet.solana.com');
@@ -36,17 +37,19 @@ const merchantKp = Keypair.fromSecretKey(/* … */);
 Writes a `ServiceRegistry` PDA so every Protocol 01 client (mobile, extension, web) picks your service up automatically in the subscription UI.
 
 ```typescript
-await registerService(connection, merchantKp, {
-  slug: 'my-saas-pro',         // unique per owner, max 32 bytes, URL-safe
-  name: 'My SaaS — Pro',       // display name
-  iconKey: 'chatgpt',          // app maps this to an Ionicons glyph
+await registerServiceOnChain(connection, merchantKp, {
+  slug: 'my-saas-pro',              // unique per owner, max 32 bytes, URL-safe
+  name: 'My SaaS — Pro',            // display name
+  iconKey: 'chatgpt',               // app maps this to an Ionicons glyph
   category: 'saas',
   metadataUri: 'https://my-saas.example/service.json',
   retailer: merchantKp.publicKey,   // who receives payments (can differ from owner)
-  priceSol: 0.05,                   // per billing period
-  intervalDays: 30,                 // billing frequency
+  tokenMint: NATIVE_SOL_MINT,       // or an SPL mint (e.g. USDC) — required
+  priceAtomic: 50_000_000n,         // 0.05 SOL in lamports (per billing period)
+  intervalSlots: 6_480_000n,        // ≈ 30 days at 0.4 s/slot
   supportsOneshot: true,            // accepts single unshield payments
   supportsVault: true,              // accepts recurring subscription vaults
+  skipIfExists: true,               // idempotent boot — don't re-register
 });
 ```
 
@@ -64,7 +67,9 @@ const receipts = await pollPaymentsForRetailer(connection, merchantKp.publicKey,
 
 for (const r of receipts) {
   console.log(`${r.signature.slice(0,8)}… +${r.sol} SOL — memo ${r.memo?.raw}`);
-  // → grant `r.memo.periods * intervalDays` of access
+  // r.memo?.slug   → service slug ("my-saas-pro")
+  // r.memo?.extras → optional [periods, nonce, ...] suffix the client tagged
+  // → grant access for the configured intervalDays * (extras[0] ?? 1)
 }
 ```
 
@@ -108,19 +113,27 @@ if (!result.valid) return Response.json({ error: result.reason }, { status: 401 
 ## API surface
 
 ```
-registerService(connection, kp, args)            → TxSig
-updateService(connection, kp, args)              → TxSig
-deregisterService(connection, kp, slug)          → TxSig
+// Registration (server-side, signs as the merchant)
+registerServiceOnChain(connection, kp, config)        → MerchantRegistrationResult
+updateServiceOnChain(connection, kp, args)            → TxSig
+deregisterServiceOnChain(connection, kp, slug)        → TxSig
+getRegisteredService(connection, ownerPubkey, slug)   → ServiceEntry | null
 
-fetchService(connection, owner, slug)            → ServiceEntry | null
-fetchServiceByPda(connection, pda)               → ServiceEntry | null
-fetchAllServices(connection, opts?)              → ServiceEntry[]
+// Read (any caller)
+fetchService(connection, owner, slug)                 → ServiceEntry | null
+fetchServiceByPda(connection, pda)                    → ServiceEntry | null
+fetchAllServices(connection, opts?)                   → ServiceEntry[]
 
-pollPaymentsForRetailer(connection, retailer, opts?) → PaymentReceipt[]
-listVaultsForRetailer(connection, retailer, opts?)   → VaultInfo[]
+// Payments + vaults
+verifyOneShotPayment(connection, signature, opts?)    → PaymentReceipt | null
+pollPaymentsForRetailer(connection, retailer, opts?)  → PaymentReceipt[]
+parseInvoiceMemo(memo)                                → ParsedInvoiceMemo | null
+listVaultsForRetailer(connection, retailer, opts?)    → SubscriptionVaultAccount[]
+hasActiveVaultAccess(connection, retailer, subscriber)→ boolean
 
-issueAccessToken(opts)                           → string
-verifyAccessToken(token, merchantPubkey)         → { valid, claims?, reason? }
+// Access tokens (Ed25519-signed, no DB required)
+issueAccessToken(opts)                                → string
+verifyAccessToken(token, merchantPubkey)              → { valid, claims?, reason? }
 ```
 
 Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) are re-exported from `@protocol-01/specter-sdk` for callers that need to assemble custom transactions.

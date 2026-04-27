@@ -1,9 +1,12 @@
 /**
- * Protocol 01 SDK
+ * Protocol 01 SDK — merchant entry-point.
  *
- * @deprecated Use `@protocol-01/privacy-sdk` instead. See docs/MIGRATION.md.
+ * Drop-in vanilla-JS + React widgets for accepting privacy-first crypto
+ * payments and Stream Secure subscriptions on your site.
  *
- * Privacy-first crypto payments for the modern web.
+ * For the full privacy stack (shielded pool, stealth scanning, MPC, etc.)
+ * use `@protocol-01/privacy-sdk` directly. `p01-js` is the merchant
+ * surface — pay buttons, subscription widgets, webhook helpers.
  *
  * @example Basic Setup
  * ```typescript
@@ -52,17 +55,6 @@
  *
  * @packageDocumentation
  */
-
-// ─── Deprecation Warning ─────────────────────────────────────────────────────
-if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'production') {
-  const DEPRECATION_WARNED = Symbol.for('p01.p01-js.deprecated');
-  const g = globalThis as any;
-  if (!g[DEPRECATION_WARNED]) {
-    g[DEPRECATION_WARNED] = true;
-    // eslint-disable-next-line no-console
-    console.warn('[@protocol-01/p01-js] This package is deprecated. Migrate to @protocol-01/privacy-sdk. See docs/MIGRATION.md.');
-  }
-}
 
 // Main SDK
 export { Protocol01, type Protocol01UrlConfig } from './protocol01';

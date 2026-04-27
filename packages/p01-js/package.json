@@ -1,8 +1,7 @@
 {
   "name": "@protocol-01/p01-js",
-  "version": "0.1.0",
-  "description": "Protocol 01 SDK for integrating privacy-first crypto payments and Stream Secure subscriptions",
-  "deprecated": "Use @protocol-01/privacy-sdk instead. See docs/MIGRATION.md.",
+  "version": "0.2.0",
+  "description": "Drop-in merchant SDK for Protocol 01 — privacy-first crypto payments, Stream Secure subscriptions, vanilla JS + React widgets. Zero-config pay button.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
