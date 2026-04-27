@@ -205,17 +205,17 @@
     <div class="card card-red">
       <h3 class="red">Public chains</h3>
       <p class="small muted">Solana Pay, Coinbase Commerce, every standard L1 rail.</p>
-      <p class="small bold" style="margin-top: 4mm;">Every customer's wallet history is on display. The merchant sees it. The chain sees it. Anyone querying the chain sees it.</p>
+      <p class="small bold" style="margin-top: 4mm;">Every customer's wallet history is on display.<br>The merchant sees it.<br>The chain sees it.<br>Anyone querying the chain sees it.</p>
     </div>
     <div class="card card-red">
       <h3 class="red">Card processors</h3>
       <p class="small muted">Stripe, PayPal, Patreon, Apple / Google in-app.</p>
-      <p class="small bold" style="margin-top: 4mm;">2.9% to 12% rake. The processor surveils every transaction. Chargebacks are a loaded gun the buyer holds.</p>
+      <p class="small bold" style="margin-top: 4mm;">2.9% to 12% rake.<br>The processor surveils every transaction.<br>Chargebacks are a loaded gun the buyer holds.</p>
     </div>
     <div class="card card-yellow">
       <h3 class="yellow">No recurring privacy rail</h3>
       <p class="small muted">Mixers (Tornado), shielded pools (Aztec, Zcash).</p>
-      <p class="small bold" style="margin-top: 4mm;">Privacy primitives exist but no merchant SDK, no recurring billing, no Solana speed. Built for transfers, not subscriptions.</p>
+      <p class="small bold" style="margin-top: 4mm;">Privacy primitives exist but no merchant SDK, no recurring billing, no Solana speed.<br>Built for transfers, not subscriptions.</p>
     </div>
   </div>
 
@@ -232,21 +232,27 @@
       <div class="badge badge-cyan">2024 Q3</div>
       <h3 class="cyan" style="margin-top: 3mm;">Compute budget bump</h3>
       <p class="small muted">
-        Solana raised the per-tx CU ceiling, making on-chain STARK verification economical (~900K CU, &lt;0.001 SOL per verify). Custom FRI verifiers in 792 KB SBF binaries became feasible.
+        Solana raised the per-tx CU ceiling.<br>
+        On-chain STARK verification became economical (~900K CU, &lt;0.001 SOL per verify).<br>
+        Custom FRI verifiers in 792 KB SBF binaries became feasible.
       </p>
     </div>
     <div class="card card-pink">
       <div class="badge badge-pink">2024 Aug</div>
       <h3 class="pink" style="margin-top: 3mm;">ML-KEM-768 finalised</h3>
       <p class="small muted">
-        NIST published the post-quantum KEM standard. Hybrid X25519 + ML-KEM-768 stealth addresses are now production-grade — privacy that survives a future quantum adversary.
+        NIST published the post-quantum KEM standard.<br>
+        Hybrid X25519 + ML-KEM-768 stealth addresses are now production-grade.<br>
+        Privacy that survives a future quantum adversary.
       </p>
     </div>
     <div class="card card-yellow">
       <div class="badge badge-yellow">2024-2026</div>
       <h3 class="yellow" style="margin-top: 3mm;">Creator-rail revolt</h3>
       <p class="small muted">
-        Patreon's 12% rake + Apple's 30% in-app + Stripe 2.9% — creators publicly leaving for crypto rails (Pump.fun, Hivemapper, indie SaaS). The market is asking for an exit.
+        Patreon's 12% rake + Apple's 30% in-app + Stripe 2.9%.<br>
+        Creators publicly leaving for crypto rails (Pump.fun, Hivemapper, indie SaaS).<br>
+        The market is asking for an exit.
       </p>
     </div>
   </div>
@@ -263,10 +269,10 @@
   <div class="slide-header"><span>Solution</span><span class="mark">01</span></div>
   <h1>Private recurring crypto subscriptions.</h1>
   <p class="lead">
-    Drop-in SDK for any online merchant. Customer subscribes from the
-    Protocol 01 wallet (or via QR scan). Merchant receives SOL or USDC
-    at their own retailer wallet. Every link between the two is severed
-    by ZK-STARK proofs and hybrid post-quantum stealth addresses.
+    Drop-in SDK for any online merchant.<br>
+    Customer subscribes from the Protocol 01 wallet (or via QR scan).<br>
+    Merchant receives SOL or USDC at their own retailer wallet.<br>
+    Every link between the two is severed by ZK-STARK proofs and hybrid post-quantum stealth addresses.
   </p>
 
   <div class="grid-4" style="margin-top: 8mm;">
@@ -300,7 +306,7 @@
     </div>
     <div class="card">
       <div class="badge badge-yellow">AUTH-SDK</div>
-      <p class="small muted" style="margin-top: 3mm;">"Login with Protocol 01" — QR + biometric, gate by active subscription.</p>
+      <p class="small muted" style="margin-top: 3mm;">"Login with Protocol 01".<br>QR + biometric, gate by active subscription.</p>
     </div>
   </div>
 
@@ -312,8 +318,9 @@
   <div class="slide-header"><span>State of the proof</span><span class="mark">01</span></div>
   <h1>Functional prototype, on-chain. Not yet adopted.</h1>
   <p class="lead" style="margin-bottom: 6mm;">
-    The rail is real and end-to-end. No external merchant has integrated yet,
-    and that is the honest stage we are at &mdash; the cryptography and the SDK
+    The rail is real and end-to-end.<br>
+    No external merchant has integrated yet, and that is the honest stage we are at.<br>
+    The cryptography and the SDK
     are ahead of the adoption curve.
   </p>
 
@@ -337,13 +344,13 @@ deregister 4MPXSxxRyocawcGuYg93aWUVKj9WPvyx2...
     <div class="card card-yellow">
       <h3 class="yellow">What is NOT proven, yet</h3>
       <ul class="small muted" style="line-height: 1.7; padding-left: 5mm;">
-        <li><span class="bold yellow">External merchant adoption.</span> No real online business has integrated Protocol 01 today.</li>
-        <li>The five entries seeded on the devnet registry (<span class="mono">netflix-standard</span>, <span class="mono">disney-plus</span>, etc.) are <span class="bold">demo placeholders</span> we created ourselves to validate the registry mechanism &mdash; not partnerships.</li>
-        <li>That crypto-native recurring privacy is a market need <span class="bold">today</span>. Web3 has not reached the threshold where every merchant must adopt it.</li>
+        <li><span class="bold yellow">External merchant adoption.</span><br>No real online business has integrated Protocol 01 today.</li>
+        <li>The five entries seeded on the devnet registry (<span class="mono">netflix-standard</span>, <span class="mono">disney-plus</span>, etc.) are <span class="bold">demo placeholders</span> we created ourselves to validate the registry mechanism.<br>Not partnerships.</li>
+        <li>That crypto-native recurring privacy is a market need <span class="bold">today</span>.<br>Web3 has not reached the threshold where every merchant must adopt it.</li>
       </ul>
       <div class="card card-cyan" style="margin-top: 4mm; padding: 3mm 4mm;">
         <p class="small bold cyan">The bet.</p>
-        <p class="micro muted">Build the rail before the wave. When privacy + post-quantum + creator-fee fatigue cross, the merchants who need it will find an SDK that has been hardened for 12 months &mdash; not one being written that day.</p>
+        <p class="micro muted">Build the rail before the wave.<br>When privacy + post-quantum + creator-fee fatigue cross, the merchants who need it will find an SDK that has been hardened for 12 months.<br>Not one being written that day.</p>
       </div>
     </div>
   </div>
@@ -355,7 +362,11 @@ deregister 4MPXSxxRyocawcGuYg93aWUVKj9WPvyx2...
 <div class="slide">
   <div class="slide-header"><span>Merchant integration</span><span class="mark">01</span></div>
   <h1>Five lines on the merchant's server.</h1>
-  <p class="lead">Frontend ships a drop-in widget. Backend runs a 30-second poll loop. That's it.</p>
+  <p class="lead">
+    Frontend ships a drop-in widget.<br>
+    Backend runs a 30-second poll loop.<br>
+    That's it.
+  </p>
 
   <div class="grid-2" style="margin-top: 6mm;">
     <div>
@@ -477,8 +488,9 @@ setInterval(<span class="kw">async</span> () =&gt; {
       </ul>
       <h3 class="pink" style="margin-top: 5mm;">Biggest risk</h3>
       <p class="small muted">
-        Audit timing. Privacy primitives without an audit are theatre. We do
-        not deploy to mainnet without one full external cycle complete.
+        Audit timing.<br>
+        Privacy primitives without an audit are theatre.<br>
+        We do not deploy to mainnet without one full external cycle complete.
       </p>
     </div>
   </div>
@@ -524,8 +536,8 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <div class="slide-header"><span>Founder</span><span class="mark">01</span></div>
   <h1>Built by hand.</h1>
   <p class="lead" style="margin-bottom: 6mm;">
-    Cryptography I implemented from first principles &mdash; not glued together
-    from libraries:
+    Cryptography I implemented from first principles.<br>
+    Not glued together from libraries:
   </p>
 
   <div class="grid-2" style="flex: 1;">
@@ -564,7 +576,9 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <div class="slide-header"><span>The ask</span><span class="mark">01</span></div>
   <h1>What we need to ship.</h1>
   <p class="lead">
-    The core is built. The cryptography is proven. The chain is ready.
+    The core is built.<br>
+    The cryptography is proven.<br>
+    The chain is ready.<br>
     What stands between Protocol 01 and 100 paying merchants on mainnet:
   </p>
 
