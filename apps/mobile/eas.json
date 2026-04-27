@@ -5,8 +5,8 @@
   },
   "build": {
     "base": {
-      "node": "20.18.0",
-      "pnpm": "8.15.0",
+      "node": "22.18.0",
+      "pnpm": "9.15.9",
       "env": {
         "EXPO_PUBLIC_SOLANA_NETWORK": "devnet"
       }

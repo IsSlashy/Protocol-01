@@ -52,9 +52,9 @@
     "turbo": "^2.8.20",
     "typescript": "^5.9.0"
   },
-  "packageManager": "pnpm@8.15.0",
+  "packageManager": "pnpm@9.15.9",
   "engines": {
-    "node": "22.x"
+    "node": ">=22"
   },
   "dependencies": {
     "expo": "~54.0.32",
