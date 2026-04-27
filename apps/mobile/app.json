@@ -35,7 +35,7 @@
         "backgroundColor": "#0a0a0c"
       },
       "package": "com.protocol01.app",
-      "versionCode": 22,
+      "versionCode": 23,
       "permissions": [
         "USE_BIOMETRIC",
         "BLUETOOTH",
