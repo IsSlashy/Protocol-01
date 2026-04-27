@@ -307,51 +307,45 @@
   <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 04 / 11</span></div>
 </div>
 
-<!-- =========================== SLIDE 5 — PROOF / DEVNET =========================== -->
+<!-- =========================== SLIDE 5 — STATE OF THE PROOF =========================== -->
 <div class="slide">
-  <div class="slide-header"><span>Live proof on devnet</span><span class="mark">01</span></div>
-  <h1>Not a prototype. Real transactions, real signatures.</h1>
+  <div class="slide-header"><span>State of the proof</span><span class="mark">01</span></div>
+  <h1>Functional prototype, on-chain. Not yet adopted.</h1>
+  <p class="lead" style="margin-bottom: 6mm;">
+    The rail is real and end-to-end. No external merchant has integrated yet,
+    and that is the honest stage we are at &mdash; the cryptography and the SDK
+    are ahead of the adoption curve.
+  </p>
 
-  <div class="grid-2" style="flex: 1; margin-top: 6mm;">
+  <div class="grid-2" style="flex: 1;">
     <div class="card card-cyan">
-      <h3 class="cyan">5 verified merchants live</h3>
-      <p class="small muted">Seeded on the on-chain registry program <span class="mono">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</span></p>
-      <table style="margin-top: 4mm;">
-        <tr><td><span class="badge badge-green">V</span> netflix-standard</td><td class="num mono">0.05 SOL/mo</td></tr>
-        <tr><td><span class="badge badge-green">V</span> disney-plus</td><td class="num mono">0.06 SOL/mo</td></tr>
-        <tr><td><span class="badge badge-green">V</span> spotify-premium</td><td class="num mono">0.03 SOL/mo</td></tr>
-        <tr><td><span class="badge badge-green">V</span> youtube-premium</td><td class="num mono">0.04 SOL/mo</td></tr>
-        <tr><td><span class="badge badge-green">V</span> test-fast-sub</td><td class="num mono">0.05 SOL/mo</td></tr>
-      </table>
-    </div>
-    <div class="card card-pink">
-      <h3 class="pink">22/22 E2E checks pass on devnet</h3>
-      <p class="small muted">
-        register &rarr; fetch &rarr; deregister, every field byte-equal, rent
-        refunded on cleanup. Net cost <span class="mono cyan">0.00001 SOL</span>.
-      </p>
+      <h3 class="cyan">What is proven, today</h3>
+      <ul class="small muted" style="line-height: 1.7; padding-left: 5mm;">
+        <li>14 Anchor programs deployed on devnet &middot; 6 STARK AIRs in a custom 792 KB FRI verifier</li>
+        <li>Registry program live: <span class="mono micro">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</span></li>
+        <li>22/22 live-devnet E2E checks: register &rarr; fetch &rarr; deregister, every field byte-equal, rent refunded</li>
+        <li>2,400+ tests passing across 17 SDKs &middot; 26/26 fresh-project tarball install</li>
+        <li>Mobile (Android), Chrome extension, web &mdash; all three clients shipped</li>
+      </ul>
       <div class="code micro" style="margin-top: 4mm;">
-<span class="com">// register sig</span>
-3odKFeJXyvpVcy7q6Df5tzqM627DE6gt5...
-
-<span class="com">// deregister sig</span>
-4MPXSxxRyocawcGuYg93aWUVKj9WPvyx2...
-
-<span class="com">// verify on Solana Explorer (devnet)</span>
-explorer.solana.com/?cluster=devnet
+<span class="com">// real on-chain signatures (devnet)</span>
+register   3odKFeJXyvpVcy7q6Df5tzqM627DE6gt5...
+deregister 4MPXSxxRyocawcGuYg93aWUVKj9WPvyx2...
       </div>
     </div>
-  </div>
 
-  <div class="card card-green" style="margin-top: 5mm;">
-    <p class="small">
-      <span class="badge badge-green">2,400+</span>
-      tests passing across 17 SDKs and 14 Anchor programs &middot;
-      <span class="badge badge-green">22 / 22</span>
-      live-devnet write E2E &middot;
-      <span class="badge badge-green">26 / 26</span>
-      external-tarball install + import smoke
-    </p>
+    <div class="card card-yellow">
+      <h3 class="yellow">What is NOT proven, yet</h3>
+      <ul class="small muted" style="line-height: 1.7; padding-left: 5mm;">
+        <li><span class="bold yellow">External merchant adoption.</span> No real online business has integrated Protocol 01 today.</li>
+        <li>The five entries seeded on the devnet registry (<span class="mono">netflix-standard</span>, <span class="mono">disney-plus</span>, etc.) are <span class="bold">demo placeholders</span> we created ourselves to validate the registry mechanism &mdash; not partnerships.</li>
+        <li>That crypto-native recurring privacy is a market need <span class="bold">today</span>. Web3 has not reached the threshold where every merchant must adopt it.</li>
+      </ul>
+      <div class="card card-cyan" style="margin-top: 4mm; padding: 3mm 4mm;">
+        <p class="small bold cyan">The bet.</p>
+        <p class="micro muted">Build the rail before the wave. When privacy + post-quantum + creator-fee fatigue cross, the merchants who need it will find an SDK that has been hardened for 12 months &mdash; not one being written that day.</p>
+      </div>
+    </div>
   </div>
 
   <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 05 / 11</span></div>
