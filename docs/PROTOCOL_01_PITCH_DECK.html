@@ -365,27 +365,27 @@ deregister 4MPXSxxRyocawcGuYg93aWUVKj9WPvyx2...
   <h1>Five lines on the merchant's server.</h1>
   <p class="lead">
     Frontend ships a drop-in widget.<br>
-    Backend runs a 30-second poll loop.<br>
-    That's it.
+    Backend runs a 30-second poll loop.
   </p>
 
-  <div class="grid-2" style="margin-top: 6mm;">
+  <div class="grid-2" style="margin-top: 5mm;">
     <div>
-      <h3>Frontend &mdash; React</h3>
-      <div class="code small">
+      <h3 style="margin-bottom: 3mm;">Frontend &middot; React</h3>
+      <div class="code" style="font-size: 7.5pt; line-height: 1.5; padding: 3mm 4mm;">
 <span class="kw">import</span> { P01Provider, SubscriptionWidget }
   <span class="kw">from</span> <span class="str">'@protocol-01/p01-js/react'</span>;
 
 &lt;P01Provider config={{ merchantId: <span class="str">'acme'</span> }}&gt;
   &lt;SubscriptionWidget tiers={[
-    { id: <span class="str">'pro'</span>, price: <span class="cyan">19.99</span>, interval: <span class="str">'monthly'</span> }
+    { id: <span class="str">'pro'</span>, price: <span class="cyan">19.99</span>,
+      interval: <span class="str">'monthly'</span> }
   ]} /&gt;
 &lt;/P01Provider&gt;
       </div>
     </div>
     <div>
-      <h3>Backend &mdash; Node / Cloudflare</h3>
-      <div class="code small">
+      <h3 style="margin-bottom: 3mm;">Backend &middot; Node / Cloudflare</h3>
+      <div class="code" style="font-size: 7.5pt; line-height: 1.5; padding: 3mm 4mm;">
 <span class="kw">import</span> { pollPaymentsForRetailer, issueAccessToken }
   <span class="kw">from</span> <span class="str">'@protocol-01/merchant-sdk'</span>;
 
@@ -397,11 +397,11 @@ setInterval(<span class="kw">async</span> () =&gt; {
     </div>
   </div>
 
-  <h3 style="margin-top: 5mm;">What the merchant never sees</h3>
-  <div class="grid-3" style="margin-top: 2mm;">
-    <div class="card" style="padding: 4mm 5mm;"><p class="micro"><span class="badge badge-red">HIDDEN</span><br>The customer's wallet identity</p></div>
-    <div class="card" style="padding: 4mm 5mm;"><p class="micro"><span class="badge badge-red">HIDDEN</span><br>The customer's transaction history</p></div>
-    <div class="card" style="padding: 4mm 5mm;"><p class="micro"><span class="badge badge-red">HIDDEN</span><br>Any link between two subscribers</p></div>
+  <h3 style="margin-top: 6mm; margin-bottom: 2mm;">What the merchant never sees</h3>
+  <div style="display: flex; gap: 3mm;">
+    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">HIDDEN</span> The customer's wallet identity</p></div>
+    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">HIDDEN</span> The customer's transaction history</p></div>
+    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">HIDDEN</span> Any link between two subscribers</p></div>
   </div>
 
   <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 06 / 11</span></div>
@@ -504,14 +504,14 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <div class="slide-header"><span>Economics</span><span class="mark">01</span></div>
   <h1>0.80% round-trip. Zero platform cut.</h1>
 
-  <div class="grid-3" style="margin-top: 6mm;">
-    <div class="card card-cyan stat"><div class="stat-num cyan">0.30%</div><div class="stat-label">Shield fee</div></div>
-    <div class="card card-pink stat"><div class="stat-num pink">0.50%</div><div class="stat-label">Unshield fee</div></div>
-    <div class="card card-yellow stat"><div class="stat-num yellow">0.80%</div><div class="stat-label">Round-trip total</div></div>
+  <div class="grid-3" style="margin-top: 4mm;">
+    <div class="card card-cyan stat" style="padding: 5mm;"><div class="stat-num cyan" style="font-size: 26pt;">0.30%</div><div class="stat-label">Shield fee</div></div>
+    <div class="card card-pink stat" style="padding: 5mm;"><div class="stat-num pink" style="font-size: 26pt;">0.50%</div><div class="stat-label">Unshield fee</div></div>
+    <div class="card card-yellow stat" style="padding: 5mm;"><div class="stat-num yellow" style="font-size: 26pt;">0.80%</div><div class="stat-label">Round-trip total</div></div>
   </div>
 
-  <h3 style="margin-top: 7mm;">Versus the rails merchants use today</h3>
-  <table style="margin-top: 3mm;">
+  <h3 style="margin-top: 5mm; margin-bottom: 2mm;">Versus the rails merchants use today</h3>
+  <table>
     <tr><th>Provider</th><th class="num">Take rate</th><th>Privacy</th><th>Settlement</th></tr>
     <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan bold">0.80%</td><td><span class="badge badge-green">Native ZK</span></td><td class="small">~10s on-chain</td></tr>
     <tr><td>Stripe (cards)</td><td class="num mono">2.90%</td><td><span class="badge badge-red">None</span></td><td class="small">2-7 days</td></tr>
@@ -521,11 +521,11 @@ setInterval(<span class="kw">async</span> () =&gt; {
     <tr><td>Solana Pay (raw)</td><td class="num mono">0.00%</td><td><span class="badge badge-red">None</span></td><td class="small">~1s</td></tr>
   </table>
 
-  <div class="card card-green" style="margin-top: 4mm;">
-    <p class="small">
-      <span class="cyan bold">Worked example.</span><br>
-      SaaS at &euro;19.99/mo, 1,000 subs, 12 months, 10% churn.<br>
-      Gross &euro;143,449 &rarr; net to merchant <span class="mono cyan bold">&euro;142,668</span> on Protocol 01.<br>
+  <div class="card card-green" style="margin-top: 3mm; padding: 4mm 5mm;">
+    <p class="micro">
+      <span class="cyan bold">Worked example.</span>
+      SaaS at &euro;19.99/mo, 1,000 subs, 12 months, 10% churn.
+      Gross &euro;143,449 &rarr; net to merchant <span class="mono cyan bold">&euro;142,668</span> on Protocol 01.
       Same revenue costs ~&euro;5,460 on Stripe, &euro;14k&ndash;17k on Patreon.
     </p>
   </div>
