@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Protocol 01 — Pitch Deck</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: 297mm 210mm; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --dark: #0f0f12;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --green: #4ade80;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .slide {
+    width: 297mm;
+    height: 210mm;
+    padding: 16mm 20mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .slide:last-child { page-break-after: avoid; }
+
+  /* Grid pattern removed: rasterizing it on every page bloats the PDF and
+     introduces scroll lag in some PDF readers. Plain void background is
+     enough; the cyan accents on cards already carry the brand. */
+
+  .slide-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8mm;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .slide-header .mark {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 12pt;
+    color: var(--cyan);
+    letter-spacing: 0.05em;
+  }
+
+  h1 { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 38pt; letter-spacing: 0.04em; line-height: 1.05; margin-bottom: 8mm; }
+  h2 { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 22pt; letter-spacing: 0.04em; color: var(--cyan); margin-bottom: 6mm; }
+  h3 { font-family: 'Orbitron', sans-serif; font-weight: 600; font-size: 14pt; letter-spacing: 0.03em; color: var(--pink); margin-bottom: 4mm; }
+  .lead { font-size: 14pt; color: var(--text-muted); line-height: 1.5; max-width: 220mm; }
+  .small { font-size: 9pt; }
+  .micro { font-size: 7.5pt; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .bold { font-weight: 700; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6mm 7mm;
+  }
+  .card-cyan { border-color: rgba(57,197,187,0.3); background: rgba(57,197,187,0.04); }
+  .card-pink { border-color: rgba(255,119,168,0.3); background: rgba(255,119,168,0.04); }
+  .card-yellow { border-color: rgba(255,204,0,0.3); background: rgba(255,204,0,0.04); }
+  .card-green { border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.04); }
+  .card-red { border-color: rgba(255,51,102,0.3); background: rgba(255,51,102,0.04); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5mm; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; }
+
+  .stat { text-align: center; }
+  .stat-num { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 32pt; line-height: 1; }
+  .stat-label { font-size: 8pt; color: var(--text-muted); margin-top: 2mm; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .badge-cyan { background: rgba(57,197,187,0.15); color: var(--cyan); border: 1px solid rgba(57,197,187,0.3); }
+  .badge-pink { background: rgba(255,119,168,0.15); color: var(--pink); border: 1px solid rgba(255,119,168,0.3); }
+  .badge-yellow { background: rgba(255,204,0,0.15); color: var(--yellow); border: 1px solid rgba(255,204,0,0.3); }
+  .badge-green { background: rgba(74,222,128,0.15); color: var(--green); border: 1px solid rgba(74,222,128,0.3); }
+  .badge-red { background: rgba(255,51,102,0.15); color: var(--red); border: 1px solid rgba(255,51,102,0.3); }
+
+  .code {
+    background: var(--dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4mm 5mm;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    color: var(--text);
+  }
+  .code .kw { color: var(--pink); }
+  .code .str { color: var(--green); }
+  .code .com { color: var(--text-dim); font-style: italic; }
+  .code .fn { color: var(--cyan); }
+
+  .flow-bar {
+    display: flex;
+    height: 30px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .flow-bar > div {
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace; font-size: 9pt; font-weight: 700; color: var(--void);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+  th { font-family: 'JetBrains Mono', monospace; font-size: 8pt; color: var(--cyan); text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 5px 8px; border-bottom: 1px solid rgba(42,42,48,0.5); }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+
+  .footer {
+    position: absolute;
+    bottom: 7mm;
+    left: 18mm;
+    right: 18mm;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border-top: 1px solid var(--border);
+    padding-top: 4mm;
+  }
+</style>
+</head>
+<body>
+
+<!-- =========================== SLIDE 1 — COVER =========================== -->
+<div class="slide" style="justify-content:center; align-items:center; text-align:center;">
+  <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:140pt; letter-spacing:0.08em; background:linear-gradient(135deg, var(--cyan), var(--pink), var(--cyan-bright)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; line-height:1;">
+    01
+  </div>
+  <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:28pt; letter-spacing:0.14em; margin-top:-6mm;">
+    PROTOCOL
+  </div>
+  <div style="font-family:'JetBrains Mono',monospace; font-size:11pt; color:var(--text-muted); letter-spacing:0.18em; text-transform:uppercase; margin-top:10mm;">
+    Private recurring crypto subscriptions for Solana
+  </div>
+  <div style="margin-top:18mm; font-family:'JetBrains Mono',monospace; font-size:9pt; color:var(--text-dim); letter-spacing:0.1em; line-height:1.8;">
+    v0.9.9 &middot; FROST RELEASE<br>
+    Volta Team &middot; Slashy Fx &middot; Solo, full-time<br>
+    Dogpatch &middot; Superteam &middot; April 2026
+  </div>
+</div>
+
+<!-- =========================== SLIDE 2 — PROBLEM =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Problem</span><span class="mark">01</span></div>
+  <h1>Crypto rails leak. Card rails take 12%.</h1>
+  <p class="lead" style="margin-bottom: 8mm;">
+    A merchant accepting subscriptions today picks one of two losing trades:
+  </p>
+
+  <div class="grid-3" style="flex: 1;">
+    <div class="card card-red">
+      <h3 class="red">Public chains</h3>
+      <p class="small muted">Solana Pay, Coinbase Commerce, every standard L1 rail.</p>
+      <p class="small bold" style="margin-top: 4mm;">Every customer's wallet history is on display. The merchant sees it. The chain sees it. Anyone querying the chain sees it.</p>
+    </div>
+    <div class="card card-red">
+      <h3 class="red">Card processors</h3>
+      <p class="small muted">Stripe, PayPal, Patreon, Apple / Google in-app.</p>
+      <p class="small bold" style="margin-top: 4mm;">2.9% to 12% rake. The processor surveils every transaction. Chargebacks are a loaded gun the buyer holds.</p>
+    </div>
+    <div class="card card-yellow">
+      <h3 class="yellow">No recurring privacy rail</h3>
+      <p class="small muted">Mixers (Tornado), shielded pools (Aztec, Zcash).</p>
+      <p class="small bold" style="margin-top: 4mm;">Privacy primitives exist but no merchant SDK, no recurring billing, no Solana speed. Built for transfers, not subscriptions.</p>
+    </div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 02 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 3 — WHY NOW =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Why now</span><span class="mark">01</span></div>
+  <h1>Three lines crossed in 18 months.</h1>
+
+  <div class="grid-3" style="flex: 1; align-items: stretch; margin-top: 6mm;">
+    <div class="card card-cyan">
+      <div class="badge badge-cyan">2024 Q3</div>
+      <h3 class="cyan" style="margin-top: 3mm;">Compute budget bump</h3>
+      <p class="small muted">
+        Solana raised the per-tx CU ceiling, making on-chain STARK verification economical (~900K CU, &lt;0.001 SOL per verify). Custom FRI verifiers in 792 KB SBF binaries became feasible.
+      </p>
+    </div>
+    <div class="card card-pink">
+      <div class="badge badge-pink">2024 Aug</div>
+      <h3 class="pink" style="margin-top: 3mm;">ML-KEM-768 finalised</h3>
+      <p class="small muted">
+        NIST published the post-quantum KEM standard. Hybrid X25519 + ML-KEM-768 stealth addresses are now production-grade — privacy that survives a future quantum adversary.
+      </p>
+    </div>
+    <div class="card card-yellow">
+      <div class="badge badge-yellow">2024-2026</div>
+      <h3 class="yellow" style="margin-top: 3mm;">Creator-rail revolt</h3>
+      <p class="small muted">
+        Patreon's 12% rake + Apple's 30% in-app + Stripe 2.9% — creators publicly leaving for crypto rails (Pump.fun, Hivemapper, indie SaaS). The market is asking for an exit.
+      </p>
+    </div>
+  </div>
+
+  <p class="lead center" style="text-align: center; margin-top: 8mm; font-size: 12pt;">
+    The cryptography is ready. The chain is ready. The market is ready.
+  </p>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 03 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 4 — SOLUTION =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Solution</span><span class="mark">01</span></div>
+  <h1>Private recurring crypto subscriptions.</h1>
+  <p class="lead">
+    Drop-in SDK for any online merchant. Customer subscribes from the
+    Protocol 01 wallet (or via QR scan). Merchant receives SOL or USDC
+    at their own retailer wallet. Every link between the two is severed
+    by ZK-STARK proofs and hybrid post-quantum stealth addresses.
+  </p>
+
+  <div class="grid-4" style="margin-top: 8mm;">
+    <div class="card card-cyan stat">
+      <div class="stat-num cyan">0.80%</div>
+      <div class="stat-label">Total round-trip fee</div>
+    </div>
+    <div class="card card-pink stat">
+      <div class="stat-num pink">0%</div>
+      <div class="stat-label">Merchant platform cut</div>
+    </div>
+    <div class="card card-yellow stat">
+      <div class="stat-num yellow">~10s</div>
+      <div class="stat-label">On-chain settlement</div>
+    </div>
+    <div class="card card-green stat">
+      <div class="stat-num green">PQ</div>
+      <div class="stat-label">Post-quantum hardened</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 9mm;">Three integration paths</h3>
+  <div class="grid-3" style="margin-top: 3mm;">
+    <div class="card">
+      <div class="badge badge-cyan">P01-JS</div>
+      <p class="small muted" style="margin-top: 3mm;">Drop-in pay button + React widgets. 5 lines of code on the merchant's site.</p>
+    </div>
+    <div class="card">
+      <div class="badge badge-pink">MERCHANT-SDK</div>
+      <p class="small muted" style="margin-top: 3mm;">Server-side: register service, poll payments, watch vaults, issue access tokens.</p>
+    </div>
+    <div class="card">
+      <div class="badge badge-yellow">AUTH-SDK</div>
+      <p class="small muted" style="margin-top: 3mm;">"Login with Protocol 01" — QR + biometric, gate by active subscription.</p>
+    </div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 04 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 5 — PROOF / DEVNET =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Live proof on devnet</span><span class="mark">01</span></div>
+  <h1>Not a prototype. Real transactions, real signatures.</h1>
+
+  <div class="grid-2" style="flex: 1; margin-top: 6mm;">
+    <div class="card card-cyan">
+      <h3 class="cyan">5 verified merchants live</h3>
+      <p class="small muted">Seeded on the on-chain registry program <span class="mono">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</span></p>
+      <table style="margin-top: 4mm;">
+        <tr><td><span class="badge badge-green">V</span> netflix-standard</td><td class="num mono">0.05 SOL/mo</td></tr>
+        <tr><td><span class="badge badge-green">V</span> disney-plus</td><td class="num mono">0.06 SOL/mo</td></tr>
+        <tr><td><span class="badge badge-green">V</span> spotify-premium</td><td class="num mono">0.03 SOL/mo</td></tr>
+        <tr><td><span class="badge badge-green">V</span> youtube-premium</td><td class="num mono">0.04 SOL/mo</td></tr>
+        <tr><td><span class="badge badge-green">V</span> test-fast-sub</td><td class="num mono">0.05 SOL/mo</td></tr>
+      </table>
+    </div>
+    <div class="card card-pink">
+      <h3 class="pink">22/22 E2E checks pass on devnet</h3>
+      <p class="small muted">
+        register &rarr; fetch &rarr; deregister, every field byte-equal, rent
+        refunded on cleanup. Net cost <span class="mono cyan">0.00001 SOL</span>.
+      </p>
+      <div class="code micro" style="margin-top: 4mm;">
+<span class="com">// register sig</span>
+3odKFeJXyvpVcy7q6Df5tzqM627DE6gt5...
+
+<span class="com">// deregister sig</span>
+4MPXSxxRyocawcGuYg93aWUVKj9WPvyx2...
+
+<span class="com">// verify on Solana Explorer (devnet)</span>
+explorer.solana.com/?cluster=devnet
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-green" style="margin-top: 5mm;">
+    <p class="small">
+      <span class="badge badge-green">2,400+</span>
+      tests passing across 17 SDKs and 14 Anchor programs &middot;
+      <span class="badge badge-green">22 / 22</span>
+      live-devnet write E2E &middot;
+      <span class="badge badge-green">26 / 26</span>
+      external-tarball install + import smoke
+    </p>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 05 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 6 — HOW IT WORKS =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Merchant integration</span><span class="mark">01</span></div>
+  <h1>Five lines on the merchant's server.</h1>
+  <p class="lead">Frontend ships a drop-in widget. Backend runs a 30-second poll loop. That's it.</p>
+
+  <div class="grid-2" style="margin-top: 6mm;">
+    <div>
+      <h3>Frontend &mdash; React</h3>
+      <div class="code small">
+<span class="kw">import</span> { P01Provider, SubscriptionWidget }
+  <span class="kw">from</span> <span class="str">'@protocol-01/p01-js/react'</span>;
+
+&lt;P01Provider config={{ merchantId: <span class="str">'acme'</span> }}&gt;
+  &lt;SubscriptionWidget tiers={[
+    { id: <span class="str">'pro'</span>, price: <span class="cyan">19.99</span>, interval: <span class="str">'monthly'</span> }
+  ]} /&gt;
+&lt;/P01Provider&gt;
+      </div>
+    </div>
+    <div>
+      <h3>Backend &mdash; Node / Cloudflare</h3>
+      <div class="code small">
+<span class="kw">import</span> { pollPaymentsForRetailer, issueAccessToken }
+  <span class="kw">from</span> <span class="str">'@protocol-01/merchant-sdk'</span>;
+
+setInterval(<span class="kw">async</span> () =&gt; {
+  <span class="kw">const</span> r = <span class="kw">await</span> <span class="fn">pollPaymentsForRetailer</span>(c, retailer);
+  r.forEach(p =&gt; grantAccess(p));
+}, <span class="cyan">30_000</span>);
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 7mm;">What the merchant never sees</h3>
+  <div class="grid-3" style="margin-top: 3mm;">
+    <div class="card"><p class="small"><span class="badge badge-red">HIDDEN</span> The customer's wallet identity</p></div>
+    <div class="card"><p class="small"><span class="badge badge-red">HIDDEN</span> The customer's transaction history</p></div>
+    <div class="card"><p class="small"><span class="badge badge-red">HIDDEN</span> Any link between two subscribers</p></div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 06 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 7 — STACK =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Solana stack</span><span class="mark">01</span></div>
+  <h1>14 programs. 1 custom STARK verifier.</h1>
+
+  <div class="grid-2" style="flex: 1; margin-top: 5mm;">
+    <div>
+      <h3>Our deployed programs</h3>
+      <table>
+        <tr><td><span class="badge badge-cyan">VERIFIER</span></td><td class="small mono">p01_stark_verifier &mdash; FRI, 6 AIRs</td></tr>
+        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">zk_shielded &mdash; pool + sub vault</td></tr>
+        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">specter &mdash; stealth + streams</td></tr>
+        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_registry &mdash; merchant directory</td></tr>
+        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_zkspl &mdash; confidential SPL</td></tr>
+        <tr><td><span class="badge badge-pink">PQ</span></td><td class="small mono">p01_quantum_vault &mdash; WOTS+ + hash-lock</td></tr>
+        <tr><td><span class="badge badge-pink">PQ</span></td><td class="small mono">p01_arcium &mdash; Cerberus MPC bridge</td></tr>
+        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_relayer &mdash; trustless relay</td></tr>
+        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_liquidity &mdash; instant unshield</td></tr>
+        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">subscription / stream / fee-splitter</td></tr>
+        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_mugen &mdash; P2P fiat escrow</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>Solana primitives leveraged</h3>
+      <table>
+        <tr><td class="cyan small mono">Anchor 0.32</td><td class="small">DSL/framework, all 14 programs</td></tr>
+        <tr><td class="cyan small mono">SPL Token</td><td class="small">USDC + native SOL handling</td></tr>
+        <tr><td class="cyan small mono">PDAs</td><td class="small">deterministic registry / vault keys</td></tr>
+        <tr><td class="cyan small mono">Compute Budget</td><td class="small">1.4M CU for STARK verify</td></tr>
+        <tr><td class="cyan small mono">SystemProgram</td><td class="small">native SOL + account allocation</td></tr>
+        <tr><td class="cyan small mono">Memo Program v2</td><td class="small">invoice memos for one-shots</td></tr>
+        <tr><td class="cyan small mono">Helius RPC</td><td class="small">getProgramAccounts pagination</td></tr>
+        <tr><td class="cyan small mono">Privy</td><td class="small">embedded wallet onboarding</td></tr>
+        <tr><td class="cyan small mono">Arcium Cerberus</td><td class="small">9 MPC circuits, threshold compute</td></tr>
+      </table>
+      <div class="card card-cyan" style="margin-top: 4mm;">
+        <p class="small">
+          The custom FRI/STARK verifier fits in a <span class="mono cyan bold">792 KB</span> SBF binary.
+          ~900K CU per verification. No other L1 hosts a verifier of this scope at this cost.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 07 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 8 — STATUS =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Status &middot; 90 days solo</span><span class="mark">01</span></div>
+  <h1>Built today, in 90 days, alone.</h1>
+
+  <div class="grid-4" style="margin-top: 6mm;">
+    <div class="card card-cyan stat"><div class="stat-num cyan">14</div><div class="stat-label">Anchor programs</div></div>
+    <div class="card card-pink stat"><div class="stat-num pink">17</div><div class="stat-label">SDKs published</div></div>
+    <div class="card card-yellow stat"><div class="stat-num yellow">6</div><div class="stat-label">STARK AIRs</div></div>
+    <div class="card card-green stat"><div class="stat-num green">2,400+</div><div class="stat-label">Tests passing</div></div>
+  </div>
+
+  <div class="grid-2" style="margin-top: 6mm;">
+    <div class="card card-cyan">
+      <h3 class="cyan">Shipped</h3>
+      <ul class="small muted" style="margin-top: 2mm; padding-left: 5mm; line-height: 1.7;">
+        <li>14 Anchor programs deployed on devnet, ~340 program tests</li>
+        <li>Custom FRI/STARK verifier (792 KB SBF, 6 circuits)</li>
+        <li>Mobile app v0.9.9 Frost (Android APK 119 MB)</li>
+        <li>Chrome extension MV3 with on-device WASM prover</li>
+        <li>Web marketing site &middot; design doc &middot; economic charter</li>
+        <li>Mugen reference fiat &lt;&gt; crypto P2P (FROST escrow)</li>
+        <li>5 verified merchants on devnet registry</li>
+      </ul>
+    </div>
+    <div class="card card-pink">
+      <h3 class="pink">Left before May 11</h3>
+      <ul class="small muted" style="margin-top: 2mm; padding-left: 5mm; line-height: 1.7;">
+        <li>External audit cycle (OtterSec / Neodyme &mdash; quote in flight)</li>
+        <li>Mainnet deployment + first 5 paying merchants</li>
+        <li>iOS TestFlight beta</li>
+        <li>Atomic dust-to-stealth in <span class="mono small">cancel_private_stark</span></li>
+      </ul>
+      <h3 class="pink" style="margin-top: 5mm;">Biggest risk</h3>
+      <p class="small muted">
+        Audit timing. Privacy primitives without an audit are theatre. We do
+        not deploy to mainnet without one full external cycle complete.
+      </p>
+    </div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 08 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 9 — ECONOMICS =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Economics</span><span class="mark">01</span></div>
+  <h1>0.80% round-trip. Zero platform cut.</h1>
+
+  <div class="grid-3" style="margin-top: 6mm;">
+    <div class="card card-cyan stat"><div class="stat-num cyan">0.30%</div><div class="stat-label">Shield fee</div></div>
+    <div class="card card-pink stat"><div class="stat-num pink">0.50%</div><div class="stat-label">Unshield fee</div></div>
+    <div class="card card-yellow stat"><div class="stat-num yellow">0.80%</div><div class="stat-label">Round-trip total</div></div>
+  </div>
+
+  <h3 style="margin-top: 7mm;">Versus the rails merchants use today</h3>
+  <table style="margin-top: 3mm;">
+    <tr><th>Provider</th><th class="num">Take rate</th><th>Privacy</th><th>Settlement</th></tr>
+    <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan bold">0.80%</td><td><span class="badge badge-green">Native ZK</span></td><td class="small">~10s on-chain</td></tr>
+    <tr><td>Stripe (cards)</td><td class="num mono">2.90%</td><td><span class="badge badge-red">None</span></td><td class="small">2-7 days</td></tr>
+    <tr><td>Patreon</td><td class="num mono">8-12%</td><td><span class="badge badge-red">None</span></td><td class="small">Monthly</td></tr>
+    <tr><td>Coinbase Commerce</td><td class="num mono">1.00%</td><td><span class="badge badge-red">None</span></td><td class="small">~30 min finality</td></tr>
+    <tr><td>BTCPay self-host</td><td class="num mono">0.00%</td><td><span class="badge badge-yellow">Pseudonymous</span></td><td class="small">10-60 min</td></tr>
+    <tr><td>Solana Pay (raw)</td><td class="num mono">0.00%</td><td><span class="badge badge-red">None</span></td><td class="small">~1s</td></tr>
+  </table>
+
+  <div class="card card-green" style="margin-top: 5mm;">
+    <p class="small">
+      <span class="cyan bold">Worked example:</span> SaaS at &euro;19.99/mo &middot; 1,000 subs &middot; 12 months &middot; 10% churn &middot;
+      gross &euro;143,449 &rarr; net to merchant <span class="mono cyan bold">&euro;142,668</span>.
+      Same revenue on Stripe: ~&euro;5,460 fee &middot; on Patreon: &euro;14,345 to &euro;17,214 fee.
+    </p>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 09 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 10 — FOUNDER =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>Founder</span><span class="mark">01</span></div>
+  <h1>One builder. Ninety days. Full-time.</h1>
+
+  <div class="grid-2" style="margin-top: 6mm;">
+    <div>
+      <h3>Slashy &mdash; sole builder, full-time</h3>
+      <p class="small muted" style="line-height: 1.7;">
+        24 years old, based in Paris. Self-taught since 17. Epitech alumnus &mdash;
+        Bachelor's Full-Stack Dev (2023), Master's Cybersecurity (2025) with
+        specialisation offensive security + cryptography.
+      </p>
+      <p class="small muted" style="line-height: 1.7; margin-top: 3mm;">
+        2 years at CaptNBoat (2023&ndash;2024) leading cybersecurity initiatives
+        and product. Earlier shipped a production e-commerce platform end-to-end
+        (2022). 18+ projects across web, mobile and backend before Protocol 01.
+      </p>
+      <p class="small muted" style="line-height: 1.7; margin-top: 3mm;">
+        Full-time on Protocol 01 since January 2026. No team. No outside funding.
+        No advisors with equity.
+      </p>
+    </div>
+    <div>
+      <h3>Why this person</h3>
+      <p class="small" style="line-height: 1.7;">
+        I read the FRI paper before writing the on-chain verifier.
+        I chose the X25519 + ML-KEM-768 hybrid stealth construction myself &mdash;
+        not copied from a reference. Every line of the cryptographic security
+        boundary is mine: custom FRI verifier, Goldilocks-Poseidon AIRs, hybrid
+        stealth, WOTS+ vault, MPC bridge.
+      </p>
+      <p class="small" style="line-height: 1.7; margin-top: 3mm;">
+        The cybersecurity Master's means I ship without breaking the threat
+        model. Seven years self-taught means I do not wait for anyone.
+      </p>
+      <div class="card card-cyan" style="margin-top: 5mm;">
+        <p class="small bold cyan" style="font-style: italic; text-align: center;">
+          "Financial privacy is a right, not a feature.<br>
+          No team, no funding, just execution."
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 10 / 11</span></div>
+</div>
+
+<!-- =========================== SLIDE 11 — ASK / CLOSE =========================== -->
+<div class="slide">
+  <div class="slide-header"><span>The ask</span><span class="mark">01</span></div>
+  <h1>What we need to ship.</h1>
+  <p class="lead">
+    The core is built. The cryptography is proven. The chain is ready.
+    What stands between Protocol 01 and 100 paying merchants on mainnet:
+  </p>
+
+  <div class="grid-3" style="margin-top: 6mm;">
+    <div class="card card-cyan">
+      <h3 class="cyan">Audit funding</h3>
+      <p class="small muted">
+        One full external cycle from OtterSec, Neodyme or Trail of Bits.
+        Quote pending. ~$80K-150K.
+      </p>
+    </div>
+    <div class="card card-pink">
+      <h3 class="pink">First merchant cohort</h3>
+      <p class="small muted">
+        5 to 10 Solana-native creators or SaaS to seed the verified registry on
+        mainnet. Friend-of-Solana intros highest-leverage.
+      </p>
+    </div>
+    <div class="card card-yellow">
+      <h3 class="yellow">Ecosystem partnerships</h3>
+      <p class="small muted">
+        Helius (RPC), Privy (wallet onboarding), Arcium (MPC), Backpack
+        (distribution). Conversations in flight.
+      </p>
+    </div>
+  </div>
+
+  <div style="margin-top: 12mm; text-align: center;">
+    <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:42pt; letter-spacing:0.04em; line-height:1.1;">
+      <span class="cyan">Privacy</span> is a right.<br>
+      <span class="pink">Recurring</span> is the rail.<br>
+      <span class="yellow">Solana</span> is the chain.
+    </div>
+    <div style="margin-top: 8mm; font-family:'JetBrains Mono',monospace; font-size:9pt; color:var(--text-muted); letter-spacing:0.12em; text-transform:uppercase; line-height:1.8;">
+      protocol-01.dev &middot; @Protocol01_<br>
+      Volta Team &middot; Slashy Fx &middot; Solo, full-time<br>
+      v0.9.9 Frost &middot; 2026-04-27
+    </div>
+  </div>
+
+  <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 11 / 11 &middot; END</span></div>
+</div>
+
+</body>
+</html>
