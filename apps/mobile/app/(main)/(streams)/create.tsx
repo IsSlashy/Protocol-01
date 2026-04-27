@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,12 +12,29 @@ import { p01Alert } from '@/stores/alertStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
 
+// Number of Solana slots per "billing period" given the canonical 0.4 s/slot.
+// Mirrors the values used by services/solana/subscriptionContract.ts so a
+// stream created here lines up with merchant subscriptions on the same chain.
+// `custom` falls back to monthly because the form does not surface a custom
+// interval input today; it can be extended when CreateStreamForm exposes one.
+const SLOTS_PER_PERIOD: Record<StreamFrequency, bigint> = {
+  daily:    216_000n,
+  weekly:   1_512_000n,
+  biweekly: 3_024_000n,
+  monthly:  6_480_000n,
+  yearly:   78_840_000n,
+  custom:   6_480_000n,
+};
+
 export default function CreatePersonalStreamScreen() {
   const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { createNewStream, loading } = useStreamStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Off by default — opting in routes through subscribe-private.tsx where
+  // the STARK proof + denominated note selection happen.
+  const [isPrivate, setIsPrivate] = useState(false);
 
   const handleCreateStream = async (data: StreamFormData) => {
     try {
@@ -27,6 +44,38 @@ export default function CreatePersonalStreamScreen() {
       try { new PublicKey(data.recipient); } catch {
         p01Alert(t('createStream.invalidAddressShort'), t('alerts.invalidAddress'));
         setIsSubmitting(false); return;
+      }
+
+      // Private path — hand off to the existing private-subscription screen
+      // (it already does note selection, STARK proof generation, vault open).
+      // The vault contract treats every retailer pubkey identically, so a
+      // P2P recipient (employee, friend) flows through the same on-chain
+      // path as a merchant subscription.
+      if (isPrivate) {
+        // Convert (totalAmount, frequency, duration_in_days) into the
+        // (rate_per_period, intervalSlots) pair the vault expects.
+        const periodDays =
+          data.frequency === 'daily' ? 1 :
+          data.frequency === 'weekly' ? 7 :
+          data.frequency === 'biweekly' ? 14 :
+          data.frequency === 'monthly' ? 30 :
+          data.frequency === 'yearly' ? 365 :
+          30; // 'custom' falls back to monthly cadence
+
+        const periods = Math.max(1, Math.floor(data.duration / periodDays));
+        const rate = data.amount / periods;
+        const intervalSlots = SLOTS_PER_PERIOD[data.frequency];
+        router.push({
+          pathname: '/(main)/(privacy)/subscribe-private',
+          params: {
+            retailer: data.recipient,
+            rate: rate.toString(),
+            intervalSlots: intervalSlots.toString(),
+            mode: 'stream-p2p',
+          },
+        });
+        setIsSubmitting(false);
+        return;
       }
 
       const now = Date.now();
@@ -66,11 +115,31 @@ export default function CreatePersonalStreamScreen() {
       </View>
 
       <View style={{ flex: 1, paddingHorizontal: Spacing.xl, paddingTop: 8 }}>
+        <View style={st.privacyRow}>
+          <View style={st.privacyIconBubble}>
+            <Ionicons name="shield-checkmark" size={18} color={isPrivate ? P01Colors.cyan : Colors.textTertiary} />
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={st.privacyTitle}>Private mode</Text>
+            <Text style={st.privacySub}>
+              {isPrivate
+                ? 'Funded from a shielded note. STARK proof breaks the on-chain link to your wallet.'
+                : 'Public stream. Recipient and amount visible on chain.'}
+            </Text>
+          </View>
+          <Switch
+            value={isPrivate}
+            onValueChange={(v) => { Haptics.selectionAsync(); setIsPrivate(v); }}
+            trackColor={{ false: Colors.surfaceSecondary, true: P01Colors.cyan }}
+            thumbColor={isPrivate ? '#fff' : Colors.textTertiary}
+          />
+        </View>
+
         <CreateStreamForm
           onSubmit={handleCreateStream}
           loading={loading || isSubmitting}
-          accentColor={P01Colors.cyan}
-          submitLabel={t('createStream.createStream')}
+          accentColor={isPrivate ? P01Colors.pink : P01Colors.cyan}
+          submitLabel={isPrivate ? 'Continue privately' : t('createStream.createStream')}
           hideServiceSelector
         />
       </View>
@@ -90,4 +159,23 @@ const st = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontFamily: FontFamily.semibold, color: Colors.text },
   headerSub: { fontSize: 12, fontFamily: FontFamily.regular, color: P01Colors.cyan, marginTop: 2 },
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.lg,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: Spacing.md,
+  },
+  privacyIconBubble: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  privacyTitle: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text },
+  privacySub: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2, lineHeight: 15 },
 });

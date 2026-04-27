@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { PublicKey } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -45,6 +45,17 @@ function GlassCard({ children, style }: { children: React.ReactNode; style?: any
 
 export default function SubscribePrivateScreen() {
   const router = useRouter();
+  // Optional prefill — used by the P2P streams flow when the user toggles
+  // "Private mode" on `(streams)/create.tsx` and gets routed here. Reading
+  // params via the framework router so deep-links work too.
+  const params = useLocalSearchParams<{
+    retailer?: string;
+    rate?: string;
+    intervalSlots?: string;
+    mode?: 'merchant' | 'stream-p2p';
+  }>();
+  const isP2PMode = params.mode === 'stream-p2p';
+
   const { notes } = useDenominatedPoolStore();
   const {
     subscribePrivateStarkAction,
@@ -56,9 +67,9 @@ export default function SubscribePrivateScreen() {
   const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof } = useStarkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const [retailer, setRetailer] = useState('');
-  const [rate, setRate] = useState('');
-  const [intervalSlots, setIntervalSlots] = useState('7200');
+  const [retailer, setRetailer] = useState(params.retailer ?? '');
+  const [rate, setRate] = useState(params.rate ?? '');
+  const [intervalSlots, setIntervalSlots] = useState(params.intervalSlots ?? '7200');
   const [starkStatus, setStarkStatusLocal] = useState<string | null>(null);
   const setStarkStatus = useCallback((s: string | null) => {
     setStarkStatusLocal(s);
