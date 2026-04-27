@@ -328,6 +328,25 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       await resetAllPrivacyStores(oldPublicKey ?? undefined);
 
       const wallet = await createWallet();
+
+      // Pre-stamp the recovery-scan flag for this brand-new pubkey BEFORE
+      // we publish the wallet to the global store. There is nothing to
+      // recover — the user just minted this keypair. (Seed-import + cross-
+      // device flows intentionally leave the flag unset.)
+      //
+      // Order matters: the RecoveryBootModal mounted in app/(main)/_layout
+      // triggers `runScan` from a useEffect on `publicKey` change. If we
+      // set state first and write the flag second, the modal's
+      // `AsyncStorage.getItem(flagKey)` can race the `setItem` and read
+      // empty — re-firing the rescan even though there's nothing to find.
+      // Writing the flag first closes the race.
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        await AsyncStorage.setItem(`p01_auto_recovery_v1_${wallet.publicKey}`, Date.now().toString());
+      } catch {
+        // Non-fatal — worst case the modal fires once, finds nothing, and self-silences.
+      }
+
       set({
         hasWallet: true,
         publicKey: wallet.publicKey,
@@ -337,17 +356,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         loading: false,
         error: null,
       });
-
-      // Pre-stamp the recovery-scan flag for this brand-new pubkey so the
-      // boot-time RecoveryBootModal doesn't fire. There is nothing to
-      // recover — the user just minted this keypair. (Seed-import + cross
-      // -device flows intentionally leave the flag unset.)
-      try {
-        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        await AsyncStorage.setItem(`p01_auto_recovery_v1_${wallet.publicKey}`, Date.now().toString());
-      } catch {
-        // Non-fatal — worst case the modal fires once, finds nothing, and self-silences.
-      }
 
       // Refresh balance
       get().refreshBalance();
