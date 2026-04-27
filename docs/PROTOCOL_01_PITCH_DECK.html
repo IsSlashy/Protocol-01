@@ -522,45 +522,37 @@ setInterval(<span class="kw">async</span> () =&gt; {
 <!-- =========================== SLIDE 10 — FOUNDER =========================== -->
 <div class="slide">
   <div class="slide-header"><span>Founder</span><span class="mark">01</span></div>
-  <h1>One builder. Ninety days. Full-time.</h1>
+  <h1>Built by hand.</h1>
+  <p class="lead" style="margin-bottom: 6mm;">
+    Cryptography I implemented from first principles &mdash; not glued together
+    from libraries:
+  </p>
 
-  <div class="grid-2" style="margin-top: 6mm;">
+  <div class="grid-2" style="flex: 1;">
     <div>
-      <h3>Slashy &mdash; sole builder, full-time</h3>
-      <p class="small muted" style="line-height: 1.7;">
-        24 years old, based in Paris. Self-taught since 17. Epitech alumnus &mdash;
-        Bachelor's Full-Stack Dev (2023), Master's Cybersecurity (2025) with
-        specialisation offensive security + cryptography.
-      </p>
-      <p class="small muted" style="line-height: 1.7; margin-top: 3mm;">
-        2 years at CaptNBoat (2023&ndash;2024) leading cybersecurity initiatives
-        and product. Earlier shipped a production e-commerce platform end-to-end
-        (2022). 18+ projects across web, mobile and backend before Protocol 01.
-      </p>
-      <p class="small muted" style="line-height: 1.7; margin-top: 3mm;">
-        Full-time on Protocol 01 since January 2026. No team. No outside funding.
-        No advisors with equity.
-      </p>
+      <ul class="small" style="line-height: 2; padding-left: 5mm;">
+        <li>Custom on-chain <span class="cyan bold">FRI/STARK verifier</span> (Goldilocks field, Poseidon AIR, 6 circuits, 792 KB SBF binary)</li>
+        <li>Hybrid <span class="cyan bold">X25519 + ML-KEM-768</span> stealth address construction (own design, not a reference port)</li>
+        <li><span class="cyan bold">WOTS+</span> post-quantum signature scheme + SHA-256 hash-timelock vault</li>
+        <li>Deterministic <span class="cyan bold">HKDF note-secret derivation</span> &mdash; one seed, every shielded note recoverable cross-device</li>
+        <li>Custom <span class="cyan bold">MPC bridge to Arcium Cerberus</span> &mdash; 9 Arcis circuits, threshold compute</li>
+        <li><span class="cyan bold">14 Anchor programs</span>, 17 SDKs, 2,400+ tests &mdash; all written by the same person</li>
+      </ul>
     </div>
     <div>
-      <h3>Why this person</h3>
-      <p class="small" style="line-height: 1.7;">
-        I read the FRI paper before writing the on-chain verifier.
-        I chose the X25519 + ML-KEM-768 hybrid stealth construction myself &mdash;
-        not copied from a reference. Every line of the cryptographic security
-        boundary is mine: custom FRI verifier, Goldilocks-Poseidon AIRs, hybrid
-        stealth, WOTS+ vault, MPC bridge.
-      </p>
-      <p class="small" style="line-height: 1.7; margin-top: 3mm;">
-        The cybersecurity Master's means I ship without breaking the threat
-        model. Seven years self-taught means I do not wait for anyone.
-      </p>
-      <div class="card card-cyan" style="margin-top: 5mm;">
-        <p class="small bold cyan" style="font-style: italic; text-align: center;">
+      <div class="card card-cyan" style="padding: 8mm;">
+        <p class="bold cyan" style="font-size: 14pt; font-style: italic; line-height: 1.5; text-align: center;">
           "Financial privacy is a right, not a feature.<br>
           No team, no funding, just execution."
         </p>
+        <p class="muted small" style="text-align: center; margin-top: 5mm;">
+          &mdash; Slashy, founder
+        </p>
       </div>
+      <p class="muted" style="text-align: center; margin-top: 9mm; font-size: 11pt; line-height: 1.5;">
+        The CV is on the form.<br>
+        <span class="cyan bold">The code is the credentials.</span>
+      </p>
     </div>
   </div>
 
