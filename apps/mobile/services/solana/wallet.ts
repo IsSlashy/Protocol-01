@@ -183,6 +183,22 @@ export async function createWallet(): Promise<WalletInfo> {
   await secureSetWithRetry(STORAGE_KEYS.PUBLIC_KEY, keypair.publicKey.toBase58());
   await secureSetWithRetry(STORAGE_KEYS.WALLET_EXISTS, 'true');
 
+  // Pre-stamp the recovery-scan flag for this brand-new pubkey — there is
+  // nothing on-chain to recover, the user just minted this keypair. Mirrors
+  // the pre-stamp in walletStore.createNewWallet so every code path that
+  // creates a fresh local wallet (including the onboarding create-wallet
+  // screen, which calls this service directly) skips the boot recovery
+  // modal on first launch.
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    await AsyncStorage.setItem(
+      `p01_auto_recovery_v1_${keypair.publicKey.toBase58()}`,
+      Date.now().toString(),
+    );
+  } catch {
+    // Non-fatal — worst case the modal fires once, finds nothing, self-silences.
+  }
+
   return {
     publicKey: keypair.publicKey.toBase58(),
     mnemonic,

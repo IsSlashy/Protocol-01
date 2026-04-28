@@ -260,6 +260,20 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         getCachedTransactions(address),
       ]);
 
+      // Pre-stamp the recovery-scan flag for this Privy address BEFORE we
+      // publish it to the store. Without this, every Privy login on a new
+      // device fires the boot recovery modal — which is meaningless for
+      // brand-new accounts and noisy for normal cross-device login (the
+      // archived-notes path on line below already restores anything we had
+      // for this address). Users who want a fresh on-chain rescan can
+      // trigger it manually from the privacy settings.
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        await AsyncStorage.setItem(`p01_auto_recovery_v1_${address}`, Date.now().toString());
+      } catch {
+        // Non-fatal — modal will fire once and self-silence on empty result.
+      }
+
       set({
         hasWallet: true,
         publicKey: address,

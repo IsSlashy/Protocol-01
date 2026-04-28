@@ -13,7 +13,7 @@ const downloadOptions = [
     description: "androidDesc",
     filename: "protocol-01-v0.9.9.apk",
     link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v0.9.9/protocol-01-v0.9.9.apk",
-    size: "125 MB",
+    size: "96 MB",
   },
   {
     platform: "chromeExtension",

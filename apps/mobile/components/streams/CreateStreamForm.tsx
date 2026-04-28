@@ -19,6 +19,10 @@ interface CreateStreamFormProps {
   accentColor?: string;
   submitLabel?: string;
   hideServiceSelector?: boolean;
+  // In private mode the per-payment rate comes from the denominated note
+  // selected on the next screen, so the total-amount input is irrelevant
+  // here. Hiding it also drops the matching validation + preview row.
+  hideAmount?: boolean;
 }
 
 export type PaymentFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly';
@@ -54,7 +58,7 @@ const getFrequencies = (t: (k: string) => string): { label: string; value: Payme
 export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   balance, symbol, onCreateStream, onSubmit, onSelectContact,
   loading = false, accentColor = P01Colors.cyan, submitLabel,
-  hideServiceSelector = false,
+  hideServiceSelector = false, hideAmount = false,
 }) => {
   const t = useT();
   const walletBalance = useWalletStore(s => s.balance);
@@ -82,20 +86,23 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   const amt = Number(amount) || 0;
   const bal = balance || solBalance;
   const tok = symbol || 'SOL';
-  const isValid = recipient && amt > 0 && dur > 0;
+  const isValid = recipient && (hideAmount || amt > 0) && dur > 0;
 
   const preview = useMemo(() => {
-    if (!amt || !dur) return null;
+    if (!dur) return null;
+    if (!hideAmount && !amt) return null;
     const end = new Date(); end.setDate(end.getDate() + dur);
-    return { rate: amt / dur, endDate: end };
-  }, [amt, dur]);
+    return { rate: hideAmount ? 0 : amt / dur, endDate: end };
+  }, [amt, dur, hideAmount]);
 
   const validate = (): boolean => {
     const e: typeof errors = {};
     if (!recipient.trim()) e.recipient = t('createStream.required');
     else if (recipient.length < 20) e.recipient = t('createStream.invalidAddressShort');
-    if (!amount || amt <= 0) e.amount = t('createStream.mustBePositive');
-    else if (amt > bal) e.amount = t('common.insufficient');
+    if (!hideAmount) {
+      if (!amount || amt <= 0) e.amount = t('createStream.mustBePositive');
+      else if (amt > bal) e.amount = t('common.insufficient');
+    }
     setErrors(e); return !Object.keys(e).length;
   };
 
@@ -151,21 +158,24 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
         </View>
       </View>
 
-      {/* Amount */}
-      <View style={st.section}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Text style={st.label}>{t('createStream.totalAmount')}</Text>
-          <Text style={st.dimLabel}>{t('common.balance')}: {bal.toFixed(4)} {tok}</Text>
+      {/* Amount — hidden in private mode (rate is derived from the
+          denominated note picked on the subscribe-private screen). */}
+      {!hideAmount && (
+        <View style={st.section}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={st.label}>{t('createStream.totalAmount')}</Text>
+            <Text style={st.dimLabel}>{t('common.balance')}: {bal.toFixed(4)} {tok}</Text>
+          </View>
+          <View style={st.inputWrap}>
+            <TextInput style={st.input} placeholder="0.00"
+              placeholderTextColor={Colors.textTertiary} value={amount}
+              onChangeText={v => setAmount(v.replace(/[^0-9.]/g, ''))}
+              keyboardType="decimal-pad" />
+            <Text style={st.dimLabel}>{tok}</Text>
+          </View>
+          {errors.amount && <Text style={st.error}>{errors.amount}</Text>}
         </View>
-        <View style={st.inputWrap}>
-          <TextInput style={st.input} placeholder="0.00"
-            placeholderTextColor={Colors.textTertiary} value={amount}
-            onChangeText={v => setAmount(v.replace(/[^0-9.]/g, ''))}
-            keyboardType="decimal-pad" />
-          <Text style={st.dimLabel}>{tok}</Text>
-        </View>
-        {errors.amount && <Text style={st.error}>{errors.amount}</Text>}
-      </View>
+      )}
 
       {/* Duration */}
       <View style={st.section}>
@@ -210,12 +220,15 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
       {preview && (
         <View style={st.previewCard}>
           <Text style={st.previewTitle}>{t('createStream.summaryTitle')}</Text>
-          {[
+          {([
             [t('streams.frequency'), getFrequencies(t).find(f => f.value === frequency)?.label || ''],
-            [t('createStream.perPayment'), `${amt.toFixed(4)} ${tok}`],
+            // Per-payment row only when the user actually entered an amount
+            // here. In private mode the rate comes from the note picked
+            // on the next screen, so this row would be misleading.
+            ...(hideAmount ? [] : [[t('createStream.perPayment'), `${amt.toFixed(4)} ${tok}`]]),
             [t('createStream.start'), t('createStream.immediately')],
             [t('createStream.end'), preview.endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })],
-          ].map(([k, v]) => (
+          ] as Array<[string, string]>).map(([k, v]) => (
             <View key={k} style={st.previewRow}>
               <Text style={st.dimLabel}>{k}</Text>
               <Text style={st.previewValue}>{v}</Text>

@@ -51,25 +51,17 @@ export default function CreatePersonalStreamScreen() {
       // The vault contract treats every retailer pubkey identically, so a
       // P2P recipient (employee, friend) flows through the same on-chain
       // path as a merchant subscription.
+      //
+      // Per-payment rate is intentionally NOT pre-filled: it is derived
+      // from the denominated note the user picks on the next screen, so
+      // collecting a "total amount" here would be misleading. We only
+      // pass the recipient + the period cadence (intervalSlots).
       if (isPrivate) {
-        // Convert (totalAmount, frequency, duration_in_days) into the
-        // (rate_per_period, intervalSlots) pair the vault expects.
-        const periodDays =
-          data.frequency === 'daily' ? 1 :
-          data.frequency === 'weekly' ? 7 :
-          data.frequency === 'biweekly' ? 14 :
-          data.frequency === 'monthly' ? 30 :
-          data.frequency === 'yearly' ? 365 :
-          30; // 'custom' falls back to monthly cadence
-
-        const periods = Math.max(1, Math.floor(data.duration / periodDays));
-        const rate = data.amount / periods;
         const intervalSlots = SLOTS_PER_PERIOD[data.frequency];
         router.push({
           pathname: '/(main)/(privacy)/subscribe-private',
           params: {
             retailer: data.recipient,
-            rate: rate.toString(),
             intervalSlots: intervalSlots.toString(),
             mode: 'stream-p2p',
           },
@@ -141,6 +133,7 @@ export default function CreatePersonalStreamScreen() {
           accentColor={isPrivate ? P01Colors.pink : P01Colors.cyan}
           submitLabel={isPrivate ? 'Continue privately' : t('createStream.createStream')}
           hideServiceSelector
+          hideAmount={isPrivate}
         />
       </View>
     </View>

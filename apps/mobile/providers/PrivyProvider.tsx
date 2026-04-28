@@ -164,19 +164,33 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
   // Track last synced address to avoid re-initializing on every render
   const lastSyncedAddress = React.useRef<string | null>(null);
 
-  // Auto-create embedded wallet if authenticated but no wallet exists
-  // This handles the case where user logs in via Google/Apple OAuth
-  // and the embedded Solana wallet hasn't been created yet.
+  // Auto-create embedded wallet if authenticated but no wallet exists.
+  // Handles the case where user logs in via Google/Apple OAuth and the
+  // embedded Solana wallet hasn't been created yet.
+  //
+  // We MUST delay before calling create() — Privy hydrates the wallets
+  // array asynchronously after auth completes. Calling create() during
+  // that window races ahead of hydration and mints a brand-new wallet
+  // even when the user already has one server-side, breaking the
+  // "same Google account → same embedded wallet" guarantee. A few
+  // seconds is enough for Privy to fetch the user's existing wallets;
+  // if none come back we then create one for first-time users.
   useEffect(() => {
-    if (isAuthenticated && !solanaWalletFromArray?.address && solanaWallet?.create) {
-      console.log('[Privy] Authenticated but no wallet — auto-creating embedded wallet...');
+    if (!isAuthenticated || solanaWalletFromArray?.address || !solanaWallet?.create) return;
+
+    const timer = setTimeout(() => {
+      // Re-check inside the timer — Privy may have loaded the wallet during the wait.
+      if (solanaWalletFromArray?.address) return;
+      console.log('[Privy] No wallet after hydration window — auto-creating embedded wallet...');
       solanaWallet.create().then(() => {
         console.log('[Privy] Embedded wallet created');
       }).catch((err: any) => {
         // Wallet may already exist — not a fatal error
         console.warn('[Privy] Auto-create wallet:', err.message?.slice(0, 80));
       });
-    }
+    }, 3000);
+
+    return () => clearTimeout(timer);
   }, [isAuthenticated, solanaWalletFromArray?.address, solanaWallet?.create]);
 
   // Sync Privy wallet with wallet store — only when address actually changes
