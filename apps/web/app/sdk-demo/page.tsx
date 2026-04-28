@@ -615,25 +615,6 @@ const result = await arcium.execute({
       {/* Install */}
       <div className="bg-p01-surface p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.installTitle')}</h3>
-
-        {/* Preview disclaimer: only @protocol-01/zk-sdk and
-            @protocol-01/privacy-toolkit are currently published to the
-            public npm registry. Everything else ships from the monorepo
-            until the API surface stabilises — clone and link via the
-            workspace to try those today. */}
-        <div className="mb-4 flex gap-3 rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 text-xs text-yellow-200/90">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-yellow-400" />
-          <div className="leading-relaxed">
-            <strong className="text-yellow-100">SDK preview.</strong>{' '}
-            <code className="font-mono">@protocol-01/zk-sdk</code> and{' '}
-            <code className="font-mono">@protocol-01/privacy-toolkit</code> are live on npm.
-            The others are still pre-release — install them from the monorepo:{' '}
-            <code className="font-mono">git clone https://github.com/IsSlashy/Protocol-01 && pnpm install</code>,
-            then import via the workspace path (e.g.{' '}
-            <code className="font-mono">{`import { ... } from '@protocol-01/specter-sdk'`}</code>).
-          </div>
-        </div>
-
         <CodeBlock
           title={t('sdkDemo.installCodeTitle')}
           code={`# Core SDK

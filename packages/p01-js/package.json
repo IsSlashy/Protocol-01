@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/p01-js",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Drop-in merchant SDK for Protocol 01 — privacy-first crypto payments, Stream Secure subscriptions, vanilla JS + React widgets. Zero-config pay button.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -24,8 +24,12 @@
   },
   "typesVersions": {
     "*": {
-      "react": ["dist/react/index.d.ts"],
-      "registry": ["dist/registry.d.ts"]
+      "react": [
+        "dist/react/index.d.ts"
+      ],
+      "registry": [
+        "dist/registry.d.ts"
+      ]
     }
   },
   "files": [
