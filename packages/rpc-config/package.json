@@ -1,6 +1,7 @@
 {
   "name": "@protocol-01/rpc-config",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "description": "Shared RPC configuration for Protocol 01 — priority-based endpoint resolution, connection management with automatic fallback, URL sanitization, and explorer URL builders.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -16,9 +17,31 @@
       }
     }
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch"
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "solana",
+    "protocol-01",
+    "rpc",
+    "endpoints",
+    "connection",
+    "web3"
+  ],
+  "author": "Protocol 01 Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/protocol-01/sdk"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4"
@@ -26,5 +49,8 @@
   "devDependencies": {
     "tsup": "^8.4.0",
     "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

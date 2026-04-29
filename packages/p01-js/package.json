@@ -1,7 +1,7 @@
 {
   "name": "@protocol-01/p01-js",
-  "version": "0.2.1",
-  "description": "Drop-in merchant SDK for Protocol 01 — privacy-first crypto payments, Stream Secure subscriptions, vanilla JS + React widgets. Zero-config pay button.",
+  "version": "0.3.0",
+  "description": "Drop-in merchant SDK for Protocol 01 — privacy-first crypto payments (post-quantum STARK proofs), Stream Secure subscriptions, vanilla JS + React widgets. Zero-config pay button.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -74,15 +74,20 @@
     "node": ">=22"
   },
   "peerDependencies": {
+    "@protocol-01/privacy-sdk": "workspace:*",
     "react": ">=17.0.0"
   },
   "peerDependenciesMeta": {
+    "@protocol-01/privacy-sdk": {
+      "optional": true
+    },
     "react": {
       "optional": true
     }
   },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.0.0",
+    "@solana/web3.js": "^1.98.4",
     "@storybook/addon-a11y": "^10.1.11",
     "@storybook/addon-docs": "^10.1.11",
     "@storybook/react-vite": "^10.1.11",
@@ -102,7 +107,8 @@
   "dependencies": {
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
-    "@noble/ciphers": "^2.2.0"
+    "@noble/ciphers": "^2.2.0",
+    "@protocol-01/stark-prover": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

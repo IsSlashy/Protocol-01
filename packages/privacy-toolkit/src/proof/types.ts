@@ -1,5 +1,10 @@
 /**
- * snarkjs proof format (as returned by snarkjs.groth16.fullProve)
+ * snarkjs-compatible Groth16 proof format (legacy backward-compat).
+ *
+ * Structural shape matching the object historically returned by
+ * `snarkjs.groth16.fullProve`. Kept for callers still consuming Groth16
+ * proofs; Protocol 01 itself has migrated to STARK proofs at runtime, so
+ * `snarkjs` is no longer a required dependency of this package.
  */
 export interface SnarkjsProof {
   pi_a: [string, string, string];

@@ -5,6 +5,8 @@
 **Status:** Research, planning, and partial implementation (stealth + claim layers shipped; proof system migration complete)
 **Classification:** Internal — engineering reference
 
+> **Status update 2026-04-28:** Hot path SDKs migrated to full STARK in P10. Groth16 retained for compliance attestations and sealed-bid auction escrow only — those two surfaces are scheduled for STARK migration in a later phase. References below to "Groth16 verifier removed" describe the hot path; the auction/compliance Groth16 verifiers remain as scoped above.
+
 ---
 
 ## What's New in v1.1 (2026-04-17)

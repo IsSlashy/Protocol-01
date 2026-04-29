@@ -201,7 +201,7 @@ export default function FounderPage() {
 
             <div className="grid sm:grid-cols-2 gap-3">
               {[
-                { icon: "cube", titleKey: "onchain", items: ["12 Solana programs (Anchor/Rust)", "6 Circom ZK circuits (Groth16)", "6 STARK AIRs (Winterfell)", "On-chain relayer + fee splitter"] },
+                { icon: "cube", titleKey: "onchain", items: ["12 Solana programs (Anchor/Rust)", "6 STARK AIRs (Winterfell, hot path)", "Custom on-chain FRI verifier (Goldilocks)", "On-chain relayer + fee splitter"] },
                 { icon: "phone", titleKey: "clients", items: ["Mobile app (Expo/React Native)", "Chrome extension (MV3)", "Next.js 16 web app", "SDK demo + documentation"] },
                 { icon: "shield", titleKey: "privacy", items: ["Stealth addresses (ECDH + ML-KEM-768)", "Denominated privacy pools", "Multi-hop mixing router", "Tor-proxied RPC relay"] },
                 { icon: "cpu", titleKey: "quantum", items: ["STARK migration (post-quantum)", "Winternitz OTS vault (WOTS+)", "Hash-timelock vault", "Commit-then-reveal auth"] },

@@ -1,11 +1,14 @@
 // ============================================================================
-// Client-Side zkSPL Prover — Public API
+// Client-Side zkSPL Prover — Public API (STARK migration)
 // ============================================================================
 //
 // TRUST THE MATH, NOT THE NODES.
 //
-// This module exports everything needed to generate zkSPL Groth16 proofs
-// entirely on the client device. No private data ever leaves the user's machine.
+// This module exports everything needed to generate zkSPL STARK proofs
+// entirely on the client device. No private data ever leaves the user's
+// machine. The underlying prover is `@protocol-01/stark-prover`, which uses
+// post-quantum-safe STARKs over the Goldilocks field — no trusted setup, no
+// elliptic-curve assumptions.
 //
 // ============================================================================
 
@@ -13,24 +16,13 @@
 // Main prover class
 // ---------------------------------------------------------------------------
 
-export { ClientProver } from './client-prover';
-
-// ---------------------------------------------------------------------------
-// Circuit file loader
-// ---------------------------------------------------------------------------
-
-export { CircuitLoader } from './circuit-loader';
-
-// ---------------------------------------------------------------------------
-// Proof format conversion utilities
-// ---------------------------------------------------------------------------
-
 export {
-  snarkjsProofToBytes,
-  parsePublicSignals,
+  StarkClientProver,
   buildBalanceCircuitInputs,
   buildSufficiencyCircuitInputs,
-  type Groth16ProofBytes,
+  validateInputs,
+  circuitIdForOperation,
+  type StarkClientProverInit,
 } from './client-prover';
 
 // ---------------------------------------------------------------------------
@@ -59,18 +51,14 @@ export type {
   BalanceSufficiencyProofInputs,
   ZkSplProofInputs,
 
-  // Proof output
-  SnarkjsProof,
-  ProofResult,
+  // Proof output (re-exported from @protocol-01/stark-prover)
+  StarkProofOutcome,
 
-  // Configuration
-  CircuitFileConfig,
-  ClientProverConfig,
-  ProgressCallback,
-  ProgressEvent,
+  // Configuration (re-exported from @protocol-01/stark-prover)
+  StarkProverConfig,
 
-  // Circuit loading state
-  CircuitFiles,
+  // Internal helper alias
+  StarkPrivateInputMap,
 } from './types';
 
 // Error class (exported as value, not just type)

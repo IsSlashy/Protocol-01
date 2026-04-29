@@ -1,5 +1,7 @@
 # Protocol 01 — Blind Auction with Shielded Pool Escrow
 
+> *Note 2026-04-28: the rest of the Protocol 01 hot path (shield/transfer/unshield, base + denominated pools) has migrated to full STARK proofs over the Goldilocks field. The blind-auction escrow described here continues to use Groth16/BN254 and is under migration to STARK in a later phase.*
+
 ## Overview
 
 Protocol 01's Blind Auction system combines Arcium MPC encrypted bid accumulation with a ZK shielded pool escrow layer, enabling sealed-bid auctions where:

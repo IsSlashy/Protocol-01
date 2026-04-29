@@ -10,8 +10,8 @@ const technologies = [
     category: "Zero-Knowledge",
     icon: Lock,
     items: [
-      { name: "Groth16 + STARK", description: "Dual proof systems" },
-      { name: "Winterfell", description: "Quantum-safe STARK prover" },
+      { name: "STARK", description: "Quantum-resistant proof system" },
+      { name: "Winterfell", description: "Goldilocks-field STARK prover" },
       { name: "Poseidon", description: "ZK-friendly hash" },
     ],
     color: "cyan",
@@ -56,7 +56,7 @@ const architectureLayers = [
   },
   {
     name: "Privacy Layer",
-    description: "Groth16 + STARK Proofs, Stealth Addresses, Encryption, zkSPL Confidential Balances",
+    description: "STARK Proofs, Stealth Addresses, Encryption, zkSPL Confidential Balances",
     color: "p01-pink",
   },
   {

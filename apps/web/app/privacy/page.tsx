@@ -174,8 +174,9 @@ export default function PrivacyPolicy() {
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
                 <strong className="text-white">Shielded Pools</strong> — funds
-                are deposited into on-chain pools using Groth16 zero-knowledge
-                proofs. The link between depositor and withdrawer is
+                are deposited into on-chain pools using quantum-resistant STARK
+                zero-knowledge proofs (Goldilocks field, hash-based, no trusted
+                setup). The link between depositor and withdrawer is
                 cryptographically broken.
               </li>
               <li>

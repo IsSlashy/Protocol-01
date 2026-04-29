@@ -1,22 +1,34 @@
 // ============================================================================
-// Client-Side zkSPL Prover — Type Definitions
+// Client-Side zkSPL Prover — Type Definitions (STARK migration)
 // ============================================================================
 //
 // TRUST THE MATH, NOT THE NODES.
 // Every type here is designed to ensure private data NEVER leaves the device.
 // The spending_key, balance, salt — all stay local.
 //
+// Post-quantum migration: Groth16/BN254 has been replaced by STARKs over the
+// Goldilocks field, generated via `@protocol-01/stark-prover`. The high-level
+// proof input shapes (deposit / withdraw / transfer / balance-proof) remain
+// stable — only the proof representation changes. Public/private input
+// objects continue to be authored in the host language with `bigint`s and
+// then flattened to a `Record<string, string | string[] | number[]>` map for
+// the WASM bindings.
+//
 // ============================================================================
+
+import type { StarkProofOutcome } from '@protocol-01/stark-prover';
 
 // ---------------------------------------------------------------------------
 // Field element alias
 // ---------------------------------------------------------------------------
 
 /**
- * BN254 scalar field element.
+ * Goldilocks field element.
  *
- * All circuit signals operate in the BN254 field
- * (p = 21888242871839275222246405745257275088548364400416034343698204186575808495617).
+ * All circuit signals operate in the 64-bit Goldilocks field
+ * (p = 2^64 - 2^32 + 1 = 18446744069414584321). Values are represented as
+ * `bigint` in TypeScript and serialized to decimal strings when handed to
+ * the WASM prover.
  */
 export type FieldElement = bigint;
 
@@ -41,7 +53,7 @@ export type ZkSplOperation = 'deposit' | 'withdraw' | 'transfer' | 'balance-proo
 /**
  * Public inputs for the confidential_balance circuit.
  *
- * These are visible on-chain and passed to the verifier contract.
+ * These are visible on-chain and bound into the STARK transcript.
  * Circuit signal order: old_commitment, new_commitment, amount_hash,
  *                       public_credit, public_debit, token_mint, nonce
  */
@@ -190,135 +202,25 @@ export type ZkSplProofInputs =
 // ---------------------------------------------------------------------------
 
 /**
- * Raw snarkjs proof format — the intermediate representation before
- * byte conversion for on-chain submission.
- */
-export interface SnarkjsProof {
-  pi_a: string[];
-  pi_b: string[][];
-  pi_c: string[];
-}
-
-/**
  * The result of proof generation.
  *
- * This is the ONLY thing that leaves the device — the proof and public signals.
- * The proof reveals NOTHING about the private inputs (spending_key, balance, salt).
+ * Re-exported from `@protocol-01/stark-prover`. The on-chain proof bytes
+ * have already been uploaded and verified by `p01_stark_verifier`; what the
+ * caller receives is a `proofBuffer` PDA (consumed by downstream programs
+ * such as `zk_shielded`) plus the public inputs that were bound into the
+ * transcript.
  */
-export interface ProofResult {
-  /** Groth16 proof in snarkjs format */
-  proof: SnarkjsProof;
-
-  /** Public signals (circuit outputs) as decimal strings */
-  publicSignals: string[];
-
-  /** Time taken for proof generation in milliseconds */
-  provingTimeMs: number;
-}
+export type { StarkProofOutcome } from '@protocol-01/stark-prover';
 
 // ---------------------------------------------------------------------------
 // Prover configuration
 // ---------------------------------------------------------------------------
 
 /**
- * Configuration for circuit file locations.
- *
- * Circuit files (.wasm and .zkey) are loaded lazily from these URLs.
- * In browser: fetched via HTTP. In Node: loaded from filesystem.
+ * Re-export the STARK prover config so callers can construct a
+ * `StarkClientProver` with the same shape used by the rest of the SDK.
  */
-export interface CircuitFileConfig {
-  /** URL or path to the circuit's WASM file */
-  wasmUrl: string;
-
-  /** URL or path to the circuit's proving key (.zkey) file */
-  zkeyUrl: string;
-}
-
-/**
- * Full prover configuration.
- */
-export interface ClientProverConfig {
-  /**
-   * Circuit files for the confidential_balance circuit.
-   * Used for deposit, withdraw, and transfer operations.
-   */
-  balanceCircuit: CircuitFileConfig;
-
-  /**
-   * Circuit files for the balance_proof (sufficiency) circuit.
-   * Used for proving balance >= threshold.
-   */
-  sufficiencyCircuit: CircuitFileConfig;
-
-  /**
-   * Base URL or directory path for circuit files.
-   * When set, circuit file URLs in balanceCircuit/sufficiencyCircuit can be
-   * specified as relative paths (e.g. 'confidential_balance.wasm') and they
-   * will be resolved against this base.
-   *
-   * @example
-   * ```ts
-   * const prover = new ClientProver({
-   *   circuitBaseUrl: 'https://cdn.example.com/circuits/',
-   *   balanceCircuit: { wasmUrl: 'confidential_balance.wasm', zkeyUrl: 'confidential_balance_final.zkey' },
-   *   sufficiencyCircuit: { wasmUrl: 'balance_proof.wasm', zkeyUrl: 'balance_proof_final.zkey' },
-   * });
-   * ```
-   */
-  circuitBaseUrl?: string;
-
-  /**
-   * Timeout for proof generation in milliseconds.
-   * Default: 60000 (60 seconds — the circuit is small, ~1382 constraints).
-   */
-  timeout?: number;
-
-  /**
-   * Optional progress callback for circuit file downloads.
-   * Reports bytes loaded and total bytes (if known from Content-Length).
-   */
-  onProgress?: ProgressCallback;
-}
-
-/**
- * Progress callback for circuit file loading.
- */
-export type ProgressCallback = (event: ProgressEvent) => void;
-
-/**
- * Progress event reported during circuit file download.
- */
-export interface ProgressEvent {
-  /** Which circuit is being loaded */
-  circuit: 'balance' | 'sufficiency';
-
-  /** Which file is being loaded */
-  file: 'wasm' | 'zkey';
-
-  /** Bytes loaded so far */
-  loaded: number;
-
-  /** Total bytes (0 if unknown) */
-  total: number;
-
-  /** Whether this file is fully loaded */
-  done: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Circuit loading state
-// ---------------------------------------------------------------------------
-
-/**
- * The loaded state of a circuit's files.
- */
-export interface CircuitFiles {
-  /** The compiled circuit WASM (Uint8Array or path string for Node) */
-  wasm: Uint8Array | string;
-
-  /** The proving key (Uint8Array or path string for Node) */
-  zkey: Uint8Array | string;
-}
+export type { StarkProverConfig } from '@protocol-01/stark-prover';
 
 // ---------------------------------------------------------------------------
 // Validation error
@@ -340,3 +242,18 @@ export class ProofInputValidationError extends Error {
     this.violations = violations;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Internal helper alias used by the prover
+// ---------------------------------------------------------------------------
+
+/**
+ * The narrow shape accepted by `StarkProofGenerator`. Re-exported so the
+ * input builders below can advertise it as their return type.
+ */
+export type StarkPrivateInputMap = Record<string, string | string[] | number[]>;
+
+// Pin a runtime use of the imported StarkProofOutcome so tsup keeps the
+// transitive dependency edge during build (otherwise an `import type` may
+// be elided and dts emit could re-resolve through the wrong path).
+export type _StarkProofOutcomeReExportAnchor = StarkProofOutcome;

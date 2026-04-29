@@ -1,298 +1,180 @@
 /**
- * ZK Proof Generator Module for Protocol 01
+ * STARK Proof Generator Adapter for Protocol 01 (p01-js merchant SDK).
  *
- * Provides an interface for generating and verifying Groth16 zero-knowledge proofs
- * for the denominated pool circuit (denominated_pool.circom).
+ * Thin wrapper around `@protocol-01/stark-prover`. The host application
+ * builds a `StarkProofGenerator` once (typically via `createStarkProver`)
+ * and passes it in here. This module exposes a circuit-1 (POOL_COMMITMENT)
+ * convenience that mirrors the privacy-sdk shield/unshield pattern so
+ * merchants can plug a single generator into both the merchant SDK and
+ * `@protocol-01/privacy-sdk`.
  *
- * Circuit details:
- * - Type: Groth16 over BN254
- * - Constraints: 4273
- * - Merkle depth: 15
- * - Public inputs: [merkle_root, nullifier, min_epoch, token_mint]
- * - Private inputs: [secret, nullifier_preimage, deposit_epoch, path_elements[15], path_indices[15]]
+ * Circuit details (POOL_COMMITMENT, id 1):
+ * - System: STARK over the Goldilocks field (DEEP-ALI), Blake3 Merkle.
+ * - Public inputs (verified on-chain by `p01_stark_verifier`):
+ *     [nullifier, commitment]
+ * - Private inputs (`Record<string, string | string[] | number[]>`):
+ *     - `nullifierPreimage` — hex/decimal field element
+ *     - `secret`            — hex/decimal field element
+ *     - `depositEpoch`      — slot/epoch as decimal
+ *     - `tokenMint`         — mint pubkey as decimal field element
  *
- * IMPORTANT: This module requires snarkjs as a runtime dependency for proof generation.
- * snarkjs is NOT bundled with this SDK to keep the package lightweight.
- * Install it separately: `npm install snarkjs`
+ * The Groth16/snarkjs pipeline shipped in 0.2.x is gone — proof generation,
+ * upload, and on-chain verification are all handled by `p01_stark_verifier`
+ * via `@protocol-01/stark-prover`. Client-side verification is no longer a
+ * supported entry point: the on-chain verifier is the source of truth.
  *
  * @module proof-generator
  */
 
+import {
+  STARK_CIRCUITS,
+  type StarkProofGenerator,
+  type StarkProofOutcome,
+} from '@protocol-01/stark-prover';
+
 // ============ Types ============
 
 /**
- * A Groth16 proof with its public signals.
+ * Outcome of a STARK proof generation + on-chain verification roundtrip.
+ *
+ * Re-exported from `@protocol-01/stark-prover` for callers that prefer to
+ * import the type from the merchant SDK without taking a second dep.
+ *
+ * BREAKING CHANGE (0.3.0): replaces the Groth16 `{ proof: { pi_a, pi_b,
+ * pi_c }, publicSignals }` shape from 0.2.x. Migrate by reading
+ * `proofBuffer` (PDA of the verified buffer held by `p01_stark_verifier`)
+ * and `publicInputs` (decimal `bigint[]` in circuit-defined order).
  */
-export interface ProofResult {
-  /** Groth16 proof components */
-  proof: {
-    /** pi_a: first proof element (2 coordinates as decimal strings) */
-    pi_a: string[];
-    /** pi_b: second proof element (2x2 matrix as decimal strings) */
-    pi_b: string[][];
-    /** pi_c: third proof element (2 coordinates as decimal strings) */
-    pi_c: string[];
-  };
-  /** Public signals (decimal strings) in the order: [merkle_root, nullifier, min_epoch, token_mint] */
-  publicSignals: string[];
-}
+export type ProofResult = StarkProofOutcome;
 
 /**
- * Configuration for the proof generator.
+ * Configuration for the STARK proof generator helper.
+ *
+ * BREAKING CHANGE (0.3.0): `wasmPath`, `zkeyPath`, and `useWebWorker` are
+ * gone. Pass a `StarkProofGenerator` (typically the
+ * `generateStarkProof` method returned by
+ * `createStarkProver(...)` in `@protocol-01/stark-prover`).
  */
 export interface ProofGeneratorConfig {
   /**
-   * Path or URL to the circuit WASM file (denominated_pool.wasm).
-   * Can be a local file path, HTTP URL, or data URI.
+   * Host-supplied STARK proof generator. Build it once at app startup with
+   * `createStarkProver({ connection, payer })` from
+   * `@protocol-01/stark-prover` and reuse the same handle for every call.
    */
-  wasmPath?: string;
-  /**
-   * Path or URL to the proving key (denominated_pool.zkey).
-   * Can be a local file path, HTTP URL, or data URI.
-   */
-  zkeyPath?: string;
-  /**
-   * Whether to run proof generation in a Web Worker (browser only).
-   * Prevents blocking the main thread during the ~3-5 second proof computation.
-   * Defaults to false.
-   */
-  useWebWorker?: boolean;
+  prover: StarkProofGenerator;
 }
 
 /**
- * Input signals for the denominated pool circuit.
+ * Input signals for the denominated pool circuit (STARK circuit 1,
+ * POOL_COMMITMENT).
+ *
+ * Field elements are decimal strings; `pathElements` / `pathIndices` are
+ * accepted but ignored by circuit 1 (kept for transitional compatibility
+ * with callers wiring up the legacy 0.2.x shape — they are consumed by
+ * MERKLE_PATH / MERKLE_UPDATE on the privacy-sdk side instead).
  */
 export interface DenominatedPoolInputs {
-  /** The current Merkle tree root (field element as decimal string) */
-  root: string;
-  /** The nullifier preimage (field element as decimal string) */
+  /** Nullifier preimage as a decimal field element. */
   nullifierPreimage: string;
-  /** The secret (field element as decimal string) */
+  /** Secret as a decimal field element. */
   secret: string;
-  /** The deposit epoch (slot number as decimal string) */
+  /** Deposit slot/epoch as decimal. */
   depositEpoch: string;
-  /** The token mint as a field element (decimal string) */
+  /** Token mint as a decimal field element. */
   tokenMint: string;
-  /** Merkle path elements (array of 15 field element strings) */
-  pathElements: string[];
-  /** Merkle path indices (array of 15 binary strings, '0' or '1') */
-  pathIndices: string[];
-  /** Minimum epoch for withdrawal (decimal string) */
-  minEpoch: string;
-}
-
-// ============ snarkjs Detection ============
-
-/**
- * Attempt to load snarkjs dynamically.
- *
- * @returns The snarkjs module, or null if not available
- */
-async function loadSnarkjs(): Promise<any | null> {
-  try {
-    // Dynamic import to avoid bundling snarkjs with the SDK
-    const snarkjs = await import('snarkjs' as string);
-    return snarkjs;
-  } catch {
-    return null;
-  }
+  /**
+   * (Unused by POOL_COMMITMENT; supplied to MERKLE_PATH on the privacy-sdk
+   * unshield path.) Merkle path elements as decimal strings.
+   */
+  pathElements?: string[];
+  /**
+   * (Unused by POOL_COMMITMENT.) Merkle path indices as '0'/'1' strings.
+   */
+  pathIndices?: string[];
 }
 
 // ============ Proof Generation ============
 
 /**
- * Generate a Groth16 proof for the denominated pool circuit.
+ * Generate a STARK proof for the denominated pool deposit circuit
+ * (POOL_COMMITMENT, circuit id 1) and submit it on-chain via
+ * `p01_stark_verifier`.
  *
- * This function computes a zero-knowledge proof that demonstrates:
- * 1. The prover knows a (secret, nullifier_preimage) pair that hashes to a commitment
- *    present in the Merkle tree at the given root.
- * 2. The nullifier is correctly derived from the nullifier_preimage.
- * 3. The deposit_epoch is at least min_epoch (enforcing withdrawal delay).
- * 4. The token_mint matches the pool's token.
+ * Returns the PDA of the verified proof buffer plus the public inputs
+ * bound into the transcript. The host can pass `proofBuffer` straight to
+ * `zk_shielded` shield/unshield instructions which read the verified
+ * buffer cross-program.
  *
- * REQUIRES: snarkjs must be installed (`npm install snarkjs`).
- * REQUIRES: Circuit artifacts (WASM + zkey) must be provided via config.
+ * REQUIRES: a `StarkProofGenerator` from `@protocol-01/stark-prover` —
+ * pass the `generateStarkProof` returned by `createStarkProver(...)`.
  *
- * @param inputs - Circuit input signals
- * @param config - Proof generator configuration with paths to circuit artifacts
- * @returns ProofResult containing the Groth16 proof and public signals
- * @throws Error if snarkjs is not available or circuit artifacts are missing
+ * @param inputs - Circuit input signals (decimal strings, field elements).
+ * @param prover - Host-supplied STARK generator.
+ * @returns `StarkProofOutcome` with `proofBuffer`, `circuitId: 1`, and
+ *          `publicInputs: [nullifier, commitment]`.
  *
  * @example
- * ```typescript
- * const result = await generateDenominatedPoolProof(
+ * ```ts
+ * import { createStarkProver } from '@protocol-01/stark-prover';
+ * import { generateDenominatedPoolStarkProof } from '@protocol-01/p01-js';
+ *
+ * const { generateStarkProof } = createStarkProver({ connection, payer });
+ *
+ * const result = await generateDenominatedPoolStarkProof(
  *   {
- *     root: '12345...',
- *     nullifierPreimage: '67890...',
- *     secret: 'abcdef...',
+ *     nullifierPreimage: '12345...',
+ *     secret: '67890...',
  *     depositEpoch: '1000000',
  *     tokenMint: '99999...',
- *     pathElements: ['...', '...', ...], // 15 elements
- *     pathIndices: ['0', '1', '0', ...], // 15 indices
- *     minEpoch: '999000',
  *   },
- *   {
- *     wasmPath: '/circuits/denominated_pool.wasm',
- *     zkeyPath: '/circuits/denominated_pool.zkey',
- *   }
+ *   generateStarkProof,
  * );
+ *
+ * console.log(result.proofBuffer.toBase58()); // PDA of verified buffer
  * ```
  */
-export async function generateDenominatedPoolProof(
-  inputs: Record<string, string | string[]>,
-  config?: ProofGeneratorConfig
-): Promise<ProofResult> {
-  // Validate config first (fast, no async)
-  if (!config?.wasmPath) {
+export async function generateDenominatedPoolStarkProof(
+  inputs: Record<string, string | string[] | number[]>,
+  prover: StarkProofGenerator,
+): Promise<StarkProofOutcome> {
+  if (typeof prover !== 'function') {
     throw new Error(
-      'wasmPath is required in ProofGeneratorConfig. ' +
-      'Provide the path to denominated_pool.wasm.'
+      'generateDenominatedPoolStarkProof() requires a StarkProofGenerator. ' +
+        'Build one via createStarkProver({ connection, payer }) from ' +
+        '@protocol-01/stark-prover and pass the returned `generateStarkProof`.',
     );
   }
 
-  if (!config?.zkeyPath) {
-    throw new Error(
-      'zkeyPath is required in ProofGeneratorConfig. ' +
-      'Provide the path to denominated_pool.zkey.'
-    );
+  const required = ['nullifierPreimage', 'secret', 'depositEpoch', 'tokenMint'] as const;
+  for (const key of required) {
+    if (inputs[key] === undefined || inputs[key] === null) {
+      throw new Error(
+        `Missing required private input "${key}" for POOL_COMMITMENT (circuit 1).`,
+      );
+    }
   }
 
-  // Validate inputs
-  if (!inputs.pathElements || !Array.isArray(inputs.pathElements)) {
-    throw new Error('inputs.pathElements must be an array of 15 field element strings.');
-  }
-
-  if (!inputs.pathIndices || !Array.isArray(inputs.pathIndices)) {
-    throw new Error('inputs.pathIndices must be an array of 15 binary strings.');
-  }
-
-  // Try to load snarkjs
-  const snarkjs = await loadSnarkjs();
-
-  if (!snarkjs) {
-    throw new Error(
-      'snarkjs is not available. Install it to enable client-side proving:\n' +
-      '  npm install snarkjs\n\n' +
-      'Alternatively, use the relayer service for server-side proving, ' +
-      'or the Rust prover at services/prover/ for native performance.'
-    );
-  }
-
-  try {
-    // Generate the proof using snarkjs
-    const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-      inputs,
-      config.wasmPath,
-      config.zkeyPath
-    );
-
-    return {
-      proof: {
-        pi_a: proof.pi_a,
-        pi_b: proof.pi_b,
-        pi_c: proof.pi_c,
-      },
-      publicSignals,
-    };
-  } catch (error: any) {
-    throw new Error(
-      `Proof generation failed: ${error?.message || 'Unknown error'}. ` +
-      'Ensure the circuit inputs are valid and the WASM/zkey files are correct.'
-    );
-  }
+  return prover(STARK_CIRCUITS.POOL_COMMITMENT, inputs);
 }
 
 // ============ Proof Verification ============
 
 /**
- * Verify a Groth16 proof against public signals.
+ * Client-side proof verification is not supported in 0.3.0+.
  *
- * This is useful for client-side verification before submitting to the chain
- * or relayer. On-chain verification is handled by the Solana program.
+ * On-chain verification is performed by the `p01_stark_verifier` Solana
+ * program during the chunked upload flow inside
+ * `@protocol-01/stark-prover`. By the time this SDK returns a
+ * `StarkProofOutcome`, the proof has already passed the two-phase DEEP-ALI
+ * verifier on-chain — there is nothing left to check off-chain.
  *
- * REQUIRES: snarkjs must be installed (`npm install snarkjs`).
+ * If you need a re-validation hook (e.g. for an audit log), inspect the
+ * `proofBuffer` PDA on-chain or rerun the prover.
  *
- * @param proof - The Groth16 proof to verify
- * @param publicSignals - The public signals
- * @param vkPath - Path or URL to the verification key JSON file
- * @returns true if the proof is valid, false otherwise
- * @throws Error if snarkjs is not available or verification key is missing
- *
- * @example
- * ```typescript
- * const isValid = await verifyProof(
- *   result.proof,
- *   result.publicSignals,
- *   '/circuits/denominated_pool_vk.json'
- * );
- * if (!isValid) {
- *   throw new Error('Invalid proof!');
- * }
- * ```
+ * @deprecated Removed in 0.3.0. Always throws.
  */
-export async function verifyProof(
-  proof: ProofResult['proof'],
-  publicSignals: string[],
-  vkPath?: string
-): Promise<boolean> {
-  // Validate config first (fast, no async)
-  if (!vkPath) {
-    throw new Error(
-      'vkPath is required for proof verification. ' +
-      'Provide the path to the verification key JSON file (denominated_pool_vk.json).'
-    );
-  }
-
-  // Try to load snarkjs
-  const snarkjs = await loadSnarkjs();
-
-  if (!snarkjs) {
-    throw new Error(
-      'snarkjs is not available. Install it to enable client-side proof verification:\n' +
-      '  npm install snarkjs\n\n' +
-      'On-chain verification is performed by the Solana program and does not require snarkjs.'
-    );
-  }
-
-  try {
-    // Load verification key
-    let vk: any;
-    if (typeof vkPath === 'string' && (vkPath.startsWith('http://') || vkPath.startsWith('https://'))) {
-      const response = await fetch(vkPath);
-      vk = await response.json();
-    } else if (typeof vkPath === 'string' && vkPath.startsWith('{')) {
-      // JSON string passed directly
-      vk = JSON.parse(vkPath);
-    } else {
-      // Assume it's a file path - try dynamic import for Node.js
-      try {
-        const fs = await import('fs' as string);
-        const content = fs.readFileSync(vkPath, 'utf-8');
-        vk = JSON.parse(content);
-      } catch {
-        throw new Error(
-          `Cannot load verification key from path: ${vkPath}. ` +
-          'In browser environments, provide an HTTP URL or the JSON content directly.'
-        );
-      }
-    }
-
-    // Verify the proof
-    const fullProof = {
-      pi_a: proof.pi_a,
-      pi_b: proof.pi_b,
-      pi_c: proof.pi_c,
-      protocol: 'groth16',
-      curve: 'bn128',
-    };
-
-    return await snarkjs.groth16.verify(vk, publicSignals, fullProof);
-  } catch (error: any) {
-    if (error.message?.includes('snarkjs')) throw error;
-    if (error.message?.includes('Cannot load')) throw error;
-
-    throw new Error(
-      `Proof verification failed: ${error?.message || 'Unknown error'}.`
-    );
-  }
+export function verifyProof(): never {
+  throw new Error(
+    'On-chain verification handled by p01_stark_verifier; client-side verify not supported.',
+  );
 }

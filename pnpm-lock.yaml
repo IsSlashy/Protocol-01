@@ -63,7 +63,7 @@ importers:
         version: 2.0.5
       circomlibjs:
         specifier: ^0.1.7
-        version: 0.1.7(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+        version: 0.1.7(bufferutil@4.1.0)
       mocha:
         specifier: ^11.7.5
         version: 11.7.5
@@ -913,10 +913,19 @@ importers:
       '@noble/hashes':
         specifier: ^2.2.0
         version: 2.2.0
+      '@protocol-01/privacy-sdk':
+        specifier: workspace:*
+        version: link:../privacy-sdk
+      '@protocol-01/stark-prover':
+        specifier: workspace:*
+        version: link:../stark-prover
     devDependencies:
       '@chromatic-com/storybook':
         specifier: ^5.0.0
         version: 5.0.0(storybook@10.2.0(@testing-library/dom@10.4.1)(bufferutil@4.1.0)(prettier@3.8.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(utf-8-validate@6.0.6))
+      '@solana/web3.js':
+        specifier: ^1.98.4
+        version: 1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@6.0.6)
       '@storybook/addon-a11y':
         specifier: ^10.1.11
         version: 10.2.0(storybook@10.2.0(@testing-library/dom@10.4.1)(bufferutil@4.1.0)(prettier@3.8.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(utf-8-validate@6.0.6))
@@ -1040,6 +1049,9 @@ importers:
         specifier: '>=16.0.0'
         version: 19.0.21(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@react-native/metro-config@0.84.1(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.4))
     devDependencies:
+      '@protocol-01/stark-prover':
+        specifier: workspace:*
+        version: link:../stark-prover
       '@types/react':
         specifier: ^19.2.9
         version: 19.2.14
@@ -1098,6 +1110,9 @@ importers:
       '@noble/post-quantum':
         specifier: ^0.6.1
         version: 0.6.1
+      '@protocol-01/stark-prover':
+        specifier: workspace:*
+        version: link:../stark-prover
       '@solana/spl-token':
         specifier: ^0.4.14
         version: 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -1116,9 +1131,6 @@ importers:
       poseidon-lite:
         specifier: ^0.3.0
         version: 0.3.0
-      snarkjs:
-        specifier: ^0.7.5
-        version: 0.7.6
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -1126,12 +1138,30 @@ importers:
       '@types/node':
         specifier: ^22.15.0
         version: 22.19.7
-      '@types/snarkjs':
-        specifier: ^0.7.8
-        version: 0.7.9
       eslint:
         specifier: ^8.56.0
         version: 8.57.1
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.7)(jsdom@26.1.0(bufferutil@4.1.0))(lightningcss@1.32.0)(terser@5.46.0)
+
+  packages/stark-prover:
+    devDependencies:
+      '@protocol-01/privacy-sdk':
+        specifier: workspace:*
+        version: link:../privacy-sdk
+      '@solana/web3.js':
+        specifier: ^1.98.4
+        version: 1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@types/node':
+        specifier: ^22.15.0
+        version: 22.19.7
       tsup:
         specifier: ^8.4.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
@@ -1197,6 +1227,12 @@ importers:
       '@noble/hashes':
         specifier: ^2.2.0
         version: 2.2.0
+      '@protocol-01/privacy-sdk':
+        specifier: workspace:*
+        version: link:../privacy-sdk
+      '@protocol-01/stark-prover':
+        specifier: workspace:*
+        version: link:../stark-prover
       '@solana/spl-token':
         specifier: ^0.4.14
         version: 0.4.14(@solana/web3.js@1.98.4(bufferutil@4.1.0)(encoding@0.1.13)(typescript@5.9.3)(utf-8-validate@6.0.6))(bufferutil@4.1.0)(encoding@0.1.13)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
@@ -1209,18 +1245,9 @@ importers:
       bs58:
         specifier: ^6.0.0
         version: 6.0.0
-      circomlibjs:
-        specifier: ^0.1.7
-        version: 0.1.7(bufferutil@4.1.0)(utf-8-validate@6.0.6)
-      ffjavascript:
-        specifier: ^0.3.1
-        version: 0.3.1
       poseidon-lite:
         specifier: ^0.3.0
         version: 0.3.0
-      snarkjs:
-        specifier: ^0.7.5
-        version: 0.7.6
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -1231,9 +1258,6 @@ importers:
       '@types/node':
         specifier: ^22.15.0
         version: 22.19.7
-      '@types/snarkjs':
-        specifier: ^0.7.8
-        version: 0.7.9
       eslint:
         specifier: ^8.56.0
         version: 8.57.1
@@ -1267,9 +1291,6 @@ importers:
       poseidon-lite:
         specifier: ^0.3.0
         version: 0.3.0
-      snarkjs:
-        specifier: ^0.7.5
-        version: 0.7.6
     devDependencies:
       '@types/bn.js':
         specifier: ^5.1.6
@@ -1277,9 +1298,6 @@ importers:
       '@types/node':
         specifier: ^22.15.0
         version: 22.19.7
-      '@types/snarkjs':
-        specifier: ^0.7.8
-        version: 0.7.9
       tsup:
         specifier: ^8.4.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
@@ -26696,11 +26714,11 @@ snapshots:
 
   circomlib@2.0.5: {}
 
-  circomlibjs@0.1.7(bufferutil@4.1.0)(utf-8-validate@6.0.6):
+  circomlibjs@0.1.7(bufferutil@4.1.0):
     dependencies:
       blake-hash: 2.0.0
       blake2b: 2.1.4
-      ethers: 5.8.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ethers: 5.8.0(bufferutil@4.1.0)
       ffjavascript: 0.2.63
     transitivePeerDependencies:
       - bufferutil
@@ -28107,7 +28125,7 @@ snapshots:
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
 
-  ethers@5.8.0(bufferutil@4.1.0)(utf-8-validate@6.0.6):
+  ethers@5.8.0(bufferutil@4.1.0):
     dependencies:
       '@ethersproject/abi': 5.8.0
       '@ethersproject/abstract-provider': 5.8.0

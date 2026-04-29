@@ -1,6 +1,8 @@
 # Protocol 01 — Full Internal Audit Report
 **Date:** April 1, 2026 | **Scope:** Complete project audit (7 parallel agents)
 
+> **Status update 2026-04-28:** Hot path SDKs migrated to full STARK in P10. Groth16 retained for compliance + escrow surfaces only.
+
 ---
 
 ## PROJECT SCALE

@@ -319,31 +319,28 @@ export {
 } from './utils';
 
 // ============================================================================
-// Proving Module (Client-Side zkSPL Prover)
+// Proving Module (Client-Side zkSPL STARK Prover)
 // ============================================================================
 //
 // TRUST THE MATH, NOT THE NODES.
-// Generate zkSPL Groth16 proofs entirely on the client device.
-// The spending_key, balance, and salt NEVER leave the user's machine.
+// Generate zkSPL STARK proofs entirely on the client device via
+// `@protocol-01/stark-prover` — post-quantum safe, no trusted setup, Goldilocks
+// field. The spending_key, balance, and salt NEVER leave the user's machine.
 //
 export {
   // Main prover class
-  ClientProver,
+  StarkClientProver,
 
-  // Circuit file loader
-  CircuitLoader,
-
-  // Proof format conversion
-  snarkjsProofToBytes,
-  parsePublicSignals,
+  // Input builders + validation helpers
   buildBalanceCircuitInputs,
   buildSufficiencyCircuitInputs,
+  validateInputs,
+  circuitIdForOperation,
 
   // Error class
   ProofInputValidationError,
 
   // Types (re-exported from proving/types.ts)
-  type Groth16ProofBytes,
   type FieldElement as ZkFieldElement,
   type ZkSplOperation,
   type ConfidentialBalancePublicInputs,
@@ -355,13 +352,10 @@ export {
   type TransferProofInputs,
   type BalanceSufficiencyProofInputs,
   type ZkSplProofInputs,
-  type SnarkjsProof,
-  type ProofResult,
-  type CircuitFileConfig,
-  type ClientProverConfig,
-  type ProgressCallback,
-  type ProgressEvent as CircuitProgressEvent,
-  type CircuitFiles,
+  type StarkProofOutcome,
+  type StarkProverConfig,
+  type StarkClientProverInit,
+  type StarkPrivateInputMap,
 } from './proving';
 
 // ============================================================================

@@ -14,8 +14,9 @@ function fieldToBeBytes32(str: string): number[] {
 }
 
 /**
- * Convert a snarkjs Groth16 proof to the 256-byte on-chain format
- * expected by Solana's alt_bn128 pairing precompile.
+ * Convert a snarkjs-compatible Groth16 proof object (legacy backward-compat)
+ * to the 256-byte on-chain format expected by Solana's alt_bn128 pairing
+ * precompile.
  *
  * Layout (256 bytes total):
  *   - pi_a: 2 x 32 bytes (G1 point: x, y)
@@ -23,17 +24,22 @@ function fieldToBeBytes32(str: string): number[] {
  *   - pi_c: 2 x 32 bytes (G1 point: x, y)
  *
  * **Why the G2 coordinate swap?**
- * snarkjs outputs G2 points as [[c0_x, c1_x], [c0_y, c1_y]] where c0 is
- * the real coefficient and c1 is the imaginary coefficient of the Fp2 element.
- * However, the EIP-197 / alt_bn128 pairing precompile (used by Solana) expects
- * G2 points serialized as [c1_x, c0_x, c1_y, c0_y] — imaginary part first,
- * then real part. This ordering matches the Ethereum Yellow Paper's convention
- * for encoding elements of Fp2 = Fp[u]/(u^2 + 1). Without this swap, the
- * pairing check will fail with a valid proof.
+ * The snarkjs convention emits G2 points as [[c0_x, c1_x], [c0_y, c1_y]]
+ * where c0 is the real coefficient and c1 is the imaginary coefficient of
+ * the Fp2 element. However, the EIP-197 / alt_bn128 pairing precompile
+ * (used by Solana) expects G2 points serialized as [c1_x, c0_x, c1_y, c0_y]
+ * — imaginary part first, then real part. This ordering matches the
+ * Ethereum Yellow Paper's convention for encoding elements of
+ * Fp2 = Fp[u]/(u^2 + 1). Without this swap, the pairing check will fail
+ * with a valid proof.
  *
  * This function handles the swap automatically.
  *
- * @param proof - A snarkjs Groth16 proof object (as returned by `snarkjs.groth16.fullProve`)
+ * Note: Protocol 01's runtime has migrated to STARK proofs; this helper is
+ * retained for legacy Groth16 callers and does not require `snarkjs` as a
+ * dependency (the input is a structural type).
+ *
+ * @param proof - A snarkjs-compatible Groth16 proof object (legacy format)
  * @returns A 256-element number array ready for on-chain verification
  * @throws {TypeError} If the proof object is missing required fields or has invalid structure
  */
@@ -82,7 +88,7 @@ export function proofToOnChainBytes(proof: SnarkjsProof): OnChainProofBytes {
   bytes.push(...fieldToBeBytes32(proof.pi_a[1]));
 
   // pi_b (G2): swap real/imaginary for EIP-197 format
-  // snarkjs: [[c0_x, c1_x], [c0_y, c1_y]]
+  // snarkjs-compatible Groth16 input: [[c0_x, c1_x], [c0_y, c1_y]]
   // on-chain: [c1_x, c0_x, c1_y, c0_y] (imaginary first)
   bytes.push(...fieldToBeBytes32(proof.pi_b[0][1])); // x_imag
   bytes.push(...fieldToBeBytes32(proof.pi_b[0][0])); // x_real

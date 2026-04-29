@@ -485,7 +485,7 @@ const payments = await scanForPayments({
           title={t('sdkDemo.zkProofsCodeTitle')}
           code={`import { proveTransfer, verifyProof } from '@protocol-01/zk-sdk';
 
-// Generate a Groth16 proof for a confidential transfer
+// Generate a STARK proof for a confidential transfer
 const { proof, publicSignals } = await proveTransfer({
   senderNote: myShieldedNote,
   recipientPubKey: recipientStealthAddress,
@@ -587,7 +587,7 @@ const result = await arcium.execute({
         <div className="flex items-center justify-center gap-4 text-center py-4 flex-wrap">
           {[
             { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl", icon: Wallet },
-            { label: t('sdkDemo.archProofLayer'), sub: "Groth16 · STARK · MPC", icon: Shield },
+            { label: t('sdkDemo.archProofLayer'), sub: "STARK · MPC", icon: Shield },
             { label: t('sdkDemo.archOnChain'), sub: "14 Anchor Programs", icon: Boxes },
           ].map((item, i) => (
             <React.Fragment key={item.label}>

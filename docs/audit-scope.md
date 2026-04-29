@@ -4,6 +4,8 @@
 **Date:** 2026-02-25
 **Status:** Pre-audit preparation
 
+> **Status update 2026-04-28:** The hot-path Groth16 verifiers listed below (`programs/zk_shielded/src/verifier/groth16.rs`, `programs/p01_zkspl/src/verifier/groth16.rs`) have been replaced by the STARK FRI verifier on every spend path in P10. Groth16 verifier code is retained only for compliance attestations and the sealed-bid auction escrow surface (legacy, scheduled for STARK migration). Auditors should treat the Groth16 entries below as scoped to those retained surfaces; the production hot path verifies STARK proofs over the Goldilocks field.
+
 ---
 
 ## Priority Table

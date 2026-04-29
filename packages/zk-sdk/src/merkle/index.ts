@@ -199,12 +199,22 @@ export class MerkleTree {
   }
 
   /**
-   * Import tree state
+   * Import tree state. Recomputes the zero cascade for the imported depth
+   * so that proofs and roots remain consistent after import.
    */
   async import(state: { leaves: [number, string][]; depth: number }): Promise<void> {
     this.depth = state.depth;
     this.leaves.clear();
     this.nodes.clear();
+
+    // Recompute zero cascade for the new depth.
+    let current = ZERO_VALUE;
+    this.zeroValues = [current];
+    for (let i = 0; i < this.depth; i++) {
+      current = hashNodes(current, current);
+      this.zeroValues.push(current);
+    }
+    this._root = this.zeroValues[this.depth]!;
 
     await this.initialize();
 

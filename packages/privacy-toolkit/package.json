@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/privacy-toolkit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "TypeScript primitives for building privacy protocols on Solana. Merkle trees, Poseidon commitments, nullifiers, and proof format conversion.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,7 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["solana", "zk", "privacy", "merkle", "poseidon", "groth16", "snarkjs", "protocol-01"],
+  "keywords": ["solana", "zk", "privacy", "merkle", "poseidon", "stark", "protocol-01"],
   "license": "MIT",
   "author": "Protocol 01",
   "homepage": "https://github.com/IsSlashy/Protocol-01",

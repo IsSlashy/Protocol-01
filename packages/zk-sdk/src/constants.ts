@@ -1,31 +1,61 @@
 /**
- * Constants for the ZK shielded system
+ * Constants for the ZK shielded system (STARK / Goldilocks edition).
+ *
+ * BREAKING CHANGE in v1.0.0: switched from BN254 + Groth16 to Goldilocks +
+ * STARK. All field arithmetic now happens mod `0xFFFFFFFF00000001` (i.e.
+ * `2^64 - 2^32 + 1`). On-chain commitments / nullifiers / merkle leaves pack
+ * into the low 8 bytes of a 32-byte LE buffer (bytes 8..32 are zero).
  */
 
 /**
- * BN254 field modulus
+ * Goldilocks field modulus: p = 2^64 - 2^32 + 1.
+ * Same modulus used by `@protocol-01/stark-prover`, the STARK verifier
+ * program, and the privacy-sdk Goldilocks-Poseidon helpers.
  */
-export const FIELD_MODULUS = BigInt(
-  '21888242871839275222246405745257275088548364400416034343698204186575808495617'
-);
+export const FIELD_MODULUS = 0xFFFFFFFF00000001n;
 
 /**
- * Default Merkle tree depth (2^20 = ~1M notes)
+ * Default Merkle tree depth for STARK circuits (matches circuit 6 / merkle
+ * paths used by the on-chain `zk_shielded` program). The previous Groth16
+ * tree was depth 20; the STARK tree is depth 15 to keep prover memory in
+ * check while still supporting 32 768 notes per pool.
  */
-export const MERKLE_TREE_DEPTH = 20;
+export const MERKLE_TREE_DEPTH = 15;
 
 /**
- * Maximum tree leaves
+ * Maximum tree leaves at depth 15.
  */
 export const MAX_TREE_LEAVES = 2 ** MERKLE_TREE_DEPTH;
 
 /**
- * Zero value for empty Merkle tree leaves
- * Computed as Poseidon(0)
+ * Zero value for empty Merkle tree leaves under Goldilocks-Poseidon.
+ * The cascade is `Z[0] = 0`, `Z[i] = hash2(Z[i-1], Z[i-1])`. This constant
+ * is `Z[0]` — callers needing intermediate zeros at higher levels should
+ * compute the cascade via the helpers in `@protocol-01/privacy-sdk` or
+ * mirror the Goldilocks zero cascade locally.
  */
-export const ZERO_VALUE = BigInt(
-  '21663839004416932945382355908790599225266501822907911457504978515578255421292'
-);
+export const ZERO_VALUE = 0n;
+
+/**
+ * STARK circuit IDs. Mirrors `STARK_CIRCUITS` from
+ * `@protocol-01/stark-prover` and `@protocol-01/privacy-sdk` so callers
+ * importing from this SDK don't need to depend on either to discover the
+ * circuit IDs.
+ */
+export const STARK_CIRCUITS = {
+  SUBSCRIBER_OWNERSHIP: 0,
+  POOL_COMMITMENT: 1,
+  BALANCE_PROOF: 2,
+  MERKLE_PATH: 3,
+  CONFIDENTIAL_BALANCE: 4,
+  TRANSFER: 5,
+  /**
+   * Variable-pool merkle update proof. NOT yet exported by the bundled WASM
+   * — calls to `STARK_CIRCUITS.MERKLE_UPDATE` will throw at runtime until
+   * the WASM is rebuilt. Once available, no migration is required.
+   */
+  MERKLE_UPDATE: 6,
+} as const;
 
 /**
  * Network type for program configuration
@@ -52,20 +82,16 @@ export const ZK_SHIELDED_PROGRAM_ID = PROGRAM_IDS.devnet;
 // </auto-generated-program-ids>
 
 /**
+ * STARK verifier program ID (`p01_stark_verifier`). Re-exported from
+ * `@protocol-01/stark-prover` would create a circular dep at the sub-path
+ * level, so we mirror the on-chain devnet ID here. Callers can override
+ * via `ShieldedClientConfig.starkVerifierProgramId`.
+ */
+export const STARK_VERIFIER_PROGRAM_ID = '5tBhkRLP2DV6szRFAiZJ6agJqZSMfWQbsy3FjybEHDBe';
+
+/**
  * Get the program ID for the given network.
  * Falls back to devnet if no network is specified.
- *
- * @param network - The Solana network to use (default: 'devnet')
- * @returns The program ID string for the given network
- * @throws If the network is 'mainnet-beta' and no program ID has been configured
- * @throws If the network string is not recognized
- *
- * @example
- * ```ts
- * const id = getProgramId('devnet');
- * // Override for mainnet when deployed:
- * const id = getProgramId('mainnet-beta'); // throws until mainnet deploy
- * ```
  */
 export function getProgramId(network?: string): string {
   const net = (network ?? 'devnet') as NetworkId;
@@ -100,12 +126,15 @@ export const PDA_SEEDS = {
 } as const;
 
 /**
- * Anchor instruction discriminators (sha256("global:<name>")[0..8])
+ * Anchor instruction discriminators for the STARK instruction family
+ * (`shield_stark` / `transfer_stark` / `unshield_stark`). Byte values match
+ * `packages/privacy-sdk/src/modules/shield.ts` and the on-chain handlers in
+ * `programs/zk_shielded`. Any drift breaks every shielded transaction.
  */
 export const IX_DISCRIMINATORS = {
-  SHIELD: Buffer.from([220, 198, 253, 246, 231, 84, 147, 98]),
-  TRANSFER: Buffer.from([163, 52, 200, 231, 140, 3, 69, 186]),
-  UNSHIELD: Buffer.from([21, 228, 55, 24, 194, 10, 21, 22]),
+  SHIELD_STARK:   Buffer.from([241, 184, 171, 177, 138,  30, 238, 145]),
+  TRANSFER_STARK: Buffer.from([101,  77, 136,  73,  63, 103, 214, 251]),
+  UNSHIELD_STARK: Buffer.from([189,  84, 110, 154, 217, 120, 183, 239]),
 } as const;
 
 /**
@@ -139,12 +168,3 @@ export const MAX_HISTORICAL_ROOTS = 100;
  * Proof generation timeout (ms)
  */
 export const PROOF_GENERATION_TIMEOUT = 120000; // 2 minutes
-
-/**
- * Circuit files
- */
-export const CIRCUIT_FILES = {
-  WASM: 'transfer.wasm',
-  ZKEY: 'transfer_final.zkey',
-  VK: 'verification_key.json',
-} as const;

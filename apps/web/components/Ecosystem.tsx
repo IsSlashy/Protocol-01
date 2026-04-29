@@ -33,12 +33,6 @@ const techLogos: Record<string, ReactElement> = {
       <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
-  Groth16: (
-    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <path d="M9 12l2 2 4-4" />
-    </svg>
-  ),
   Poseidon: (
     <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 12c2-4 6-4 8 0s6 4 8 0" />
@@ -180,7 +174,6 @@ const techsRow1 = [
   { name: "Anchor", category: "smartContracts" },
   { name: "Circom", category: "zkCircuits" },
   { name: "ark-circom", category: "rustProver" },
-  { name: "Groth16", category: "zkProofSystem" },
   { name: "STARK", category: "quantumSafeProofs" },
   { name: "Poseidon", category: "zkHash" },
   { name: "Jupiter", category: "dexAggregator" },

@@ -1,35 +1,42 @@
 /**
- * Circuit Asset Loader
+ * Circuit Asset Loader (v2 — STARK).
  *
- * Loads .wasm and .zkey files for ZK proof generation in React Native.
- * Provides multiple loading strategies with built-in caching.
+ * In v2 the package ships the prover WASM inlined as base64 (see
+ * `wasmData.ts`), so most callers never need this file. The loaders are
+ * retained for two scenarios:
  *
- * Strategy:
- *   1. Try Expo Asset system (works with native builds / EAS)
- *   2. Fallback: read directly from APK assets via fetch
+ *   1. Ship a custom WASM build (e.g. one that exports
+ *      `generate_merkle_update_stark_proof` for circuit 6).
+ *   2. Defer the WASM bytes to runtime (smaller JS bundle, but adds an
+ *      asset round-trip on first proof).
+ *
+ * STARK proofs have NO proving key — the corresponding `.zkey` half from
+ * v1 is gone. The result type is now `{ wasmBase64 }` only.
  *
  * @example
  * ```ts
- * import { loadCircuitAssets, loadFromExpoAsset, isCircuitCached } from '@protocol-01/react-native-zk';
+ * import { loadFromApkAssets, loadCircuitAssets } from '@protocol-01/react-native-zk';
  *
- * // Expo workflow
- * const assets = await loadFromExpoAsset(require('./circuit.wasm'), require('./circuit.zkey'));
- *
- * // Cached loading
- * const result = await loadCircuitAssets('transfer', () => loadFromApkAssets('transfer.wasm', 'transfer.zkey'));
- * console.log(isCircuitCached('transfer')); // true
+ * const result = await loadCircuitAssets('p01_stark', () =>
+ *   loadFromApkAssets('p01_stark_bg.wasm'),
+ * );
+ * console.log(result.wasmBase64.length); // ~165_000
  * ```
  */
 
-import { Platform } from 'react-native';
 import type { CircuitLoadResult } from './types';
 
-// Cache loaded base64 data
+// ---------------------------------------------------------------------------
+// In-memory cache (keyed by user-supplied name)
+// ---------------------------------------------------------------------------
+
 const cache: Partial<Record<string, CircuitLoadResult>> = {};
 const loadPromises: Partial<Record<string, Promise<CircuitLoadResult>>> = {};
 
 /**
- * Convert ArrayBuffer to base64 string.
+ * Convert ArrayBuffer to base64 string. Chunked to avoid call-stack
+ * blow-ups on large buffers (`String.fromCharCode(...bytes)` overflows
+ * around 100 KB on JavaScriptCore).
  */
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -39,154 +46,132 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
     binary += String.fromCharCode(...chunk);
   }
+  // `btoa` is available in React Native via JavaScriptCore / Hermes >= 0.71.
   return btoa(binary);
 }
 
 /**
- * Load circuit assets from Expo Asset system.
- * Requires `expo-asset` and `expo-file-system` to be installed (optional peer dependencies).
+ * Load STARK WASM from the Expo Asset system.
  *
- * @param wasmModule - `require()` result for the .wasm file
- * @param zkeyModule - `require()` result for the .zkey file
- * @returns Base64-encoded wasm and zkey data
- * @throws Error if asset download fails or localUri is missing
+ * Requires `expo-asset` and `expo-file-system` (declared as optional peer
+ * dependencies). Use this when you ship a custom WASM build via Expo's
+ * native asset registry.
+ *
+ * @param wasmModule - `require()` result for the `.wasm` file
+ * @returns Object with `wasmBase64` only
+ * @throws Error if the asset cannot be downloaded or has no `localUri`
  *
  * @example
  * ```ts
- * const wasmModule = require('./assets/transfer.wasm');
- * const zkeyModule = require('./assets/transfer_final.zkey');
- * const { wasmBase64, zkeyBase64 } = await loadFromExpoAsset(wasmModule, zkeyModule);
+ * const wasmModule = require('./assets/p01_stark_bg.wasm');
+ * const { wasmBase64 } = await loadFromExpoAsset(wasmModule);
  * ```
  */
 export async function loadFromExpoAsset(
   wasmModule: number,
-  zkeyModule: number,
 ): Promise<CircuitLoadResult> {
+  // Dynamic imports — these are optional peer deps so they may not exist.
   const { Asset } = await import('expo-asset');
   const FileSystem = await import('expo-file-system');
 
-  const [wasmAsset, zkeyAsset] = await Promise.all([
-    Asset.fromModule(wasmModule).downloadAsync(),
-    Asset.fromModule(zkeyModule).downloadAsync(),
-  ]);
+  const wasmAsset = await Asset.fromModule(wasmModule).downloadAsync();
 
-  if (!wasmAsset.localUri || !zkeyAsset.localUri) {
-    throw new Error('Failed to download circuit assets via Expo');
+  if (!wasmAsset.localUri) {
+    throw new Error('Failed to download STARK WASM asset via Expo (no localUri).');
   }
 
-  const [wasmB64, zkeyB64] = await Promise.all([
-    FileSystem.readAsStringAsync(wasmAsset.localUri, { encoding: 'base64' as any }),
-    FileSystem.readAsStringAsync(zkeyAsset.localUri, { encoding: 'base64' as any }),
-  ]);
+  const wasmBase64 = await FileSystem.readAsStringAsync(wasmAsset.localUri, {
+    encoding: 'base64' as 'base64',
+  });
 
-  return { wasmBase64: wasmB64, zkeyBase64: zkeyB64 };
+  return { wasmBase64 };
 }
 
 /**
- * Load circuit assets directly from Android APK assets via fetch.
- * Works with APK injection where Expo's native asset registry may not reflect injected files.
+ * Load STARK WASM from Android APK assets via `fetch('file:///android_asset/...')`.
  *
- * @param wasmPath - Asset filename (e.g. 'my_circuit.wasm')
- * @param zkeyPath - Asset filename (e.g. 'my_circuit_final.zkey')
- * @returns Base64-encoded wasm and zkey data
- * @throws Error if asset files are not found at `file:///android_asset/{path}`
+ * Used by the bundled `tools/inject-apk.py` workflow for fast dev cycles.
+ *
+ * @param wasmPath - Asset filename (e.g. 'p01_stark_bg.wasm')
+ * @returns Object with `wasmBase64` only
+ * @throws Error if the asset is not found
  *
  * @example
  * ```ts
- * const { wasmBase64, zkeyBase64 } = await loadFromApkAssets('transfer.wasm', 'transfer_final.zkey');
+ * const { wasmBase64 } = await loadFromApkAssets('p01_stark_bg.wasm');
  * ```
  */
 export async function loadFromApkAssets(
   wasmPath: string,
-  zkeyPath: string,
 ): Promise<CircuitLoadResult> {
-  const [wasmResponse, zkeyResponse] = await Promise.all([
-    fetch(`file:///android_asset/${wasmPath}`),
-    fetch(`file:///android_asset/${zkeyPath}`),
-  ]);
+  const wasmResponse = await fetch(`file:///android_asset/${wasmPath}`);
 
-  if (!wasmResponse.ok || !zkeyResponse.ok) {
-    throw new Error(`APK asset fetch failed: wasm=${wasmResponse.status}, zkey=${zkeyResponse.status}`);
+  if (!wasmResponse.ok) {
+    throw new Error(`APK asset fetch failed for ${wasmPath}: status ${wasmResponse.status}`);
   }
 
-  const [wasmBuf, zkeyBuf] = await Promise.all([
-    wasmResponse.arrayBuffer(),
-    zkeyResponse.arrayBuffer(),
-  ]);
-
-  return {
-    wasmBase64: arrayBufferToBase64(wasmBuf),
-    zkeyBase64: arrayBufferToBase64(zkeyBuf),
-  };
+  const wasmBuf = await wasmResponse.arrayBuffer();
+  return { wasmBase64: arrayBufferToBase64(wasmBuf) };
 }
 
 /**
- * Load circuit assets with caching. Uses the provided loader function on first
- * call for a given name, then returns cached data on subsequent calls.
+ * Load STARK WASM with caching. Uses the provided loader function on the
+ * first call for a given name, then returns the cached result on
+ * subsequent calls.
  *
- * @param name - Circuit name (used as cache key)
- * @param loader - Async function that returns CircuitLoadResult
- * @returns Cached or freshly loaded CircuitLoadResult
+ * @param name - Cache key (typically `'p01_stark'`)
+ * @param loader - Async function that returns `CircuitLoadResult`
+ * @returns Cached or freshly-loaded `CircuitLoadResult`
  *
  * @example
  * ```ts
- * const result = await loadCircuitAssets('transfer', () =>
- *   loadFromApkAssets('transfer.wasm', 'transfer_final.zkey')
+ * const result = await loadCircuitAssets('p01_stark', () =>
+ *   loadFromApkAssets('p01_stark_bg.wasm'),
  * );
- * // Second call returns cached data instantly
- * const cached = await loadCircuitAssets('transfer', () => { throw new Error('never called'); });
+ * // Subsequent calls are instant
+ * const cached = await loadCircuitAssets('p01_stark', () => {
+ *   throw new Error('never reached');
+ * });
  * ```
  */
 export async function loadCircuitAssets(
   name: string,
   loader: () => Promise<CircuitLoadResult>,
 ): Promise<CircuitLoadResult> {
-  if (cache[name]) return cache[name];
-  if (loadPromises[name]) return loadPromises[name]!;
+  const hit = cache[name];
+  if (hit) return hit;
 
-  loadPromises[name] = (async () => {
+  const inFlight = loadPromises[name];
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
     const result = await loader();
     cache[name] = result;
     return result;
   })();
 
-  return loadPromises[name];
+  loadPromises[name] = promise;
+  return promise;
 }
 
 /**
- * Check if circuit assets are cached in memory.
- *
- * @param name - Circuit name to check
- * @returns true if the circuit's base64 data is cached
- *
- * @example
- * ```ts
- * if (!isCircuitCached('transfer')) {
- *   await loadCircuitAssets('transfer', myLoader);
- * }
- * ```
+ * Check if WASM bytes for `name` are cached in memory.
  */
 export function isCircuitCached(name: string): boolean {
   return !!cache[name];
 }
 
 /**
- * Clear cached circuit data to free memory.
+ * Clear cached WASM bytes to free memory.
  *
- * @param name - Specific circuit to clear. If omitted, clears all cached circuits.
- *
- * @example
- * ```ts
- * clearCircuitCache('transfer');  // Clear one circuit
- * clearCircuitCache();            // Clear all circuits
- * ```
+ * @param name - Specific cache key. If omitted, clears all entries.
  */
 export function clearCircuitCache(name?: string): void {
   if (name) {
     delete cache[name];
     delete loadPromises[name];
-  } else {
-    for (const key of Object.keys(cache)) delete cache[key];
-    for (const key of Object.keys(loadPromises)) delete loadPromises[key];
+    return;
   }
+  for (const key of Object.keys(cache)) delete cache[key];
+  for (const key of Object.keys(loadPromises)) delete loadPromises[key];
 }

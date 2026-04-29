@@ -1,5 +1,13 @@
 import { PublicKey } from '@solana/web3.js';
-import BN from 'bn.js';
+
+// Re-export host-supplied STARK prover types so consumers of this SDK
+// don't have to take an extra dep on `@protocol-01/stark-prover`.
+export type {
+  StarkProofOutcome,
+  StarkProofGenerator,
+  StarkProverConfig,
+  StarkCircuitId,
+} from '@protocol-01/stark-prover';
 
 /**
  * 32-byte array type alias
@@ -7,7 +15,9 @@ import BN from 'bn.js';
 export type Bytes32 = Uint8Array;
 
 /**
- * Field element (BigInt within BN254 field)
+ * Field element (BigInt within the Goldilocks field, p = 2^64 - 2^32 + 1).
+ * All on-chain commitments / nullifiers / merkle leaves are Goldilocks u64s
+ * packed into the low 8 bytes of a 32-byte LE buffer.
  */
 export type FieldElement = bigint;
 
@@ -56,19 +66,24 @@ export interface MerkleProofData {
 }
 
 /**
- * Groth16 proof structure
+ * Canonical STARK private-input shape. Each circuit has its own set of keys
+ * — see the per-circuit dispatch in `@protocol-01/stark-prover/src/index.ts`
+ * (`generateProofBytes`) and the worker contract in
+ * `apps/extension/src/shared/workers/starkProver.worker.ts:43-67` for the
+ * authoritative key names.
+ *
+ * Values are decimal strings (or string arrays / number arrays for the
+ * merkle-path / merkle-update circuits). The SDK forwards this map verbatim
+ * to the host-supplied `generateStarkProof`.
  */
-export interface Groth16ProofData {
-  /** G1 point pi_a (compressed) */
-  pi_a: Uint8Array;
-  /** G2 point pi_b (compressed) */
-  pi_b: Uint8Array;
-  /** G1 point pi_c (compressed) */
-  pi_c: Uint8Array;
-}
+export type StarkPrivateInputs = Record<string, string | string[] | number[]>;
 
 /**
- * Public inputs for transfer proof
+ * Public inputs derivable for a circuit-5 (transfer) STARK proof. Returned
+ * inside `StarkProofOutcome.publicInputs` once the prover has finished.
+ *
+ * Order matches the on-chain verifier:
+ *   [nullifier1, nullifier2, outputCommitment1, outputCommitment2, publicAmount, tokenMint]
  */
 export interface TransferPublicInputs {
   merkleRoot: FieldElement;
@@ -78,46 +93,6 @@ export interface TransferPublicInputs {
   outputCommitment2: FieldElement;
   publicAmount: bigint;
   tokenMint: FieldElement;
-}
-
-/**
- * Private inputs for transfer proof
- */
-export interface TransferPrivateInputs {
-  // Input note 1
-  inAmount1: bigint;
-  inOwnerPubkey1: FieldElement;
-  inRandomness1: FieldElement;
-  inPathIndices1: number[];
-  inPathElements1: FieldElement[];
-
-  // Input note 2
-  inAmount2: bigint;
-  inOwnerPubkey2: FieldElement;
-  inRandomness2: FieldElement;
-  inPathIndices2: number[];
-  inPathElements2: FieldElement[];
-
-  // Output note 1
-  outAmount1: bigint;
-  outRecipient1: FieldElement;
-  outRandomness1: FieldElement;
-
-  // Output note 2
-  outAmount2: bigint;
-  outRecipient2: FieldElement;
-  outRandomness2: FieldElement;
-
-  // Spending key
-  spendingKey: FieldElement;
-}
-
-/**
- * Full proof inputs (public + private)
- */
-export interface FullProofInputs {
-  public: TransferPublicInputs;
-  private: TransferPrivateInputs;
 }
 
 /**
@@ -209,9 +184,8 @@ export interface NetworkConfig {
   programId?: string;
 
   /**
-   * Base URL for circuit files (.wasm and .zkey).
-   * When set, the prover will load circuit files from `${circuitBaseUrl}/${filename}`.
-   * @example 'https://cdn.example.com/circuits/v1'
+   * Override the STARK verifier program ID. Takes precedence over the
+   * default `p01_stark_verifier` ID baked into this package.
    */
-  circuitBaseUrl?: string;
+  starkVerifierProgramId?: string;
 }

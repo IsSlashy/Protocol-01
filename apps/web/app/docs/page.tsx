@@ -218,6 +218,7 @@ import { createAuction, submitSealedBid, finalizeAuction } from '@protocol-01/ar
 await createAuction(client, program, { auctionId, pool, deadline });
 
 // 2. Bidder locks funds in escrow (Groth16 proof pre-authorizes both outcomes)
+//    Note: escrow surface still uses Groth16 — STARK migration scheduled.
 await escrowShield(proof, nullifier, merkleRoot, auctionId, payCommit, refundCommit);
 
 // 3. Bidder submits encrypted bid (MPC — no one sees the amount)

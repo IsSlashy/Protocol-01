@@ -53,7 +53,9 @@ The ZK proof is generated locally using a WebView-based prover on mobile. There 
 
 **2. Post-quantum ready — STARK migration is complete**
 
-Groth16 (BN254) is vulnerable to Shor's algorithm. We built a complete parallel proof system using STARKs over Goldilocks field (2^64 - 2^32 + 1) with Poseidon AIR. The on-chain FRI verifier is custom-built (no Winterfell dependency), supports 6 circuit types, and is already deployed on devnet. Both proof systems work — users can choose Groth16 (smaller proofs, ~200 bytes) or STARKs (quantum-resistant, ~9KB proofs).
+Groth16 (BN254) is vulnerable to Shor's algorithm. We built a complete parallel proof system using STARKs over Goldilocks field (2^64 - 2^32 + 1) with Poseidon AIR. The on-chain FRI verifier is custom-built (no Winterfell dependency), supports 6 circuit types, and is already deployed on devnet. Both proof systems work — users can choose Groth16 (smaller proofs, ~200 bytes) or STARKs (quantum-resistant, ~9KB proofs).<sup>†</sup>
+
+> <sup>†</sup> *Update 2026-04-28: the hot path (shield/transfer/unshield, base + denominated pools) has since migrated to STARK-only. Groth16 is retained for compliance attestations and the sealed-bid auction escrow — both under migration.*
 
 **3. Stealth addresses with post-quantum key exchange**
 

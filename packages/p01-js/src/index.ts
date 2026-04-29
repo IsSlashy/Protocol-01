@@ -8,6 +8,12 @@
  * use `@protocol-01/privacy-sdk` directly. `p01-js` is the merchant
  * surface — pay buttons, subscription widgets, webhook helpers.
  *
+ * Privacy backend: post-quantum STARK proofs (Goldilocks field, Blake3
+ * Merkle, DEEP-ALI) generated and verified via `@protocol-01/stark-prover`
+ * + the on-chain `p01_stark_verifier` program. The legacy Groth16 /
+ * snarkjs path was removed in 0.3.0 — see `proof-generator.ts` for the
+ * replacement adapter.
+ *
  * @example Basic Setup
  * ```typescript
  * import { Protocol01 } from '@protocol-01/p01-js';
@@ -198,9 +204,9 @@ export {
   type UnshieldResponse,
 } from './relayer-client';
 
-// ZK Proof Generator
+// STARK Proof Generator Adapter (0.3.0+: replaces Groth16/snarkjs path)
 export {
-  generateDenominatedPoolProof,
+  generateDenominatedPoolStarkProof,
   verifyProof,
   type ProofResult,
   type ProofGeneratorConfig,

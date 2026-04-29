@@ -6,7 +6,7 @@
  * - Receipt encryption/decryption with password
  * - RelayerClient retry logic with mocked fetch
  * - Pool info types and delay tier estimation
- * - Proof generator throws without snarkjs
+ * - STARK proof generator adapter forwards to a host StarkProofGenerator
  * - Shield parameter validation
  * - Unshield parameter validation
  * - Commitment placeholder computation
@@ -34,15 +34,19 @@ import {
   resolveTokenMintForPool,
 } from './shielded-pool';
 
+import {
+  generateDenominatedPoolStarkProof,
+  verifyProof,
+} from './proof-generator';
+
+import { STARK_CIRCUITS } from '@protocol-01/stark-prover';
+import type { StarkProofGenerator, StarkProofOutcome } from '@protocol-01/stark-prover';
+import { PublicKey } from '@solana/web3.js';
+
 import type { ShieldReceipt } from './shielded-pool';
 
 import { RelayerClient } from './relayer-client';
 import type { RelayerConfig } from './relayer-client';
-
-import {
-  generateDenominatedPoolProof,
-  verifyProof,
-} from './proof-generator';
 
 // ============ Test Fixtures ============
 
@@ -635,58 +639,93 @@ describe('shield', () => {
   });
 });
 
-// ============ Proof Generator ============
+// ============ STARK Proof Generator Adapter ============
 
-describe('generateDenominatedPoolProof', () => {
-  it('should throw when pathElements is missing', async () => {
-    await expect(
-      generateDenominatedPoolProof(
-        { root: '123', secret: '456' },
-        { wasmPath: '/test.wasm', zkeyPath: '/test.zkey' }
-      )
-    ).rejects.toThrow('pathElements');
+describe('generateDenominatedPoolStarkProof', () => {
+  const validInputs = {
+    nullifierPreimage: '12345',
+    secret: '67890',
+    depositEpoch: '1000000',
+    tokenMint: '99999',
+  };
+
+  it('forwards to the host StarkProofGenerator with circuit id 1 (POOL_COMMITMENT)', async () => {
+    const proofBuffer = new PublicKey('11111111111111111111111111111111');
+    const mockProver: StarkProofGenerator = vi.fn(async (circuitId, inputs) => {
+      expect(circuitId).toBe(STARK_CIRCUITS.POOL_COMMITMENT);
+      expect(circuitId).toBe(1);
+      expect(inputs).toEqual(validInputs);
+      return {
+        proofBuffer,
+        circuitId,
+        publicInputs: [42n, 1337n],
+      } satisfies StarkProofOutcome;
+    });
+
+    const result = await generateDenominatedPoolStarkProof(validInputs, mockProver);
+
+    expect(mockProver).toHaveBeenCalledTimes(1);
+    expect(result.proofBuffer).toBe(proofBuffer);
+    expect(result.circuitId).toBe(1);
+    expect(result.publicInputs).toEqual([42n, 1337n]);
   });
 
-  it('should throw when wasmPath is not provided', async () => {
+  it('throws when no prover is supplied', async () => {
     await expect(
-      generateDenominatedPoolProof({ root: '123' }, {})
-    ).rejects.toThrow('wasmPath is required');
+      generateDenominatedPoolStarkProof(validInputs, undefined as unknown as StarkProofGenerator),
+    ).rejects.toThrow(/StarkProofGenerator/);
   });
 
-  it('should throw when zkeyPath is not provided', async () => {
+  it('throws when nullifierPreimage is missing', async () => {
+    const mockProver: StarkProofGenerator = vi.fn();
     await expect(
-      generateDenominatedPoolProof(
-        { root: '123', pathElements: [], pathIndices: [] },
-        { wasmPath: '/test.wasm' }
-      )
-    ).rejects.toThrow('zkeyPath is required');
+      generateDenominatedPoolStarkProof(
+        { secret: '1', depositEpoch: '2', tokenMint: '3' },
+        mockProver,
+      ),
+    ).rejects.toThrow(/nullifierPreimage/);
+    expect(mockProver).not.toHaveBeenCalled();
   });
 
-  it('should throw when no config is provided', async () => {
+  it('throws when secret is missing', async () => {
+    const mockProver: StarkProofGenerator = vi.fn();
     await expect(
-      generateDenominatedPoolProof({ root: '123' })
-    ).rejects.toThrow();
+      generateDenominatedPoolStarkProof(
+        { nullifierPreimage: '1', depositEpoch: '2', tokenMint: '3' },
+        mockProver,
+      ),
+    ).rejects.toThrow(/secret/);
+    expect(mockProver).not.toHaveBeenCalled();
+  });
+
+  it('throws when depositEpoch is missing', async () => {
+    const mockProver: StarkProofGenerator = vi.fn();
+    await expect(
+      generateDenominatedPoolStarkProof(
+        { nullifierPreimage: '1', secret: '2', tokenMint: '3' },
+        mockProver,
+      ),
+    ).rejects.toThrow(/depositEpoch/);
+    expect(mockProver).not.toHaveBeenCalled();
+  });
+
+  it('throws when tokenMint is missing', async () => {
+    const mockProver: StarkProofGenerator = vi.fn();
+    await expect(
+      generateDenominatedPoolStarkProof(
+        { nullifierPreimage: '1', secret: '2', depositEpoch: '3' },
+        mockProver,
+      ),
+    ).rejects.toThrow(/tokenMint/);
+    expect(mockProver).not.toHaveBeenCalled();
   });
 });
 
 describe('verifyProof', () => {
-  it('should throw when vkPath is not provided', async () => {
-    await expect(
-      verifyProof(
-        { pi_a: [], pi_b: [], pi_c: [] },
-        ['1', '2']
-      )
-    ).rejects.toThrow('vkPath is required');
-  });
-
-  it('should throw when vkPath points to a non-existent file', async () => {
-    await expect(
-      verifyProof(
-        { pi_a: [], pi_b: [], pi_c: [] },
-        ['1', '2'],
-        '/nonexistent/vk.json'
-      )
-    ).rejects.toThrow();
+  it('always throws — client-side verify is not supported in 0.3.0+', () => {
+    expect(() => verifyProof()).toThrow(
+      'On-chain verification handled by p01_stark_verifier; client-side verify not supported.',
+    );
   });
 });
 

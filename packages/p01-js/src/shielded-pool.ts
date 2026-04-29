@@ -11,8 +11,9 @@
  *   - MerkleTree:      [b"merkle_tree", pool_key]
  *   - NullifierRecord: [b"nullifier", pool_key, nullifier_bytes]
  *
- * Commitment scheme: Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)
- * Proof system: Groth16 over BN254 (denominated_pool.circom, depth 15, 4273 constraints)
+ * Commitment scheme: Goldilocks-field hash(nullifier_preimage, secret, deposit_epoch, token_mint)
+ * Proof system: STARK (DEEP-ALI, Goldilocks, Blake3 Merkle) via
+ *   `@protocol-01/stark-prover` + on-chain `p01_stark_verifier`. Depth 15.
  *
  * @module shielded-pool
  */
@@ -325,55 +326,33 @@ export async function shield(params: ShieldParams): Promise<ShieldReceipt> {
 /**
  * Unshield (withdraw) tokens from a denominated pool.
  *
- * This function supports two modes:
- * - Relayer mode (useRelayer=true): Sends proof to relayer for meta-transaction.
- *   The relayer submits the transaction so the recipient's address is not linked
- *   to the original depositor.
- * - Direct mode (useRelayer=false): Builds and sends the unshield transaction directly.
- *   This is cheaper but links the recipient to the withdrawal transaction.
+ * The merchant SDK exposes `unshield()` only as a thin parameter validator
+ * — the heavy lifting (STARK proof generation, chunked upload to
+ * `p01_stark_verifier`, on-chain submission) lives in
+ * `@protocol-01/privacy-sdk` and `@protocol-01/stark-prover`. Pass the
+ * `generateStarkProof` returned by `createStarkProver(...)` into
+ * `Privacy.setProverConfig({ generateStarkProof })` and call
+ * `privacy.unshield(...)` for the full flow.
  *
- * TODO: Both modes require heavy dependencies:
- * - snarkjs for client-side proof generation
- * - @solana/web3.js for direct transaction submission
- * - circomlibjs for Poseidon hash computation
+ * BREAKING CHANGE (0.3.0): the `useRelayer` branch no longer references
+ * snarkjs / circomlibjs. The error message points callers at the STARK
+ * backend instead.
  *
  * @param params - Unshield parameters
- * @returns Transaction signature (base58-encoded)
- * @throws Error if proof generation fails or transaction is rejected
+ * @returns Transaction signature (base58-encoded) — never resolved here.
+ * @throws Always — call the privacy-sdk for the full unshield flow.
  */
 export async function unshield(params: UnshieldParams): Promise<string> {
   // Validate inputs
   validateUnshieldParams(params);
 
-  if (params.useRelayer) {
-    // Relayer mode: POST proof to relayer service
-    // TODO: Generate ZK proof first via snarkjs (see proof-generator.ts)
-    //
-    // The proof must demonstrate:
-    // 1. Knowledge of secret and nullifier_preimage that hash to a commitment in the Merkle tree
-    // 2. The nullifier is correctly derived from nullifier_preimage
-    // 3. The deposit_epoch satisfies the minimum delay requirement
-    // 4. The token_mint matches the pool
-    //
-    // Public inputs: [merkle_root, nullifier, min_epoch, token_mint]
-
-    if (!params.relayerUrl) {
-      throw new Error('relayerUrl is required when useRelayer is true.');
-    }
-
-    throw new Error(
-      'Unshield via relayer requires snarkjs for proof generation. ' +
-      'Install snarkjs and provide circuit artifacts (wasm + zkey) to enable client-side proving. ' +
-      'Alternatively, use the full ZK service from apps/mobile or apps/extension.'
-    );
-  } else {
-    // Direct mode: build and send transaction
-    // TODO: Requires @solana/web3.js + snarkjs
-    throw new Error(
-      'Direct unshield requires @solana/web3.js and snarkjs. ' +
-      'Use shield() to generate a receipt, then submit via the full ZK service.'
-    );
+  if (params.useRelayer && !params.relayerUrl) {
+    throw new Error('relayerUrl is required when useRelayer is true.');
   }
+
+  throw new Error(
+    'unshield() requires a StarkProofGenerator. Pass one via setProverConfig({ generateStarkProof }) or use @protocol-01/privacy-sdk for the full flow.',
+  );
 }
 
 // ============ Pool Information ============

@@ -842,14 +842,14 @@ const fr: Translations = {
       },
       sealedBidAuctions: {
         title: 'Ench\u00e8res scell\u00e9es (Arcium + Escrow ZK)',
-        desc: 'Ench\u00e8res aveugles sans confiance combinant l\u2019accumulation d\u2019offres chiffr\u00e9es Arcium MPC avec un escrow ZK Groth16 dans le pool blind\u00e9. Les offres sont cach\u00e9es, le r\u00e8glement est automatique, et aucune partie ne peut tricher.',
-        detail1: 'Escrow avant ench\u00e8re : les ench\u00e9risseurs verrouillent leurs fonds via escrow_shield (preuve Groth16). La preuve pr\u00e9-autorise deux issues \u2014 payer le vendeur OU rembourser l\u2019ench\u00e9risseur.',
+        desc: 'Ench\u00e8res aveugles sans confiance combinant l\u2019accumulation d\u2019offres chiffr\u00e9es Arcium MPC avec un escrow ZK Groth16 dans le pool blind\u00e9 (legacy, migration STARK pr\u00e9vue). Les offres sont cach\u00e9es, le r\u00e8glement est automatique, et aucune partie ne peut tricher.',
+        detail1: 'Escrow avant ench\u00e8re : les ench\u00e9risseurs verrouillent leurs fonds via escrow_shield (preuve Groth16 \u2014 legacy, migration STARK pr\u00e9vue). La preuve pr\u00e9-autorise deux issues \u2014 payer le vendeur OU rembourser l\u2019ench\u00e9risseur.',
         detail2: 'Accumulation d\u2019offres chiffr\u00e9es : le circuit MPC sealed_bid_auction s\u2019ex\u00e9cute sur les n\u0153uds ARX Arcium. Comparaison en temps constant. Aucun n\u0153ud ne voit aucune offre.',
         detail3: 'R\u00e9v\u00e9lation du r\u00e9sultat MPC : finalize_auction ne r\u00e9v\u00e8le que le nullifieur gagnant et le montant. Toutes les offres perdantes restent cach\u00e9es.',
         detail4: 'Identit\u00e9 par nullifieur : les ench\u00e9risseurs sont identifi\u00e9s par leur nullifieur d\u2019escrow, pas leur adresse wallet. Impossible \u00e0 relier.',
         detail5: 'R\u00e8glement sans permission : write_escrow_outcome lit le PDA Auction, escrow_release ins\u00e8re le bon commitment dans l\u2019arbre de Merkle. N\u2019importe qui peut ex\u00e9cuter.',
         detail6: 'Anti-rejeu : auction_id est une entr\u00e9e publique dans la preuve ZK, liant chaque escrow \u00e0 une ench\u00e8re sp\u00e9cifique.',
-        detail7: 'Circuit : escrow_bid.circom \u2014 4 954 contraintes, 7 entr\u00e9es publiques, Groth16 sur BN254.',
+        detail7: 'Circuit : escrow_bid.circom \u2014 4 954 contraintes, 7 entr\u00e9es publiques, Groth16 sur BN254 (legacy, migration STARK pr\u00e9vue).',
         detail8: 'D\u00e9ploy\u00e9 sur devnet : p01_arcium + zk_shielded avec comp defs initialis\u00e9s et VK upload\u00e9.',
       },
       streamsPrivacy: {
@@ -959,7 +959,7 @@ const fr: Translations = {
         detail3: 'Conservation de d\u00e9nomination appliqu\u00e9e : source = nbSorties \u00d7 cible',
         detail4: 'M\u00eame motif PDA de nullifieur que le d\u00e9blindage (pr\u00e9vention atomique de double d\u00e9pense)',
         detail5: 'Frais de protocole : 0,3% de la d\u00e9nomination source',
-        detail6: 'La preuve Groth16 v\u00e9rifie la propri\u00e9t\u00e9 + l\u2019exactitude des engagements de sortie',
+        detail6: 'La preuve STARK v\u00e9rifie la propri\u00e9t\u00e9 + l\u2019exactitude des engagements de sortie',
         detail7: 'SDK mobile : fonction splitNote() avec callback proofGenerator',
       },
       privacyRouter: {

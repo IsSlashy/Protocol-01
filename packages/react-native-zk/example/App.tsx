@@ -1,7 +1,9 @@
 /**
- * Example: @protocol-01/react-native-zk
+ * Example: @protocol-01/react-native-zk v2 (STARK)
  *
- * Minimal Expo app demonstrating client-side ZK proof generation.
+ * Minimal Expo app demonstrating client-side STARK proof generation.
+ * The WASM is bundled inside the package as base64 — no asset registration,
+ * no CDN load, no zkey. Private inputs never leave the device.
  */
 import React, { useRef, useState } from 'react';
 import { View, Text, Button, StyleSheet, ScrollView } from 'react-native';
@@ -12,16 +14,13 @@ export default function App() {
   const [status, setStatus] = useState('Ready');
   const [result, setResult] = useState<string | null>(null);
 
-  const handleLoadCircuit = async () => {
-    setStatus('Loading circuit...');
+  const handleLoadWasm = async () => {
+    setStatus('Loading STARK WASM...');
     try {
-      const loaded = await proverRef.current?.loadCircuit('example', {
-        wasmUri: 'example_circuit.wasm',
-        zkeyUri: 'example_circuit_final.zkey',
-      });
-      setStatus(loaded ? 'Circuit loaded!' : 'Failed to load circuit');
-    } catch (err: any) {
-      setStatus(`Error: ${err.message}`);
+      const ok = await proverRef.current?.loadWasm();
+      setStatus(ok ? 'WASM loaded — ready to prove' : 'Failed to load WASM');
+    } catch (err: unknown) {
+      setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -29,27 +28,31 @@ export default function App() {
     setStatus('Generating proof...');
     const start = Date.now();
     try {
-      const proof = await proverRef.current?.prove('example', {
-        // Your circuit's private inputs
-        secret: '123456789',
-        nullifier: '987654321',
-      });
+      // Circuit 1 (POOL_COMMITMENT) — proves knowledge of (nullifierPreimage,
+      // secret) for a given (epoch, mint). Returns nullifier + commitment.
+      const proof = await proverRef.current?.generatePoolCommitmentProof(
+        'demo-1',
+        '123456789',         // nullifierPreimage
+        '987654321',         // secret
+        '1',                 // depositEpoch
+        '1',                 // tokenMint
+      );
       const ms = Date.now() - start;
-      setStatus(`Proof generated in ${ms}ms`);
-      setResult(JSON.stringify(proof?.publicSignals, null, 2));
-    } catch (err: any) {
-      setStatus(`Error: ${err.message}`);
+      setStatus(`Proof generated in ${ms}ms (${proof?.proofSize ?? 0} bytes)`);
+      setResult(JSON.stringify(proof?.publicInputs, null, 2));
+    } catch (err: unknown) {
+      setStatus(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>@protocol-01/react-native-zk Demo</Text>
+      <Text style={styles.title}>@protocol-01/react-native-zk Demo (STARK)</Text>
       <Text style={styles.status}>{status}</Text>
 
-      <Button title="Load Circuit" onPress={handleLoadCircuit} />
+      <Button title="Load WASM" onPress={handleLoadWasm} />
       <View style={{ height: 12 }} />
-      <Button title="Generate Proof" onPress={handleProve} />
+      <Button title="Generate Pool Commitment Proof" onPress={handleProve} />
 
       {result && (
         <ScrollView style={styles.result}>

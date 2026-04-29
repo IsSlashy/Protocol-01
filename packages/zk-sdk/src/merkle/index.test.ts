@@ -1,49 +1,38 @@
 /**
- * Unit tests for Merkle tree module
- * Tests tree construction, leaf insertion, proof generation, and proof verification
+ * Unit tests for Merkle tree module (Goldilocks edition).
+ *
+ * The tree now uses Goldilocks-Poseidon (u64 outputs reduced mod
+ * 2^64 - 2^32 + 1). Mock outputs are kept inside that range. Depth 15 is
+ * the new default but tests use small depths for speed.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ----- Mock external dependencies -----
 
-// Track poseidon calls for verification
 let poseidonCallCount = 0;
 
-// Deterministic mock poseidon: H(a, b) = (a * 7 + b * 13 + 37) mod 2^64
-// This ensures consistent behavior across tests while being simple to reason about.
+const GOLDILOCKS_MODULUS = 0xFFFFFFFF00000001n;
+
+// Deterministic mock Poseidon over the Goldilocks field. Values stay
+// strictly below 2^64 - 2^32 + 1 so the assertions catch any leak of BN254
+// 256-bit values.
 function fakePoseidonHash(inputs: bigint[]): bigint {
-  let acc = BigInt(37);
+  let acc = 37n;
   for (let i = 0; i < inputs.length; i++) {
-    acc = acc + inputs[i] * BigInt(7 + i * 6);
+    acc = (acc * 0x9E3779B97F4A7C15n) ^ (inputs[i]! + BigInt(i + 1));
   }
-  // Keep values manageable but large enough to avoid collisions
-  return acc % BigInt('18446744073709551616'); // mod 2^64
+  let r = acc % GOLDILOCKS_MODULUS;
+  if (r < 0n) r += GOLDILOCKS_MODULUS;
+  return r;
 }
 
-const mockPoseidonInstance = Object.assign(
-  (inputs: (bigint | number)[]) => {
+vi.mock('../circuits', () => ({
+  poseidonHashLite: vi.fn((inputs: (bigint | number)[]) => {
     poseidonCallCount++;
     const bigInputs = inputs.map((x) => BigInt(x));
-    const result = fakePoseidonHash(bigInputs);
-    // Wrap in an object with the F.toObject pattern used by circomlibjs
-    return result;
-  },
-  {
-    F: {
-      toObject: (val: any) => val,
-    },
-  }
-);
-
-vi.mock('../circuits', () => ({
-  getPoseidon: vi.fn(async () => mockPoseidonInstance),
-  poseidonHashSync: vi.fn(
-    (_poseidon: any, inputs: (bigint | number)[]) => {
-      const bigInputs = inputs.map((x) => BigInt(x));
-      return fakePoseidonHash(bigInputs);
-    }
-  ),
+    return fakePoseidonHash(bigInputs);
+  }),
 }));
 
 // ----- Imports (after mocks) -----
@@ -61,7 +50,7 @@ async function createTree(depth: number = 3): Promise<MerkleTree> {
 
 // ----- Tests -----
 
-describe('MerkleTree', () => {
+describe('MerkleTree (Goldilocks)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     poseidonCallCount = 0;
@@ -83,7 +72,6 @@ describe('MerkleTree', () => {
     it('should compute zero values and initial root', async () => {
       const tree = await createTree(3);
 
-      // After initialization, the root should be defined
       expect(tree.root).toBeDefined();
       expect(typeof tree.root).toBe('bigint');
     });
@@ -93,9 +81,9 @@ describe('MerkleTree', () => {
       expect(tree.leafCount).toBe(0);
     });
 
-    it('should throw when accessing root before initialization', () => {
-      const tree = new MerkleTree(3);
-      expect(() => tree.root).toThrow('Tree not initialized');
+    it('should keep the initial root strictly below the Goldilocks modulus', async () => {
+      const tree = await createTree(3);
+      expect(tree.root < GOLDILOCKS_MODULUS).toBe(true);
     });
   });
 
@@ -103,7 +91,7 @@ describe('MerkleTree', () => {
     it('should insert a leaf and return index 0 for first insert', async () => {
       const tree = await createTree(3);
 
-      const index = tree.insert(BigInt(100));
+      const index = tree.insert(100n);
 
       expect(index).toBe(0);
       expect(tree.leafCount).toBe(1);
@@ -112,9 +100,9 @@ describe('MerkleTree', () => {
     it('should return incrementing indices for sequential inserts', async () => {
       const tree = await createTree(3);
 
-      const i0 = tree.insert(BigInt(100));
-      const i1 = tree.insert(BigInt(200));
-      const i2 = tree.insert(BigInt(300));
+      const i0 = tree.insert(100n);
+      const i1 = tree.insert(200n);
+      const i2 = tree.insert(300n);
 
       expect(i0).toBe(0);
       expect(i1).toBe(1);
@@ -126,7 +114,7 @@ describe('MerkleTree', () => {
       const tree = await createTree(3);
       const rootBefore = tree.root;
 
-      tree.insert(BigInt(42));
+      tree.insert(42n);
       const rootAfter = tree.root;
 
       expect(rootAfter).not.toBe(rootBefore);
@@ -136,8 +124,8 @@ describe('MerkleTree', () => {
       const tree1 = await createTree(3);
       const tree2 = await createTree(3);
 
-      tree1.insert(BigInt(100));
-      tree2.insert(BigInt(200));
+      tree1.insert(100n);
+      tree2.insert(200n);
 
       expect(tree1.root).not.toBe(tree2.root);
     });
@@ -146,13 +134,21 @@ describe('MerkleTree', () => {
       const tree1 = await createTree(3);
       const tree2 = await createTree(3);
 
-      tree1.insert(BigInt(10));
-      tree1.insert(BigInt(20));
+      tree1.insert(10n);
+      tree1.insert(20n);
 
-      tree2.insert(BigInt(10));
-      tree2.insert(BigInt(20));
+      tree2.insert(10n);
+      tree2.insert(20n);
 
       expect(tree1.root).toBe(tree2.root);
+    });
+
+    it('should keep the root strictly below the Goldilocks modulus', async () => {
+      const tree = await createTree(3);
+      tree.insert(100n);
+      tree.insert(200n);
+      tree.insert(300n);
+      expect(tree.root < GOLDILOCKS_MODULUS).toBe(true);
     });
   });
 
@@ -160,16 +156,16 @@ describe('MerkleTree', () => {
     it('should insert at a specific index', async () => {
       const tree = await createTree(3);
 
-      tree.insertAt(5, BigInt(500));
+      tree.insertAt(5, 500n);
 
-      expect(tree.getLeaf(5)).toBe(BigInt(500));
+      expect(tree.getLeaf(5)).toBe(500n);
     });
 
     it('should change the root', async () => {
       const tree = await createTree(3);
       const rootBefore = tree.root;
 
-      tree.insertAt(0, BigInt(123));
+      tree.insertAt(0, 123n);
 
       expect(tree.root).not.toBe(rootBefore);
     });
@@ -177,7 +173,7 @@ describe('MerkleTree', () => {
     it('should throw if index is out of bounds', async () => {
       const tree = await createTree(3);
 
-      expect(() => tree.insertAt(MAX_TREE_LEAVES, BigInt(1))).toThrow('Index out of bounds');
+      expect(() => tree.insertAt(MAX_TREE_LEAVES, 1n)).toThrow('Index out of bounds');
     });
   });
 
@@ -185,9 +181,9 @@ describe('MerkleTree', () => {
     it('should return the inserted leaf value', async () => {
       const tree = await createTree(3);
 
-      tree.insert(BigInt(777));
+      tree.insert(777n);
 
-      expect(tree.getLeaf(0)).toBe(BigInt(777));
+      expect(tree.getLeaf(0)).toBe(777n);
     });
 
     it('should return undefined for non-existent leaves', async () => {
@@ -200,13 +196,13 @@ describe('MerkleTree', () => {
     it('should return correct values for multiple leaves', async () => {
       const tree = await createTree(3);
 
-      tree.insert(BigInt(10));
-      tree.insert(BigInt(20));
-      tree.insert(BigInt(30));
+      tree.insert(10n);
+      tree.insert(20n);
+      tree.insert(30n);
 
-      expect(tree.getLeaf(0)).toBe(BigInt(10));
-      expect(tree.getLeaf(1)).toBe(BigInt(20));
-      expect(tree.getLeaf(2)).toBe(BigInt(30));
+      expect(tree.getLeaf(0)).toBe(10n);
+      expect(tree.getLeaf(1)).toBe(20n);
+      expect(tree.getLeaf(2)).toBe(30n);
     });
   });
 
@@ -214,7 +210,7 @@ describe('MerkleTree', () => {
     it('should produce a proof with correct path length', async () => {
       const depth = 4;
       const tree = await createTree(depth);
-      tree.insert(BigInt(100));
+      tree.insert(100n);
 
       const proof = tree.generateProof(0);
 
@@ -225,9 +221,9 @@ describe('MerkleTree', () => {
 
     it('should produce path indices of only 0s and 1s', async () => {
       const tree = await createTree(4);
-      tree.insert(BigInt(100));
-      tree.insert(BigInt(200));
-      tree.insert(BigInt(300));
+      tree.insert(100n);
+      tree.insert(200n);
+      tree.insert(300n);
 
       const proof = tree.generateProof(1);
 
@@ -238,7 +234,7 @@ describe('MerkleTree', () => {
 
     it('should indicate left (0) for leaf at even index at level 0', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(10)); // index 0 (even)
+      tree.insert(10n); // index 0 (even)
 
       const proof = tree.generateProof(0);
 
@@ -247,8 +243,8 @@ describe('MerkleTree', () => {
 
     it('should indicate right (1) for leaf at odd index at level 0', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(10)); // index 0
-      tree.insert(BigInt(20)); // index 1 (odd)
+      tree.insert(10n);
+      tree.insert(20n);
 
       const proof = tree.generateProof(1);
 
@@ -257,18 +253,18 @@ describe('MerkleTree', () => {
 
     it('should include sibling values in pathElements', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(10));
-      tree.insert(BigInt(20));
+      tree.insert(10n);
+      tree.insert(20n);
 
       const proof = tree.generateProof(0);
 
       // The sibling of leaf 0 at level 0 is leaf 1
-      expect(proof.pathElements[0]).toBe(BigInt(20));
+      expect(proof.pathElements[0]).toBe(20n);
     });
 
     it('should use ZERO_VALUE for empty sibling at level 0', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(10));
+      tree.insert(10n);
 
       const proof = tree.generateProof(0);
 
@@ -280,9 +276,9 @@ describe('MerkleTree', () => {
   describe('verifyProof', () => {
     it('should verify a valid proof returns true', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(100));
+      tree.insert(100n);
 
-      const leaf = BigInt(100);
+      const leaf = 100n;
       const proof = tree.generateProof(0);
       const root = tree.root;
 
@@ -293,9 +289,9 @@ describe('MerkleTree', () => {
 
     it('should reject a proof with wrong leaf', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(100));
+      tree.insert(100n);
 
-      const wrongLeaf = BigInt(999);
+      const wrongLeaf = 999n;
       const proof = tree.generateProof(0);
       const root = tree.root;
 
@@ -306,11 +302,11 @@ describe('MerkleTree', () => {
 
     it('should reject a proof with wrong root', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(100));
+      tree.insert(100n);
 
-      const leaf = BigInt(100);
+      const leaf = 100n;
       const proof = tree.generateProof(0);
-      const wrongRoot = BigInt(12345);
+      const wrongRoot = 12345n;
 
       const valid = tree.verifyProof(proof, leaf, wrongRoot);
 
@@ -319,7 +315,7 @@ describe('MerkleTree', () => {
 
     it('should verify proofs for multiple leaves', async () => {
       const tree = await createTree(3);
-      const leaves = [BigInt(10), BigInt(20), BigInt(30), BigInt(40)];
+      const leaves = [10n, 20n, 30n, 40n];
 
       for (const leaf of leaves) {
         tree.insert(leaf);
@@ -329,20 +325,20 @@ describe('MerkleTree', () => {
 
       for (let i = 0; i < leaves.length; i++) {
         const proof = tree.generateProof(i);
-        expect(tree.verifyProof(proof, leaves[i], root)).toBe(true);
+        expect(tree.verifyProof(proof, leaves[i]!, root)).toBe(true);
       }
     });
 
     it('should reject proof after tree state changes', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(100));
+      tree.insert(100n);
 
-      const leaf = BigInt(100);
+      const leaf = 100n;
       const proof = tree.generateProof(0);
       const oldRoot = tree.root;
 
       // Insert another leaf, changing the root
-      tree.insert(BigInt(200));
+      tree.insert(200n);
       const newRoot = tree.root;
 
       // Old proof should not verify against new root
@@ -356,8 +352,8 @@ describe('MerkleTree', () => {
   describe('export / import', () => {
     it('should export tree state', async () => {
       const tree = await createTree(3);
-      tree.insert(BigInt(100));
-      tree.insert(BigInt(200));
+      tree.insert(100n);
+      tree.insert(200n);
 
       const exported = tree.export();
 
@@ -377,43 +373,44 @@ describe('MerkleTree', () => {
 
     it('should import and reconstruct identical tree', async () => {
       const original = await createTree(3);
-      original.insert(BigInt(100));
-      original.insert(BigInt(200));
-      original.insert(BigInt(300));
+      original.insert(100n);
+      original.insert(200n);
+      original.insert(300n);
 
       const exported = original.export();
       const originalRoot = original.root;
 
-      const restored = new MerkleTree();
+      const restored = new MerkleTree(3);
       await restored.import(exported);
 
       expect(restored.root).toBe(originalRoot);
       expect(restored.leafCount).toBe(3);
-      expect(restored.getLeaf(0)).toBe(BigInt(100));
-      expect(restored.getLeaf(1)).toBe(BigInt(200));
-      expect(restored.getLeaf(2)).toBe(BigInt(300));
+      expect(restored.getLeaf(0)).toBe(100n);
+      expect(restored.getLeaf(1)).toBe(200n);
+      expect(restored.getLeaf(2)).toBe(300n);
     });
 
     it('should produce valid proofs after import', async () => {
       const original = await createTree(3);
-      original.insert(BigInt(10));
-      original.insert(BigInt(20));
+      original.insert(10n);
+      original.insert(20n);
 
       const exported = original.export();
 
-      const restored = new MerkleTree();
+      const restored = new MerkleTree(3);
       await restored.import(exported);
 
       const proof = restored.generateProof(0);
-      expect(restored.verifyProof(proof, BigInt(10), restored.root)).toBe(true);
+      expect(restored.verifyProof(proof, 10n, restored.root)).toBe(true);
     });
   });
 });
 
 describe('generateMerkleProof (standalone)', () => {
   it('should delegate to tree.generateProof', async () => {
-    const tree = await createTree(3);
-    tree.insert(BigInt(100));
+    const tree = new MerkleTree(3);
+    await tree.initialize();
+    tree.insert(100n);
 
     const proof = await generateMerkleProof(tree, 0);
 
@@ -425,51 +422,58 @@ describe('generateMerkleProof (standalone)', () => {
 
 describe('verifyMerkleProof (standalone)', () => {
   it('should verify a valid proof', async () => {
-    const tree = await createTree(3);
-    tree.insert(BigInt(100));
+    const tree = new MerkleTree(3);
+    await tree.initialize();
+    tree.insert(100n);
 
     const proof = tree.generateProof(0);
     const root = tree.root;
 
-    const valid = await verifyMerkleProof(proof, BigInt(100), root);
+    const valid = await verifyMerkleProof(proof, 100n, root);
     expect(valid).toBe(true);
   });
 
   it('should reject an invalid proof', async () => {
-    const tree = await createTree(3);
-    tree.insert(BigInt(100));
+    const tree = new MerkleTree(3);
+    await tree.initialize();
+    tree.insert(100n);
 
     const proof = tree.generateProof(0);
 
-    const valid = await verifyMerkleProof(proof, BigInt(999), tree.root);
+    const valid = await verifyMerkleProof(proof, 999n, tree.root);
     expect(valid).toBe(false);
   });
 });
 
-describe('Edge cases', () => {
+describe('Edge cases (Goldilocks)', () => {
   it('should handle tree with depth 1', async () => {
-    const tree = await createTree(1);
-    tree.insert(BigInt(10));
+    const tree = new MerkleTree(1);
+    await tree.initialize();
+    tree.insert(10n);
 
     const proof = tree.generateProof(0);
     expect(proof.pathIndices.length).toBe(1);
-    expect(tree.verifyProof(proof, BigInt(10), tree.root)).toBe(true);
+    expect(tree.verifyProof(proof, 10n, tree.root)).toBe(true);
   });
 
   it('should handle inserting leaves with value 0', async () => {
-    const tree = await createTree(3);
-    tree.insert(BigInt(0));
+    const tree = new MerkleTree(3);
+    await tree.initialize();
+    tree.insert(0n);
 
-    expect(tree.getLeaf(0)).toBe(BigInt(0));
+    expect(tree.getLeaf(0)).toBe(0n);
     expect(tree.leafCount).toBe(1);
 
     const proof = tree.generateProof(0);
-    expect(tree.verifyProof(proof, BigInt(0), tree.root)).toBe(true);
+    expect(tree.verifyProof(proof, 0n, tree.root)).toBe(true);
   });
 
-  it('should handle inserting very large field elements', async () => {
-    const tree = await createTree(3);
-    const largeVal = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495616');
+  it('should handle Goldilocks-sized values (u64 range)', async () => {
+    const tree = new MerkleTree(3);
+    await tree.initialize();
+
+    // Largest value that fits in the Goldilocks field representation.
+    const largeVal = GOLDILOCKS_MODULUS - 1n;
     tree.insert(largeVal);
 
     expect(tree.getLeaf(0)).toBe(largeVal);
@@ -479,19 +483,18 @@ describe('Edge cases', () => {
   });
 
   it('should handle adjacent leaf proofs correctly', async () => {
-    const tree = await createTree(3);
-    tree.insert(BigInt(10));
-    tree.insert(BigInt(20));
+    const tree = new MerkleTree(3);
+    await tree.initialize();
+    tree.insert(10n);
+    tree.insert(20n);
 
     const proof0 = tree.generateProof(0);
     const proof1 = tree.generateProof(1);
 
-    // Leaf 0's sibling at level 0 should be leaf 1's value
-    expect(proof0.pathElements[0]).toBe(BigInt(20));
-    // Leaf 1's sibling at level 0 should be leaf 0's value
-    expect(proof1.pathElements[0]).toBe(BigInt(10));
+    expect(proof0.pathElements[0]).toBe(20n);
+    expect(proof1.pathElements[0]).toBe(10n);
 
-    expect(tree.verifyProof(proof0, BigInt(10), tree.root)).toBe(true);
-    expect(tree.verifyProof(proof1, BigInt(20), tree.root)).toBe(true);
+    expect(tree.verifyProof(proof0, 10n, tree.root)).toBe(true);
+    expect(tree.verifyProof(proof1, 20n, tree.root)).toBe(true);
   });
 });

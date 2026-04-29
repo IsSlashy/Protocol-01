@@ -34,7 +34,7 @@ All new applications, examples, and docs should import from `@protocol-01/privac
 - **Granular stealth helpers** (individual functions, not the `StealthModule` wrapper): `generateMultipleStealthAddresses`, `createStealthAnnouncement`, `parseStealthAnnouncement`, `generateStealthTransferData`, `deriveStealthPublicKeyFromEncoded`, `deriveStealthPrivateKey`, `verifyStealthOwnership`, `computeStealthAddress`.
 - **`StealthScanner` class** and helpers: `scanForPayments`, `createScanner`, `subscribeToPayments` (real-time subscription/event-based stealth scanning — privacy-sdk only ships a one-shot `scan()`).
 - **Post-quantum stealth claim proofs** (P4.3): `deriveStealthWotsKeypair`, `deriveStealthWotsFromRecipient`, `buildClaimProofPQ`, `verifyClaimProofPQ`, along with `PQClaimContext` and `PQClaimProof` types. These use WOTS+ signatures derived from the stealth seed for hybrid Ed25519 + hash-based claim proofs.
-- **`ClientProver`** (Groth16 zkSPL prover, also exposed as `proving`) — privacy-sdk wraps proofs inside modules rather than exposing this class directly.
+- **`ClientProver`** (legacy zkSPL prover, also exposed as `proving`) — privacy-sdk wraps proofs inside modules rather than exposing this class directly. The hot-path zkSPL prover is now STARK-based; this class is retained for the legacy Groth16 surfaces (compliance + auction escrow) until they migrate.
 - **`CommitmentIndexer` / `StealthIndexer`** and cache backends (`MemoryCache`, `LocalStorageCache`).
 - **Standalone wallet utilities** (`createWallet`, `generateMnemonic`, `importFromSeedPhrase`, `recoverAddresses`, etc.).
 

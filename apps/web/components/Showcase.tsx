@@ -37,10 +37,10 @@ const screens = [
     subtitle: "Shield & unshield in ~3 seconds",
     color: "#ff77a8",
     description:
-      "Deposit tokens into a Merkle tree pool using Groth16 ZK proofs. Funds become untraceable on-chain. The Rust native prover makes operations instant.",
+      "Deposit tokens into a Merkle tree pool using quantum-resistant STARK proofs. Funds become untraceable on-chain. The on-device WASM prover makes operations instant.",
     highlights: [
       "Instant shield & unshield (~3s total)",
-      "Rust native Groth16 prover (10x faster)",
+      "On-device STARK prover (no remote prover, ~9-15KB proofs)",
       "1M+ commitment capacity (depth 20)",
       "Dual verification safety net",
     ],

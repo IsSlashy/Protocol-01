@@ -842,14 +842,14 @@ const en = {
       },
       sealedBidAuctions: {
         title: 'Sealed-Bid Auctions (Arcium + ZK Escrow)',
-        desc: 'Trustless blind auctions combining Arcium MPC encrypted bid accumulation with a Groth16 ZK shielded pool escrow. Bids are hidden, settlement is automatic, and no party can cheat — the circuit, the MPC, and the on-chain program enforce outcomes independently.',
-        detail1: 'Escrow before auction: bidders lock funds via escrow_shield (Groth16 proof). The proof pre-authorizes two outcomes — pay the seller OR refund the bidder. Neither party chooses.',
+        desc: 'Trustless blind auctions combining Arcium MPC encrypted bid accumulation with a Groth16 ZK shielded pool escrow (legacy, scheduled for STARK migration). Bids are hidden, settlement is automatic, and no party can cheat — the circuit, the MPC, and the on-chain program enforce outcomes independently.',
+        detail1: 'Escrow before auction: bidders lock funds via escrow_shield (Groth16 proof — legacy, scheduled for STARK migration). The proof pre-authorizes two outcomes — pay the seller OR refund the bidder. Neither party chooses.',
         detail2: 'Encrypted bid accumulation: sealed_bid_auction MPC circuit runs on Arcium ARX nodes. Constant-time comparison prevents timing side-channels. No single node sees any bid.',
         detail3: 'MPC result revelation: finalize_auction reveals only the winning nullifier and bid amount. All losing bid amounts remain permanently hidden.',
         detail4: 'Nullifier-based identity: bidders are identified by their escrow nullifier, not their wallet address. Nullifiers are cryptographically unlinkable to identity.',
         detail5: 'Permissionless settlement: write_escrow_outcome reads the Auction PDA, escrow_release inserts the correct commitment into the Merkle tree. Anyone can crank — no cooperation needed.',
         detail6: 'Anti-replay: auction_id is a public input in the ZK proof, binding each escrow to a specific auction. Proofs cannot be reused across auctions.',
-        detail7: 'Circuit: escrow_bid.circom — 4,954 constraints, 7 public inputs, Groth16 over BN254. Proves note ownership, Merkle membership, maturity, and dual commitment correctness.',
+        detail7: 'Circuit: escrow_bid.circom — 4,954 constraints, 7 public inputs, Groth16 over BN254 (legacy, scheduled for STARK migration). Proves note ownership, Merkle membership, maturity, and dual commitment correctness.',
         detail8: 'Deployed on devnet: p01_arcium (FH1Ji...) + zk_shielded (GbVM5...) with comp defs initialized and VK uploaded. Ready for integration.',
       },
       streamsPrivacy: {
@@ -959,7 +959,7 @@ const en = {
         detail3: 'Denomination conservation enforced: source = numOutputs × target',
         detail4: 'Same nullifier PDA pattern as unshield (atomic double-spend prevention)',
         detail5: 'Protocol fee: 0.3% of source denomination',
-        detail6: 'Groth16 proof verifies ownership + output commitment correctness',
+        detail6: 'STARK proof verifies ownership + output commitment correctness',
         detail7: 'Mobile SDK: splitNote() function with proofGenerator callback',
       },
       privacyRouter: {

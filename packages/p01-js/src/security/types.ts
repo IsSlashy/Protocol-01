@@ -135,7 +135,7 @@ export interface ConfidentialTransfer {
  */
 export interface ZKProof {
   /** Proof type */
-  type: 'groth16' | 'plonk' | 'bulletproof';
+  type: 'stark' | 'plonk' | 'bulletproof';
   /** Serialized proof data */
   proof: Uint8Array;
   /** Public inputs to the proof */

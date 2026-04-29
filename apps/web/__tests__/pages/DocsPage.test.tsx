@@ -90,20 +90,20 @@ describe('DocsPage -- Privacy technologies documentation', () => {
   });
 
   describe('Core Technologies - Zero-Knowledge Proofs', () => {
-    it('documents Zero-Knowledge Proofs (Groth16)', () => {
-      expect(screen.getByText('Zero-Knowledge Proofs (Groth16)')).toBeInTheDocument();
+    it('documents Zero-Knowledge Proofs (STARK)', () => {
+      expect(screen.getByText('Zero-Knowledge Proofs (STARK)')).toBeInTheDocument();
     });
 
-    it('explains ZK-SNARKs for private transfers', () => {
-      expect(screen.getByText(/amounts and participants are hidden/)).toBeInTheDocument();
+    it('describes the quantum-resistant STARK proof system', () => {
+      expect(screen.getByText(/Quantum-resistant STARK proof system/)).toBeInTheDocument();
     });
 
-    it('lists ~12,000 constraints for efficient proving', () => {
-      expect(screen.getByText(/12,000 constraints/)).toBeInTheDocument();
+    it('mentions the custom on-chain FRI verifier on Goldilocks', () => {
+      expect(screen.getByText(/Custom on-chain FRI verifier/)).toBeInTheDocument();
     });
 
-    it('mentions Groth16 verification using Solana native BN254 pairing', () => {
-      expect(screen.getByText(/Groth16 verification using Solana's native BN254/)).toBeInTheDocument();
+    it('notes that Groth16/BN254 was retired in April 2026', () => {
+      expect(screen.getByText(/Groth16\/BN254 was retired in April 2026/)).toBeInTheDocument();
     });
   });
 

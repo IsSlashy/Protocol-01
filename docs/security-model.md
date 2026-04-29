@@ -4,6 +4,8 @@
 **Date:** 2026-02-25
 **Status:** Pre-audit preparation
 
+> **Status update 2026-04-28:** This document predates the STARK migration. The hot path (shield/transfer/unshield, base + denominated pools) now verifies quantum-resistant STARK proofs (Goldilocks field, hash-based, no trusted setup) on-chain via the custom FRI verifier. Groth16/BN254 is retained only for compliance attestations and the sealed-bid auction escrow (legacy, scheduled for STARK migration). Sections below describing Groth16 as the live proof system reflect the pre-migration architecture and remain useful for historical context.
+
 ---
 
 ## 1. Architecture de securite

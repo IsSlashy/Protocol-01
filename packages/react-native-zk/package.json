@@ -1,14 +1,32 @@
 {
   "name": "@protocol-01/react-native-zk",
-  "version": "1.0.0",
-  "description": "Client-side Groth16 ZK proof generation for React Native apps using a hidden WebView. No backend required.",
+  "version": "2.0.0",
+  "description": "Client-side STARK (Goldilocks, post-quantum, no trusted setup) ZK proof generation for React Native — runs `p01_stark_bg.wasm` inside a hidden WebView. Private inputs never leave the device.",
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc --skipLibCheck",
+    "inline-wasm": "node scripts/inline-wasm.mjs",
+    "prepublishOnly": "node scripts/inline-wasm.mjs && tsc --skipLibCheck",
     "test": "echo \"Tests require React Native environment\""
   },
-  "keywords": ["react-native", "snarkjs", "zk", "groth16", "privacy", "webview", "zero-knowledge", "protocol-01"],
+  "keywords": [
+    "react-native",
+    "zk",
+    "zk-stark",
+    "stark",
+    "post-quantum",
+    "privacy",
+    "webview",
+    "zero-knowledge",
+    "protocol-01"
+  ],
   "license": "MIT",
   "author": "Protocol 01",
   "homepage": "https://github.com/IsSlashy/Protocol-01",
@@ -16,6 +34,9 @@
     "type": "git",
     "url": "https://github.com/IsSlashy/Protocol-01",
     "directory": "packages/react-native-zk"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
@@ -27,10 +48,11 @@
     "expo-file-system": ">=16.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.0",
+    "@protocol-01/stark-prover": "workspace:*",
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
     "react-native": "^0.81.0",
-    "react-native-webview": "^13.0.0"
+    "react-native-webview": "^13.0.0",
+    "typescript": "^5.9.0"
   }
 }

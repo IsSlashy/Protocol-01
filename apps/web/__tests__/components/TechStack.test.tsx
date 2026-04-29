@@ -62,9 +62,9 @@ describe('TechStack -- Cryptography and infrastructure showcase', () => {
       expect(screen.getByText('ZK circuit language')).toBeInTheDocument();
     });
 
-    it('lists snarkjs as Groth16 prover', () => {
-      expect(screen.getByText('snarkjs')).toBeInTheDocument();
-      expect(screen.getByText('Groth16 prover')).toBeInTheDocument();
+    it('lists STARK as the active proof system', () => {
+      expect(screen.getByText('STARK')).toBeInTheDocument();
+      expect(screen.getByText('Quantum-resistant proof system')).toBeInTheDocument();
     });
 
     it('lists Poseidon as ZK-friendly hash', () => {

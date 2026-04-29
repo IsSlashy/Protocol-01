@@ -1,7 +1,7 @@
 {
   "name": "@protocol-01/zk-sdk",
-  "version": "0.2.1",
-  "description": "Zero-knowledge SDK for Protocol 01 shielded transactions",
+  "version": "1.0.0",
+  "description": "STARK-native, quantum-resistant ZK SDK for Protocol 01 shielded transactions on Solana",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -37,17 +37,11 @@
       "types": "./dist/client/index.d.ts"
     }
   },
-  "bin": {
-    "p01-setup": "./scripts/setup-circuits.js"
-  },
   "files": [
     "dist",
-    "src",
-    "wasm",
-    "scripts"
+    "src"
   ],
   "scripts": {
-    "setup": "node scripts/setup-circuits.js",
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
@@ -60,8 +54,8 @@
     "protocol-01",
     "privacy",
     "zero-knowledge",
-    "zk-snark",
-    "groth16",
+    "zk-stark",
+    "post-quantum",
     "shielded",
     "crypto"
   ],
@@ -74,26 +68,24 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@noble/hashes": "^2.2.0",
+    "@protocol-01/stark-prover": "workspace:*",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "bn.js": "^5.2.1",
     "bs58": "^6.0.0",
-    "circomlibjs": "^0.1.7",
-    "ffjavascript": "^0.3.1",
     "poseidon-lite": "^0.3.0",
-    "snarkjs": "^0.7.5",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.6",
     "@types/node": "^22.15.0",
-    "@types/snarkjs": "^0.7.8",
     "eslint": "^8.56.0",
     "tsup": "^8.4.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
   "peerDependencies": {
+    "@protocol-01/privacy-sdk": "workspace:*",
     "@solana/web3.js": "^1.98.0"
   },
   "engines": {

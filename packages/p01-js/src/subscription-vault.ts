@@ -105,12 +105,22 @@ export interface SubscribePrivateParams {
   vkHashSubscriber: Uint8Array;
 }
 
-/** Groth16 proof data */
-export interface ProofData {
-  pi_a: Uint8Array;
-  pi_b: Uint8Array;
-  pi_c: Uint8Array;
-}
+/**
+ * STARK proof data passed alongside a `subscribe_private` instruction.
+ *
+ * BREAKING CHANGE (0.3.0): replaces the Groth16 byte triple
+ * (`{ pi_a, pi_b, pi_c }`) with the `StarkProofOutcome` returned by
+ * `@protocol-01/stark-prover`. Re-exported here so consumers don't need to
+ * pull a second dep just for the type.
+ *
+ * Migration:
+ *   // 0.2.x
+ *   const proof: ProofData = { pi_a, pi_b, pi_c };
+ *   // 0.3.0+
+ *   const proof: ProofData = await generateStarkProof(circuitId, inputs);
+ *   // → { proofBuffer: PublicKey, circuitId: number, publicInputs?: bigint[] }
+ */
+export type ProofData = import('@protocol-01/stark-prover').StarkProofOutcome;
 
 // ============ PDA Derivation ============
 

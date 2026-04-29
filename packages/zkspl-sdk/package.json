@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/zkspl-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "SDK for Protocol 01 zkSPL confidential token balances",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -29,8 +29,8 @@
     "protocol-01",
     "privacy",
     "zero-knowledge",
-    "zk-snark",
-    "groth16",
+    "zk-stark",
+    "stark",
     "confidential",
     "zkspl",
     "poseidon"
@@ -47,13 +47,11 @@
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "bn.js": "^5.2.1",
-    "poseidon-lite": "^0.3.0",
-    "snarkjs": "^0.7.5"
+    "poseidon-lite": "^0.3.0"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.6",
     "@types/node": "^22.15.0",
-    "@types/snarkjs": "^0.7.8",
     "tsup": "^8.4.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

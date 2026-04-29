@@ -1,311 +1,69 @@
 /**
- * ZK Prover for generating Groth16 proofs
- * Uses snarkjs with WebAssembly for client-side proof generation
- */
-
-import * as snarkjs from 'snarkjs';
-import { fieldToBytes } from '../circuits';
-import { CIRCUIT_FILES, PROOF_GENERATION_TIMEOUT } from '../constants';
-import type {
-  Groth16ProofData,
-  TransferPublicInputs,
-  TransferPrivateInputs,
-  FullProofInputs,
-} from '../types';
-
-/**
- * Optional configuration for the ZK prover
- */
-export interface ZkProverConfig {
-  /**
-   * Base URL for circuit files (.wasm and .zkey).
-   * When set, circuit files are resolved as `${circuitBaseUrl}/${filename}`.
-   * @example 'https://cdn.example.com/circuits/v1'
-   */
-  circuitBaseUrl?: string;
-}
-
-/**
- * Groth16 proof structure
- */
-export interface Groth16Proof {
-  pi_a: Uint8Array;
-  pi_b: Uint8Array;
-  pi_c: Uint8Array;
-}
-
-/**
- * Proof inputs for the transfer circuit
- */
-export interface ProofInputs {
-  [key: string]: string | string[];
-  // Public inputs
-  merkle_root: string;
-  nullifier_1: string;
-  nullifier_2: string;
-  output_commitment_1: string;
-  output_commitment_2: string;
-  public_amount: string;
-  token_mint: string;
-
-  // Private inputs - Note 1
-  in_amount_1: string;
-  in_owner_pubkey_1: string;
-  in_randomness_1: string;
-  in_path_indices_1: string[];
-  in_path_elements_1: string[];
-
-  // Private inputs - Note 2
-  in_amount_2: string;
-  in_owner_pubkey_2: string;
-  in_randomness_2: string;
-  in_path_indices_2: string[];
-  in_path_elements_2: string[];
-
-  // Output notes
-  out_amount_1: string;
-  out_recipient_1: string;
-  out_randomness_1: string;
-  out_amount_2: string;
-  out_recipient_2: string;
-  out_randomness_2: string;
-
-  // Spending key
-  spending_key: string;
-}
-
-/**
- * ZK Prover class for managing proof generation
- */
-export class ZkProver {
-  private wasmPath: string;
-  private zkeyPath: string;
-  private isInitialized: boolean = false;
-
-  constructor(wasmPath?: string, zkeyPath?: string, config?: ZkProverConfig) {
-    if (config?.circuitBaseUrl) {
-      const base = config.circuitBaseUrl.replace(/\/+$/, '');
-      this.wasmPath = wasmPath || `${base}/${CIRCUIT_FILES.WASM}`;
-      this.zkeyPath = zkeyPath || `${base}/${CIRCUIT_FILES.ZKEY}`;
-    } else {
-      this.wasmPath = wasmPath || CIRCUIT_FILES.WASM;
-      this.zkeyPath = zkeyPath || CIRCUIT_FILES.ZKEY;
-    }
-  }
-
-  /**
-   * Initialize the prover (load circuit files)
-   */
-  async initialize(): Promise<void> {
-    // In browser, files should be loaded from URLs
-    // In Node.js, they can be loaded from filesystem
-    this.isInitialized = true;
-  }
-
-  /**
-   * Generate a transfer proof
-   */
-  async generateTransferProof(
-    publicInputs: TransferPublicInputs,
-    privateInputs: TransferPrivateInputs
-  ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-    const inputs = this.buildCircuitInputs(publicInputs, privateInputs);
-    return this.generateProof(inputs);
-  }
-
-  /**
-   * Build circuit inputs from structured data
-   */
-  private buildCircuitInputs(
-    publicInputs: TransferPublicInputs,
-    privateInputs: TransferPrivateInputs
-  ): ProofInputs {
-    return {
-      // Public inputs
-      merkle_root: publicInputs.merkleRoot.toString(),
-      nullifier_1: publicInputs.nullifier1.toString(),
-      nullifier_2: publicInputs.nullifier2.toString(),
-      output_commitment_1: publicInputs.outputCommitment1.toString(),
-      output_commitment_2: publicInputs.outputCommitment2.toString(),
-      public_amount: publicInputs.publicAmount.toString(),
-      token_mint: publicInputs.tokenMint.toString(),
-
-      // Private inputs - Note 1
-      in_amount_1: privateInputs.inAmount1.toString(),
-      in_owner_pubkey_1: privateInputs.inOwnerPubkey1.toString(),
-      in_randomness_1: privateInputs.inRandomness1.toString(),
-      in_path_indices_1: privateInputs.inPathIndices1.map(x => x.toString()),
-      in_path_elements_1: privateInputs.inPathElements1.map(x => x.toString()),
-
-      // Private inputs - Note 2
-      in_amount_2: privateInputs.inAmount2.toString(),
-      in_owner_pubkey_2: privateInputs.inOwnerPubkey2.toString(),
-      in_randomness_2: privateInputs.inRandomness2.toString(),
-      in_path_indices_2: privateInputs.inPathIndices2.map(x => x.toString()),
-      in_path_elements_2: privateInputs.inPathElements2.map(x => x.toString()),
-
-      // Output notes
-      out_amount_1: privateInputs.outAmount1.toString(),
-      out_recipient_1: privateInputs.outRecipient1.toString(),
-      out_randomness_1: privateInputs.outRandomness1.toString(),
-      out_amount_2: privateInputs.outAmount2.toString(),
-      out_recipient_2: privateInputs.outRecipient2.toString(),
-      out_randomness_2: privateInputs.outRandomness2.toString(),
-
-      // Spending key
-      spending_key: privateInputs.spendingKey.toString(),
-    };
-  }
-
-  /**
-   * Generate proof with raw circuit inputs
-   */
-  async generateProof(
-    inputs: ProofInputs
-  ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-    // Set timeout for proof generation
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(
-        () => reject(new Error('Proof generation timeout')),
-        PROOF_GENERATION_TIMEOUT
-      );
-    });
-
-    const proofPromise = this.doGenerateProof(inputs);
-
-    return Promise.race([proofPromise, timeoutPromise]);
-  }
-
-  private async doGenerateProof(
-    inputs: ProofInputs
-  ): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-    try {
-      // Generate proof using snarkjs
-      const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-        inputs,
-        this.wasmPath,
-        this.zkeyPath
-      );
-
-      // Convert proof to byte format for on-chain verification
-      const proofBytes = this.proofToBytes(proof);
-
-      return {
-        proof: proofBytes,
-        publicSignals,
-      };
-    } catch (error) {
-      const msg = String(error);
-
-      // Detect missing circuit files and provide actionable guidance
-      if (
-        msg.includes('ENOENT') ||
-        msg.includes('not found') ||
-        msg.includes('Failed to fetch') ||
-        msg.includes('404') ||
-        msg.includes('Cannot read')
-      ) {
-        throw new Error(
-          `Circuit file not found. The prover tried to load:\n` +
-          `  WASM: ${this.wasmPath}\n` +
-          `  zkey: ${this.zkeyPath}\n\n` +
-          `To fix this, either:\n` +
-          `  1. Set circuitBaseUrl in your config to point to a hosted directory containing the circuit files.\n` +
-          `  2. Pass explicit wasmPath and zkeyPath to the ZkProver constructor.\n` +
-          `  3. Place circuit files at the default paths (${CIRCUIT_FILES.WASM}, ${CIRCUIT_FILES.ZKEY}).\n\n` +
-          `Download circuits from: https://github.com/protocol-01/circuits\n\n` +
-          `Original error: ${msg}`
-        );
-      }
-
-      throw new Error(`Proof generation failed: ${msg}`);
-    }
-  }
-
-  /**
-   * Convert snarkjs proof to bytes for on-chain verification
-   */
-  private proofToBytes(proof: any): Groth16Proof {
-    // pi_a is a G1 point [x, y, z] - we need compressed format
-    const pi_a = this.g1ToBytes(proof.pi_a);
-
-    // pi_b is a G2 point [[x0, x1], [y0, y1], [z0, z1]]
-    const pi_b = this.g2ToBytes(proof.pi_b);
-
-    // pi_c is a G1 point
-    const pi_c = this.g1ToBytes(proof.pi_c);
-
-    return { pi_a, pi_b, pi_c };
-  }
-
-  /**
-   * Convert G1 point to compressed bytes
-   */
-  private g1ToBytes(point: string[]): Uint8Array {
-    const bytes = new Uint8Array(64);
-
-    // x coordinate (32 bytes)
-    const x = BigInt(point[0]);
-    bytes.set(fieldToBytes(x), 0);
-
-    // y coordinate (32 bytes)
-    const y = BigInt(point[1]);
-    bytes.set(fieldToBytes(y), 32);
-
-    return bytes;
-  }
-
-  /**
-   * Convert G2 point to bytes in EIP-197 (alt_bn128) ordering.
-   *
-   * snarkjs JSON format: [[x_real, x_imag], [y_real, y_imag]]
-   * EIP-197 expects:     [x_imag, x_real, y_imag, y_real]
-   */
-  private g2ToBytes(point: string[][]): Uint8Array {
-    const bytes = new Uint8Array(128);
-
-    bytes.set(fieldToBytes(BigInt(point[0][1])), 0);   // x_imag
-    bytes.set(fieldToBytes(BigInt(point[0][0])), 32);  // x_real
-    bytes.set(fieldToBytes(BigInt(point[1][1])), 64);  // y_imag
-    bytes.set(fieldToBytes(BigInt(point[1][0])), 96);  // y_real
-
-    return bytes;
-  }
-
-  /**
-   * Verify proof locally (for testing)
-   */
-  async verifyProof(
-    proof: any,
-    publicSignals: string[],
-    vkPath: string
-  ): Promise<boolean> {
-    try {
-      const vk = await fetch(vkPath).then(r => r.json());
-      return snarkjs.groth16.verify(vk, publicSignals, proof);
-    } catch {
-      return false;
-    }
-  }
-}
-
-/**
- * Generate a transfer proof (convenience function)
+ * STARK prover adapter.
  *
- * @param inputs - Public and private proof inputs
- * @param wasmPath - Path or URL to the circuit WASM file
- * @param zkeyPath - Path or URL to the circuit zkey file
- * @param config - Optional prover configuration (e.g. circuitBaseUrl)
+ * v1.0.0 of `@protocol-01/zk-sdk` no longer ships a Groth16 prover. Proof
+ * generation is delegated to `@protocol-01/stark-prover`, which produces
+ * Goldilocks-field STARK proofs and uploads them to `p01_stark_verifier` on
+ * Solana. This module re-exports the public surface of `stark-prover` plus
+ * a couple of typed helpers that wrap the most common circuit calls.
+ *
+ * For the canonical wiring pattern see
+ * `packages/privacy-sdk/src/modules/shield.ts:1208-1237` (private
+ * `requestStarkProof`).
  */
-export async function generateProof(
-  inputs: FullProofInputs,
-  wasmPath?: string,
-  zkeyPath?: string,
-  config?: ZkProverConfig
-): Promise<{ proof: Groth16Proof; publicSignals: string[] }> {
-  const prover = new ZkProver(wasmPath, zkeyPath, config);
-  return prover.generateTransferProof(inputs.public, inputs.private);
+
+import {
+  createStarkProver,
+  STARK_CIRCUITS,
+  type StarkProofGenerator,
+  type StarkProofOutcome,
+  type StarkProverConfig,
+  type StarkCircuitId,
+} from '@protocol-01/stark-prover';
+
+export {
+  createStarkProver,
+  STARK_CIRCUITS,
+  type StarkProofGenerator,
+  type StarkProofOutcome,
+  type StarkProverConfig,
+  type StarkCircuitId,
+};
+
+import type { StarkPrivateInputs } from '../types';
+
+/**
+ * Generate a circuit-5 (transfer) STARK proof. Thin wrapper that hardcodes
+ * the circuit ID so callers don't have to remember it.
+ *
+ * @param generator Host-supplied generator from
+ *   `createStarkProver(...).generateStarkProof` (or any function with the
+ *   same shape).
+ * @param privateInputs Circuit-5 private inputs — see
+ *   `@protocol-01/stark-prover/src/index.ts` for the canonical key names
+ *   (`spendingKey`, `tokenMint`, `inAmount1`, `inRand1`, `inAmount2`,
+ *   `inRand2`, `outAmount1`, `outRecipient1`, `outRand1`, `outAmount2`,
+ *   `outRecipient2`, `outRand2`, `publicAmount`).
+ */
+export async function requestTransferProof(
+  generator: StarkProofGenerator,
+  privateInputs: StarkPrivateInputs,
+): Promise<StarkProofOutcome> {
+  return generator(STARK_CIRCUITS.TRANSFER, privateInputs);
 }
 
-// Re-export types
-export type { FullProofInputs };
+/**
+ * Generate a circuit-6 (merkle_update) STARK proof for variable-pool shield.
+ *
+ * ⚠️ WARNING: circuit 6 is not yet exported by the bundled WASM. This call
+ * will throw at runtime until the WASM is rebuilt — see
+ * `packages/stark-prover/README.md` for the rebuild command.
+ *
+ * Required inputs: `oldLeaf`, `newLeaf`, `pathElements`, `pathIndices`.
+ */
+export async function requestMerkleUpdateProof(
+  generator: StarkProofGenerator,
+  privateInputs: StarkPrivateInputs,
+): Promise<StarkProofOutcome> {
+  return generator(STARK_CIRCUITS.MERKLE_UPDATE, privateInputs);
+}

@@ -7,8 +7,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ----- Mock external dependencies -----
 
-// Mock @noble/hashes/sha2
-vi.mock('@noble/hashes/sha2', () => ({
+// Mock @noble/hashes/sha2 — match the source's import path exactly
+// (`@noble/hashes` 2.2.0 only exports `./sha2.js`, not `./sha2`).
+vi.mock('@noble/hashes/sha2.js', () => ({
   sha256: vi.fn((input: Uint8Array) => {
     // Deterministic fake hash: XOR-fold input into 32 bytes
     const result = new Uint8Array(32);
@@ -27,9 +28,12 @@ const mockFieldToBytes = vi.fn();
 const mockBytesToField = vi.fn();
 const mockPubkeyToField = vi.fn();
 
+const mockComputeSpendingKeyHash = vi.fn(async (key: bigint) => key + BigInt(1));
+
 vi.mock('../circuits', () => ({
   computeCommitment: (...args: any[]) => mockComputeCommitment(...args),
   deriveOwnerPubkey: (...args: any[]) => mockDeriveOwnerPubkey(...args),
+  computeSpendingKeyHash: (...args: any[]) => mockComputeSpendingKeyHash(...args),
   randomFieldElement: (...args: any[]) => mockRandomFieldElement(...args),
   fieldToBytes: (...args: any[]) => mockFieldToBytes(...args),
   bytesToField: (...args: any[]) => mockBytesToField(...args),
@@ -48,6 +52,7 @@ vi.stubGlobal('crypto', { getRandomValues: mockGetRandomValues });
 
 // ----- Imports (after mocks) -----
 
+import nacl from 'tweetnacl';
 import {
   Note,
   EncryptedNote,
@@ -285,7 +290,15 @@ describe('createNote', () => {
 });
 
 describe('encryptNote / decryptNote', () => {
-  const viewingKey = new Uint8Array(32).fill(0x42);
+  // The impl uses X25519 ECDH: encrypt expects the recipient's PUBLIC key,
+  // decrypt expects the recipient's PRIVATE key. Generate a real keypair so
+  // the round-trip can complete (a random 32-byte buffer used for both sides
+  // will not satisfy the ECDH equation).
+  const recipientKeyPair = nacl.box.keyPair.fromSecretKey(
+    new Uint8Array(32).fill(0x42),
+  );
+  const recipientPub = recipientKeyPair.publicKey;
+  const recipientPriv = recipientKeyPair.secretKey;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -299,37 +312,7 @@ describe('encryptNote / decryptNote', () => {
     });
   });
 
-  // Note: serializeNoteData allocates 128 bytes but writes 136 bytes
-  // (8+32+32+32+32). With fieldToBytes returning 32-byte arrays, the final
-  // commitment field write at offset 104 overflows. To work around this, we
-  // make fieldToBytes return a Uint8Array whose length fits the remaining
-  // buffer space when the commitment is being serialized.
-  // We track call order: calls 1=amount, 2=ownerPubkey, 3=randomness,
-  // 4=tokenMint, 5=commitment (inside serializeNoteData),
-  // then call 6=commitment (for the EncryptedNote.commitment field).
-
-  function setupFieldToBytesForEncryption() {
-    let callCount = 0;
-    mockFieldToBytes.mockImplementation((val: bigint) => {
-      callCount++;
-      // The 5th call is the commitment inside serializeNoteData at offset 104
-      // where only 24 bytes remain. Return a 24-byte array to avoid overflow.
-      if (callCount === 5) {
-        const bytes = new Uint8Array(24);
-        let v = val;
-        for (let i = 0; i < 24; i++) {
-          bytes[i] = Number(v & BigInt(0xff));
-          v >>= BigInt(8);
-        }
-        return bytes;
-      }
-      return makeFieldToBytes(val);
-    });
-  }
-
   it('should produce an EncryptedNote with correct structure', () => {
-    setupFieldToBytesForEncryption();
-
     const note = new Note({
       amount: BigInt(1000),
       ownerPubkey: BigInt(2000),
@@ -338,18 +321,18 @@ describe('encryptNote / decryptNote', () => {
       commitment: BigInt(5000),
     });
 
-    const encrypted = encryptNote(note, viewingKey);
+    const encrypted = encryptNote(note, recipientPub);
 
     expect(encrypted).toBeInstanceOf(EncryptedNote);
-    expect(encrypted.ciphertext.length).toBe(128);
+    // serializeNoteData writes 136 bytes (8 + 32 + 32 + 32 + 32);
+    // NaCl secretbox adds a 16-byte Poly1305 tag → 152.
+    expect(encrypted.ciphertext.length).toBe(152);
     expect(encrypted.ephemeralPubkey.length).toBe(32);
     expect(encrypted.commitment.length).toBe(32);
     expect(encrypted.nonce.length).toBe(ENCRYPTION.NONCE_SIZE);
   });
 
   it('should encrypt and decrypt round-trip successfully', () => {
-    setupFieldToBytesForEncryption();
-
     const noteData = {
       amount: BigInt(1000),
       ownerPubkey: BigInt(2000),
@@ -359,21 +342,11 @@ describe('encryptNote / decryptNote', () => {
     };
     const note = new Note(noteData);
 
-    // encryptNote uses crypto.getRandomValues for ephemeralPrivate and nonce.
-    // The sha256 mock is deterministic, so encryption key stream is deterministic.
-    // However, the ephemeralPrivate -> sha256 produces ephemeralPubkey used in encrypt,
-    // but decryptNote uses the encrypted.ephemeralPubkey (which is sha256(ephemeralPrivate)).
-    // Since both use the same sha256 mock + same viewingKey, the shared secret matches.
-
-    const encrypted = encryptNote(note, viewingKey);
-
-    // Reset the mock for decryption path (decryptNote calls bytesToField, not fieldToBytes for deserialization)
-    const decrypted = decryptNote(encrypted, viewingKey);
+    const encrypted = encryptNote(note, recipientPub);
+    const decrypted = decryptNote(encrypted, recipientPriv);
 
     expect(decrypted).not.toBeNull();
     expect(decrypted).toBeInstanceOf(Note);
-    // Check that the deserialized fields have reasonable values
-    // (exact round-trip may not work due to the 24-byte truncation of commitment in serialization)
     expect(decrypted!.amount).toBe(noteData.amount);
     expect(decrypted!.ownerPubkey).toBe(noteData.ownerPubkey);
     expect(decrypted!.randomness).toBe(noteData.randomness);
@@ -381,8 +354,6 @@ describe('encryptNote / decryptNote', () => {
   });
 
   it('should return null when decrypting with wrong key', () => {
-    setupFieldToBytesForEncryption();
-
     const note = new Note({
       amount: BigInt(1000),
       ownerPubkey: BigInt(2000),
@@ -391,29 +362,16 @@ describe('encryptNote / decryptNote', () => {
       commitment: BigInt(5000),
     });
 
-    const encrypted = encryptNote(note, viewingKey);
-    const wrongKey = new Uint8Array(32).fill(0xff);
+    const encrypted = encryptNote(note, recipientPub);
+    const wrongKey = nacl.box.keyPair.fromSecretKey(
+      new Uint8Array(32).fill(0x99),
+    ).secretKey;
 
-    // With a different key, the XOR decryption will produce garbled data.
-    // The deserialization may or may not throw depending on the mock behavior.
-    // Either way, it should not match the original note values.
     const decrypted = decryptNote(encrypted, wrongKey);
-
-    if (decrypted !== null) {
-      // If it didn't throw, the values should be different
-      const anyFieldDiffers =
-        decrypted.amount !== note.amount ||
-        decrypted.ownerPubkey !== note.ownerPubkey ||
-        decrypted.randomness !== note.randomness;
-      expect(anyFieldDiffers).toBe(true);
-    } else {
-      expect(decrypted).toBeNull();
-    }
+    expect(decrypted).toBeNull();
   });
 
   it('should handle ciphertext tampering gracefully', () => {
-    setupFieldToBytesForEncryption();
-
     const note = new Note({
       amount: BigInt(100),
       ownerPubkey: BigInt(200),
@@ -422,9 +380,8 @@ describe('encryptNote / decryptNote', () => {
       commitment: BigInt(500),
     });
 
-    const encrypted = encryptNote(note, viewingKey);
+    const encrypted = encryptNote(note, recipientPub);
 
-    // Tamper with ciphertext
     const tamperedCiphertext = new Uint8Array(encrypted.ciphertext);
     tamperedCiphertext[0] ^= 0xff;
     tamperedCiphertext[10] ^= 0xff;
@@ -436,20 +393,12 @@ describe('encryptNote / decryptNote', () => {
       nonce: encrypted.nonce,
     });
 
-    const decrypted = decryptNote(tampered, viewingKey);
-
-    // Should either return null or produce wrong values
-    if (decrypted !== null) {
-      const anyFieldDiffers =
-        decrypted.amount !== note.amount ||
-        decrypted.ownerPubkey !== note.ownerPubkey;
-      expect(anyFieldDiffers).toBe(true);
-    }
+    const decrypted = decryptNote(tampered, recipientPriv);
+    // Poly1305 authenticates the ciphertext: any tamper must fail decryption.
+    expect(decrypted).toBeNull();
   });
 
-  it('should use crypto.getRandomValues for nonce and ephemeral key', () => {
-    setupFieldToBytesForEncryption();
-
+  it('should produce a fresh nonce and ephemeral key each call', () => {
     const note = new Note({
       amount: BigInt(1),
       ownerPubkey: BigInt(2),
@@ -458,10 +407,11 @@ describe('encryptNote / decryptNote', () => {
       commitment: BigInt(5),
     });
 
-    encryptNote(note, viewingKey);
+    const a = encryptNote(note, recipientPub);
+    const b = encryptNote(note, recipientPub);
 
-    // Should have been called at least twice: once for ephemeralPrivate, once for nonce
-    expect(mockGetRandomValues).toHaveBeenCalledTimes(2);
+    expect(a.nonce).not.toEqual(b.nonce);
+    expect(a.ephemeralPubkey).not.toEqual(b.ephemeralPubkey);
   });
 });
 

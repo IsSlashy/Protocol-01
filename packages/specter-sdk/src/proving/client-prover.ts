@@ -1,32 +1,48 @@
 // ============================================================================
-// Client-Side zkSPL Prover — Main Prover Class
+// Client-Side zkSPL Prover — Main Prover Class (STARK migration)
 // ============================================================================
 //
 // TRUST THE MATH, NOT THE NODES.
 //
-// This module generates Groth16 proofs for the zkSPL confidential balance
-// circuit ENTIRELY on the user's device. The spending_key, balance, and salt
-// NEVER leave this machine.
+// This module dispatches zkSPL proof requests to `@protocol-01/stark-prover`,
+// which generates STARK proofs over the Goldilocks field ENTIRELY on the
+// user's device. The spending_key, balance, and salt NEVER leave this
+// machine — only the resulting proof bytes (and their public inputs) are
+// uploaded to the on-chain `p01_stark_verifier`.
 //
-// The confidential_balance circuit has only ~1,382 constraints — it should
-// prove in roughly 2-5 seconds in a modern browser using snarkjs WASM.
+// Operation routing — must match `programs/p01_stark_verifier/src/lib.rs:15-21`:
+//   - 'deposit'        -> CONFIDENTIAL_BALANCE (4)  (public_credit > 0)
+//   - 'withdraw'       -> CONFIDENTIAL_BALANCE (4)  (public_debit > 0)
+//   - 'transfer'       -> CONFIDENTIAL_BALANCE (4)  (private amount > 0)
+//   - 'balance-proof'  -> BALANCE_PROOF        (2)
+//
+// All three balance-update operations route to circuit 4 because the
+// confidential_balance circuit handles the same delta + spending-key binding
+// regardless of whether the delta is funded publicly (deposit/withdraw) or
+// privately (transfer). Circuit 5 (TRANSFER) is reserved for the 2-in-2-out
+// shielded transfer with nullifier outputs, which is *not* a confidential
+// balance update — it is the higher-level UTXO-style transfer used by the
+// transfer module, not by the zkSPL balance API.
 //
 // ============================================================================
 
-import { CircuitLoader } from './circuit-loader';
+import {
+  STARK_CIRCUITS,
+  createStarkProver,
+  type StarkProofGenerator,
+  type StarkProofOutcome,
+  type StarkProverConfig,
+} from '@protocol-01/stark-prover';
+
 import {
   ProofInputValidationError,
   type BalanceProofPrivateInputs,
   type BalanceProofPublicInputs,
   type BalanceSufficiencyProofInputs,
-  type ClientProverConfig,
-  type CircuitFiles,
   type ConfidentialBalancePrivateInputs,
   type ConfidentialBalancePublicInputs,
   type DepositProofInputs,
-  type ProgressCallback,
-  type ProofResult,
-  type SnarkjsProof,
+  type StarkPrivateInputMap,
   type TransferProofInputs,
   type WithdrawProofInputs,
   type ZkSplOperation,
@@ -34,90 +50,76 @@ import {
 } from './types';
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Default proof generation timeout: 60 seconds */
-const DEFAULT_TIMEOUT = 60_000;
-
-/** Circuit cache labels */
-const BALANCE_CIRCUIT = 'balance';
-const SUFFICIENCY_CIRCUIT = 'sufficiency';
-
-/**
- * Resolve a potentially relative URL against a base.
- * If the url is already absolute (starts with http:// or https:// or /), return it as-is.
- */
-function resolveUrl(base: string, url: string): string {
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/')) {
-    return url;
-  }
-  return base + url;
-}
-
-// ---------------------------------------------------------------------------
-// Input builders — convert typed inputs to snarkjs flat string map
+// Input builders — convert typed inputs to the STARK prover's flat string map
 // ---------------------------------------------------------------------------
 
 /**
- * Build the flat string-keyed input object for the confidential_balance circuit.
+ * Build the flat string-keyed input object for the confidential_balance
+ * circuit (STARK circuit id 4).
  *
- * Signal ordering matches the circom template:
- *   Public:  old_commitment, new_commitment, amount_hash,
- *            public_credit, public_debit, token_mint, nonce
- *   Private: old_balance, old_salt, new_balance, new_salt,
- *            amount, amount_salt, spending_key, is_debit
+ * The WASM bindings consume:
+ *   spendingKey, oldBalance, oldSalt, newBalance, newSalt,
+ *   amount, amountSalt, tokenMint
+ *
+ * The host-level public inputs (publicCredit, publicDebit, oldCommitment,
+ * newCommitment, amountHash, nonce) are recomputed inside the circuit from
+ * the private witness and asserted against the bound transcript, so we
+ * forward them here for completeness — the WASM dispatcher only reads the
+ * keys it needs and ignores the rest.
  */
 export function buildBalanceCircuitInputs(
   pub: ConfidentialBalancePublicInputs,
   priv: ConfidentialBalancePrivateInputs,
-): Record<string, string> {
+): StarkPrivateInputMap {
   return {
-    // Public inputs
-    old_commitment: pub.oldCommitment.toString(),
-    new_commitment: pub.newCommitment.toString(),
-    amount_hash: pub.amountHash.toString(),
-    public_credit: pub.publicCredit.toString(),
-    public_debit: pub.publicDebit.toString(),
-    token_mint: pub.tokenMint.toString(),
-    nonce: pub.nonce.toString(),
-    // Private inputs
-    old_balance: priv.oldBalance.toString(),
-    old_salt: priv.oldSalt.toString(),
-    new_balance: priv.newBalance.toString(),
-    new_salt: priv.newSalt.toString(),
+    // Witness consumed by `generate_confidential_balance_stark_proof`
+    spendingKey: priv.spendingKey.toString(),
+    oldBalance: priv.oldBalance.toString(),
+    oldSalt: priv.oldSalt.toString(),
+    newBalance: priv.newBalance.toString(),
+    newSalt: priv.newSalt.toString(),
     amount: priv.amount.toString(),
-    amount_salt: priv.amountSalt.toString(),
-    spending_key: priv.spendingKey.toString(),
-    is_debit: priv.isDebit.toString(),
+    amountSalt: priv.amountSalt.toString(),
+    tokenMint: pub.tokenMint.toString(),
+
+    // Host-level extras — kept in the map so verifiers / loggers can
+    // inspect the originating intent without re-deriving from the witness.
+    oldCommitment: pub.oldCommitment.toString(),
+    newCommitment: pub.newCommitment.toString(),
+    amountHash: pub.amountHash.toString(),
+    publicCredit: pub.publicCredit.toString(),
+    publicDebit: pub.publicDebit.toString(),
+    nonce: pub.nonce.toString(),
+    isDebit: priv.isDebit.toString(),
   };
 }
 
 /**
- * Build the flat string-keyed input object for the balance_proof circuit.
+ * Build the flat string-keyed input object for the balance_proof circuit
+ * (STARK circuit id 2).
  *
- * Signal ordering:
- *   Public:  balance_commitment, threshold, token_mint
- *   Private: balance, salt, spending_key
+ * The WASM bindings consume: spendingKey, balance, salt, tokenMint.
+ * Public inputs (balanceCommitment, threshold) are recomputed inside the
+ * circuit and bound into the STARK transcript.
  */
 export function buildSufficiencyCircuitInputs(
   pub: BalanceProofPublicInputs,
   priv: BalanceProofPrivateInputs,
-): Record<string, string> {
+): StarkPrivateInputMap {
   return {
-    // Public inputs
-    balance_commitment: pub.balanceCommitment.toString(),
-    threshold: pub.threshold.toString(),
-    token_mint: pub.tokenMint.toString(),
-    // Private inputs
+    spendingKey: priv.spendingKey.toString(),
     balance: priv.balance.toString(),
     salt: priv.salt.toString(),
-    spending_key: priv.spendingKey.toString(),
+    tokenMint: pub.tokenMint.toString(),
+
+    // Host-level extras
+    balanceCommitment: pub.balanceCommitment.toString(),
+    threshold: pub.threshold.toString(),
   };
 }
 
 // ---------------------------------------------------------------------------
-// Input validation
+// Input validation — operation-shape checks, independent of proof system
 // ---------------------------------------------------------------------------
 
 /**
@@ -239,8 +241,11 @@ function validateBalanceProofInputs(
 /**
  * Validate inputs for a given operation type.
  * Throws ProofInputValidationError if validation fails.
+ *
+ * Exported because hosts that pre-flight inputs before queuing a proof
+ * (e.g. UI form validators) want to share the exact same rules.
  */
-function validateInputs(inputs: ZkSplProofInputs): void {
+export function validateInputs(inputs: ZkSplProofInputs): void {
   let violations: string[];
 
   switch (inputs.operation) {
@@ -256,8 +261,10 @@ function validateInputs(inputs: ZkSplProofInputs): void {
     case 'balance-proof':
       violations = validateBalanceProofInputs(inputs.public, inputs.private);
       break;
-    default:
-      throw new Error(`Unknown operation: ${(inputs as ZkSplProofInputs).operation}`);
+    default: {
+      const op = (inputs as { operation?: unknown }).operation;
+      throw new Error(`Unknown operation: ${String(op)}`);
+    }
   }
 
   if (violations.length > 0) {
@@ -266,69 +273,91 @@ function validateInputs(inputs: ZkSplProofInputs): void {
 }
 
 // ---------------------------------------------------------------------------
-// ClientProver
+// Operation -> circuit id routing
 // ---------------------------------------------------------------------------
 
 /**
- * Client-side Groth16 prover for zkSPL circuits.
+ * Map a high-level zkSPL operation to the on-chain circuit id consumed by
+ * `p01_stark_verifier`. Centralising this mapping makes mismatched ids a
+ * compile-time bug rather than a silent runtime acceptance.
  *
- * Generates proofs entirely on the user's device using snarkjs.
- * Circuit files (.wasm and .zkey) are loaded lazily from configured URLs
- * and cached in memory for subsequent proofs.
+ * SEE: `programs/p01_stark_verifier/src/lib.rs:15-21`.
+ */
+export function circuitIdForOperation(op: ZkSplOperation): number {
+  switch (op) {
+    case 'deposit':
+    case 'withdraw':
+    case 'transfer':
+      return STARK_CIRCUITS.CONFIDENTIAL_BALANCE; // 4
+    case 'balance-proof':
+      return STARK_CIRCUITS.BALANCE_PROOF; // 2
+    default: {
+      const exhaustive: never = op;
+      throw new Error(`Unknown operation: ${String(exhaustive)}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// StarkClientProver
+// ---------------------------------------------------------------------------
+
+/**
+ * Constructor argument for `StarkClientProver`.
+ *
+ * Either pass a pre-built `generator` (handy for tests + DI), or a
+ * `StarkProverConfig` from which a generator will be created via
+ * `createStarkProver`. Exactly one must be supplied.
+ */
+export interface StarkClientProverInit {
+  /** Pre-built generator — typically obtained from `createStarkProver(...)`. */
+  generator?: StarkProofGenerator;
+  /** Solana connection + payer config — convenience for production callers. */
+  config?: StarkProverConfig;
+}
+
+/**
+ * Client-side STARK prover for zkSPL operations.
+ *
+ * Generates proofs entirely on the user's device by delegating to
+ * `@protocol-01/stark-prover`. The WASM bindings produce a proof + public
+ * inputs, the upload protocol pushes the proof bytes into a buffer PDA on
+ * `p01_stark_verifier`, and the two-phase DEEP-ALI verifier blesses the
+ * buffer for downstream programs to consume.
  *
  * ZERO private data leaves the device. The spending_key, balance, and salt
  * are used only inside the WASM proof generator.
  *
  * @example
  * ```ts
- * const prover = new ClientProver({
- *   balanceCircuit: {
- *     wasmUrl: 'https://cdn.example.com/circuits/confidential_balance.wasm',
- *     zkeyUrl: 'https://cdn.example.com/circuits/confidential_balance_final.zkey',
- *   },
- *   sufficiencyCircuit: {
- *     wasmUrl: 'https://cdn.example.com/circuits/balance_proof.wasm',
- *     zkeyUrl: 'https://cdn.example.com/circuits/balance_proof_final.zkey',
- *   },
- * });
+ * import { createStarkProver } from '@protocol-01/stark-prover';
+ * import { StarkClientProver } from '@protocol-01/specter-sdk/proving';
  *
- * // Preload circuit files in background
- * await prover.preloadCircuits();
+ * const handle = createStarkProver({ connection, payer });
+ * const prover = new StarkClientProver({ generator: handle.generateStarkProof });
  *
- * // Generate a deposit proof — spending_key never leaves this device
  * const result = await prover.prove({
  *   operation: 'deposit',
  *   public: { oldCommitment, newCommitment, amountHash, publicCredit: 100n, publicDebit: 0n, tokenMint, nonce },
  *   private: { oldBalance, oldSalt, newBalance, newSalt, amount: 0n, amountSalt: 0n, spendingKey, isDebit: 0 },
  * });
+ * console.log(result.proofBuffer.toBase58()); // PDA holding the verified proof
  * ```
  */
-export class ClientProver {
-  private readonly config: ClientProverConfig;
-  private readonly loader: CircuitLoader;
-  private readonly timeout: number;
+export class StarkClientProver {
+  private readonly generator: StarkProofGenerator;
 
-  constructor(config: ClientProverConfig) {
-    // Resolve relative circuit URLs against circuitBaseUrl if provided
-    if (config.circuitBaseUrl) {
-      const base = config.circuitBaseUrl.endsWith('/')
-        ? config.circuitBaseUrl
-        : config.circuitBaseUrl + '/';
-      config = {
-        ...config,
-        balanceCircuit: {
-          wasmUrl: resolveUrl(base, config.balanceCircuit.wasmUrl),
-          zkeyUrl: resolveUrl(base, config.balanceCircuit.zkeyUrl),
-        },
-        sufficiencyCircuit: {
-          wasmUrl: resolveUrl(base, config.sufficiencyCircuit.wasmUrl),
-          zkeyUrl: resolveUrl(base, config.sufficiencyCircuit.zkeyUrl),
-        },
-      };
+  constructor(init: StarkClientProverInit) {
+    if (init.generator && init.config) {
+      throw new Error('StarkClientProver: pass either `generator` OR `config`, not both.');
     }
-    this.config = config;
-    this.loader = new CircuitLoader();
-    this.timeout = config.timeout ?? DEFAULT_TIMEOUT;
+    if (init.generator) {
+      this.generator = init.generator;
+    } else if (init.config) {
+      this.generator = createStarkProver(init.config).generateStarkProof;
+    } else {
+      throw new Error('StarkClientProver: one of `generator` or `config` is required.');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -336,282 +365,70 @@ export class ClientProver {
   // -------------------------------------------------------------------------
 
   /**
-   * Generate a Groth16 proof for any zkSPL operation.
+   * Generate a STARK proof for any zkSPL operation.
    *
    * This is the main entry point. It:
    *   1. Validates the inputs match the operation type
-   *   2. Loads circuit files if not already cached
-   *   3. Generates the proof using snarkjs
-   *   4. Returns the proof and public signals
+   *   2. Builds the flat string-keyed input map
+   *   3. Routes to the correct STARK circuit id
+   *   4. Generates and uploads the proof via the bound generator
    *
    * @throws {ProofInputValidationError} if inputs violate operation rules
-   * @throws {Error} if circuit files cannot be loaded or proof generation fails
+   * @throws {Error} if proof generation or upload fails
    */
-  async prove(inputs: ZkSplProofInputs): Promise<ProofResult> {
-    // Step 1: Validate inputs
+  async prove(inputs: ZkSplProofInputs): Promise<StarkProofOutcome> {
     validateInputs(inputs);
 
-    // Step 2: Route to the correct circuit
-    if (inputs.operation === 'balance-proof') {
-      return this.proveSufficiency(inputs);
-    }
+    const circuitId = circuitIdForOperation(inputs.operation);
+    const map: StarkPrivateInputMap =
+      inputs.operation === 'balance-proof'
+        ? buildSufficiencyCircuitInputs(inputs.public, inputs.private)
+        : buildBalanceCircuitInputs(inputs.public, inputs.private);
 
-    return this.proveBalance(inputs);
+    return this.generator(circuitId, map);
   }
 
   /**
-   * Generate a deposit proof.
-   * Convenience wrapper around prove() with type narrowing.
+   * Generate a deposit proof. Convenience wrapper with type narrowing.
    */
   async proveDeposit(
     pub: ConfidentialBalancePublicInputs,
     priv: ConfidentialBalancePrivateInputs,
-  ): Promise<ProofResult> {
-    return this.prove({ operation: 'deposit', public: pub, private: priv });
+  ): Promise<StarkProofOutcome> {
+    return this.prove({ operation: 'deposit', public: pub, private: priv } satisfies DepositProofInputs);
   }
 
   /**
-   * Generate a withdraw proof.
-   * Convenience wrapper around prove() with type narrowing.
+   * Generate a withdraw proof. Convenience wrapper with type narrowing.
    */
   async proveWithdraw(
     pub: ConfidentialBalancePublicInputs,
     priv: ConfidentialBalancePrivateInputs,
-  ): Promise<ProofResult> {
-    return this.prove({ operation: 'withdraw', public: pub, private: priv });
+  ): Promise<StarkProofOutcome> {
+    return this.prove({ operation: 'withdraw', public: pub, private: priv } satisfies WithdrawProofInputs);
   }
 
   /**
-   * Generate a confidential transfer proof (send or receive side).
-   * Convenience wrapper around prove() with type narrowing.
+   * Generate a confidential transfer proof. Convenience wrapper with type narrowing.
    */
   async proveTransfer(
     pub: ConfidentialBalancePublicInputs,
     priv: ConfidentialBalancePrivateInputs,
-  ): Promise<ProofResult> {
-    return this.prove({ operation: 'transfer', public: pub, private: priv });
+  ): Promise<StarkProofOutcome> {
+    return this.prove({ operation: 'transfer', public: pub, private: priv } satisfies TransferProofInputs);
   }
 
   /**
-   * Generate a balance sufficiency proof.
-   * Convenience wrapper around prove() with type narrowing.
+   * Generate a balance sufficiency proof. Convenience wrapper with type narrowing.
    */
   async proveBalanceSufficiency(
     pub: BalanceProofPublicInputs,
     priv: BalanceProofPrivateInputs,
-  ): Promise<ProofResult> {
-    return this.prove({ operation: 'balance-proof', public: pub, private: priv });
+  ): Promise<StarkProofOutcome> {
+    return this.prove({
+      operation: 'balance-proof',
+      public: pub,
+      private: priv,
+    } satisfies BalanceSufficiencyProofInputs);
   }
-
-  /**
-   * Preload all circuit files in the background.
-   * Call this early (e.g., on app startup) so proofs generate instantly later.
-   *
-   * @returns Object with loading results for each circuit
-   */
-  async preloadCircuits(
-    onProgress?: ProgressCallback,
-  ): Promise<{ balance: boolean; sufficiency: boolean }> {
-    const [balance, sufficiency] = await Promise.all([
-      this.loader.preload(BALANCE_CIRCUIT, this.config.balanceCircuit, onProgress),
-      this.loader.preload(SUFFICIENCY_CIRCUIT, this.config.sufficiencyCircuit, onProgress),
-    ]);
-    return { balance, sufficiency };
-  }
-
-  /**
-   * Check if circuit files are loaded and ready for proof generation.
-   */
-  isReady(circuit?: 'balance' | 'sufficiency'): boolean {
-    if (circuit) {
-      return this.loader.isLoaded(circuit);
-    }
-    return this.loader.isLoaded(BALANCE_CIRCUIT) && this.loader.isLoaded(SUFFICIENCY_CIRCUIT);
-  }
-
-  /**
-   * Check if circuit files are currently being loaded.
-   */
-  isLoading(circuit?: 'balance' | 'sufficiency'): boolean {
-    if (circuit) {
-      return this.loader.isLoading(circuit);
-    }
-    return this.loader.isLoading(BALANCE_CIRCUIT) || this.loader.isLoading(SUFFICIENCY_CIRCUIT);
-  }
-
-  /**
-   * Clear cached circuit files to free memory.
-   */
-  clearCache(circuit?: 'balance' | 'sufficiency'): void {
-    this.loader.clear(circuit);
-  }
-
-  // -------------------------------------------------------------------------
-  // Internal proving methods
-  // -------------------------------------------------------------------------
-
-  /**
-   * Generate a proof for the confidential_balance circuit (deposit/withdraw/transfer).
-   */
-  private async proveBalance(
-    inputs: DepositProofInputs | WithdrawProofInputs | TransferProofInputs,
-  ): Promise<ProofResult> {
-    const circuitInputs = buildBalanceCircuitInputs(inputs.public, inputs.private);
-    const circuitFiles = await this.loader.load(
-      BALANCE_CIRCUIT,
-      this.config.balanceCircuit,
-      this.config.onProgress,
-    );
-    return this.generateProof(circuitInputs, circuitFiles);
-  }
-
-  /**
-   * Generate a proof for the balance_proof (sufficiency) circuit.
-   */
-  private async proveSufficiency(
-    inputs: BalanceSufficiencyProofInputs,
-  ): Promise<ProofResult> {
-    const circuitInputs = buildSufficiencyCircuitInputs(inputs.public, inputs.private);
-    const circuitFiles = await this.loader.load(
-      SUFFICIENCY_CIRCUIT,
-      this.config.sufficiencyCircuit,
-      this.config.onProgress,
-    );
-    return this.generateProof(circuitInputs, circuitFiles);
-  }
-
-  /**
-   * Core proof generation using snarkjs.groth16.fullProve.
-   *
-   * This is where the magic happens — the proof is generated entirely locally.
-   * The snarkjs WASM runtime evaluates the circuit with the provided inputs
-   * and produces a Groth16 proof that can be verified on-chain.
-   */
-  private async generateProof(
-    inputs: Record<string, string>,
-    circuitFiles: CircuitFiles,
-  ): Promise<ProofResult> {
-    // Dynamic import: snarkjs is not required at module load time.
-    // This keeps the initial bundle size small and allows the module to be
-    // imported in environments where snarkjs isn't available yet.
-    const snarkjs = await import('snarkjs');
-
-    const startTime = performance.now();
-
-    // Race proof generation against timeout
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`Proof generation timed out after ${this.timeout}ms`)),
-        this.timeout,
-      );
-      // Unref the timer in Node so it doesn't prevent process exit
-      if (typeof timer === 'object' && 'unref' in timer) {
-        (timer as NodeJS.Timeout).unref();
-      }
-    });
-
-    const provePromise = (async (): Promise<ProofResult> => {
-      const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-        inputs,
-        circuitFiles.wasm,
-        circuitFiles.zkey,
-      );
-
-      const provingTimeMs = Math.round(performance.now() - startTime);
-
-      return {
-        proof: proof as SnarkjsProof,
-        publicSignals: publicSignals as string[],
-        provingTimeMs,
-      };
-    })();
-
-    return Promise.race([provePromise, timeoutPromise]);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Proof format conversion utilities
-// ---------------------------------------------------------------------------
-
-/**
- * BN254 field modulus — used for field element byte conversion.
- */
-const FIELD_MODULUS = BigInt(
-  '21888242871839275222246405745257275088548364400416034343698204186575808495617'
-);
-
-/**
- * Convert a field element to 32 bytes (big-endian).
- * Used for G1/G2 point encoding for the alt_bn128 precompile.
- */
-function fieldToBytesBE(field: bigint): Uint8Array {
-  const bytes = new Uint8Array(32);
-  let value = field < 0n ? field + FIELD_MODULUS : field;
-  for (let i = 31; i >= 0; i--) {
-    bytes[i] = Number(value & 0xffn);
-    value >>= 8n;
-  }
-  return bytes;
-}
-
-/**
- * Convert G1 affine point [x, y, "1"] to 64 bytes (x || y, big-endian).
- */
-function g1ToBytes(point: string[]): Uint8Array {
-  const bytes = new Uint8Array(64);
-  bytes.set(fieldToBytesBE(BigInt(point[0]!)), 0);
-  bytes.set(fieldToBytesBE(BigInt(point[1]!)), 32);
-  return bytes;
-}
-
-/**
- * Convert G2 affine point [[x_real, x_imag], [y_real, y_imag], ["1","0"]]
- * to 128 bytes in alt_bn128 format: (x_imag, x_real, y_imag, y_real).
- */
-function g2ToBytes(point: string[][]): Uint8Array {
-  const bytes = new Uint8Array(128);
-  bytes.set(fieldToBytesBE(BigInt(point[0]![1]!)), 0);   // x_imag
-  bytes.set(fieldToBytesBE(BigInt(point[0]![0]!)), 32);  // x_real
-  bytes.set(fieldToBytesBE(BigInt(point[1]![1]!)), 64);  // y_imag
-  bytes.set(fieldToBytesBE(BigInt(point[1]![0]!)), 96);  // y_real
-  return bytes;
-}
-
-/**
- * Groth16 proof in on-chain byte representation.
- * Matches the Anchor IDL `Groth16Proof` type.
- */
-export interface Groth16ProofBytes {
-  /** G1 point pi_a (64 bytes: x || y, big-endian) */
-  pi_a: Uint8Array;
-  /** G2 point pi_b (128 bytes: x_imag || x_real || y_imag || y_real, big-endian) */
-  pi_b: Uint8Array;
-  /** G1 point pi_c (64 bytes: x || y, big-endian) */
-  pi_c: Uint8Array;
-}
-
-/**
- * Convert a snarkjs proof to the on-chain Groth16 byte layout.
- *
- * snarkjs returns proof points as decimal string arrays.
- * The on-chain verifier expects raw bytes in alt_bn128 format.
- *
- * This matches the exact same conversion used by the relayer and
- * the existing @protocol-01/zkspl-sdk prover, ensuring proof format compatibility.
- */
-export function snarkjsProofToBytes(proof: SnarkjsProof): Groth16ProofBytes {
-  return {
-    pi_a: g1ToBytes(proof.pi_a),
-    pi_b: g2ToBytes(proof.pi_b),
-    pi_c: g1ToBytes(proof.pi_c),
-  };
-}
-
-/**
- * Convert public signals from decimal strings to bigint array.
- * Useful for downstream processing (e.g., building Solana instructions).
- */
-export function parsePublicSignals(signals: string[]): bigint[] {
-  return signals.map(s => BigInt(s));
 }
