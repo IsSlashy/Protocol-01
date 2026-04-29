@@ -55,7 +55,7 @@
     "proof-system"
   ],
   "author": "Protocol 01 Team",
-  "license": "MIT",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/protocol-01/sdk"
@@ -63,7 +63,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "dependencies": {},
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
+  },
   "devDependencies": {
     "@protocol-01/privacy-sdk": "workspace:*",
     "@solana/web3.js": "^1.98.4",

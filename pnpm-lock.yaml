@@ -1152,6 +1152,10 @@ importers:
         version: 3.2.4(@types/debug@4.1.12)(@types/node@22.19.7)(jsdom@26.1.0(bufferutil@4.1.0))(lightningcss@1.32.0)(terser@5.46.0)
 
   packages/stark-prover:
+    dependencies:
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
     devDependencies:
       '@protocol-01/privacy-sdk':
         specifier: workspace:*

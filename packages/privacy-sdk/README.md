@@ -79,7 +79,7 @@ await sdk.shield.unshield({
 | **Registry** | On-chain stealth address directory | `@protocol-01/privacy-sdk/registry` |
 | **Relay** | Transaction relay for sender privacy | `@protocol-01/privacy-sdk/relay` |
 | **MPC** | Multi-party computation via Arcium | `@protocol-01/privacy-sdk/mpc` |
-| **Compliance** | ZK-KYC proofs (range proofs, sanctions innocence) | `@protocol-01/privacy-sdk/compliance` |
+| **Compliance** | ZK-KYC proofs (range proofs, sanctions innocence) -- *optional Groth16 overlay, not on the post-quantum hot path* | `@protocol-01/privacy-sdk/compliance` |
 | **Airdrop** | Private token distribution (Merkle-based) | `@protocol-01/privacy-sdk/airdrop` |
 | **OTC** | Private OTC trading desk (atomic P2P swaps) | `@protocol-01/privacy-sdk/otc` |
 | **Payroll** | Confidential salary payments (batch) | `@protocol-01/privacy-sdk/payroll` |

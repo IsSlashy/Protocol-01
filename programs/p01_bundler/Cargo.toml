@@ -1,7 +1,8 @@
 [package]
 name = "p01-bundler"
 version = "0.1.0"
-description = "P01 On-chain Privacy Bundler — atomic multi-shield CPI batching"
+description = "P01 On-chain Privacy Bundler — atomic multi-shield CPI batching. EXPERIMENTAL, not deployed."
+keywords = ["protocol-01", "experimental", "not-deployed"]
 edition = "2021"
 
 [lib]

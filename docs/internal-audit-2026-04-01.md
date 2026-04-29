@@ -227,13 +227,13 @@ Protocol 01
 
 | Program | Address | Status |
 |---|---|---|
-| zk_shielded | GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c | Deployed (with auction escrow) |
+| zk_shielded | 2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms | Deployed (with auction escrow) |
 | p01_arcium | FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT | Deployed (with sealed_bid_auction) |
 | sealed_bid_auction comp_def | DVpJSm4n2hYJtg4DhFQQeg5BMQdyJxDbVjNC7bQk844K | Initialized |
 | finalize_auction comp_def | FKGVvENfEXW1DDXdwuFX1ByALVmsUK541FpHvUKRVcVG | Initialized |
 | Escrow VK Data | BjFQUfcoP1ipHooNnnKYyppAjAHxoc5eBVmH3TF1WTm | Uploaded (960 bytes) |
 | 0.1 SOL Pool (escrow-enabled) | JDVrKu9cKZMKaxxVeC8QUBRTnkC81LcbNHFDcrbyZ2iv | VK hash set |
-| p01_stark_verifier | DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs | Deployed |
+| p01_stark_verifier | EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z | Deployed |
 | p01_quantum_vault | HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o | Deployed |
 | p01_registry | QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB | Deployed |
 

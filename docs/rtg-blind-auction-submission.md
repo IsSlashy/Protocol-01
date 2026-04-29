@@ -151,4 +151,4 @@ Key files:
 ## Devnet Program IDs
 
 - **p01_arcium**: `FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT`
-- **zk_shielded**: `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c`
+- **zk_shielded**: `2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms`

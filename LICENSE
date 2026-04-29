@@ -65,11 +65,27 @@ TERMS AND CONDITIONS
    - Incorporate any part of the Software into other software
 
 6. OPEN SOURCE COMPONENTS
-   Certain reusable libraries under the packages/ directory (react-native-zk,
-   solana-verifier, privacy-toolkit, zk-pipeline) may be released separately
-   under permissive licenses at Volta Team's sole discretion. Unless explicitly
-   stated in a separate LICENSE file within those packages, no such license
-   is granted.
+   SDK packages published from this repository's packages/ directory under
+   the @protocol-01 npm scope are released under the license declared in
+   each package's package.json "license" field. That field is the
+   authoritative license declaration for the package as published to npm.
+   This carve-out exists to allow third-party developers to integrate
+   Protocol 01 privacy primitives into their own products.
+
+   At the date of this LICENSE, the SDK packages whose package.json
+   declares a permissive license (typically "MIT") are released under
+   that license. The @protocol-01/stark-prover package, whose package.json
+   declares "SEE LICENSE IN ../../LICENSE", remains governed by Sections
+   1-5 of this LICENSE, with a soft license-key gate for production use
+   documented in packages/stark-prover/src/license.ts.
+
+   All other materials in this repository — including but not limited to
+   apps/, programs/, circuits/, stark/, scripts/, services/, and tools/ —
+   remain proprietary as defined in Sections 1-5 above. Volta Team retains
+   the right to relicense any SDK package, or to revoke the permissive
+   grant on future releases, at its sole discretion. Existing forks of
+   permissively-released versions retain their granted rights only for
+   the code as it existed at the time of forking.
 
 7. PRIOR MIT LICENSE PERIOD
    This repository was temporarily licensed under MIT for the Privacy Hack

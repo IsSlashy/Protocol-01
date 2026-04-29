@@ -120,6 +120,16 @@ export interface StarkProverConfig {
    * shield/unshield/transfer instruction.
    */
   retainBuffer?: boolean;
+  /**
+   * Optional commercial license JWT. When omitted, the SDK runs in non-
+   * production mode and emits a one-time console warning. Required for
+   * production deployments — see https://protocol01.com/license.
+   *
+   * Format: `<base64url-payload>.<base64url-signature>` signed with the
+   * Protocol 01 license signing key. Verified locally against
+   * `LICENSE_PUBLIC_KEY_B64` (no network call).
+   */
+  licenseKey?: string;
 }
 
 // ---------------------------------------------------------------------------

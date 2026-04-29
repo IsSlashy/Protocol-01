@@ -36,7 +36,7 @@
 | `DenominatedPool.vk_hash` | ✅ | Champ unique pour le VK unshield |
 | `DenominatedPool.vk_hash_transfer` | ❌ N'existe pas | Le pool n'a qu'un seul champ VK |
 | `verify_denominated_transfer()` | ✅ Existe | 5 inputs: `merkle_root, nullifier, min_epoch, token_mint, new_commitment` |
-| Programme déployé | ✅ Devnet | `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` |
+| Programme déployé | ✅ Devnet | `2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms` |
 
 ### Problème critique : VK partagé
 

@@ -25,6 +25,18 @@ import type {
 import { PrivacyError, PrivacyErrorCode } from '../errors';
 import { SEEDS, COMPUTE_UNITS } from '../constants';
 
+/**
+ * Compliance overlay (optional, regulatory).
+ *
+ * Status: Groth16 / snarkjs based. NOT part of the post-quantum hot path.
+ * The shield / transfer / unshield / subscribe / cancel flows use STARK proofs
+ * (see `@protocol-01/stark-prover` and the AIRs in `stark/src/air/`).
+ *
+ * This module is exported separately for regulated integrators who need
+ * range attestations or sanctions-screening proofs as a side-channel. It is
+ * never invoked by the default privacy-sdk pipeline. Treat it as opt-in.
+ */
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 /** Sorted Merkle tree depth for the sanctions non-inclusion proof. */

@@ -252,3 +252,43 @@ Keep `@protocol-01/specter-sdk` installed. It is not deprecated; see "Why is spe
 ### Where do I report gaps?
 
 Open an issue with the missing API surface (function name, intended signature) so it can be folded into `privacy-sdk` before v1.0.
+
+---
+
+## Migration completed 2026-04-29
+
+The STARK migration described above is **delivered**.
+Round 1, Round 2, and Round 3 are all merged.
+The only outstanding task is the npm publish wave for the eight migrated SDKs, which is paused on user OTP and not on any technical work.
+
+### Packages where the STARK migration is shipped
+
+The following eight workspace packages have moved off Groth16 on the hot path and now produce or consume STARK proofs end-to-end:
+
+- `@protocol-01/stark-prover`
+- `@protocol-01/privacy-toolkit`
+- `@protocol-01/zkspl-sdk`
+- `@protocol-01/zk-sdk`
+- `@protocol-01/p01-js`
+- `@protocol-01/specter-sdk`
+- `@protocol-01/react-native-zk`
+- `@protocol-01/privacy-sdk`
+
+### On-chain hot path
+
+`zk_shielded` and `p01_zkspl` are STARK-only on devnet.
+Shield, transfer, unshield, subscribe, cancel-subscription, and merkle-update all route through `p01_stark_verifier` (`EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z`).
+The legacy Groth16 instruction handlers have been deleted from these programs, and `p01_trustless` has been removed from the workspace.
+
+### Retained Groth16 surfaces (by design, off hot path)
+
+Two narrow Groth16 surfaces remain and are intentional:
+
+- **Compliance overlay** in `privacy-sdk` (`compliance.ts`), used for opt-in audit attestations where merchants need selective disclosure to a regulator. Sits outside the shielded pool flow.
+- **Escrow auction** (`escrow_bid` circuit), used by the OTC primitive for sealed-bid resolution. Also off the hot path.
+
+These are the only Groth16 code paths still in production. All other surfaces previously listed under "Groth16 (Circom)" have been replaced by STARK AIRs.
+
+### Current source of truth
+
+For the deployed program addresses, the post-migration architecture, and the Frontier IE positioning, see `docs/colosseum-frontier-submission.md`.

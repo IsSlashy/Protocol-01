@@ -54,6 +54,15 @@ import {
 
 import { uploadAndVerify } from './upload-protocol';
 
+import {
+  verifyLicenseKey,
+  formatMissingLicenseWarning,
+  formatInvalidLicenseWarning,
+  LICENSE_PUBLIC_KEY_B64,
+  type LicensePayload,
+  type LicenseVerification,
+} from './license';
+
 // Re-export the public surface so consumers can `import { ... } from '@protocol-01/stark-prover'`.
 export {
   STARK_CIRCUITS,
@@ -65,6 +74,15 @@ export {
   type CompactStarkProof,
   type GenericStarkProof,
 } from './types';
+
+export {
+  verifyLicenseKey,
+  formatMissingLicenseWarning,
+  formatInvalidLicenseWarning,
+  LICENSE_PUBLIC_KEY_B64,
+  type LicensePayload,
+  type LicenseVerification,
+} from './license';
 
 export {
   initStarkWasm,
@@ -409,6 +427,14 @@ export function createStarkProver(
    */
   wasmSource?: WasmSource,
 ): StarkProverHandle {
+  // Soft license gate — warn on missing/invalid, never throw. v0.x only.
+  if (!config.licenseKey) {
+    console.warn(formatMissingLicenseWarning());
+  } else {
+    const v = verifyLicenseKey(config.licenseKey);
+    if (!v.valid) console.warn(formatInvalidLicenseWarning(v.reason ?? 'unknown'));
+  }
+
   const programId = config.programId ?? new PublicKey(DEFAULT_STARK_VERIFIER_PROGRAM_ID);
   const retainBuffer = config.retainBuffer ?? true;
 

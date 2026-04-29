@@ -1,3 +1,16 @@
+//! # Protocol 01 — Transaction bundler
+//!
+//! **Status: EXPERIMENTAL — not deployed on devnet or mainnet.**
+//!
+//! This program is part of the workspace for development and CI builds, but
+//! it is intentionally absent from `Anchor.toml [programs.devnet]` and
+//! `[programs.mainnet]`. The address declared by `declare_id!` is a localnet
+//! placeholder.
+//!
+//! Reference deployments and the production state of Protocol 01 use the
+//! programs declared in `Anchor.toml [programs.devnet]`. Do not assume any
+//! instruction here matches a live program ID.
+
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 
