@@ -18,6 +18,13 @@ import {
   type EphemeralKeyPair,
 } from './crypto/sessionCrypto';
 import { computeFingerprint } from './crypto/fingerprint';
+import {
+  bleLog,
+  markShareComplete,
+  inspectError,
+  logStateTransition,
+  resetGhostWindow,
+} from './diagnostics';
 import type {
   NotePayload,
   NoteType,
@@ -133,6 +140,11 @@ export class ShareService {
         this.updateSession({ state: 'key-exchange', peer });
       },
       onPeerDisconnected: (peerId) => {
+        bleLog('onPeerDisconnected', {
+          peerId,
+          currentState: this.currentSession.state,
+          isSender: this.currentSession.isSender,
+        });
         this.callbacks?.onPeerRemoved(peerId);
         if (this.currentSession.peer?.id === peerId) {
           // Only treat disconnect as fatal if we're past the connection/key-exchange phase.
@@ -140,7 +152,14 @@ export class ShareService {
           // and the retry logic in BleTransport will handle it.
           const s = this.currentSession.state;
           if (s && s !== 'scanning' && s !== 'connecting' && s !== 'key-exchange') {
+            bleLog('disconnect-promoted-to-error', {
+              peerId,
+              state: s,
+              note: 'session not in scanning/connecting/key-exchange — disconnect treated as fatal',
+            });
             this.updateSession({ state: 'error', error: 'Peer disconnected' });
+          } else {
+            bleLog('disconnect-ignored', { peerId, state: s });
           }
         }
       },
@@ -179,8 +198,9 @@ export class ShareService {
         this.emitShareRecord('sent');
       },
       onError: (error) => {
-        this.callbacks?.onError(error.message);
-        this.updateSession({ state: 'error', error: error.message });
+        const msg = inspectError(error.message, 'BleTransport.onError');
+        this.callbacks?.onError(msg);
+        this.updateSession({ state: 'error', error: msg });
       },
     };
 
@@ -335,8 +355,9 @@ export class ShareService {
           this.emitShareRecord('sent');
         },
         onError: (error) => {
-          this.callbacks?.onError(error.message);
-          this.updateSession({ state: 'error', error: error.message });
+          const msg = inspectError(error.message, 'NfcTransport.onError');
+          this.callbacks?.onError(msg);
+          this.updateSession({ state: 'error', error: msg });
         },
       };
       this.nfcTransport = new NfcTransport(callbacks);
@@ -398,7 +419,15 @@ export class ShareService {
   // -----------------------------------------------------------------------
 
   private updateSession(updates: Partial<ShareSession>): void {
+    const prevState = this.currentSession.state;
     this.currentSession = { ...this.currentSession, ...updates };
+    if (updates.state && updates.state !== prevState) {
+      logStateTransition(prevState, updates.state, {
+        isSender: this.currentSession.isSender,
+        transport: this.currentSession.transport,
+        error: updates.error,
+      });
+    }
     this.callbacks?.onSessionUpdate(this.currentSession);
   }
 
@@ -415,6 +444,7 @@ export class ShareService {
       timestamp: Date.now(),
     };
 
+    markShareComplete(direction, this.currentSession.peer?.id);
     this.callbacks.onShareComplete(record);
   }
 
@@ -423,11 +453,16 @@ export class ShareService {
   // -----------------------------------------------------------------------
 
   async cancelSession(): Promise<void> {
+    bleLog('cancelSession-called', {
+      previousState: this.currentSession.state,
+      isSender: this.currentSession.isSender,
+    });
     await this.bleTransport?.disconnect();
     await this.nfcTransport?.destroy();
     this.ephemeralKeyPair = null;
     this.remotePubKey = null;
     this.currentSession = {};
+    resetGhostWindow();
     this.updateSession({ state: 'idle' });
   }
 

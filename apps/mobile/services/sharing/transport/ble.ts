@@ -240,6 +240,16 @@ export class BleTransport {
 
     device.onDisconnected((err) => {
       console.log('[BLE-DBG] onDisconnected fired:', err?.message || 'no error');
+      console.log(
+        `[P01_BLE] ${JSON.stringify({
+          ts: new Date().toISOString(),
+          event: 'transport-onDisconnected',
+          peerId,
+          source: 'ble-plx device.onDisconnected',
+          errorMsg: err?.message ?? null,
+          hadActiveDevice: this.connectedDevice !== null,
+        })}`,
+      );
       this.connectedDevice = null;
       this.callbacks.onPeerDisconnected(peerId);
     });
@@ -329,6 +339,14 @@ export class BleTransport {
       try { sub.remove(); } catch { /* ok */ }
     }
     this.monitorSubscriptions = [];
+    console.log(
+      `[P01_BLE] ${JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'sender-programmatic-disconnect',
+        peerId,
+        reason: 'about to call cancelDeviceConnection before native write',
+      })}`,
+    );
     try {
       await this.manager.cancelDeviceConnection(peerId);
     } catch { /* ok */ }
@@ -519,6 +537,14 @@ export class BleTransport {
     this.peripheralSubscriptions.push(
       peripheralEmitter.addListener('BlePeripheralPeerDisconnected', (event: any) => {
         const { peerId } = event;
+        console.log(
+          `[P01_BLE] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'peripheral-peer-disconnected',
+            peerId,
+            source: 'BlePeripheralPeerDisconnected native event',
+          })}`,
+        );
         this.peripheralPeerId = null;
         this.callbacks.onPeerDisconnected(peerId);
       }),
@@ -536,6 +562,14 @@ export class BleTransport {
     // Native errors
     this.peripheralSubscriptions.push(
       peripheralEmitter.addListener('BlePeripheralError', (event: any) => {
+        console.log(
+          `[P01_BLE] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'peripheral-native-error',
+            message: event.message ?? null,
+            source: 'BlePeripheralError native event',
+          })}`,
+        );
         this.callbacks.onError(new Error(event.message || 'BLE peripheral error'));
       }),
     );
