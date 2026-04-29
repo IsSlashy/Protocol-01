@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendSol } from './transactions';
 import { getConnection } from './connection';
 import { Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction } from '@solana/web3.js';
+import { payLog, markPayComplete, inspectPayError, type PaymentMode } from '../payments/diagnostics';
 import {
   applyAmountNoise,
   NoiseAdjustment,
@@ -303,6 +304,16 @@ async function saveStreams(streams: Stream[]): Promise<void> {
 
 // Create a new stream
 export async function createStream(params: CreateStreamParams): Promise<Stream> {
+  payLog('stream-create', 'createStream-start', {
+    name: params.name,
+    recipient: params.recipientAddress,
+    totalAmount: params.totalAmount,
+    frequency: params.frequency,
+    useZkPool: !!(params as any).useZkPool,
+    useZkVault: !!(params as any).useZkVault,
+    useStealthAddress: !!(params as any).useStealthAddress,
+  });
+
   const now = Date.now();
   const startDate = params.startDate || now;
   const intervalMs = getIntervalMs(params.frequency, params.customIntervalDays);
@@ -667,6 +678,23 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
   const stream = await getStream(streamId);
   if (!stream || stream.status !== 'active') return null;
 
+  // Determine effective payment-mode tag for the diagnostic logs.
+  const streamMode: PaymentMode = stream.useZkPool
+    ? 'zk-oneshot'
+    : stream.useStealthAddress
+      ? 'classic-recurring-p2p'
+      : 'stream-process';
+
+  payLog('stream-process', 'processStreamPayment-start', {
+    streamId,
+    name: stream.name,
+    useZkPool: !!stream.useZkPool,
+    useStealthAddress: !!stream.useStealthAddress,
+    amountPerPayment: stream.amountPerPayment,
+    paymentsCompleted: stream.paymentsCompleted,
+    effectiveMode: streamMode,
+  });
+
   const paymentId = `payment_${Date.now()}`;
 
   // Auto-pause ZK pool streams when private wallet has no mature notes
@@ -800,6 +828,7 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
     }
 
     if (!result.success) {
+      inspectPayError('stream-process', result.error || 'Payment failed', 'processStreamPayment');
       throw new Error(result.error || 'Payment failed');
     }
 
@@ -814,6 +843,13 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
       stealthAddress: stealthAddressUsed,
       wasStealthPayment: !!stealthAddressUsed,
     };
+
+    markPayComplete('stream-process', {
+      signature: result.signature,
+      streamId,
+      amountToSend,
+      paymentsCompleted: stream.paymentsCompleted + 1,
+    });
 
     // Calculate next payment date (base time without noise)
     const intervalMs = getIntervalMs(stream.frequency, stream.customIntervalDays);

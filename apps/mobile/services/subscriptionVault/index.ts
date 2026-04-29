@@ -31,6 +31,7 @@ import {
   bigintToLeBytes32,
   deriveNullifierPDA,
 } from '../denominatedPool';
+import { payLog, markPayComplete, inspectPayError } from '../payments/diagnostics';
 
 /**
  * Encode a Goldilocks u64 commitment into the 32-byte `subscriber_commitment`
@@ -318,6 +319,14 @@ export async function subscribeNormal(
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
 ): Promise<string> {
+  payLog('classic-recurring-p2b', 'subscribeNormal-start', {
+    retailer: config.retailer.toBase58(),
+    tokenMint: config.tokenMint.toBase58(),
+    amount: String(config.amount),
+    rate: String(config.rate),
+    intervalSlots: String(config.intervalSlots),
+  });
+
   onProgress?.('Reading wallet...');
   const keypair = walletSigner ? null : await getKeypair();
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
@@ -356,9 +365,16 @@ export async function subscribeNormal(
   const tx = new Transaction();
   tx.add(...buildComputeBudgetIxs(300_000));
   tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+  let sig: string;
+  try {
+    sig = await signAndSend(connection, tx, keypair, walletSigner);
+  } catch (err: any) {
+    inspectPayError('classic-recurring-p2b', err?.message ?? String(err), 'subscribeNormal');
+    throw err;
+  }
 
   onProgress?.('Done!');
+  markPayComplete('classic-recurring-p2b', { signature: sig, vault: vaultPDA.toBase58() });
   return sig;
 }
 
@@ -370,6 +386,8 @@ export async function claimPeriod(
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
 ): Promise<string> {
+  payLog('vault-claim', 'claimPeriod-start', { vault: vaultPDA.toBase58() });
+
   onProgress?.('Reading wallet...');
   const keypair = walletSigner ? null : await getKeypair();
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
@@ -382,9 +400,16 @@ export async function claimPeriod(
 
   onProgress?.('Sending transaction...');
   const tx = new Transaction().add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+  let sig: string;
+  try {
+    sig = await signAndSend(connection, tx, keypair, walletSigner);
+  } catch (err: any) {
+    inspectPayError('vault-claim', err?.message ?? String(err), 'claimPeriod');
+    throw err;
+  }
 
   onProgress?.('Done!');
+  markPayComplete('vault-claim', { signature: sig, vault: vaultPDA.toBase58() });
   return sig;
 }
 
@@ -449,6 +474,12 @@ export async function cancelNormal(
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
 ): Promise<string> {
+  payLog('vault-cancel', 'cancelNormal-start', {
+    vault: vaultPDA.toBase58(),
+    retailer: retailer.toBase58(),
+    flavor: 'classic',
+  });
+
   onProgress?.('Reading wallet...');
   const keypair = walletSigner ? null : await getKeypair();
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
@@ -461,9 +492,16 @@ export async function cancelNormal(
 
   onProgress?.('Sending transaction...');
   const tx = new Transaction().add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+  let sig: string;
+  try {
+    sig = await signAndSend(connection, tx, keypair, walletSigner);
+  } catch (err: any) {
+    inspectPayError('vault-cancel', err?.message ?? String(err), 'cancelNormal');
+    throw err;
+  }
 
   onProgress?.('Done!');
+  markPayComplete('vault-cancel', { signature: sig, vault: vaultPDA.toBase58(), flavor: 'classic' });
   return sig;
 }
 
@@ -491,6 +529,15 @@ export async function subscribePrivateStark(
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
 ): Promise<string> {
+  payLog('zk-recurring', 'subscribePrivateStark-start', {
+    retailer: vaultConfig.retailer.toBase58(),
+    rate: String(vaultConfig.rate),
+    intervalSlots: String(vaultConfig.intervalSlots),
+    pool: poolConfig.poolPDA.toBase58(),
+    leafIndex: receipt.leafIndex,
+    receiptHasMerkleRoot: receipt.merkleRoot !== undefined,
+  });
+
   const {
     submitAndVerifyStarkProof,
     closeStarkProofBuffer,
@@ -575,13 +622,24 @@ export async function subscribePrivateStark(
   const tx = new Transaction();
   tx.add(...buildComputeBudgetIxs(300_000));
   tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+  let sig: string;
+  try {
+    sig = await signAndSend(connection, tx, keypair, walletSigner);
+  } catch (err: any) {
+    inspectPayError('zk-recurring', err?.message ?? String(err), 'subscribePrivateStark');
+    throw err;
+  }
 
   // Step 3: Close proof buffer (recover rent)
   onProgress?.('Closing proof buffer...');
   await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
 
   onProgress?.('Done!');
+  markPayComplete('zk-recurring', {
+    signature: sig,
+    vault: vaultPDA.toBase58(),
+    pool: poolConfig.poolPDA.toBase58(),
+  });
   return sig;
 }
 
@@ -875,6 +933,14 @@ export async function cancelPrivateStark(
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
 ): Promise<string> {
+  payLog('vault-cancel', 'cancelPrivateStark-start', {
+    vault: vaultPDA.toBase58(),
+    retailer: retailer.toBase58(),
+    pool: sourcePool.poolPDA.toBase58(),
+    reShieldCount: newCommitmentBytes.length,
+    flavor: 'zk',
+  });
+
   const {
     submitAndVerifyStarkProof,
     closeStarkProofBuffer,
@@ -922,13 +988,24 @@ export async function cancelPrivateStark(
   const tx = new Transaction();
   tx.add(...buildComputeBudgetIxs(400_000));
   tx.add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
+  let sig: string;
+  try {
+    sig = await signAndSend(connection, tx, keypair, walletSigner);
+  } catch (err: any) {
+    inspectPayError('vault-cancel', err?.message ?? String(err), 'cancelPrivateStark');
+    throw err;
+  }
 
   // Step 3: Close proof buffer (recover rent)
   onProgress?.('Closing proof buffer...');
   await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
 
   onProgress?.('Done!');
+  markPayComplete('vault-cancel', {
+    signature: sig,
+    vault: vaultPDA.toBase58(),
+    flavor: 'zk',
+  });
   return sig;
 }
 
