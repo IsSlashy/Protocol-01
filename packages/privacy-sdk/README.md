@@ -6,7 +6,7 @@
 
 Shield funds, send privately, manage stealth addresses, create payment streams, and more.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 
 Built by [Protocol 01](https://protocol-01.dev) -- The Privacy Layer for Solana
 
