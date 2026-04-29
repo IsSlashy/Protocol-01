@@ -54,14 +54,14 @@ const PROTOCOL_FEE_WALLET = new PublicKey(
   'BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN'
 );
 
-const MERKLE_DEPTH = 15;
+export const MERKLE_DEPTH = 15;
 const SLOTS_PER_EPOCH = 7200;
 
 const FIELD_ORDER = BigInt(
   '21888242871839275222246405745257275088548364400416034343698204186575808495617'
 );
 
-const ZERO_VALUE = BigInt(
+export const ZERO_VALUE = BigInt(
   '21663839004416932945382355908790599225266501822907911457504978515578255421292'
 );
 
@@ -878,6 +878,23 @@ export async function ensureMerkleProof(
       `computed=${computedRoot.toString(16)} onChain=${onChainRootBig.toString(16)}. ` +
       `A concurrent shield may have landed; retrying usually picks it up.`
     );
+    // Surface the divergence as a structured [P01_DIAG] line so it survives in
+    // logcat alongside the eventual simulation failure — gives the maintainer
+    // a single grep to correlate root drift with the InvalidMerkleRoot below.
+    console.log(
+      `[P01_DIAG:rebuildDrift] ` +
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        poolPDA: poolConfig.poolPDA.toBase58(),
+        leafIndex: receipt.leafIndex,
+        leafCount,
+        scannedLeaves: leavesByIndex.length,
+        missingLeaves: missing.length,
+        firstMissing: missing.slice(0, 8),
+        computedRoot: '0x' + computedRoot.toString(16).padStart(64, '0'),
+        onChainRoot: '0x' + onChainRootBig.toString(16).padStart(64, '0'),
+      })
+    );
   }
   receipt.merkleRoot = computedRoot;
   receipt.merklePathElements = pathElements;
@@ -1615,6 +1632,16 @@ export async function unshieldStark(
         console.error(`[DenomPool] Simulation logs:`, simResult.value.logs?.join('\n'));
         const signerBal = await connection.getBalance(effectiveWalletSigner?.publicKey || walletPubkey);
         console.error(`[DenomPool] Signer balance at failure: ${signerBal / 1e9} SOL`);
+        // Auto-diagnose: read-only scan of every state dimension that could
+        // explain the failure. Output is one JSON line tagged [P01_DIAG] so it
+        // is grep-able via `adb logcat -s ReactNativeJS | grep P01_DIAG`.
+        try {
+          const { diagnoseSpend, logDiagnostic } = await import('./diagnoseSpend');
+          const report = await diagnoseSpend(receipt, connection, poolConfig, simResult);
+          logDiagnostic(report, 'unshieldStark');
+        } catch (diagErr: any) {
+          console.error('[P01_DIAG:unshieldStark] diagnostic itself failed:', diagErr?.message ?? String(diagErr));
+        }
       } else {
         console.log(`[DenomPool] Simulation OK — CU used: ${simResult.value.unitsConsumed}`);
       }
