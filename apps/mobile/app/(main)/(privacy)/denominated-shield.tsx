@@ -72,12 +72,11 @@ export default function DenominatedShieldScreen() {
   } = useDenominatedPoolStore();
 
   // V3 pools listed AFTER v2 in the same UI grid so the migration is visible
-  // but the user's existing v2 muscle-memory still works. A "V3" badge marks
-  // each one. Once the 30-day deprecation window closes we drop v2 from this
-  // concat and the shield UI silently goes V3-only.
-  const pools = tokenTab === 'SOL'
-    ? [...SOL_POOLS, ...SOL_POOLS_V3]
-    : [...USDC_POOLS, ...USDC_POOLS_V3];
+  // V3 is the only shield path going forward. v2 pools STAY ACTIVE on the
+  // unshield/transfer side so users can drain their existing v2 notes during
+  // the 30-day deprecation window — the per-note routing uses
+  // note.poolVersion to pick the correct path. New shields are V3 only.
+  const pools = tokenTab === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
   const { publicKey: storePublicKey, initializeWithPrivy } = useWalletStore();
   const { walletAddress: privyWalletAddress } = useAuth();
   const walletPublicKey = privyWalletAddress || storePublicKey;
@@ -226,7 +225,11 @@ export default function DenominatedShieldScreen() {
             {
               commitment,
               newRoot,
-              newSubtrees: updatedSubtrees,
+              // On-chain `insert_with_root_v3` requires exactly `tree_depth`
+              // (=15) entries representing levels 1..=depth. computeNewRootFromSubtreesV3
+              // returns depth+1 entries (levels 0..=depth) where index 0 is the
+              // leaf itself — drop it.
+              newSubtrees: updatedSubtrees.slice(1),
               secret,
               nullifierPreimage,
               depositEpoch,
