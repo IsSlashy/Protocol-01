@@ -2063,6 +2063,21 @@ export class ZkService {
     proofSize: number;
   }>) | null = null;
 
+  // V3 — STARK merkle_path prover (circuit 3), injected by StarkProverProvider.
+  // Used by `unshield_denominated_stark_v3` stacked on top of C1 to prove the
+  // commitment is at the merkle root via the supplied path. Public inputs:
+  // [leaf, root] (2 u64 Goldilocks felts).
+  private merklePathProver: ((
+    leaf: string,
+    pathElements: string[],
+    pathIndices: number[],
+  ) => Promise<{
+    circuitId: number;
+    publicInputs: string[];
+    proofHex: string;
+    proofSize: number;
+  }>) | null = null;
+
   // STARK transfer prover (circuit 5), injected by StarkProverProvider.
   // All u64 arguments are passed as decimal strings (so callers can stringify
   // bigints directly). Returns the proof plus the circuit-computed public
@@ -2110,6 +2125,26 @@ export class ZkService {
     }>,
   ): void {
     this.merkleUpdateProver = prover;
+  }
+
+  /**
+   * V3 — Set the STARK merkle_path prover (circuit 3, called by
+   * StarkProverProvider). Required for `unshieldStarkV3()` to stack a
+   * merkle-path proof on top of the C1 pool_commitment proof.
+   */
+  setMerklePathProver(
+    prover: (
+      leaf: string,
+      pathElements: string[],
+      pathIndices: number[],
+    ) => Promise<{
+      circuitId: number;
+      publicInputs: string[];
+      proofHex: string;
+      proofSize: number;
+    }>,
+  ): void {
+    this.merklePathProver = prover;
   }
 
   /**

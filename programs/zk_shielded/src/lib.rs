@@ -146,6 +146,54 @@ pub mod zk_shielded {
     }
 
     // -----------------------------------------------------------------------
+    // V3 Denominated Pool instructions (Goldilocks Poseidon, end-to-end PQ).
+    // v2 instructions stay live for the 30-day deprecation window.
+    // -----------------------------------------------------------------------
+
+    /// Initialize a V3 denominated shielded pool (Goldilocks Poseidon tree).
+    /// PDA seed: [b"denominated_pool_v3", token_mint, denomination_le_bytes].
+    pub fn init_denominated_pool_v3(
+        ctx: Context<InitDenominatedPoolV3>,
+        vk_hash: [u8; 32],
+        token_mint: Pubkey,
+        denomination: u64,
+        epoch_delay: u64,
+    ) -> Result<()> {
+        instructions::init_denominated_pool_v3::handler(
+            ctx, vk_hash, token_mint, denomination, epoch_delay,
+        )
+    }
+
+    /// Shield into a V3 pool. Requires a pre-verified C6 (merkle_update)
+    /// STARK proof buffer attesting that (old_root → new_root + leaf +
+    /// new_subtrees) is a valid insertion.
+    pub fn shield_denominated_v3(
+        ctx: Context<ShieldDenominatedV3>,
+        commitment: [u8; 32],
+        new_root: [u8; 32],
+        new_subtrees: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::shield_denominated_v3::handler(ctx, commitment, new_root, new_subtrees)
+    }
+
+    /// Unshield from a V3 pool using two STARK proof buffers:
+    ///   - C1 (pool_commitment): proves nullifier + commitment.
+    ///   - C3 (merkle_path): proves the commitment is at the supplied
+    ///     merkle root (closes the v2 trust gap where membership was
+    ///     never proven on-chain).
+    pub fn unshield_denominated_stark_v3(
+        ctx: Context<UnshieldDenominatedStarkV3>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        stark_commitment: u64,
+    ) -> Result<()> {
+        instructions::unshield_denominated_stark_v3::handler(
+            ctx, nullifier, merkle_root, min_epoch, stark_commitment,
+        )
+    }
+
+    // -----------------------------------------------------------------------
     // Subscription Vault instructions (normal + private ZK)
     // -----------------------------------------------------------------------
 

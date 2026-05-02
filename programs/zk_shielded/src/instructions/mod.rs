@@ -7,7 +7,10 @@ pub mod unshield_stark;
 // The _stark variants read a pre-verified ProofBuffer from p01_stark_verifier
 // and are the canonical base-pool entrypoints.
 pub mod init_denominated_pool;
+pub mod init_denominated_pool_v3;
 pub mod shield_denominated;
+pub mod shield_denominated_v3;
+pub mod unshield_denominated_stark_v3;
 // P3.7 — REMOVED Groth16 denominated-pool instructions (replaced by STARK variants):
 //   unshield_denominated, emergency_unshield_denominated, transfer_denominated,
 //   split_note, subscribe_private, pause_private, resume_private, cancel_private,
@@ -42,7 +45,10 @@ pub use shield_stark::*;
 pub use transfer_stark::*;
 pub use unshield_stark::*;
 pub use init_denominated_pool::*;
+pub use init_denominated_pool_v3::*;
 pub use shield_denominated::*;
+pub use shield_denominated_v3::*;
+pub use unshield_denominated_stark_v3::*;
 pub use resize_denominated_pool::*;
 pub use subscribe_normal::*;
 pub use claim_period::*;

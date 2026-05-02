@@ -56,6 +56,9 @@ interface StarkProverContextType {
   generateConfidentialBalanceProof: (spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string) => Promise<GenericStarkProofResult>;
   generateTransferProof: (spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string) => Promise<GenericStarkProofResult>;
   generateMerkleUpdateProof: (oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]) => Promise<GenericStarkProofResult>;
+  /** V3 — circuit 3 (merkle_path). Proves `leaf` is at `root` via the supplied
+   *  path. Used by `unshield_denominated_stark_v3` stacked on top of C1. */
+  generateMerklePathProof: (leaf: string, pathElements: string[], pathIndices: number[]) => Promise<GenericStarkProofResult>;
   error: string | null;
 }
 
@@ -278,6 +281,28 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     [sendRequestRaw],
   );
 
+  // V3 quick-win: expose circuit 3 (merkle_path) the same way C6 is exposed.
+  // The underlying StarkProver.tsx already supports `generateMerklePathProof`
+  // (line 51 of StarkProver.tsx), this just bridges it into the React context.
+  const generateMerklePathProof = useCallback(
+    async (
+      leaf: string,
+      pathElements: string[], pathIndices: number[],
+    ): Promise<GenericStarkProofResult> => {
+      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
+        proverRef.current!.generateMerklePathProof(id, leaf, pathElements, pathIndices);
+      });
+      return {
+        circuitId: msg.circuitId ?? 3,
+        publicInputs: msg.publicInputs ?? [],
+        proofHex: msg.proofHex!,
+        proofSize: msg.proofSize!,
+        durationMs: msg.durationMs!,
+      };
+    },
+    [sendRequestRaw],
+  );
+
   // Register this prover with the privacy-router autonomous runner so
   // unshield/split hops can generate real STARK proofs while the app is
   // foregrounded. Cleared on unmount so background ticks fall back to the
@@ -319,6 +344,16 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
           proofSize: result.proofSize,
         };
       });
+      // V3 — wire C3 (merkle_path) prover the same way C6 is wired.
+      zkService.setMerklePathProver(async (leaf, pathElements, pathIndices) => {
+        const result = await generateMerklePathProof(leaf, pathElements, pathIndices);
+        return {
+          circuitId: result.circuitId,
+          publicInputs: result.publicInputs,
+          proofHex: result.proofHex,
+          proofSize: result.proofSize,
+        };
+      });
       zkService.setTransferProver(async (
         spendingKey, tokenMint,
         inAmount1, inRand1, inAmount2, inRand2,
@@ -344,7 +379,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     } catch (err) {
       console.warn('[StarkProver] Failed to wire into ZkService:', err);
     }
-  }, [isReady, generateMerkleUpdateProof, generateTransferProof]);
+  }, [isReady, generateMerkleUpdateProof, generateMerklePathProof, generateTransferProof]);
 
   const contextValue: StarkProverContextType = {
     isReady,
@@ -355,6 +390,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     generateConfidentialBalanceProof,
     generateTransferProof,
     generateMerkleUpdateProof,
+    generateMerklePathProof,
     error,
   };
 
@@ -383,6 +419,7 @@ export function useStarkProver(): StarkProverContextType {
       generateConfidentialBalanceProof: notAvailable as any,
       generateTransferProof: notAvailable as any,
       generateMerkleUpdateProof: notAvailable as any,
+      generateMerklePathProof: notAvailable as any,
       error: 'StarkProverProvider not in component tree',
     };
   }
