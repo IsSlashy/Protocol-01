@@ -2509,19 +2509,109 @@ export function deriveSplitOutputSecretsV3(parentSecret: bigint, count: number):
 // V3 pool config — TODO fill after devnet v3 deploy
 // ---------------------------------------------------------------------------
 
+// V3 pools deployed on devnet 2026-05-03 via scripts/setup-v3-pools.mjs.
+// Program GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c, init signatures
+// captured in /tmp/init-v3.log.
 export const SOL_POOLS_V3: PoolConfig[] = [
-  // TODO(v3-pools): fill after `init_denominated_pool_v3` runs on devnet.
-  // Shape mirrors v2 SOL_POOLS above:
-  // {
-  //   token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
-  //   denominationAtomic: 100_000_000n,
-  //   poolPDA: new PublicKey('TBD_v3'), treePDA: new PublicKey('TBD_v3'),
-  //   version: 'v3',
-  // },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
+    denominationAtomic: 100_000_000n,
+    poolPDA: new PublicKey('28BvnswZBPnYQ6sVFQbD14NnYRsf6uXX4atd1aHb1xDZ'),
+    treePDA: new PublicKey('596hfJZcR5TNR9ugfBgpAViJsc2A5fVCSNfiG7ZRqcDs'),
+    version: 'v3',
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
+    denominationAtomic: 1_000_000_000n,
+    poolPDA: new PublicKey('9Mx3GvcTpR1ejvrkve7GuqaTELh4a1rBswjdRKj6dGRL'),
+    treePDA: new PublicKey('ELSe7TpQcJKNJH6XkJawXJiHu25s8iSL1o2zuvfYCuwb'),
+    version: 'v3',
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 10, decimals: 9,
+    denominationAtomic: 10_000_000_000n,
+    poolPDA: new PublicKey('CdhHpciQUzR2PirrTZ5ygnu9dEM5UZKJtAMoqJtrZJBT'),
+    treePDA: new PublicKey('FLREPZ5s34b8jhFX4jru7NJvbgxLnN4wHiNDAozjC8P6'),
+    version: 'v3',
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 100, decimals: 9,
+    denominationAtomic: 100_000_000_000n,
+    poolPDA: new PublicKey('F84bQhMABsMyCMeeRDRzAcX5Yt4iBi568pRhWVBYuSzi'),
+    treePDA: new PublicKey('56DwhuWWGA45VYEGCqcH9LpbqYDQHmKXg3pSL5aPc7x9'),
+    version: 'v3',
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 500, decimals: 9,
+    denominationAtomic: 500_000_000_000n,
+    poolPDA: new PublicKey('9FPqdA7isir7bw1tUrX4V882Ptdz4CT7pKaqB5SzE853'),
+    treePDA: new PublicKey('CHcmJ1S2G3nZ8x8n2exrj4HnXrGdeooBHjUm8oCSRzeq'),
+    version: 'v3',
+  },
+  {
+    token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1000, decimals: 9,
+    denominationAtomic: 1_000_000_000_000n,
+    poolPDA: new PublicKey('GrN3Rnh8UwvFkxfw7NauVBrQnDHEs6aNcQGy4rpstsCA'),
+    treePDA: new PublicKey('7yueJ7Ga13dyWCkoeUPXjb8Dks3R4PDvkVUaCK5nwXo8'),
+    version: 'v3',
+  },
 ];
 
+// USDC V3 pools — vaultATA needs to be derived (PoolPDA + USDC mint via
+// the Associated Token Account program). For now we skip the field; the
+// caller can compute it lazily when needed (matches behavior of v2 USDC
+// init script which derives ATAs idempotently). Filling in after first
+// USDC v3 shield validates the derivation.
 export const USDC_POOLS_V3: PoolConfig[] = [
-  // TODO(v3-pools): same as SOL_POOLS_V3 — needs vaultATA per pool.
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1, decimals: 6,
+    denominationAtomic: 1_000_000n,
+    poolPDA: new PublicKey('EVvL3yMNc3PfcN8vrG3hDhHqqoLhgUz38hA4E2rJBg2k'),
+    treePDA: new PublicKey('Diw7YwYD3meQuAxvxBRBx8sfEWK2uxokFTjhFc41sUsU'),
+    version: 'v3',
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10, decimals: 6,
+    denominationAtomic: 10_000_000n,
+    poolPDA: new PublicKey('4LdnmcMJBBE356tufQ1FnRB9bVnMrU4NRgpy32xFH47K'),
+    treePDA: new PublicKey('HH8hWXPyTwPqFwavrxRgBhM6Lh8J3k7kVPheVBpyzps7'),
+    version: 'v3',
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 100, decimals: 6,
+    denominationAtomic: 100_000_000n,
+    poolPDA: new PublicKey('8yBbnKigbkcg7j7LR5dvD9LavPKLEphsAusDEyn32dcQ'),
+    treePDA: new PublicKey('FAPZ8wgNAcCbg4Nh1agfkht9xxXbsAARbdZS7CjTKXXV'),
+    version: 'v3',
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1000, decimals: 6,
+    denominationAtomic: 1_000_000_000n,
+    poolPDA: new PublicKey('EhfXXPUsTKnLrve3h8pBhhKMAz67Q677iABFaXVpkm6S'),
+    treePDA: new PublicKey('CHLPWqqfefyugyLAS6DckDEm3DUVNa6iT6B1j9jvX1y'),
+    version: 'v3',
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10000, decimals: 6,
+    denominationAtomic: 10_000_000_000n,
+    poolPDA: new PublicKey('BudP4c2DujcxfY5RXRVZYKCGdAUJzJitKTfJieN2UGh5'),
+    treePDA: new PublicKey('J2jxo1TV6SnDBBT4z9NCDq6iinvtxRcn6QyZJwAruPQk'),
+    version: 'v3',
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 20000, decimals: 6,
+    denominationAtomic: 20_000_000_000n,
+    poolPDA: new PublicKey('BfQsdJrjRaFcEvHUQjFCLtdPRDYPNsj6K7T9wjeepM5V'),
+    treePDA: new PublicKey('Ga6voXbAEVywXvCKqYWuxQLWCmp94KbhpXppi3vfzwbA'),
+    version: 'v3',
+  },
+  {
+    token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 50000, decimals: 6,
+    denominationAtomic: 50_000_000_000n,
+    poolPDA: new PublicKey('4R3wUmVzv8SPriBWffGxUAdS4NCcRuYBpujAmU58aTcn'),
+    treePDA: new PublicKey('6XNZtGCZSXTLH1Lv6rVJJ1tqhSpPSjipQCFVfv5CNcWa'),
+    version: 'v3',
+  },
 ];
 
 export const ALL_POOLS_V3: PoolConfig[] = [...SOL_POOLS_V3, ...USDC_POOLS_V3];
