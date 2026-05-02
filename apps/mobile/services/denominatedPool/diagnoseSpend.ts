@@ -24,6 +24,7 @@ import {
   fetchPoolLeavesByIndex,
   parseFilledSubtrees,
   buildMerkleProofFromLeaves,
+  replayMerkleProofFromEvents,
   deriveNullifierPDA,
   bigintToLeBytes32,
   slotToEpoch,
@@ -221,7 +222,10 @@ export async function diagnoseSpend(
     const leafAtTarget = leavesByIndex[receipt.leafIndex];
     const leafMatches = leafAtTarget === receipt.commitment;
 
-    const { root: computedRoot } = buildMerkleProofFromLeaves({
+    // Use replay to mirror ensureMerkleProof behavior: the on-chain "tree" is
+    // computed with stale subtrees (insert_with_root only persists level 0),
+    // so a pure rebuild would diverge from on-chain by design.
+    const { root: computedRoot } = replayMerkleProofFromEvents({
       leavesByIndex,
       targetLeafIndex: receipt.leafIndex,
     });

@@ -686,6 +686,95 @@ export function createNullifier(
  * should still check against the pool's historical roots when there's a
  * race with a concurrent shield.
  */
+/**
+ * Replay the stale-subtrees insertion pattern from on-chain events to recover
+ * the merkle proof for a leaf inserted in the past.
+ *
+ * Background (the bug):
+ *   `insert_with_root` (programs/zk_shielded/src/state/merkle_tree.rs:125) only
+ *   persists `filled_subtrees[0] = leaf` after each insertion. Levels 1+ stay at
+ *   their initial values (per-level zero hashes set at pool init). So every
+ *   shield client computes its `new_root` using stale subtrees at higher levels:
+ *   the on-chain "tree" is NOT a real merkle tree of all leaves — it is a sequence
+ *   of roots derived from (latest leaf, zero-hash siblings).
+ *
+ *   A pure rebuild via `buildMerkleProofFromLeaves` produces a "true" merkle root
+ *   that is NEVER in the on-chain historical ring → unshield fails after a wipe
+ *   when the receipt's stored path is lost.
+ *
+ * Fix: replay each shield in insertion order using the same stale-subtrees logic
+ * that `computeNewRootFromSubtrees` uses (line 1012). For our target leaf, record
+ * the path and root that the past inserter computed. This path matches what was
+ * accepted on-chain and is a valid input for the STARK proof.
+ *
+ * Verified against pool HkzArVjU on devnet (2026-05-02): replays all 14 leaves'
+ * `new_root` byte-for-byte against the event log. See `scripts/diagnose-merkle-rebuild.mjs`.
+ */
+export function replayMerkleProofFromEvents(params: {
+  leavesByIndex: bigint[];
+  targetLeafIndex: number;
+}): {
+  root: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+} {
+  const { leavesByIndex, targetLeafIndex } = params;
+  const zeros = getZeroHashes();
+
+  // Persisted on-chain state: filled_subtrees[i] starts at zeros[i] (per-level
+  // zero hash, matching merkle_tree.rs:65) and only [0] is updated after each
+  // insertion (matching merkle_tree.rs:125).
+  const onChainSubtrees: bigint[] = zeros.slice(0, MERKLE_DEPTH);
+
+  let recordedPathElements: bigint[] | null = null;
+  let recordedPathIndices: number[] | null = null;
+  let recordedRoot: bigint | null = null;
+
+  for (let leafIndex = 0; leafIndex < leavesByIndex.length; leafIndex++) {
+    const leaf = leavesByIndex[leafIndex];
+    if (leaf === ZERO_VALUE) continue; // gap (shouldn't happen on a fully-scanned pool)
+
+    // Replay computeNewRootFromSubtrees logic with the current on-chain state.
+    const localSubtrees = [...onChainSubtrees];
+    const path: bigint[] = [];
+    const indices: number[] = [];
+    let current = leaf;
+    let idx = leafIndex;
+
+    for (let level = 0; level < MERKLE_DEPTH; level++) {
+      const isRight = idx & 1;
+      indices.push(isRight);
+      if (isRight === 0) {
+        path.push(zeros[level]);
+        localSubtrees[level] = current;
+        current = poseidon2([current, zeros[level]]);
+      } else {
+        path.push(localSubtrees[level]);
+        current = poseidon2([localSubtrees[level], current]);
+      }
+      idx >>= 1;
+    }
+
+    if (leafIndex === targetLeafIndex) {
+      recordedPathElements = path;
+      recordedPathIndices = indices;
+      recordedRoot = current;
+    }
+
+    // Mimic insert_with_root: only level 0 persists on-chain
+    onChainSubtrees[0] = leaf;
+  }
+
+  if (recordedPathElements === null || recordedRoot === null) {
+    throw new Error(
+      `replayMerkleProofFromEvents: target leafIndex ${targetLeafIndex} not found ` +
+      `among ${leavesByIndex.filter((l) => l !== ZERO_VALUE).length} non-empty leaves.`
+    );
+  }
+
+  return { root: recordedRoot, pathElements: recordedPathElements, pathIndices: recordedPathIndices! };
+}
+
 export function buildMerkleProofFromLeaves(params: {
   leavesByIndex: bigint[]; // leavesByIndex[i] = commitment at leafIndex i; gaps filled with ZERO_VALUE
   targetLeafIndex: number;
@@ -929,7 +1018,10 @@ export async function ensureMerkleProof(
     );
   }
 
-  const { root: computedRoot, pathElements, pathIndices } = buildMerkleProofFromLeaves({
+  // Use replay (not pure rebuild) — the on-chain tree is not a real merkle tree
+  // due to insert_with_root only persisting level 0. See replayMerkleProofFromEvents
+  // docstring for full background.
+  const { root: computedRoot, pathElements, pathIndices } = replayMerkleProofFromEvents({
     leavesByIndex,
     targetLeafIndex: receipt.leafIndex,
   });

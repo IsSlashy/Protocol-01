@@ -2,7 +2,7 @@
   "expo": {
     "name": "Protocol 01",
     "slug": "protocol-01",
-    "version": "0.9.9",
+    "version": "0.9.10",
     "orientation": "portrait",
     "scheme": "p01",
     "userInterfaceStyle": "dark",
@@ -35,7 +35,7 @@
         "backgroundColor": "#0a0a0c"
       },
       "package": "com.protocol01.app",
-      "versionCode": 23,
+      "versionCode": 25,
       "permissions": [
         "USE_BIOMETRIC",
         "BLUETOOTH",
