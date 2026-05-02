@@ -100,6 +100,13 @@ export interface PoolConfig {
   poolPDA: PublicKey;
   treePDA: PublicKey;
   vaultATA?: PublicKey; // only for SPL tokens
+  /**
+   * V3 marker. Defaults to 'v2' (BN254 Poseidon, off-chain merkle hash).
+   * 'v3' = full Goldilocks Poseidon end-to-end + on-chain C3/C6 STARK
+   * verification. v2 + v3 pools coexist during the 30-day deprecation
+   * window. See `v3-stark-migration-plan-2026-05-02.md`.
+   */
+  version?: 'v2' | 'v3';
 }
 
 // v2 pools — fresh PDAs after program seed bump to `denominated_pool_v2`
@@ -2283,6 +2290,664 @@ export async function splitNoteStark(
     }
   }
 }
+
+// ===========================================================================
+// V3 — full-Goldilocks code paths (side-by-side with v2 above)
+// ===========================================================================
+//
+// V3 swaps the BN254 `poseidon-lite` hash for the Goldilocks Poseidon used
+// end-to-end by the STARK circuits and the on-chain verifier. Every export
+// here is suffixed `V3` / `v3` so callers can pick — v2 paths above stay live
+// for the 30-day deprecation window.
+//
+// Imports use the existing mobile-local Goldilocks port at
+// `services/zk/goldilocks-poseidon`. The privacy-sdk `crypto/poseidonGl` is
+// not in mobile's dependency graph (mobile only depends on specter-sdk +
+// arcium-sdk + stark-prover); the local port is a bit-exact mirror — same
+// parity vectors, same Rust source. If the privacy-sdk export becomes
+// reachable here later (workspace re-export), swap the import below.
+//
+// Plan + progress: memory `v3-stark-migration-plan-2026-05-02.md` and
+// `v3-progress-2026-05-03.md`.
+
+import {
+  goldilocksHash2to1 as poseidonHash2,
+  goldilocksHash4to1 as poseidonHash4,
+  computeGoldilocksZeroCascade,
+  GOLDILOCKS_MODULUS,
+} from '../zk/goldilocks-poseidon';
+
+// Re-export so future callers can grab the field constant from this module
+// instead of reaching into services/zk.
+export { GOLDILOCKS_MODULUS, poseidonHash2 as poseidonHash2V3, poseidonHash4 as poseidonHash4V3 };
+
+/** V3 zero leaf — Goldilocks 0n. Stored as 32-byte LE = all zeros. */
+export const ZERO_VALUE_V3 = 0n;
+
+const U64_MASK_V3 = (1n << 64n) - 1n;
+
+/** Reduce an arbitrary bigint into a Goldilocks field element. */
+function toGoldilocks(x: bigint): bigint {
+  const r = x % GOLDILOCKS_MODULUS;
+  return r < 0n ? r + GOLDILOCKS_MODULUS : r;
+}
+
+// ---------------------------------------------------------------------------
+// V3 commitment + nullifier (Goldilocks Poseidon)
+// ---------------------------------------------------------------------------
+
+/**
+ * V3 commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)
+ * computed via the Rust `hash4` (single t=5 permutation). Mirrors
+ * `stark/src/air/denominated_pool.rs`. Inputs are reduced mod Goldilocks
+ * before hashing — Goldilocks fits in u64 and the WASM bridge truncates
+ * via `& U64_MASK` anyway.
+ */
+export function createCommitmentV3(
+  nullifierPreimage: bigint,
+  secret: bigint,
+  depositEpoch: bigint,
+  tokenMint: bigint,
+): bigint {
+  return poseidonHash4(
+    toGoldilocks(nullifierPreimage & U64_MASK_V3),
+    toGoldilocks(secret & U64_MASK_V3),
+    toGoldilocks(depositEpoch & U64_MASK_V3),
+    toGoldilocks(tokenMint & U64_MASK_V3),
+  );
+}
+
+/**
+ * V3 nullifier = Poseidon(nullifier_preimage, secret) using width-3 t=3.
+ * Matches `computeGoldilocksPoolNullifier` already in services/zk; re-exported
+ * here for symmetry with the v2 `createNullifier`.
+ */
+export function createNullifierV3(
+  nullifierPreimage: bigint,
+  secret: bigint,
+): bigint {
+  return poseidonHash2(
+    toGoldilocks(nullifierPreimage & U64_MASK_V3),
+    toGoldilocks(secret & U64_MASK_V3),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// V3 zero-hash cascade (Goldilocks)
+// ---------------------------------------------------------------------------
+
+let _zeroHashesV3: bigint[] | null = null;
+/**
+ * V3 zero hashes for the merkle tree, length = MERKLE_DEPTH + 1.
+ * Cached on first call. Matches `MerkleTreeStateV3::ZEROS` on-chain (see
+ * `programs/zk_shielded/src/state/merkle_tree_v3.rs`) and the table in
+ * memory `v3-progress-2026-05-03.md`.
+ */
+export function computeZeroHashesV3(): bigint[] {
+  if (_zeroHashesV3) return _zeroHashesV3;
+  _zeroHashesV3 = computeGoldilocksZeroCascade(MERKLE_DEPTH);
+  return _zeroHashesV3;
+}
+
+// ---------------------------------------------------------------------------
+// V3 merkle proof helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * V3 byte serialization for a Goldilocks leaf/root: 32 bytes little-endian
+ * with the u64 in bytes 0..8 and zeros in bytes 8..32. Matches the on-chain
+ * convention used by `verify_c6_proof_buffer` (it reads
+ * `u64::from_le_bytes(leaf[..8])`).
+ *
+ * Uses the existing `bigintToLeBytes32` (which already handles 64-bit values
+ * — bytes past index 7 are zero because the value fits in 64 bits).
+ */
+export function goldilocksToLeBytes32(value: bigint): number[] {
+  const v = value & U64_MASK_V3;
+  return bigintToLeBytes32(v);
+}
+
+/**
+ * V3 — pure rebuild from a leaves-by-index array, Goldilocks Poseidon.
+ *
+ * Note: V3 doesn't need the v2 `replayMerkleProofFromEvents` workaround
+ * because `insert_with_root_v3` maintains the FULL filled_subtrees array
+ * (verified by the C6 STARK proof on every insertion), so the on-chain
+ * tree is a real merkle tree — a pure rebuild always agrees with on-chain.
+ */
+export function buildMerkleProofFromLeavesV3(params: {
+  leavesByIndex: bigint[];
+  targetLeafIndex: number;
+}): {
+  root: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+} {
+  const { leavesByIndex, targetLeafIndex } = params;
+  const zeros = computeZeroHashesV3();
+
+  let nodes: bigint[] = leavesByIndex.length > 0 ? [...leavesByIndex] : [zeros[0]];
+  const pathElements: bigint[] = [];
+  const pathIndices: number[] = [];
+  let idx = targetLeafIndex;
+
+  for (let level = 0; level < MERKLE_DEPTH; level++) {
+    const siblingIdx = idx ^ 1;
+    const sibling = siblingIdx < nodes.length ? nodes[siblingIdx] : zeros[level];
+    pathElements.push(sibling);
+    pathIndices.push(idx & 1);
+
+    const next: bigint[] = [];
+    for (let i = 0; i < nodes.length; i += 2) {
+      const left = nodes[i];
+      const right = i + 1 < nodes.length ? nodes[i + 1] : zeros[level];
+      next.push(poseidonHash2(left, right));
+    }
+    nodes = next.length > 0 ? next : [zeros[level + 1]];
+    idx >>= 1;
+  }
+
+  return { root: nodes[0], pathElements, pathIndices };
+}
+
+/**
+ * V3 — incremental insert helper (mirrors v2 `computeNewRootFromSubtrees`).
+ * Used by shield: given the on-chain `filledSubtrees`, computes the new
+ * root + updated subtrees + path that the C6 prover must witness.
+ */
+export function computeNewRootFromSubtreesV3(
+  leaf: bigint,
+  leafIndex: number,
+  filledSubtrees: bigint[],
+): {
+  newRoot: bigint;
+  updatedSubtrees: bigint[];
+  pathElements: bigint[];
+  pathIndices: number[];
+} {
+  const zeros = computeZeroHashesV3();
+  const subtrees = [...filledSubtrees];
+  const pathElements: bigint[] = [];
+  const pathIndices: number[] = [];
+
+  let current = leaf;
+  let idx = leafIndex;
+
+  for (let level = 0; level < MERKLE_DEPTH; level++) {
+    const isRight = idx & 1;
+    pathIndices.push(isRight);
+
+    if (isRight === 0) {
+      pathElements.push(zeros[level]);
+      subtrees[level] = current;
+      current = poseidonHash2(current, zeros[level]);
+    } else {
+      pathElements.push(subtrees[level]);
+      current = poseidonHash2(subtrees[level], current);
+    }
+    idx >>= 1;
+  }
+
+  return { newRoot: current, updatedSubtrees: subtrees, pathElements, pathIndices };
+}
+
+/**
+ * V3 — split-output secret derivation. Deterministic so split children are
+ * recoverable from the parent secret via `rescanPoolFromSeed`-style scans.
+ * Uses Goldilocks Poseidon t=3 (poseidonHash2) instead of v2's BN254 t=2.
+ */
+export function deriveSplitOutputSecretsV3(parentSecret: bigint, count: number): bigint[] {
+  const parent = toGoldilocks(parentSecret & U64_MASK_V3);
+  const secrets: bigint[] = new Array(count);
+  for (let i = 0; i < count; i++) {
+    secrets[i] = poseidonHash2(parent, toGoldilocks(BigInt(i)));
+  }
+  return secrets;
+}
+
+// ---------------------------------------------------------------------------
+// V3 pool config — TODO fill after devnet v3 deploy
+// ---------------------------------------------------------------------------
+
+export const SOL_POOLS_V3: PoolConfig[] = [
+  // TODO(v3-pools): fill after `init_denominated_pool_v3` runs on devnet.
+  // Shape mirrors v2 SOL_POOLS above:
+  // {
+  //   token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
+  //   denominationAtomic: 100_000_000n,
+  //   poolPDA: new PublicKey('TBD_v3'), treePDA: new PublicKey('TBD_v3'),
+  //   version: 'v3',
+  // },
+];
+
+export const USDC_POOLS_V3: PoolConfig[] = [
+  // TODO(v3-pools): same as SOL_POOLS_V3 — needs vaultATA per pool.
+];
+
+export const ALL_POOLS_V3: PoolConfig[] = [...SOL_POOLS_V3, ...USDC_POOLS_V3];
+
+export function getPoolsForTokenV3(token: 'SOL' | 'USDC'): PoolConfig[] {
+  return token === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
+}
+
+export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolConfig | undefined {
+  return ALL_POOLS_V3.find(p => p.token === token && p.denomination === denomination);
+}
+
+// ---------------------------------------------------------------------------
+// V3 instruction builders
+// ---------------------------------------------------------------------------
+
+/** Build `shield_denominated_v3`. Args: commitment[32], new_root[32], new_subtrees Vec<[u8;32]>. */
+function buildShieldDenominatedV3Ix(
+  depositor: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  c6ProofBuffer: PublicKey,
+  commitment: number[],
+  newRoot: number[],
+  newSubtrees: number[][],
+  tokenProgram?: PublicKey,
+  userTokenAccount?: PublicKey,
+  poolVault?: PublicKey,
+): TransactionInstruction {
+  const disc = getDiscriminator('shield_denominated_v3');
+  const subtreesBytesLen = 4 + newSubtrees.length * 32; // borsh Vec<[u8;32]>
+  const data = Buffer.alloc(8 + 32 + 32 + subtreesBytesLen);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(commitment).copy(data, offset); offset += 32;
+  Buffer.from(newRoot).copy(data, offset); offset += 32;
+  data.writeUInt32LE(newSubtrees.length, offset); offset += 4;
+  for (const st of newSubtrees) {
+    Buffer.from(st).copy(data, offset);
+    offset += 32;
+  }
+
+  const keys = [
+    { pubkey: depositor, isSigner: true, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: true },
+    { pubkey: c6ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: userTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!userTokenAccount },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+/** Build `unshield_denominated_stark_v3`. Args: nullifier[32], merkle_root[32], min_epoch u64, stark_commitment u64. */
+function buildUnshieldDenominatedStarkV3Ix(
+  payer: PublicKey,
+  recipient: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  starkCommitment: bigint,
+  tokenProgram?: PublicKey,
+  poolVault?: PublicKey,
+  recipientTokenAccount?: PublicKey,
+): TransactionInstruction {
+  const disc = getDiscriminator('unshield_denominated_stark_v3');
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  data.writeBigUInt64LE(starkCommitment, offset);
+
+  // Account ordering must match `UnshieldDenominatedStarkV3` struct
+  // (see programs/zk_shielded/src/instructions/unshield_denominated_stark_v3.rs).
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: recipient, isSigner: false, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: c1ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: c3ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+// ---------------------------------------------------------------------------
+// V3 high-level flow functions
+// ---------------------------------------------------------------------------
+
+/**
+ * V3 shield — orchestrates (1) C6 proof submit + verify, (2) shield_denominated_v3.
+ *
+ * Caller must have already generated the C6 STARK proof via the StarkProver
+ * provider (`generateMerkleUpdateProof` — already wired into ZkService).
+ * `c6ProofResult` is the GenericStarkProofResult for circuit 6:
+ *   publicInputs = [old_leaf=0, new_leaf=commitment_u64, old_root_u64,
+ *                   new_root_u64, depth_u64]
+ *
+ * The C6 STARK proof verification happens in PRIOR transactions (init →
+ * upload chunks → verify_stark_proof_v2 → verify_deep_ali_phase2). The
+ * V3 shield tx then references the verified buffer PDA.
+ *
+ * Returns the shield tx signature + the buffer PDA so the caller can close
+ * it later (rent recovery).
+ */
+export async function shieldV3(
+  poolConfig: PoolConfig,
+  // C6 proof from StarkProver.generateMerkleUpdateProof — circuitId must be 6.
+  c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  // Plain pool insert state (the values witnessed by the C6 proof).
+  insertParams: {
+    commitment: bigint;
+    newRoot: bigint;
+    newSubtrees: bigint[];
+    secret: bigint;
+    nullifierPreimage: bigint;
+    depositEpoch: bigint;
+    leafIndex: number;
+  },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+  overrideKeypair?: import('@solana/web3.js').Keypair,
+): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_MERKLE_UPDATE, getProofBufferPDA } =
+    await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  const starkSigner: WalletSigner = keypair
+    ? {
+        publicKey: keypair.publicKey,
+        signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+      }
+    : walletSigner!;
+
+  // 1. Submit + verify C6 proof on-chain (init → upload → verify phase 1+2).
+  onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
+  const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
+
+  let didShield = false;
+  try {
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c6ProofResult.proofBytes,
+        circuitId: CIRCUIT_MERKLE_UPDATE,
+        publicInputs: c6ProofResult.publicInputs,
+        proofSize: c6ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+
+    // 2. Build shield_denominated_v3 referencing the verified buffer.
+    onProgress?.('Building V3 shield transaction...');
+    const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+    let tokenProgram: PublicKey | undefined;
+    let userTokenAccount: PublicKey | undefined;
+    let poolVault: PublicKey | undefined;
+    if (!isNativeSOL) {
+      tokenProgram = TOKEN_PROGRAM_ID;
+      userTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, walletPubkey);
+      poolVault = poolConfig.vaultATA;
+    }
+
+    const commitmentBytes = goldilocksToLeBytes32(insertParams.commitment);
+    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
+    const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
+
+    const ix = buildShieldDenominatedV3Ix(
+      walletPubkey,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      c6ProofBuffer,
+      commitmentBytes,
+      newRootBytes,
+      newSubtreesBytes,
+      tokenProgram,
+      userTokenAccount,
+      poolVault,
+    );
+
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    if (!isNativeSOL && userTokenAccount) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          walletPubkey, userTokenAccount, walletPubkey, poolConfig.tokenMint,
+        ),
+      );
+    }
+    tx.add(ix);
+
+    onProgress?.('Sending V3 shield transaction...');
+    const txSig = await signAndSend(connection, tx, keypair, walletSigner);
+    didShield = true;
+    onProgress?.('V3 shield confirmed!');
+
+    const receipt: ShieldReceipt = {
+      secret: insertParams.secret,
+      nullifierPreimage: insertParams.nullifierPreimage,
+      depositEpoch: insertParams.depositEpoch,
+      tokenMint: pubkeyToField(poolConfig.tokenMint),
+      commitment: insertParams.commitment,
+      leafIndex: insertParams.leafIndex,
+      denomination: poolConfig.denominationAtomic,
+      pool: poolConfig.poolPDA.toBase58(),
+      token: poolConfig.token,
+      denominationHuman: poolConfig.denomination,
+      shieldedAt: Date.now(),
+      // Note: the path/root stored here are Goldilocks values. Downstream
+      // unshieldV3 uses these directly without conversion.
+      merkleRoot: insertParams.newRoot,
+    };
+    return { txSig, receipt, c6ProofBuffer };
+  } finally {
+    // Buffer is consumed by shield (no further use), close to recover rent.
+    if (didShield) {
+      try {
+        onProgress?.('Closing C6 proof buffer...');
+        await closeStarkProofBuffer(c6ProofBuffer, starkSigner, connection);
+      } catch (closeErr: any) {
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (shield C6) failed:', closeErr?.message ?? String(closeErr));
+      }
+    }
+  }
+}
+
+/**
+ * V3 unshield — orchestrates 3 STARK txs + the unshield ix:
+ *   (1) submit + verify C1 (pool_commitment) proof   → c1ProofBuffer
+ *   (2) submit + verify C3 (merkle_path) proof       → c3ProofBuffer
+ *   (3) build + send `unshield_denominated_stark_v3` referencing both buffers
+ *   (4) close both buffers (rent recovery)
+ *
+ * Both proofs are authored by the same `payer` (the on-chain handler enforces
+ * `c1.authority == c3.authority == payer`). With overrideKeypair we use a
+ * stealth keypair as the payer to break the link to the user's wallet.
+ *
+ * `c1ProofResult.publicInputs = [nullifier_u64, commitment_u64]`
+ * `c3ProofResult.publicInputs = [leaf_u64, root_u64, ...]` — TODO(c3-public-inputs)
+ *   confirm exact layout once the on-chain `verify_c3_proof_buffer` hash is
+ *   finalized (see TODO in unshield_denominated_stark_v3.rs:239).
+ */
+export async function unshieldDenominatedStarkV3(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+  overrideKeypair?: import('@solana/web3.js').Keypair,
+): Promise<string> {
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_POOL_COMMITMENT,
+    CIRCUIT_MERKLE_PATH,
+    getProofBufferPDA,
+  } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  const starkSigner: WalletSigner = keypair
+    ? {
+        publicKey: keypair.publicKey,
+        signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+      }
+    : walletSigner!;
+
+  // Both proof buffer PDAs derived upfront so the finally block can close them
+  // even if any submit step throws.
+  const [c1ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
+  const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
+
+  let c1Verified = false;
+  let c3Verified = false;
+
+  try {
+    // Step 1: C1 (pool_commitment) — same as v2 unshield.
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c1ProofResult.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: c1ProofResult.publicInputs,
+        proofSize: c1ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+    c1Verified = true;
+
+    // Step 2: C3 (merkle_path) — NEW in V3.
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c3ProofResult.proofBytes,
+        circuitId: CIRCUIT_MERKLE_PATH,
+        publicInputs: c3ProofResult.publicInputs,
+        proofSize: c3ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+    c3Verified = true;
+
+    // Step 3: Build + send unshield_denominated_stark_v3.
+    onProgress?.('Building V3 unshield transaction...');
+    const goldilocksNullifier = c1ProofResult.publicInputs[0] ?? 0n;
+    const nullifierBytes = goldilocksToLeBytes32(goldilocksNullifier);
+    const merkleRootBytes = goldilocksToLeBytes32(receipt.merkleRoot ?? 0n);
+    const starkCommitment = c1ProofResult.publicInputs[1] ?? 0n;
+
+    const slot = await connection.getSlot('confirmed');
+    const minEpoch = slotToEpoch(slot); // V3 mirrors v2: maturity is UX-only on-chain.
+
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+    let tokenProgram: PublicKey | undefined;
+    let recipientTokenAccount: PublicKey | undefined;
+    let poolVault: PublicKey | undefined;
+    if (!isNativeSOL) {
+      tokenProgram = TOKEN_PROGRAM_ID;
+      recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+      poolVault = poolConfig.vaultATA;
+    }
+
+    const ix = buildUnshieldDenominatedStarkV3Ix(
+      walletPubkey,
+      recipient,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c1ProofBuffer,
+      c3ProofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      starkCommitment,
+      tokenProgram,
+      poolVault,
+      recipientTokenAccount,
+    );
+
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    if (!isNativeSOL && recipientTokenAccount) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          walletPubkey, recipientTokenAccount, recipient, poolConfig.tokenMint,
+        ),
+      );
+    }
+    tx.add(ix);
+
+    onProgress?.('Sending V3 unshield transaction...');
+    const sig = await signAndSend(connection, tx, keypair, walletSigner);
+    onProgress?.('V3 unshield confirmed!');
+    return sig;
+  } finally {
+    // Always close any verified buffer to recover rent, regardless of whether
+    // the unshield tx succeeded or threw mid-flight. Failed verifies leave no
+    // buffer to close.
+    if (c1Verified) {
+      try {
+        onProgress?.('Closing C1 proof buffer...');
+        await closeStarkProofBuffer(c1ProofBuffer, starkSigner, connection);
+      } catch (closeErr: any) {
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (C1) failed:', closeErr?.message ?? String(closeErr));
+      }
+    }
+    if (c3Verified) {
+      try {
+        onProgress?.('Closing C3 proof buffer...');
+        await closeStarkProofBuffer(c3ProofBuffer, starkSigner, connection);
+      } catch (closeErr: any) {
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (C3) failed:', closeErr?.message ?? String(closeErr));
+      }
+    }
+  }
+}
+
+// TODO(v3-transfer): port `transferNoteStark` to V3 once
+// `transfer_denominated_stark_v3` ships in zk_shielded (commit 2447df7
+// only includes init/shield/unshield_v3). Will need both C1 (source nullifier
+// proof) and C6 (recipient leaf insertion proof) buffers.
+//
+// TODO(v3-split): port `splitNoteStark` to V3 once `split_note_stark_v3`
+// ships. N output leaves require 1 C1 (source) + N C6 (one per output) proofs
+// — orchestrate sequentially or chunk by tx-budget.
+//
+// TODO(v3-escrow-release): port `escrow_release_v3`.
+// TODO(v3-cancel): port `cancel_private_stark_v3`.
+// TODO(v3-prefund): port the p01_liquidity prefund path with the C1/C3 buffer
+// pair (currently v2-only — see unshieldStark `instant` flag).
 
 // ---------------------------------------------------------------------------
 // Note import/export (backup & sharing)

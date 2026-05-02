@@ -114,6 +114,27 @@ export function parsePoolAccount(data: Buffer | Uint8Array): ParsedPool | null {
   };
 }
 
+/**
+ * V3 — `DenominatedPoolV3` account parser.
+ *
+ * The V3 pool struct in `programs/zk_shielded/src/state/pool_v3.rs` has the
+ * SAME byte layout as v2 (`DenominatedPool`): authority, token_mint,
+ * denomination, epoch_delay, merkle_root, tree_depth, next_leaf_index,
+ * vk_hash, total_shielded, note_count, is_active, historical_roots Vec,
+ * max_historical_roots. The differences are:
+ *   - PDA seed is `denominated_pool_v3` (not `_v2`)
+ *   - The off-chain merkle tree IS a real tree (subtrees maintained on-chain
+ *     via C6 STARK proofs), so the historical_roots entries are computed via
+ *     Goldilocks Poseidon t=3 instead of BN254 poseidon-lite
+ *   - `is_valid_root` semantics on-chain are unchanged (membership in ring)
+ *
+ * Because the byte layout matches, we re-export the v2 parser as the V3
+ * parser. If V3 ever adds fields (e.g. `vk_hash_c6`, `vk_hash_c3`), bump this
+ * to a separate function with adjusted offsets and keep v2 untouched.
+ */
+export const parsePoolV3Account = parsePoolAccount;
+export type ParsedPoolV3 = ParsedPool;
+
 /** Convert a 32-byte buffer to lowercase hex with 0x prefix. */
 export function bytesToHex(b: Uint8Array): string {
   let s = '0x';
