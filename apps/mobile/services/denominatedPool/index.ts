@@ -2624,6 +2624,17 @@ export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolCon
   return ALL_POOLS_V3.find(p => p.token === token && p.denomination === denomination);
 }
 
+/**
+ * Lookup a pool config (v2 or v3) by its on-chain PDA. Returns the matching
+ * `PoolConfig` so the caller can read `version` and route to the right STARK
+ * flow. Returns `undefined` if the PDA isn't in either pool registry — in that
+ * case the note belongs to an orphaned/legacy pool and is unspendable.
+ */
+export function findPoolByPDA(poolPDA: string): PoolConfig | undefined {
+  return ALL_POOLS.find(p => p.poolPDA.toBase58() === poolPDA)
+    || ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === poolPDA);
+}
+
 // ---------------------------------------------------------------------------
 // V3 instruction builders
 // ---------------------------------------------------------------------------

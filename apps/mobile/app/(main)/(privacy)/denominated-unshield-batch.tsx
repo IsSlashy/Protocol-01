@@ -36,9 +36,16 @@ import {
 } from '@/stores/batchUnshieldStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useWalletStore } from '@/stores/walletStore';
-import { receiptFromJSON } from '@/services/denominatedPool';
+import {
+  receiptFromJSON,
+  ALL_POOLS_V3,
+  fetchPoolLeavesByIndex,
+  buildMerkleProofFromLeavesV3,
+} from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
+import { getConnection } from '@/services/solana/connection';
+import { Buffer } from 'buffer';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { p01Alert } from '@/stores/alertStore';
@@ -49,9 +56,13 @@ export default function DenominatedUnshieldBatchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const { notes, unshieldNoteStark } = useDenominatedPoolStore();
+  const { notes, unshieldNoteStark, unshieldNoteStarkV3 } = useDenominatedPoolStore();
   const { publicKey: walletPublicKey } = useWalletStore();
-  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
+  const {
+    isReady: starkReady,
+    generatePoolCommitmentProof,
+    generateMerklePathProof,
+  } = useStarkProver();
 
   const selectedIds = useBatchUnshieldStore((s) => s.selectedIds);
   const recipient = useBatchUnshieldStore((s) => s.recipient);
@@ -151,26 +162,81 @@ export default function DenominatedUnshieldBatchScreen() {
         try {
           updateNote(id, { status: 'proving', progress: t('batchNoteProving') });
           const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
-          const starkResult = await generatePoolCommitmentProof(
-            receipt.nullifierPreimage.toString(),
-            receipt.secret.toString(),
-            receipt.depositEpoch.toString(),
-            receipt.tokenMint.toString(),
-          );
-          const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-          const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
 
-          updateNote(id, {
-            status: 'unshielding',
-            progress: t('privacy.batchNoteUnshielding'),
-          });
+          let sig: string;
+          if (note.poolVersion === 'v3') {
+            // V3: C1 + C3 sequentially (StarkProver is single-threaded).
+            const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+            if (!pool) throw new Error('V3 pool config not found');
 
-          const sig = await unshieldNoteStark(
-            id,
-            resolved.addr,
-            { proofBytes, publicInputs, proofSize: starkResult.proofSize },
-            false,
-          );
+            const c1Result = await generatePoolCommitmentProof(
+              receipt.nullifierPreimage.toString(),
+              receipt.secret.toString(),
+              receipt.depositEpoch.toString(),
+              receipt.tokenMint.toString(),
+            );
+
+            // Rebuild merkle path against the current on-chain V3 tree.
+            const conn = getConnection();
+            const { leavesByIndex } = await fetchPoolLeavesByIndex(conn, pool.poolPDA);
+            const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } =
+              buildMerkleProofFromLeavesV3({
+                leavesByIndex,
+                targetLeafIndex: receipt.leafIndex,
+              });
+            receipt.merkleRoot = c3Root;
+            receipt.merklePathElements = c3Path;
+            receipt.merklePathIndices = c3Indices;
+
+            const U64 = (1n << 64n) - 1n;
+            const c3Result = await generateMerklePathProof(
+              (receipt.commitment & U64).toString(),
+              c3Path.map(e => (e & U64).toString()),
+              c3Indices,
+            );
+
+            updateNote(id, {
+              status: 'unshielding',
+              progress: t('privacy.batchNoteUnshielding'),
+            });
+
+            sig = await unshieldNoteStarkV3(
+              id,
+              resolved.addr,
+              {
+                proofBytes: Buffer.from(c1Result.proofHex, 'hex'),
+                publicInputs: c1Result.publicInputs.map((s: string) => BigInt(s)),
+                proofSize: c1Result.proofSize,
+              },
+              {
+                proofBytes: Buffer.from(c3Result.proofHex, 'hex'),
+                publicInputs: c3Result.publicInputs.map((s: string) => BigInt(s)),
+                proofSize: c3Result.proofSize,
+              },
+              false,
+            );
+          } else {
+            const starkResult = await generatePoolCommitmentProof(
+              receipt.nullifierPreimage.toString(),
+              receipt.secret.toString(),
+              receipt.depositEpoch.toString(),
+              receipt.tokenMint.toString(),
+            );
+            const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+            const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
+
+            updateNote(id, {
+              status: 'unshielding',
+              progress: t('privacy.batchNoteUnshielding'),
+            });
+
+            sig = await unshieldNoteStark(
+              id,
+              resolved.addr,
+              { proofBytes, publicInputs, proofSize: starkResult.proofSize },
+              false,
+            );
+          }
 
           updateNote(id, {
             status: 'done',
@@ -200,7 +266,9 @@ export default function DenominatedUnshieldBatchScreen() {
       notes,
       selectedIds,
       generatePoolCommitmentProof,
+      generateMerklePathProof,
       unshieldNoteStark,
+      unshieldNoteStarkV3,
       t,
       beginRun,
       advance,

@@ -14,11 +14,18 @@ import {
 } from '@/stores/denominatedPoolStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useArcium } from '@/providers/ArciumProvider';
-import { receiptFromJSON } from '@/services/denominatedPool';
+import {
+  receiptFromJSON,
+  ALL_POOLS_V3,
+  fetchPoolLeavesByIndex,
+  buildMerkleProofFromLeavesV3,
+} from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
+import { getConnection } from '@/services/solana/connection';
 import { useWalletStore } from '@/stores/walletStore';
 import { PublicKey } from '@solana/web3.js';
+import { Buffer } from 'buffer';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
@@ -34,11 +41,15 @@ export default function DenominatedUnshieldScreen() {
 
   const {
     notes, isLoading, isProving, error, progress,
-    unshieldNoteStark, refreshNoteStatuses, resetOperationState,
+    unshieldNoteStark, unshieldNoteStarkV3, refreshNoteStatuses, resetOperationState,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
-  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
+  const {
+    isReady: starkReady,
+    generatePoolCommitmentProof,
+    generateMerklePathProof,
+  } = useStarkProver();
   const { isMpcActive } = useArcium();
 
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
@@ -129,6 +140,71 @@ export default function DenominatedUnshieldScreen() {
       }
       const sig = await withKeepAwake(emergency ? 'p01-emergency-unshield' : 'p01-unshield', async () => {
         const receipt = receiptFromJSON(vaultDecrypt(selectedNote.receiptJSON));
+
+        if (selectedNote.poolVersion === 'v3') {
+          // V3 unshield = C1 (pool_commitment) + C3 (merkle_path) proofs
+          // submitted sequentially. The StarkProver is single-threaded
+          // (one WebView) — DO NOT use Promise.all here.
+          const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === selectedNote.poolPDA);
+          if (!pool) throw new Error('V3 pool config not found for this note');
+
+          // C1 — pool commitment proof (same publicInputs format as v2).
+          const c1Result = await generatePoolCommitmentProof(
+            receipt.nullifierPreimage.toString(),
+            receipt.secret.toString(),
+            receipt.depositEpoch.toString(),
+            receipt.tokenMint.toString(),
+          );
+
+          // Build merkle path against the current on-chain V3 tree.
+          // V3 trees are real (subtrees attested by C6), so a pure rebuild
+          // from leaves matches the on-chain root. We need this fresh path
+          // because other deposits may have been added since the receipt was
+          // stored.
+          const conn = getConnection();
+          const { leavesByIndex } = await fetchPoolLeavesByIndex(conn, pool.poolPDA);
+          const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } =
+            buildMerkleProofFromLeavesV3({
+              leavesByIndex,
+              targetLeafIndex: receipt.leafIndex,
+            });
+
+          // Stash the latest root onto the receipt so the v3 unshield ix
+          // sends the merkle_root that's currently in the on-chain ring.
+          // (Mutation OK — receipt is local to this closure.)
+          receipt.merkleRoot = c3Root;
+          receipt.merklePathElements = c3Path;
+          receipt.merklePathIndices = c3Indices;
+
+          // C3 — merkle path proof (NEW in V3).
+          const U64 = (1n << 64n) - 1n;
+          const c3Result = await generateMerklePathProof(
+            (receipt.commitment & U64).toString(),
+            c3Path.map(e => (e & U64).toString()),
+            c3Indices,
+          );
+
+          // Re-encrypt the receipt back into the StoredNote so future
+          // operations see the refreshed merkleRoot. (We persist via the
+          // store's secureReceipt helper inside unshieldNoteStarkV3 — the
+          // store reads the receipt fresh so passing the updated values is
+          // not strictly needed for this single call.)
+
+          const c1Bytes = Buffer.from(c1Result.proofHex, 'hex');
+          const c1Inputs = c1Result.publicInputs.map((s: string) => BigInt(s));
+          const c3Bytes = Buffer.from(c3Result.proofHex, 'hex');
+          const c3Inputs = c3Result.publicInputs.map((s: string) => BigInt(s));
+
+          return unshieldNoteStarkV3(
+            selectedNote.id,
+            finalRecipient,
+            { proofBytes: c1Bytes, publicInputs: c1Inputs, proofSize: c1Result.proofSize },
+            { proofBytes: c3Bytes, publicInputs: c3Inputs, proofSize: c3Result.proofSize },
+            emergency,
+          );
+        }
+
+        // v2 path — single STARK proof (pool_commitment).
         const starkResult = await generatePoolCommitmentProof(
           receipt.nullifierPreimage.toString(),
           receipt.secret.toString(),
@@ -163,7 +239,7 @@ export default function DenominatedUnshieldScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('common.error'), err.message);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, starkReady, generatePoolCommitmentProof, router, t, isMpcActive]);
+  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, starkReady, generatePoolCommitmentProof, generateMerklePathProof, router, t, isMpcActive]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {

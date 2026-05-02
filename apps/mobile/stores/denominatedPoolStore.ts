@@ -21,9 +21,12 @@ import {
   ALL_POOLS,
   SOL_POOLS,
   USDC_POOLS,
+  ALL_POOLS_V3,
   fetchPoolInfo,
   shield,
+  shieldV3,
   unshieldStark,
+  unshieldDenominatedStarkV3,
   transferNoteStark as serviceTransferNoteStark,
   splitNoteStark as serviceSplitNoteStark,
   importNote as serviceImportNote,
@@ -117,6 +120,13 @@ export interface StoredNote {
   ownerPubkey?: string;
   /** Set when this note was reconstructed by `rescanPool` rather than freshly shielded. */
   recoveredAt?: number;
+  /**
+   * V3 marker. Optional — legacy notes (pre-v3) leave this undefined and route
+   * through the v2 STARK paths. New notes shielded into a `pool.version === 'v3'`
+   * pool stamp this as `'v3'` and route through the V3 (Goldilocks) STARK paths.
+   * See `v3-stark-migration-plan-2026-05-02.md`.
+   */
+  poolVersion?: 'v2' | 'v3';
 }
 
 interface PoolCacheEntry {
@@ -166,6 +176,30 @@ interface DenominatedPoolState {
   setSelectedDenomination: (denom: number | null) => void;
   shieldNote: (pool: PoolConfig) => Promise<string>;
   /**
+   * V3 (Goldilocks STARK) shield — accepts a pre-generated C6 (merkle_update)
+   * proof from the StarkProver context. Caller (screen) is responsible for:
+   *   1. Computing insertParams (commitment + new_root + new_subtrees) from
+   *      on-chain pool state via `prepareShieldV3Insert` exported here.
+   *   2. Generating the C6 STARK proof via `useStarkProver().generateMerkleUpdateProof`.
+   *   3. Passing both into this action.
+   *
+   * Side-by-side with v2 `shieldNote` — pool routing is the screen's job
+   * (`pool.version === 'v3'`). Stamps `poolVersion: 'v3'` on the StoredNote.
+   */
+  shieldNoteV3: (
+    pool: PoolConfig,
+    insertParams: {
+      commitment: bigint;
+      newRoot: bigint;
+      newSubtrees: bigint[];
+      secret: bigint;
+      nullifierPreimage: bigint;
+      depositEpoch: bigint;
+      leafIndex: number;
+    },
+    c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<string>;
+  /**
    * Quantum-resistant STARK unshield. Pass `emergency=true` to bypass the maturity
    * check (min_epoch=0). The on-chain ix, account layout, and emitted event are
    * identical for both paths — an observer cannot distinguish emergency from
@@ -176,6 +210,25 @@ interface DenominatedPoolState {
     noteId: string,
     recipient: string,
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    emergency?: boolean,
+  ) => Promise<string>;
+  /**
+   * V3 STARK unshield — 3-tx orchestration (C1 + C3 + unshield_v3).
+   * Caller (screen) generates BOTH C1 (pool_commitment) and C3 (merkle_path)
+   * proofs sequentially via the StarkProver context (it's single-threaded —
+   * never parallel) and passes them in. Stealth signer + recipient pattern
+   * mirrors v2 `unshieldNoteStark`.
+   *
+   * Side-by-side with v2 — screen routes via `note.poolVersion === 'v3'`.
+   * `emergency` flag is accepted for symmetry but currently unused: the
+   * V3 ix maturity check uses the same UX-only convention as v2 and the
+   * on-chain min_epoch check is decoupled from the proof contents.
+   */
+  unshieldNoteStarkV3: (
+    noteId: string,
+    recipient: string,
+    c1ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
     emergency?: boolean,
   ) => Promise<string>;
   /** Quantum-resistant STARK peer-to-peer transfer */
@@ -875,6 +928,112 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       // ------------------------------------------------------------------
+      // V3 Shield (Goldilocks STARK — C6 merkle_update attestation)
+      // ------------------------------------------------------------------
+      //
+      // V3 = full Goldilocks/STARK migration. Unlike v2, V3 requires the
+      // depositor to pre-verify a C6 (merkle_update) STARK proof on-chain
+      // BEFORE calling shield_denominated_v3, so the on-chain tree state
+      // (root + filled_subtrees) is STARK-attested instead of trust-on-first-use.
+      //
+      // The screen drives the heavy lifting:
+      //   1. Read pool tree state via parseFilledSubtrees(treePDA)
+      //   2. Derive (secret, nullifierPreimage) deterministically from seed
+      //   3. Compute commitment via createCommitmentV3
+      //   4. Compute newRoot + updatedSubtrees via computeNewRootFromSubtreesV3
+      //   5. Generate C6 proof via useStarkProver().generateMerkleUpdateProof
+      //   6. Call this action with insertParams + c6ProofResult
+      //
+      // We keep the v2 stealth-intermediary pattern (transfer→shield-from-stealth)
+      // skipped for V3 in this first cut — V3 funds rent for the C6 proof
+      // buffer, which doubles the wallet→pool linkage if we layer in another
+      // stealth hop. Add it later via a separate pre-fund tx if needed.
+      // TODO(v3-stealth-shield): wire stealth intermediary like v2 does.
+      // ------------------------------------------------------------------
+      shieldNoteV3: async (pool, insertParams, c6ProofResult) => {
+        if (get().isLoading || _starkOpInFlight) {
+          console.warn('[DenomStore] shieldNoteV3 ignored — another operation in progress');
+          throw new Error('Another shield/unshield is already in progress. Please wait.');
+        }
+        if (pool.version !== 'v3') {
+          throw new Error('shieldNoteV3 called with non-v3 pool — use shieldNote for v2');
+        }
+        console.log('[DenomStore] shieldNoteV3 start:', pool.denomination, pool.token);
+        _starkOpInFlight = true;
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V3 shield...' });
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const walletPubkey = walletSigner
+            ? walletSigner.publicKey
+            : (await getKeypair())?.publicKey;
+
+          // Use the depositor's own wallet as the C6 proof buffer authority and
+          // shield ix payer. (The C6 proof was generated by the screen using
+          // the same wallet's StarkProver, so this is byte-consistent.)
+          const localKp = walletSigner ? null : await getKeypair();
+
+          const { txSig, receipt } = await shieldV3(
+            pool,
+            c6ProofResult,
+            insertParams,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK') || step.includes('C6');
+              set({ progress: step, isProving: proving });
+            },
+            walletSigner,
+            localKp || undefined,
+          );
+
+          // The service shieldV3 already populates receipt.tokenMint via
+          // pubkeyToField. We just stamp poolVersion onto the StoredNote so
+          // unshield can route correctly.
+          const storedNote: StoredNote = {
+            id: noteIdFromReceipt(receipt),
+            receiptJSON: secureReceipt(receipt),
+            token: pool.token,
+            denomination: pool.denomination,
+            poolPDA: pool.poolPDA.toBase58(),
+            shieldedAt: receipt.shieldedAt,
+            status: 'pending',
+            source: 'shielded',
+            cluster: getCluster(),
+            ownerPubkey: walletPubkey?.toBase58(),
+            poolVersion: 'v3',
+          };
+
+          console.log('[DenomStore] V3 note stored:', storedNote.id, 'sig:', txSig.slice(0, 16));
+          set(state => ({
+            isLoading: false,
+            isProving: false,
+            progress: null,
+            notes: [storedNote, ...state.notes],
+          }));
+
+          scheduleLocalNotification(
+            'Shield Confirmed (V3)',
+            `${pool.denomination} ${pool.token} shielded to V3 privacy pool`,
+            { category: 'transaction', token: pool.token, amount: String(pool.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          return storedNote.id;
+        } catch (err) {
+          console.error('[DenomStore] V3 shield error:', err);
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Shield Failed',
+            `Failed to shield ${pool.denomination} ${pool.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: pool.token, amount: String(pool.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          throw err;
+        } finally {
+          _starkOpInFlight = false;
+        }
+      },
+
+      // ------------------------------------------------------------------
       // STARK Unshield (quantum-resistant — no Groth16 proof)
       // ------------------------------------------------------------------
 
@@ -1152,6 +1311,259 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             } catch (sweepErr: any) {
               console.error(
                 `[DenomStore] ❌ crash-sweep FAILED — funds stuck at ${stealthKp.publicKey.toBase58()}:`,
+                sweepErr.message,
+              );
+            }
+          }
+
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Unshield Failed',
+            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          throw err;
+        } finally {
+          _starkOpInFlight = false;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // V3 STARK Unshield (Goldilocks — 3-tx orchestration: C1 + C3 + ix)
+      // ------------------------------------------------------------------
+      //
+      // Mirrors `unshieldNoteStark` (v2) but consumes TWO pre-generated proofs
+      // (C1 pool_commitment + C3 merkle_path) instead of one. The screen
+      // generates them sequentially via the StarkProver (single-threaded
+      // WebView — never use Promise.all) and passes both into this action.
+      //
+      // Stealth signer + ECDH stealth recipient + auto-sweep is identical
+      // to v2. The only differences:
+      //   - Pre-fund covers TWO proof buffers (C1 + C3 ≈ 2× v2 buffer rent)
+      //   - 3 tx round-trips instead of 2 (~+6s on devnet)
+      //   - Service helper closes BOTH buffers in `finally` for rent recovery
+      // ------------------------------------------------------------------
+      unshieldNoteStarkV3: async (noteId, recipientAddress, c1ProofData, c3ProofData, _emergency) => {
+        if (_starkOpInFlight || get().isLoading) {
+          console.warn('[DenomStore] unshieldNoteStarkV3 ignored — another STARK op in progress');
+          throw new Error('Another shield/unshield is already in progress. Please wait.');
+        }
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.poolVersion !== 'v3') {
+          throw new Error('unshieldNoteStarkV3 called with non-v3 note — use unshieldNoteStark for v2');
+        }
+
+        const receipt = readReceipt(note.receiptJSON);
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('V3 pool config not found for this note');
+
+        // Pre-flight: STARK PDA already on-chain → already spent.
+        try {
+          const preStarkNull = c1ProofData.publicInputs?.[0] ?? 0n;
+          if (preStarkNull !== 0n) {
+            const [prePda] = deriveNullifierPDA(
+              pool.poolPDA,
+              goldilocksNullifierToBytes(preStarkNull),
+            );
+            const preConn = getConnection();
+            const preAcct = await preConn.getAccountInfo(prePda);
+            if (preAcct !== null) {
+              set(state => ({
+                notes: state.notes.map(n =>
+                  n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n,
+                ),
+              }));
+              throw new Error('Note already spent on-chain');
+            }
+          }
+        } catch (e) {
+          if ((e as Error).message === 'Note already spent on-chain') throw e;
+          // Network glitch — fall through; the on-chain `init` constraint is
+          // still the authoritative double-spend guard.
+        }
+
+        _starkOpInFlight = true;
+        console.log(
+          `[P01_UI] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'unshieldStarkV3-flow-begin',
+            noteId,
+          })}`,
+        );
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V3 STARK unshield...' });
+
+        let stealthKp: SolKeypair | null = null;
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const PK = PublicKey;
+
+          // Derive ECDH stealth recipient from user's meta-address
+          set({ progress: 'Generating stealth recipient...' });
+          const metaAddr = await getMetaAddress();
+          const parsed = parseMetaAddress(metaAddr);
+          const stealthResult = genStealth(parsed.spendingPubKey, parsed.viewingPubKey, parsed.kemPubKey);
+          const stealthRecipient = new PK(stealthResult.address);
+
+          // Deterministic per-note ephemeral signer (resumable on crash).
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_v3_${noteId}`));
+          stealthKp = SolKeypair.fromSeed(seed);
+
+          // V3 = TWO proof buffers. Pre-fund covers both rents + tx fees.
+          set({ progress: 'Funding ephemeral signer (V3)...' });
+          const connection = getConnection();
+          const PROOF_DATA_OFFSET_LOCAL = 83;
+          const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c1ProofData.proofSize);
+          const c3Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c3ProofData.proofSize);
+          // 0.015 SOL margin — covers 4 confirmable txs + nullifier PDA rent + slippage.
+          const FEE_FUND = c1Rent + c3Rent + 15_000_000;
+          console.log(`[DenomStore/V3] Pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL (c1Rent=${(c1Rent / 1e9).toFixed(4)} c3Rent=${(c3Rent / 1e9).toFixed(4)})`);
+
+          if (walletSigner) {
+            const fundTx = new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: walletSigner.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND }),
+            );
+            const { blockhash } = await connection.getLatestBlockhash();
+            fundTx.recentBlockhash = blockhash;
+            fundTx.feePayer = walletSigner.publicKey;
+            const signedFund = await walletSigner.signTransaction(fundTx);
+            await connection.sendRawTransaction(signedFund.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+          } else {
+            const kp = await getKeypair();
+            if (kp) {
+              const fundTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND }),
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              fundTx.recentBlockhash = blockhash;
+              fundTx.feePayer = kp.publicKey;
+              fundTx.sign(kp);
+              await connection.sendRawTransaction(fundTx.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+            }
+          }
+
+          // Timing jitter
+          const jitter = 1000 + Math.floor(Math.random() * 2000);
+          set({ progress: 'Waiting (timing privacy)...' });
+          await new Promise(r => setTimeout(r, jitter));
+
+          // V3 unshield — service handles 3-tx flow + buffer cleanup.
+          const sig = await unshieldDenominatedStarkV3(
+            receipt, pool, stealthRecipient,
+            c1ProofData, c3ProofData,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK') || step.includes('C1') || step.includes('C3');
+              set({ progress: step, isProving: proving });
+            },
+            undefined,
+            stealthKp,
+          );
+
+          // Mark spent immediately so background sweep can't re-trigger
+          set(state => ({
+            isProving: false,
+            progress: 'Sweeping to wallet...',
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
+            ),
+          }));
+
+          // Auto-sweep stealth recipient → real wallet (delayed)
+          try {
+            const sweepDelay = 3000 + Math.floor(Math.random() * 4000);
+            set({ progress: 'Sweeping to wallet (delayed)...' });
+            await new Promise(r => setTimeout(r, sweepDelay));
+
+            const stealthKeys = await getOrCreateStealthKeys();
+            const scanResult = scanStealthPayment(
+              stealthResult.ephemeralPublicKey,
+              stealthKeys.viewingSecretKey,
+              stealthKeys.spendingKey.publicKey.toBytes(),
+              stealthResult.viewTag,
+              stealthResult.kemCiphertext,
+              stealthKeys.kemSecretKey,
+            );
+
+            if (scanResult.found && scanResult.privateKey) {
+              const stealthRecipientKp = SolKeypair.fromSecretKey(scanResult.privateKey);
+              const recipientBal = await connection.getBalance(stealthRecipientKp.publicKey);
+              if (recipientBal > 5000) {
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({ fromPubkey: stealthRecipientKp.publicKey, toPubkey: new PK(recipientAddress), lamports: recipientBal - 5000 }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthRecipientKp.publicKey;
+                sweepTx.sign(stealthRecipientKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore/V3] ✅ Sweep: stealth → wallet (${(recipientBal - 5000) / 1e9} SOL)`);
+              }
+            }
+
+            // Drain leftover from signer back to wallet
+            const signerBal = await connection.getBalance(stealthKp.publicKey);
+            if (signerBal > 5000) {
+              const drainTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: stealthKp.publicKey, toPubkey: new PK(recipientAddress), lamports: signerBal - 5000 }),
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              drainTx.recentBlockhash = blockhash;
+              drainTx.feePayer = stealthKp.publicKey;
+              drainTx.sign(stealthKp);
+              await connection.sendRawTransaction(drainTx.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+            }
+          } catch (sweepErr: any) {
+            console.error('[DenomStore/V3] ❌ Sweep failed (funds in stealth):', sweepErr.message);
+          }
+
+          set({ isLoading: false, isProving: false, progress: null });
+
+          useWalletStore.getState().refreshBalance();
+          setTimeout(() => useWalletStore.getState().refreshTransactions(), 5000);
+
+          scheduleLocalNotification(
+            'Unshield Confirmed (V3)',
+            `${note.denomination} ${note.token} withdrawn from V3 privacy pool`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          return sig;
+        } catch (err) {
+          console.error('[DenomPool/V3] STARK unshield error:', err);
+
+          // Crash-sweep — recover ephemeral signer balance
+          if (stealthKp) {
+            try {
+              const connection = getConnection();
+              const stealthBal = await connection.getBalance(stealthKp.publicKey);
+              const FEE_RESERVE = 5000;
+              if (stealthBal > FEE_RESERVE) {
+                const sweepAmount = stealthBal - FEE_RESERVE;
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({
+                    fromPubkey: stealthKp.publicKey,
+                    toPubkey: new PublicKey(recipientAddress),
+                    lamports: sweepAmount,
+                  }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthKp.publicKey;
+                sweepTx.sign(stealthKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore/V3] 🛟 crash-sweep: ${(sweepAmount / 1e9).toFixed(4)} SOL recovered`);
+              }
+            } catch (sweepErr: any) {
+              console.error(
+                `[DenomStore/V3] ❌ crash-sweep FAILED — funds stuck at ${stealthKp.publicKey.toBase58()}:`,
                 sweepErr.message,
               );
             }

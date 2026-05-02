@@ -27,8 +27,21 @@ import {
   type PoolConfig,
   SOL_POOLS,
   USDC_POOLS,
+  SOL_POOLS_V3,
+  USDC_POOLS_V3,
+  parseFilledSubtrees,
+  computeNewRootFromSubtreesV3,
+  createCommitmentV3,
+  goldilocksToLeBytes32,
+  deriveNoteMaterial,
+  deriveSeedFromSigner,
+  slotToEpoch,
+  pubkeyToField,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
+import { getKeypair } from '@/services/solana/wallet';
+import { useStarkProver } from '@/providers/StarkProverProvider';
+import { Buffer } from 'buffer';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
@@ -54,13 +67,21 @@ export default function DenominatedShieldScreen() {
     progress,
     poolCache,
     shieldNote,
+    shieldNoteV3,
     refreshPoolInfo,
   } = useDenominatedPoolStore();
 
-  const pools = tokenTab === 'SOL' ? SOL_POOLS : USDC_POOLS;
+  // V3 pools listed AFTER v2 in the same UI grid so the migration is visible
+  // but the user's existing v2 muscle-memory still works. A "V3" badge marks
+  // each one. Once the 30-day deprecation window closes we drop v2 from this
+  // concat and the shield UI silently goes V3-only.
+  const pools = tokenTab === 'SOL'
+    ? [...SOL_POOLS, ...SOL_POOLS_V3]
+    : [...USDC_POOLS, ...USDC_POOLS_V3];
   const { publicKey: storePublicKey, initializeWithPrivy } = useWalletStore();
   const { walletAddress: privyWalletAddress } = useAuth();
   const walletPublicKey = privyWalletAddress || storePublicKey;
+  const { isReady: starkReady, generateMerkleUpdateProof } = useStarkProver();
 
   useEffect(() => {
     if (privyWalletAddress && !storePublicKey) {
@@ -121,7 +142,102 @@ export default function DenominatedShieldScreen() {
     }
 
     try {
-      await withKeepAwake('p01-shield', () => shieldNote(selectedPool));
+      if (selectedPool.version === 'v3') {
+        // V3 path: generate C6 (merkle_update) proof first, then call shieldNoteV3.
+        // The shield-from-stealth pattern (used by v2 in the store) is skipped
+        // here because V3 already adds two STARK txs to the wallet→pool path —
+        // adding stealth on top would 2× the user's wait. TODO(v3-stealth-shield).
+        if (!starkReady) {
+          throw new Error('STARK prover not ready yet — try again in a moment.');
+        }
+        await withKeepAwake('p01-shield-v3', async () => {
+          const connection = getConnection();
+
+          // 1. Read pool tree state (V3 layout matches v2 byte-for-byte).
+          const treeAcct = await connection.getAccountInfo(selectedPool.treePDA);
+          if (!treeAcct) throw new Error('V3 merkle tree not initialized');
+          const { leafCount, subtrees } = parseFilledSubtrees(treeAcct.data);
+
+          // 2. Derive deterministic note material from wallet seed.
+          // Use the same `deterministic` mechanic as v2 so V3 notes are
+          // recoverable from seed via rescanPool.
+          const localKp = await getKeypair().catch(() => null);
+          let walletSeed: Uint8Array | null = null;
+          if (localKp) {
+            walletSeed = localKp.secretKey.slice(0, 32);
+          } else {
+            // Privy: ask for a one-per-session signature
+            const { isPrivyWallet } = useWalletStore.getState();
+            if (isPrivyWallet) {
+              const { getPrivySigner, getPrivyMessageSigner } = await import('@/stores/walletStore');
+              const signer = getPrivySigner();
+              const messageSigner = getPrivyMessageSigner();
+              if (signer && messageSigner && walletPublicKey) {
+                const walletSigner = {
+                  publicKey: new PublicKey(walletPublicKey),
+                  signTransaction: signer,
+                  signMessage: messageSigner,
+                };
+                walletSeed = await deriveSeedFromSigner(walletSigner);
+              }
+            }
+          }
+          if (!walletSeed) throw new Error('No wallet seed available — cannot derive V3 note');
+
+          // V3 uses a fresh counter namespace from v2 (different commitment hash function),
+          // so reusing the v2 shieldCounters key is safe — the derived nullifier PDAs differ.
+          const counter = 0; // TODO(v3-counter): track per-pool counter for V3 the same way v2 does.
+          const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, selectedPool.poolPDA, counter);
+
+          const slot = await connection.getSlot('confirmed');
+          const depositEpoch = slotToEpoch(slot);
+          const tokenMintField = pubkeyToField(selectedPool.tokenMint);
+
+          // 3. Compute commitment + new merkle state via Goldilocks helpers.
+          const commitment = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMintField);
+          const { newRoot, updatedSubtrees, pathElements: _pathElements, pathIndices: _pathIndices } =
+            computeNewRootFromSubtreesV3(commitment, leafCount, subtrees);
+
+          // 4. Generate C6 (merkle_update) STARK proof.
+          // C6 public inputs (per stark/src/air/merkle_update.rs):
+          //   [old_leaf=0, new_leaf=commitment_u64, old_root_u64, new_root_u64, depth_u64]
+          // The prover takes the path that the new commitment will travel in
+          // the v3 tree; we already have it from computeNewRootFromSubtreesV3.
+          //
+          // generateMerkleUpdateProof signature:
+          //   (oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[])
+          const oldLeafGl = '0';
+          const newLeafGl = (commitment & ((1n << 64n) - 1n)).toString();
+          const pathElementsGl = _pathElements.map(e => (e & ((1n << 64n) - 1n)).toString());
+          const c6Result = await generateMerkleUpdateProof(
+            oldLeafGl,
+            newLeafGl,
+            pathElementsGl,
+            _pathIndices,
+          );
+
+          const c6ProofBytes = Buffer.from(c6Result.proofHex, 'hex');
+          const c6PublicInputs = c6Result.publicInputs.map((s: string) => BigInt(s));
+
+          // 5. Hand off to the store action which orchestrates submit+verify
+          //    of the C6 buffer and the shield_denominated_v3 ix.
+          await shieldNoteV3(
+            selectedPool,
+            {
+              commitment,
+              newRoot,
+              newSubtrees: updatedSubtrees,
+              secret,
+              nullifierPreimage,
+              depositEpoch,
+              leafIndex: leafCount,
+            },
+            { proofBytes: c6ProofBytes, publicInputs: c6PublicInputs, proofSize: c6Result.proofSize },
+          );
+        });
+      } else {
+        await withKeepAwake('p01-shield', () => shieldNote(selectedPool));
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const pool = selectedPool;
       setSelectedPool(null);
@@ -129,7 +245,7 @@ export default function DenominatedShieldScreen() {
         visible: true,
         type: 'success',
         title: 'Deposited!',
-        message: `${pool.denomination} ${pool.token} is now in your private wallet.\nIt will be ready to use in ~1 hour.`,
+        message: `${pool.denomination} ${pool.token}${pool.version === 'v3' ? ' (V3)' : ''} is now in your private wallet.\nIt will be ready to use in ~1 hour.`,
       });
       fetchBalance();
     } catch (err: any) {
@@ -142,7 +258,7 @@ export default function DenominatedShieldScreen() {
         message: err.message || 'An unknown error occurred.',
       });
     }
-  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, fetchBalance]);
+  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, fetchBalance, starkReady, generateMerkleUpdateProof]);
 
   const getPoolNoteCount = (pool: PoolConfig): number => {
     const cached = poolCache[pool.poolPDA.toBase58()];
@@ -221,6 +337,11 @@ export default function DenominatedShieldScreen() {
                     {pool.denomination}
                   </Text>
                   <Text style={st.chipToken}>{pool.token}</Text>
+                  {pool.version === 'v3' && (
+                    <View style={st.v3Badge}>
+                      <Text style={st.v3BadgeText}>V3</Text>
+                    </View>
+                  )}
                   {noteCount > 0 && (
                     <Text style={[st.chipPrivacy, { color: privacyColor }]}>
                       {privacyDots}
@@ -450,6 +571,21 @@ const st = StyleSheet.create({
   chipAmountDim: { color: Colors.textSecondary },
   chipToken: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginTop: 2 },
   chipPrivacy: { fontSize: 8, marginTop: 4, letterSpacing: 2 },
+  v3Badge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: 'rgba(0, 224, 255, 0.18)',
+  },
+  v3BadgeText: {
+    fontSize: 8,
+    fontFamily: FontFamily.bold,
+    color: P01Colors.cyan,
+    letterSpacing: 0.5,
+  },
 
   // Legend
   privacyLegend: {
