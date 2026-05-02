@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Linking, StyleSheet,
 } from 'react-native';
-import { PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, SystemProgram, TransactionInstruction, sendAndConfirmTransaction } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
 import { p01Alert } from '../../../stores/alertStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -191,7 +191,46 @@ function DetailContent() {
       p01Alert(t('streams.cancelStream'), t('streams.cancelStreamConfirm', { name: stream.name }),
         [{ text: t('streams.cancelStream'), style: 'destructive', onPress: async () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          await cancelStream(stream.id); await deleteStream(stream.id); router.back();
+          await cancelStream(stream.id);
+          // Publish a P01_SUB_UPD memo on-chain so cross-device sync (and our own
+          // post-wipe recovery) sees the cancellation. Without this, the stream
+          // resurrects from its original P01_SUB_V1 memo as `s:'a'` after wipe.
+          try {
+            const memoData = 'P01_SUB_UPD:' + JSON.stringify({
+              v: 1,
+              id: stream.id,
+              s: 'c',
+              u: Math.floor(Date.now() / 1000),
+            });
+            const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+            const memoIx = new TransactionInstruction({
+              keys: [],
+              programId: MEMO_PROGRAM_ID,
+              data: Buffer.from(memoData, 'utf-8'),
+            });
+            const conn = getConnection();
+            const walletPub = useWalletStore.getState().publicKey;
+            const isPrivy = useWalletStore.getState().isPrivyWallet;
+            const privySigner = isPrivy ? getPrivySigner() : null;
+            if (privySigner && walletPub) {
+              const memoTx = new Transaction().add(memoIx);
+              memoTx.feePayer = new PublicKey(walletPub);
+              const { blockhash } = await conn.getLatestBlockhash('confirmed');
+              memoTx.recentBlockhash = blockhash;
+              const signed = await privySigner(memoTx);
+              await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+            } else {
+              const kp = await getKeypair();
+              if (kp) {
+                const tx = new Transaction().add(memoIx);
+                await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
+              }
+            }
+          } catch (e) {
+            console.warn('[Streams] cancel publish memo failed (non-fatal):', (e as Error).message);
+          }
+          await deleteStream(stream.id);
+          router.back();
         }}, { text: t('streams.keepStream'), style: 'cancel' }], 'warning');
       return;
     }

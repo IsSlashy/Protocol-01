@@ -70,7 +70,9 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   const [selectedDuration, setSelectedDuration] = useState(30);
   const [customDuration, setCustomDuration] = useState('');
   const [frequency, setFrequency] = useState<PaymentFrequency>('monthly');
-  const [isPrivate, setIsPrivate] = useState(true);
+  // Note: privacy mode is controlled by the parent screen's top-level toggle
+  // (see create.tsx). The previous in-form `isPrivate` checkbox was dead UI —
+  // the data flag was collected but never read. Removed for clarity.
   const [errors, setErrors] = useState<{ recipient?: string; amount?: string }>({});
   const [selectedService, setSelectedService] = useState<ServiceInfo | null>(null);
   const [autoDetected, setAutoDetected] = useState<ServiceInfo | null>(null);
@@ -111,7 +113,7 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
     const streamName = activeService?.name || name || `Stream to ${recipient.slice(0, 8)}...`;
     onSubmit?.({
       recipient, name: streamName, token: tok, amount: amt, duration: dur,
-      frequency, isPrivate, serviceId: activeService?.id, serviceName: activeService?.name,
+      frequency, isPrivate: false, serviceId: activeService?.id, serviceName: activeService?.name,
       serviceCategory: activeService?.category, serviceColor: activeService?.color,
     });
     if (onCreateStream && preview) {
@@ -235,14 +237,6 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
             </View>
           ))}
 
-          {/* Private toggle */}
-          <TouchableOpacity onPress={() => setIsPrivate(!isPrivate)} style={st.privacyRow}>
-            <Ionicons name="shield-checkmark" size={16} color={isPrivate ? accentColor : Colors.textSecondary} />
-            <Text style={[st.previewValue, { flex: 1 }]}>{t('createStream.privateStream')}</Text>
-            <View style={[st.switchTrack, isPrivate && { backgroundColor: `${accentColor}50` }]}>
-              <View style={[st.switchThumb, isPrivate && { alignSelf: 'flex-end', backgroundColor: accentColor }]} />
-            </View>
-          </TouchableOpacity>
         </View>
       )}
 

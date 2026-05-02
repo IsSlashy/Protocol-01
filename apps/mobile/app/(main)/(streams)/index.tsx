@@ -61,7 +61,16 @@ export default function StreamsDashboard() {
   const availableNotes = denomNotes.filter(n => n.status === 'mature' || n.status === 'pending');
   const privateBalance = availableNotes.reduce((sum, n) => sum + n.denomination, 0);
 
-  useEffect(() => { initialize(publicKey || undefined); }, [publicKey]);
+  useEffect(() => {
+    initialize(publicKey || undefined);
+    // Auto-sync on mount: pull memo-tagged streams from chain history so
+    // subscriptions reappear after wipe + re-login without requiring a
+    // manual pull-to-refresh. Silent (no UI feedback) — pull-to-refresh
+    // remains the user-initiated path for explicit re-sync.
+    if (publicKey) {
+      refresh(publicKey).catch((e) => console.warn('[Streams] auto-sync on mount failed:', (e as Error).message));
+    }
+  }, [publicKey]);
 
   // Auto-process due payments on focus
   const isProcessingRef = useRef(false);

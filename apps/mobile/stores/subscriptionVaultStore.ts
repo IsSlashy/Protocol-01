@@ -324,6 +324,18 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
 
+          // Sync the new vault as a Stream record so the Streams tab reflects
+          // the subscription immediately (otherwise it stays invisible until
+          // the next on-chain rescan / app reboot). Best-effort, non-fatal.
+          try {
+            const { fetchVault } = await import('../services/subscriptionVault');
+            const { upsertStreamFromVault } = await import('../services/solana/streams');
+            const vaultInfo = await fetchVault(vaultPDA);
+            if (vaultInfo) await upsertStreamFromVault(vaultInfo);
+          } catch (e) {
+            console.warn('[SubscriptionVault] stream sync after subscribeNormal failed (non-fatal):', e);
+          }
+
           notifySubscriptionEvent(
             'Subscription Active',
             `Subscribed at ${formatRateSOL(config.rate)} per period`,
@@ -396,6 +408,17 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({
             vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
+
+          // Sync the new vault as a Stream record so the Streams tab reflects
+          // the subscription immediately. Best-effort, non-fatal.
+          try {
+            const { fetchVault } = await import('../services/subscriptionVault');
+            const { upsertStreamFromVault } = await import('../services/solana/streams');
+            const vaultInfo = await fetchVault(vaultPDA);
+            if (vaultInfo) await upsertStreamFromVault(vaultInfo);
+          } catch (e) {
+            console.warn('[SubscriptionVault] stream sync after subscribePrivateStark failed (non-fatal):', e);
+          }
 
           notifySubscriptionEvent(
             'Subscription Active',

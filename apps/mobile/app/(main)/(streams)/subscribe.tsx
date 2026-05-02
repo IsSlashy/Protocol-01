@@ -161,7 +161,10 @@ function SubscribeContent() {
         s: 'a',
         np: Math.floor((now + duration * 30 * 86_400_000) / 1000),
         mp: duration > 0 ? duration : 0,
-        pm: 0,
+        // pm:1 — the subscribe flow always pays the first period now, so the
+        // memo MUST reflect that or recovery will display "0/N completed"
+        // for an already-paid first period (UX bug surfaced 2026-05-02).
+        pm: 1,
         c: Math.floor(now / 1000),
       };
       const invoiceMemo = `P01_SUB_V1:${JSON.stringify(subMemoPayload)}`;
