@@ -451,14 +451,39 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       refreshAllPools: async () => {
-        set({ isLoading: true, error: null });
+        // CRITICAL: do NOT touch `isLoading` if a STARK op is currently in
+        // flight. The unshield/transfer/subscribe flows raise `isLoading`
+        // for the duration of their multi-batch proof submission, and our
+        // own `set({ isLoading: false })` at the end of the refresh would
+        // race with that flow and leave the UI without a loader for the
+        // remainder of the proof upload — even though the actual STARK op
+        // is still running. Skip toggling the flag in that case; the
+        // refresh itself is fast enough that no spinner is needed.
+        const starkInFlight = _starkOpInFlight;
+        if (starkInFlight) {
+          console.log(
+            `[P01_UI] ${JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'refreshAllPools-during-stark',
+              note: 'skipping isLoading toggle to preserve in-flight STARK loader',
+            })}`,
+          );
+        } else {
+          set({ isLoading: true, error: null });
+        }
         try {
           await get().refreshPoolInfo();
           await get().refreshNoteStatuses();
-          set({ isLoading: false });
+          if (!starkInFlight) set({ isLoading: false });
         } catch (err) {
           console.error('[DenomPool] refreshAllPools error:', err);
-          set({ isLoading: false, error: (err as Error).message });
+          if (!starkInFlight) {
+            set({ isLoading: false, error: (err as Error).message });
+          } else {
+            // STARK flow is still running and owns isLoading; just stash the
+            // error without flipping the flag.
+            set({ error: (err as Error).message });
+          }
         }
       },
 
@@ -897,6 +922,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         }
 
         _starkOpInFlight = true;
+        console.log(
+          `[P01_UI] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'unshieldStark-flow-begin',
+            noteId,
+            emergency: !!emergency,
+          })}`,
+        );
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK unshield...' });
 
         // Hoisted so the catch handler can sweep the ephemeral signer back
@@ -986,6 +1019,18 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             receipt, pool, stealthRecipient, starkProofData,
             (step) => {
               const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');
+              const cur = get();
+              console.log(
+                `[P01_UI] ${JSON.stringify({
+                  ts: new Date().toISOString(),
+                  event: 'unshieldStark-progress',
+                  step,
+                  isProvingNext: proving,
+                  isProvingPrev: cur.isProving,
+                  isLoading: cur.isLoading,
+                  starkOpInFlight: _starkOpInFlight,
+                })}`,
+              );
               set({ progress: step, isProving: proving });
             },
             undefined, // stealth keypair signs, not wallet
@@ -1590,11 +1635,40 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       resetOperationState: () => {
+        const wasInFlight = _starkOpInFlight;
+        const prev = get();
+        const stack = (new Error().stack || '').split('\n').slice(2, 8).join(' | ');
+        console.log(
+          `[P01_UI] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'resetOperationState-called',
+            wasStarkOpInFlight: wasInFlight,
+            prevIsLoading: prev.isLoading,
+            prevIsProving: prev.isProving,
+            prevProgress: prev.progress,
+            stack,
+          })}`,
+        );
         _starkOpInFlight = false;
         set({ isLoading: false, isProving: false, progress: null, error: null });
       },
 
       reset: () => {
+        const wasInFlight = _starkOpInFlight;
+        const prev = get();
+        const stack = (new Error().stack || '').split('\n').slice(2, 8).join(' | ');
+        console.log(
+          `[P01_UI] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'reset-called',
+            wasStarkOpInFlight: wasInFlight,
+            prevIsLoading: prev.isLoading,
+            prevIsProving: prev.isProving,
+            prevProgress: prev.progress,
+            prevNotesCount: prev.notes.length,
+            stack,
+          })}`,
+        );
         _starkOpInFlight = false;
         set({
           notes: [],

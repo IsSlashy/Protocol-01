@@ -130,6 +130,18 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     };
   }
 
+  // Stub Node-only fs/promises and node:fs subpaths used by workspace
+  // libraries that target Node (notably @protocol-01/stark-prover dist's
+  // disk-based WASM loader). The runtime path uses the inlined base64 WASM
+  // so these imports are dead-code at the call site, but Metro still has to
+  // resolve them statically.
+  if (moduleName === 'fs/promises' || moduleName === 'node:fs' || moduleName === 'node:fs/promises' || moduleName === 'node:path') {
+    return {
+      filePath: path.resolve(projectRoot, 'polyfills/empty.js'),
+      type: 'sourceFile',
+    };
+  }
+
   // Handle ox/erc8010 polyfill (required by viem)
   if (moduleName === 'ox/erc8010') {
     return {

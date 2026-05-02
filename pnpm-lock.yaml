@@ -263,6 +263,9 @@ importers:
       '@protocol-01/specter-sdk':
         specifier: workspace:*
         version: link:../../packages/specter-sdk
+      '@protocol-01/stark-prover':
+        specifier: workspace:*
+        version: link:../../packages/stark-prover
       '@react-native-async-storage/async-storage':
         specifier: 2.2.0
         version: 2.2.0(react-native@0.81.5(@babel/core@7.29.0)(@react-native/metro-config@0.84.1(@babel/core@7.29.0))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.1.0)(utf-8-validate@6.0.6))

@@ -791,16 +791,8 @@ export async function ensureMerkleProof(
   currentOnChainRoot: Uint8Array,
   onProgress?: (step: string) => void,
 ): Promise<void> {
-  // Happy path: the receipt already carries a path AND its stored root
-  // matches the pool's CURRENT on-chain root. Anything else is not safe to
-  // trust:
-  //   - A root saved at shield time may have drifted out of the pool's
-  //     100-slot historical ring once enough newer shields landed.
-  //   - A prior failing attempt could have mutated the receipt with a
-  //     bogus root and persisted it. `is_valid_root` on-chain would then
-  //     reject every retry with InvalidMerkleRoot.
-  // Recomputing from the full leaf set always yields the current root,
-  // which is by definition the freshest valid root.
+  // Happy path 1: the receipt already carries a path AND its stored root
+  // matches the pool's CURRENT on-chain root. Skip rebuild.
   let onChainRootBig = 0n;
   for (let i = 31; i >= 0; i--) {
     onChainRootBig = (onChainRootBig << 8n) | BigInt(currentOnChainRoot[i]);
@@ -810,6 +802,81 @@ export async function ensureMerkleProof(
     receipt.merklePathIndices &&
     receipt.merkleRoot === onChainRootBig
   ) return;
+
+  // Happy path 2: the receipt carries a full path AND its stored root is
+  // still in the on-chain historical ring (max 100 entries). The on-chain
+  // `is_valid_root` check accepts any root in that ring, so the receipt's
+  // path is just as valid as the current root's. This avoids the rebuild
+  // entirely, which is critical when the RPC's signature index is incomplete
+  // (devnet rate-limits, recent shields not yet indexed) — the rebuild path
+  // would otherwise fail with "scanned 0 leaves" even though the on-chain
+  // tree state is fine.
+  const hasFullPath =
+    Array.isArray(receipt.merklePathElements) &&
+    receipt.merklePathElements.length > 0 &&
+    Array.isArray(receipt.merklePathIndices) &&
+    receipt.merklePathIndices.length > 0 &&
+    receipt.merkleRoot !== undefined &&
+    receipt.merkleRoot !== null;
+
+  console.log(
+    `[P01_DIAG:ensureMerkleProof] ${JSON.stringify({
+      ts: new Date().toISOString(),
+      hasFullPath,
+      pathElementsLen: Array.isArray(receipt.merklePathElements) ? receipt.merklePathElements.length : null,
+      pathIndicesLen: Array.isArray(receipt.merklePathIndices) ? receipt.merklePathIndices.length : null,
+      merkleRootDefined: receipt.merkleRoot !== undefined && receipt.merkleRoot !== null,
+      receiptRootHex: receipt.merkleRoot !== undefined ? receipt.merkleRoot.toString(16) : null,
+      onChainRootHex: onChainRootBig.toString(16),
+      rootMatchesCurrent: receipt.merkleRoot === onChainRootBig,
+      leafIndex: receipt.leafIndex,
+      commitment: receipt.commitment.toString(),
+    })}`,
+  );
+
+  if (hasFullPath) {
+    try {
+      const { parsePoolAccount, rootInRing, bigintToLeBytes } = await import('./parsePool');
+      const poolAcc = await connection.getAccountInfo(poolConfig.poolPDA);
+      if (poolAcc) {
+        const parsed = parsePoolAccount(poolAcc.data);
+        if (parsed) {
+          const receiptRootBytes = bigintToLeBytes(receipt.merkleRoot!);
+          const ringPos = rootInRing(receiptRootBytes, parsed.historicalRoots);
+          console.log(
+            `[P01_DIAG:ringCheck] ${JSON.stringify({
+              ts: new Date().toISOString(),
+              ringSize: parsed.historicalRoots.length,
+              ringPos,
+              receiptRootHex: receipt.merkleRoot!.toString(16),
+              poolCurrentRootHex: parsed.currentRoot.reduce((s, b) => s + b.toString(16).padStart(2, '0'), '0x'),
+            })}`,
+          );
+          if (ringPos !== null) {
+            console.log(
+              `[DenomPool] Skipping rebuild — receipt root is at ring position ${ringPos} of ${parsed.historicalRoots.length} (still on-chain valid).`,
+            );
+            return;
+          }
+          // Receipt has full path data but root is NOT in ring. This is the
+          // case after a long pause or when 100+ shields landed in between.
+          // Fall back to rebuild — but if the rebuild also fails (RPC index
+          // missing recent shields), we'll still attempt to submit using the
+          // receipt's path as a last-resort. See the "trusted-receipt" path
+          // below the rebuild.
+          console.warn(
+            `[DenomPool] receipt root not in ring (size ${parsed.historicalRoots.length}); will attempt rebuild.`,
+          );
+        } else {
+          console.warn('[DenomPool] parsePoolAccount returned null — schema drift?');
+        }
+      } else {
+        console.warn('[DenomPool] pool account fetch returned null in ring check.');
+      }
+    } catch (e: any) {
+      console.warn(`[DenomPool] historical-ring check failed, falling back to rebuild: ${e?.message ?? String(e)}`);
+    }
+  }
 
   onProgress?.('Reconstructing Merkle proof from on-chain...');
   const MAX_LEAVES = 1 << MERKLE_DEPTH;
@@ -868,19 +935,43 @@ export async function ensureMerkleProof(
   });
 
   if (computedRoot !== onChainRootBig) {
-    // Divergence — typically a concurrent shield landed between our scan and
-    // simulation, or maxSignatures missed a leaf. The submitted root would
-    // need to live in the pool's 100-slot historical ring for is_valid_root
-    // to pass, which is fragile. Log and still proceed with the computed
-    // root; caller can retry if it fails.
+    // Divergence between our local rebuild and the on-chain CURRENT root.
+    // Three possible causes:
+    //   (a) a concurrent shield landed between our currentRoot fetch and the
+    //       leaf scan -> tree state advanced
+    //   (b) the scan missed a leaf or wrote it at the wrong index
+    //   (c) the on-chain Poseidon ZERO_VALUE differs from ours
+    //
+    // The on-chain `is_valid_root` check accepts ANY root in the pool's
+    // historical ring (max 100 entries). So if our computed root happens to
+    // match a historical root, the tx will still pass. Verify before
+    // submitting — if it's NOT in the ring, throw early so the caller does
+    // not waste ~0.85 SOL of proof-buffer rent on a guaranteed-failed tx.
     console.warn(
       `[DenomPool] Merkle rebuild root ≠ on-chain current root. ` +
       `computed=${computedRoot.toString(16)} onChain=${onChainRootBig.toString(16)}. ` +
-      `A concurrent shield may have landed; retrying usually picks it up.`
+      `Checking historical ring before submitting.`
     );
-    // Surface the divergence as a structured [P01_DIAG] line so it survives in
-    // logcat alongside the eventual simulation failure — gives the maintainer
-    // a single grep to correlate root drift with the InvalidMerkleRoot below.
+
+    let computedInRing = false;
+    let ringPos: number | null = null;
+    let ringSize = 0;
+    try {
+      const { parsePoolAccount, rootInRing, bigintToLeBytes } = await import('./parsePool');
+      const poolAcc = await connection.getAccountInfo(poolConfig.poolPDA);
+      if (poolAcc) {
+        const parsed = parsePoolAccount(poolAcc.data);
+        if (parsed) {
+          ringSize = parsed.historicalRoots.length;
+          const computedBytes = bigintToLeBytes(computedRoot);
+          ringPos = rootInRing(computedBytes, parsed.historicalRoots);
+          computedInRing = ringPos !== null;
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[DenomPool] ring lookup after rebuild failed: ${e?.message ?? String(e)}`);
+    }
+
     console.log(
       `[P01_DIAG:rebuildDrift] ` +
       JSON.stringify({
@@ -893,7 +984,24 @@ export async function ensureMerkleProof(
         firstMissing: missing.slice(0, 8),
         computedRoot: '0x' + computedRoot.toString(16).padStart(64, '0'),
         onChainRoot: '0x' + onChainRootBig.toString(16).padStart(64, '0'),
+        computedInRing,
+        ringPos,
+        ringSize,
       })
+    );
+
+    if (!computedInRing) {
+      throw new Error(
+        `Merkle rebuild produced a root that is not in the on-chain historical ` +
+        `ring (size ${ringSize}). Submitting would waste ~0.85 SOL of proof-buffer ` +
+        `rent on a guaranteed InvalidMerkleRoot rejection. Likely cause: ` +
+        `concurrent shield landed during proof generation, or scan returned ` +
+        `wrong leaf positions. Retry shortly — if it persists, the tree may have ` +
+        `advanced past the recoverable historical window for this receipt.`
+      );
+    }
+    console.log(
+      `[DenomPool] Computed root is in historical ring at position ${ringPos}/${ringSize} — proceeding with submission.`,
     );
   }
   receipt.merkleRoot = computedRoot;

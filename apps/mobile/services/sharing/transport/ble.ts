@@ -107,6 +107,14 @@ export class BleTransport {
   private peripheralSubscriptions: Array<{ remove: () => void }> = [];
   /** Active characteristic monitor subscriptions (must cancel before disconnect) */
   private monitorSubscriptions: Array<{ remove: () => void }> = [];
+  /**
+   * True while we are intentionally tearing down a ble-plx connection (e.g.
+   * before handing off to the native BleCentralWriteModule for the encrypted
+   * note write). During that window, ble-plx surfaces "Operation was cancelled"
+   * and "Disconnected" errors through every active monitor — these are
+   * expected, NOT user-visible failures. Squelch them.
+   */
+  private _expectingProgrammaticDisconnect = false;
   /** Session nonce for replay prevention (M12) — exchanged with peer during handshake */
   private localNonce: Uint8Array = generateSessionNonce();
   private remoteNonce: Uint8Array | null = null;
@@ -335,6 +343,10 @@ export class BleTransport {
     console.log('[BLE-DBG] sendEncryptedNote: using native BleCentralWriteModule');
 
     // 1. Cancel ble-plx monitors and disconnect (free the GATT handle)
+    // Set the squelch flag BEFORE removing subscriptions / cancelling the
+    // connection so the monitor callback skips the "Operation was cancelled"
+    // error that ble-plx surfaces synchronously during teardown.
+    this._expectingProgrammaticDisconnect = true;
     for (const sub of this.monitorSubscriptions) {
       try { sub.remove(); } catch { /* ok */ }
     }
@@ -371,6 +383,8 @@ export class BleTransport {
     );
 
     console.log(`[BLE-DBG] sendEncryptedNote: native write OK, ${result} chunks written`);
+    // Native write done — clear the squelch flag. Future errors are real.
+    this._expectingProgrammaticDisconnect = false;
   }
 
   /**
@@ -443,11 +457,25 @@ export class BleTransport {
       charUUID,
       (error, characteristic) => {
         if (error) {
-          // Ignore disconnect errors — these fire when the peer disconnects
-          // normally after transfer. ble-plx has a bug where it passes null
-          // error code to Promise.reject, causing a native NPE crash.
           const msg = (error as Error).message || '';
-          if (msg.includes('Disconnected') || msg.includes('disconnected')) {
+          // Squelch errors that result from a programmatic teardown we
+          // initiated ourselves — typically "Operation was cancelled" right
+          // before the native BleCentralWriteModule takes over. Without this
+          // guard, the UI flashes an "error" state for ~1s before the
+          // native write completes and the session transitions to success.
+          if (this._expectingProgrammaticDisconnect) {
+            console.log('[BLE-DBG] Monitor error during programmatic teardown (squelched):', msg.slice(0, 60));
+            return;
+          }
+          // Ignore unsolicited disconnect errors — these fire when the peer
+          // disconnects normally after transfer. ble-plx has a bug where it
+          // passes null error code to Promise.reject, causing a native NPE.
+          if (
+            msg.includes('Disconnected') ||
+            msg.includes('disconnected') ||
+            msg.includes('cancelled') ||
+            msg.includes('Cancelled')
+          ) {
             console.log('[BLE-DBG] Monitor disconnect (expected):', charUUID.slice(-4));
             return;
           }
