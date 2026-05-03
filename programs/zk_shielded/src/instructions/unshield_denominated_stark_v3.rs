@@ -229,22 +229,22 @@ pub fn handler(
     require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
     require!(c3_verified, ZkShieldedError::InvalidProof);
 
-    // Reconstruct C3 expected hash. The merkle_path circuit's public inputs
-    // are (leaf: BaseElement, root: 4 BaseElements little-endian limbs).
+    // Reconstruct C3 expected hash. The merkle_path PROVER
+    // (`stark/src/compact.rs::generate_merkle_path_compact_proof`, line 3961)
+    // stores `public_inputs: vec![leaf, root_u64]` — exactly TWO u64 felts.
+    // (Note: the AIR's `MerklePathPublicInputs::to_elements` returns THREE
+    // including depth, but only the first two are exposed via the prover's
+    // `public_inputs` field that the mobile sends to the verifier.)
     //
-    // V3 leaf format (from migration plan): commitment u64 in bytes 0..8 of
-    // the leaf, zeros 8..32. The C1 commitment is the same `stark_commitment`
-    // u64. The root is `merkle_root` — packed as 4 u64 limbs LE, total 32 B.
-    //
-    // TODO(c3-public-inputs): Confirm exact public-input ordering matches
-    // `MerklePathPublicInputs` in `stark/src/air/merkle_path.rs` and what
-    // `verify_stark_proof_v2` hashes. Until verified, this hash check is
-    // best-effort — must be cross-validated with a host-side gen_proof
-    // run before going live.
+    // The verifier (`p01_stark_verifier::verify_stark_proof_v2`, lines
+    // 182-186) hashes them as `concat(u64.to_le_bytes() for each input)`
+    // = 16 bytes. The V3 leaf format packs the Goldilocks felt into bytes
+    // 0..8 of the 32-byte buffer, so we extract the low 8 bytes for the
+    // root.
     {
-        let mut pub_buf = [0u8; 8 + 32]; // leaf u64 + root [u8;32]
+        let mut pub_buf = [0u8; 16]; // 2 × u64 LE: leaf, root
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
-        pub_buf[8..].copy_from_slice(&merkle_root);
+        pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
             c3_inputs_hash == expected_hash,

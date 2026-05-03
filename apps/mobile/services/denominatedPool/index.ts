@@ -372,6 +372,38 @@ export function rescanPoolFromSeed(params: {
   return matches;
 }
 
+/**
+ * V3 — same as `rescanPoolFromSeed` but uses the Goldilocks Poseidon
+ * `createCommitmentV3`. V3 commitments are u64 (low limb of the t=5 hash);
+ * the on-chain leaf at the same position is exactly that u64 LE-padded to 32
+ * bytes, so `commitment.toString()` matches the bigint we read from the
+ * `LeafInserted.leaf` field via `leBytes32ToBigint`.
+ */
+export function rescanPoolFromSeedV3(params: {
+  walletSeed: Uint8Array;
+  poolPDA: PublicKey;
+  tokenMints: PublicKey[];
+  epochs: bigint[];
+  maxCounter: number;
+  knownCommitments: Set<string>;
+}): RescannedReceipt[] {
+  const { walletSeed, poolPDA, tokenMints, epochs, maxCounter, knownCommitments } = params;
+  const matches: RescannedReceipt[] = [];
+  const mintFields = tokenMints.map(pubkeyToField);
+  for (let counter = 0; counter <= maxCounter; counter++) {
+    const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolPDA, counter);
+    for (const epoch of epochs) {
+      for (const mintField of mintFields) {
+        const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, mintField);
+        if (knownCommitments.has(commitment.toString())) {
+          matches.push({ counter, depositEpoch: epoch, secret, nullifierPreimage, commitment });
+        }
+      }
+    }
+  }
+  return matches;
+}
+
 export function pubkeyToField(pubkey: PublicKey): bigint {
   const bytes = pubkey.toBytes();
   let n = 0n;
@@ -408,8 +440,23 @@ const LEAF_INSERTION_EVENTS: Array<{
   leafIndexOffset: number;
   minLength: number;
 }> = [
-  // Every leaf insertion emits this (post-hardening). Ordered first so it
-  // wins the disc match on modern events without a layout lookup.
+  // V3 universal LeafInserted event (programs/zk_shielded/src/state/merkle_tree_v3.rs:209)
+  // Layout (after 8-byte disc):
+  //   pool: Pubkey (32) @ 8
+  //   leaf_index: u64 (8) @ 40
+  //   leaf: [u8; 32] (32) @ 48
+  //   new_root: [u8; 32] (32) @ 80
+  //   old_root: [u8; 32] (32) @ 112
+  // Total: 144 bytes. Listed first so it wins the disc match on V3 events.
+  {
+    name: 'LeafInserted',
+    disc: anchorEventDiscriminator('LeafInserted'),
+    commitmentOffset: 48,
+    leafIndexOffset: 40,
+    minLength: 144,
+  },
+  // V2: every leaf insertion emits this (post-hardening). Ordered after V3
+  // so V3 events win first. Pre-hardening v2 pools fall through to flavored.
   {
     name: 'MerkleRootChanged',
     disc: MERKLE_ROOT_CHANGED_DISC,
@@ -2337,11 +2384,20 @@ function toGoldilocks(x: bigint): bigint {
 // ---------------------------------------------------------------------------
 
 /**
- * V3 commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)
- * computed via the Rust `hash4` (single t=5 permutation). Mirrors
- * `stark/src/air/denominated_pool.rs`. Inputs are reduced mod Goldilocks
- * before hashing — Goldilocks fits in u64 and the WASM bridge truncates
- * via `& U64_MASK` anyway.
+ * V3 commitment — MUST match the on-chain AIR formula in
+ * `stark/src/air/denominated_pool.rs` lines 349-351:
+ *
+ *   nullifier  = hash2(nullifier_preimage, secret)
+ *   epoch_hash = hash2(deposit_epoch, token_mint)
+ *   commitment = hash2(nullifier, epoch_hash)
+ *
+ * Three sequential t=3 (hash2) calls — NOT a single t=5 hash4. The C1
+ * STARK proof's `commitment` public input is the result of this exact
+ * formula; if the mobile uses anything else, the leaf in the on-chain
+ * tree will not equal `c1.publicInputs[1]` and the unshield ix's
+ * `c1.commitment == c3.leaf` tie-up will fail with InvalidProof.
+ *
+ * Inputs are reduced mod Goldilocks (each is a u64).
  */
 export function createCommitmentV3(
   nullifierPreimage: bigint,
@@ -2349,12 +2405,15 @@ export function createCommitmentV3(
   depositEpoch: bigint,
   tokenMint: bigint,
 ): bigint {
-  return poseidonHash4(
+  const nullifier = poseidonHash2(
     toGoldilocks(nullifierPreimage & U64_MASK_V3),
     toGoldilocks(secret & U64_MASK_V3),
+  );
+  const epochHash = poseidonHash2(
     toGoldilocks(depositEpoch & U64_MASK_V3),
     toGoldilocks(tokenMint & U64_MASK_V3),
   );
+  return poseidonHash2(nullifier, epochHash);
 }
 
 /**
@@ -2963,7 +3022,13 @@ export async function unshieldDenominatedStarkV3(
     onProgress?.('Building V3 unshield transaction...');
     const goldilocksNullifier = c1ProofResult.publicInputs[0] ?? 0n;
     const nullifierBytes = goldilocksToLeBytes32(goldilocksNullifier);
-    const merkleRootBytes = goldilocksToLeBytes32(receipt.merkleRoot ?? 0n);
+    // Extract the merkle root from the C3 proof's public inputs (layout
+    // [leaf, root, depth] per stark/src/air/merkle_path.rs:67). This is the
+    // canonical source — `receipt.merkleRoot` from a recovered note is
+    // undefined and the screen's local mutation doesn't survive into the
+    // store action's fresh receipt read.
+    const merkleRootGl = c3ProofResult.publicInputs[1] ?? receipt.merkleRoot ?? 0n;
+    const merkleRootBytes = goldilocksToLeBytes32(merkleRootGl);
     const starkCommitment = c1ProofResult.publicInputs[1] ?? 0n;
 
     const slot = await connection.getSlot('confirmed');

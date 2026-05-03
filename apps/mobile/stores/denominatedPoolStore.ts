@@ -42,7 +42,7 @@ import {
   deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner, getPrivyMessageSigner } from './walletStore';
-import { deriveSeedFromSigner, rescanPoolFromSeed, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
+import { deriveSeedFromSigner, rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
 
 /**
  * Walk the counter forward until we find one whose derived nullifier PDAs
@@ -1914,9 +1914,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
       rescanPool: async (poolPDA, opts) => {
         const cluster = getCluster();
+        // Scan BOTH v2 and v3 pools. The two have different commitment hash
+        // functions (BN254 vs Goldilocks) so each pool is dispatched to its
+        // own rescanPoolFromSeed* helper below.
+        const allPoolsCombined = [...ALL_POOLS, ...ALL_POOLS_V3];
         const targetPools = poolPDA
-          ? ALL_POOLS.filter(p => p.poolPDA.toBase58() === poolPDA)
-          : ALL_POOLS;
+          ? allPoolsCombined.filter(p => p.poolPDA.toBase58() === poolPDA)
+          : allPoolsCombined;
         if (targetPools.length === 0) {
           throw new Error('No pool to rescan');
         }
@@ -1968,7 +1972,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             console.log(`[Rescan] ${label} — ${onChain.size} commitments on-chain`);
             if (onChain.size === 0) continue;
 
-            const matches = rescanPoolFromSeed({
+            const isV3 = pool.version === 'v3';
+            const rescanFn = isV3 ? rescanPoolFromSeedV3 : rescanPoolFromSeed;
+            const matches = rescanFn({
               walletSeed,
               poolPDA: pool.poolPDA,
               tokenMints: [pool.tokenMint],
@@ -2019,6 +2025,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               source: 'shielded' as NoteSource,
               cluster,
               recoveredAt: Date.now(),
+              // Stamp the pool version so the unshield path routes to the
+              // correct (v2 or v3) STARK ix at spend time.
+              poolVersion: pool.version === 'v3' ? 'v3' : 'v2',
             });
             if (m.counter + 1 > highestCounter) highestCounter = m.counter + 1;
           }
