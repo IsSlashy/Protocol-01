@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/mobile",
-  "version": "0.9.9",
+  "version": "0.9.11",
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "main": "./index.js",
