@@ -20,7 +20,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 
-import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
+import { useDenominatedPoolStore, findSafeShieldCounter } from '@/stores/denominatedPoolStore';
 import { useWalletStore } from '@/stores/walletStore';
 import { useAuth } from '@/providers/PrivyProvider';
 import {
@@ -183,9 +183,24 @@ export default function DenominatedShieldScreen() {
           }
           if (!walletSeed) throw new Error('No wallet seed available — cannot derive V3 note');
 
-          // V3 uses a fresh counter namespace from v2 (different commitment hash function),
-          // so reusing the v2 shieldCounters key is safe — the derived nullifier PDAs differ.
-          const counter = 0; // TODO(v3-counter): track per-pool counter for V3 the same way v2 does.
+          // V3 uses the SAME shieldCounters store entry as v2 — the derived
+          // nullifier PDAs differ by hash function, so a counter shared between
+          // the two namespaces is fine. Without this, every V3 shield would
+          // re-use counter=0 → same (np, secret) → same nullifier → only one
+          // V3 unshield ever possible per pool per wallet (the v3-counter bug
+          // surfaced live on devnet 2026-05-03 when re-shielding into SOL 0.1
+          // V3 produced a note that `refreshNoteStatuses` immediately marked
+          // 'spent' because the previous V3 unshield's nullifier was still
+          // on-chain).
+          //
+          // findSafeShieldCounter walks counters from `startCounter`, checks
+          // BOTH BN254 and Goldilocks nullifier PDAs, and returns the first
+          // one with no on-chain nullifier — robust against (a) cross-device
+          // shields the local store doesn't know about and (b) post-wipe
+          // resync gaps.
+          const poolKey = selectedPool.poolPDA.toBase58();
+          const startCounter = useDenominatedPoolStore.getState().shieldCounters[poolKey] ?? 0;
+          const counter = await findSafeShieldCounter(connection, walletSeed, selectedPool.poolPDA, startCounter);
           const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, selectedPool.poolPDA, counter);
 
           const slot = await connection.getSlot('confirmed');
@@ -234,6 +249,7 @@ export default function DenominatedShieldScreen() {
               nullifierPreimage,
               depositEpoch,
               leafIndex: leafCount,
+              counter,
             },
             { proofBytes: c6ProofBytes, publicInputs: c6PublicInputs, proofSize: c6Result.proofSize },
           );

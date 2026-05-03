@@ -55,7 +55,7 @@ import { deriveSeedFromSigner, rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPo
  * Returns the first safe counter. Throws if no free counter is found within
  * `maxAttempts`.
  */
-async function findSafeShieldCounter(
+export async function findSafeShieldCounter(
   connection: Connection,
   walletSeed: Uint8Array,
   poolPDA: PublicKey,
@@ -196,6 +196,10 @@ interface DenominatedPoolState {
       nullifierPreimage: bigint;
       depositEpoch: bigint;
       leafIndex: number;
+      /** Counter chosen via findSafeShieldCounter — store advances
+       * `shieldCounters[poolKey] = counter + 1` after successful shield to
+       * avoid v3-counter nullifier collisions on the next shield. */
+      counter: number;
     },
     c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   ) => Promise<string>;
@@ -1003,11 +1007,21 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           };
 
           console.log('[DenomStore] V3 note stored:', storedNote.id, 'sig:', txSig.slice(0, 16));
+          // Advance the per-pool counter so the NEXT V3 shield uses a fresh
+          // (np, secret) and avoids the v3-counter nullifier collision bug.
+          // findSafeShieldCounter chose `insertParams.counter`; the next safe
+          // candidate is `counter + 1` (it'll re-walk on the next shield to
+          // skip any cross-device shifts).
+          const poolKey = pool.poolPDA.toBase58();
           set(state => ({
             isLoading: false,
             isProving: false,
             progress: null,
             notes: [storedNote, ...state.notes],
+            shieldCounters: {
+              ...state.shieldCounters,
+              [poolKey]: insertParams.counter + 1,
+            },
           }));
 
           scheduleLocalNotification(
