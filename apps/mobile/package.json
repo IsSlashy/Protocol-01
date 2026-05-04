@@ -134,6 +134,7 @@
   "devDependencies": {
     "@babel/core": "^7.29.0",
     "@types/react": "~19.2.14",
+    "babel-plugin-transform-remove-console": "^6.9.4",
     "eas-cli": "^16.28.0",
     "eslint": "^8.57.0",
     "eslint-config-expo": "~10.0.0",
