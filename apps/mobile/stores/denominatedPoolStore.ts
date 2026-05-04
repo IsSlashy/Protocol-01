@@ -28,6 +28,7 @@ import {
   unshieldStark,
   unshieldDenominatedStarkV3,
   transferNoteStark as serviceTransferNoteStark,
+  transferDenominatedStarkV3 as serviceTransferDenominatedStarkV3,
   splitNoteStark as serviceSplitNoteStark,
   importNote as serviceImportNote,
   exportNote as serviceExportNote,
@@ -239,6 +240,28 @@ interface DenominatedPoolState {
   transferNoteStark: (
     noteId: string,
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  ) => Promise<{ txSig: string; shareableNote: string }>;
+  /**
+   * V3 STARK transfer — 4-tx orchestration (C1 + C3 + C6 + transfer_v3).
+   * Caller (screen) generates the three proofs sequentially via StarkProver
+   * (single-threaded) and pre-computes the new note material + insertion
+   * deltas. Stealth signer + per-note deterministic seed mirror the v2
+   * `transferNoteStark` privacy posture.
+   */
+  transferNoteStarkV3: (
+    noteId: string,
+    c1ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    c6ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    insertParams: {
+      newCommitment: bigint;
+      newRoot: bigint;
+      newSubtrees: bigint[];     // depth entries (levels 1..=depth)
+      newSecret: bigint;
+      newNullifierPreimage: bigint;
+      newDepositEpoch: bigint;
+      newLeafIndex: number;
+    },
   ) => Promise<{ txSig: string; shareableNote: string }>;
   /** Quantum-resistant STARK split across denominations (same token) */
   splitNoteStark: (
@@ -473,9 +496,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
       refreshPoolInfo: async (poolPDA?: string) => {
         const connection = getConnection();
+        // Both v2 and V3 pool generations participate in the cache: V3 pools
+        // are real on-chain accounts whose `epoch_delay` + `dynamic_delay`
+        // feed `refreshNoteStatuses` for V3 imported notes. Excluding V3 here
+        // would force the maturity check to fall back to default delays.
+        const allPoolsCombined = [...ALL_POOLS, ...ALL_POOLS_V3];
         const pools = poolPDA
-          ? ALL_POOLS.filter(p => p.poolPDA.toBase58() === poolPDA)
-          : ALL_POOLS;
+          ? allPoolsCombined.filter(p => p.poolPDA.toBase58() === poolPDA)
+          : allPoolsCombined;
 
         const cache = { ...get().poolCache };
         const now = Date.now();
@@ -640,7 +668,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             }
 
             const receipt = readReceipt(note.receiptJSON);
-            const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
+            // Lookup must include V3 pools — without this, a V3 imported note
+            // (e.g. received via transfer) returns early here and stays stuck
+            // at status='imported' forever instead of transitioning to 'mature'.
+            const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA)
+              ?? ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
             if (!pool) return note;
 
             const cached = get().poolCache[note.poolPDA];
@@ -1740,6 +1772,150 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       },
 
       // ------------------------------------------------------------------
+      // STARK Transfer Note V3 (4-tx: C1 + C3 + C6 + transfer_v3)
+      // ------------------------------------------------------------------
+
+      transferNoteStarkV3: async (noteId, c1ProofData, c3ProofData, c6ProofData, insertParams) => {
+        if (get().isLoading) {
+          console.warn('[DenomStore] transferNoteStarkV3 ignored — another operation in progress');
+          throw new Error('Another shield/unshield is already in progress. Please wait.');
+        }
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.status !== 'mature') throw new Error('Note must be mature for transfer');
+        if (note.poolVersion !== 'v3') {
+          throw new Error('transferNoteStarkV3 called with non-v3 note — use transferNoteStark for v2');
+        }
+
+        const receipt = readReceipt(note.receiptJSON);
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('V3 pool config not found for this note');
+
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V3 STARK transfer...' });
+
+        // Hoisted for crash-sweep (mirrors v2 transferNoteStark).
+        let stealthKp: SolKeypair | null = null;
+
+        try {
+          const walletSigner = getWalletSignerIfPrivy();
+          const walletAddr = walletSigner?.publicKey.toBase58()
+            || useWalletStore.getState().publicKey || '';
+
+          // Deterministic per-note stealth signer — namespace differs from v2
+          // so a v2/v3 collision on the same noteId can't happen.
+          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_v3_${noteId}`));
+          stealthKp = SolKeypair.fromSeed(seed);
+
+          // V3 transfer = THREE proof buffers (C1 + C3 + C6). Pre-fund covers
+          // all three rents + nullifier PDA + tx fees. Buffers are closed in
+          // the service `finally` so net cost ≈ 0.003 SOL.
+          set({ progress: 'Funding stealth signer (V3)...' });
+          const connection = getConnection();
+          const PROOF_DATA_OFFSET_LOCAL = 83;
+          const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c1ProofData.proofSize);
+          const c3Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c3ProofData.proofSize);
+          const c6Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c6ProofData.proofSize);
+          // 0.02 SOL margin — covers 5 confirmable txs (init+upload×3 + transfer + close×3),
+          // nullifier PDA rent, and rate-limit retries.
+          const FEE_FUND = c1Rent + c3Rent + c6Rent + 20_000_000;
+          console.log(`[DenomStore/V3] Transfer pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL (c1=${(c1Rent / 1e9).toFixed(4)} c3=${(c3Rent / 1e9).toFixed(4)} c6=${(c6Rent / 1e9).toFixed(4)})`);
+
+          if (walletSigner) {
+            const fundTx = new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: walletSigner.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND }),
+            );
+            const { blockhash } = await connection.getLatestBlockhash();
+            fundTx.recentBlockhash = blockhash;
+            fundTx.feePayer = walletSigner.publicKey;
+            const signedFund = await walletSigner.signTransaction(fundTx);
+            await connection.sendRawTransaction(signedFund.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+          } else {
+            const kp = await getKeypair();
+            if (kp) {
+              const fundTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND }),
+              );
+              await sendAndConfirmTransaction(connection, fundTx, [kp], { commitment: 'confirmed' });
+            }
+          }
+
+          // Timing jitter (1-3s)
+          const jitter = 1000 + Math.floor(Math.random() * 2000);
+          set({ progress: 'Waiting (timing privacy)...' });
+          await new Promise(r => setTimeout(r, jitter));
+
+          const { txSig, recipientNote } = await serviceTransferDenominatedStarkV3(
+            receipt,
+            pool,
+            c1ProofData,
+            c3ProofData,
+            c6ProofData,
+            insertParams,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK') || step.includes('C1') || step.includes('C3') || step.includes('C6');
+              set({ progress: step, isProving: proving });
+            },
+            undefined,
+            stealthKp,
+          );
+
+          const encoded = encodeShareableNote(recipientNote);
+
+          set(state => ({
+            isLoading: false,
+            isProving: false,
+            progress: null,
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'transferred' as NoteStatus, spentTxSig: txSig, transferredTo: encoded } : n
+            ),
+          }));
+
+          return { txSig, shareableNote: encoded };
+        } catch (err) {
+          console.error('[DenomPool/V3] STARK transfer error:', err);
+
+          // Crash-sweep stranded stealth balance back to the user wallet.
+          const walletAddrForSweep =
+            getWalletSignerIfPrivy()?.publicKey.toBase58()
+            || useWalletStore.getState().publicKey;
+          if (stealthKp && walletAddrForSweep) {
+            try {
+              const connection = getConnection();
+              const stealthBal = await connection.getBalance(stealthKp.publicKey);
+              const FEE_RESERVE = 5000;
+              if (stealthBal > FEE_RESERVE) {
+                const sweepAmount = stealthBal - FEE_RESERVE;
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({
+                    fromPubkey: stealthKp.publicKey,
+                    toPubkey: new PublicKey(walletAddrForSweep),
+                    lamports: sweepAmount,
+                  }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthKp.publicKey;
+                sweepTx.sign(stealthKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore/V3] 🛟 crash-sweep (transfer V3): ${(sweepAmount / 1e9).toFixed(4)} SOL recovered → ${walletAddrForSweep.slice(0, 12)}… sig=${sweepSig.slice(0, 16)}…`);
+              }
+            } catch (sweepErr: any) {
+              console.error(
+                `[DenomStore/V3] ❌ transfer V3 crash-sweep FAILED — funds stuck at ${stealthKp.publicKey.toBase58()}:`,
+                sweepErr.message,
+              );
+            }
+          }
+
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+          throw err;
+        }
+      },
+
+      // ------------------------------------------------------------------
       // STARK Split Note (quantum-resistant, cross-denomination)
       // ------------------------------------------------------------------
 
@@ -1862,7 +2038,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const noteData = decodeShareableNote(encodedNote);
           const receipt = serviceImportNote(noteData);
-          const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === noteData.pool);
+          // V3 first — peer-to-peer V3 transfers (and any future V3 share)
+          // land in this branch. Falling back to v2 keeps the legacy receive
+          // flow working until v2 deprecation.
+          const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === noteData.pool)
+            ?? ALL_POOLS.find(p => p.poolPDA.toBase58() === noteData.pool);
           if (!pool) throw new Error('Unknown pool');
 
           const storedNote: StoredNote = {
@@ -1871,6 +2051,10 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             token: noteData.token,
             denomination: noteData.denominationHuman,
             poolPDA: noteData.pool,
+            // Stamp pool generation so the unshield/transfer screens route to
+            // the right ix variant. Without this, a V3-imported note would
+            // attempt v2 unshield → on-chain reject (wrong pool seed).
+            poolVersion: pool.version === 'v3' ? 'v3' : 'v2',
             shieldedAt: receipt.shieldedAt || Date.now(),
             status: 'imported',
             source,
@@ -1910,7 +2094,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           .filter(n => n.status !== 'spent')
           .map(n => {
             const receipt = readReceipt(n.receiptJSON);
-            const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === n.poolPDA);
+            const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === n.poolPDA)
+              ?? ALL_POOLS.find(p => p.poolPDA.toBase58() === n.poolPDA);
             if (!pool) return '';
             return encodeShareableNote(serviceExportNote(receipt, pool));
           })
@@ -1921,7 +2106,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         const receipt = readReceipt(note.receiptJSON);
-        const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA)
+          ?? ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
         if (!pool) throw new Error('Pool config not found');
         return encodeShareableNote(serviceExportNote(receipt, pool));
       },

@@ -15,7 +15,7 @@ import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { useDenominatedPoolStore, type NoteSource } from '@/stores/denominatedPoolStore';
-import { decodeShareableNote, ALL_POOLS } from '@/services/denominatedPool';
+import { decodeShareableNote, ALL_POOLS, ALL_POOLS_V3 } from '@/services/denominatedPool';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 
@@ -39,7 +39,9 @@ export default function DenominatedImportScreen() {
     setPreviewError(null);
     try {
       const decoded = decodeShareableNote(text.trim());
-      const poolFound = ALL_POOLS.some(p => p.poolPDA.toBase58() === decoded.pool);
+      const poolFound =
+        ALL_POOLS_V3.some(p => p.poolPDA.toBase58() === decoded.pool)
+        || ALL_POOLS.some(p => p.poolPDA.toBase58() === decoded.pool);
       setPreview({ token: decoded.token, denomination: decoded.denominationHuman, poolFound });
       if (!poolFound) {
         setPreviewError('Unknown pool — this note may be from a different network.');

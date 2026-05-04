@@ -268,6 +268,36 @@ pub mod zk_shielded {
         )
     }
 
+    /// V3 transfer of a note within a denominated pool using THREE STARK proofs:
+    ///   - C1 (pool_commitment): proves ownership of the old note.
+    ///   - C3 (merkle_path): proves the old commitment is at `merkle_root`
+    ///     (closes the v2 trust gap where membership was never on-chain proven).
+    ///   - C6 (merkle_update): proves the new commitment insertion against the
+    ///     current pool root.
+    /// Funds do not move (same pool, same denomination). Universal `LeafInserted`
+    /// is emitted by `insert_with_root_v3`.
+    pub fn transfer_denominated_stark_v3(
+        ctx: Context<TransferDenominatedStarkV3>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        min_epoch: u64,
+        stark_commitment: u64,
+        new_commitment: [u8; 32],
+        new_root: [u8; 32],
+        new_subtrees: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::transfer_denominated_stark_v3::handler(
+            ctx,
+            nullifier,
+            merkle_root,
+            min_epoch,
+            stark_commitment,
+            new_commitment,
+            new_root,
+            new_subtrees,
+        )
+    }
+
     /// Split a note into multiple notes in a lower-denomination pool using STARK
     /// (quantum-resistant). Uses circuit 1 for source ownership; output commitments
     /// are bound by the payer's signature on the instruction data.

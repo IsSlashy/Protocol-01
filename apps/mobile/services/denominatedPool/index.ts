@@ -2785,6 +2785,60 @@ function buildUnshieldDenominatedStarkV3Ix(
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
+/** Build `transfer_denominated_stark_v3`. Args:
+ *  nullifier[32], merkle_root[32] (C3 root, must be in pool ring), min_epoch u64,
+ *  stark_commitment u64 (old leaf), new_commitment[32], new_root[32],
+ *  new_subtrees: Vec<[u8;32]> (depth entries — levels 1..=depth from C6).
+ *  Account ordering must match `TransferDenominatedStarkV3` struct in
+ *  programs/zk_shielded/src/instructions/transfer_denominated_stark_v3.rs.
+ */
+function buildTransferDenominatedStarkV3Ix(
+  payer: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
+  c6ProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  starkCommitment: bigint,
+  newCommitmentBytes: number[],
+  newRootBytes: number[],
+  newSubtreesBytes: number[][],
+): TransactionInstruction {
+  const disc = getDiscriminator('transfer_denominated_stark_v3');
+  const subtreesBytesLen = 4 + newSubtreesBytes.length * 32;
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32 + 32 + subtreesBytesLen);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+  Buffer.from(newCommitmentBytes).copy(data, offset); offset += 32;
+  Buffer.from(newRootBytes).copy(data, offset); offset += 32;
+  data.writeUInt32LE(newSubtreesBytes.length, offset); offset += 4;
+  for (const st of newSubtreesBytes) {
+    Buffer.from(st).copy(data, offset);
+    offset += 32;
+  }
+
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: true },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    { pubkey: c1ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: c3ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: c6ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
 // ---------------------------------------------------------------------------
 // V3 high-level flow functions
 // ---------------------------------------------------------------------------
@@ -3101,11 +3155,224 @@ export async function unshieldDenominatedStarkV3(
   }
 }
 
-// TODO(v3-transfer): port `transferNoteStark` to V3 once
-// `transfer_denominated_stark_v3` ships in zk_shielded (commit 2447df7
-// only includes init/shield/unshield_v3). Will need both C1 (source nullifier
-// proof) and C6 (recipient leaf insertion proof) buffers.
-//
+/**
+ * V3 transfer — orchestrates 4 STARK txs + the transfer ix:
+ *   (1) submit + verify C1 (pool_commitment)  → c1ProofBuffer
+ *   (2) submit + verify C3 (merkle_path)      → c3ProofBuffer
+ *   (3) submit + verify C6 (merkle_update)    → c6ProofBuffer
+ *   (4) build + send `transfer_denominated_stark_v3` referencing all three
+ *   (5) close all three buffers (rent recovery)
+ *
+ * All proofs must share the same `payer` (the on-chain handler enforces
+ * `c1.authority == c3.authority == c6.authority == payer`). The caller
+ * supplies a stealth keypair via `overrideKeypair` to break wallet linkage.
+ *
+ * Public-input convention (matches on-chain hash reconstruction):
+ *   `c1ProofResult.publicInputs = [old_nullifier_u64, old_commitment_u64]`
+ *   `c3ProofResult.publicInputs = [old_commitment_u64, old_root_u64]`
+ *   `c6ProofResult.publicInputs = [0, new_commitment_u64, current_root_u64,
+ *                                  new_root_u64, depth_u64]`
+ *
+ * `merkleRoot` is the root the C3 proof targeted (must be in
+ * `pool.historical_roots`). It can differ from C6's `current_root_u64` —
+ * C3 reads any historical root, C6 must witness against the LATEST root the
+ * tree had when this tx was built.
+ */
+export async function transferDenominatedStarkV3(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  insertParams: {
+    newCommitment: bigint;
+    newRoot: bigint;
+    newSubtrees: bigint[];   // depth entries — levels 1..=depth, NOT including the leaf
+    newSecret: bigint;
+    newNullifierPreimage: bigint;
+    newDepositEpoch: bigint;
+    newLeafIndex: number;
+  },
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+  overrideKeypair?: import('@solana/web3.js').Keypair,
+): Promise<{ txSig: string; recipientNote: ShareableNote }> {
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_POOL_COMMITMENT,
+    CIRCUIT_MERKLE_PATH,
+    CIRCUIT_MERKLE_UPDATE,
+    getProofBufferPDA,
+  } = await import('../stark');
+
+  onProgress?.('Reading wallet...');
+  const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+  const connection = getConnection();
+
+  const starkSigner: WalletSigner = keypair
+    ? {
+        publicKey: keypair.publicKey,
+        signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+      }
+    : walletSigner!;
+
+  // All three proof-buffer PDAs derived upfront so the finally block can
+  // close any buffer that was successfully verified — even if a later step
+  // throws mid-flight.
+  const [c1ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
+  const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
+  const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
+
+  let c1Verified = false;
+  let c3Verified = false;
+  let c6Verified = false;
+
+  try {
+    // Maturity / epoch math (mirrors v2 transferNoteStark)
+    onProgress?.('Reading pool state...');
+    const slot = await connection.getSlot('confirmed');
+    const currentEpoch = slotToEpoch(slot);
+    const poolInfo = await fetchPoolInfo(connection, poolConfig);
+    if (!poolInfo) throw new Error('Pool not found');
+    const totalDelay = poolInfo.epochDelay + BigInt(poolInfo.dynamicDelay);
+    const minEpoch = currentEpoch - totalDelay;
+
+    // 1. C1 — proves ownership of OLD note.
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c1ProofResult.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: c1ProofResult.publicInputs,
+        proofSize: c1ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+    c1Verified = true;
+
+    // 2. C3 — proves OLD commitment is at supplied merkle_root.
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c3ProofResult.proofBytes,
+        circuitId: CIRCUIT_MERKLE_PATH,
+        publicInputs: c3ProofResult.publicInputs,
+        proofSize: c3ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+    c3Verified = true;
+
+    // 3. C6 — proves NEW commitment insertion against the current pool root.
+    onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c6ProofResult.proofBytes,
+        circuitId: CIRCUIT_MERKLE_UPDATE,
+        publicInputs: c6ProofResult.publicInputs,
+        proofSize: c6ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+    c6Verified = true;
+
+    // 4. Build + send transfer_denominated_stark_v3 referencing all three buffers.
+    onProgress?.('Building V3 transfer transaction...');
+    const goldilocksNullifier = c1ProofResult.publicInputs[0] ?? 0n;
+    const nullifierBytes = goldilocksToLeBytes32(goldilocksNullifier);
+
+    // C3's root is canonical for the source-side membership check (matches
+    // what the prover witnessed). Falling back to receipt.merkleRoot covers
+    // the (theoretically unreachable) case where C3 only exposed [leaf].
+    const c3Root = c3ProofResult.publicInputs[1] ?? receipt.merkleRoot ?? 0n;
+    const merkleRootBytes = goldilocksToLeBytes32(c3Root);
+
+    const starkCommitment = c1ProofResult.publicInputs[1] ?? 0n;
+    const newCommitmentBytes = goldilocksToLeBytes32(insertParams.newCommitment);
+    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
+    const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
+
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const ix = buildTransferDenominatedStarkV3Ix(
+      starkSigner.publicKey,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c1ProofBuffer,
+      c3ProofBuffer,
+      c6ProofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      starkCommitment,
+      newCommitmentBytes,
+      newRootBytes,
+      newSubtreesBytes,
+    );
+
+    onProgress?.('Sending V3 transfer transaction...');
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    tx.add(ix);
+    const txSig = overrideKeypair
+      ? await signAndSend(connection, tx, overrideKeypair, undefined)
+      : await signAndSend(connection, tx, keypair, walletSigner);
+
+    onProgress?.('V3 transfer confirmed!');
+
+    const recipientNote: ShareableNote = {
+      version: 1,
+      pool: poolConfig.poolPDA.toBase58(),
+      secret: insertParams.newSecret.toString(),
+      nullifier_preimage: insertParams.newNullifierPreimage.toString(),
+      deposit_epoch: insertParams.newDepositEpoch.toString(),
+      token_mint: receipt.tokenMint.toString(),
+      commitment: insertParams.newCommitment.toString(),
+      leafIndex: insertParams.newLeafIndex,
+      token: poolConfig.token,
+      denominationHuman: poolConfig.denomination,
+    };
+
+    return { txSig, recipientNote };
+  } finally {
+    // Close any successfully-verified buffer to recover rent, regardless of
+    // whether the transfer ix succeeded or threw mid-flight.
+    if (c1Verified) {
+      try {
+        onProgress?.('Closing C1 proof buffer...');
+        await closeStarkProofBuffer(c1ProofBuffer, starkSigner, connection);
+      } catch (e: any) {
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer C1) failed:', e?.message ?? String(e));
+      }
+    }
+    if (c3Verified) {
+      try {
+        onProgress?.('Closing C3 proof buffer...');
+        await closeStarkProofBuffer(c3ProofBuffer, starkSigner, connection);
+      } catch (e: any) {
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer C3) failed:', e?.message ?? String(e));
+      }
+    }
+    if (c6Verified) {
+      try {
+        onProgress?.('Closing C6 proof buffer...');
+        await closeStarkProofBuffer(c6ProofBuffer, starkSigner, connection);
+      } catch (e: any) {
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer C6) failed:', e?.message ?? String(e));
+      }
+    }
+  }
+}
+
 // TODO(v3-split): port `splitNoteStark` to V3 once `split_note_stark_v3`
 // ships. N output leaves require 1 C1 (source) + N C6 (one per output) proofs
 // — orchestrate sequentially or chunk by tx-budget.
@@ -3143,7 +3410,11 @@ export function importNote(noteData: ShareableNote): ShieldReceipt {
     throw new Error(`Unsupported note version: ${noteData.version}`);
   }
 
-  const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === noteData.pool);
+  // V3 transfer outputs land in V3 pools; the receiver must be able to
+  // import notes targeting either generation. ALL_POOLS_V3 is checked first
+  // (V3 is the future default); falling back to ALL_POOLS preserves v2 import.
+  const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === noteData.pool)
+    ?? ALL_POOLS.find(p => p.poolPDA.toBase58() === noteData.pool);
   if (!pool) {
     throw new Error(`Unknown pool: ${noteData.pool}`);
   }
@@ -3153,8 +3424,13 @@ export function importNote(noteData: ShareableNote): ShieldReceipt {
   const depositEpoch = BigInt(noteData.deposit_epoch);
   const tokenMint = BigInt(noteData.token_mint);
 
-  // Verify commitment matches
-  const expectedCommitment = createCommitment(nullifierPreimage, secret, depositEpoch, tokenMint);
+  // Verify commitment with the hash function matching the pool generation.
+  // V3 = Goldilocks Poseidon t=5 (`createCommitmentV3`); v2 = BN254 Poseidon
+  // t=4 (`createCommitment`). Mixing them silently produces a "commitment
+  // does not match secrets" error that masks the real cause.
+  const expectedCommitment = pool.version === 'v3'
+    ? createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMint)
+    : createCommitment(nullifierPreimage, secret, depositEpoch, tokenMint);
   const providedCommitment = BigInt(noteData.commitment);
   if (expectedCommitment !== providedCommitment) {
     throw new Error('Invalid note: commitment does not match secrets');

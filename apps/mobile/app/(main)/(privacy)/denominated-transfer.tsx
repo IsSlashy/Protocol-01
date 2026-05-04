@@ -14,13 +14,43 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
+import { Buffer } from 'buffer';
 import { useDenominatedPoolStore, type StoredNote } from '@/stores/denominatedPoolStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { receiptFromJSON } from '@/services/denominatedPool';
+import {
+  receiptFromJSON,
+  ALL_POOLS_V3,
+  fetchPoolLeavesByIndex,
+  buildMerkleProofFromLeavesV3,
+  computeNewRootFromSubtreesV3,
+  parseFilledSubtrees,
+  createCommitmentV3,
+  pubkeyToField,
+  slotToEpoch,
+} from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
+import { getConnection } from '@/services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
+
+/**
+ * 64-bit cryptographically-random scalar for V3 transfer note secrets.
+ * The recipient's note must be unrelated to the sender's wallet seed —
+ * deterministic recovery doesn't apply, only the recipient's possession of
+ * `(secret, nullifier_preimage)` lets them spend the note.
+ */
+function secureRandomU64(): bigint {
+  const bytes = new Uint8Array(8);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 8; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  let n = 0n;
+  for (let i = 0; i < 8; i++) n = (n << 8n) | BigInt(bytes[i]);
+  return n;
+}
 
 export default function DenominatedTransferScreen() {
   return <TransferScreenContent />;
@@ -34,12 +64,18 @@ function TransferScreenContent() {
   const {
     notes,
     transferNoteStark,
+    transferNoteStarkV3,
     isLoading,
     isProving,
     progress,
     error,
   } = useDenominatedPoolStore();
-  const { isReady: starkReady, generatePoolCommitmentProof } = useStarkProver();
+  const {
+    isReady: starkReady,
+    generatePoolCommitmentProof,
+    generateMerklePathProof,
+    generateMerkleUpdateProof,
+  } = useStarkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(paramNoteId ?? null);
   const [result, setResult] = useState<{ txSig: string; shareableNote: string } | null>(null);
@@ -72,23 +108,120 @@ function TransferScreenContent() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
-      const starkResult = await generatePoolCommitmentProof(
-        receipt.nullifierPreimage.toString(),
-        receipt.secret.toString(),
-        receipt.depositEpoch.toString(),
-        receipt.tokenMint.toString(),
-      );
-      const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
-      const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
-      const res = await transferNoteStark(selectedNoteId, {
-        proofBytes, publicInputs, proofSize: starkResult.proofSize,
-      });
-      setResult(res);
+
+      if (note.poolVersion === 'v3') {
+        // V3 path — generate C1 + C3 + C6 sequentially. The StarkProver
+        // WebView is single-threaded; never use Promise.all here.
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('V3 pool config not found');
+
+        // 1. C1 — proves ownership of OLD note.
+        const c1Result = await generatePoolCommitmentProof(
+          receipt.nullifierPreimage.toString(),
+          receipt.secret.toString(),
+          receipt.depositEpoch.toString(),
+          receipt.tokenMint.toString(),
+        );
+
+        // 2. Read on-chain V3 tree state (root, leafCount, subtrees) and the
+        //    leaves-by-index map so we can build BOTH the OLD merkle path
+        //    (for C3) AND the NEW insertion deltas (for C6).
+        const conn = getConnection();
+        const treeAccount = await conn.getAccountInfo(pool.treePDA);
+        if (!treeAccount) throw new Error('V3 merkle tree account not found');
+        const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+        const { leavesByIndex } = await fetchPoolLeavesByIndex(conn, pool.poolPDA);
+
+        // 3. C3 — proves OLD commitment is at the current on-chain root.
+        const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } =
+          buildMerkleProofFromLeavesV3({
+            leavesByIndex,
+            targetLeafIndex: receipt.leafIndex,
+          });
+        const U64 = (1n << 64n) - 1n;
+        const c3Result = await generateMerklePathProof(
+          (receipt.commitment & U64).toString(),
+          c3Path.map(e => (e & U64).toString()),
+          c3Indices,
+        );
+        // Receipt mutation purely for parity with unshield V3 — the SDK reads
+        // the C3 root straight from `c3Result.publicInputs[1]`, so this is
+        // belt-and-braces only.
+        receipt.merkleRoot = c3Root;
+
+        // 4. Generate fresh secrets for the recipient (RANDOM — the recipient
+        //    is unrelated to the sender's seed; deterministic recovery does
+        //    not apply for peer-to-peer transfer outputs).
+        const newSecret = secureRandomU64();
+        const newNullifierPreimage = secureRandomU64();
+        const slot = await conn.getSlot('confirmed');
+        const newDepositEpoch = slotToEpoch(slot);
+        const tokenMintField = pubkeyToField(pool.tokenMint);
+        const newCommitment = createCommitmentV3(
+          newNullifierPreimage, newSecret, newDepositEpoch, tokenMintField,
+        );
+
+        // 5. Compute C6 witness (current_root → newRoot via newCommitment at
+        //    leafCount). `updatedSubtrees` is depth+1 entries (level 0 is
+        //    the leaf itself); on-chain `insert_with_root_v3` needs
+        //    levels 1..=depth so we slice(1) at the call site.
+        const { newRoot, updatedSubtrees, pathElements: c6Path, pathIndices: c6Indices } =
+          computeNewRootFromSubtreesV3(newCommitment, leafCount, subtrees);
+
+        const c6Result = await generateMerkleUpdateProof(
+          '0',
+          (newCommitment & U64).toString(),
+          c6Path.map(e => (e & U64).toString()),
+          c6Indices,
+        );
+
+        const c1Bytes = Buffer.from(c1Result.proofHex, 'hex');
+        const c1Inputs = c1Result.publicInputs.map((s: string) => BigInt(s));
+        const c3Bytes = Buffer.from(c3Result.proofHex, 'hex');
+        const c3Inputs = c3Result.publicInputs.map((s: string) => BigInt(s));
+        const c6Bytes = Buffer.from(c6Result.proofHex, 'hex');
+        const c6Inputs = c6Result.publicInputs.map((s: string) => BigInt(s));
+
+        const res = await transferNoteStarkV3(
+          selectedNoteId,
+          { proofBytes: c1Bytes, publicInputs: c1Inputs, proofSize: c1Result.proofSize },
+          { proofBytes: c3Bytes, publicInputs: c3Inputs, proofSize: c3Result.proofSize },
+          { proofBytes: c6Bytes, publicInputs: c6Inputs, proofSize: c6Result.proofSize },
+          {
+            newCommitment,
+            newRoot,
+            newSubtrees: updatedSubtrees.slice(1),
+            newSecret,
+            newNullifierPreimage,
+            newDepositEpoch,
+            newLeafIndex: leafCount,
+          },
+        );
+        setResult(res);
+      } else {
+        // v2 path — single C1 proof.
+        const starkResult = await generatePoolCommitmentProof(
+          receipt.nullifierPreimage.toString(),
+          receipt.secret.toString(),
+          receipt.depositEpoch.toString(),
+          receipt.tokenMint.toString(),
+        );
+        const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
+        const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
+        const res = await transferNoteStark(selectedNoteId, {
+          proofBytes, publicInputs, proofSize: starkResult.proofSize,
+        });
+        setResult(res);
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       p01Alert(t('alerts.sendFailed'), (err as Error).message || t('alerts.errorGeneric'));
     }
-  }, [selectedNoteId, notes, starkReady, generatePoolCommitmentProof, transferNoteStark, t]);
+  }, [
+    selectedNoteId, notes, starkReady,
+    generatePoolCommitmentProof, generateMerklePathProof, generateMerkleUpdateProof,
+    transferNoteStark, transferNoteStarkV3, t,
+  ]);
 
   const handleCopy = useCallback(async () => {
     if (!result) return;
