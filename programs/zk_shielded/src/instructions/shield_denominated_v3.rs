@@ -118,10 +118,11 @@ fn verify_c6_proof_buffer(
 ///     consistent with the previous root. Same UX pattern as the C1 proof
 ///     buffer used by `unshield_denominated_stark` (init → upload → verify
 ///     in prior txs, then this tx consumes it).
-///   - The leaf-inserted event is emitted as the universal `LeafInserted`
-///     from inside `insert_with_root_v3`. This instruction also emits a
-///     `ShieldDenominatedV3Event` for backwards-compat indexers (denomination,
-///     fee, deposit_epoch, etc. — the maturity bookkeeping stuff).
+///   - Emits the canonical `LeafInsertedEvent` (Phase B — scrubbed; no
+///     `depositor`, no `denomination`, no maturity stats). Off-event fields
+///     (denomination, protocol fee, deposit epoch, mature note count, dynamic
+///     delay) are derivable from on-chain pool state at the time of the slot
+///     for indexers that genuinely need them.
 ///
 /// `new_subtrees` is the post-insertion filled-subtrees array (one entry per
 /// internal level, length == tree_depth). Produced by the client alongside
@@ -320,34 +321,14 @@ pub fn handler(
 
     msg!("V3 commitment added at index: {}", leaf_index);
 
-    emit!(ShieldDenominatedV3Event {
-        pool: pool.key(),
-        depositor: ctx.accounts.depositor.key(),
-        denomination: amount,
-        protocol_fee: shield_fee,
-        commitment,
-        leaf_index,
-        new_root: merkle_tree.root,
-        deposit_epoch: current_epoch,
-        mature_note_count: pool.mature_note_count,
-        dynamic_delay: pool.get_dynamic_delay(),
-        timestamp: clock.unix_timestamp,
-    });
+    // Phase B: no flavored event. The universal `LeafInserted` event is
+    // already emitted from `insert_with_root_v3` and is what the off-chain
+    // tree sync uses. The previous `ShieldDenominatedV3Event` leaked
+    // `depositor` and other identity fields without adding value, so it's
+    // dropped entirely. The on-chain `depositor: Signer` in the tx accounts
+    // is still visible (event-level scrub does NOT close the tx-level leak —
+    // see Phase A.5 feeder pool).
+    let _ = (current_epoch, shield_fee, leaf_index); // computed but not surfaced via event
 
     Ok(())
-}
-
-#[event]
-pub struct ShieldDenominatedV3Event {
-    pub pool: Pubkey,
-    pub depositor: Pubkey,
-    pub denomination: u64,
-    pub protocol_fee: u64,
-    pub commitment: [u8; 32],
-    pub leaf_index: u64,
-    pub new_root: [u8; 32],
-    pub deposit_epoch: u64,
-    pub mature_note_count: u64,
-    pub dynamic_delay: u64,
-    pub timestamp: i64,
 }

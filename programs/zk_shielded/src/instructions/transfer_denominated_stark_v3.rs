@@ -289,32 +289,15 @@ pub fn handler(
     pool.mature_note_count = pool.mature_note_count.saturating_sub(1);
     pool.record_deposit(current_epoch);
 
-    emit!(TransferDenominatedStarkV3Event {
-        pool: pool.key(),
-        nullifier,
-        new_commitment,
-        leaf_index,
-        new_root,
-        min_epoch,
-        current_epoch,
-        dynamic_delay,
-        mature_note_count: pool.mature_note_count,
-        timestamp: clock.unix_timestamp,
-    });
+    // Phase B: no flavored event. The universal `LeafInserted` (from
+    // `insert_with_root_v3`) covers the new leaf; the on-chain
+    // `NullifierRecord` PDA covers the spent nullifier. Re-emitting them as
+    // an additional `TransferDenominatedStarkV3Event` only added latency-
+    // window analytics that any sophisticated attacker can derive from
+    // `getTransaction` anyway. Dropped to remove an unnecessary parser
+    // surface — Phase B is event-level scrub only; tx-account-level leaks
+    // remain (Phase A.5 / B.2).
+    let _ = (min_epoch, current_epoch, dynamic_delay, nullifier, leaf_index, new_commitment, new_root);
 
     Ok(())
-}
-
-#[event]
-pub struct TransferDenominatedStarkV3Event {
-    pub pool: Pubkey,
-    pub nullifier: [u8; 32],
-    pub new_commitment: [u8; 32],
-    pub leaf_index: u64,
-    pub new_root: [u8; 32],
-    pub min_epoch: u64,
-    pub current_epoch: u64,
-    pub dynamic_delay: u64,
-    pub mature_note_count: u64,
-    pub timestamp: i64,
 }

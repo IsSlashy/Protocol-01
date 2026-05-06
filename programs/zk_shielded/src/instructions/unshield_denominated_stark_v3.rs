@@ -332,32 +332,13 @@ pub fn handler(
     pool.last_tx_at = clock.unix_timestamp;
     pool.mature_note_count = pool.mature_note_count.saturating_sub(1);
 
-    emit!(UnshieldDenominatedStarkV3Event {
-        pool: pool.key(),
-        recipient: ctx.accounts.recipient.key(),
-        denomination: amount,
-        protocol_fee: unshield_fee,
-        nullifier,
-        min_epoch,
-        current_epoch,
-        dynamic_delay,
-        mature_note_count: pool.mature_note_count,
-        timestamp: clock.unix_timestamp,
-    });
+    // Phase B: no flavored event. The on-chain `NullifierRecord` PDA
+    // already serves as the public "this nullifier was spent" marker;
+    // re-emitting it as an event added nothing while leaking `recipient`
+    // and other identity fields. Dropped entirely. The on-chain `recipient:
+    // AccountInfo` in the tx accounts is still visible (closing it requires
+    // a stealth-recipient redesign — Phase B.2).
+    let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay, nullifier);
 
     Ok(())
-}
-
-#[event]
-pub struct UnshieldDenominatedStarkV3Event {
-    pub pool: Pubkey,
-    pub recipient: Pubkey,
-    pub denomination: u64,
-    pub protocol_fee: u64,
-    pub nullifier: [u8; 32],
-    pub min_epoch: u64,
-    pub current_epoch: u64,
-    pub dynamic_delay: u64,
-    pub mature_note_count: u64,
-    pub timestamp: i64,
 }
