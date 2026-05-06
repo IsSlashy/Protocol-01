@@ -65,7 +65,6 @@ export default function DenominatedShieldScreen() {
     isLoading,
     error,
     progress,
-    poolCache,
     shieldNote,
     shieldNoteV3,
     refreshPoolInfo,
@@ -279,11 +278,6 @@ export default function DenominatedShieldScreen() {
     }
   }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, fetchBalance, starkReady, generateMerkleUpdateProof]);
 
-  const getPoolNoteCount = (pool: PoolConfig): number => {
-    const cached = poolCache[pool.poolPDA.toBase58()];
-    return cached?.info.noteCount ?? 0;
-  };
-
   return (
     <SafeAreaView style={st.container} edges={['top']}>
       {/* Header */}
@@ -334,12 +328,8 @@ export default function DenominatedShieldScreen() {
         <Animated.View entering={FadeInDown.delay(100).duration(300)}>
           <Text style={st.sectionLabel}>Choose amount</Text>
           <View style={st.chipsGrid}>
-            {pools.map((pool, i) => {
-              const noteCount = getPoolNoteCount(pool);
+            {pools.map((pool) => {
               const canAfford = pool.token === 'SOL' ? balanceSol >= pool.denomination : true;
-              const privacyLevel = noteCount === 0 ? 0 : noteCount < 10 ? 1 : noteCount < 100 ? 2 : 3;
-              const privacyDots = ['', '\u25CF', '\u25CF\u25CF', '\u25CF\u25CF\u25CF'][privacyLevel];
-              const privacyColor = [Colors.textTertiary, P01Colors.yellow, P01Colors.cyan, P01Colors.green][privacyLevel];
 
               return (
                 <TouchableOpacity
@@ -361,21 +351,9 @@ export default function DenominatedShieldScreen() {
                       <Text style={st.v3BadgeText}>V3</Text>
                     </View>
                   )}
-                  {noteCount > 0 && (
-                    <Text style={[st.chipPrivacy, { color: privacyColor }]}>
-                      {privacyDots}
-                    </Text>
-                  )}
                 </TouchableOpacity>
               );
             })}
-          </View>
-
-          <View style={st.privacyLegend}>
-            <Text style={st.legendText}>Privacy level: </Text>
-            <Text style={[st.legendDot, { color: P01Colors.yellow }]}>{'\u25CF'} Low  </Text>
-            <Text style={[st.legendDot, { color: P01Colors.cyan }]}>{'\u25CF\u25CF'} Med  </Text>
-            <Text style={[st.legendDot, { color: P01Colors.green }]}>{'\u25CF\u25CF\u25CF'} High</Text>
           </View>
         </Animated.View>
 
@@ -384,7 +362,6 @@ export default function DenominatedShieldScreen() {
           <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
           <Text style={st.hintText}>
             Deposits with the same amount are indistinguishable from each other.
-            More deposits = stronger privacy.
           </Text>
         </View>
 
@@ -435,12 +412,6 @@ export default function DenominatedShieldScreen() {
                 <View style={cs.detailRow}>
                   <Text style={cs.detailLabel}>Ready in</Text>
                   <Text style={cs.detailValue}>~1 hour</Text>
-                </View>
-                <View style={cs.detailRow}>
-                  <Text style={cs.detailLabel}>Pool size</Text>
-                  <Text style={cs.detailValue}>
-                    {getPoolNoteCount(selectedPool)} deposits
-                  </Text>
                 </View>
               </View>
 
@@ -589,7 +560,6 @@ const st = StyleSheet.create({
   chipAmount: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
   chipAmountDim: { color: Colors.textSecondary },
   chipToken: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginTop: 2 },
-  chipPrivacy: { fontSize: 8, marginTop: 4, letterSpacing: 2 },
   v3Badge: {
     position: 'absolute',
     top: 6,
@@ -605,13 +575,6 @@ const st = StyleSheet.create({
     color: P01Colors.cyan,
     letterSpacing: 0.5,
   },
-
-  // Legend
-  privacyLegend: {
-    flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg,
-  },
-  legendText: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary },
-  legendDot: { fontSize: 11, fontFamily: FontFamily.medium },
 
   // Hint
   hint: {

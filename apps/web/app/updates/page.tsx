@@ -47,6 +47,39 @@ const updates: WeekUpdate[] = [
       "Mobile WASM prover, extension, and SDK v2 all migrated — 138 tests green",
     ],
   },
+  {
+    week: 3,
+    title: "Colosseum Submitted & v0.9.9 Shipped",
+    date: "April 20 - 26, 2026",
+    status: "published",
+    video: "/videos/week3.mp4",
+    highlights: [
+      "Colosseum Frontier hackathon submitted — accelerator track, ~7% / ~$250K target",
+      "Pitch deck + economic charter PDFs published on the marketing site",
+      "Service Registry live on devnet — 4 services attested (Netflix, Spotify, YouTube, Disney+)",
+      "useServiceRegistry hook + release APK demoed on Galaxy device",
+      "v0.9.9 shipped — denominated_pool_v2 seed bump, 13 fresh pools",
+      "Merkle proof rebuild from chain events — recovered notes work end-to-end",
+      "abandonNote action + walletStore destructive init wipe fixed",
+      "Web v0.9.9 marketing refresh + Hermes Buffer compat fix in specter-sdk",
+    ],
+  },
+  {
+    week: 4,
+    title: "Five Days in Dublin & ZK End-to-End",
+    date: "April 27 - May 3, 2026",
+    status: "published",
+    video: "/videos/week4.mp4",
+    highlights: [
+      "Five days in Dublin with Superteam Ireland — face-to-face with builders, founders, and investors",
+      "Met Diarmuid (Superteam IE) and Alejandro Gutierrez (Lead Superteam IE / Blockchain Ireland)",
+      "Pete Townsend's talk on Finding PMF in Web3 @ Buildstation — re-shaped the roadmap",
+      "Merkle root divergence fixed via replayMerkleProofFromEvents — every shielded note recoverable",
+      "Unshield lifecycle: 5 cascading bugs closed, per-pool counter via findSafeShieldCounter",
+      "V3 STARK pools live on devnet — v0.9.11 tagged, foundation stable for enterprise SDKs",
+      "Applied to CastleDAO Ireland (August 2026)",
+    ],
+  },
 ];
 
 export default function UpdatesPage() {

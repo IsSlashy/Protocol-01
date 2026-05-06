@@ -1,12 +1,30 @@
 import React from 'react';
 import { Composition } from 'remotion';
 import { WeeklyUpdate } from './WeeklyUpdate';
+import { Week3 } from './Week3';
+import { Week4 } from './Week4';
 import { PitchVideo } from './PitchVideo';
 import { FrostIntro } from './FrostIntro';
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      <Composition
+        id="Week4"
+        component={Week4}
+        durationInFrames={3600}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
+      <Composition
+        id="Week3"
+        component={Week3}
+        durationInFrames={3000}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
       <Composition
         id="WeeklyUpdate"
         component={WeeklyUpdate}

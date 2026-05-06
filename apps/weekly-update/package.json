@@ -9,6 +9,8 @@
     "render:frost": "node scripts/render-chunked.mjs FrostIntro out/frost-intro.mp4 --total=1500",
     "render:pitch": "node scripts/render-chunked.mjs PitchVideo out/pitch.mp4 --total=7200",
     "render:weekly": "node scripts/render-chunked.mjs WeeklyUpdate out/weekly.mp4 --total=3240",
+    "render:week3": "node scripts/render-chunked.mjs Week3 out/week3.mp4 --total=3000",
+    "render:week4": "node scripts/render-chunked.mjs Week4 out/week4.mp4 --total=3600",
     "render:chunked": "node scripts/render-chunked.mjs"
   },
   "dependencies": {

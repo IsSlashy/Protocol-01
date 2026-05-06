@@ -1468,8 +1468,20 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c1ProofData.proofSize);
           const c3Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c3ProofData.proofSize);
           // 0.015 SOL margin — covers 4 confirmable txs + nullifier PDA rent + slippage.
-          const FEE_FUND = c1Rent + c3Rent + 15_000_000;
-          console.log(`[DenomStore/V3] Pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL (c1Rent=${(c1Rent / 1e9).toFixed(4)} c3Rent=${(c3Rent / 1e9).toFixed(4)})`);
+          // When the V3 relayer wrapper is enabled the stealth signer must
+          // also cover the relay-job pre-fund (20M jobFee+rent+txFees) since
+          // the wrapper transfers FROM the stealth signer to the relayer
+          // ephemeral. We top up by 25M (5M margin) so the chain remains
+          // main → stealth → relay-ephemeral instead of main → relay-ephemeral
+          // direct (which would add a new on-chain link from main wallet).
+          const settings = await import('./settingsStore').then(m => m.useSettingsStore.getState());
+          const RELAYER_TOPUP = settings.relayerV3Enabled ? 25_000_000 : 0;
+          const FEE_FUND = c1Rent + c3Rent + 15_000_000 + RELAYER_TOPUP;
+          console.log(
+            `[DenomStore/V3] Pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL ` +
+            `(c1Rent=${(c1Rent / 1e9).toFixed(4)} c3Rent=${(c3Rent / 1e9).toFixed(4)} ` +
+            `relayerTopup=${(RELAYER_TOPUP / 1e9).toFixed(3)})`,
+          );
 
           if (walletSigner) {
             const fundTx = new Transaction().add(
@@ -1811,16 +1823,26 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // V3 transfer = THREE proof buffers (C1 + C3 + C6). Pre-fund covers
           // all three rents + nullifier PDA + tx fees. Buffers are closed in
           // the service `finally` so net cost ≈ 0.003 SOL.
+          // Add an extra 25M lamports when the V3 relayer wrapper is enabled
+          // (mirrors unshieldNoteStarkV3) so the stealth signer can fund the
+          // relay-job ephemeral without adding a new main-wallet → ephemeral
+          // direct link.
           set({ progress: 'Funding stealth signer (V3)...' });
           const connection = getConnection();
           const PROOF_DATA_OFFSET_LOCAL = 83;
           const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c1ProofData.proofSize);
           const c3Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c3ProofData.proofSize);
           const c6Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c6ProofData.proofSize);
+          const settings = await import('./settingsStore').then(m => m.useSettingsStore.getState());
+          const RELAYER_TOPUP = settings.relayerV3Enabled ? 25_000_000 : 0;
           // 0.02 SOL margin — covers 5 confirmable txs (init+upload×3 + transfer + close×3),
           // nullifier PDA rent, and rate-limit retries.
-          const FEE_FUND = c1Rent + c3Rent + c6Rent + 20_000_000;
-          console.log(`[DenomStore/V3] Transfer pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL (c1=${(c1Rent / 1e9).toFixed(4)} c3=${(c3Rent / 1e9).toFixed(4)} c6=${(c6Rent / 1e9).toFixed(4)})`);
+          const FEE_FUND = c1Rent + c3Rent + c6Rent + 20_000_000 + RELAYER_TOPUP;
+          console.log(
+            `[DenomStore/V3] Transfer pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL ` +
+            `(c1=${(c1Rent / 1e9).toFixed(4)} c3=${(c3Rent / 1e9).toFixed(4)} c6=${(c6Rent / 1e9).toFixed(4)} ` +
+            `relayerTopup=${(RELAYER_TOPUP / 1e9).toFixed(3)})`,
+          );
 
           if (walletSigner) {
             const fundTx = new Transaction().add(
