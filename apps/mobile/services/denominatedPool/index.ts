@@ -1489,6 +1489,59 @@ async function signAndSend(
   throw new Error('No wallet available for signing');
 }
 
+/**
+ * V3 wrapper around `signAndSend` that routes through `p01_relayer` when
+ * the `relayerV3Enabled` user setting is on.
+ *
+ * Privacy: hides the user's RPC submission IP (L19) and the outer fee_payer
+ * of the relay-job tx. Inner shield/unshield/transfer ix signers are
+ * untouched (closing those leaks needs Phase A.5 / Phase B / Phase D).
+ *
+ * Failure mode (Phase A revised): the relayer node infrastructure is still
+ * young (one hosted node on Railway). Hard-failing the user's UX every time
+ * the relayer hiccups is worse than a temporary privacy degradation, so any
+ * relayer error → fall back to direct submission with a loud console warn.
+ * The toggle stays effective (off skips the relayer entirely); when it's on
+ * we *try* the relayer first, then degrade. Re-tighten this once we have N≥3
+ * geo-distributed nodes and uptime metrics.
+ */
+async function signAndSendV3(
+  connection: Connection,
+  tx: Transaction,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+): Promise<string> {
+  // Lazy import to avoid pulling zustand into modules that don't need it.
+  const { useSettingsStore } = await import('../../stores/settingsStore');
+  const enabled = useSettingsStore.getState().relayerV3Enabled;
+  console.log('[V3-Relay] signAndSendV3: relayerV3Enabled=' + enabled);
+  if (!enabled) {
+    console.log('[V3-Relay] → direct signAndSend (toggle OFF)');
+    return await signAndSend(connection, tx, keypair, walletSigner);
+  }
+  console.log('[V3-Relay] → routing through p01_relayer wrapper');
+  const { signAndSendViaRelayer, OversizedInnerTxError } =
+    await import('../privacy/v3RelayerWrapper');
+  try {
+    return await signAndSendViaRelayer(connection, tx, keypair, walletSigner);
+  } catch (e) {
+    const reason =
+      e instanceof OversizedInnerTxError
+        ? `oversized inner tx (${e.innerTxBytes}B > ${e.budgetBytes}B)`
+        : `relayer error: ${(e as Error)?.message ?? String(e)}`;
+    console.warn(
+      '[V3-Relay] ' + reason + ' — falling back to direct signAndSend (RPC IP exposed for this tx)',
+    );
+    // Re-build a fresh blockhash + reset signatures: the inner tx may have
+    // been signed for the relayer envelope, but a direct submission needs
+    // its own clean state. Easiest = reset and let signAndSend re-sign.
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+    tx.signatures = [];
+    return await signAndSend(connection, tx, keypair, walletSigner);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shield (deposit)
 // ---------------------------------------------------------------------------
@@ -2897,7 +2950,11 @@ export async function shieldV3(
   onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
   const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
 
-  let didShield = false;
+  // Track buffers created during this operation. Any error path (including
+  // wrapper preflight failure, relayer timeout, etc.) must close them in
+  // `finally` to recover the rent. Decoupled from "did the shield ix land"
+  // because the buffer can exist on-chain even when the final tx fails.
+  const createdBuffers: PublicKey[] = [];
   try {
     await submitAndVerifyStarkProof(
       {
@@ -2910,6 +2967,7 @@ export async function shieldV3(
       onProgress,
       connection,
     );
+    createdBuffers.push(c6ProofBuffer);
 
     // 2. Build shield_denominated_v3 referencing the verified buffer.
     onProgress?.('Building V3 shield transaction...');
@@ -2952,8 +3010,7 @@ export async function shieldV3(
     tx.add(ix);
 
     onProgress?.('Sending V3 shield transaction...');
-    const txSig = await signAndSend(connection, tx, keypair, walletSigner);
-    didShield = true;
+    const txSig = await signAndSendV3(connection, tx, keypair, walletSigner);
     onProgress?.('V3 shield confirmed!');
 
     const receipt: ShieldReceipt = {
@@ -2974,13 +3031,14 @@ export async function shieldV3(
     };
     return { txSig, receipt, c6ProofBuffer };
   } finally {
-    // Buffer is consumed by shield (no further use), close to recover rent.
-    if (didShield) {
+    // Close every buffer that was created — single-use, must recover rent
+    // regardless of whether the final shield tx succeeded.
+    for (const buf of createdBuffers) {
       try {
-        onProgress?.('Closing C6 proof buffer...');
-        await closeStarkProofBuffer(c6ProofBuffer, starkSigner, connection);
+        onProgress?.('Closing proof buffer...');
+        await closeStarkProofBuffer(buf, starkSigner, connection);
       } catch (closeErr: any) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer (shield C6) failed:', closeErr?.message ?? String(closeErr));
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (shield) failed:', closeErr?.message ?? String(closeErr));
       }
     }
   }
@@ -3038,8 +3096,7 @@ export async function unshieldDenominatedStarkV3(
   const [c1ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
   const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
 
-  let c1Verified = false;
-  let c3Verified = false;
+  const createdBuffers: PublicKey[] = [];
 
   try {
     // Step 1: C1 (pool_commitment) — same as v2 unshield.
@@ -3055,7 +3112,7 @@ export async function unshieldDenominatedStarkV3(
       onProgress,
       connection,
     );
-    c1Verified = true;
+    createdBuffers.push(c1ProofBuffer);
 
     // Step 2: C3 (merkle_path) — NEW in V3.
     onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
@@ -3070,7 +3127,7 @@ export async function unshieldDenominatedStarkV3(
       onProgress,
       connection,
     );
-    c3Verified = true;
+    createdBuffers.push(c3ProofBuffer);
 
     // Step 3: Build + send unshield_denominated_stark_v3.
     onProgress?.('Building V3 unshield transaction...');
@@ -3129,27 +3186,18 @@ export async function unshieldDenominatedStarkV3(
     tx.add(ix);
 
     onProgress?.('Sending V3 unshield transaction...');
-    const sig = await signAndSend(connection, tx, keypair, walletSigner);
+    const sig = await signAndSendV3(connection, tx, keypair, walletSigner);
     onProgress?.('V3 unshield confirmed!');
     return sig;
   } finally {
-    // Always close any verified buffer to recover rent, regardless of whether
-    // the unshield tx succeeded or threw mid-flight. Failed verifies leave no
-    // buffer to close.
-    if (c1Verified) {
+    // Close every buffer that was successfully created/verified, regardless
+    // of whether the final unshield tx succeeded.
+    for (const buf of createdBuffers) {
       try {
-        onProgress?.('Closing C1 proof buffer...');
-        await closeStarkProofBuffer(c1ProofBuffer, starkSigner, connection);
+        onProgress?.('Closing proof buffer...');
+        await closeStarkProofBuffer(buf, starkSigner, connection);
       } catch (closeErr: any) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer (C1) failed:', closeErr?.message ?? String(closeErr));
-      }
-    }
-    if (c3Verified) {
-      try {
-        onProgress?.('Closing C3 proof buffer...');
-        await closeStarkProofBuffer(c3ProofBuffer, starkSigner, connection);
-      } catch (closeErr: any) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer (C3) failed:', closeErr?.message ?? String(closeErr));
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (unshield) failed:', closeErr?.message ?? String(closeErr));
       }
     }
   }
@@ -3225,9 +3273,7 @@ export async function transferDenominatedStarkV3(
   const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
   const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
 
-  let c1Verified = false;
-  let c3Verified = false;
-  let c6Verified = false;
+  const createdBuffers: PublicKey[] = [];
 
   try {
     // Maturity / epoch math (mirrors v2 transferNoteStark)
@@ -3252,7 +3298,7 @@ export async function transferDenominatedStarkV3(
       onProgress,
       connection,
     );
-    c1Verified = true;
+    createdBuffers.push(c1ProofBuffer);
 
     // 2. C3 — proves OLD commitment is at supplied merkle_root.
     onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
@@ -3267,7 +3313,7 @@ export async function transferDenominatedStarkV3(
       onProgress,
       connection,
     );
-    c3Verified = true;
+    createdBuffers.push(c3ProofBuffer);
 
     // 3. C6 — proves NEW commitment insertion against the current pool root.
     onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
@@ -3282,7 +3328,7 @@ export async function transferDenominatedStarkV3(
       onProgress,
       connection,
     );
-    c6Verified = true;
+    createdBuffers.push(c6ProofBuffer);
 
     // 4. Build + send transfer_denominated_stark_v3 referencing all three buffers.
     onProgress?.('Building V3 transfer transaction...');
@@ -3324,8 +3370,8 @@ export async function transferDenominatedStarkV3(
     tx.add(...buildComputeBudgetIxs(300_000));
     tx.add(ix);
     const txSig = overrideKeypair
-      ? await signAndSend(connection, tx, overrideKeypair, undefined)
-      : await signAndSend(connection, tx, keypair, walletSigner);
+      ? await signAndSendV3(connection, tx, overrideKeypair, undefined)
+      : await signAndSendV3(connection, tx, keypair, walletSigner);
 
     onProgress?.('V3 transfer confirmed!');
 
@@ -3344,30 +3390,14 @@ export async function transferDenominatedStarkV3(
 
     return { txSig, recipientNote };
   } finally {
-    // Close any successfully-verified buffer to recover rent, regardless of
-    // whether the transfer ix succeeded or threw mid-flight.
-    if (c1Verified) {
+    // Close every buffer that was successfully created/verified, regardless
+    // of whether the final transfer tx succeeded.
+    for (const buf of createdBuffers) {
       try {
-        onProgress?.('Closing C1 proof buffer...');
-        await closeStarkProofBuffer(c1ProofBuffer, starkSigner, connection);
+        onProgress?.('Closing proof buffer...');
+        await closeStarkProofBuffer(buf, starkSigner, connection);
       } catch (e: any) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer C1) failed:', e?.message ?? String(e));
-      }
-    }
-    if (c3Verified) {
-      try {
-        onProgress?.('Closing C3 proof buffer...');
-        await closeStarkProofBuffer(c3ProofBuffer, starkSigner, connection);
-      } catch (e: any) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer C3) failed:', e?.message ?? String(e));
-      }
-    }
-    if (c6Verified) {
-      try {
-        onProgress?.('Closing C6 proof buffer...');
-        await closeStarkProofBuffer(c6ProofBuffer, starkSigner, connection);
-      } catch (e: any) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer C6) failed:', e?.message ?? String(e));
+        console.warn('[DenomPool/V3] closeStarkProofBuffer (transfer) failed:', e?.message ?? String(e));
       }
     }
   }

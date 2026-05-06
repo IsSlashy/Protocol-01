@@ -52,7 +52,7 @@ export async function confidentialRelay(
 
   // Fallback: standard single-relayer
   const { relayTransaction } = await import('../relay');
-  const sig = await relayTransaction(serializedTx, walletPublicKey, signTransaction, timeoutMs);
+  const sig = await relayTransaction(serializedTx, walletPublicKey, signTransaction, { timeoutMs });
   return { signature: sig, feePaid: 0n, wasMpcProtected: false };
 }
 

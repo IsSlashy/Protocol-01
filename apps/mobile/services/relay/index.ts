@@ -204,17 +204,20 @@ export async function fetchActiveRelayers(
   // RelayerNode discriminator: sha256("account:RelayerNode")[0..8]
   const discriminator = sha256(Buffer.from('account:RelayerNode')).slice(0, 8);
 
-  // RelayerNode layout: disc(8) + operator(32) + encryption_key(32) + stake(8) + ...
-  // is_active is at offset: 8 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 = byte 121
-  // Actually let's compute: disc(8) + operator(32) + enc_key(32) + stake(8) + jobs_completed(8) +
-  //   jobs_failed(8) + last_active_slot(8) + registered_at(8) + deactivated_at(8) + is_active(1)
-  // = 8 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 1 = offset 121 for is_active
-  const IS_ACTIVE_OFFSET = 121;
+  // RelayerNode layout (programs/p01_relayer/src/state/relayer_node.rs):
+  //   disc(8) + operator(32) + encryption_key(32) + stake(8) + jobs_completed(8) +
+  //   jobs_failed(8) + last_active_slot(8) + registered_at(8) + deactivated_at_slot(8) +
+  //   is_active(1) + ...
+  // Cumulative: 8+32+32+8+8+8+8+8+8 = 120 → is_active starts at byte 120.
+  const IS_ACTIVE_OFFSET = 120;
 
+  // Solana JSON-RPC memcmp `bytes` defaults to base58 decoding. Passing a
+  // base64 string without `encoding: 'base64'` triggers a Base58DecodeError
+  // on chars '0'/'/'/'+/=' which are absent from the base58 alphabet.
   const accounts = await connection.getProgramAccounts(RELAYER_PROGRAM_ID, {
     filters: [
-      { memcmp: { offset: 0, bytes: Buffer.from(discriminator).toString('base64') } },
-      { memcmp: { offset: IS_ACTIVE_OFFSET, bytes: Buffer.from([1]).toString('base64') } },
+      { memcmp: { offset: 0, bytes: Buffer.from(discriminator).toString('base64'), encoding: 'base64' } },
+      { memcmp: { offset: IS_ACTIVE_OFFSET, bytes: Buffer.from([1]).toString('base64'), encoding: 'base64' } },
     ],
   });
 
@@ -286,21 +289,41 @@ export function generateJobId(): Uint8Array {
 }
 
 /**
+ * Options for submitRelayJob.
+ *
+ * - `ephemeralKeypair`: provide a pre-derived ephemeral signer (e.g. derived
+ *   from a stealth meta-address via specter-sdk for cross-flow coherence).
+ *   Defaults to a fresh `Keypair.generate()`.
+ * - `forceV1Encryption`: skip ML-KEM-768 hybrid v2 even if the selected
+ *   relayer publishes a KEM key. v2 overhead is 1161 bytes; the on-chain
+ *   `encrypted_tx` cap (~1280 bytes) leaves only ~119 usable bytes — too
+ *   small for zk_shielded V3 inner txs. Set true when wrapping V3.
+ */
+export interface SubmitRelayJobOptions {
+  ephemeralKeypair?: Keypair;
+  forceV1Encryption?: boolean;
+}
+
+/**
  * Submit a relay job on-chain.
  *
  * @param serializedTx - The fully signed transaction to relay (serialized bytes)
  * @param walletPublicKey - User's wallet (funds the ephemeral keypair)
  * @param signTransaction - Wallet adapter sign function
+ * @param opts - Optional ephemeral override + encryption-version override
  * @returns Job result with monitoring info
  */
 export async function submitRelayJob(
   serializedTx: Uint8Array,
   walletPublicKey: PublicKey,
   signTransaction: (tx: Transaction) => Promise<Transaction>,
+  opts: SubmitRelayJobOptions = {},
 ): Promise<RelayJobResult> {
   const connection = getConnection();
+  const t0 = Date.now();
 
   // 1. Fetch config and active relayers
+  console.log('[Relay] step1/7: fetching config + active relayers');
   const [config, relayers] = await Promise.all([
     fetchRelayerConfig(connection),
     fetchActiveRelayers(connection),
@@ -308,24 +331,66 @@ export async function submitRelayJob(
 
   if (!config.isActive) throw new Error('Relay protocol is paused');
   if (relayers.length === 0) throw new Error('No active relayers available');
+  console.log('[Relay] step1/7 done: ' + relayers.length + ' active relayers, jobFee=' + config.jobFeeLamports.toString() + ' lamports');
 
   // 2. Generate job ID and select relayer
+  console.log('[Relay] step2/7: selecting relayer deterministically');
   const jobId = generateJobId();
   const { blockhash: currentBlockhash } = await connection.getLatestBlockhash('confirmed');
   const { relayer: selectedRelayer } = selectRelayer(relayers, currentBlockhash, jobId);
+  console.log('[Relay] step2/7 done: relayer=' + selectedRelayer.operator.toBase58().slice(0, 8) + '... (kem=' + (selectedRelayer.kemEncryptionKey ? 'yes' : 'no') + ')');
 
-  // 3. Encrypt the transaction for the selected relayer (hybrid if KEM key available)
-  const encrypted = encryptForRelayer(serializedTx, selectedRelayer.encryptionKey, selectedRelayer.kemEncryptionKey);
+  // 3. Encrypt the transaction for the selected relayer (hybrid if KEM key available
+  //    and not explicitly forced to v1).
+  const kemKey = opts.forceV1Encryption ? undefined : selectedRelayer.kemEncryptionKey;
+  const encrypted = encryptForRelayer(serializedTx, selectedRelayer.encryptionKey, kemKey);
+  const encVer = kemKey ? 'v2-hybrid' : 'v1-x25519';
+  console.log('[Relay] step3/7: encrypted innerTx, version=' + encVer + ', ciphertext=' + encrypted.length + 'B (cap 1280)');
 
-  // 4. Generate ephemeral keypair
-  const ephemeral = Keypair.generate();
+  // 4. Use caller-provided ephemeral if any, else derive deterministically
+  // from the per-device session seed + jobId. Deterministic derivation is
+  // critical for Phase A.1 stuck-funds recovery: even if the wrapper crashes
+  // mid-flight, the ephemeral keypair can be re-derived from (sessionSeed,
+  // jobId) and any leftover lamports swept back to the user wallet.
+  const { deriveEphemeralForRelay, addPendingRelay, jobIdToHex } = await import('./ephemeralRecovery');
+  const ephemeral = opts.ephemeralKeypair ?? (await deriveEphemeralForRelay(jobId));
+  const ephemeralSrc = opts.ephemeralKeypair ? 'caller-provided' : 'derived';
+  console.log('[Relay] step4/7: ephemeral=' + ephemeral.publicKey.toBase58().slice(0, 8) + '... (' + ephemeralSrc + ')');
 
   // 5. Fund ephemeral keypair (job fee + rent + tx fees)
-  // Relay job rent ~0.01 SOL, fee from config, extra for tx fees
-  const jobRent = 10_000_000; // ~0.01 SOL conservative estimate
-  const txFees = 10_000; // 10k lamports for submit_job tx fee
-  const fundAmount = Number(config.jobFeeLamports) + jobRent + txFees;
+  //
+  // The submitter (= ephemeral) pays:
+  //   - submit_job tx fee (~5k lamports)
+  //   - rent for the new RelayJob PDA (init constraint) — computed dynamically
+  //   - explicit CPI transfer of jobFeeLamports to the new PDA inside the handler
+  //
+  // Solana rent-exempt formula = (128 + size) × 6960 lamports.
+  // RelayJob::LEN = 1414 (must mirror programs/p01_relayer/src/state/relay_job.rs).
+  // Hardcoded estimates previously missed the 128-byte account header → ephemeral
+  // ran out of lamports during the CPI transfer ("Transfer: insufficient lamports").
+  const RELAY_JOB_LEN = 1414;
+  const jobRent = await connection.getMinimumBalanceForRentExemption(RELAY_JOB_LEN);
+  const txFees = 50_000; // generous: 5k base + priority fee headroom
+  // After submit_job CPI, the ephemeral keeps `txFees - 5k` lamports. As a
+  // system-owned account it must remain rent-exempt or be fully drained, else
+  // the runtime rejects with "account (0) insufficient funds for rent". Top
+  // up by the 0-byte rent-exempt minimum (~890k lamports). Residue is swept
+  // back to the user wallet later by ephemeralRecovery.
+  const ephemeralRentMin = await connection.getMinimumBalanceForRentExemption(0);
+  const fundAmount =
+    Number(config.jobFeeLamports) + jobRent + txFees + ephemeralRentMin;
 
+  // Persist a pending entry BEFORE the fund tx so that any crash between
+  // here and successful completion leaves a recovery breadcrumb.
+  const jobIdHex = jobIdToHex(jobId);
+  await addPendingRelay({
+    jobId: jobIdHex,
+    ephemeralPubkey: ephemeral.publicKey.toBase58(),
+    expectedLamports: fundAmount,
+    createdAt: new Date().toISOString(),
+  });
+
+  console.log('[Relay] step5/7: pre-funding ephemeral, total=' + fundAmount + ' lamports (jobFee+rent+txFees)');
   const fundTx = new Transaction().add(
     SystemProgram.transfer({
       fromPubkey: walletPublicKey,
@@ -348,9 +413,10 @@ export async function submitRelayJob(
     'confirmed',
   );
 
-  console.log('[Relay] Ephemeral funded:', ephemeral.publicKey.toBase58().slice(0, 12) + '...');
+  console.log('[Relay] step5/7 done: ephemeral funded with ' + fundAmount + ' lamports, fundTx=' + fundSig.slice(0, 12) + '...');
 
   // 6. Build submit_job instruction
+  console.log('[Relay] step6/7: building submit_job ix');
   const [configPDA] = PublicKey.findProgramAddressSync([SEEDS.CONFIG], RELAYER_PROGRAM_ID);
   const [relayerNodePDA] = PublicKey.findProgramAddressSync(
     [SEEDS.NODE, selectedRelayer.operator.toBytes()],
@@ -360,6 +426,7 @@ export async function submitRelayJob(
     [SEEDS.JOB, jobId],
     RELAYER_PROGRAM_ID,
   );
+  console.log('[Relay] step6/7: jobPDA=' + jobPDA.toBase58().slice(0, 8) + '...');
 
   // Anchor discriminator for submit_job: sha256("global:submit_job")[0..8]
   const submitDiscriminator = sha256(Buffer.from('global:submit_job')).slice(0, 8);
@@ -404,7 +471,7 @@ export async function submitRelayJob(
     'confirmed',
   );
 
-  console.log('[Relay] Job submitted:', signature.slice(0, 20) + '...');
+  console.log('[Relay] step7/7 done: relay-job submitted, outerSig=' + signature.slice(0, 12) + '..., total elapsed=' + (Date.now() - t0) + 'ms');
 
   return {
     jobAddress: jobPDA,
@@ -429,31 +496,49 @@ export async function monitorJob(
 ): Promise<{ success: boolean; status: JobStatus }> {
   const connection = getConnection();
   const startTime = Date.now();
+  let pollCount = 0;
+  console.log('[Relay] monitor: starting poll, timeoutMs=' + timeoutMs);
 
   while (Date.now() - startTime < timeoutMs) {
     const accountInfo = await connection.getAccountInfo(jobAddress);
+    pollCount++;
 
     if (!accountInfo) {
       // Account closed — job completed, expired, or cancelled
+      console.log('[Relay] monitor: account closed → completed (polls=' + pollCount + ', elapsed=' + (Date.now() - startTime) + 'ms)');
       return { success: true, status: JobStatus.Completed };
     }
 
     // Check status byte (at data.length - 2: status + bump)
     const statusByte = accountInfo.data[accountInfo.data.length - 2];
     if (statusByte !== JobStatus.Pending) {
+      const statusNames = ['Pending', 'Completed', 'Expired', 'Cancelled'];
+      console.log('[Relay] monitor: status changed → ' + statusNames[statusByte] + ' (polls=' + pollCount + ', elapsed=' + (Date.now() - startTime) + 'ms)');
       return {
         success: statusByte === JobStatus.Completed,
         status: statusByte as JobStatus,
       };
     }
 
+    if (pollCount % 5 === 0) {
+      console.log('[Relay] monitor: still pending, poll=' + pollCount + ', elapsed=' + (Date.now() - startTime) + 'ms');
+    }
+
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 
+  console.log('[Relay] monitor: TIMEOUT after ' + timeoutMs + 'ms (polls=' + pollCount + ')');
   return { success: false, status: JobStatus.Pending };
 }
 
 // ── High-Level API ─────────────────────────────────────────────────────
+
+/**
+ * Options for relayTransaction.
+ */
+export interface RelayTransactionOptions extends SubmitRelayJobOptions {
+  timeoutMs?: number;
+}
 
 /**
  * Submit a transaction via the decentralized relay and wait for completion.
@@ -466,28 +551,41 @@ export async function monitorJob(
  * @param serializedTx - Fully signed transaction bytes
  * @param walletPublicKey - User's wallet (only used to fund ephemeral)
  * @param signTransaction - Wallet adapter sign function
- * @param timeoutMs - Max wait time (default 120s)
+ * @param opts - timeout, ephemeral override, encryption-version override
  * @returns Relay job signature
  */
 export async function relayTransaction(
   serializedTx: Uint8Array,
   walletPublicKey: PublicKey,
   signTransaction: (tx: Transaction) => Promise<Transaction>,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  opts: RelayTransactionOptions = {},
 ): Promise<string> {
-  const job = await submitRelayJob(serializedTx, walletPublicKey, signTransaction);
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...submitOpts } = opts;
+  const { removePendingRelay, markPendingRelayErrored, jobIdToHex } =
+    await import('./ephemeralRecovery');
+
+  const job = await submitRelayJob(serializedTx, walletPublicKey, signTransaction, submitOpts);
+  const jobIdHex = jobIdToHex(job.jobId);
 
   console.log('[Relay] Monitoring job:', job.jobAddress.toBase58().slice(0, 12) + '...');
 
-  const result = await monitorJob(job.jobAddress, timeoutMs);
+  let result;
+  try {
+    result = await monitorJob(job.jobAddress, timeoutMs);
+  } catch (e) {
+    await markPendingRelayErrored(jobIdHex, `monitor threw: ${(e as Error)?.message ?? String(e)}`);
+    throw e;
+  }
 
   if (!result.success) {
     const statusNames = ['Pending', 'Completed', 'Expired', 'Cancelled'];
-    throw new Error(
-      `Relay job failed with status: ${statusNames[result.status] || result.status}`,
-    );
+    const status = statusNames[result.status] || String(result.status);
+    await markPendingRelayErrored(jobIdHex, `status=${status}`);
+    throw new Error(`Relay job failed with status: ${status}`);
   }
 
+  // Job consumed by relay protocol — ephemeral funds spent, nothing to sweep.
+  await removePendingRelay(jobIdHex);
   console.log('[Relay] Job completed successfully');
   return job.signature;
 }

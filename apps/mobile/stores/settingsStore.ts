@@ -31,11 +31,16 @@ interface SettingsState {
   shieldedWalletEnabled: boolean;
   confidentialBalanceEnabled: boolean;
 
+  // Phase A — route V3 shield/unshield/transfer through p01_relayer
+  // (hides RPC IP + outer fee_payer). Default ON; off only for debugging.
+  relayerV3Enabled: boolean;
+
   // Actions
   initialize: () => Promise<void>;
   setCurrency: (currency: Currency) => Promise<void>;
   setShieldedWalletEnabled: (enabled: boolean) => Promise<void>;
   setConfidentialBalanceEnabled: (enabled: boolean) => Promise<void>;
+  setRelayerV3Enabled: (enabled: boolean) => Promise<void>;
 
   // Helpers
   formatAmount: (usdAmount: number) => string;
@@ -50,6 +55,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   initialized: false,
   shieldedWalletEnabled: false,
   confidentialBalanceEnabled: false,
+  relayerV3Enabled: true,
 
   initialize: async () => {
     try {
@@ -66,6 +72,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           const toggles = JSON.parse(togglesRaw);
           updates.shieldedWalletEnabled = toggles.shieldedWalletEnabled ?? false;
           updates.confidentialBalanceEnabled = toggles.confidentialBalanceEnabled ?? false;
+          updates.relayerV3Enabled = toggles.relayerV3Enabled ?? true;
         } catch {}
       }
       set(updates);
@@ -102,6 +109,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
       const toggles = raw ? JSON.parse(raw) : {};
       toggles.confidentialBalanceEnabled = enabled;
+      await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
+    } catch (error) {
+      console.error('Failed to save privacy toggle:', error);
+    }
+  },
+
+  setRelayerV3Enabled: async (enabled: boolean) => {
+    set({ relayerV3Enabled: enabled });
+    try {
+      const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
+      const toggles = raw ? JSON.parse(raw) : {};
+      toggles.relayerV3Enabled = enabled;
       await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
     } catch (error) {
       console.error('Failed to save privacy toggle:', error);

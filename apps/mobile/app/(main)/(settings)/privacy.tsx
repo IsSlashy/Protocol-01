@@ -26,6 +26,7 @@ import {
 } from '../../../services/solana/decoyTransactions';
 import { useArcium } from '@/providers/ArciumProvider';
 import { useAutoShieldStore } from '@/stores/autoShieldStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { useT } from '@/i18n';
 
 const STORAGE_KEYS = {
@@ -96,6 +97,8 @@ export default function PrivacySettingsScreen() {
   const { } = useArcium(); // MPC always on
   const autoShieldEnabled = useAutoShieldStore((s) => s.enabled);
   const setAutoShieldEnabled = useAutoShieldStore((s) => s.setEnabled);
+  const relayerV3Enabled = useSettingsStore((s) => s.relayerV3Enabled);
+  const setRelayerV3Enabled = useSettingsStore((s) => s.setRelayerV3Enabled);
 
   useEffect(() => {
     loadSettings();
@@ -290,6 +293,20 @@ export default function PrivacySettingsScreen() {
             description="Enable privacy features on all sends"
             value={privateByDefault}
             onValueChange={handlePrivateDefaultToggle}
+          />
+        </GlassCard>
+
+        {/* RELAY ROUTING */}
+        <SectionTitle title="RELAY ROUTING" delay={320} />
+        <GlassCard delay={335}>
+          <ToggleRow
+            label="Route via decentralized relayer"
+            description="Hides your IP and submission patterns from RPC nodes. Adds a few seconds of latency."
+            value={relayerV3Enabled}
+            onValueChange={(v) => {
+              setRelayerV3Enabled(v);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
           />
         </GlassCard>
 

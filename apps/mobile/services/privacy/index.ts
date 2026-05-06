@@ -11,3 +11,9 @@ export {
   type SplitPart,
   type SplitTransaction,
 } from './transactionSplitter';
+
+export {
+  signAndSendViaRelayer,
+  fitsInRelayerEnvelope,
+  type WalletSigner as RelayerWalletSigner,
+} from './v3RelayerWrapper';

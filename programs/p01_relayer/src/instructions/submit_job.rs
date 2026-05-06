@@ -30,16 +30,21 @@ pub struct SubmitJob<'info> {
     )]
     pub config: Account<'info, RelayerConfig>,
 
-    /// Assigned relayer (must be active and meet minimum reputation)
+    /// Assigned relayer (must be active and meet minimum reputation).
+    /// Wrapped in `Box` to keep the 1184-byte ML-KEM-768 public-key field
+    /// off the SBF stack — `Account<'info, RelayerNode>` directly would
+    /// blow the 4096-byte stack frame limit in `try_accounts`, causing
+    /// undefined behavior at runtime ("Access violation in stack frame N").
     #[account(
         seeds = [RelayerNode::SEED_PREFIX, assigned_relayer.operator.as_ref()],
         bump = assigned_relayer.bump,
         constraint = assigned_relayer.is_active @ RelayerError::RelayerNotActive,
         constraint = assigned_relayer.reputation_score >= MIN_REPUTATION @ RelayerError::InsufficientReputation
     )]
-    pub assigned_relayer: Account<'info, RelayerNode>,
+    pub assigned_relayer: Box<Account<'info, RelayerNode>>,
 
-    /// Relay job PDA (created on submission)
+    /// Relay job PDA (created on submission). Boxed for the same reason —
+    /// `RelayJob` carries a 1280-byte `Vec<u8>` capacity.
     #[account(
         init,
         payer = submitter,
@@ -47,7 +52,7 @@ pub struct SubmitJob<'info> {
         seeds = [RelayJob::SEED_PREFIX, job_id.as_ref()],
         bump
     )]
-    pub job: Account<'info, RelayJob>,
+    pub job: Box<Account<'info, RelayJob>>,
 
     /// System program
     pub system_program: Program<'info, System>,

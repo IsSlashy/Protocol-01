@@ -22,16 +22,17 @@ pub struct CompleteJob<'info> {
     )]
     pub config: Account<'info, RelayerConfig>,
 
-    /// The relayer node completing the job
+    /// The relayer node completing the job. Boxed — keeps the 1184-byte
+    /// ML-KEM-768 key field off the SBF stack (see submit_job.rs).
     #[account(
         mut,
         seeds = [RelayerNode::SEED_PREFIX, operator.key().as_ref()],
         bump = relayer_node.bump,
         has_one = operator @ RelayerError::Unauthorized,
     )]
-    pub relayer_node: Account<'info, RelayerNode>,
+    pub relayer_node: Box<Account<'info, RelayerNode>>,
 
-    /// The job being completed
+    /// The job being completed. Boxed — `RelayJob` carries a 1280-byte Vec.
     #[account(
         mut,
         seeds = [RelayJob::SEED_PREFIX, job.job_id.as_ref()],
@@ -40,7 +41,7 @@ pub struct CompleteJob<'info> {
         constraint = job.assigned_relayer == relayer_node.key() @ RelayerError::InvalidRelayerAssignment,
         close = submitter
     )]
-    pub job: Account<'info, RelayJob>,
+    pub job: Box<Account<'info, RelayJob>>,
 
     /// Protocol fee wallet (receives protocol cut)
     /// CHECK: validated against config.protocol_fee_wallet
