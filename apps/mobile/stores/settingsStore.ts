@@ -35,12 +35,20 @@ interface SettingsState {
   // (hides RPC IP + outer fee_payer). Default ON; off only for debugging.
   relayerV3Enabled: boolean;
 
+  // When `true` (default), if the relayer fails (timeout, no active relayers,
+  // oversized inner tx, etc.) the transaction fails LOUDLY instead of silently
+  // falling back to direct RPC submission (which would leak L19 — user IP).
+  // Privacy-conscious users want fail-closed; users prioritising availability
+  // over privacy can toggle this off.
+  relayerStrictMode: boolean;
+
   // Actions
   initialize: () => Promise<void>;
   setCurrency: (currency: Currency) => Promise<void>;
   setShieldedWalletEnabled: (enabled: boolean) => Promise<void>;
   setConfidentialBalanceEnabled: (enabled: boolean) => Promise<void>;
   setRelayerV3Enabled: (enabled: boolean) => Promise<void>;
+  setRelayerStrictMode: (enabled: boolean) => Promise<void>;
 
   // Helpers
   formatAmount: (usdAmount: number) => string;
@@ -56,6 +64,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   shieldedWalletEnabled: false,
   confidentialBalanceEnabled: false,
   relayerV3Enabled: true,
+  relayerStrictMode: true,
 
   initialize: async () => {
     try {
@@ -73,6 +82,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           updates.shieldedWalletEnabled = toggles.shieldedWalletEnabled ?? false;
           updates.confidentialBalanceEnabled = toggles.confidentialBalanceEnabled ?? false;
           updates.relayerV3Enabled = toggles.relayerV3Enabled ?? true;
+          updates.relayerStrictMode = toggles.relayerStrictMode ?? true;
         } catch {}
       }
       set(updates);
@@ -121,6 +131,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
       const toggles = raw ? JSON.parse(raw) : {};
       toggles.relayerV3Enabled = enabled;
+      await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
+    } catch (error) {
+      console.error('Failed to save privacy toggle:', error);
+    }
+  },
+
+  setRelayerStrictMode: async (enabled: boolean) => {
+    set({ relayerStrictMode: enabled });
+    try {
+      const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
+      const toggles = raw ? JSON.parse(raw) : {};
+      toggles.relayerStrictMode = enabled;
       await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
     } catch (error) {
       console.error('Failed to save privacy toggle:', error);

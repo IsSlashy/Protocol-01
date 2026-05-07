@@ -481,23 +481,96 @@ export async function submitRelayJob(
   };
 }
 
+// ── Cancel Job ─────────────────────────────────────────────────────────
+
+/**
+ * Cancel a Pending relay job. Only the original submitter (ephemeral keypair)
+ * can sign. On success, the job PDA is closed and rent + fee are refunded
+ * to the ephemeral. No slash to the relayer.
+ *
+ * Used by the V3 wrapper when the inner-tx blockhash expires while the job
+ * is still Pending — cancel + retry with a fresh blockhash.
+ */
+export async function cancelRelayJob(
+  jobAddress: PublicKey,
+  ephemeral: Keypair,
+): Promise<string> {
+  const connection = getConnection();
+  // Anchor discriminator for cancel_job: sha256("global:cancel_job")[0..8]
+  const cancelDiscriminator = sha256(Buffer.from('global:cancel_job')).slice(0, 8);
+
+  const cancelIx = new TransactionInstruction({
+    programId: RELAYER_PROGRAM_ID,
+    keys: [
+      { pubkey: ephemeral.publicKey, isSigner: true, isWritable: true }, // submitter
+      { pubkey: jobAddress, isSigner: false, isWritable: true }, // job (close=submitter)
+    ],
+    data: Buffer.from(cancelDiscriminator),
+  });
+
+  const tx = new Transaction().add(cancelIx);
+  tx.feePayer = ephemeral.publicKey;
+  const { blockhash, lastValidBlockHeight } =
+    await connection.getLatestBlockhash('confirmed');
+  tx.recentBlockhash = blockhash;
+  tx.sign(ephemeral);
+
+  const sig = await connection.sendRawTransaction(tx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+  });
+  await connection.confirmTransaction(
+    { signature: sig, blockhash, lastValidBlockHeight },
+    'confirmed',
+  );
+  console.log('[Relay] cancel_job done, sig=' + sig.slice(0, 12) + '...');
+  return sig;
+}
+
 // ── Job Monitoring ─────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS = 2_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
+// Probe blockhash freshness every BLOCKHASH_CHECK_INTERVAL_MS while job pending.
+// Solana's blockhash window is ~150 slots (~60s legacy, ~120-150s new). We
+// fail-fast at the lower end to leave headroom for cancel + retry.
+const BLOCKHASH_CHECK_INTERVAL_MS = 10_000;
+const BLOCKHASH_FAILSAFE_MS = 90_000;
+
+/**
+ * Specific error thrown by `monitorJob` when the inner-tx blockhash expires
+ * while the job is still Pending. The caller should cancel the job (refund
+ * ephemeral rent) and retry with a fresh blockhash.
+ */
+export class InnerBlockhashExpiredError extends Error {
+  constructor(public readonly jobAddress: PublicKey) {
+    super(
+      `Inner-tx blockhash expired while job ${jobAddress.toBase58().slice(0, 8)}... still Pending — abort and retry`,
+    );
+    this.name = 'InnerBlockhashExpiredError';
+  }
+}
 
 /**
  * Monitor a relay job until completion or timeout.
  * The relayer closes the job PDA on completion, so account disappearing = done.
+ *
+ * If `innerBlockhash` is provided, the function also probes the blockhash for
+ * freshness while the job is Pending. When it goes stale (or after
+ * `BLOCKHASH_FAILSAFE_MS` regardless of probe accuracy), `InnerBlockhashExpiredError`
+ * is thrown so the caller can cancel + retry with a fresh blockhash instead
+ * of blocking the user for the full timeout window.
  */
 export async function monitorJob(
   jobAddress: PublicKey,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  innerBlockhash?: string,
 ): Promise<{ success: boolean; status: JobStatus }> {
   const connection = getConnection();
   const startTime = Date.now();
   let pollCount = 0;
-  console.log('[Relay] monitor: starting poll, timeoutMs=' + timeoutMs);
+  let lastBlockhashCheck = startTime;
+  console.log('[Relay] monitor: starting poll, timeoutMs=' + timeoutMs + (innerBlockhash ? ', blockhash-aware' : ''));
 
   while (Date.now() - startTime < timeoutMs) {
     const accountInfo = await connection.getAccountInfo(jobAddress);
@@ -520,8 +593,31 @@ export async function monitorJob(
       };
     }
 
+    // Fail-fast on inner-tx blockhash expiry instead of waiting for the full
+    // user-facing timeout — lets the wrapper cancel + retry quickly.
+    const elapsed = Date.now() - startTime;
+    if (innerBlockhash && elapsed - (lastBlockhashCheck - startTime) >= BLOCKHASH_CHECK_INTERVAL_MS) {
+      lastBlockhashCheck = Date.now();
+      try {
+        const isValid = await connection.isBlockhashValid(innerBlockhash, { commitment: 'confirmed' });
+        if (!isValid) {
+          console.warn('[Relay] monitor: inner blockhash expired (job still Pending after ' + elapsed + 'ms) — fail-fast');
+          throw new InnerBlockhashExpiredError(jobAddress);
+        }
+      } catch (e) {
+        if (e instanceof InnerBlockhashExpiredError) throw e;
+        // RPC error — don't fail-fast on flaky RPC; rely on the fail-safe timer.
+        console.warn('[Relay] monitor: blockhash probe RPC error, continuing: ' + (e as Error).message);
+      }
+    }
+    // Hard fail-safe regardless of probe result (covers RPC outages).
+    if (innerBlockhash && elapsed >= BLOCKHASH_FAILSAFE_MS) {
+      console.warn('[Relay] monitor: blockhash fail-safe triggered after ' + elapsed + 'ms — assuming expired');
+      throw new InnerBlockhashExpiredError(jobAddress);
+    }
+
     if (pollCount % 5 === 0) {
-      console.log('[Relay] monitor: still pending, poll=' + pollCount + ', elapsed=' + (Date.now() - startTime) + 'ms');
+      console.log('[Relay] monitor: still pending, poll=' + pollCount + ', elapsed=' + elapsed + 'ms');
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -538,6 +634,8 @@ export async function monitorJob(
  */
 export interface RelayTransactionOptions extends SubmitRelayJobOptions {
   timeoutMs?: number;
+  /** Inner-tx recentBlockhash for fail-fast expiry detection (recommended). */
+  innerBlockhash?: string;
 }
 
 /**
@@ -560,7 +658,7 @@ export async function relayTransaction(
   signTransaction: (tx: Transaction) => Promise<Transaction>,
   opts: RelayTransactionOptions = {},
 ): Promise<string> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...submitOpts } = opts;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, innerBlockhash, ...submitOpts } = opts;
   const { removePendingRelay, markPendingRelayErrored, jobIdToHex } =
     await import('./ephemeralRecovery');
 
@@ -571,9 +669,21 @@ export async function relayTransaction(
 
   let result;
   try {
-    result = await monitorJob(job.jobAddress, timeoutMs);
+    result = await monitorJob(job.jobAddress, timeoutMs, innerBlockhash);
   } catch (e) {
-    await markPendingRelayErrored(jobIdHex, `monitor threw: ${(e as Error)?.message ?? String(e)}`);
+    if (e instanceof InnerBlockhashExpiredError) {
+      // Cancel the job to refund ephemeral rent before bubbling up.
+      try {
+        await cancelRelayJob(job.jobAddress, job.ephemeralKeypair);
+        await removePendingRelay(jobIdHex);
+        console.log('[Relay] cancelled stale job after blockhash expiry');
+      } catch (cancelErr) {
+        console.warn('[Relay] cancel after blockhash expiry failed: ' + (cancelErr as Error).message);
+        await markPendingRelayErrored(jobIdHex, `blockhash-expired-cancel-failed: ${(cancelErr as Error)?.message ?? String(cancelErr)}`);
+      }
+    } else {
+      await markPendingRelayErrored(jobIdHex, `monitor threw: ${(e as Error)?.message ?? String(e)}`);
+    }
     throw e;
   }
 

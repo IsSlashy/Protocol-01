@@ -115,7 +115,7 @@ pub fn handler(
     let dynamic_delay = pool.get_dynamic_delay();
     let effective_min_epoch = min_epoch
         .checked_add(dynamic_delay)
-        .unwrap_or(u64::MAX);
+        .ok_or(ZkShieldedError::ArithmeticOverflow)?;
     require!(
         current_epoch >= effective_min_epoch,
         ZkShieldedError::EpochDelayNotMet

@@ -99,6 +99,8 @@ export default function PrivacySettingsScreen() {
   const setAutoShieldEnabled = useAutoShieldStore((s) => s.setEnabled);
   const relayerV3Enabled = useSettingsStore((s) => s.relayerV3Enabled);
   const setRelayerV3Enabled = useSettingsStore((s) => s.setRelayerV3Enabled);
+  const relayerStrictMode = useSettingsStore((s) => s.relayerStrictMode);
+  const setRelayerStrictMode = useSettingsStore((s) => s.setRelayerStrictMode);
 
   useEffect(() => {
     loadSettings();
@@ -305,6 +307,16 @@ export default function PrivacySettingsScreen() {
             value={relayerV3Enabled}
             onValueChange={(v) => {
               setRelayerV3Enabled(v);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          />
+          <GlassDivider />
+          <ToggleRow
+            label="Strict mode (fail closed)"
+            description="If the relayer fails, the transaction is aborted instead of falling back to direct submission (which would expose your IP). Recommended for maximum privacy."
+            value={relayerStrictMode}
+            onValueChange={(v) => {
+              setRelayerStrictMode(v);
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }}
           />

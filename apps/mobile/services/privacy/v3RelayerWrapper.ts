@@ -123,18 +123,39 @@ export async function signAndSendViaRelayer(
   };
 
   console.log('[V3-Relay] Step 6: calling relayTransaction (forceV1, timeout=' + V3_RELAYER_TIMEOUT_MS + 'ms)');
-  const { relayTransaction } = await import('../relay');
-  const sig = await relayTransaction(
-    innerBytes,
-    userPubkey,
-    signFn,
-    {
+  const { relayTransaction, InnerBlockhashExpiredError } = await import('../relay');
+
+  const callRelay = async (innerSerialized: Uint8Array, innerBh: string) =>
+    relayTransaction(innerSerialized, userPubkey, signFn, {
       forceV1Encryption: true,
       timeoutMs: V3_RELAYER_TIMEOUT_MS,
-    },
-  );
-  console.log('[V3-Relay] Step 7: DONE in ' + (Date.now() - t0) + 'ms, outer sig=' + sig.slice(0, 12) + '...');
-  return sig;
+      innerBlockhash: innerBh,
+    });
+
+  try {
+    const sig = await callRelay(innerBytes, blockhash);
+    console.log('[V3-Relay] Step 7: DONE in ' + (Date.now() - t0) + 'ms, outer sig=' + sig.slice(0, 12) + '...');
+    return sig;
+  } catch (e) {
+    if (!(e instanceof InnerBlockhashExpiredError)) throw e;
+    // Single retry with a fresh blockhash. The job was cancelled and ephemeral
+    // rent reclaimed inside relayTransaction's catch path.
+    console.log('[V3-Relay] inner blockhash expired — retrying once with fresh blockhash');
+    const fresh = (await connection.getLatestBlockhash('confirmed')).blockhash;
+    tx.recentBlockhash = fresh;
+    tx.signatures = [];
+    let retrySigned: Transaction;
+    if (keypair) {
+      tx.sign(keypair);
+      retrySigned = tx;
+    } else {
+      retrySigned = await walletSigner!.signTransaction(tx);
+    }
+    const retryBytes = retrySigned.serialize();
+    const sig = await callRelay(retryBytes, fresh);
+    console.log('[V3-Relay] Step 7 (retry): DONE in ' + (Date.now() - t0) + 'ms, outer sig=' + sig.slice(0, 12) + '...');
+    return sig;
+  }
 }
 
 /**

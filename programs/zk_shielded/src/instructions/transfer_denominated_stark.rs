@@ -27,7 +27,8 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
     );
-    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID]).unwrap();
+    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID])
+        .map_err(|_| ZkShieldedError::InvalidProof)?;
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
@@ -136,7 +137,7 @@ pub fn handler(
     let dynamic_delay = pool.get_dynamic_delay();
     let effective_min_epoch = min_epoch
         .checked_add(dynamic_delay)
-        .unwrap_or(u64::MAX);
+        .ok_or(ZkShieldedError::ArithmeticOverflow)?;
     require!(
         current_epoch >= effective_min_epoch,
         ZkShieldedError::EpochDelayNotMet

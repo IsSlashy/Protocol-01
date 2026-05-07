@@ -63,7 +63,8 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
     );
-    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID]).unwrap();
+    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID])
+        .map_err(|_| ZkShieldedError::InvalidProof)?;
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
@@ -385,10 +386,12 @@ pub fn handler(
             let pool_lamports = pool.to_account_info().lamports();
             let rent = Rent::get()?;
             let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
-            if pool_lamports.saturating_sub(min_rent) >= unshield_fee {
-                **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
-                **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
-            }
+            require!(
+                pool_lamports.saturating_sub(min_rent) >= unshield_fee,
+                ZkShieldedError::InsufficientPoolBalance
+            );
+            **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
+            **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
         }
     }
 
