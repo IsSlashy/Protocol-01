@@ -79,6 +79,8 @@ function TransferScreenContent() {
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(paramNoteId ?? null);
   const [result, setResult] = useState<{ txSig: string; shareableNote: string } | null>(null);
+  // Sync re-tap guard (store's isLoading flips after STARK gen starts).
+  const [submitting, setSubmitting] = useState(false);
 
   const matureNotes = useMemo(
     () => notes.filter(n => n.status === 'mature'),
@@ -99,12 +101,14 @@ function TransferScreenContent() {
 
   const handleTransfer = useCallback(async () => {
     if (!selectedNoteId) return;
+    if (submitting) return;
     if (!starkReady) {
       p01Alert(t('common.error'), t('shieldUnshield.starkNotReady'));
       return;
     }
     const note = notes.find(n => n.id === selectedNoteId);
     if (!note) return;
+    setSubmitting(true);
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
@@ -216,11 +220,13 @@ function TransferScreenContent() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       p01Alert(t('alerts.sendFailed'), (err as Error).message || t('alerts.errorGeneric'));
+    } finally {
+      setSubmitting(false);
     }
   }, [
     selectedNoteId, notes, starkReady,
     generatePoolCommitmentProof, generateMerklePathProof, generateMerkleUpdateProof,
-    transferNoteStark, transferNoteStarkV3, t,
+    transferNoteStark, transferNoteStarkV3, t, submitting,
   ]);
 
   const handleCopy = useCallback(async () => {
@@ -369,9 +375,9 @@ function TransferScreenContent() {
       {matureNotes.length > 0 && (
         <View style={[st.footer, { paddingBottom: 80 + insets.bottom }]}>
           <TouchableOpacity
-            style={[st.sendBtn, (!selectedNoteId || isLoading) && st.sendBtnDisabled]}
+            style={[st.sendBtn, (!selectedNoteId || isLoading || submitting) && st.sendBtnDisabled]}
             onPress={handleTransfer}
-            disabled={!selectedNoteId || isLoading}
+            disabled={!selectedNoteId || isLoading || submitting}
           >
             {isLoading ? (
               <Text style={st.sendBtnText}>

@@ -64,8 +64,13 @@ const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per reall
  * Closes leaks L13 (circuit_id at init) + L14 (proof_size variable).
  *
  * Cost: ~1.01 SOL transient rent per flow (refunded on close). 14 resize tx
- * @ ~5000 lamports each = ~0.07 SOL net. */
-const UNIFORM_PROOF_SIZE = 145_000;
+ * @ ~5000 lamports each = ~0.07 SOL net.
+ *
+ * Exported so V3 store pre-fund logic uses the SAME size for rent calculation
+ * (the buffer is reallocated to UNIFORM_PROOF_SIZE regardless of the actual
+ * proof bytes — pre-funding for the actual size leaves the ephemeral
+ * underfunded by the padding's rent). */
+export const UNIFORM_PROOF_SIZE = 145_000;
 
 /** SPL Memo program v2 — used to disambiguate resize tx (Phase C v1.1).
  * Each resize tx prepends a memo ix with a 4-byte LE counter, making the tx

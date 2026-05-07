@@ -1544,23 +1544,33 @@ async function signAndSendV3(
   try {
     return await signAndSendViaRelayer(connection, tx, keypair, walletSigner);
   } catch (e) {
-    const reason =
-      e instanceof OversizedInnerTxError
-        ? `oversized inner tx (${e.innerTxBytes}B > ${e.budgetBytes}B)`
-        : `relayer error: ${(e as Error)?.message ?? String(e)}`;
-    const strict = useSettingsStore.getState().relayerStrictMode;
-    if (strict) {
-      console.warn(
-        '[V3-Relay] ' + reason + ' — STRICT mode: failing closed (no IP leak fallback)',
-      );
-      const err = new Error(
-        'Relay unavailable — strict privacy mode prevented direct fallback. ' +
-          'Retry later or disable strict mode in Privacy settings to allow direct submission. ' +
-          `Underlying: ${reason}`,
-      );
-      (err as Error & { code?: string }).code = 'RELAYER_STRICT_FAILCLOSED';
-      throw err;
+    const isOversized = e instanceof OversizedInnerTxError;
+    const reason = isOversized
+      ? `oversized inner tx (${e.innerTxBytes}B > ${e.budgetBytes}B)`
+      : `relayer error: ${(e as Error)?.message ?? String(e)}`;
+
+    // OversizedInnerTxError is a STRUCTURAL limitation, not a privacy/availability
+    // failure — the inner tx is bigger than the v1 envelope can carry, so we
+    // MUST send direct (no relayer can encrypt this). strictMode does not apply
+    // here; the user has no privacy choice. Document the leak transparently in
+    // the warning. Phase A.3 (chunked submit_job + v2 hybrid envelope) will
+    // remove this hard constraint.
+    if (!isOversized) {
+      const strict = useSettingsStore.getState().relayerStrictMode;
+      if (strict) {
+        console.warn(
+          '[V3-Relay] ' + reason + ' — STRICT mode: failing closed (no IP leak fallback)',
+        );
+        const err = new Error(
+          'Relay unavailable — strict privacy mode prevented direct fallback. ' +
+            'Retry later or disable strict mode in Privacy settings to allow direct submission. ' +
+            `Underlying: ${reason}`,
+        );
+        (err as Error & { code?: string }).code = 'RELAYER_STRICT_FAILCLOSED';
+        throw err;
+      }
     }
+
     console.warn(
       '[V3-Relay] ' + reason + ' — falling back to direct signAndSend (RPC IP exposed for this tx)',
     );

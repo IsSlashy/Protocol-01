@@ -34,10 +34,13 @@
  */
 
 import {
+  AddressLookupTableAccount,
   Connection,
   Keypair,
   PublicKey,
   Transaction,
+  TransactionMessage,
+  VersionedTransaction,
 } from '@solana/web3.js';
 
 export interface WalletSigner {
@@ -46,6 +49,21 @@ export interface WalletSigner {
 }
 
 const V3_RELAYER_TIMEOUT_MS = 180_000;
+
+/** Phase A.2 — Address Lookup Table for V3 static accounts (devnet).
+ * Contains ZK_SHIELDED + STARK_VERIFIER + Token + Memo + ComputeBudget +
+ * SystemProgram + 4 SOL pools (pool/tree/fee_escrow each).
+ * Created via scripts/create-v3-lut.mjs. */
+const V3_STATIC_LUT = new PublicKey('J8zM2zwmx8zNMkWeej55P59EWsy9Rz6zgxxA2uCX4pTm');
+
+let cachedLut: AddressLookupTableAccount | null = null;
+async function getLutAccount(connection: Connection): Promise<AddressLookupTableAccount> {
+  if (cachedLut) return cachedLut;
+  const res = await connection.getAddressLookupTable(V3_STATIC_LUT);
+  if (!res.value) throw new Error(`V3 static LUT ${V3_STATIC_LUT.toBase58()} not found on-chain`);
+  cachedLut = res.value;
+  return cachedLut;
+}
 
 /**
  * Specific error type so the dispatcher can detect "tx too big" and fall
@@ -90,21 +108,34 @@ export async function signAndSendViaRelayer(
   console.log('[V3-Relay] Step 2: signer = ' + userPubkey.toBase58().slice(0, 8) + '... (kind=' + (keypair ? 'keypair' : 'walletSigner') + ')');
 
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = userPubkey;
-  console.log('[V3-Relay] Step 3: blockhash + feePayer set');
 
-  // Sign in-memory (no RPC side-effect yet) then measure.
-  let signedInner: Transaction;
-  if (keypair) {
-    tx.sign(keypair);
-    signedInner = tx;
+  // Phase A.2 — for keypair signers, build V0 versioned tx with the V3 static
+  // LUT to compress static account keys (saves ~150-200B). Closes the v0.9.11
+  // shield V3 oversize gap (~947B legacy → ~750-800B versioned). WalletSigner
+  // path (Privy etc) keeps legacy until those wallets support v0 sign.
+  const useVersioned = keypair !== null;
+  let innerBytes: Uint8Array;
+
+  if (useVersioned) {
+    const lut = await getLutAccount(connection);
+    console.log('[V3-Relay] Step 3 (v0): using LUT ' + V3_STATIC_LUT.toBase58().slice(0, 8) + '... (' + lut.state.addresses.length + ' static accounts)');
+    const message = new TransactionMessage({
+      payerKey: userPubkey,
+      recentBlockhash: blockhash,
+      instructions: tx.instructions,
+    }).compileToV0Message([lut]);
+    const versionedTx = new VersionedTransaction(message);
+    versionedTx.sign([keypair!]);
+    innerBytes = versionedTx.serialize();
   } else {
-    signedInner = await walletSigner!.signTransaction(tx);
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = userPubkey;
+    console.log('[V3-Relay] Step 3 (legacy): walletSigner path, no LUT compression');
+    const signed = await walletSigner!.signTransaction(tx);
+    innerBytes = signed.serialize();
   }
-  const innerBytes = signedInner.serialize();
   const budget = inferV1InnerTxBudget();
-  console.log('[V3-Relay] Step 4: inner tx signed, size=' + innerBytes.length + 'B (v1 budget=' + budget + 'B)');
+  console.log('[V3-Relay] Step 4: inner tx signed, size=' + innerBytes.length + 'B (v1 budget=' + budget + 'B' + (useVersioned ? ', v0+LUT' : ', legacy') + ')');
 
   // PREFLIGHT — fail loud BEFORE any on-chain side-effect (no pre-fund tx,
   // no relay-job submission, nothing). The caller handles fallback.
@@ -142,16 +173,23 @@ export async function signAndSendViaRelayer(
     // rent reclaimed inside relayTransaction's catch path.
     console.log('[V3-Relay] inner blockhash expired — retrying once with fresh blockhash');
     const fresh = (await connection.getLatestBlockhash('confirmed')).blockhash;
-    tx.recentBlockhash = fresh;
-    tx.signatures = [];
-    let retrySigned: Transaction;
-    if (keypair) {
-      tx.sign(keypair);
-      retrySigned = tx;
+    let retryBytes: Uint8Array;
+    if (useVersioned) {
+      const lut = await getLutAccount(connection);
+      const message = new TransactionMessage({
+        payerKey: userPubkey,
+        recentBlockhash: fresh,
+        instructions: tx.instructions,
+      }).compileToV0Message([lut]);
+      const versionedTx = new VersionedTransaction(message);
+      versionedTx.sign([keypair!]);
+      retryBytes = versionedTx.serialize();
     } else {
-      retrySigned = await walletSigner!.signTransaction(tx);
+      tx.recentBlockhash = fresh;
+      tx.signatures = [];
+      const signed = await walletSigner!.signTransaction(tx);
+      retryBytes = signed.serialize();
     }
-    const retryBytes = retrySigned.serialize();
     const sig = await callRelay(retryBytes, fresh);
     console.log('[V3-Relay] Step 7 (retry): DONE in ' + (Date.now() - t0) + 'ms, outer sig=' + sig.slice(0, 12) + '...');
     return sig;

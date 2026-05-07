@@ -57,6 +57,8 @@ export default function DenominatedUnshieldScreen() {
   const [useOwnWallet, setUseOwnWallet] = useState(true);
   const [emergencyToggle, setEmergencyToggle] = useState(isEmergencyMode);
   const [refreshing, setRefreshing] = useState(false);
+  // Sync re-tap guard (store's isLoading flips after biometric+stealth+RPC).
+  const [submitting, setSubmitting] = useState(false);
 
   const matureNotes = notes.filter(n => n.status === 'mature');
   const pendingNotes = notes.filter(n => n.status === 'pending');
@@ -100,6 +102,9 @@ export default function DenominatedUnshieldScreen() {
   }, [useOwnWallet, walletPublicKey]);
 
   const executeUnshield = useCallback(async (emergency: boolean) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
     if (!selectedNote) {
       p01Alert(t('shieldUnshield.selectNote'), t('shieldUnshield.selectNoteFirst'));
       return;
@@ -239,7 +244,10 @@ export default function DenominatedUnshieldScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('common.error'), err.message);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, starkReady, generatePoolCommitmentProof, generateMerklePathProof, router, t, isMpcActive]);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, starkReady, generatePoolCommitmentProof, generateMerklePathProof, router, t, isMpcActive, submitting]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {
@@ -483,10 +491,10 @@ export default function DenominatedUnshieldScreen() {
             style={[
               st.confirmBtn,
               emergencyToggle && selectedNote?.status === 'pending' && st.confirmBtnEmergency,
-              (!selectedNote || isLoading) && st.confirmBtnDisabled,
+              (!selectedNote || isLoading || submitting) && st.confirmBtnDisabled,
             ]}
             onPress={handleUnshield}
-            disabled={!selectedNote || isLoading}
+            disabled={!selectedNote || isLoading || submitting}
             activeOpacity={0.8}
           >
             {isLoading ? (

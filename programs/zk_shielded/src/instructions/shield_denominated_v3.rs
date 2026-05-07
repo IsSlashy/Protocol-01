@@ -223,14 +223,31 @@ pub fn handler(
         system_program::transfer(cpi_context, amount)?;
 
         if shield_fee > 0 {
+            // Phase E v1 — fee_escrow is a SystemAccount PDA. Solana rejects
+            // any tx that leaves a system account with lamports below the
+            // rent-exempt minimum for its data length (0-byte → ~890_880
+            // lamports). On the first shield to a fresh pool the escrow has
+            // 0 lamports, so a single 300k fee credit would leave it
+            // rent-defective and the runtime aborts the whole tx.
+            // Top up to rent-exempt min on first use.
+            let escrow_info = ctx.accounts.fee_escrow.to_account_info();
+            let rent = Rent::get()?;
+            let rent_min = rent.minimum_balance(0);
+            let current = escrow_info.lamports();
+            let projected = current.saturating_add(shield_fee);
+            let amount_to_transfer = if projected < rent_min {
+                rent_min.saturating_sub(current)
+            } else {
+                shield_fee
+            };
             let fee_context = CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
                     from: ctx.accounts.depositor.to_account_info(),
-                    to: ctx.accounts.fee_escrow.to_account_info(),
+                    to: escrow_info,
                 },
             );
-            system_program::transfer(fee_context, shield_fee)?;
+            system_program::transfer(fee_context, amount_to_transfer)?;
         }
     } else {
         // SPL Token transfer
@@ -273,14 +290,31 @@ pub fn handler(
 
         // SPL fee paid in SOL from depositor
         if shield_fee > 0 {
+            // Phase E v1 — fee_escrow is a SystemAccount PDA. Solana rejects
+            // any tx that leaves a system account with lamports below the
+            // rent-exempt minimum for its data length (0-byte → ~890_880
+            // lamports). On the first shield to a fresh pool the escrow has
+            // 0 lamports, so a single 300k fee credit would leave it
+            // rent-defective and the runtime aborts the whole tx.
+            // Top up to rent-exempt min on first use.
+            let escrow_info = ctx.accounts.fee_escrow.to_account_info();
+            let rent = Rent::get()?;
+            let rent_min = rent.minimum_balance(0);
+            let current = escrow_info.lamports();
+            let projected = current.saturating_add(shield_fee);
+            let amount_to_transfer = if projected < rent_min {
+                rent_min.saturating_sub(current)
+            } else {
+                shield_fee
+            };
             let fee_context = CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
                     from: ctx.accounts.depositor.to_account_info(),
-                    to: ctx.accounts.fee_escrow.to_account_info(),
+                    to: escrow_info,
                 },
             );
-            system_program::transfer(fee_context, shield_fee)?;
+            system_program::transfer(fee_context, amount_to_transfer)?;
         }
     }
 

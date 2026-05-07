@@ -54,6 +54,11 @@ export default function DenominatedShieldScreen() {
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [loadingBalance, setLoadingBalance] = useState(true);
   const [selectedPool, setSelectedPool] = useState<PoolConfig | null>(null);
+  // Synchronous re-tap guard. The store's isLoading flips ~500ms-2s after
+  // press (we await getBalance RPC first), leaving a window where double-tap
+  // would fire two parallel shields → counter collision. `submitting` is
+  // flipped on tap immediately and reset in the finally block.
+  const [submitting, setSubmitting] = useState(false);
   const [resultModal, setResultModal] = useState<{
     visible: boolean;
     type: 'success' | 'error';
@@ -115,8 +120,11 @@ export default function DenominatedShieldScreen() {
 
   const handleConfirmShield = useCallback(async () => {
     if (!selectedPool) return;
+    if (submitting) return; // re-tap guard (sync — fires before isLoading flips)
+    setSubmitting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    try {
     // Refresh balance right before check
     let currentBalance = walletBalance;
     try {
@@ -276,7 +284,10 @@ export default function DenominatedShieldScreen() {
         message: err.message || 'An unknown error occurred.',
       });
     }
-  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, fetchBalance, starkReady, generateMerkleUpdateProof]);
+    } finally {
+      setSubmitting(false);
+    }
+  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, fetchBalance, starkReady, generateMerkleUpdateProof, submitting]);
 
   return (
     <SafeAreaView style={st.container} edges={['top']}>
@@ -433,11 +444,11 @@ export default function DenominatedShieldScreen() {
                   <Text style={cs.cancelText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[cs.confirmBtn, isLoading && { opacity: 0.5 }]}
+                  style={[cs.confirmBtn, (isLoading || submitting) && { opacity: 0.5 }]}
                   onPress={handleConfirmShield}
-                  disabled={isLoading}
+                  disabled={isLoading || submitting}
                 >
-                  {isLoading ? (
+                  {(isLoading || submitting) ? (
                     <ActivityIndicator size="small" color="#000" />
                   ) : (
                     <Text style={cs.confirmText}>

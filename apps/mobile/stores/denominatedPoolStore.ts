@@ -1462,11 +1462,18 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           stealthKp = SolKeypair.fromSeed(seed);
 
           // V3 = TWO proof buffers. Pre-fund covers both rents + tx fees.
+          // Phase C v1: BOTH buffers are padded to UNIFORM_PROOF_SIZE so the
+          // verifier sees identical envelope sizes regardless of circuit.
+          // Pre-fund the rent for the PADDED size, not the proof's actual
+          // size — otherwise the ephemeral runs out of lamports during the
+          // last few resize calls and the realloc CPI fails with
+          // ResultWithNegativeLamports (Custom error 1).
           set({ progress: 'Funding ephemeral signer (V3)...' });
           const connection = getConnection();
           const PROOF_DATA_OFFSET_LOCAL = 83;
-          const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c1ProofData.proofSize);
-          const c3Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c3ProofData.proofSize);
+          const { UNIFORM_PROOF_SIZE } = await import('../services/stark');
+          const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + UNIFORM_PROOF_SIZE);
+          const c3Rent = c1Rent; // same uniform size
           // 0.015 SOL margin — covers 4 confirmable txs + nullifier PDA rent + slippage.
           // When the V3 relayer wrapper is enabled the stealth signer must
           // also cover the relay-job pre-fund (20M jobFee+rent+txFees) since
@@ -1830,9 +1837,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           set({ progress: 'Funding stealth signer (V3)...' });
           const connection = getConnection();
           const PROOF_DATA_OFFSET_LOCAL = 83;
-          const c1Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c1ProofData.proofSize);
-          const c3Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c3ProofData.proofSize);
-          const c6Rent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + c6ProofData.proofSize);
+          const { UNIFORM_PROOF_SIZE } = await import('../services/stark');
+          // Phase C v1: 3 proof buffers all padded to UNIFORM_PROOF_SIZE.
+          const cRent = await connection.getMinimumBalanceForRentExemption(PROOF_DATA_OFFSET_LOCAL + UNIFORM_PROOF_SIZE);
+          const c1Rent = cRent;
+          const c3Rent = cRent;
+          const c6Rent = cRent;
           const settings = await import('./settingsStore').then(m => m.useSettingsStore.getState());
           const RELAYER_TOPUP = settings.relayerV3Enabled ? 25_000_000 : 0;
           // 0.02 SOL margin — covers 5 confirmable txs (init+upload×3 + transfer + close×3),
