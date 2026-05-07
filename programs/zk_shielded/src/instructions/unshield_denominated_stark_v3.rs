@@ -76,15 +76,25 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
     nullifier: [u8; 32],
     merkle_root: [u8; 32],
     min_epoch: u64,
-    stark_commitment: u64
+    stark_commitment: u64,
+    recipient: [u8; 32]
 )]
 pub struct UnshieldDenominatedStarkV3<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: Any address can receive tokens
-    #[account(mut)]
-    pub recipient: AccountInfo<'info>,
+    // `recipient` removed from named accounts — moved to remaining_accounts[0].
+    // This is the indexability-layer privacy adaptation (Tornado Nova extDataHash
+    // pattern for Solana): the IDL no longer names the recipient slot so naive
+    // Solscan-style indexers cannot semantically resolve "recipient: ABC".
+    // The `recipient: [u8; 32]` instruction arg is verified in the handler
+    // against remaining_accounts[0].key() — the cryptographic binding is
+    // unchanged (c3_authority == payer check still holds).
+    // `recipient_token_account` stays as a named Option<Account> because it
+    // is validated by Anchor's token constraints (mint/owner checks). Moving it
+    // to remaining_accounts[2] would require manual deserialization — the privacy
+    // gain from hiding the SPL token account is marginal vs. the added complexity,
+    // so we keep it named for now.
 
     #[account(
         mut,
@@ -160,7 +170,19 @@ pub fn handler(
     merkle_root: [u8; 32],
     min_epoch: u64,
     stark_commitment: u64,
+    recipient: [u8; 32],
 ) -> Result<()> {
+    // Resolve recipient from remaining_accounts[0] and verify it matches the
+    // `recipient` instruction arg. This prevents a malicious relayer from
+    // substituting a different account — they cannot forge the payer signature
+    // (c3_authority check), but belt-and-suspenders here too.
+    let recipient_account = ctx.remaining_accounts.get(0)
+        .ok_or(ZkShieldedError::MissingRecipient)?;
+    require!(
+        recipient_account.key() == Pubkey::new_from_array(recipient),
+        ZkShieldedError::MismatchedRecipient
+    );
+
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.denominated_pool;
     let amount = pool.denomination;
@@ -289,7 +311,7 @@ pub fn handler(
             ZkShieldedError::InsufficientPoolBalance
         );
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
-        **ctx.accounts.recipient.try_borrow_mut_lamports()? += recipient_amount;
+        **recipient_account.try_borrow_mut_lamports()? += recipient_amount;
         if unshield_fee > 0 {
             **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += unshield_fee;
         }

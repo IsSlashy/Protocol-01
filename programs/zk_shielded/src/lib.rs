@@ -187,9 +187,10 @@ pub mod zk_shielded {
         merkle_root: [u8; 32],
         min_epoch: u64,
         stark_commitment: u64,
+        recipient: [u8; 32],
     ) -> Result<()> {
         instructions::unshield_denominated_stark_v3::handler(
-            ctx, nullifier, merkle_root, min_epoch, stark_commitment,
+            ctx, nullifier, merkle_root, min_epoch, stark_commitment, recipient,
         )
     }
 

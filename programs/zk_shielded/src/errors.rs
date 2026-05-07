@@ -154,4 +154,10 @@ pub enum ZkShieldedError {
 
     #[msg("Auction has not been finalized by MPC")]
     AuctionNotFinalized,
+
+    #[msg("Recipient account missing from remaining_accounts")]
+    MissingRecipient,
+
+    #[msg("Recipient pubkey does not match recipient arg")]
+    MismatchedRecipient,
 }

@@ -2844,7 +2844,22 @@ function buildShieldDenominatedV3Ix(
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
-/** Build `unshield_denominated_stark_v3`. Args: nullifier[32], merkle_root[32], min_epoch u64, stark_commitment u64. */
+/**
+ * Build `unshield_denominated_stark_v3`.
+ *
+ * Args layout: nullifier[32], merkle_root[32], min_epoch u64, stark_commitment u64, recipient[32].
+ *
+ * Phase B.2 indexability change: `recipient` is no longer a named account in the
+ * Anchor struct — it is passed as a 32-byte instruction arg AND placed as
+ * remaining_accounts[0] (isWritable=true, isSigner=false). The on-chain handler
+ * validates remaining_accounts[0].key() == Pubkey::from(recipient_arg), so a
+ * malicious relayer cannot redirect funds. Naive Solscan-style indexers keying on
+ * the named accounts list will no longer resolve "recipient: ABC" semantically.
+ *
+ * `recipientTokenAccount` stays as a named Option account (accounts[10]) because
+ * Anchor's token constraints validate mint/owner — moving it to remaining_accounts
+ * would require manual deserialization for marginal privacy gain.
+ */
 function buildUnshieldDenominatedStarkV3Ix(
   payer: PublicKey,
   recipient: PublicKey,
@@ -2862,22 +2877,25 @@ function buildUnshieldDenominatedStarkV3Ix(
   recipientTokenAccount?: PublicKey,
 ): TransactionInstruction {
   const disc = getDiscriminator('unshield_denominated_stark_v3');
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8);
+  // Args: nullifier[32] + merkle_root[32] + min_epoch u64 + stark_commitment u64 + recipient[32]
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
   data.writeBigUInt64LE(minEpoch, offset); offset += 8;
-  data.writeBigUInt64LE(starkCommitment, offset);
+  data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+  // recipient as 32-byte instruction arg (matches `recipient: [u8; 32]` in Rust)
+  Buffer.from(recipient.toBytes()).copy(data, offset);
 
-  // Account ordering must match `UnshieldDenominatedStarkV3` struct
-  // (see programs/zk_shielded/src/instructions/unshield_denominated_stark_v3.rs).
+  // Account ordering must match `UnshieldDenominatedStarkV3` struct.
+  // `recipient` is NOT in the named accounts list — it goes in remaining_accounts[0].
   // Phase E v1: fee_escrow is a per-pool PDA (deployed 2026-05-07).
   const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
 
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
-    { pubkey: recipient, isSigner: false, isWritable: true },
+    // recipient removed from named accounts — moved to remaining_accounts[0] below
     { pubkey: poolPDA, isSigner: false, isWritable: true },
     { pubkey: treePDA, isSigner: false, isWritable: false },
     { pubkey: nullifierPDA, isSigner: false, isWritable: true },
@@ -2888,6 +2906,8 @@ function buildUnshieldDenominatedStarkV3Ix(
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
     { pubkey: feeEscrowPDA, isSigner: false, isWritable: true },
+    // remaining_accounts[0]: recipient (no IDL label, indexers see anonymous AccountInfo)
+    { pubkey: recipient, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
