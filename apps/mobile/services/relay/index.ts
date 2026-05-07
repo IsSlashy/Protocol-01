@@ -55,6 +55,10 @@ export interface RelayerNode {
   stake: number;
   isActive: boolean;
   reputationScore: number;
+  /** Slot of last successful complete_job. 0 if never completed a job. */
+  lastActiveSlot: number;
+  /** Slot of registration (used for new-relayer-still-warming heuristics). */
+  registeredAtSlot: number;
 }
 
 export interface RelayerConfig {
@@ -72,6 +76,8 @@ export interface RelayJobResult {
   jobId: Uint8Array;
   ephemeralKeypair: Keypair;
   signature: string;
+  /** Operator pubkey of the relayer that was assigned (for failover tracking). */
+  selectedOperator: PublicKey;
 }
 
 export enum JobStatus {
@@ -228,10 +234,10 @@ export async function fetchActiveRelayers(
     const operator = new PublicKey(data.slice(offset, offset + 32)); offset += 32;
     const encryptionKey = new Uint8Array(data.slice(offset, offset + 32)); offset += 32;
     const stake = Number(data.readBigUInt64LE(offset)); offset += 8;
-    const jobsCompleted = Number(data.readBigUInt64LE(offset)); offset += 8;
-    const jobsFailed = Number(data.readBigUInt64LE(offset)); offset += 8;
-    offset += 8; // last_active_slot
-    offset += 8; // registered_at
+    /* jobsCompleted */ Number(data.readBigUInt64LE(offset)); offset += 8;
+    /* jobsFailed */ Number(data.readBigUInt64LE(offset)); offset += 8;
+    const lastActiveSlot = Number(data.readBigUInt64LE(offset)); offset += 8;
+    const registeredAtSlot = Number(data.readBigUInt64LE(offset)); offset += 8;
     offset += 8; // deactivated_at_slot
     const isActive = data[offset] === 1; offset += 1;
     const reputationScore = data.readUInt32LE(offset); offset += 4;
@@ -254,20 +260,38 @@ export async function fetchActiveRelayers(
       stake,
       isActive,
       reputationScore,
+      lastActiveSlot,
+      registeredAtSlot,
     };
   });
 }
 
 /**
  * Deterministic relayer selection: SHA-256(blockhash || jobId) mod count.
+ *
+ * `excludedOperators` (base58 pubkey strings) lets the caller skip relayers
+ * that have already failed in a prior attempt of the same flow. The function
+ * filters the candidate set first, then applies the deterministic hash.
+ * Throws if no relayer remains after exclusion.
  */
 export function selectRelayer(
   relayers: RelayerNode[],
   blockhash: string,
   jobId: Uint8Array,
+  excludedOperators?: Set<string>,
 ): { index: number; relayer: RelayerNode } {
-  if (relayers.length === 0) throw new Error('No active relayers');
-  if (relayers.length === 1) return { index: 0, relayer: relayers[0] };
+  let candidates = relayers;
+  if (excludedOperators && excludedOperators.size > 0) {
+    candidates = relayers.filter(r => !excludedOperators.has(r.operator.toBase58()));
+    if (candidates.length === 0) {
+      throw new Error(`All ${relayers.length} active relayers excluded — no candidate remaining`);
+    }
+  }
+  if (candidates.length === 0) throw new Error('No active relayers');
+  if (candidates.length === 1) {
+    const idx = relayers.indexOf(candidates[0]);
+    return { index: idx, relayer: candidates[0] };
+  }
 
   const input = new Uint8Array(blockhash.length + jobId.length);
   input.set(Buffer.from(blockhash), 0);
@@ -275,8 +299,41 @@ export function selectRelayer(
 
   const hash = sha256(input);
   const seed = (hash[0] | (hash[1] << 8) | (hash[2] << 16) | ((hash[3] & 0x7f) << 24)) >>> 0;
-  const index = seed % relayers.length;
-  return { index, relayer: relayers[index] };
+  const candidateIdx = seed % candidates.length;
+  const selected = candidates[candidateIdx];
+  // Return the index in the ORIGINAL relayers array (consumers iterate it).
+  const indexInOriginal = relayers.indexOf(selected);
+  return { index: indexInOriginal, relayer: selected };
+}
+
+/**
+ * Liveness threshold for filtering dormant relayers in selection.
+ *
+ * If a relayer's `lastActiveSlot` is older than `currentSlot - LIVENESS_THRESHOLD_SLOTS`
+ * AND it has had a chance to run a job (lastActiveSlot != 0 OR
+ * registered >= LIVENESS_THRESHOLD_SLOTS ago), treat it as dormant.
+ *
+ * Slots @ ~400ms each: 4500 slots ≈ 30 min. Reasonable for "haven't touched
+ * a job in 30 min = probably down". A polling worker that's running but
+ * just hasn't been picked a job won't get filtered (only complete_job
+ * updates lastActiveSlot).
+ */
+const LIVENESS_THRESHOLD_SLOTS = 4500;
+
+/** Filter out dormant relayers based on `lastActiveSlot` vs the current slot. */
+export function filterByLiveness(
+  relayers: RelayerNode[],
+  currentSlot: number,
+): RelayerNode[] {
+  return relayers.filter(r => {
+    // Never-active fresh relayer: give it a chance until LIVENESS_THRESHOLD_SLOTS
+    // since registration.
+    if (r.lastActiveSlot === 0) {
+      return currentSlot - r.registeredAtSlot < LIVENESS_THRESHOLD_SLOTS;
+    }
+    // Has completed jobs in the past → require recent activity.
+    return currentSlot - r.lastActiveSlot < LIVENESS_THRESHOLD_SLOTS;
+  });
 }
 
 // ── Job Submission ─────────────────────────────────────────────────────
@@ -302,6 +359,12 @@ export function generateJobId(): Uint8Array {
 export interface SubmitRelayJobOptions {
   ephemeralKeypair?: Keypair;
   forceV1Encryption?: boolean;
+  /** Operator pubkeys (base58) to skip in selection. Used by the multi-relayer
+   * failover loop in `signAndSendViaRelayer` after a relayer fails to pick up. */
+  excludedOperators?: Set<string>;
+  /** When true, also filter out dormant relayers via `last_active_slot` heuristic
+   * before selection. Defaults to true. */
+  filterDormant?: boolean;
 }
 
 /**
@@ -333,11 +396,27 @@ export async function submitRelayJob(
   if (relayers.length === 0) throw new Error('No active relayers available');
   console.log('[Relay] step1/7 done: ' + relayers.length + ' active relayers, jobFee=' + config.jobFeeLamports.toString() + ' lamports');
 
-  // 2. Generate job ID and select relayer
-  console.log('[Relay] step2/7: selecting relayer deterministically');
+  // Apply liveness filter (skip dormant relayers per last_active_slot).
+  const filterDormant = opts.filterDormant !== false; // default true
+  let candidatePool = relayers;
+  if (filterDormant) {
+    const currentSlot = await connection.getSlot('confirmed');
+    const live = filterByLiveness(relayers, currentSlot);
+    if (live.length > 0) {
+      candidatePool = live;
+      if (live.length < relayers.length) {
+        console.log('[Relay] liveness filter: ' + live.length + '/' + relayers.length + ' active relayers passed');
+      }
+    } else {
+      console.warn('[Relay] liveness filter: 0/' + relayers.length + ' relayers look alive — falling back to full set');
+    }
+  }
+
+  // 2. Generate job ID and select relayer (skip excluded operators).
+  console.log('[Relay] step2/7: selecting relayer deterministically' + (opts.excludedOperators?.size ? ' (excluded=' + opts.excludedOperators.size + ')' : ''));
   const jobId = generateJobId();
   const { blockhash: currentBlockhash } = await connection.getLatestBlockhash('confirmed');
-  const { relayer: selectedRelayer } = selectRelayer(relayers, currentBlockhash, jobId);
+  const { relayer: selectedRelayer } = selectRelayer(candidatePool, currentBlockhash, jobId, opts.excludedOperators);
   console.log('[Relay] step2/7 done: relayer=' + selectedRelayer.operator.toBase58().slice(0, 8) + '... (kem=' + (selectedRelayer.kemEncryptionKey ? 'yes' : 'no') + ')');
 
   // 3. Encrypt the transaction for the selected relayer (hybrid if KEM key available
@@ -478,6 +557,7 @@ export async function submitRelayJob(
     jobId,
     ephemeralKeypair: ephemeral,
     signature,
+    selectedOperator: selectedRelayer.operator,
   };
 }
 
@@ -541,8 +621,14 @@ const BLOCKHASH_FAILSAFE_MS = 90_000;
  * Specific error thrown by `monitorJob` when the inner-tx blockhash expires
  * while the job is still Pending. The caller should cancel the job (refund
  * ephemeral rent) and retry with a fresh blockhash.
+ *
+ * The optional `failedOperator` field is set by `relayTransaction` after
+ * cancelling so the multi-relayer failover loop in `signAndSendViaRelayer`
+ * can exclude this relayer on the next attempt.
  */
 export class InnerBlockhashExpiredError extends Error {
+  public failedOperator?: PublicKey;
+
   constructor(public readonly jobAddress: PublicKey) {
     super(
       `Inner-tx blockhash expired while job ${jobAddress.toBase58().slice(0, 8)}... still Pending — abort and retry`,
@@ -672,11 +758,14 @@ export async function relayTransaction(
     result = await monitorJob(job.jobAddress, timeoutMs, innerBlockhash);
   } catch (e) {
     if (e instanceof InnerBlockhashExpiredError) {
+      // Tag with the failed operator so the wrapper's failover loop can
+      // exclude this relayer on the next attempt.
+      e.failedOperator = job.selectedOperator;
       // Cancel the job to refund ephemeral rent before bubbling up.
       try {
         await cancelRelayJob(job.jobAddress, job.ephemeralKeypair);
         await removePendingRelay(jobIdHex);
-        console.log('[Relay] cancelled stale job after blockhash expiry');
+        console.log('[Relay] cancelled stale job after blockhash expiry (failed op=' + job.selectedOperator.toBase58().slice(0, 8) + '...)');
       } catch (cancelErr) {
         console.warn('[Relay] cancel after blockhash expiry failed: ' + (cancelErr as Error).message);
         await markPendingRelayErrored(jobIdHex, `blockhash-expired-cancel-failed: ${(cancelErr as Error)?.message ?? String(cancelErr)}`);

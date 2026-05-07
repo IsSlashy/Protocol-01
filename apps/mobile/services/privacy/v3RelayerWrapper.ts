@@ -154,46 +154,75 @@ export async function signAndSendViaRelayer(
   };
 
   console.log('[V3-Relay] Step 6: calling relayTransaction (forceV1, timeout=' + V3_RELAYER_TIMEOUT_MS + 'ms)');
-  const { relayTransaction, InnerBlockhashExpiredError } = await import('../relay');
+  const { relayTransaction, InnerBlockhashExpiredError, fetchActiveRelayers } = await import('../relay');
+
+  // Fetch active count once for the failover budget. We'll try at most
+  // `activeCount` distinct relayers before giving up.
+  const activeRelayers = await fetchActiveRelayers(connection);
+  const maxAttempts = Math.max(1, activeRelayers.length);
+  const excludedOperators = new Set<string>();
+
+  const reSign = async (bh: string): Promise<Uint8Array> => {
+    if (useVersioned) {
+      const lut = await getLutAccount(connection);
+      const message = new TransactionMessage({
+        payerKey: userPubkey,
+        recentBlockhash: bh,
+        instructions: tx.instructions,
+      }).compileToV0Message([lut]);
+      const versionedTx = new VersionedTransaction(message);
+      versionedTx.sign([keypair!]);
+      return versionedTx.serialize();
+    }
+    tx.recentBlockhash = bh;
+    tx.signatures = [];
+    const signed = await walletSigner!.signTransaction(tx);
+    return signed.serialize();
+  };
 
   const callRelay = async (innerSerialized: Uint8Array, innerBh: string) =>
     relayTransaction(innerSerialized, userPubkey, signFn, {
       forceV1Encryption: true,
       timeoutMs: V3_RELAYER_TIMEOUT_MS,
       innerBlockhash: innerBh,
+      excludedOperators: excludedOperators.size > 0 ? excludedOperators : undefined,
     });
 
-  try {
-    const sig = await callRelay(innerBytes, blockhash);
-    console.log('[V3-Relay] Step 7: DONE in ' + (Date.now() - t0) + 'ms, outer sig=' + sig.slice(0, 12) + '...');
-    return sig;
-  } catch (e) {
-    if (!(e instanceof InnerBlockhashExpiredError)) throw e;
-    // Single retry with a fresh blockhash. The job was cancelled and ephemeral
-    // rent reclaimed inside relayTransaction's catch path.
-    console.log('[V3-Relay] inner blockhash expired — retrying once with fresh blockhash');
-    const fresh = (await connection.getLatestBlockhash('confirmed')).blockhash;
-    let retryBytes: Uint8Array;
-    if (useVersioned) {
-      const lut = await getLutAccount(connection);
-      const message = new TransactionMessage({
-        payerKey: userPubkey,
-        recentBlockhash: fresh,
-        instructions: tx.instructions,
-      }).compileToV0Message([lut]);
-      const versionedTx = new VersionedTransaction(message);
-      versionedTx.sign([keypair!]);
-      retryBytes = versionedTx.serialize();
-    } else {
-      tx.recentBlockhash = fresh;
-      tx.signatures = [];
-      const signed = await walletSigner!.signTransaction(tx);
-      retryBytes = signed.serialize();
+  let currentBytes = innerBytes;
+  let currentBh = blockhash;
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const sig = await callRelay(currentBytes, currentBh);
+      console.log('[V3-Relay] Step 7: DONE in ' + (Date.now() - t0) + 'ms (attempt ' + attempt + '/' + maxAttempts + '), outer sig=' + sig.slice(0, 12) + '...');
+      return sig;
+    } catch (e) {
+      lastError = e as Error;
+      if (!(e instanceof InnerBlockhashExpiredError)) {
+        // Non-retryable error (oversize, no active, etc.) — bubble up immediately.
+        throw e;
+      }
+      const failedOp = e.failedOperator?.toBase58();
+      if (failedOp) excludedOperators.add(failedOp);
+      console.log('[V3-Relay] attempt ' + attempt + '/' + maxAttempts + ' timed out (op=' + (failedOp?.slice(0, 8) ?? '?') + ') — excluding + retrying');
+
+      if (attempt === maxAttempts) {
+        console.warn('[V3-Relay] all ' + maxAttempts + ' relayers exhausted — failing closed');
+        const exhausted = new Error(
+          `All ${maxAttempts} active relayers timed out — privacy path unavailable. Excluded: ${Array.from(excludedOperators).map(o => o.slice(0, 8)).join(', ')}`,
+        );
+        (exhausted as Error & { code?: string }).code = 'RELAYERS_EXHAUSTED';
+        throw exhausted;
+      }
+
+      // Refresh blockhash + re-sign for the next attempt.
+      currentBh = (await connection.getLatestBlockhash('confirmed')).blockhash;
+      currentBytes = await reSign(currentBh);
     }
-    const sig = await callRelay(retryBytes, fresh);
-    console.log('[V3-Relay] Step 7 (retry): DONE in ' + (Date.now() - t0) + 'ms, outer sig=' + sig.slice(0, 12) + '...');
-    return sig;
   }
+  // Unreachable.
+  throw lastError ?? new Error('relayTransaction loop exited unexpectedly');
 }
 
 /**
