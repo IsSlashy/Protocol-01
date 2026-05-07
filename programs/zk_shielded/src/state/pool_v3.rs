@@ -163,12 +163,18 @@ impl DenominatedPoolV3 {
         + 8   // root_write_index
         + 32; // vk_hash_escrow
 
-    /// Seeds for V3 PDA derivation: [b"denominated_pool_v3", token_mint, denomination]
+    /// Seeds for V3 PDA derivation: [b"denominated_pool_v4", token_mint, denomination]
     ///
-    /// Bumped from `denominated_pool_v2` because V3 introduces a different
-    /// merkle tree hash variant (Goldilocks Poseidon) — fresh trees are
-    /// required, can't co-mingle leaves with a different hash function.
-    pub const SEED_PREFIX: &'static [u8] = b"denominated_pool_v3";
+    /// Bumped from `denominated_pool_v3` to `denominated_pool_v4` (2026-05-07)
+    /// because the v3 pools accumulated leaves whose `LeafInserted` events
+    /// are not decodable by the current 6-layout registry (pre-hardening
+    /// split/escrow). Mobile cannot rebuild the merkle tree from events when
+    /// any leaf is missing → InvalidMerkleRoot at unshield. v4 pools start
+    /// with a guaranteed-clean event stream (V3 LeafInserted format only).
+    /// Bumped from `denominated_pool_v2` originally because V3 introduces a
+    /// different merkle tree hash variant (Goldilocks Poseidon) — fresh
+    /// trees are required, can't co-mingle leaves with a different hash.
+    pub const SEED_PREFIX: &'static [u8] = b"denominated_pool_v4";
 
     /// Default tree depth (2^15 = 32,768 notes per pool)
     /// Must equal the C6 (merkle_update) circuit's CANONICAL_DEPTH in

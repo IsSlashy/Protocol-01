@@ -2667,46 +2667,51 @@ export function deriveSplitOutputSecretsV3(parentSecret: bigint, count: number):
 // Program GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c, init signatures
 // captured in /tmp/init-v3.log.
 export const SOL_POOLS_V3: PoolConfig[] = [
+  // V4 pools (seed bumped 2026-05-07 to escape v3 pools with un-decodable
+  // legacy LeafInserted events). Old v3 SOL 0.1/1 pools left as comments
+  // for forensics.
+  // OLD v3: 28Bvnsw…/596hfJZcR5… (pool 0.1) had 14 leaves, 1 unrecoverable.
+  // OLD v3: 9Mx3Gv…/ELSe7TpQc…  (pool 1)
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
     denominationAtomic: 100_000_000n,
-    poolPDA: new PublicKey('28BvnswZBPnYQ6sVFQbD14NnYRsf6uXX4atd1aHb1xDZ'),
-    treePDA: new PublicKey('596hfJZcR5TNR9ugfBgpAViJsc2A5fVCSNfiG7ZRqcDs'),
+    poolPDA: new PublicKey('HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG'),
+    treePDA: new PublicKey('43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU'),
     version: 'v3',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
     denominationAtomic: 1_000_000_000n,
-    poolPDA: new PublicKey('9Mx3GvcTpR1ejvrkve7GuqaTELh4a1rBswjdRKj6dGRL'),
-    treePDA: new PublicKey('ELSe7TpQcJKNJH6XkJawXJiHu25s8iSL1o2zuvfYCuwb'),
+    poolPDA: new PublicKey('6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS'),
+    treePDA: new PublicKey('GGJQwEigkoSk3pzg6eiLtt1cu2kYfCtV5JewNJsMkNdi'),
     version: 'v3',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 10, decimals: 9,
     denominationAtomic: 10_000_000_000n,
-    poolPDA: new PublicKey('CdhHpciQUzR2PirrTZ5ygnu9dEM5UZKJtAMoqJtrZJBT'),
-    treePDA: new PublicKey('FLREPZ5s34b8jhFX4jru7NJvbgxLnN4wHiNDAozjC8P6'),
+    poolPDA: new PublicKey('H91CcAemoNktnW785XfnMjQqwThRNe127X5c2XuwtvwQ'),
+    treePDA: new PublicKey('AFLnk8gEVY38zG6fopuNb2oHyPZyjVsvyN3wqNVVyWFs'),
     version: 'v3',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 100, decimals: 9,
     denominationAtomic: 100_000_000_000n,
-    poolPDA: new PublicKey('F84bQhMABsMyCMeeRDRzAcX5Yt4iBi568pRhWVBYuSzi'),
-    treePDA: new PublicKey('56DwhuWWGA45VYEGCqcH9LpbqYDQHmKXg3pSL5aPc7x9'),
+    poolPDA: new PublicKey('AWWQ2QpB6omxywWU5RQYD7D5QvC5kjqo71Vj8QJxCUKu'),
+    treePDA: new PublicKey('2DNoAGmpBmq3uTgqVVgE8yKcnGtVk4gkL5n5QHgU97G1'),
     version: 'v3',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 500, decimals: 9,
     denominationAtomic: 500_000_000_000n,
-    poolPDA: new PublicKey('9FPqdA7isir7bw1tUrX4V882Ptdz4CT7pKaqB5SzE853'),
-    treePDA: new PublicKey('CHcmJ1S2G3nZ8x8n2exrj4HnXrGdeooBHjUm8oCSRzeq'),
+    poolPDA: new PublicKey('A6Dp4q8rVMmhM1F4bXL8VV6BER4xGgmiqoYXQhfhGGAh'),
+    treePDA: new PublicKey('BvDHQeryXC1WBYyqdnDsw6QZEUxk3ht86adiwuGm1eme'),
     version: 'v3',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1000, decimals: 9,
     denominationAtomic: 1_000_000_000_000n,
-    poolPDA: new PublicKey('GrN3Rnh8UwvFkxfw7NauVBrQnDHEs6aNcQGy4rpstsCA'),
-    treePDA: new PublicKey('7yueJ7Ga13dyWCkoeUPXjb8Dks3R4PDvkVUaCK5nwXo8'),
+    poolPDA: new PublicKey('ASMW2Gtg9q2J64jaLhVqHmXBFUmuFtRi9WQoKNdVed7X'),
+    treePDA: new PublicKey('ANwpHYapKrw94pxcDfg7ggAad2MwmG5Gr4NYMvLC7Yb1'),
     version: 'v3',
   },
 ];
@@ -2717,53 +2722,54 @@ export const SOL_POOLS_V3: PoolConfig[] = [
 // init script which derives ATAs idempotently). Filling in after first
 // USDC v3 shield validates the derivation.
 export const USDC_POOLS_V3: PoolConfig[] = [
+  // V4 pools (seed bumped 2026-05-07 — see SOL_POOLS_V3 above for context).
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1, decimals: 6,
     denominationAtomic: 1_000_000n,
-    poolPDA: new PublicKey('EVvL3yMNc3PfcN8vrG3hDhHqqoLhgUz38hA4E2rJBg2k'),
-    treePDA: new PublicKey('Diw7YwYD3meQuAxvxBRBx8sfEWK2uxokFTjhFc41sUsU'),
+    poolPDA: new PublicKey('AnBmWYRKGmcPSVTSgYZJeFgqaHmyLTzT1VJbmejXVSib'),
+    treePDA: new PublicKey('FwxkCXBSGjeNqjEpbBGAjuYB5fLV4iqddMbqPq9UDpcz'),
     version: 'v3',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10, decimals: 6,
     denominationAtomic: 10_000_000n,
-    poolPDA: new PublicKey('4LdnmcMJBBE356tufQ1FnRB9bVnMrU4NRgpy32xFH47K'),
-    treePDA: new PublicKey('HH8hWXPyTwPqFwavrxRgBhM6Lh8J3k7kVPheVBpyzps7'),
+    poolPDA: new PublicKey('58xgMmQJQbh2H5QMvw7Sw9CmnEGww17i4YtESJU7pcm4'),
+    treePDA: new PublicKey('H4syFMw5HovpQ8usEJiPsp69T8VUK6HbnNAcFAS8BewQ'),
     version: 'v3',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 100, decimals: 6,
     denominationAtomic: 100_000_000n,
-    poolPDA: new PublicKey('8yBbnKigbkcg7j7LR5dvD9LavPKLEphsAusDEyn32dcQ'),
-    treePDA: new PublicKey('FAPZ8wgNAcCbg4Nh1agfkht9xxXbsAARbdZS7CjTKXXV'),
+    poolPDA: new PublicKey('Dm6XJCkrqEjd9iC6uMyeaJQ5ADNB4Dd3ap3cCjyUP2RA'),
+    treePDA: new PublicKey('GkDqmFJYRx3FJYSbVAULde4WU8q31WSZmHkT1g5HuYKs'),
     version: 'v3',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1000, decimals: 6,
     denominationAtomic: 1_000_000_000n,
-    poolPDA: new PublicKey('EhfXXPUsTKnLrve3h8pBhhKMAz67Q677iABFaXVpkm6S'),
-    treePDA: new PublicKey('CHLPWqqfefyugyLAS6DckDEm3DUVNa6iT6B1j9jvX1y'),
+    poolPDA: new PublicKey('BwVswgqjXayXBbwu3WXrbB2MxcJdoRr5KC1aUfwqmGxT'),
+    treePDA: new PublicKey('FpmYv4NiAGYKZDvytGEzcmaajZ9voHRjLFpqU8rCunZb'),
     version: 'v3',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10000, decimals: 6,
     denominationAtomic: 10_000_000_000n,
-    poolPDA: new PublicKey('BudP4c2DujcxfY5RXRVZYKCGdAUJzJitKTfJieN2UGh5'),
-    treePDA: new PublicKey('J2jxo1TV6SnDBBT4z9NCDq6iinvtxRcn6QyZJwAruPQk'),
+    poolPDA: new PublicKey('5tjCa8FS41pdAg7dzH6wVePVDPJvbiBSbQxYRwgtXC3w'),
+    treePDA: new PublicKey('ABjs9guDCV1th3ixp4hmx2SkGdNBKXuDEptzcBnZjVj4'),
     version: 'v3',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 20000, decimals: 6,
     denominationAtomic: 20_000_000_000n,
-    poolPDA: new PublicKey('BfQsdJrjRaFcEvHUQjFCLtdPRDYPNsj6K7T9wjeepM5V'),
-    treePDA: new PublicKey('Ga6voXbAEVywXvCKqYWuxQLWCmp94KbhpXppi3vfzwbA'),
+    poolPDA: new PublicKey('A6nJv8ib2ek5WjUzknw7ijRRvfTH4Q2Ds63VNpq7FefM'),
+    treePDA: new PublicKey('Fw7UvkiBwZyNrUo8WohZWagHLwwArrdKrW6t1PRvzVii'),
     version: 'v3',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 50000, decimals: 6,
     denominationAtomic: 50_000_000_000n,
-    poolPDA: new PublicKey('4R3wUmVzv8SPriBWffGxUAdS4NCcRuYBpujAmU58aTcn'),
-    treePDA: new PublicKey('6XNZtGCZSXTLH1Lv6rVJJ1tqhSpPSjipQCFVfv5CNcWa'),
+    poolPDA: new PublicKey('27evdDgKsXYa73dpBtULcZMyNMNhk9zhHsFFtNT92M3w'),
+    treePDA: new PublicKey('BCoV7J3uaq57bsLGBTubnS1en31GxXnexoXBWJ4e8YpL'),
     version: 'v3',
   },
 ];
@@ -3195,6 +3201,55 @@ export async function unshieldDenominatedStarkV3(
     const merkleRootGl = c3ProofResult.publicInputs[1] ?? receipt.merkleRoot ?? 0n;
     const merkleRootBytes = goldilocksToLeBytes32(merkleRootGl);
     const starkCommitment = c1ProofResult.publicInputs[1] ?? 0n;
+
+    // Pre-flight root verification — without this the unshield can fail with
+    // InvalidMerkleRoot on-chain after burning ~2 SOL of STARK proof rent + 7
+    // minutes of upload, simply because `fetchPoolLeavesByIndex` missed an
+    // event (Helius 429, slow indexing of just-shielded note). Verify the
+    // c3Root is in the pool's known set BEFORE submitting; if not, retry the
+    // leaf scan with a higher `maxSignatures` and rebuild the proof tree once.
+    {
+      const { parsePoolAccount } = await import('./parsePool');
+      const poolAcct = await connection.getAccountInfo(poolConfig.poolPDA, 'confirmed');
+      if (poolAcct) {
+        const parsed = parsePoolAccount(poolAcct.data);
+        if (parsed) {
+          const eq = (a: Uint8Array, b: Uint8Array) => {
+            if (a.length !== b.length) return false;
+            for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+            return true;
+          };
+          const target = new Uint8Array(merkleRootBytes);
+          const inCurrent = eq(target, parsed.currentRoot);
+          const inHist = parsed.historicalRoots.some(r => eq(target, r));
+          const hex = (u: Uint8Array) => Array.from(u).map(b => b.toString(16).padStart(2, '0')).join('');
+          if (!inCurrent && !inHist) {
+            console.error(
+              `[Unshield/V3] PRE-FLIGHT FAIL — c3Root not in pool known roots. ` +
+              `c3Root=0x${hex(target).slice(0, 24)}…  ` +
+              `current=0x${hex(parsed.currentRoot).slice(0, 24)}…  ` +
+              `histLen=${parsed.historicalRoots.length}  ` +
+              `nextLeafIdx=${parsed.nextLeafIndex}  ` +
+              `noteCount=${parsed.noteCount}`,
+            );
+            console.error(`[Unshield/V3] historicalRoots dump:`);
+            parsed.historicalRoots.forEach((r, i) => console.error(`  [${i}] 0x${hex(r).slice(0, 24)}…`));
+            throw new Error(
+              `c3Root not in pool known roots — likely an incomplete event scan ` +
+              `(missed LeafInserted on devnet). Aborting before burning STARK rent. ` +
+              `Try again in ~10s once Helius indexes catch up, or restart the app to bust the leaf cache.`,
+            );
+          }
+          console.log(
+            `[Unshield/V3] PRE-FLIGHT OK — c3Root matches ${inCurrent ? 'pool.currentRoot' : 'historicalRoots[' + parsed.historicalRoots.findIndex(r => eq(target, r)) + ']'}`,
+          );
+        } else {
+          console.warn('[Unshield/V3] PRE-FLIGHT skip — pool parser returned null (layout drift?)');
+        }
+      } else {
+        console.warn('[Unshield/V3] PRE-FLIGHT skip — pool account fetch returned null');
+      }
+    }
 
     const slot = await connection.getSlot('confirmed');
     const minEpoch = slotToEpoch(slot); // V3 mirrors v2: maturity is UX-only on-chain.

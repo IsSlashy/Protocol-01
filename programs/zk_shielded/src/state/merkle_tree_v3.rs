@@ -45,8 +45,10 @@ impl MerkleTreeStateV3 {
         + 4 + (21 * 32)  // filled_subtrees (Vec with depth + 1 items, max depth 20)
         + 1;  // bump
 
-    /// Seeds for PDA derivation: [b"merkle_tree_v3", pool.key()]
-    pub const SEED_PREFIX: &'static [u8] = b"merkle_tree_v3";
+    /// Seeds for PDA derivation: [b"merkle_tree_v4", pool.key()]
+    /// Bumped from `merkle_tree_v3` along with `denominated_pool_v4` so
+    /// fresh pools start with empty trees and a clean event stream.
+    pub const SEED_PREFIX: &'static [u8] = b"merkle_tree_v4";
 
     /// Zero value for empty leaves under Goldilocks Poseidon t=3.
     /// V3 base zero = field zero (0u64 LE-padded to 32 bytes), unlike v2 which
