@@ -6,7 +6,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import {
   Wallet, Radio, ArrowLeftRight, Bot, Shield, Layers,
-  Lock, Calendar, Eye, Fingerprint, Globe, Zap,
+  Lock, Calendar, Eye, Fingerprint, Zap,
 } from "lucide-react";
 import { useT } from "@/i18n";
 
@@ -18,7 +18,6 @@ const features = [
   { icon: ArrowLeftRight, name: "tokenSwap", color: "#39c5bb" },
   { icon: Bot, name: "aiAgent", color: "#ffcc00" },
   { icon: Lock, name: "zkProofs", color: "#ff2d7a" },
-  { icon: Globe, name: "torRelay", color: "#00ffe5" },
   { icon: Eye, name: "confidentialBalances", color: "#39c5bb" },
   { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a" },
   { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00" },

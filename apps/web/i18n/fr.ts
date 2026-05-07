@@ -99,7 +99,6 @@ const fr: Translations = {
     tokenSwap: '\u00c9change de tokens',
     aiAgent: 'Agent IA',
     zkProofs: 'Preuves ZK',
-    torRelay: 'Relais Tor',
     confidentialBalances: 'Soldes confidentiels',
     stealthMetaAddresses: 'M\u00e9ta-adresses furtives',
     subscriptionVaults: 'Coffres d\u2019abonnement',
@@ -296,10 +295,6 @@ const fr: Translations = {
       automatedTests: {
         title: '370+ tests automatis\u00e9s',
         desc: 'Suite de tests compl\u00e8te : 106 tests de stress de programmes, 124 tests SDK crypto, 140 tests de services mobiles, flux E2E, 69 tests Rust STARK. Tous passants.',
-      },
-      privacyRelay: {
-        title: 'Relais de confidentialit\u00e9 (Routage Tor)',
-        desc: 'Relais de confidentialit\u00e9 3 niveaux d\u00e9ploy\u00e9 sur Railway. Suppression d\u2019en-t\u00eates c\u00f4t\u00e9 client + gigue, routage Tor SOCKS5 c\u00f4t\u00e9 serveur avec rotation de circuit toutes les 10 min. 13K+ requ\u00eates test\u00e9es, 100% rout\u00e9es via Tor.',
       },
       autoShieldReceive: {
         title: 'R\u00e9ception auto-blind\u00e9e',
@@ -684,8 +679,6 @@ const fr: Translations = {
     nodeWebSub: 'Next.js 16',
     nodeAiAgent: 'AGENT IA',
     nodeAiSub: '56 outils / LLM embarqu\u00e9',
-    nodeTorRelay: 'RELAIS TOR',
-    nodeTorSub: 'Anonymisation IP 3 niveaux',
     nodeAutoShield: 'AUTO-BLINDAGE',
     nodeAutoShieldSub: 'R\u00e9ception furtive + Pool auto',
     nodePrivacyRouter: 'ROUTEUR CONFIDENTIALIT\u00c9',
@@ -927,18 +920,6 @@ const fr: Translations = {
         detail5: 'Adresses de r\u00e9ception furtives suivies dans SecureStore avec nettoyage apr\u00e8s 7 jours',
         detail6: 'Bascule dans les param\u00e8tres de confidentialit\u00e9 pour activer/d\u00e9sactiver l\u2019auto-blindage',
         detail7: 'Compatible avec tout portefeuille Solana exp\u00e9diteur \u2014 Protocol 01 non requis c\u00f4t\u00e9 exp\u00e9diteur',
-      },
-      torRelay: {
-        title: 'Relais de confidentialit\u00e9 (Routage Tor)',
-        desc: 'Tous les appels RPC de l\u2019application mobile sont rout\u00e9s via un relais de confidentialit\u00e9 \u00e0 3 niveaux. Le relais supprime les en-t\u00eates identifiants, ajoute une gigue temporelle et route via Tor \u2014 les fournisseurs RPC en amont ne voient jamais l\u2019adresse IP r\u00e9elle de l\u2019utilisateur.',
-        detail1: 'Niveau 1 (Client) : fetchMiddleware supprime User-Agent, Origin, Referer + ajoute une gigue de 30-120ms',
-        detail2: 'Niveau 2 (Relais) : serveur Express avec limiteur de d\u00e9bit HMAC (z\u00e9ro stockage d\u2019IP), en-t\u00eates de s\u00e9curit\u00e9, suppression de m\u00e9tadonn\u00e9es',
-        detail3: 'Niveau 3 (Tor) : proxy SOCKS5 avec rotation de circuit toutes les 10 minutes via authentification al\u00e9atoire',
-        detail4: 'D\u00e9ploy\u00e9 sur Railway \u2014 conteneur unique (Node 22 Alpine + sidecar Tor)',
-        detail5: 'Supporte le transfert batch JSON-RPC pour getParsedTransactions',
-        detail6: 'RPC Helius en amont via Tor \u2014 cl\u00e9 API cach\u00e9e, IP anonymis\u00e9e',
-        detail7: 'Repli : l\u2019application fonctionne sans relais (protection c\u00f4t\u00e9 client niveau 1 toujours active)',
-        detail8: '13K+ requ\u00eates test\u00e9es avec 100% de routage Tor et 0 erreur',
       },
       stealthMetaAddresses: {
         title: 'M\u00e9ta-adresses furtives (P01 \u00e0 P01)',

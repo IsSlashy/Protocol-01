@@ -55,9 +55,7 @@ async function resilientFetch(
   const sanitizedOptions = stripIdentifyingHeaders(options);
   await sleep(30 + Math.floor(Math.random() * 90));
 
-  const urlStr = typeof url === 'string' ? url : String(url);
-  const isRelayCall = P01_RPC_RELAY !== '' && urlStr.startsWith(P01_RPC_RELAY);
-  const timeoutMs = isRelayCall ? 8000 : 30000;
+  const timeoutMs = 30000;
 
   // STARK chunk upload fires 100+ sequential TXs; Helius free tier (~10 RPS) will
   // 429 a fraction of them. Retry transparently so web3.js never sees the error.
@@ -138,12 +136,6 @@ const NETWORK_STORAGE_KEY = 'settings_network';
 // Helius API key from environment (optional but recommended)
 const HELIUS_API_KEY = process.env.EXPO_PUBLIC_HELIUS_API_KEY;
 
-// P01 Privacy RPC Relay — strips IP/metadata, Tor routing
-// When set, ALL RPC calls go through the relay instead of directly to Helius
-// Fallback to production relay URL if env var not injected (e.g. dev client cache)
-const _rawRelay = process.env.EXPO_PUBLIC_P01_RPC_RELAY || '';
-const P01_RPC_RELAY = (_rawRelay && _rawRelay.length > 5 && _rawRelay.startsWith('http')) ? _rawRelay : '';
-
 /**
  * Strip API keys from RPC URLs before logging (M10).
  * Helius requires ?api-key= as a query param — this is their required auth method.
@@ -183,25 +175,18 @@ const MAINNET_WS = HELIUS_API_KEY
 
 const RPC_ENDPOINTS: Record<SolanaCluster, { http: string; ws: string }[]> = {
   'devnet': [
-    // Privacy relay first (if configured) — pass network so relay routes correctly
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc?network=devnet`, ws: DEVNET_WS }] : []),
-    // Helius direct (fallback)
     ...(HELIUS_API_KEY
       ? [{ http: `https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: DEVNET_WS }]
       : []),
     { http: 'https://api.devnet.solana.com', ws: 'wss://api.devnet.solana.com' },
   ],
   'mainnet-beta': [
-    // Privacy relay with network param — if relay doesn't support it, skip to Helius
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc?network=mainnet-beta`, ws: MAINNET_WS }] : []),
-    // Helius direct — preferred for mainnet (no relay latency)
     ...(HELIUS_API_KEY
       ? [{ http: `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, ws: MAINNET_WS }]
       : []),
     { http: 'https://api.mainnet-beta.solana.com', ws: 'wss://api.mainnet-beta.solana.com' },
   ],
   'testnet': [
-    ...(P01_RPC_RELAY ? [{ http: `${P01_RPC_RELAY}/v1/rpc?network=testnet`, ws: '' }] : []),
     { http: 'https://api.testnet.solana.com', ws: 'wss://api.testnet.solana.com' },
   ],
 };

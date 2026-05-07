@@ -384,26 +384,6 @@ if (balance > MIN_THRESHOLD) {
 }`,
   },
   {
-    id: "tor-relay",
-    i18nKey: "torRelay",
-    icon: <Network className="w-6 h-6" />,
-    detailCount: 8,
-    codeExample: `// 3-tier privacy architecture
-// Tier 1: Client-side (always active)
-const connection = new Connection(relayUrl, {
-  fetchMiddleware: privacyFetchMiddleware, // Strip headers + jitter
-});
-
-// Tier 2: Relay server (Railway)
-app.use(stripMetadata);     // 20+ headers removed
-app.use(securityHeaders);   // HSTS, CSP, no-referrer
-app.use(rateLimiter);       // HMAC-hashed IP (zero storage)
-
-// Tier 3: Tor SOCKS5
-const agent = new SocksProxyAgent("socks5h://tor:9050");
-// Circuit rotates every 10min via random SOCKS auth`,
-  },
-  {
     id: "stealth-meta-addresses",
     i18nKey: "stealthMetaAddresses",
     icon: <Key className="w-6 h-6" />,
@@ -500,7 +480,6 @@ const docsArchLayers = [
     nameKey: "docs.layerPrivacy",
     hex: "#ff2d7a",
     nodes: [
-      { labelKey: "docs.nodeTorRelay", subKey: "docs.nodeTorSub" },
       { labelKey: "docs.nodeAutoShield", subKey: "docs.nodeAutoShieldSub" },
       { labelKey: "docs.nodePrivacyRouter", subKey: "docs.nodePrivacyRouterSub" },
       { labelKey: "docs.nodeMetaAddr", subKey: "docs.nodeMetaAddrSub" },

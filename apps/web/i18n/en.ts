@@ -97,7 +97,6 @@ const en = {
     tokenSwap: 'Token Swap',
     aiAgent: 'AI Agent',
     zkProofs: 'ZK Proofs',
-    torRelay: 'Tor Relay',
     confidentialBalances: 'Confidential Balances',
     stealthMetaAddresses: 'Stealth Meta-Addresses',
     subscriptionVaults: 'Subscription Vaults',
@@ -295,10 +294,6 @@ const en = {
       automatedTests: {
         title: '370+ Automated Tests',
         desc: 'Comprehensive test suite: 106 program stress tests, 124 crypto SDK tests, 140 mobile service tests, E2E flows, 69 Rust STARK tests. All passing.',
-      },
-      privacyRelay: {
-        title: 'Privacy Relay (Tor Routing)',
-        desc: '3-tier privacy relay deployed on Railway. Client-side header stripping + jitter, server-side Tor SOCKS5 routing with circuit rotation every 10min. 13K+ requests tested, 100% Tor-routed.',
       },
       autoShieldReceive: {
         title: 'Auto-Shield Receive',
@@ -684,8 +679,6 @@ const en = {
     nodeWebSub: 'Next.js 16',
     nodeAiAgent: 'AI AGENT',
     nodeAiSub: '56 Tools / On-Device LLM',
-    nodeTorRelay: 'TOR RELAY',
-    nodeTorSub: '3-Tier IP Anonymization',
     nodeAutoShield: 'AUTO-SHIELD',
     nodeAutoShieldSub: 'Stealth Receive + Auto Pool',
     nodePrivacyRouter: 'PRIVACY ROUTER',
@@ -927,18 +920,6 @@ const en = {
         detail5: 'Stealth receive addresses tracked in SecureStore with cleanup after 7 days',
         detail6: 'Settings toggle in Privacy Settings to enable/disable auto-shielding',
         detail7: 'Compatible with any Solana wallet sender — no Protocol 01 required on sender side',
-      },
-      torRelay: {
-        title: 'Privacy Relay (Tor Routing)',
-        desc: 'All RPC calls from the mobile app are routed through a 3-tier privacy relay. The relay strips identifying headers, adds timing jitter, and routes through Tor — upstream RPC providers never see the user\'s real IP address.',
-        detail1: 'Tier 1 (Client): fetchMiddleware strips User-Agent, Origin, Referer + adds 30-120ms jitter',
-        detail2: 'Tier 2 (Relay): Express server with HMAC rate limiter (zero IP storage), security headers, metadata stripping',
-        detail3: 'Tier 3 (Tor): SOCKS5 proxy with circuit rotation every 10 minutes via random authentication',
-        detail4: 'Deployed on Railway — single container (Node 22 Alpine + Tor sidecar)',
-        detail5: 'Supports batch JSON-RPC forwarding for getParsedTransactions',
-        detail6: 'Helius RPC upstream via Tor — API key hidden, IP anonymized',
-        detail7: 'Fallback: app works without relay (Tier 1 client-side protection always active)',
-        detail8: '13K+ requests tested with 100% Tor routing and 0 errors',
       },
       stealthMetaAddresses: {
         title: 'Stealth Meta-Addresses (P01-to-P01)',

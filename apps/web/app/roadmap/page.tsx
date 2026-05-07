@@ -194,11 +194,6 @@ const roadmap: RoadmapPhase[] = [
         icon: <TestTube className="w-5 h-5" />,
       },
       {
-        title: "roadmap.items.privacyRelay.title",
-        description: "roadmap.items.privacyRelay.desc",
-        icon: <Globe className="w-5 h-5" />,
-      },
-      {
         title: "roadmap.items.autoShieldReceive.title",
         description: "roadmap.items.autoShieldReceive.desc",
         icon: <Shield className="w-5 h-5" />,
