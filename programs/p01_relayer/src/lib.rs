@@ -160,4 +160,20 @@ pub mod p01_relayer {
     pub fn cancel_job(ctx: Context<CancelJob>) -> Result<()> {
         instructions::cancel_job::handler(ctx)
     }
+
+    // -----------------------------------------------------------------------
+    // Liveness & GC
+    // -----------------------------------------------------------------------
+
+    /// Bump `last_active_slot` on the relayer node without completing a job.
+    /// Workers call this every ~60 s so mobile liveness filters stay green.
+    pub fn heartbeat(ctx: Context<Heartbeat>) -> Result<()> {
+        instructions::heartbeat::handler(ctx)
+    }
+
+    /// Permissionless GC: close a Pending job older than 150 slots and refund
+    /// rent to the original submitter. Caller pays the tx fee only.
+    pub fn expire_pending_job(ctx: Context<ExpirePendingJob>) -> Result<()> {
+        instructions::expire_pending_job::handler(ctx)
+    }
 }

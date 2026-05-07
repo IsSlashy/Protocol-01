@@ -10,6 +10,8 @@ pub mod submit_chunk;
 pub mod complete_job;
 pub mod expire_job;
 pub mod cancel_job;
+pub mod heartbeat;
+pub mod expire_pending_job;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_config::*;
@@ -24,3 +26,5 @@ pub use submit_chunk::*;
 pub use complete_job::*;
 pub use expire_job::*;
 pub use cancel_job::*;
+pub use heartbeat::*;
+pub use expire_pending_job::*;
