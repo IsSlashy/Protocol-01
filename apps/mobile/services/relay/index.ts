@@ -313,12 +313,14 @@ export function selectRelayer(
  * AND it has had a chance to run a job (lastActiveSlot != 0 OR
  * registered >= LIVENESS_THRESHOLD_SLOTS ago), treat it as dormant.
  *
- * Slots @ ~400ms each: 4500 slots ≈ 30 min. Reasonable for "haven't touched
- * a job in 30 min = probably down". A polling worker that's running but
- * just hasn't been picked a job won't get filtered (only complete_job
- * updates lastActiveSlot).
+ * Slots @ ~400ms each : 50_000 slots ≈ 5.5 hours. Generous grace for
+ * registered-but-not-yet-picked relayers (lastActiveSlot=0 stays alive
+ * for 5h post-registration). Trade-off: a relayer that crashed but stays
+ * isActive on-chain will be considered live for ~5h. Acceptable because
+ * the multi-relayer failover will route to the next one if this one
+ * doesn't pickup within 90s blockhash window.
  */
-const LIVENESS_THRESHOLD_SLOTS = 4500;
+const LIVENESS_THRESHOLD_SLOTS = 50_000;
 
 /** Filter out dormant relayers based on `lastActiveSlot` vs the current slot. */
 export function filterByLiveness(
@@ -586,8 +588,15 @@ export async function submitRelayJob(
  * program side; mobile self-imposes the tighter 900 for safe margin). */
 export const MAX_CHUNK_DATA_SIZE = 900;
 
-/** RelayChunk PDA size (in bytes), MUST match `RelayChunk::LEN` on-chain. */
-const RELAY_CHUNK_LEN = 8 + 32 + 2 + 4 + MAX_CHUNK_DATA_SIZE + 1; // = 1037
+/** RelayChunk PDA on-chain allocated size (bytes).
+ * MUST match `RelayChunk::LEN` in programs/p01_relayer/src/state/relay_job.rs,
+ * which uses the on-chain `MAX_CHUNK_DATA_SIZE = 990` (the looser cap). The
+ * mobile MAX_CHUNK_DATA_SIZE = 900 is a tighter self-imposed limit for the
+ * tx envelope; it does NOT change the allocated account size. Pre-fund rent
+ * MUST use 990 (the actual on-chain alloc) or the second chunk's `init`
+ * fails with Custom(0x1) ResultWithNegativeLamports. */
+const ONCHAIN_MAX_CHUNK_DATA_SIZE = 990;
+const RELAY_CHUNK_LEN = 8 + 32 + 2 + 4 + ONCHAIN_MAX_CHUNK_DATA_SIZE + 1; // = 1037
 
 /** Discriminator for `submit_job_chunked` (sha256("global:submit_job_chunked")[..8]). */
 const SUBMIT_JOB_CHUNKED_DISC = Buffer.from([192, 160, 6, 61, 217, 212, 36, 196]);
