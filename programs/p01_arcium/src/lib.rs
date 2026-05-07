@@ -4,7 +4,13 @@ use arcium_anchor::prelude::*;
 pub mod state;
 use state::{RelayJob, RelayJobStatus};
 
-declare_id!("9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ");
+// declare_id matches the on-chain program ID — drift fixed 2026-05-07.
+// Source previously declared `9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ`
+// but actual deploy address is FH1JiQRUhKP1... (memory + Hardening
+// Master Plan flagged this drift). Mismatch caused
+// `DeclaredProgramIdMismatch` (Anchor 4100 / 0x1004) on every ix call
+// after the Phase D scaffold deploy at slot 460790xxx.
+declare_id!("FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT");
 
 /// Computation definition offsets (must match encrypted-ixs function names)
 const COMP_DEF_BALANCE_AUDIT: u32 = comp_def_offset("balance_audit");
@@ -1381,6 +1387,48 @@ pub mod p01_arcium {
 
         Ok(())
     }
+
+    /// Permissionless GC: close a `Pending` or `Decrypting` relay job whose
+    /// `deadline_slot` has been reached. Rent + fee lamports are returned to
+    /// the original `submitter` (NOT the caller — the caller only pays the tx
+    /// fee).
+    ///
+    /// **Why `Decrypting` is expirable**: once a job is stuck in `Decrypting`
+    /// past its deadline it means the MPC orchestration never completed all
+    /// chunk callbacks. The submitter's funds would be locked indefinitely
+    /// without this escape hatch. The job transitions to `Expired` and the
+    /// account is closed (rent + lamports → submitter).
+    ///
+    /// **Terminal states** (`Decrypted`, `Submitted`, `Expired`, `Failed`) are
+    /// rejected — they are either completing normally or already finalized.
+    pub fn expire_relay_job(ctx: Context<ExpireRelayJob>) -> Result<()> {
+        let clock = Clock::get()?;
+        let job = &ctx.accounts.relay_job;
+
+        // Status guard — only non-terminal active states may be expired.
+        require!(
+            job.status == RelayJobStatus::Pending || job.status == RelayJobStatus::Decrypting,
+            ErrorCode::RelayJobAlreadyTerminal
+        );
+
+        // Deadline guard.
+        require!(
+            clock.slot >= job.deadline_slot,
+            ErrorCode::RelayJobNotExpired
+        );
+
+        emit!(RelayJobExpiredEvent {
+            job: ctx.accounts.relay_job.key(),
+            submitter: job.submitter,
+            fee: job.fee,
+            expired_at_slot: clock.slot,
+        });
+
+        // `close = submitter` in the Accounts struct transfers all lamports
+        // (rent + any fee balance held by the PDA) back to the submitter and
+        // zeroes the account, so no explicit lamport manipulation is needed.
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -2648,6 +2696,46 @@ pub struct ConfidentialRelayJobSubmitted {
     pub posted_at_slot: u64,
 }
 
+/// Accounts for `expire_relay_job`.
+///
+/// Permissionless: anyone may be `caller` — they only pay the Solana tx fee.
+/// The PDA's lamports (rent + `fee` balance) are returned to `submitter`.
+#[derive(Accounts)]
+pub struct ExpireRelayJob<'info> {
+    /// Anyone may call this ix — they pay the tx fee but receive nothing.
+    pub caller: Signer<'info>,
+
+    /// The relay job PDA to be closed. Anchor transfers all lamports to
+    /// `submitter` and zeroes the account via `close = submitter`.
+    #[account(
+        mut,
+        constraint = relay_job.status == RelayJobStatus::Pending
+            || relay_job.status == RelayJobStatus::Decrypting
+            @ ErrorCode::RelayJobAlreadyTerminal,
+        constraint = submitter.key() == relay_job.submitter
+            @ ErrorCode::RelayJobInvalidSubmitter,
+        close = submitter,
+    )]
+    pub relay_job: Account<'info, RelayJob>,
+
+    /// Original submitter — must match `relay_job.submitter`. Receives rent +
+    /// fee lamports when the account is closed.
+    #[account(mut)]
+    pub submitter: SystemAccount<'info>,
+}
+
+#[event]
+pub struct RelayJobExpiredEvent {
+    /// Address of the closed RelayJob PDA.
+    pub job: Pubkey,
+    /// Submitter that receives the refund.
+    pub submitter: Pubkey,
+    /// Fee that was locked in the PDA and is now refunded.
+    pub fee: u64,
+    /// Slot at which the expiry was executed.
+    pub expired_at_slot: u64,
+}
+
 // ============================================================================
 // Errors
 // ============================================================================
@@ -2680,4 +2768,10 @@ pub enum ErrorCode {
     RelayPayloadTooLarge,
     #[msg("Relay deadline_slot must be in the future")]
     RelayDeadlineInPast,
+    #[msg("Relay job deadline_slot has not been reached yet")]
+    RelayJobNotExpired,
+    #[msg("submitter account does not match job.submitter")]
+    RelayJobInvalidSubmitter,
+    #[msg("Relay job is in a terminal state and cannot be expired")]
+    RelayJobAlreadyTerminal,
 }
