@@ -55,4 +55,26 @@ pub enum RelayerError {
 
     #[msg("Relayer reputation score is below minimum required for job assignment")]
     InsufficientReputation,
+
+    // Phase A.3 — chunked submit_job
+    #[msg("Invalid total_chunks (must be 1..=256)")]
+    InvalidChunkCount,
+
+    #[msg("Encryption version not supported (1 = X25519, 2 = ML-KEM-768 hybrid)")]
+    UnsupportedEncryptionVersion,
+
+    #[msg("Job is not in chunked mode")]
+    NotChunkedJob,
+
+    #[msg("chunk_index out of range")]
+    ChunkIndexOutOfRange,
+
+    #[msg("All chunks already received for this job")]
+    ChunkAlreadyComplete,
+
+    #[msg("Chunk data exceeds MAX_CHUNK_DATA_SIZE")]
+    ChunkDataTooLarge,
+
+    #[msg("Chunk data must not be empty")]
+    EmptyChunk,
 }

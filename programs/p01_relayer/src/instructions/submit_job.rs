@@ -89,7 +89,10 @@ pub fn handler(
         .checked_add(config.job_timeout_slots)
         .ok_or(RelayerError::ArithmeticOverflow)?;
 
-    // Initialize the job
+    // Initialize the job (legacy single-shot mode — encrypted_tx inline).
+    // `encryption_version` derived from the first byte of encrypted_tx
+    // (0x01 = X25519, 0x02 = ML-KEM-768 hybrid). Defaults to 1 if absent.
+    let enc_version = encrypted_tx.first().copied().unwrap_or(1);
     let job = &mut ctx.accounts.job;
     job.job_id = job_id;
     job.encrypted_tx = encrypted_tx;
@@ -100,6 +103,10 @@ pub fn handler(
     job.deadline_slot = deadline_slot;
     job.status = crate::state::JobStatus::Pending;
     job.bump = ctx.bumps.job;
+    // Phase A.3 — chunked-mode metadata; legacy single-shot ⇒ total_chunks=0.
+    job.total_chunks = 0;
+    job.chunks_received = 0;
+    job.encryption_version = enc_version;
 
     msg!(
         "Job submitted: relayer={}, fee={}, deadline={}",

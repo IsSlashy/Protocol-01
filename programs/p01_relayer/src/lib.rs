@@ -117,6 +117,31 @@ pub mod p01_relayer {
         instructions::submit_job::handler(ctx, job_id, encrypted_tx)
     }
 
+    /// Phase A.3 — Initialise a CHUNKED relay job. Use when the encrypted
+    /// payload exceeds the single-tx 1232-byte cap (V3 shield ~947B inner +
+    /// envelope) or when v2 hybrid ML-KEM-768 envelope is required (1161B
+    /// overhead). Caller follows up with N `submit_chunk` calls.
+    pub fn submit_job_chunked(
+        ctx: Context<SubmitJobChunked>,
+        job_id: [u8; 32],
+        total_chunks: u16,
+        encryption_version: u8,
+    ) -> Result<()> {
+        instructions::submit_job_chunked::handler(ctx, job_id, total_chunks, encryption_version)
+    }
+
+    /// Phase A.3 — Append a single chunk to a chunked relay job. Each
+    /// chunk_index gets its own RelayChunk PDA. Worker reassembles all
+    /// chunks (sequenced by chunk_index) once `chunks_received == total_chunks`.
+    pub fn submit_chunk(
+        ctx: Context<SubmitChunk>,
+        job_id: [u8; 32],
+        chunk_index: u16,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::submit_chunk::handler(ctx, job_id, chunk_index, data)
+    }
+
     /// Relayer reports successful job completion with the tx signature.
     pub fn complete_job(
         ctx: Context<CompleteJob>,
