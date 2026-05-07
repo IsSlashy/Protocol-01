@@ -19,6 +19,7 @@ import {
   ALL_POOLS_V3,
   fetchPoolLeavesByIndex,
   buildMerkleProofFromLeavesV3,
+  goldilocksToLeBytes32,
 } from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
@@ -167,12 +168,57 @@ export default function DenominatedUnshieldScreen() {
           // because other deposits may have been added since the receipt was
           // stored.
           const conn = getConnection();
-          const { leavesByIndex } = await fetchPoolLeavesByIndex(conn, pool.poolPDA);
-          const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } =
-            buildMerkleProofFromLeavesV3({
-              leavesByIndex,
-              targetLeafIndex: receipt.leafIndex,
-            });
+          // Bumped from default 1000 to 5000 — devnet Helius 429s frequently
+          // truncate the signature list at low limits; missing even one
+          // LeafInserted event makes `buildMerkleProofFromLeavesV3` fill that
+          // slot with BN254 ZERO_VALUE (gap-fill), producing a Goldilocks
+          // root that doesn't exist on-chain → InvalidMerkleRoot at unshield.
+          const SIG_SCAN_LIMIT = 5000;
+          let leafScan = await fetchPoolLeavesByIndex(conn, pool.poolPDA, { maxSignatures: SIG_SCAN_LIMIT });
+          let { leavesByIndex } = leafScan;
+          let merkleProof = buildMerkleProofFromLeavesV3({
+            leavesByIndex,
+            targetLeafIndex: receipt.leafIndex,
+          });
+
+          // Pre-proof verification — if the rebuilt root isn't in the pool's
+          // known roots, the STARK proof would fail at submission anyway
+          // (after burning ~2 SOL of buffer rent + 7 min of upload). Re-fetch
+          // the pool, retry the scan ONCE more with delay if mismatch (gives
+          // Helius indexer time to catch up on a just-shielded note).
+          {
+            const { parsePoolAccount } = await import('@/services/denominatedPool/parsePool');
+            const eq = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i]);
+            const checkRoot = async (rootBigint: bigint, label: string) => {
+              const acct = await conn.getAccountInfo(pool.poolPDA, 'confirmed');
+              if (!acct) return null;
+              const parsed = parsePoolAccount(acct.data);
+              if (!parsed) return null;
+              const target = new Uint8Array(goldilocksToLeBytes32(rootBigint));
+              const inCur = eq(target, parsed.currentRoot);
+              const idx = parsed.historicalRoots.findIndex(r => eq(target, r));
+              const ok = inCur || idx >= 0;
+              console.log(`[Unshield/V3] pre-proof ${label}: rebuilt c3Root in pool? ${ok ? 'YES (' + (inCur ? 'currentRoot' : 'hist[' + idx + ']') + ')' : 'NO'} — pool nextLeafIdx=${parsed.nextLeafIndex} histLen=${parsed.historicalRoots.length} mySeen=${leafScan.scannedLeafCount} missing=${leafScan.missing.length}`);
+              return ok;
+            };
+            const ok1 = await checkRoot(merkleProof.root, 'attempt-1');
+            if (ok1 === false) {
+              console.warn('[Unshield/V3] root mismatch — retrying scan after 8s with limit ' + (SIG_SCAN_LIMIT * 2));
+              await new Promise(r => setTimeout(r, 8000));
+              leafScan = await fetchPoolLeavesByIndex(conn, pool.poolPDA, { maxSignatures: SIG_SCAN_LIMIT * 2 });
+              leavesByIndex = leafScan.leavesByIndex;
+              merkleProof = buildMerkleProofFromLeavesV3({ leavesByIndex, targetLeafIndex: receipt.leafIndex });
+              const ok2 = await checkRoot(merkleProof.root, 'attempt-2');
+              if (ok2 === false) {
+                throw new Error(
+                  'Cannot rebuild merkle root that matches the pool. ' +
+                  'Likely a missing LeafInserted event (Helius indexing delay). ' +
+                  'Wait ~30s and retry, or restart the app to bust caches.',
+                );
+              }
+            }
+          }
+          const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } = merkleProof;
 
           // Stash the latest root onto the receipt so the v3 unshield ix
           // sends the merkle_root that's currently in the on-chain ring.

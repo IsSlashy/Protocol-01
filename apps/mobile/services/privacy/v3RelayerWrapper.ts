@@ -174,6 +174,11 @@ export async function signAndSendViaRelayer(
   const activeRelayers = await fetchActiveRelayers(connection);
   const maxAttempts = Math.max(1, activeRelayers.length);
   const excludedOperators = new Set<string>();
+  console.log(`[V3-Relay] Step 6: ${activeRelayers.length} active relayers on-chain, maxAttempts=${maxAttempts}`);
+  activeRelayers.forEach((r, i) => {
+    const ageSlots = r.lastActiveSlot;
+    console.log(`[V3-Relay]   relayer ${i}: op=${r.operator.toBase58().slice(0, 8)}… stake=${(r.stake / 1e9).toFixed(2)} SOL last_active_slot=${ageSlots} active=${r.isActive}`);
+  });
 
   const reSign = async (bh: string): Promise<Uint8Array> => {
     if (useVersioned) {

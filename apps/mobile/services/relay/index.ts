@@ -697,7 +697,20 @@ export async function submitChunkedRelayJob(
     createdAt: new Date().toISOString(),
   });
 
-  console.log('[ChunkedRelay] step5/7: pre-funding ephemeral, total=' + fundAmount + ' lamports (' + totalChunks + ' chunks @ ' + chunkRent + ' each)');
+  const sourceBal = await connection.getBalance(walletPublicKey);
+  console.log(
+    `[ChunkedRelay] step5/7: pre-funding ephemeral=${ephemeral.publicKey.toBase58().slice(0, 8)}… ` +
+    `fundAmount=${(fundAmount / 1e9).toFixed(6)} SOL ` +
+    `(jobFee=${(Number(config.jobFeeLamports) / 1e9).toFixed(6)} ` +
+    `jobRent=${(jobRent / 1e9).toFixed(6)} ` +
+    `${totalChunks}×chunkRent=${((totalChunks * chunkRent) / 1e9).toFixed(6)} ` +
+    `txFees=${(txFees / 1e9).toFixed(6)} ` +
+    `ephRent=${(ephemeralRentMin / 1e9).toFixed(6)})`,
+  );
+  console.log(`[ChunkedRelay] step5/7 source ${walletPublicKey.toBase58().slice(0, 8)}… bal=${(sourceBal / 1e9).toFixed(6)} SOL`);
+  if (sourceBal < fundAmount) {
+    console.error(`[ChunkedRelay] step5/7 INSUFFICIENT SOURCE BAL — short ${((fundAmount - sourceBal) / 1e9).toFixed(6)} SOL (this will fail simulation)`);
+  }
   const fundTx = new Transaction().add(
     SystemProgram.transfer({
       fromPubkey: walletPublicKey,
@@ -718,6 +731,7 @@ export async function submitChunkedRelayJob(
     { signature: fundSig, blockhash: fundBlockhash, lastValidBlockHeight: fundHeight },
     'confirmed',
   );
+  console.log(`[ChunkedRelay] step5/7 fund confirmed sig=${fundSig.slice(0, 16)}…`);
 
   // 6. submit_job_chunked
   const [configPDA] = PublicKey.findProgramAddressSync([SEEDS.CONFIG], RELAYER_PROGRAM_ID);
@@ -759,7 +773,11 @@ export async function submitChunkedRelayJob(
     { signature: initSig, blockhash: initBh, lastValidBlockHeight: initLvbh },
     'confirmed',
   );
-  console.log('[ChunkedRelay] step6/7: submit_job_chunked ok, sig=' + initSig.slice(0, 12) + '...');
+  const ephBalAfterInit = await connection.getBalance(ephemeral.publicKey);
+  console.log(
+    `[ChunkedRelay] step6/7: submit_job_chunked ok sig=${initSig.slice(0, 16)}… ` +
+    `eph bal=${(ephBalAfterInit / 1e9).toFixed(6)} SOL`,
+  );
 
   // 7. submit_chunk × N (parallel waves)
   console.log('[ChunkedRelay] step7/7: submitting ' + totalChunks + ' chunks');
@@ -812,6 +830,7 @@ export async function submitChunkedRelayJob(
       ),
     );
     chunkSigs.push(...sigs);
+    console.log(`[ChunkedRelay] step7 wave ${Math.floor(w / WAVE_SIZE) + 1}: sent ${slice.length} chunks (${chunkSigs.length}/${totalChunks})`);
   }
   // Confirm all
   await Promise.all(
@@ -823,7 +842,11 @@ export async function submitChunkedRelayJob(
     ),
   );
 
-  console.log('[ChunkedRelay] DONE in ' + (Date.now() - t0) + 'ms, ' + totalChunks + ' chunks landed, jobPDA=' + jobPDA.toBase58().slice(0, 8) + '...');
+  const ephBalFinal = await connection.getBalance(ephemeral.publicKey);
+  console.log(
+    `[ChunkedRelay] DONE in ${Date.now() - t0}ms — ${totalChunks} chunks landed, ` +
+    `jobPDA=${jobPDA.toBase58().slice(0, 8)}… eph leftover=${(ephBalFinal / 1e9).toFixed(6)} SOL`,
+  );
 
   return {
     jobAddress: jobPDA,

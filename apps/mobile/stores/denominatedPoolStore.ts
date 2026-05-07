@@ -1476,19 +1476,29 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const c3Rent = c1Rent; // same uniform size
           // 0.015 SOL margin — covers 4 confirmable txs + nullifier PDA rent + slippage.
           // When the V3 relayer wrapper is enabled the stealth signer must
-          // also cover the relay-job pre-fund (20M jobFee+rent+txFees) since
-          // the wrapper transfers FROM the stealth signer to the relayer
-          // ephemeral. We top up by 25M (5M margin) so the chain remains
-          // main → stealth → relay-ephemeral instead of main → relay-ephemeral
-          // direct (which would add a new on-chain link from main wallet).
+          // also cover the relay-job pre-fund (jobFee + jobRent + N*chunkRent
+          // + txFees + ephemeralRentMin) since the wrapper transfers FROM
+          // the stealth signer to the relayer ephemeral. We top up by 40M
+          // (~0.04 SOL) to cover up to 4 chunks (v2 ML-KEM-768 hybrid envelope
+          // can push chunk count to 3 for non-trivial inner txs). Excess is
+          // recovered via the crash-sweep on error.
           const settings = await import('./settingsStore').then(m => m.useSettingsStore.getState());
-          const RELAYER_TOPUP = settings.relayerV3Enabled ? 25_000_000 : 0;
+          const RELAYER_TOPUP = settings.relayerV3Enabled ? 40_000_000 : 0;
           const FEE_FUND = c1Rent + c3Rent + 15_000_000 + RELAYER_TOPUP;
           console.log(
-            `[DenomStore/V3] Pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL ` +
+            `[Unshield/V3] step1 pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL ` +
             `(c1Rent=${(c1Rent / 1e9).toFixed(4)} c3Rent=${(c3Rent / 1e9).toFixed(4)} ` +
-            `relayerTopup=${(RELAYER_TOPUP / 1e9).toFixed(3)})`,
+            `margin=0.0150 relayerTopup=${(RELAYER_TOPUP / 1e9).toFixed(3)} v3Relayer=${settings.relayerV3Enabled})`,
           );
+
+          const fundSourcePubkey = walletSigner?.publicKey ?? (await getKeypair())?.publicKey;
+          if (fundSourcePubkey) {
+            const sourceBal = await connection.getBalance(fundSourcePubkey);
+            console.log(`[Unshield/V3] step1 source ${fundSourcePubkey.toBase58().slice(0, 8)}… bal=${(sourceBal / 1e9).toFixed(6)} SOL (need ${(FEE_FUND / 1e9).toFixed(6)})`);
+            if (sourceBal < FEE_FUND) {
+              console.error(`[Unshield/V3] step1 INSUFFICIENT BALANCE — short ${((FEE_FUND - sourceBal) / 1e9).toFixed(6)} SOL`);
+            }
+          }
 
           if (walletSigner) {
             const fundTx = new Transaction().add(
@@ -1498,7 +1508,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             fundTx.recentBlockhash = blockhash;
             fundTx.feePayer = walletSigner.publicKey;
             const signedFund = await walletSigner.signTransaction(fundTx);
-            await connection.sendRawTransaction(signedFund.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+            const fundSig = await connection.sendRawTransaction(signedFund.serialize());
+            await connection.confirmTransaction(fundSig, 'confirmed');
+            console.log(`[Unshield/V3] step1 fundTx confirmed: ${fundSig.slice(0, 16)}…`);
           } else {
             const kp = await getKeypair();
             if (kp) {
@@ -1509,9 +1521,13 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               fundTx.recentBlockhash = blockhash;
               fundTx.feePayer = kp.publicKey;
               fundTx.sign(kp);
-              await connection.sendRawTransaction(fundTx.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+              const fundSig = await connection.sendRawTransaction(fundTx.serialize());
+              await connection.confirmTransaction(fundSig, 'confirmed');
+              console.log(`[Unshield/V3] step1 fundTx confirmed: ${fundSig.slice(0, 16)}…`);
             }
           }
+          const stealthBalAfterFund = await connection.getBalance(stealthKp.publicKey);
+          console.log(`[Unshield/V3] step1 stealth ${stealthKp.publicKey.toBase58().slice(0, 8)}… funded bal=${(stealthBalAfterFund / 1e9).toFixed(6)} SOL`);
 
           // Timing jitter
           const jitter = 1000 + Math.floor(Math.random() * 2000);
@@ -1830,10 +1846,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // V3 transfer = THREE proof buffers (C1 + C3 + C6). Pre-fund covers
           // all three rents + nullifier PDA + tx fees. Buffers are closed in
           // the service `finally` so net cost ≈ 0.003 SOL.
-          // Add an extra 25M lamports when the V3 relayer wrapper is enabled
+          // Add an extra 40M lamports when the V3 relayer wrapper is enabled
           // (mirrors unshieldNoteStarkV3) so the stealth signer can fund the
-          // relay-job ephemeral without adding a new main-wallet → ephemeral
-          // direct link.
+          // relay-job ephemeral (jobFee + jobRent + N*chunkRent + txFees +
+          // ephemeralRentMin — up to 4 chunks for v2 hybrid envelope) without
+          // adding a new main-wallet → ephemeral direct link.
           set({ progress: 'Funding stealth signer (V3)...' });
           const connection = getConnection();
           const PROOF_DATA_OFFSET_LOCAL = 83;
@@ -1844,7 +1861,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const c3Rent = cRent;
           const c6Rent = cRent;
           const settings = await import('./settingsStore').then(m => m.useSettingsStore.getState());
-          const RELAYER_TOPUP = settings.relayerV3Enabled ? 25_000_000 : 0;
+          const RELAYER_TOPUP = settings.relayerV3Enabled ? 40_000_000 : 0;
           // 0.02 SOL margin — covers 5 confirmable txs (init+upload×3 + transfer + close×3),
           // nullifier PDA rent, and rate-limit retries.
           const FEE_FUND = c1Rent + c3Rent + c6Rent + 20_000_000 + RELAYER_TOPUP;
