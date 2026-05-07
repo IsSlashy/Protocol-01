@@ -318,6 +318,102 @@ pub mod p01_stark_verifier {
     ) -> Result<()> {
         Ok(())
     }
+
+    /// Phase C v1 — Initialize a proof buffer WITHOUT exposing circuit_id at
+    /// init time. The buffer's PDA seed uses a 16-byte caller-supplied nonce
+    /// instead of `[circuit_id]`, and `circuit_id` is stored as a sentinel
+    /// (u8::MAX = "unknown") until `verify_uniform` probes it.
+    ///
+    /// Combined with `verify_uniform` and uniform-padding (mobile pads proofs
+    /// to a fixed N bytes regardless of circuit), an indexer cannot infer
+    /// which circuit the user is proving from the init/chunk/verify tx
+    /// envelopes. Closes leaks L13 (circuit_id) + L14 (proof_size variable).
+    pub fn init_proof_buffer_v2(
+        ctx: Context<InitProofBufferV2>,
+        proof_size: u32,
+        _nonce: [u8; 16],
+    ) -> Result<()> {
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.authority = ctx.accounts.authority.key();
+        // Sentinel: circuit_id is unknown until verify_uniform probes it.
+        buffer.circuit_id = u8::MAX;
+        buffer.proof_size = proof_size;
+        buffer.bytes_written = 0;
+        buffer.verified = false;
+        buffer.public_inputs_hash = [0u8; 32];
+        buffer.deep_ali_verified = false;
+        Ok(())
+    }
+
+    /// Phase C v1 — Verify a STARK proof without exposing `circuit_id` in the
+    /// instruction data. Probes the V3 active circuit configs in fixed order
+    /// (1, 3, 5, 6) — the first config whose `from_bytes` succeeds is the
+    /// candidate. After parse succeeds, runs ONE `verify_generic` against
+    /// that config; if it fails, errors (does NOT fall through to the next
+    /// config — that would multiply CU cost beyond the 1.4M cap).
+    ///
+    /// CU cost: ~3-12K CU for failed parses (length-check arithmetic only)
+    /// + ~700K-1.3M CU for the matched circuit's verify_generic. Stays under
+    /// the per-ix 1.4M cap.
+    ///
+    /// On success, stores the discovered `circuit_id` in the buffer for
+    /// downstream `verify_deep_ali_phase2` consumption.
+    pub fn verify_uniform(
+        ctx: Context<VerifyStarkProof>,
+        public_inputs: Vec<u64>,
+    ) -> Result<()> {
+        let buffer = &mut ctx.accounts.proof_buffer;
+        require!(!buffer.verified, StarkVerifierError::AlreadyVerified);
+        require!(
+            buffer.bytes_written >= buffer.proof_size,
+            StarkVerifierError::IncompleteProof
+        );
+
+        let info = buffer.to_account_info();
+        let account_data = info.data.borrow();
+        let proof_start = ProofBuffer::PROOF_DATA_OFFSET;
+        let proof_end = proof_start + buffer.proof_size as usize;
+        let proof_bytes = &account_data[proof_start..proof_end];
+
+        // Probe order: V3 active circuits only (1=pool_commitment, 3=merkle_path,
+        // 5=transfer, 6=merkle_update). C0/C2/C4 are not used in V3 hot paths.
+        const PROBE_ORDER: [u8; 4] = [1, 3, 5, 6];
+
+        let mut matched: Option<(u8, GenericCompactProof)> = None;
+        for &cid in PROBE_ORDER.iter() {
+            let config = match get_circuit_config(cid) {
+                Some(c) => c,
+                None => continue,
+            };
+            if let Some(proof) = GenericCompactProof::from_bytes(proof_bytes, config) {
+                matched = Some((cid, proof));
+                break;
+            }
+        }
+
+        let (circuit_id, proof) = matched.ok_or(StarkVerifierError::DeserializationError)?;
+        let config = get_circuit_config(circuit_id)
+            .ok_or(StarkVerifierError::UnsupportedCircuit)?;
+
+        verify::verify_generic(&proof, circuit_id, &public_inputs, config)
+            .map_err(|_| StarkVerifierError::InvalidProof)?;
+
+        // Hash public inputs to bind them to the buffer for phase-2 use.
+        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
+        for v in &public_inputs {
+            pub_buf.extend_from_slice(&v.to_le_bytes());
+        }
+        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+
+        drop(account_data);
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.circuit_id = circuit_id; // post-hoc; was u8::MAX
+        buffer.verified = true;
+        buffer.public_inputs_hash = public_inputs_hash;
+
+        msg!("verify_uniform: probed circuit {}", circuit_id);
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -333,6 +429,23 @@ pub struct InitProofBuffer<'info> {
         // Cap init allocation at 10KB; use resize_proof_buffer for larger proofs
         space = ProofBuffer::init_space(proof_size as usize),
         seeds = [b"stark_proof", authority.key().as_ref(), &[circuit_id]],
+        bump,
+    )]
+    pub proof_buffer: Account<'info, ProofBuffer>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Phase C v1 init buffer — seeds use a 16-byte nonce instead of circuit_id.
+#[derive(Accounts)]
+#[instruction(proof_size: u32, nonce: [u8; 16])]
+pub struct InitProofBufferV2<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = ProofBuffer::init_space(proof_size as usize),
+        seeds = [b"stark_proof_v2", authority.key().as_ref(), &nonce],
         bump,
     )]
     pub proof_buffer: Account<'info, ProofBuffer>,

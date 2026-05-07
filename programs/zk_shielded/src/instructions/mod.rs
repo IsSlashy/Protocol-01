@@ -39,6 +39,7 @@ pub mod escrow_release;
 pub mod write_escrow_outcome;
 pub mod update_escrow_vk;
 pub mod store_escrow_vk_data;
+pub mod sweep_fee_escrow;
 
 #[allow(ambiguous_glob_reexports)]
 pub use initialize_pool::*;
@@ -71,3 +72,4 @@ pub use escrow_release::*;
 pub use write_escrow_outcome::*;
 pub use update_escrow_vk::*;
 pub use store_escrow_vk_data::*;
+pub use sweep_fee_escrow::*;

@@ -50,9 +50,28 @@ export const USDC_DEVNET_MINT = new PublicKey(
 );
 
 /// Protocol fee wallet — hardcoded, must match on-chain constant
+/** Legacy hardcoded fee wallet — V2 paths only. V3 paths route through
+ * per-pool `fee_escrow` PDAs (see `deriveFeeEscrowPDA` below). Phase E v1
+ * (deployed 2026-05-07) closes L16/partial-L17 by removing this constant
+ * from V3 tx accounts. */
 const PROTOCOL_FEE_WALLET = new PublicKey(
   'BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN'
 );
+
+/** Per-pool fee_escrow PDA (Phase E v1). Mirrors the on-chain Anchor
+ * constraint `seeds = [b"fee_escrow", pool.key()]` in
+ * `programs/zk_shielded/src/instructions/{shield,unshield}_denominated_v3.rs`.
+ * The escrow accumulates fees from V3 ix; treasury drains via
+ * `sweep_fee_escrow` (only `TREASURY_AUTHORITY` can sign).
+ *
+ * Privacy property: pool-keyed, depositor-independent. Indexer cannot link
+ * an escrow address to a single user — only to a (pool, total revenue) pair. */
+export function deriveFeeEscrowPDA(poolPDA: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('fee_escrow'), poolPDA.toBuffer()],
+    ZK_SHIELDED_PROGRAM_ID,
+  );
+}
 
 export const MERKLE_DEPTH = 15;
 const SLOTS_PER_EPOCH = 7200;
@@ -1529,6 +1548,19 @@ async function signAndSendV3(
       e instanceof OversizedInnerTxError
         ? `oversized inner tx (${e.innerTxBytes}B > ${e.budgetBytes}B)`
         : `relayer error: ${(e as Error)?.message ?? String(e)}`;
+    const strict = useSettingsStore.getState().relayerStrictMode;
+    if (strict) {
+      console.warn(
+        '[V3-Relay] ' + reason + ' — STRICT mode: failing closed (no IP leak fallback)',
+      );
+      const err = new Error(
+        'Relay unavailable — strict privacy mode prevented direct fallback. ' +
+          'Retry later or disable strict mode in Privacy settings to allow direct submission. ' +
+          `Underlying: ${reason}`,
+      );
+      (err as Error & { code?: string }).code = 'RELAYER_STRICT_FAILCLOSED';
+      throw err;
+    }
     console.warn(
       '[V3-Relay] ' + reason + ' — falling back to direct signAndSend (RPC IP exposed for this tx)',
     );
@@ -2777,6 +2809,10 @@ function buildShieldDenominatedV3Ix(
     offset += 32;
   }
 
+  // Phase E v1: fee_escrow is a per-pool PDA (deployed 2026-05-07), no
+  // longer the hardcoded BRop3... constant.
+  const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
+
   const keys = [
     { pubkey: depositor, isSigner: true, isWritable: true },
     { pubkey: poolPDA, isSigner: false, isWritable: true },
@@ -2786,7 +2822,7 @@ function buildShieldDenominatedV3Ix(
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: userTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!userTokenAccount },
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
-    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
+    { pubkey: feeEscrowPDA, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -2820,6 +2856,9 @@ function buildUnshieldDenominatedStarkV3Ix(
 
   // Account ordering must match `UnshieldDenominatedStarkV3` struct
   // (see programs/zk_shielded/src/instructions/unshield_denominated_stark_v3.rs).
+  // Phase E v1: fee_escrow is a per-pool PDA (deployed 2026-05-07).
+  const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
+
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
     { pubkey: recipient, isSigner: false, isWritable: true },
@@ -2832,7 +2871,7 @@ function buildUnshieldDenominatedStarkV3Ix(
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!poolVault },
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
-    { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
+    { pubkey: feeEscrowPDA, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -2930,7 +2969,10 @@ export async function shieldV3(
   walletSigner?: WalletSigner,
   overrideKeypair?: import('@solana/web3.js').Keypair,
 ): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_MERKLE_UPDATE, getProofBufferPDA } =
+  // Phase C v1 (deployed 2026-05-07): use uniform STARK pipeline for V3.
+  // Pads to 145KB, drops circuit_id from init+verify ix data, randomized
+  // nonce-keyed PDA. Closes L13 + L14.
+  const { submitAndVerifyStarkProofUniform, closeStarkProofBuffer, CIRCUIT_MERKLE_UPDATE } =
     await import('../stark');
 
   onProgress?.('Reading wallet...');
@@ -2947,16 +2989,17 @@ export async function shieldV3(
     : walletSigner!;
 
   // 1. Submit + verify C6 proof on-chain (init → upload → verify phase 1+2).
-  onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
-  const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
+  // PDA is randomized per call (16-byte nonce); we get it back from the call.
+  onProgress?.('Submitting C6 (merkle_update) proof on-chain (uniform)...');
 
   // Track buffers created during this operation. Any error path (including
   // wrapper preflight failure, relayer timeout, etc.) must close them in
   // `finally` to recover the rent. Decoupled from "did the shield ix land"
   // because the buffer can exist on-chain even when the final tx fails.
   const createdBuffers: PublicKey[] = [];
+  let c6ProofBuffer: PublicKey;
   try {
-    await submitAndVerifyStarkProof(
+    const c6Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c6ProofResult.proofBytes,
         circuitId: CIRCUIT_MERKLE_UPDATE,
@@ -2967,6 +3010,7 @@ export async function shieldV3(
       onProgress,
       connection,
     );
+    c6ProofBuffer = c6Result.proofBuffer;
     createdBuffers.push(c6ProofBuffer);
 
     // 2. Build shield_denominated_v3 referencing the verified buffer.
@@ -3070,12 +3114,12 @@ export async function unshieldDenominatedStarkV3(
   walletSigner?: WalletSigner,
   overrideKeypair?: import('@solana/web3.js').Keypair,
 ): Promise<string> {
+  // Phase C v1 (deployed 2026-05-07): use uniform STARK pipeline for V3.
   const {
-    submitAndVerifyStarkProof,
+    submitAndVerifyStarkProofUniform,
     closeStarkProofBuffer,
     CIRCUIT_POOL_COMMITMENT,
     CIRCUIT_MERKLE_PATH,
-    getProofBufferPDA,
   } = await import('../stark');
 
   onProgress?.('Reading wallet...');
@@ -3091,17 +3135,15 @@ export async function unshieldDenominatedStarkV3(
       }
     : walletSigner!;
 
-  // Both proof buffer PDAs derived upfront so the finally block can close them
-  // even if any submit step throws.
-  const [c1ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
-  const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
-
+  // PDAs are randomized per call (16-byte nonce); we collect them as we go.
   const createdBuffers: PublicKey[] = [];
+  let c1ProofBuffer: PublicKey;
+  let c3ProofBuffer: PublicKey;
 
   try {
     // Step 1: C1 (pool_commitment) — same as v2 unshield.
-    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
-    await submitAndVerifyStarkProof(
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain (uniform)...');
+    const c1Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c1ProofResult.proofBytes,
         circuitId: CIRCUIT_POOL_COMMITMENT,
@@ -3112,11 +3154,12 @@ export async function unshieldDenominatedStarkV3(
       onProgress,
       connection,
     );
+    c1ProofBuffer = c1Result.proofBuffer;
     createdBuffers.push(c1ProofBuffer);
 
     // Step 2: C3 (merkle_path) — NEW in V3.
-    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
-    await submitAndVerifyStarkProof(
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain (uniform)...');
+    const c3Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c3ProofResult.proofBytes,
         circuitId: CIRCUIT_MERKLE_PATH,
@@ -3127,6 +3170,7 @@ export async function unshieldDenominatedStarkV3(
       onProgress,
       connection,
     );
+    c3ProofBuffer = c3Result.proofBuffer;
     createdBuffers.push(c3ProofBuffer);
 
     // Step 3: Build + send unshield_denominated_stark_v3.
@@ -3245,13 +3289,13 @@ export async function transferDenominatedStarkV3(
   walletSigner?: WalletSigner,
   overrideKeypair?: import('@solana/web3.js').Keypair,
 ): Promise<{ txSig: string; recipientNote: ShareableNote }> {
+  // Phase C v1 (deployed 2026-05-07): use uniform STARK pipeline for V3.
   const {
-    submitAndVerifyStarkProof,
+    submitAndVerifyStarkProofUniform,
     closeStarkProofBuffer,
     CIRCUIT_POOL_COMMITMENT,
     CIRCUIT_MERKLE_PATH,
     CIRCUIT_MERKLE_UPDATE,
-    getProofBufferPDA,
   } = await import('../stark');
 
   onProgress?.('Reading wallet...');
@@ -3266,14 +3310,11 @@ export async function transferDenominatedStarkV3(
       }
     : walletSigner!;
 
-  // All three proof-buffer PDAs derived upfront so the finally block can
-  // close any buffer that was successfully verified — even if a later step
-  // throws mid-flight.
-  const [c1ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
-  const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
-  const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
-
+  // PDAs are randomized per call (16-byte nonce); we collect them as we go.
   const createdBuffers: PublicKey[] = [];
+  let c1ProofBuffer: PublicKey;
+  let c3ProofBuffer: PublicKey;
+  let c6ProofBuffer: PublicKey;
 
   try {
     // Maturity / epoch math (mirrors v2 transferNoteStark)
@@ -3286,8 +3327,8 @@ export async function transferDenominatedStarkV3(
     const minEpoch = currentEpoch - totalDelay;
 
     // 1. C1 — proves ownership of OLD note.
-    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
-    await submitAndVerifyStarkProof(
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain (uniform)...');
+    const c1Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c1ProofResult.proofBytes,
         circuitId: CIRCUIT_POOL_COMMITMENT,
@@ -3298,11 +3339,12 @@ export async function transferDenominatedStarkV3(
       onProgress,
       connection,
     );
+    c1ProofBuffer = c1Result.proofBuffer;
     createdBuffers.push(c1ProofBuffer);
 
     // 2. C3 — proves OLD commitment is at supplied merkle_root.
-    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
-    await submitAndVerifyStarkProof(
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain (uniform)...');
+    const c3Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c3ProofResult.proofBytes,
         circuitId: CIRCUIT_MERKLE_PATH,
@@ -3313,11 +3355,12 @@ export async function transferDenominatedStarkV3(
       onProgress,
       connection,
     );
+    c3ProofBuffer = c3Result.proofBuffer;
     createdBuffers.push(c3ProofBuffer);
 
     // 3. C6 — proves NEW commitment insertion against the current pool root.
-    onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
-    await submitAndVerifyStarkProof(
+    onProgress?.('Submitting C6 (merkle_update) proof on-chain (uniform)...');
+    const c6Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c6ProofResult.proofBytes,
         circuitId: CIRCUIT_MERKLE_UPDATE,
@@ -3328,6 +3371,7 @@ export async function transferDenominatedStarkV3(
       onProgress,
       connection,
     );
+    c6ProofBuffer = c6Result.proofBuffer;
     createdBuffers.push(c6ProofBuffer);
 
     // 4. Build + send transfer_denominated_stark_v3 referencing all three buffers.

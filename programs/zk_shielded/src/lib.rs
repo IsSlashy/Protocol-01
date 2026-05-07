@@ -268,6 +268,16 @@ pub mod zk_shielded {
         )
     }
 
+    /// Phase E v1 — drain a per-pool fee_escrow PDA into an arbitrary
+    /// destination. Only `fee::TREASURY_AUTHORITY` can sign. Records each
+    /// sweep in a SweepRecord PDA (per-slot idempotent).
+    pub fn sweep_fee_escrow(
+        ctx: Context<SweepFeeEscrow>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::sweep_fee_escrow::handler(ctx, amount)
+    }
+
     /// V3 transfer of a note within a denominated pool using THREE STARK proofs:
     ///   - C1 (pool_commitment): proves ownership of the old note.
     ///   - C3 (merkle_path): proves the old commitment is at `merkle_root`

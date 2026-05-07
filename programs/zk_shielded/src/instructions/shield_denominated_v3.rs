@@ -3,7 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
-use crate::fee::{self, PROTOCOL_FEE_WALLET};
+use crate::fee::{self, FEE_ESCROW_SEED_PREFIX};
 use crate::state::pool_v3::DenominatedPoolV3;
 use crate::state::merkle_tree_v3::MerkleTreeStateV3;
 
@@ -181,13 +181,17 @@ pub struct ShieldDenominatedV3<'info> {
     #[account(mut)]
     pub pool_vault: Option<Account<'info, TokenAccount>>,
 
-    /// Protocol fee wallet — receives shield fee (0.3%)
-    /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant
+    /// Per-pool fee escrow PDA (Phase E v1).
+    /// Receives the shield fee instead of the legacy hardcoded `BRop3...` wallet.
+    /// PDA seed: [b"fee_escrow", pool.key()]. Deterministic per pool, no
+    /// cross-pool linkability. Drained later via `sweep_fee_escrow` (treasury
+    /// authority).
     #[account(
         mut,
-        constraint = protocol_fee_wallet.key() == PROTOCOL_FEE_WALLET @ ZkShieldedError::InvalidFeeWallet
+        seeds = [FEE_ESCROW_SEED_PREFIX, denominated_pool.key().as_ref()],
+        bump,
     )]
-    pub protocol_fee_wallet: AccountInfo<'info>,
+    pub fee_escrow: SystemAccount<'info>,
 }
 
 pub fn handler(
@@ -223,7 +227,7 @@ pub fn handler(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
                     from: ctx.accounts.depositor.to_account_info(),
-                    to: ctx.accounts.protocol_fee_wallet.to_account_info(),
+                    to: ctx.accounts.fee_escrow.to_account_info(),
                 },
             );
             system_program::transfer(fee_context, shield_fee)?;
@@ -273,7 +277,7 @@ pub fn handler(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
                     from: ctx.accounts.depositor.to_account_info(),
-                    to: ctx.accounts.protocol_fee_wallet.to_account_info(),
+                    to: ctx.accounts.fee_escrow.to_account_info(),
                 },
             );
             system_program::transfer(fee_context, shield_fee)?;

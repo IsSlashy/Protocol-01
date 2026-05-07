@@ -48,11 +48,49 @@ const DISCRIMINATORS = {
   verifyStarkProofV2: Buffer.from([149, 18, 96, 15, 144, 68, 8, 233]),
   verifyDeepAliPhase2: Buffer.from([217, 239, 203, 65, 109, 182, 70, 115]),
   closeProofBuffer: Buffer.from([130, 150, 6, 35, 193, 34, 243, 87]),
+  // Phase C v1 (deployed 2026-05-07) — uniform STARK upload pipeline.
+  initProofBufferV2: Buffer.from([195, 42, 231, 101, 125, 247, 122, 16]),
+  verifyUniform: Buffer.from([132, 164, 86, 87, 3, 165, 212, 103]),
 };
 
 const PROOF_DATA_OFFSET = 83; // 8 disc + 32 pubkey + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified
 const MAX_INIT_SIZE = 10_240; // Solana create_account limit
 const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per realloc call
+
+/** Phase C v1 — uniform proof size target. Padded zero bytes are tolerated by
+ * the verifier's `from_bytes` (lower-bound length checks only).
+ *
+ * Sized to fit the largest active circuit (C3/C5/C6 ~ 138-140KB) plus headroom.
+ * Closes leaks L13 (circuit_id at init) + L14 (proof_size variable).
+ *
+ * Cost: ~1.01 SOL transient rent per flow (refunded on close). 14 resize tx
+ * @ ~5000 lamports each = ~0.07 SOL net. */
+const UNIFORM_PROOF_SIZE = 145_000;
+
+/** SPL Memo program v2 — used to disambiguate resize tx (Phase C v1.1).
+ * Each resize tx prepends a memo ix with a 4-byte LE counter, making the tx
+ * envelopes byte-different WITHOUT using the leaky `microLamports: i+1`
+ * priority fingerprint. The Memo program ID `MemoSq4...` appears in millions
+ * of unrelated tx (NFT mints, DAO votes, etc.) so it doesn't fingerprint P01.
+ */
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+
+/** Build a memo ix with a 4-byte LE counter as payload. Keeps tx serialized
+ * bytes unique across the resize loop without needing the microLamports
+ * priority counter. */
+function buildMemoCounterIx(counter: number): TransactionInstruction {
+  const data = Buffer.alloc(4);
+  data.writeUInt32LE(counter, 0);
+  return new TransactionInstruction({
+    programId: MEMO_PROGRAM_ID,
+    keys: [],
+    data,
+  });
+}
+
+/** Phase C v1.1 — fixed CU price for ALL stark verifier tx. Replaces the
+ * leaky `microLamports: i+1` priority counter with a constant. */
+const UNIFORM_CU_PRICE_MICROLAMPORTS = 1;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -115,6 +153,18 @@ function getProofBufferPDA(
     STARK_VERIFIER_PROGRAM_ID
   );
   return [pda, bump];
+}
+
+/** Phase C v1 — uniform proof buffer PDA (no circuit_id in seed). */
+function getProofBufferV2PDA(
+  authority: PublicKey,
+  nonce: Uint8Array,
+): [PublicKey, number] {
+  if (nonce.length !== 16) throw new Error('Phase C v1 nonce must be 16 bytes');
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('stark_proof_v2'), authority.toBuffer(), Buffer.from(nonce)],
+    STARK_VERIFIER_PROGRAM_ID,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +276,75 @@ function buildVerifyStarkProofV2Ix(
     ],
     data,
   });
+}
+
+/** Phase C v1 — `init_proof_buffer_v2(proof_size, nonce[16])`.
+ * Drops `circuit_id` from ix data + PDA seed → no L13 leak at init time. */
+function buildInitProofBufferV2Ix(
+  proofSize: number,
+  nonce: Uint8Array,
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+): TransactionInstruction {
+  if (nonce.length !== 16) throw new Error('init_proof_buffer_v2 nonce must be 16 bytes');
+  // disc(8) + proof_size(u32, 4) + nonce(16) = 28 bytes
+  const data = Buffer.alloc(8 + 4 + 16);
+  DISCRIMINATORS.initProofBufferV2.copy(data, 0);
+  data.writeUInt32LE(proofSize, 8);
+  Buffer.from(nonce).copy(data, 12);
+
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_PROGRAM_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+}
+
+/** Phase C v1 — `verify_uniform(public_inputs)`.
+ * Probes V3 active circuits [1, 3, 5, 6] in fixed order; first parse-success
+ * wins. circuit_id is discovered post-hoc and stored in buffer for
+ * downstream `verify_deep_ali_phase2`. */
+function buildVerifyUniformIx(
+  publicInputs: bigint[],
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+): TransactionInstruction {
+  const vecLen = Buffer.alloc(4);
+  vecLen.writeUInt32LE(publicInputs.length, 0);
+  const inputBufs = publicInputs.map(v => {
+    const buf = Buffer.alloc(8);
+    buf.writeBigUInt64LE(v);
+    return buf;
+  });
+  const data = Buffer.concat([DISCRIMINATORS.verifyUniform, vecLen, ...inputBufs]);
+
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_PROGRAM_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
+}
+
+/** Phase C v1 — pad a STARK proof to UNIFORM_PROOF_SIZE bytes with trailing
+ * zeros. The verifier's `from_bytes` parser uses lower-bound length checks
+ * (data.len() < cursor + N) so trailing zeros are silently tolerated.
+ *
+ * Closes L14 (proof_size variable) — every uploaded proof now writes exactly
+ * UNIFORM_PROOF_SIZE bytes regardless of the underlying circuit. */
+export function padProofToUniform(bytes: Uint8Array): Uint8Array {
+  if (bytes.length > UNIFORM_PROOF_SIZE) {
+    throw new Error(`proof too large: ${bytes.length} > ${UNIFORM_PROOF_SIZE}`);
+  }
+  const padded = new Uint8Array(UNIFORM_PROOF_SIZE);
+  padded.set(bytes, 0);
+  return padded;
 }
 
 /**
@@ -450,15 +569,16 @@ async function resizeToTarget(
   const resizesNeeded = Math.ceil((targetSize - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
   console.log(`[STARK] Resizing proof buffer 10KB → ${targetSize}B in ${resizesNeeded} steps`);
   const { blockhash } = await conn.getLatestBlockhash('confirmed');
-  // Each TX gets a UNIQUE ComputeUnitPrice (microLamports = i+1) so the
-  // serialized bytes differ — otherwise ed25519 deterministic signing would
-  // produce identical signatures and Solana would dedupe all resize TXs to
-  // one, leaving the buffer at 10KB and chunks past that offset panicking.
+  // Phase C v1.1: each tx is made byte-unique via a SPL Memo ix carrying a
+  // 4-byte LE counter (NOT a priority-fee counter — kills the L18 fingerprint).
+  // The Memo program is generic enough that its presence doesn't tag P01.
+  // CU price is uniform = UNIFORM_CU_PRICE_MICROLAMPORTS for all resize tx.
   const signedTxs = await Promise.all(
     Array.from({ length: resizesNeeded }, async (_, i) => {
       onProgress?.(`Resizing proof buffer (${i + 1}/${resizesNeeded})...`);
       let tx = new Transaction()
-        .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: i + 1 }))
+        .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: UNIFORM_CU_PRICE_MICROLAMPORTS }))
+        .add(buildMemoCounterIx(i))
         .add(buildResizeProofBufferIx(proofBuffer, authority));
       tx.recentBlockhash = blockhash;
       if (keypair) {
@@ -849,6 +969,109 @@ export async function submitAndVerifyStarkProof(
   }
 
   onProgress?.('STARK proof verified (buffer retained for cross-program read)');
+  return { proofBuffer, authority, txSignature: txSig };
+}
+
+/**
+ * Phase C v1 (deployed 2026-05-07) — uniform STARK upload pipeline.
+ *
+ * Drop-in replacement for `submitAndVerifyStarkProof` for V3 callers. Returns
+ * the same shape so call-sites swap with one line.
+ *
+ * Differences vs legacy:
+ * - PDA seed: `[b"stark_proof_v2", authority, nonce[16]]` (no circuit_id leak)
+ * - Init ix: `init_proof_buffer_v2(proof_size, nonce[16])` — proof_size is
+ *   ALWAYS `UNIFORM_PROOF_SIZE` (=145000) regardless of underlying circuit
+ * - Verify ix: `verify_uniform(public_inputs)` — verifier probes V3 circuits
+ *   [1, 3, 5, 6] in fixed order, first parse-success wins. circuit_id stored
+ *   in buffer post-hoc for downstream `verify_deep_ali_phase2`.
+ * - Proof bytes: padded to UNIFORM_PROOF_SIZE with trailing zeros (tolerated
+ *   by from_bytes lower-bound length checks).
+ *
+ * Closes leaks L13 (circuit_id at init) + L14 (proof_size variable). L15/L18
+ * (CU consumed + CU price fingerprint) are partial — Phase C v1.1 will
+ * uniformize CU ceiling and migrate from microLamports:i+1 to Memo nonce.
+ */
+export async function submitAndVerifyStarkProofUniform(
+  proof: GenericStarkProof,
+  walletSigner?: WalletSigner,
+  onProgress?: (step: string) => void,
+  connection?: Connection,
+): Promise<{ proofBuffer: PublicKey; authority: PublicKey; txSignature: string }> {
+  const conn = connection ?? getConnection();
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const authority = keypair ? keypair.publicKey : walletSigner!.publicKey;
+
+  // Random 16-byte nonce per upload — defeats PDA collision and keeps the
+  // init ix data different across uploads of the same circuit.
+  const nonce = new Uint8Array(16);
+  // crypto.getRandomValues works in React Native via expo-crypto polyfill.
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(nonce);
+  } else {
+    // Fallback (Node test contexts) — Math.random is fine for nonce uniqueness.
+    for (let i = 0; i < 16; i++) nonce[i] = Math.floor(Math.random() * 256);
+  }
+
+  const [proofBuffer] = getProofBufferV2PDA(authority, nonce);
+
+  // Stale buffer cleanup is per-PDA; new nonce = new PDA, so no stale to
+  // worry about. Skip the legacy stale-cleanup branch.
+
+  // Pad raw proof bytes to uniform size (closes L14).
+  const paddedBytes = padProofToUniform(proof.proofBytes);
+  const uniformSize = UNIFORM_PROOF_SIZE;
+
+  // Step 1: Init buffer with uniform size + nonce (no circuit_id leak).
+  onProgress?.('Initializing proof buffer (uniform pipeline)...');
+  const initTx = new Transaction().add(
+    buildInitProofBufferV2Ix(uniformSize, nonce, proofBuffer, authority),
+  );
+  await signSendConfirm(conn, initTx, keypair, walletSigner);
+
+  // Step 1b: Resize to uniform target (~14 resize tx of 10KB each).
+  await resizeToTarget(
+    conn,
+    uniformSize + PROOF_DATA_OFFSET,
+    proofBuffer,
+    authority,
+    keypair,
+    walletSigner,
+    onProgress,
+  );
+
+  // Step 2: Upload all UNIFORM_PROOF_SIZE bytes (real proof + zero padding).
+  await uploadChunksParallel(
+    conn,
+    paddedBytes,
+    proofBuffer,
+    authority,
+    keypair,
+    walletSigner,
+    onProgress,
+  );
+
+  // Step 3a: Phase 1 — verify_uniform (probes V3 active circuits, sets
+  // circuit_id in buffer post-success).
+  onProgress?.('Verifying STARK proof (uniform probe)...');
+  const verifyTx = new Transaction()
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+    .add(buildVerifyUniformIx(proof.publicInputs, proofBuffer, authority));
+  const txSig = await signSendConfirm(conn, verifyTx, keypair, walletSigner);
+
+  // Step 3b: Phase 2 — DEEP-ALI at OOD. The buffer's circuit_id is now set by
+  // verify_uniform; verify_deep_ali_phase2 reads it. C0 (subscriber_ownership,
+  // not in V3 probe set) inlines DEEP-ALI in phase 1; Phase C v1 only handles
+  // V3 active circuits [1,3,5,6] which all need phase-2.
+  onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
+  const deepAliTx = new Transaction()
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+    .add(buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority));
+  await signSendConfirm(conn, deepAliTx, keypair, walletSigner);
+
+  onProgress?.('STARK proof verified (uniform pipeline, buffer retained)');
   return { proofBuffer, authority, txSignature: txSig };
 }
 

@@ -3,7 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
-use crate::fee::{self, PROTOCOL_FEE_WALLET};
+use crate::fee::{self, FEE_ESCROW_SEED_PREFIX};
 use crate::state::NullifierRecord;
 use crate::state::pool_v3::DenominatedPoolV3;
 use crate::state::merkle_tree_v3::MerkleTreeStateV3;
@@ -34,7 +34,8 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
     );
-    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID]).unwrap();
+    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID])
+        .map_err(|_| ZkShieldedError::InvalidProof)?;
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
@@ -140,13 +141,17 @@ pub struct UnshieldDenominatedStarkV3<'info> {
     #[account(mut)]
     pub recipient_token_account: Option<Account<'info, TokenAccount>>,
 
-    /// Protocol fee wallet — receives unshield fee (0.5%)
-    /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant
+    /// Per-pool fee escrow PDA (Phase E v1).
+    /// Receives the unshield fee instead of the legacy hardcoded `BRop3...` wallet.
+    /// PDA seed: [b"fee_escrow", pool.key()]. Deterministic per pool, no
+    /// cross-pool linkability. Drained later via `sweep_fee_escrow` (treasury
+    /// authority).
     #[account(
         mut,
-        constraint = protocol_fee_wallet.key() == PROTOCOL_FEE_WALLET @ ZkShieldedError::InvalidFeeWallet
+        seeds = [FEE_ESCROW_SEED_PREFIX, denominated_pool.key().as_ref()],
+        bump,
     )]
-    pub protocol_fee_wallet: AccountInfo<'info>,
+    pub fee_escrow: SystemAccount<'info>,
 }
 
 pub fn handler(
@@ -286,7 +291,7 @@ pub fn handler(
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
         **ctx.accounts.recipient.try_borrow_mut_lamports()? += recipient_amount;
         if unshield_fee > 0 {
-            **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
+            **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += unshield_fee;
         }
     } else {
         let token_program = ctx.accounts.token_program
@@ -317,10 +322,12 @@ pub fn handler(
             let pool_lamports = pool.to_account_info().lamports();
             let rent = Rent::get()?;
             let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
-            if pool_lamports.saturating_sub(min_rent) >= unshield_fee {
-                **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
-                **ctx.accounts.protocol_fee_wallet.try_borrow_mut_lamports()? += unshield_fee;
-            }
+            require!(
+                pool_lamports.saturating_sub(min_rent) >= unshield_fee,
+                ZkShieldedError::InsufficientPoolBalance
+            );
+            **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
+            **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += unshield_fee;
         }
     }
 
