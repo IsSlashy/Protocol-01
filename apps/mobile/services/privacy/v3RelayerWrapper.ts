@@ -137,11 +137,17 @@ export async function signAndSendViaRelayer(
   const budget = inferV1InnerTxBudget();
   console.log('[V3-Relay] Step 4: inner tx signed, size=' + innerBytes.length + 'B (v1 budget=' + budget + 'B' + (useVersioned ? ', v0+LUT' : ', legacy') + ')');
 
-  // PREFLIGHT — fail loud BEFORE any on-chain side-effect (no pre-fund tx,
-  // no relay-job submission, nothing). The caller handles fallback.
-  if (innerBytes.length > budget) {
-    console.warn('[V3-Relay] PREFLIGHT FAIL: ' + innerBytes.length + 'B > ' + budget + 'B — caller must fall back to direct');
-    throw new OversizedInnerTxError(innerBytes.length, budget);
+  // PREFLIGHT — Phase A.3 auto-routing :
+  // - if innerBytes ≤ budget → legacy single-shot submitRelayJob (cheaper)
+  // - if innerBytes > budget → chunked submitChunkedRelayJob (unlocks any size,
+  //   plus v2 hybrid ML-KEM-768 envelope when relayer publishes a KEM key)
+  //
+  // We don't throw OversizedInnerTxError anymore in the chunked-capable build —
+  // that path was for v0.9.11 fallback to direct, which is no longer needed
+  // because chunked carries arbitrary payloads via N submit_chunk calls.
+  const useChunked = innerBytes.length > budget;
+  if (useChunked) {
+    console.log('[V3-Relay] PREFLIGHT: ' + innerBytes.length + 'B > ' + budget + 'B → routing chunked');
   }
 
   const signFn = async (fundTx: Transaction): Promise<Transaction> => {
@@ -153,8 +159,15 @@ export async function signAndSendViaRelayer(
     return walletSigner!.signTransaction(fundTx);
   };
 
-  console.log('[V3-Relay] Step 6: calling relayTransaction (forceV1, timeout=' + V3_RELAYER_TIMEOUT_MS + 'ms)');
-  const { relayTransaction, InnerBlockhashExpiredError, fetchActiveRelayers } = await import('../relay');
+  console.log('[V3-Relay] Step 6: calling relayTransaction (path=' + (useChunked ? 'chunked' : 'legacy') + ', timeout=' + V3_RELAYER_TIMEOUT_MS + 'ms)');
+  const {
+    relayTransaction,
+    InnerBlockhashExpiredError,
+    fetchActiveRelayers,
+    submitChunkedRelayJob,
+    monitorJob,
+    cancelRelayJob,
+  } = await import('../relay');
 
   // Fetch active count once for the failover budget. We'll try at most
   // `activeCount` distinct relayers before giving up.
@@ -180,13 +193,47 @@ export async function signAndSendViaRelayer(
     return signed.serialize();
   };
 
-  const callRelay = async (innerSerialized: Uint8Array, innerBh: string) =>
+  /** Legacy single-shot (innerBytes ≤ 845B) path. */
+  const callRelayLegacy = async (innerSerialized: Uint8Array, innerBh: string) =>
     relayTransaction(innerSerialized, userPubkey, signFn, {
       forceV1Encryption: true,
       timeoutMs: V3_RELAYER_TIMEOUT_MS,
       innerBlockhash: innerBh,
       excludedOperators: excludedOperators.size > 0 ? excludedOperators : undefined,
     });
+
+  /** Chunked path (Phase A.3) — supports v2 hybrid ML-KEM-768 because the
+   * envelope is split across N submit_chunk calls. monitorJob is invoked
+   * separately so we share the InnerBlockhashExpiredError surface for
+   * multi-relayer failover. */
+  const callRelayChunked = async (innerSerialized: Uint8Array, innerBh: string): Promise<string> => {
+    const job = await submitChunkedRelayJob(innerSerialized, userPubkey, signFn, {
+      forceV1Encryption: false, // chunked unlocks v2 hybrid by default
+      excludedOperators: excludedOperators.size > 0 ? excludedOperators : undefined,
+    });
+    try {
+      const result = await monitorJob(job.jobAddress, V3_RELAYER_TIMEOUT_MS, innerBh);
+      if (!result.success) {
+        throw new Error(`Chunked relay job failed with status ${result.status}`);
+      }
+      return job.signature;
+    } catch (e) {
+      if (e instanceof InnerBlockhashExpiredError) {
+        e.failedOperator = job.selectedOperator;
+        try {
+          await cancelRelayJob(job.jobAddress, job.ephemeralKeypair);
+        } catch (cancelErr) {
+          console.warn('[V3-Relay] cancel chunked job after expiry failed: ' + (cancelErr as Error).message);
+        }
+      }
+      throw e;
+    }
+  };
+
+  const callRelay = (innerSerialized: Uint8Array, innerBh: string) =>
+    useChunked
+      ? callRelayChunked(innerSerialized, innerBh)
+      : callRelayLegacy(innerSerialized, innerBh);
 
   let currentBytes = innerBytes;
   let currentBh = blockhash;

@@ -561,6 +561,252 @@ export async function submitRelayJob(
   };
 }
 
+// ── Chunked Job Submission (Phase A.3) ─────────────────────────────────
+
+/** MUST mirror `MAX_CHUNK_DATA_SIZE` in programs/p01_relayer/src/state/relay_job.rs.
+ * Sized so a single submit_chunk tx fits inside the 1232-byte Solana cap with
+ * reasonable overhead headroom. */
+export const MAX_CHUNK_DATA_SIZE = 990;
+
+/** RelayChunk PDA size (in bytes), MUST match `RelayChunk::LEN` on-chain. */
+const RELAY_CHUNK_LEN = 8 + 32 + 2 + 4 + MAX_CHUNK_DATA_SIZE + 1; // = 1037
+
+/** Discriminator for `submit_job_chunked` (sha256("global:submit_job_chunked")[..8]). */
+const SUBMIT_JOB_CHUNKED_DISC = Buffer.from([192, 160, 6, 61, 217, 212, 36, 196]);
+/** Discriminator for `submit_chunk` (sha256("global:submit_chunk")[..8]). */
+const SUBMIT_CHUNK_DISC = Buffer.from([53, 145, 90, 120, 188, 31, 143, 10]);
+
+const SEED_RELAY_CHUNK = Buffer.from('relay_chunk');
+
+/** Compute the per-chunk PDA address, mirroring on-chain seeds. */
+function deriveChunkPDA(jobId: Uint8Array, chunkIndex: number): PublicKey {
+  const idxBuf = Buffer.alloc(2);
+  idxBuf.writeUInt16LE(chunkIndex, 0);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [SEED_RELAY_CHUNK, jobId, idxBuf],
+    RELAYER_PROGRAM_ID,
+  );
+  return pda;
+}
+
+/**
+ * Phase A.3 — submit a chunked relay job.
+ *
+ * Same shape as `submitRelayJob` but supports arbitrary-size encrypted_tx
+ * by splitting the ciphertext across N `submit_chunk` calls. Use when
+ * the encrypted bytes > legacy single-shot envelope budget (845B for v1,
+ * impossible for v2 hybrid ML-KEM-768 = 1161B overhead).
+ *
+ * Pre-fund covers : jobFee + RelayJob rent + N × RelayChunk rent + N+1
+ * tx fees + ephemeralRentMin. Worst-case overshoot is reclaimed by
+ * `ephemeralRecovery` after completion.
+ */
+export async function submitChunkedRelayJob(
+  serializedTx: Uint8Array,
+  walletPublicKey: PublicKey,
+  signTransaction: (tx: Transaction) => Promise<Transaction>,
+  opts: SubmitRelayJobOptions = {},
+): Promise<RelayJobResult> {
+  const connection = getConnection();
+  const t0 = Date.now();
+
+  // 1. Fetch config + active relayers (same as legacy)
+  console.log('[ChunkedRelay] step1/7: fetching config + active relayers');
+  const [config, relayers] = await Promise.all([
+    fetchRelayerConfig(connection),
+    fetchActiveRelayers(connection),
+  ]);
+  if (!config.isActive) throw new Error('Relay protocol is paused');
+  if (relayers.length === 0) throw new Error('No active relayers available');
+
+  const filterDormant = opts.filterDormant !== false;
+  let candidatePool = relayers;
+  if (filterDormant) {
+    const currentSlot = await connection.getSlot('confirmed');
+    const live = filterByLiveness(relayers, currentSlot);
+    if (live.length > 0) candidatePool = live;
+  }
+
+  // 2. Pick relayer + jobId
+  const jobId = generateJobId();
+  const { blockhash: outerBlockhash } = await connection.getLatestBlockhash('confirmed');
+  const { relayer: selectedRelayer } = selectRelayer(candidatePool, outerBlockhash, jobId, opts.excludedOperators);
+  console.log('[ChunkedRelay] step2/7: relayer=' + selectedRelayer.operator.toBase58().slice(0, 8) + '... (kem=' + (selectedRelayer.kemEncryptionKey ? 'yes' : 'no') + ')');
+
+  // 3. Encrypt (chunked unlocks v2 hybrid ML-KEM-768 by default)
+  const kemKey = opts.forceV1Encryption ? undefined : selectedRelayer.kemEncryptionKey;
+  const encrypted = encryptForRelayer(serializedTx, selectedRelayer.encryptionKey, kemKey);
+  const encVer = kemKey ? 2 : 1;
+  const totalChunks = Math.ceil(encrypted.length / MAX_CHUNK_DATA_SIZE);
+  if (totalChunks < 1 || totalChunks > 256) {
+    throw new Error(`Chunked submission requires 1..=256 chunks, got ${totalChunks}`);
+  }
+  console.log('[ChunkedRelay] step3/7: encrypted=' + encrypted.length + 'B → ' + totalChunks + ' chunks (v' + encVer + ')');
+
+  // 4. Ephemeral
+  const { deriveEphemeralForRelay, addPendingRelay, jobIdToHex } = await import('./ephemeralRecovery');
+  const ephemeral = opts.ephemeralKeypair ?? (await deriveEphemeralForRelay(jobId));
+
+  // 5. Pre-fund
+  const RELAY_JOB_LEN = 1414;
+  const jobRent = await connection.getMinimumBalanceForRentExemption(RELAY_JOB_LEN);
+  const chunkRent = await connection.getMinimumBalanceForRentExemption(RELAY_CHUNK_LEN);
+  const ephemeralRentMin = await connection.getMinimumBalanceForRentExemption(0);
+  // N+1 tx fees: 1 submit_job_chunked + N submit_chunk. Each ~5k base, plus
+  // headroom for priority fees + retries = 30k per tx.
+  const txFees = 30_000 * (totalChunks + 1);
+  const fundAmount =
+    Number(config.jobFeeLamports) +
+    jobRent +
+    totalChunks * chunkRent +
+    txFees +
+    ephemeralRentMin;
+
+  const jobIdHex = jobIdToHex(jobId);
+  await addPendingRelay({
+    jobId: jobIdHex,
+    ephemeralPubkey: ephemeral.publicKey.toBase58(),
+    expectedLamports: fundAmount,
+    createdAt: new Date().toISOString(),
+  });
+
+  console.log('[ChunkedRelay] step5/7: pre-funding ephemeral, total=' + fundAmount + ' lamports (' + totalChunks + ' chunks @ ' + chunkRent + ' each)');
+  const fundTx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: walletPublicKey,
+      toPubkey: ephemeral.publicKey,
+      lamports: fundAmount,
+    }),
+  );
+  fundTx.feePayer = walletPublicKey;
+  const { blockhash: fundBlockhash, lastValidBlockHeight: fundHeight } =
+    await connection.getLatestBlockhash('confirmed');
+  fundTx.recentBlockhash = fundBlockhash;
+  const signedFundTx = await signTransaction(fundTx);
+  const fundSig = await connection.sendRawTransaction(signedFundTx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+  });
+  await connection.confirmTransaction(
+    { signature: fundSig, blockhash: fundBlockhash, lastValidBlockHeight: fundHeight },
+    'confirmed',
+  );
+
+  // 6. submit_job_chunked
+  const [configPDA] = PublicKey.findProgramAddressSync([SEEDS.CONFIG], RELAYER_PROGRAM_ID);
+  const [relayerNodePDA] = PublicKey.findProgramAddressSync(
+    [SEEDS.NODE, selectedRelayer.operator.toBytes()],
+    RELAYER_PROGRAM_ID,
+  );
+  const [jobPDA] = PublicKey.findProgramAddressSync([SEEDS.JOB, jobId], RELAYER_PROGRAM_ID);
+
+  const initData = Buffer.alloc(8 + 32 + 2 + 1);
+  SUBMIT_JOB_CHUNKED_DISC.copy(initData, 0);
+  Buffer.from(jobId).copy(initData, 8);
+  initData.writeUInt16LE(totalChunks, 40);
+  initData.writeUInt8(encVer, 42);
+
+  const initIx = new TransactionInstruction({
+    programId: RELAYER_PROGRAM_ID,
+    keys: [
+      { pubkey: ephemeral.publicKey, isSigner: true, isWritable: true },
+      { pubkey: configPDA, isSigner: false, isWritable: true },
+      { pubkey: relayerNodePDA, isSigner: false, isWritable: false },
+      { pubkey: jobPDA, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: initData,
+  });
+
+  const initTx = new Transaction().add(initIx);
+  initTx.feePayer = ephemeral.publicKey;
+  const { blockhash: initBh, lastValidBlockHeight: initLvbh } =
+    await connection.getLatestBlockhash('confirmed');
+  initTx.recentBlockhash = initBh;
+  initTx.sign(ephemeral);
+  const initSig = await connection.sendRawTransaction(initTx.serialize(), {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+  });
+  await connection.confirmTransaction(
+    { signature: initSig, blockhash: initBh, lastValidBlockHeight: initLvbh },
+    'confirmed',
+  );
+  console.log('[ChunkedRelay] step6/7: submit_job_chunked ok, sig=' + initSig.slice(0, 12) + '...');
+
+  // 7. submit_chunk × N (parallel waves)
+  console.log('[ChunkedRelay] step7/7: submitting ' + totalChunks + ' chunks');
+  const { blockhash: chunkBh, lastValidBlockHeight: chunkLvbh } =
+    await connection.getLatestBlockhash('confirmed');
+
+  const chunkTxs: Transaction[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * MAX_CHUNK_DATA_SIZE;
+    const end = Math.min(start + MAX_CHUNK_DATA_SIZE, encrypted.length);
+    const data = encrypted.slice(start, end);
+
+    const chunkPda = deriveChunkPDA(jobId, i);
+    const ixData = Buffer.alloc(8 + 32 + 2 + 4 + data.length);
+    SUBMIT_CHUNK_DISC.copy(ixData, 0);
+    Buffer.from(jobId).copy(ixData, 8);
+    ixData.writeUInt16LE(i, 40);
+    ixData.writeUInt32LE(data.length, 42);
+    Buffer.from(data).copy(ixData, 46);
+
+    const ix = new TransactionInstruction({
+      programId: RELAYER_PROGRAM_ID,
+      keys: [
+        { pubkey: ephemeral.publicKey, isSigner: true, isWritable: true },
+        { pubkey: jobPDA, isSigner: false, isWritable: true },
+        { pubkey: chunkPda, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: ixData,
+    });
+
+    const tx = new Transaction().add(ix);
+    tx.feePayer = ephemeral.publicKey;
+    tx.recentBlockhash = chunkBh;
+    tx.sign(ephemeral);
+    chunkTxs.push(tx);
+  }
+
+  // Send all chunks in parallel waves of 8
+  const WAVE_SIZE = 8;
+  const chunkSigs: string[] = [];
+  for (let w = 0; w < chunkTxs.length; w += WAVE_SIZE) {
+    const slice = chunkTxs.slice(w, Math.min(w + WAVE_SIZE, chunkTxs.length));
+    const sigs = await Promise.all(
+      slice.map(tx =>
+        connection.sendRawTransaction(tx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        }),
+      ),
+    );
+    chunkSigs.push(...sigs);
+  }
+  // Confirm all
+  await Promise.all(
+    chunkSigs.map(sig =>
+      connection.confirmTransaction(
+        { signature: sig, blockhash: chunkBh, lastValidBlockHeight: chunkLvbh },
+        'confirmed',
+      ),
+    ),
+  );
+
+  console.log('[ChunkedRelay] DONE in ' + (Date.now() - t0) + 'ms, ' + totalChunks + ' chunks landed, jobPDA=' + jobPDA.toBase58().slice(0, 8) + '...');
+
+  return {
+    jobAddress: jobPDA,
+    jobId,
+    ephemeralKeypair: ephemeral,
+    signature: initSig,
+    selectedOperator: selectedRelayer.operator,
+  };
+}
+
 // ── Cancel Job ─────────────────────────────────────────────────────────
 
 /**
