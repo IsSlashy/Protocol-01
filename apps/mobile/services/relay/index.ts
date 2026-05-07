@@ -563,10 +563,28 @@ export async function submitRelayJob(
 
 // ── Chunked Job Submission (Phase A.3) ─────────────────────────────────
 
-/** MUST mirror `MAX_CHUNK_DATA_SIZE` in programs/p01_relayer/src/state/relay_job.rs.
- * Sized so a single submit_chunk tx fits inside the 1232-byte Solana cap with
- * reasonable overhead headroom. */
-export const MAX_CHUNK_DATA_SIZE = 990;
+/** Maximum chunk data bytes per submit_chunk tx.
+ *
+ * Sized so a single submit_chunk tx fits inside the 1232-byte Solana cap.
+ *
+ * Tx breakdown (recomputed 2026-05-07 after device error "1306 > 1232") :
+ *   sigCount(1) + 64×1 sig                  = 65
+ *   header                                   = 3
+ *   keysCount(1) + 32×5 unique keys
+ *     (ephemeral, jobPDA, chunkPDA, systemProgram, p01_relayer programId)
+ *                                            = 161
+ *   recentBlockhash                          = 32
+ *   ixCount(1)                               = 1
+ *   per-ix: progIdx(1) + acctCount(1)
+ *     + 4 acct_indices(4) + dataLen(4)       = 10
+ *   ix data fixed: disc(8) + jobId(32) + chunkIdx(2) + vecLen(4)
+ *                                            = 46
+ *   Total fixed: 65+3+161+32+1+1+10+46       = 319
+ * → Available for data = 1232 - 319 = 913 bytes.
+ *
+ * On-chain `MAX_CHUNK_DATA_SIZE` in relay_job.rs is 990 (looser cap on the
+ * program side; mobile self-imposes the tighter 900 for safe margin). */
+export const MAX_CHUNK_DATA_SIZE = 900;
 
 /** RelayChunk PDA size (in bytes), MUST match `RelayChunk::LEN` on-chain. */
 const RELAY_CHUNK_LEN = 8 + 32 + 2 + 4 + MAX_CHUNK_DATA_SIZE + 1; // = 1037
