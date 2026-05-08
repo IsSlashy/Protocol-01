@@ -67,7 +67,9 @@ pub fn handler(
     relayer_node.stake = min_stake;
     relayer_node.jobs_completed = 0;
     relayer_node.jobs_failed = 0;
-    relayer_node.last_active_slot = 0;
+    // Anchor decay baseline at registration so a brand-new relayer is not
+    // immediately decayed to zero on its first job assignment.
+    relayer_node.last_active_slot = clock.slot;
     relayer_node.registered_at = clock.unix_timestamp;
     relayer_node.deactivated_at_slot = 0;
     relayer_node.is_active = true;

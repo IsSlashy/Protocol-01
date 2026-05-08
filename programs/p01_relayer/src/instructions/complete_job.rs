@@ -97,6 +97,11 @@ pub fn handler(ctx: Context<CompleteJob>, tx_signature: [u8; 64]) -> Result<()> 
     // Update job status
     job.status = JobStatus::Completed;
 
+    // Apply pending decay before crediting +100 so a long-dormant relayer
+    // doesn't ride a stale score into the reward. Order matters:
+    //   pre-decay score → apply_decay → +100 → set last_active_slot=now.
+    relayer_node.apply_decay(clock.slot);
+
     // Update relayer stats
     relayer_node.jobs_completed = relayer_node.jobs_completed.saturating_add(1);
     relayer_node.last_active_slot = clock.slot;

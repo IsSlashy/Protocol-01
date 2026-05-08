@@ -67,6 +67,12 @@ pub fn handler(ctx: Context<ExpireJob>) -> Result<()> {
         relayer_node.stake = relayer_node.stake.saturating_sub(slash);
     }
 
+    // Apply pending decay before the explicit -500 penalty so total
+    // reputation reflects (a) dormant time + (b) failed assignment, not
+    // double-counted. last_active_slot intentionally NOT bumped to
+    // clock.slot — expiring a job is failure, not activity.
+    relayer_node.apply_decay(clock.slot);
+
     // Update status and stats
     job.status = JobStatus::Expired;
     relayer_node.jobs_failed = relayer_node.jobs_failed.saturating_add(1);

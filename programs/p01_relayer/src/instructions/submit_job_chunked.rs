@@ -31,10 +31,10 @@ pub struct SubmitJobChunked<'info> {
     pub config: Account<'info, RelayerConfig>,
 
     #[account(
+        mut,
         seeds = [RelayerNode::SEED_PREFIX, assigned_relayer.operator.as_ref()],
         bump = assigned_relayer.bump,
-        constraint = assigned_relayer.is_active @ RelayerError::RelayerNotActive,
-        constraint = assigned_relayer.reputation_score >= MIN_REPUTATION @ RelayerError::InsufficientReputation
+        constraint = assigned_relayer.is_active @ RelayerError::RelayerNotActive
     )]
     pub assigned_relayer: Box<Account<'info, RelayerNode>>,
 
@@ -68,6 +68,14 @@ pub fn handler(
     let clock = Clock::get()?;
     let config = &ctx.accounts.config;
     let fee_lamports = config.job_fee_lamports;
+
+    // Apply lazy decay before gating on reputation (same pattern as
+    // submit_job.rs). The relayer account is `mut` above for this reason.
+    ctx.accounts.assigned_relayer.apply_decay(clock.slot);
+    require!(
+        ctx.accounts.assigned_relayer.reputation_score >= MIN_REPUTATION,
+        RelayerError::InsufficientReputation
+    );
 
     let transfer_ctx = CpiContext::new(
         ctx.accounts.system_program.to_account_info(),
