@@ -129,7 +129,7 @@ export default function SubscribePrivateScreen() {
     // version determines which proof system the on-chain ix expects, and a
     // mismatch later (e.g. Pay Now using V2 path against a V3 note) silently
     // breaks renewals.
-    if (__DEV__) {
+    if (1) {
       console.log('[Sub:Create] note+pool selected', {
         noteId: note.id,
         token: note.token,
@@ -172,7 +172,7 @@ export default function SubscribePrivateScreen() {
       setStarkStatus('Computing STARK commitment...');
       const ownershipResult = await starkGenerate(subscriberSecret.toString());
       const vkHashSubscriber = sha256(Buffer.from(ownershipResult.commitment, 'hex'));
-      if (__DEV__) {
+      if (1) {
         // Hash the secret rather than logging it — never the raw bigint.
         const secretHash = sha256(Buffer.from(subscriberSecret.toString(), 'utf8'))
           .slice(0, 8).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
@@ -194,7 +194,7 @@ export default function SubscribePrivateScreen() {
 
       const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
       const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
-      if (__DEV__) {
+      if (1) {
         console.log('[Sub:Create] pool_commitment proof', {
           circuitId: starkResult.circuitId,
           proofSize: starkResult.proofSize,
@@ -220,7 +220,7 @@ export default function SubscribePrivateScreen() {
         },
       );
 
-      if (__DEV__) {
+      if (1) {
         console.log('[Sub:Create] subscribePrivateStarkAction returned', {
           sigPrefix: sig.slice(0, 16),
           // Pool version we created against — Pay Now / processDuePayments
@@ -233,7 +233,7 @@ export default function SubscribePrivateScreen() {
       router.back();
       });
     } catch (err) {
-      if (__DEV__) {
+      if (1) {
         console.warn('[Sub:Create] FAILED', {
           message: (err as Error).message,
           stack: (err as Error).stack?.split('\n').slice(0, 4).join(' | '),

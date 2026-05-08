@@ -19,7 +19,15 @@ import { getKeypair } from '../../../services/solana/wallet';
 import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
 import { sendSolWithSigner } from '../../../services/solana/transactions';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
-import { receiptFromJSON, ALL_POOLS } from '../../../services/denominatedPool';
+import {
+  receiptFromJSON,
+  ALL_POOLS,
+  ALL_POOLS_V3,
+  findPoolByPDA,
+  fetchPoolLeavesByIndex,
+  buildMerkleProofFromLeavesV3,
+  goldilocksToLeBytes32,
+} from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { getServiceById, CATEGORY_CONFIG, ServiceCategory } from '../../../services/subscriptions/serviceRegistry';
 import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
@@ -47,7 +55,7 @@ function DetailContent() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { streams, processingPayment, refresh, pauseStream, resumeStream, cancelStream, deleteStream } = useStreamStore();
-  const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof } = useStarkProver();
+  const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof, generateMerklePathProof } = useStarkProver();
   const {
     pausePrivateStarkAction,
     resumePrivateStarkAction,
@@ -320,63 +328,134 @@ function DetailContent() {
             .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
             .sort((a: any, b: any) => a.denomination - b.denomination);
           const note = matureSol.find((n: any) => n.denomination >= stream.amountPerPayment);
-          if (__DEV__) {
-            console.log('[Sub:Renew:PayNow] note selection', {
-              streamId: stream.id,
-              streamName: stream.name,
-              useZkVault: !!stream.useZkVault,
-              amountPerPayment: stream.amountPerPayment,
-              matureSolNotesCount: matureSol.length,
-              matureDenoms: matureSol.map((n: any) => n.denomination),
-              selectedNoteId: note?.id ?? 'NONE',
-              selectedDenom: note?.denomination,
-              selectedPoolVersion: (note as any)?.poolVersion ?? 'unknown',
-            });
-          }
           if (!note) throw new Error('No mature note large enough.');
-          // CRITICAL — handlePayNow currently calls `unshieldNoteStark` (V2/BN254
-          // path) regardless of the note's pool version. If the note was shielded
-          // into a V3/V4 pool, the on-chain ix expects Goldilocks proofs and
-          // this V2 call will fail at proof verification. Surface the mismatch
-          // so we can see it in adb logcat the moment a renewal starts.
-          if (__DEV__) {
-            const noteVersion = (note as any).poolVersion;
-            if (noteVersion && noteVersion !== 'v2') {
-              console.warn('[Sub:Renew:PayNow] POOL VERSION MISMATCH', {
-                noteId: note.id,
-                notePoolVersion: noteVersion,
-                payPath: 'unshieldNoteStark (V2/BN254)',
-                expected: 'unshieldNoteStarkV3 (Goldilocks) for V3+',
-                consequence: 'on-chain proof verification will fail',
-              });
-            }
-          }
-          setPayProgress(t('shieldUnshield.generatingProof'));
+          // Resolve pool version (V2 vs V3) so we route to the matching unshield
+          // path. Pre-fix this branch always called V2 unshield → on-chain proof
+          // verification fail for V3/V4 notes (the post-2026-05-07 default).
+          const poolByPda = findPoolByPDA(note.poolPDA);
+          const noteIsV3 = (note as any).poolVersion === 'v3' || poolByPda?.version === 'v3';
+          console.log('[Sub:Renew:PayNow] note selection', {
+            streamId: stream.id,
+            streamName: stream.name,
+            useZkVault: !!stream.useZkVault,
+            amountPerPayment: stream.amountPerPayment,
+            matureSolNotesCount: matureSol.length,
+            selectedNoteId: note.id,
+            selectedDenom: note.denomination,
+            poolPDA: note.poolPDA?.slice(0, 12) + '…',
+            poolFoundVersion: poolByPda?.version,
+            willRoute: noteIsV3 ? 'V3 (Goldilocks: C1+C3)' : 'V2 (BN254: C1)',
+          });
           const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
-          const starkResult = await generatePoolCommitmentProof(
-            receipt.nullifierPreimage.toString(),
-            receipt.secret.toString(),
-            receipt.depositEpoch.toString(),
-            receipt.tokenMint.toString(),
-          );
-          if (__DEV__) {
-            console.log('[Sub:Renew:PayNow] V2 pool_commitment proof generated', {
-              circuitId: starkResult.circuitId,
+
+          if (noteIsV3) {
+            const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+            if (!pool) {
+              throw new Error(
+                `V3 pool config not found for note (poolPDA=${note.poolPDA.slice(0, 8)}…). ` +
+                `Pool may have been deprecated.`,
+              );
+            }
+
+            // C1 — pool_commitment proof (same as V2).
+            setPayProgress(t('shieldUnshield.generatingProof'));
+            const c1Result = await generatePoolCommitmentProof(
+              receipt.nullifierPreimage.toString(),
+              receipt.secret.toString(),
+              receipt.depositEpoch.toString(),
+              receipt.tokenMint.toString(),
+            );
+            console.log('[Sub:Renew:PayNow] V3 C1 ready', { proofSize: c1Result.proofSize });
+
+            // Build merkle path against on-chain V3 tree.
+            const conn = getConnection();
+            const SIG_SCAN_LIMIT = 5000;
+            let leafScan = await fetchPoolLeavesByIndex(conn, pool.poolPDA, { maxSignatures: SIG_SCAN_LIMIT });
+            let merkleProof = buildMerkleProofFromLeavesV3({
+              leavesByIndex: leafScan.leavesByIndex,
+              targetLeafIndex: receipt.leafIndex,
+            });
+
+            // Pre-proof root verification.
+            const { parsePoolAccount } = await import('@/services/denominatedPool/parsePool');
+            const eq = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i]);
+            const checkRoot = async (rootBigint: bigint, label: string) => {
+              const acct = await conn.getAccountInfo(pool.poolPDA, 'confirmed');
+              if (!acct) return null;
+              const parsed = parsePoolAccount(acct.data);
+              if (!parsed) return null;
+              const target = new Uint8Array(goldilocksToLeBytes32(rootBigint));
+              const inCur = eq(target, parsed.currentRoot);
+              const idx = parsed.historicalRoots.findIndex(r => eq(target, r));
+              const ok = inCur || idx >= 0;
+              console.log(`[Sub:Renew:PayNow] V3 pre-proof ${label}: rebuilt root in pool? ${ok ? 'YES' : 'NO'} mySeen=${leafScan.scannedLeafCount}`);
+              return ok;
+            };
+            const ok1 = await checkRoot(merkleProof.root, 'attempt-1');
+            if (ok1 === false) {
+              console.warn('[Sub:Renew:PayNow] root mismatch — retrying scan after 8s');
+              await new Promise(r => setTimeout(r, 8000));
+              leafScan = await fetchPoolLeavesByIndex(conn, pool.poolPDA, { maxSignatures: SIG_SCAN_LIMIT * 2 });
+              merkleProof = buildMerkleProofFromLeavesV3({
+                leavesByIndex: leafScan.leavesByIndex,
+                targetLeafIndex: receipt.leafIndex,
+              });
+              const ok2 = await checkRoot(merkleProof.root, 'attempt-2');
+              if (ok2 === false) {
+                throw new Error(
+                  'Cannot rebuild merkle root that matches the pool. ' +
+                  'Likely a missing LeafInserted event (Helius indexing delay). ' +
+                  'Wait ~30s and retry.',
+                );
+              }
+            }
+            const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } = merkleProof;
+
+            receipt.merkleRoot = c3Root;
+            receipt.merklePathElements = c3Path;
+            receipt.merklePathIndices = c3Indices;
+
+            // C3 — merkle_path proof.
+            const U64 = (1n << 64n) - 1n;
+            const c3Result = await generateMerklePathProof(
+              (receipt.commitment & U64).toString(),
+              c3Path.map(e => (e & U64).toString()),
+              c3Indices,
+            );
+            console.log('[Sub:Renew:PayNow] V3 C3 ready', { proofSize: c3Result.proofSize });
+
+            setPayProgress(t('shieldUnshield.sendingTransaction'));
+            sig = await store.unshieldNoteStarkV3(
+              note.id,
+              stream.recipientAddress,
+              {
+                proofBytes: Buffer.from(c1Result.proofHex, 'hex'),
+                publicInputs: c1Result.publicInputs.map((s: string) => BigInt(s)),
+                proofSize: c1Result.proofSize,
+              },
+              {
+                proofBytes: Buffer.from(c3Result.proofHex, 'hex'),
+                publicInputs: c3Result.publicInputs.map((s: string) => BigInt(s)),
+                proofSize: c3Result.proofSize,
+              },
+              false,
+            );
+            console.log('[Sub:Renew:PayNow] V3 sig', { sigPrefix: sig.slice(0, 16) });
+          } else {
+            // V2/BN254 path — single C1 proof.
+            setPayProgress(t('shieldUnshield.generatingProof'));
+            const starkResult = await generatePoolCommitmentProof(
+              receipt.nullifierPreimage.toString(),
+              receipt.secret.toString(),
+              receipt.depositEpoch.toString(),
+              receipt.tokenMint.toString(),
+            );
+            sig = await store.unshieldNoteStark(note.id, stream.recipientAddress, {
+              proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
+              publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
               proofSize: starkResult.proofSize,
-              publicInputsCount: starkResult.publicInputs.length,
-              durationMs: starkResult.durationMs,
-            });
-          }
-          sig = await store.unshieldNoteStark(note.id, stream.recipientAddress, {
-            proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
-            publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
-            proofSize: starkResult.proofSize,
-          }, false);
-          if (__DEV__) {
-            console.log('[Sub:Renew:PayNow] unshieldNoteStark V2 returned', {
-              sigPrefix: sig.slice(0, 16),
-              noteId: note.id,
-            });
+            }, false);
+            console.log('[Sub:Renew:PayNow] V2 sig', { sigPrefix: sig.slice(0, 16) });
           }
           paid = note.denomination;
         } else {

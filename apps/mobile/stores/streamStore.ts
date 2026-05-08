@@ -354,7 +354,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     try {
       set({ loading: true, error: null });
 
-      if (__DEV__) {
+      if (1) {
         const before = get().streams;
         const due = before.filter(s => s.status === 'active' && s.nextPaymentDate <= Date.now());
         console.log('[Sub:Renew:Cycle] processAllDuePayments begin', {
@@ -377,7 +377,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         loading: false,
       });
 
-      if (__DEV__) {
+      if (1) {
         console.log('[Sub:Renew:Cycle] processAllDuePayments done', {
           paymentsReturned: payments.length,
           paymentsByStatus: payments.reduce<Record<string, number>>((m, p) => {
@@ -389,7 +389,7 @@ export const useStreamStore = create<StreamState>((set, get) => ({
 
       return payments;
     } catch (error: any) {
-      if (__DEV__) {
+      if (1) {
         console.warn('[Sub:Renew:Cycle] processAllDuePayments threw', {
           message: error.message,
           stack: error.stack?.split('\n').slice(0, 4).join(' | '),

@@ -30,9 +30,13 @@ import {
   type ShieldReceipt,
   type PoolConfig,
   ALL_POOLS,
+  ALL_POOLS_V3,
+  findPoolByPDA,
   createCommitment,
+  createCommitmentV3,
   deriveSplitOutputSecrets,
   computeNewRootFromSubtrees,
+  computeNewRootFromSubtreesV3,
   slotToEpoch,
   bigintToLeBytes32,
   parseFilledSubtrees,
@@ -365,7 +369,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       ) => {
         set({ isLoading: true, error: null, progress: 'Preparing STARK subscription...' });
 
-        if (__DEV__) {
+        if (1) {
           console.log('[Sub:Create:Store] subscribePrivateStarkAction begin', {
             poolPDA: poolConfig.poolPDA.toBase58(),
             poolVersion: (poolConfig as any).version ?? 'v2',
@@ -419,7 +423,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
           // Save secret to SecureStore (not AsyncStorage)
           await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
-          if (__DEV__) {
+          if (1) {
             // Verify the round-trip — SecureStore can silently fail on locked
             // device or 2 KB key-size cap. A vault that exists on-chain but
             // whose secret isn't retrievable later is the canonical
@@ -450,7 +454,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             const { fetchVault } = await import('../services/subscriptionVault');
             const { upsertStreamFromVault } = await import('../services/solana/streams');
             const vaultInfo = await fetchVault(vaultPDA);
-            if (__DEV__) {
+            if (1) {
               console.log('[Sub:Create:Store] stream sync', {
                 vaultFetched: !!vaultInfo,
                 vaultPDA: vaultPDA.toBase58(),
@@ -467,7 +471,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             { transactionId: sig },
           );
 
-          if (__DEV__) {
+          if (1) {
             console.log('[Sub:Create:Store] subscribePrivateStarkAction success', {
               vaultPDA: vaultPDA.toBase58(),
               sigPrefix: sig.slice(0, 16),
@@ -477,7 +481,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return { signature: sig, vaultAddress: vaultPDA.toBase58() };
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
-          if (__DEV__) {
+          if (1) {
             console.warn('[Sub:Create:Store] FAILED', {
               message: (err as Error).message,
               poolPDA: poolConfig.poolPDA.toBase58(),
@@ -684,9 +688,16 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           if (!vault.isPrivateMode) throw new Error('Vault is not in private mode');
           if (!vault.sourcePool) throw new Error('Vault has no source pool');
 
-          // 2. Resolve source pool config
-          const sourcePool = ALL_POOLS.find(p => p.poolPDA.toBase58() === vault.sourcePool);
+          // 2. Resolve source pool config (search V2 + V3 lists — V3 vaults
+          //    created on V4 pools post-2026-05-07 seed bump are NOT in V2 list).
+          const sourcePool = findPoolByPDA(vault.sourcePool);
           if (!sourcePool) throw new Error(`Source pool not found: ${vault.sourcePool}`);
+          const sourceIsV3 = sourcePool.version === 'v3';
+          console.log('[Sub:Cancel] resolved source pool', {
+            poolPDA: sourcePool.poolPDA.toBase58(),
+            version: sourcePool.version,
+            denomination: sourcePool.denomination,
+          });
 
           // 3. Compute refundable amount (matches on-chain handler math exactly)
           const currentSlot = await connection.getSlot('confirmed');
@@ -700,10 +711,14 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           // 4. Derive deterministic output secrets from subscriber secret
           const outputSecrets = deriveSplitOutputSecrets(subscriberSecret, notesToReshield);
 
-          // 5. Compute commitments + sequential new Merkle roots
+          // 5. Compute commitments + sequential new Merkle roots — pick V2/V3
+          //    hash family based on the source pool. Mismatch silently fails
+          //    on-chain at re-shield root verification.
           set({ progress: 'Computing re-shield commitments...' });
           const currentEpoch = slotToEpoch(currentSlot);
           const tokenMintField = pubkeyToField(sourcePool.tokenMint);
+          const commitFn = sourceIsV3 ? createCommitmentV3 : createCommitment;
+          const newRootFn = sourceIsV3 ? computeNewRootFromSubtreesV3 : computeNewRootFromSubtrees;
 
           const outputCommitments: bigint[] = [];
           const newReceipts: ShieldReceipt[] = [];
@@ -711,7 +726,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           for (let i = 0; i < notesToReshield; i++) {
             const secret = outputSecrets[i];
             const nullifierPreimage = poseidon2([secret, BigInt(i)]);
-            const commitment = createCommitment(
+            const commitment = commitFn(
               nullifierPreimage, secret, currentEpoch, tokenMintField,
             );
             outputCommitments.push(commitment);
@@ -739,7 +754,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
             commitmentBytes = outputCommitments.map(c => new Uint8Array(bigintToLeBytes32(c)));
             for (let i = 0; i < notesToReshield; i++) {
-              const { newRoot, updatedSubtrees } = computeNewRootFromSubtrees(
+              const { newRoot, updatedSubtrees } = newRootFn(
                 outputCommitments[i], leafCount, subtrees,
               );
               rootBytes.push(new Uint8Array(bigintToLeBytes32(newRoot)));
@@ -842,7 +857,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         //    prover — pass `computeStarkCommitment` from `useStarkProver().computeCommitment`.
         const connection = getConnection();
         const { notes } = useDenominatedPoolStore.getState();
-        if (__DEV__) {
+        if (1) {
           console.log('[Sub:Recovery] begin', {
             totalNotes: notes.length,
             hasStarkProver: !!computeStarkCommitment,
@@ -946,7 +961,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({ vaults: [...newStoredVaults, ...state.vaults] }));
         }
 
-        if (__DEV__) {
+        if (1) {
           console.log('[Sub:Recovery] done', {
             scanned: allAccounts.length,
             recovered,
