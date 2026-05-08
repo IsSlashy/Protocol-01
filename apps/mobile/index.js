@@ -13,15 +13,19 @@
 //
 // __DEV__ is `true` in Metro dev mode and `false` in release builds — Hermes
 // inlines this constant so the if-block is dead-code-eliminated in dev.
-if (!__DEV__) {
-  const noop = () => {};
-  console.log = noop;
-  console.warn = noop;
-  console.error = noop;
-  console.info = noop;
-  console.debug = noop;
-  console.trace = noop;
-}
+// TEMP — diagnostic build for sub-renewal investigation 2026-05-08.
+// Runtime console no-op DISABLED so [Sub:*] logs reach adb logcat in
+// release-signed builds. Pair with babel.config.js (transform-remove-console
+// commented out). Revert (uncomment block) before user-facing release.
+// if (!__DEV__) {
+//   const noop = () => {};
+//   console.log = noop;
+//   console.warn = noop;
+//   console.error = noop;
+//   console.info = noop;
+//   console.debug = noop;
+//   console.trace = noop;
+// }
 
 // Polyfills must be imported BEFORE anything else
 import 'react-native-get-random-values';

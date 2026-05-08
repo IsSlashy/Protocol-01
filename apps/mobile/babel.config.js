@@ -44,7 +44,11 @@ module.exports = function (api) {
     env: {
       production: {
         plugins: [
-          ['transform-remove-console', { exclude: [] }],
+          // TEMP — diagnostic build for sub-renewal investigation 2026-05-08.
+          // transform-remove-console is disabled so that [Sub:*] structured
+          // logs survive in a release-signed standalone APK. Revert before
+          // shipping any release intended for users.
+          // ['transform-remove-console', { exclude: [] }],
         ],
       },
     },
