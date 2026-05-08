@@ -578,7 +578,14 @@ export async function subscribePrivateStark(
   const goldilocksNullifier = starkProofData.publicInputs[0] ?? 0n;
   const nullifierBytes = Array.from(goldilocksU64To32(goldilocksNullifier));
   const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
-  const minEpoch = currentEpoch - 1n;
+  // min_epoch must satisfy: current_epoch >= min_epoch + dynamic_delay (where
+  // dynamic_delay scales with pool activity, often 0..N). Setting min_epoch
+  // to the note's deposit epoch lets the on-chain check evaluate as
+  // "current_epoch ≥ depositEpoch + dynamic_delay" — i.e. the note has aged
+  // at least `dynamic_delay` epochs since it was shielded. The previous
+  // (currentEpoch - 1n) only works if dynamic_delay ≤ 1, which fails on
+  // active pools and surfaces as EpochDelayNotMet (6023 / 0x1787).
+  const minEpoch = receipt.depositEpoch;
 
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
   onProgress?.('Submitting STARK proof on-chain...');
@@ -624,7 +631,14 @@ export async function subscribePrivateStark(
   tx.add(ix);
   let sig: string;
   try {
-    sig = await signAndSend(connection, tx, keypair, walletSigner);
+    // Route through p01_relayer (when `relayerV3Enabled`) so the on-chain
+    // tx fee payer is a relayer pubkey, NOT the subscriber's wallet. This
+    // closes the leak documented at the May-9 audit: the wallet pubkey
+    // appearing as Account #0 / fee payer of the subscribe tx — which let
+    // any chain-scanner correlate "wallet X created sub Y at time T".
+    // Falls back to direct on relayer error unless strict-mode is on.
+    const { signAndSendV3 } = await import('../denominatedPool');
+    sig = await signAndSendV3(connection, tx, keypair, walletSigner);
   } catch (err: any) {
     inspectPayError('zk-recurring', err?.message ?? String(err), 'subscribePrivateStark');
     throw err;
@@ -809,8 +823,20 @@ function buildSubscribePrivateStarkIx(
     { pubkey: poolPDA, isSigner: false, isWritable: true },
     { pubkey: treePDA, isSigner: false, isWritable: false },
     { pubkey: nullifierPDA, isSigner: false, isWritable: true },
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    // stark_proof_buffer is `#[account(mut)]` in subscribe_private_stark
+    // (the handler invalidates it post-use by setting verified=false).
+    // Pass writable=true to match — otherwise Anchor throws ConstraintMut
+    // (2000 / 0x7d0).
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Optional accounts for SPL-token pools (token_program, pool_vault,
+    // vault_token_account). Anchor 0.32 requires placeholder accounts even
+    // when None — pass the executing program ID as the sentinel that Anchor
+    // interprets as `None`. Without these, the ix fails with
+    // AccountNotEnoughKeys (3005 / 0xbbd) before reaching the handler.
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });

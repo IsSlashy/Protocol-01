@@ -1524,7 +1524,7 @@ async function signAndSend(
  * we *try* the relayer first, then degrade. Re-tighten this once we have N≥3
  * geo-distributed nodes and uptime metrics.
  */
-async function signAndSendV3(
+export async function signAndSendV3(
   connection: Connection,
   tx: Transaction,
   keypair: Keypair | null,

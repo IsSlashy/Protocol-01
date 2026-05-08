@@ -55,6 +55,20 @@ async function resilientFetch(
   const sanitizedOptions = stripIdentifyingHeaders(options);
   await sleep(30 + Math.floor(Math.random() * 90));
 
+  // Detect whether this fetch targets the configured privacy relay vs a
+  // direct RPC. Relay calls get a fallback to direct on 5xx/timeout (line
+  // 110-123); direct calls surface their error as-is. Without this flag
+  // both branches reference an undeclared `isRelayCall` → ReferenceError
+  // on the very first sendRawTransaction.
+  const RELAYER_URL = process.env.EXPO_PUBLIC_RELAYER_URL ?? '';
+  const urlStr =
+    typeof url === 'string'
+      ? url
+      : url instanceof URL
+        ? url.toString()
+        : (url as Request)?.url ?? String(url);
+  const isRelayCall = RELAYER_URL.length > 0 && urlStr.startsWith(RELAYER_URL);
+
   const timeoutMs = 30000;
 
   // STARK chunk upload fires 100+ sequential TXs; Helius free tier (~10 RPS) will
