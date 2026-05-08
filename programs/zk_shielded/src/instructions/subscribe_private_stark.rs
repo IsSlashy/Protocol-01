@@ -3,7 +3,12 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
-use crate::state::{DenominatedPool, MerkleTreeState, NullifierRecord, SubscriptionVault};
+// V4 seed bump (2026-05-07) replaced V2 pools with V3 (struct DenominatedPoolV3,
+// seed `denominated_pool_v4`). subscribe_private_stark was missed in that pass —
+// it was still deserializing V4 pool accounts as the V2 `DenominatedPool` struct,
+// producing AccountDiscriminatorMismatch (Anchor error 3002 / 0xbba) for every
+// vault subscription on V3+ pools. Switch to V3 structs.
+use crate::state::{DenominatedPoolV3, MerkleTreeStateV3, NullifierRecord, SubscriptionVault};
 
 /// STARK Proof Buffer account layout (from p01_stark_verifier).
 /// We read this account to check that a STARK proof was verified.
@@ -92,7 +97,7 @@ pub struct SubscribePrivateStark<'info> {
     #[account(
         mut,
         seeds = [
-            DenominatedPool::SEED_PREFIX,
+            DenominatedPoolV3::SEED_PREFIX,
             denominated_pool.token_mint.as_ref(),
             &denominated_pool.denomination.to_le_bytes()
         ],
@@ -100,17 +105,17 @@ pub struct SubscribePrivateStark<'info> {
         constraint = denominated_pool.is_active @ ZkShieldedError::PoolNotActive,
         constraint = denominated_pool.is_valid_root(&merkle_root) @ ZkShieldedError::InvalidMerkleRoot
     )]
-    pub denominated_pool: Box<Account<'info, DenominatedPool>>,
+    pub denominated_pool: Box<Account<'info, DenominatedPoolV3>>,
 
     /// Merkle tree state (read-only for unshield)
     #[account(
         seeds = [
-            MerkleTreeState::SEED_PREFIX,
+            MerkleTreeStateV3::SEED_PREFIX,
             denominated_pool.key().as_ref()
         ],
         bump = merkle_tree.bump
     )]
-    pub merkle_tree: Box<Account<'info, MerkleTreeState>>,
+    pub merkle_tree: Box<Account<'info, MerkleTreeStateV3>>,
 
     /// Nullifier record PDA — init for double-spend prevention
     #[account(
@@ -180,7 +185,7 @@ pub fn handler(
     );
 
     // Dynamic delay check
-    let current_epoch = DenominatedPool::current_epoch(clock.slot);
+    let current_epoch = DenominatedPoolV3::current_epoch(clock.slot);
     pool.update_maturity(current_epoch);
     let dynamic_delay = pool.get_dynamic_delay();
     let effective_min_epoch = min_epoch
@@ -251,7 +256,7 @@ pub fn handler(
     let denomination_bytes = pool.denomination.to_le_bytes();
     let bump = pool.bump;
     let seeds = &[
-        DenominatedPool::SEED_PREFIX,
+        DenominatedPoolV3::SEED_PREFIX,
         token_mint.as_ref(),
         denomination_bytes.as_ref(),
         &[bump],
