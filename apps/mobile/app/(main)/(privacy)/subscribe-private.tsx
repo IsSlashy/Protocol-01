@@ -125,6 +125,25 @@ export default function SubscribePrivateScreen() {
       p01Alert('Pool Unavailable', `No pool registered for ${note.token} ${note.denomination}.`);
       return;
     }
+    // Diagnostic — surface which note + pool the user is binding to. The pool
+    // version determines which proof system the on-chain ix expects, and a
+    // mismatch later (e.g. Pay Now using V2 path against a V3 note) silently
+    // breaks renewals.
+    if (__DEV__) {
+      console.log('[Sub:Create] note+pool selected', {
+        noteId: note.id,
+        token: note.token,
+        denomination: note.denomination,
+        noteStatus: note.status,
+        notePoolVersion: (note as any).poolVersion ?? 'unknown',
+        poolPDA: poolConfig.poolPDA.toBase58(),
+        poolVersion: poolConfig.version ?? 'v2',
+        retailer: trimmedRetailer.slice(0, 8) + '…',
+        rateLamports: rateLamports.toString(),
+        intervalSlots: intervalSlotsInt,
+        matureNotesAvailable: matureNotes.length,
+      });
+    }
     if (rateLamports > poolConfig.denominationAtomic) {
       p01Alert(
         'Rate Exceeds Note',
@@ -153,6 +172,17 @@ export default function SubscribePrivateScreen() {
       setStarkStatus('Computing STARK commitment...');
       const ownershipResult = await starkGenerate(subscriberSecret.toString());
       const vkHashSubscriber = sha256(Buffer.from(ownershipResult.commitment, 'hex'));
+      if (__DEV__) {
+        // Hash the secret rather than logging it — never the raw bigint.
+        const secretHash = sha256(Buffer.from(subscriberSecret.toString(), 'utf8'))
+          .slice(0, 8).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '');
+        console.log('[Sub:Create] STARK ownership commitment', {
+          commitmentHexPrefix: ownershipResult.commitment.slice(0, 16),
+          vkHashPrefix: Buffer.from(vkHashSubscriber).slice(0, 4).toString('hex'),
+          subscriberSecretHash8: secretHash,
+          durationMs: ownershipResult.durationMs,
+        });
+      }
 
       setStarkStatus('Generating STARK pool commitment proof...');
       const starkResult = await generatePoolCommitmentProof(
@@ -164,6 +194,16 @@ export default function SubscribePrivateScreen() {
 
       const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
       const publicInputs = starkResult.publicInputs.map(s => BigInt(s));
+      if (__DEV__) {
+        console.log('[Sub:Create] pool_commitment proof', {
+          circuitId: starkResult.circuitId,
+          proofSize: starkResult.proofSize,
+          publicInputsCount: publicInputs.length,
+          // public inputs[0] = nullifier hash on this circuit; safe to log prefix.
+          nullifierHashPrefix: publicInputs[0]?.toString(16).slice(0, 16) ?? 'none',
+          durationMs: starkResult.durationMs,
+        });
+      }
 
       setStarkStatus('Submitting STARK subscription...');
       const { signature: sig } = await subscribePrivateStarkAction(
@@ -180,11 +220,25 @@ export default function SubscribePrivateScreen() {
         },
       );
 
+      if (__DEV__) {
+        console.log('[Sub:Create] subscribePrivateStarkAction returned', {
+          sigPrefix: sig.slice(0, 16),
+          // Pool version we created against — Pay Now / processDuePayments
+          // must select the matching V2/V3 unshield path for this same note.
+          poolVersion: poolConfig.version ?? 'v2',
+        });
+      }
       setStarkStatus(null);
       p01Alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
       router.back();
       });
     } catch (err) {
+      if (__DEV__) {
+        console.warn('[Sub:Create] FAILED', {
+          message: (err as Error).message,
+          stack: (err as Error).stack?.split('\n').slice(0, 4).join(' | '),
+        });
+      }
       setStarkStatus(null);
       p01Alert('Error', (err as Error).message);
     }

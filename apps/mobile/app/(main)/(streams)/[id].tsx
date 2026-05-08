@@ -316,11 +316,41 @@ function DetailContent() {
         if (stream.useZkPool) {
           if (!starkReady) throw new Error('STARK prover not ready — try again in a moment');
           const store = useDenominatedPoolStore.getState();
-          const note = store.getActiveNotes()
+          const matureSol = store.getActiveNotes()
             .filter((n: any) => n.token === 'SOL' && n.status === 'mature')
-            .sort((a: any, b: any) => a.denomination - b.denomination)
-            .find((n: any) => n.denomination >= stream.amountPerPayment);
+            .sort((a: any, b: any) => a.denomination - b.denomination);
+          const note = matureSol.find((n: any) => n.denomination >= stream.amountPerPayment);
+          if (__DEV__) {
+            console.log('[Sub:Renew:PayNow] note selection', {
+              streamId: stream.id,
+              streamName: stream.name,
+              useZkVault: !!stream.useZkVault,
+              amountPerPayment: stream.amountPerPayment,
+              matureSolNotesCount: matureSol.length,
+              matureDenoms: matureSol.map((n: any) => n.denomination),
+              selectedNoteId: note?.id ?? 'NONE',
+              selectedDenom: note?.denomination,
+              selectedPoolVersion: (note as any)?.poolVersion ?? 'unknown',
+            });
+          }
           if (!note) throw new Error('No mature note large enough.');
+          // CRITICAL — handlePayNow currently calls `unshieldNoteStark` (V2/BN254
+          // path) regardless of the note's pool version. If the note was shielded
+          // into a V3/V4 pool, the on-chain ix expects Goldilocks proofs and
+          // this V2 call will fail at proof verification. Surface the mismatch
+          // so we can see it in adb logcat the moment a renewal starts.
+          if (__DEV__) {
+            const noteVersion = (note as any).poolVersion;
+            if (noteVersion && noteVersion !== 'v2') {
+              console.warn('[Sub:Renew:PayNow] POOL VERSION MISMATCH', {
+                noteId: note.id,
+                notePoolVersion: noteVersion,
+                payPath: 'unshieldNoteStark (V2/BN254)',
+                expected: 'unshieldNoteStarkV3 (Goldilocks) for V3+',
+                consequence: 'on-chain proof verification will fail',
+              });
+            }
+          }
           setPayProgress(t('shieldUnshield.generatingProof'));
           const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
           const starkResult = await generatePoolCommitmentProof(
@@ -329,11 +359,25 @@ function DetailContent() {
             receipt.depositEpoch.toString(),
             receipt.tokenMint.toString(),
           );
+          if (__DEV__) {
+            console.log('[Sub:Renew:PayNow] V2 pool_commitment proof generated', {
+              circuitId: starkResult.circuitId,
+              proofSize: starkResult.proofSize,
+              publicInputsCount: starkResult.publicInputs.length,
+              durationMs: starkResult.durationMs,
+            });
+          }
           sig = await store.unshieldNoteStark(note.id, stream.recipientAddress, {
             proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
             publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
             proofSize: starkResult.proofSize,
           }, false);
+          if (__DEV__) {
+            console.log('[Sub:Renew:PayNow] unshieldNoteStark V2 returned', {
+              sigPrefix: sig.slice(0, 16),
+              noteId: note.id,
+            });
+          }
           paid = note.denomination;
         } else {
           setPayProgress(t('shieldUnshield.sendingTransaction'));

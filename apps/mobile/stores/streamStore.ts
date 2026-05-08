@@ -354,6 +354,18 @@ export const useStreamStore = create<StreamState>((set, get) => ({
     try {
       set({ loading: true, error: null });
 
+      if (__DEV__) {
+        const before = get().streams;
+        const due = before.filter(s => s.status === 'active' && s.nextPaymentDate <= Date.now());
+        console.log('[Sub:Renew:Cycle] processAllDuePayments begin', {
+          totalStreams: before.length,
+          dueCount: due.length,
+          dueZkCount: due.filter((s: any) => s.useZkPool).length,
+          dueZkVaultCount: due.filter((s: any) => s.useZkVault).length,
+          dueIds: due.map(s => s.id),
+        });
+      }
+
       const payments = await processDuePayments();
 
       const streams = await loadStreams();
@@ -365,8 +377,24 @@ export const useStreamStore = create<StreamState>((set, get) => ({
         loading: false,
       });
 
+      if (__DEV__) {
+        console.log('[Sub:Renew:Cycle] processAllDuePayments done', {
+          paymentsReturned: payments.length,
+          paymentsByStatus: payments.reduce<Record<string, number>>((m, p) => {
+            m[p.status] = (m[p.status] ?? 0) + 1;
+            return m;
+          }, {}),
+        });
+      }
+
       return payments;
     } catch (error: any) {
+      if (__DEV__) {
+        console.warn('[Sub:Renew:Cycle] processAllDuePayments threw', {
+          message: error.message,
+          stack: error.stack?.split('\n').slice(0, 4).join(' | '),
+        });
+      }
       set({
         error: error.message || 'Failed to process payments',
         loading: false,

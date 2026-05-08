@@ -706,6 +706,21 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
         .filter((n: any) => n.token === 'SOL' && n.status === 'mature');
       const availableNote = matureNotes.find((n: any) => n.denomination >= stream.amountPerPayment);
 
+      if (__DEV__) {
+        console.log('[Sub:Renew:Auto] precheck', {
+          streamId,
+          streamName: stream.name,
+          useZkVault: !!stream.useZkVault,
+          amountPerPayment: stream.amountPerPayment,
+          matureCount: matureNotes.length,
+          matureDenoms: matureNotes.map((n: any) => n.denomination),
+          matureVersions: matureNotes.map((n: any) => (n as any).poolVersion ?? 'unknown'),
+          willAutoPause: !availableNote,
+          selectedDenom: availableNote?.denomination,
+          selectedVersion: (availableNote as any)?.poolVersion ?? 'unknown',
+        });
+      }
+
       if (!availableNote) {
         console.log(`[Streams] Auto-pausing ZK stream "${stream.name}" — no mature notes available`);
 
@@ -728,6 +743,12 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
       }
     } catch (e) {
       console.warn('[Streams] Failed to check denomination pool notes:', e);
+      if (__DEV__) {
+        console.warn('[Sub:Renew:Auto] precheck threw', {
+          streamId,
+          message: (e as Error).message,
+        });
+      }
     }
   }
 
@@ -777,7 +798,21 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
 
     if (stream.useZkPool) {
       // ZK streams: skip automatic payment, user must use "Pay Now" button
-      // The pre-check above already handles auto-pause on insufficient balance
+      // The pre-check above already handles auto-pause on insufficient balance.
+      // This is the architectural gap behind "subscription stops renewing":
+      // useZkPool ⇒ no auto path. The user has to be in-app to tap Pay Now,
+      // and Pay Now itself currently uses the V2 unshield path (see
+      // app/(main)/(streams)/[id].tsx:332) which fails on V3+ notes.
+      if (__DEV__) {
+        console.log('[Sub:Renew:Skip] ZK stream skipped by processDuePayments', {
+          streamId,
+          streamName: stream.name,
+          useZkVault: !!stream.useZkVault,
+          reason: 'requires foreground STARK prover + manual Pay Now',
+          nextPaymentDate: stream.nextPaymentDate,
+          dueByMs: Date.now() - stream.nextPaymentDate,
+        });
+      }
       console.log(`[Streams] Skipping automatic payment for ZK stream "${stream.name}" — requires manual Pay Now`);
       return null;
     } else if (stream.useStealthAddress) {

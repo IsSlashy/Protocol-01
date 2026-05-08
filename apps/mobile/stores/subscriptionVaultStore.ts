@@ -365,6 +365,21 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       ) => {
         set({ isLoading: true, error: null, progress: 'Preparing STARK subscription...' });
 
+        if (__DEV__) {
+          console.log('[Sub:Create:Store] subscribePrivateStarkAction begin', {
+            poolPDA: poolConfig.poolPDA.toBase58(),
+            poolVersion: (poolConfig as any).version ?? 'v2',
+            tokenMint: poolConfig.tokenMint.toBase58(),
+            denomination: poolConfig.denomination,
+            retailer: vaultConfig.retailer.toBase58().slice(0, 8) + '…',
+            rate: vaultConfig.rate.toString(),
+            intervalSlots: vaultConfig.intervalSlots.toString(),
+            commitmentBigintPrefix: subscriberOwnershipCommitment.toString(16).slice(0, 16),
+            vkHashPrefix: Buffer.from(vkHashSubscriber).slice(0, 4).toString('hex'),
+            proofSize: starkProofData.proofSize,
+          });
+        }
+
         try {
           const walletSigner = getWalletSignerIfPrivy();
           const sig = await subscribePrivateStark(
@@ -404,6 +419,26 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
           // Save secret to SecureStore (not AsyncStorage)
           await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
+          if (__DEV__) {
+            // Verify the round-trip — SecureStore can silently fail on locked
+            // device or 2 KB key-size cap. A vault that exists on-chain but
+            // whose secret isn't retrievable later is the canonical
+            // "subscription stops renewing" symptom.
+            try {
+              const roundTrip = await loadSecretSecurely(vaultPDA.toBase58());
+              const ok = roundTrip === subscriberSecret.toString();
+              console.log('[Sub:Create:Store] vault secret saved', {
+                vaultPDA: vaultPDA.toBase58(),
+                secretRoundTripOk: ok,
+                storedLen: roundTrip?.length ?? 0,
+              });
+              if (!ok) {
+                console.warn('[Sub:Create:Store] SECRET ROUND-TRIP MISMATCH — renewal will fail');
+              }
+            } catch (e) {
+              console.warn('[Sub:Create:Store] secret round-trip check threw', e);
+            }
+          }
 
           set(state => ({
             vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
@@ -415,6 +450,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             const { fetchVault } = await import('../services/subscriptionVault');
             const { upsertStreamFromVault } = await import('../services/solana/streams');
             const vaultInfo = await fetchVault(vaultPDA);
+            if (__DEV__) {
+              console.log('[Sub:Create:Store] stream sync', {
+                vaultFetched: !!vaultInfo,
+                vaultPDA: vaultPDA.toBase58(),
+              });
+            }
             if (vaultInfo) await upsertStreamFromVault(vaultInfo);
           } catch (e) {
             console.warn('[SubscriptionVault] stream sync after subscribePrivateStark failed (non-fatal):', e);
@@ -426,9 +467,23 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             { transactionId: sig },
           );
 
+          if (__DEV__) {
+            console.log('[Sub:Create:Store] subscribePrivateStarkAction success', {
+              vaultPDA: vaultPDA.toBase58(),
+              sigPrefix: sig.slice(0, 16),
+              storedVaultCount: get().vaults.length,
+            });
+          }
           return { signature: sig, vaultAddress: vaultPDA.toBase58() };
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
+          if (__DEV__) {
+            console.warn('[Sub:Create:Store] FAILED', {
+              message: (err as Error).message,
+              poolPDA: poolConfig.poolPDA.toBase58(),
+              poolVersion: (poolConfig as any).version ?? 'v2',
+            });
+          }
           set({ error: (err as Error).message });
           throw err;
         } finally {
@@ -787,6 +842,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         //    prover — pass `computeStarkCommitment` from `useStarkProver().computeCommitment`.
         const connection = getConnection();
         const { notes } = useDenominatedPoolStore.getState();
+        if (__DEV__) {
+          console.log('[Sub:Recovery] begin', {
+            totalNotes: notes.length,
+            hasStarkProver: !!computeStarkCommitment,
+            existingVaults: get().vaults.length,
+          });
+        }
 
         // Candidate notes — anything we have a receipt for, even if marked spent. On a
         // new device the seed-based `rescanPool` reconstructs spent notes too, which is
@@ -884,6 +946,15 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({ vaults: [...newStoredVaults, ...state.vaults] }));
         }
 
+        if (__DEV__) {
+          console.log('[Sub:Recovery] done', {
+            scanned: allAccounts.length,
+            recovered,
+            candidateCount: candidates.length,
+            candidatesWithStark: candidates.filter(c => !!c.starkHex).length,
+            newVaultAddresses: newStoredVaults.map(v => v.vaultAddress),
+          });
+        }
         return { recovered, scanned: allAccounts.length, newVaults };
       },
 
