@@ -29,6 +29,7 @@ import { PublicKey, Transaction } from '@solana/web3.js';
 import { getSolanaWebSocket } from '../services/solana/websocket';
 import { resetAllPrivacyStores, restorePrivacyStoresForWallet } from './resetStores';
 import { scheduleLocalNotification } from '../services/notifications';
+import { requestAirdrop, isDevnet, initializeConnection } from '../services/solana/connection';
 
 // Store Privy signer for transactions
 let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
@@ -51,7 +52,6 @@ export function setPrivyMessageSigner(signer: ((message: Uint8Array) => Promise<
 export function getPrivyMessageSigner(): ((message: Uint8Array) => Promise<Uint8Array>) | null {
   return privyMessageSigner;
 }
-import { requestAirdrop, isDevnet, initializeConnection } from '../services/solana/connection';
 
 interface WalletState {
   // State

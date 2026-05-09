@@ -17,6 +17,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as anchor from '@coral-xyz/anchor';
+import { PublicKey } from '@solana/web3.js';
 import {
   submitEncryptedOffer,
   blindTakeOrder,
@@ -28,6 +29,10 @@ import {
   type BlindTakeParams,
 } from '../src/mugen';
 import type { ArciumClient } from '../src/client';
+
+// A throwaway but valid pubkey for mock client/program program IDs.
+const MOCK_PROGRAM_ID = new PublicKey('11111111111111111111111111111112');
+const MOCK_PAYER = new PublicKey('11111111111111111111111111111113');
 
 // ─── Mock helpers ────────────────────────────────────────────────────────────
 
@@ -43,6 +48,7 @@ interface MockClient {
   getComputationAccounts: ReturnType<typeof vi.fn>;
   awaitFinalization: ReturnType<typeof vi.fn>;
   nonceToU128: ReturnType<typeof vi.fn>;
+  programId: PublicKey;
   connection: {
     getTransaction: ReturnType<typeof vi.fn>;
   };
@@ -54,6 +60,8 @@ interface MockMethodsBuilder {
 }
 
 interface MockProgram {
+  programId: PublicKey;
+  provider: { wallet: { publicKey: PublicKey }; publicKey: PublicKey };
   methods: {
     mugenSubmitOffer: ReturnType<typeof vi.fn>;
     mugenBlindTake: ReturnType<typeof vi.fn>;
@@ -80,7 +88,9 @@ function makePayload(blocks = 2): MockEncryptPayload {
 
 function makeMockClient(): MockClient {
   return {
-    encrypt: vi.fn((_values: bigint[]) => makePayload(2)),
+    // Return one ciphertext block per plaintext value — submit/take pass 5
+    // values, cancel passes 1. Earlier hard-coded `makePayload(2)` was wrong.
+    encrypt: vi.fn((values: bigint[]) => makePayload(values.length)),
     newComputationOffset: vi.fn(() => new anchor.BN(42)),
     getComputationAccounts: vi.fn((_circuit: string, _offset: anchor.BN) => ({
       computationAccount: 'compAcc',
@@ -92,6 +102,7 @@ function makeMockClient(): MockClient {
     })),
     awaitFinalization: vi.fn(async (_offset: anchor.BN) => 'finalize-sig-123'),
     nonceToU128: vi.fn((_nonce: Uint8Array) => new anchor.BN(1)),
+    programId: MOCK_PROGRAM_ID,
     connection: {
       getTransaction: vi.fn(),
     },
@@ -110,6 +121,11 @@ function makeMockProgram(): MockProgram {
   const blindTake = makeBuilder('sig-take');
   const cancel = makeBuilder('sig-cancel');
   return {
+    programId: MOCK_PROGRAM_ID,
+    provider: {
+      wallet: { publicKey: MOCK_PAYER },
+      publicKey: MOCK_PAYER,
+    },
     methods: {
       mugenSubmitOffer: vi.fn(() => submit),
       mugenBlindTake: vi.fn(() => blindTake),
@@ -225,8 +241,9 @@ describe('submitEncryptedOffer', () => {
     );
 
     const args = program.methods.mugenSubmitOffer.mock.calls[0];
-    // args = [computationOffset, ct0, ct1, pubKey, nonce]
-    expect(args).toHaveLength(5);
+    // args = [computationOffset, ct0, ct1, ct2, ct3, ct4, pubKey, nonceU128]
+    // — 5 ciphertexts (one per plaintext IR input) + 3 framing args.
+    expect(args).toHaveLength(8);
     const flattened = JSON.stringify(args);
     // cryptoAmount 100_000_000 and fiat 1500 should not be found as raw numbers
     // in the serialized instruction args (they are inside opaque ciphertext bytes).

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PublicKey, Connection } from '@solana/web3.js';
 import * as nacl from 'tweetnacl';
 import * as naclUtil from 'tweetnacl-util';
@@ -275,8 +275,21 @@ describe('generateAdminKeyPair', () => {
 // IPFS functions (mocked fetch)
 // ============================================================
 describe('IPFS functions', () => {
+  // uploadToIPFS reads WEB3_STORAGE_TOKEN at call time. Stub it for the upload
+  // suite, then unset on teardown so other suites are not polluted.
+  const ORIGINAL_TOKEN = process.env.WEB3_STORAGE_TOKEN;
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    process.env.WEB3_STORAGE_TOKEN = 'test-token-xxx';
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_TOKEN === undefined) {
+      delete process.env.WEB3_STORAGE_TOKEN;
+    } else {
+      process.env.WEB3_STORAGE_TOKEN = ORIGINAL_TOKEN;
+    }
   });
 
   describe('uploadToIPFS', () => {
@@ -305,12 +318,16 @@ describe('IPFS functions', () => {
     it('should throw if the upload response is not ok', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: false,
+        status: 401,
         statusText: 'Unauthorized',
       });
       vi.stubGlobal('fetch', mockFetch);
 
       const data = { nonce: 'abc', encrypted: 'def' };
-      await expect(uploadToIPFS(data)).rejects.toThrow('IPFS upload failed: Unauthorized');
+      // The current implementation prefixes "Failed to upload to IPFS." and
+      // includes the HTTP status + statusText. Match on the statusText only,
+      // so this stays robust to message tweaks.
+      await expect(uploadToIPFS(data)).rejects.toThrow(/Unauthorized/);
     });
   });
 
@@ -369,8 +386,11 @@ describe('IPFS functions', () => {
       const mockFetch = vi.fn().mockRejectedValue(new Error('fail'));
       vi.stubGlobal('fetch', mockFetch);
 
+      // The current implementation message is "Failed to fetch from IPFS
+      // gateway. … CID: badcid. Gateways tried: …" — match on the CID and
+      // the leading clause so the test stays robust to copy tweaks.
       await expect(fetchFromIPFS('badcid')).rejects.toThrow(
-        'Failed to fetch from IPFS: badcid'
+        /Failed to fetch from IPFS.*badcid/,
       );
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
