@@ -102,8 +102,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-target-
 
-      - name: cargo check (workspace)
-        run: cargo check --workspace --all-targets
+      # p01-arcium is excluded because its Arcium macros
+      # (init_computation_definition_accounts, queue_computation_accounts,
+      # callback_accounts, arcium_callback) read .arcis bytecode files from
+      # programs/p01_arcium/build/ at proc-macro expansion time. Those files
+      # are produced by `arcium build` (Arcium CLI / Arcis compiler), not by
+      # cargo, and are gitignored. CI does not have the Arcium toolchain.
+      # Local devs run `arcium build` once, then `cargo check` works there.
+      - name: cargo check (workspace, excl. p01-arcium)
+        run: cargo check --workspace --all-targets --exclude p01-arcium --exclude encrypted-ixs
 
       - name: cargo clippy (warnings as errors on hot programs)
         run: |
