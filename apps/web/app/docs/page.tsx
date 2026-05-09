@@ -82,7 +82,7 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);
     i18nKey: "shieldedPool",
     icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Shielded pool flow (v0.9.9 — STARK, quantum-safe)
+    codeExample: `// Shielded pool flow (v0.9.11 — STARK V3, quantum-safe)
 // 1. User generates a STARK proof locally (no remote prover)
 const starkProof = await starkProver.generateProof(noteInputs);
 
@@ -143,7 +143,7 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     i18nKey: "solanaIntegration",
     icon: <Cpu className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// v0.9.9 — Every spend verifies through the custom on-chain
+    codeExample: `// v0.9.11 — Every spend verifies through the custom on-chain
 // FRI verifier (no Winterfell dep, Goldilocks + Blake3, ~889K CU).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
@@ -154,7 +154,7 @@ for pos in positions {
 // LEGACY (pre-April 2026, now retired from every spend path) —
 // BN254 Groth16 pairing via the sol_alt_bn128 syscall. Kept here
 // only for historical reference; the code still exists in the
-// repo history but no instruction dispatches to it in v0.9.9+.
+// repo history but no instruction dispatches to it in v0.9.11+.
 //
 //   let pairing_result = sol_alt_bn128_pairing(&[...]);
 //   require!(pairing_result == 1, "Invalid Groth16 proof");`,
@@ -164,7 +164,7 @@ for pos in positions {
     i18nKey: "privateRelay",
     icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// Trustless on-chain relay flow (v0.9.9 — STARK-only)
+    codeExample: `// Trustless on-chain relay flow (v0.9.11 — STARK V3 + relayer-routed)
 // 1. Client generates a STARK proof locally via the WASM prover
 //    (spending key stays on device; no remote prover fallback)
 const starkProof = await starkProver.generateProof({
@@ -445,6 +445,35 @@ const balance = await executeTool("wallet_balance", {});
 // Agent responds and calls shield tool:
 await executeTool("privacy_shield", { amount: 0.1 });
 // → Redirects to Privacy → Shield screen`,
+  },
+  {
+    id: "quantum-wallet",
+    i18nKey: "quantumWallet",
+    icon: <Key className="w-6 h-6" />,
+    detailCount: 8,
+    codeExample: `// Quantum Wallet — STARK-authorized fund custody (coming Q3 2026)
+// Funds spent via Poseidon preimage proof, not Ed25519 signature.
+
+// 1. Init at first launch — silent, transparent migration
+const seedSecret = hkdf(seedPhrase, "p01_quantum_v1");
+const commitment = poseidonGl(seedSecret, salt);  // Goldilocks
+const ownerId = poseidonGl(seedSecret, "id_v1");
+const pda = derivePda(["qw", ownerId], P01_QUANTUM_WALLET_ID);
+await initQuantumWallet({ commitment, recoveryPubkey: null });
+
+// 2. Receive — your address is the PDA. Senders use SystemProgram.transfer
+// like any other wallet. They don't know it's quantum-protected.
+
+// 3. Send — STARK proves "I know the preimage of commitment"
+const proof = await starkProver.generateProof({
+  seedSecret, salt, recipient, amount, nonce, circuitId: 7,
+});
+await uploadProofBuffer(proof);
+await withdraw({ amount, recipient, proofBuffer });
+
+// Threat: Shor breaks Ed25519 ≥ 2030. Attacker steals your gas keypair
+// → can pay fees in your name, CANNOT move your funds.
+// Custody = preimage knowledge (Grover-resistant), not signature.`,
   },
   {
     id: "migration-history",

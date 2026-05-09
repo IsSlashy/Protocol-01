@@ -1,0 +1,5 @@
+# Old APK builds — not served by the site anymore (CTA points to GitHub
+# releases at IsSlashy/Protocol-01-releases). Keeping them local for archive
+# purposes but they exceed Vercel's 100 MB per-file limit if uploaded.
+public/*.apk
+public/downloads/*.apk

@@ -6,7 +6,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import {
   Wallet, Radio, ArrowLeftRight, Bot, Shield, Layers,
-  Lock, Calendar, Eye, Fingerprint, Zap,
+  Lock, Calendar, Eye, Fingerprint, Zap, GitBranch, Network, FileText,
 } from "lucide-react";
 import { useT } from "@/i18n";
 
@@ -22,6 +22,9 @@ const features = [
   { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a" },
   { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00" },
   { icon: Zap, name: "multiHopRouting", color: "#00ffe5" },
+  { icon: GitBranch, name: "noteSplitting", color: "#39c5bb" },
+  { icon: Network, name: "privacyRouter", color: "#ff2d7a" },
+  { icon: FileText, name: "serviceRegistry", color: "#00ffe5" },
 ];
 
 export default function Features() {

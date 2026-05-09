@@ -83,7 +83,7 @@ const ja: Translations = {
     step4Title: '\u53d7\u4fe1',
     step4Desc: '\u4efb\u610f\u306e\u30a6\u30a9\u30ec\u30c3\u30c8\u306b\u51fa\u91d1 \u2014 \u30bc\u30ed\u30c8\u30ec\u30fc\u30b9',
     instantOps: '\u5373\u6642\u64cd\u4f5c',
-    shieldTime: '\u30b7\u30fc\u30eb\u30c9+\u30a2\u30f3\u30b7\u30fc\u30eb\u30c9 \u7d043\u79d2',
+    shieldTime: '\u30b7\u30fc\u30eb\u30c9 ~5\u79d2 \u00b7 STARK\u30a2\u30f3\u30b7\u30fc\u30eb\u30c9 ~30\u79d2',
     zeroTraces: '\u30bc\u30ed\u30c8\u30ec\u30fc\u30b9',
   },
 
@@ -103,6 +103,9 @@ const ja: Translations = {
     stealthMetaAddresses: '\u30b9\u30c6\u30eb\u30b9\u30e1\u30bf\u30a2\u30c9\u30ec\u30b9',
     subscriptionVaults: '\u30b5\u30d6\u30b9\u30af\u30ea\u30d7\u30b7\u30e7\u30f3\u30dc\u30fc\u30eb\u30c8',
     multiHopRouting: '\u30de\u30eb\u30c1\u30db\u30c3\u30d7\u30eb\u30fc\u30c6\u30a3\u30f3\u30b0',
+    noteSplitting: '\u30ce\u30fc\u30c8\u5206\u5272',
+    privacyRouter: '\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u30eb\u30fc\u30bf\u30fc',
+    serviceRegistry: '\u30b5\u30fc\u30d3\u30b9\u30ec\u30b8\u30b9\u30c8\u30ea',
     exploreDocs: '\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8\u3092\u63a2\u7d22 \u2192',
   },
 
@@ -130,6 +133,7 @@ const ja: Translations = {
     deployment: '\u30c7\u30d7\u30ed\u30a4',
     starkProver: 'STARK\u30d7\u30ed\u30fc\u30d0\u30fc',
     ellipticCurve: '\u697d\u5186\u66f2\u7dda',
+    friHash: 'FRI\u30cf\u30c3\u30b7\u30e5',
     quantumSafeField: '\u8010\u91cf\u5b50\u4f53',
     ecdh: 'ECDH',
     dataStructure: '\u30c7\u30fc\u30bf\u69cb\u9020',
@@ -364,6 +368,54 @@ const ja: Translations = {
         title: 'Mugen Exchange（P2Pフィアット）',
         desc: '呪術廻戦（五条）をテーマにしたP2Pフィアット-to-crypto マーケットプレイス — KYCなし、オンチェーンwSOL vaultによるエスクロー、Treasury Bufferレイヤー、MagicBlock PER + Arcium + FROST + Nymプライバシースタック。プライバシーレシート + トレードライフサイクルUIのモバイルネイティブ統合。Vercelにデプロイ済み。',
       },
+      v3StarkE2E: {
+        title: 'V3 STARKエンドツーエンド稼働',
+        desc: 'V3 STARK transferがdevnetでエンドツーエンド検証完了（送信→encoded→import→maturation→unshield、テストtxで+0.995 SOL純額）。Goldilocks Poseidonがmobile、extension、オンチェーンverifier間でパリティロック。BN254は全ての支出パスから完全に廃止。',
+      },
+      txOpacityRelayer: {
+        title: 'Tx-Opacity Phase A — Relayer V3 接続',
+        desc: 'p01_relayerをV3 shield/unshield/transferフローに統合。RPC submitterのIPがユーザーデバイスと相関付けられなくなった。外側のrelay-job tx fee_payer = エフェメラルランダム。1280バイトencrypted_tx capに収めるため v1 X25519エンベロープ（73バイトオーバーヘッド）を採用。',
+      },
+      txOpacityEvents: {
+        title: 'Tx-Opacity Phase B — オンチェーンEventスクラブ',
+        desc: '全V3イベントから depositor、recipient、denomination、protocol fee、timestamps を削除。devnetでinner unshield logsが空であることを検証。indexer層の監視（Helius、Solscan、Chainalysis級）はもはや有用な状態を読み取れない。',
+      },
+      uniformStarkProofs: {
+        title: '均一STARK Proofs (Phase C v1)',
+        desc: '全STARK proof bufferをcircuit不問でUNIFORM_PROOF_SIZE = 145 KBにパディング。proofサイズによるtx-level fingerprinting排除。Phase E fee_escrow PDAsと組み合わせ、lamport差分が個別トランザクションのdenominationを漏洩しなくなった。',
+      },
+      multiRelayerRotation: {
+        title: 'Sprint 3 — マルチリレイヤーローテーション',
+        desc: '登録済みリレイヤー間のモバイル自動ローテーション + last_active_slot経由のlivenessフィルタ。strict-mode-on-first-failureギャップを解消。tx当たりキャップを超えるproof用にchunked submit_job ix scaffold。lazy reputation decay anti-Sybil。',
+      },
+      poolV4Migration: {
+        title: 'Denominated Pool V4 マイグレーション',
+        desc: 'プログラムシードを denominated_pool_v4 にバンプ。13の新規プール（6 SOL + 7 USDC）をdevnetにデプロイ。V3プールでMerkleリビルドを壊していたlegacy un-decodable LeafInsertedイベントから脱出。V3プールはdeprecate、cancel_jobでドレイン可能。',
+      },
+      subscribePrivateV3: {
+        title: 'Subscribe_Private V3',
+        desc: 'subscribe_private_stark ixをV2→V3にオンチェーン移植（Anchor discriminator mismatchを修正）。モバイルix builder : Option<Account>用placeholders、stark_proof_buffer writable、isRelayCall ReferenceError解消、min_epochセマンティクス修正。devnetでvault PDA作成をlive end-to-end検証済み。',
+      },
+      cancelPrivateV3: {
+        title: 'cancel_private_stark V3 移植',
+        desc: 'オンチェーンcancel ixをV3に移植 — insert_with_root_v3は異なるシグネチャ（subtrees + c6_verifiedフラグ）を持つ。再シールドされたnoteごとに新しいsubtreesをクライアント側で計算する必要あり。subscribe_private_stark V3とは別途追跡。',
+      },
+      arciumConfidentialRelay: {
+        title: 'Phase D — Arcium confidentialRelay',
+        desc: 'submit_confidential_relay ix scaffoldがp01_arciumに着地（コミット7c0841c）。閾値MPC復号によりリレイヤーからもrecipientを隠す。stealth recipient強制と組み合わせてT3（侵害されたリレイヤー）脅威モデルを閉じる。',
+      },
+      quantumWallet: {
+        title: 'Quantum Wallet (p01_quantum_wallet)',
+        desc: 'Ed25519資金保管を置き換えるSTARK認可スマートコントラクトウォレット。資金は署名ではなくPoseidon preimage知識証明（Goldilocks、ポスト量子）で支出。ShorがEd25519を破る時（≥ 2030）でも、ガスキーを盗んだ攻撃者は資金を動かせない。約9〜11週間ソロ、V3監査クローズ後にゲート。',
+      },
+      coverTraffic: {
+        title: 'Cover Traffic (セルフループダミー)',
+        desc: 'ユーザー側ダミートランザクション、実際のshield → unshieldラウンドトリップとバイト同一で、実際のアクティビティを区別不可能なノイズで覆い隠す。タイミング相関（L20）を閉じ、touched-program信号（L11）を低下。区別不可能性上限5/5。プロトコル表面ゼロ、インフラコストゼロ。',
+      },
+      feederPool: {
+        title: 'Feeder Pool (Phase A.5)',
+        desc: 'depositor-visible-on-shieldリーク（L1/L2）を閉じる。誠実な実装にはTEE attestation（Marlin Oyster）またはステーク/スラッシング付きN ≥ 3地理分散リレイヤーのいずれかが必要。どちらもなければtrust-shiftであってprivacy-gainではない。インフラ可用性にゲート。',
+      },
       colosseumFrontier: {
         title: 'Colosseum Frontier 2026',
         desc: '2026年4月23日、アイルランドチームリージョン（Superteam IEアフィリエーション）で提出。アクセラレータートラック有効。Superteam Irelandから、Arcium上で活動中のアイルランドの5チームの一つとして公に認識されました。',
@@ -386,7 +438,7 @@ const ja: Translations = {
       },
       securityAudit: {
         title: '\u5916\u90e8\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u76e3\u67fb',
-        desc: 'メインネットデプロイ前にOtterSec、Neodyme、またはTrail of Bitsによる全14プログラム、6つのSTARK AIR、カスタムオンチェーンFRI検証器、17つのSDKの包括的監査。',
+        desc: 'メインネットデプロイ前にOtterSec、Neodyme、またはTrail of Bitsによる全12プログラム、6つのSTARK AIR、カスタムオンチェーンFRI検証器、10のSDKの包括的監査。',
       },
       trustedSetup: {
         title: '\u4fe1\u983c\u306e\u7f6e\u3051\u308b\u30bb\u30c3\u30c8\u30a2\u30c3\u30d7\u30bb\u30ec\u30e2\u30cb\u30fc \u2014 \u5ec3\u6b62',
@@ -973,6 +1025,18 @@ const ja: Translations = {
         detail13: '\u30e1\u30e2\u30ea (3): \u4fdd\u5b58\u3001\u8aad\u307f\u53d6\u308a\u3001\u6c38\u7d9a\u30a8\u30fc\u30b8\u30a7\u30f3\u30c8\u30e1\u30e2\u30ea\u30ea\u30b9\u30c8',
         detail14: '\u30c4\u30fc\u30eb\u30eb\u30fc\u30d7: \u30e1\u30c3\u30bb\u30fc\u30b8\u3042\u305f\u308a\u6700\u59273\u30e9\u30a6\u30f3\u30c9\u306e\u30c4\u30fc\u30eb\u5b9f\u884c',
       },
+      quantumWallet: {
+        title: 'Quantum Wallet (近日公開)',
+        desc: 'Ed25519資金保管を置き換えるSTARK認可スマートコントラクトウォレット。資金は署名ではなくPoseidon preimage知識証明（Goldilocks、ポスト量子）で支出。通常のSolanaウォレットと同じUX — アドレスは同じに見え、友人は同じように送金できる — しかしShorはあなたの資金を動かせない。設計ドキュメント2026-05-09公開、V3監査クローズ後の約9〜11週間のソロ実行。',
+        detail1: '保管：ed25519 → Goldilocks上のPoseidon(seed_secret, salt)preimage知識のSTARK証明',
+        detail2: 'ウォレットアドレス = p01_quantum_walletプログラム所有のPDA（32バイト、送信者にとって通常のpubkeyと区別不可）',
+        detail3: '受信：任意のウォレット（Phantom、取引所、友人）がSystemProgram.transfer経由でPDAに送信 — 送信者側に特別な統合不要',
+        detail4: '送信：preimageのSTARK証明がwithdraw ixを認可。1送信あたり約20〜30秒（proof生成 + バッファアップロード + verify + execute）。ポスト量子セキュリティのコスト',
+        detail5: '出荷後の脅威モデル：ShorがEd25519を破る時（≥ 2030）、Solana keypairを盗んだ攻撃者はあなた名義でガスを払えるが資金は動かせない。保管 = preimage知識、署名ではない',
+        detail6: 'マイグレーション：アップデート後の最初の起動時にEd25519 → quantum walletを自動ドレイン（サイレントtx 1つ、~3秒）。ユーザーは既存のウォレットがその場でアップグレードされるのを見る — 新しいseedなし、手動転送なし',
+        detail7: 'リカバリー：「seedを失っても」緊急時のためのオプションのSPHINCS+リカバリーキー。MVPはなしで出荷（seedフレーズで十分）',
+        detail8: 'V3 STARK verifier（DGY37k…）をwallet-auth用の新しいcircuit_id = 7で再利用。同じGoldilocks Poseidon、同じchunked buffer upload、同じmulti-relayer rotation。新しいインフラなし',
+      },
       migrationHistory: {
         title: 'Legacy / \u30de\u30a4\u30b0\u30ec\u30fc\u30b7\u30e7\u30f3\u5c65\u6b74',
         desc: '\u524a\u9664\u3057\u305f\u3082\u306e\u3068\u7f6e\u304d\u63db\u3048\u305f\u3082\u306e\u3002Protocol 01\u306f\u30c7\u30d5\u30a9\u30eb\u30c8\u3067\u30dd\u30b9\u30c8\u91cf\u5b50\u30d5\u30a1\u30fc\u30b9\u30c8 \u2014 \u3059\u3079\u3066\u306eGroth16/BN254\u30d1\u30b9\u306f2026\u5e744\u6708\u306bGoldilocks\u4f53\u4e0a\u306eSTARK\u306b\u7f6e\u304d\u63db\u3048\u3089\u308c\u305f\u3002\u3053\u306e\u30a8\u30f3\u30c8\u30ea\u306fSDK\u30b3\u30f3\u30b7\u30e5\u30fc\u30de\u30fc\u3068\u76e3\u67fb\u4eba\u304c\u3001\u4f55\u304c\u3069\u3046\u5909\u308f\u3063\u305f\u304b\u3092\u6b63\u78ba\u306b\u78ba\u8a8d\u3067\u304d\u308b\u3088\u3046\u306b\u30de\u30a4\u30b0\u30ec\u30fc\u30b7\u30e7\u30f3\u3092\u6587\u66f8\u5316\u3057\u3066\u3044\u308b\u3002',
@@ -1067,7 +1131,7 @@ const ja: Translations = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'ファウンダー & ソロデベロッパー — Protocol 01',
-    bio: '24歳、パリ在住。\nEpitech卒業、サイバーセキュリティ修士号取得、7年以上の開発経験。\nProtocol 01を90日間で一人で構築、Solanaプログラム14個、ZK回路10個、STARK 6個、クライアントアプリ3個、SDK 17個。\nチームなし、資金なし、実行あるのみ。',
+    bio: '24歳、パリ在住。\nEpitech卒業、サイバーセキュリティ修士号取得、7年以上の開発経験。\nProtocol 01を2026年1月から一人で構築:Solanaプログラム12個、ZK回路6個、STARK AIR 6個、MPC回路9個、クライアントアプリ3個、SDK 10個。\nチームなし、資金なし、実行あるのみ。',
     missionBadge: 'ミッション',
     missionTitle: 'なぜこれを作るのか',
     mission1: '金融プライバシーは機能ではなく基本的権利です。\n今日のすべてのブロックチェーン取引は永続的な痕跡を残します、給与、サブスクリプション、寄付、すべてが公開されています。\nこれは透明性ではなく、監視です。',
@@ -1083,7 +1147,7 @@ const ja: Translations = {
       captnboat: { title: 'CaptNBoat — 開発 & PM', desc: 'フルスタック開発者兼プロジェクトマネージャー。サイバーセキュリティイニシアチブを2年間リード。' },
       master: { title: '修士号 — サイバーセキュリティ', desc: 'Epitech Paris。攻撃的セキュリティ、暗号学、セキュアアーキテクチャ専門。' },
       freelance: { title: 'フリーランス & ハッカソン', desc: '独立。Solanaハッカソンに参加開始。Protocol 01の最初のバージョンを構築。' },
-      protocol01: { title: 'Protocol 01 — フルタイム', desc: '2026年1月からの継続的ソロ開発。14プログラム、10 ZK回路、6 STARK、9 MPC回路、3アプリ、17 SDK。Colosseum Frontier 2026に提出。' },
+      protocol01: { title: 'Protocol 01 — フルタイム', desc: '2026年1月からの継続的ソロ開発。12プログラム、6 ZK回路、6 STARK AIR、9 MPC回路、3アプリ、10 SDK。Colosseum Frontier 2026に提出。' },
     },
     stats: {
       yearsCode: '年のコーディング',

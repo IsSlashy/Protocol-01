@@ -14,11 +14,13 @@ import {
   Layers,
   Cpu,
   Eye,
+  EyeOff,
   Wallet,
   Globe,
   Terminal,
   Bot,
   Lock,
+  Key,
   Radio,
   CreditCard,
   Network,
@@ -285,6 +287,42 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.colosseumFrontier.desc",
         icon: <Globe className="w-5 h-5" />,
       },
+      // ── May 2026 sprint shipping wave ─────────────────────────
+      {
+        title: "roadmap.items.v3StarkE2E.title",
+        description: "roadmap.items.v3StarkE2E.desc",
+        icon: <Cpu className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.txOpacityRelayer.title",
+        description: "roadmap.items.txOpacityRelayer.desc",
+        icon: <Radio className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.txOpacityEvents.title",
+        description: "roadmap.items.txOpacityEvents.desc",
+        icon: <EyeOff className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.uniformStarkProofs.title",
+        description: "roadmap.items.uniformStarkProofs.desc",
+        icon: <Lock className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.multiRelayerRotation.title",
+        description: "roadmap.items.multiRelayerRotation.desc",
+        icon: <Network className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.poolV4Migration.title",
+        description: "roadmap.items.poolV4Migration.desc",
+        icon: <Layers className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.subscribePrivateV3.title",
+        description: "roadmap.items.subscribePrivateV3.desc",
+        icon: <Zap className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -328,6 +366,16 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.defiComposability.desc",
         icon: <Layers className="w-5 h-5" />,
       },
+      {
+        title: "roadmap.items.cancelPrivateV3.title",
+        description: "roadmap.items.cancelPrivateV3.desc",
+        icon: <Code className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.arciumConfidentialRelay.title",
+        description: "roadmap.items.arciumConfidentialRelay.desc",
+        icon: <Network className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -336,6 +384,21 @@ const roadmap: RoadmapPhase[] = [
     title: "roadmap.future",
     subtitle: "roadmap.futureSub",
     items: [
+      {
+        title: "roadmap.items.quantumWallet.title",
+        description: "roadmap.items.quantumWallet.desc",
+        icon: <Key className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.coverTraffic.title",
+        description: "roadmap.items.coverTraffic.desc",
+        icon: <EyeOff className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.feederPool.title",
+        description: "roadmap.items.feederPool.desc",
+        icon: <Shield className="w-5 h-5" />,
+      },
       {
         title: "roadmap.items.desktopApp.title",
         description: "roadmap.items.desktopApp.desc",

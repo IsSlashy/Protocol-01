@@ -24,7 +24,7 @@ const daysSinceStart = () => Math.floor((Date.now() - PROJECT_START.getTime()) /
 
 const stats = [
   { value: "7+", labelKey: "yearsCode" },
-  { value: "14", labelKey: "programs" },
+  { value: "12", labelKey: "programs" },
   { value: "6", labelKey: "circuits" },
   { value: String(daysSinceStart()), labelKey: "days" },
   { value: "1", labelKey: "dev" },

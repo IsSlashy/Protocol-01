@@ -80,6 +80,23 @@ const updates: WeekUpdate[] = [
       "Applied to CastleDAO Ireland (August 2026)",
     ],
   },
+  {
+    week: 5,
+    title: "V3 End-to-End, Tx-Opacity & Multi-Relayer",
+    date: "May 4 - May 10, 2026",
+    status: "published",
+    video: "/videos/week5.mp4",
+    highlights: [
+      "V3 STARK transfer end-to-end live on devnet — sender → encoded → import → maturation → unshield, +0.995 SOL net",
+      "Sprint 2 Tx-Opacity shipped: p01_relayer wired into V3 (Phase A), event scrubbing on-chain (Phase B), uniform 145 KB STARK proofs (Phase C), fee_escrow PDAs (Phase E)",
+      "Sprint 3 Multi-relayer: auto-rotation + liveness filter + chunked submit_job + lazy reputation decay anti-Sybil",
+      "V4 pool seed bump (denominated_pool_v4) — 13 fresh pools, escapes un-decodable legacy events forever",
+      "Subscribe_private V3 fixes — Rust V2 → V3 structs, mobile ix builder placeholders, stark_proof_buffer writable, 4 cascading bugs closed",
+      "Mobile UI 2-modes (Classique / Privé) + V3 routing in subscribe.tsx and (streams)/[id].tsx + explicit note picker + withKeepAwake",
+      "Subscribe_private vault création validated live (PDA FG3DPX6SN…, end-to-end on-chain)",
+      "Quantum Wallet UX design doc shipped — cahier des charges for the post-judging 2-3 month execution",
+    ],
+  },
 ];
 
 export default function UpdatesPage() {

@@ -82,11 +82,11 @@ const techLogos: Record<string, ReactElement> = {
       <rect x="14" y="10.5" width="2" height="2" rx="0.3" fill="currentColor" />
     </svg>
   ),
-  BN254: (
+  Blake3: (
     <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="12" cy="12" rx="10" ry="6" />
-      <path d="M12 6v12" />
-      <path d="M6 8c2 3 10 3 12 0" />
+      <path d="M3 12h4l2-7 4 14 2-7h6" />
+      <circle cx="3" cy="12" r="1.2" fill="currentColor" />
+      <circle cx="21" cy="12" r="1.2" fill="currentColor" />
     </svg>
   ),
   Curve25519: (
@@ -186,7 +186,7 @@ const techsRow1 = [
 
 const techsRow2 = [
   { name: "Winterfell", category: "starkProver" },
-  { name: "BN254", category: "ellipticCurve" },
+  { name: "Blake3", category: "friHash" },
   { name: "Goldilocks", category: "quantumSafeField" },
   { name: "Curve25519", category: "ecdh" },
   { name: "Merkle Trees", category: "dataStructure" },
@@ -305,8 +305,8 @@ function Ecosystem() {
         >
           {[
             { value: "26+", label: "technologies" },
-            { value: "14", label: "onChainPrograms" },
-            { value: "17", label: "clientSDKs" },
+            { value: "12", label: "onChainPrograms" },
+            { value: "10", label: "clientSDKs" },
             { value: "100%", label: "selfCustody" },
           ].map((s) => (
             <div key={s.label} className="text-center">

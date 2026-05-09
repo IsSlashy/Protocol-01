@@ -83,7 +83,7 @@ const fr: Translations = {
     step4Title: 'RECEVOIR',
     step4Desc: 'Retirez vers n\u2019importe quel portefeuille \u2014 z\u00e9ro trace',
     instantOps: 'Op\u00e9rations instantan\u00e9es',
-    shieldTime: '~3s blindage + d\u00e9blindage',
+    shieldTime: '~5s blindage \u00b7 ~30s d\u00e9blindage STARK',
     zeroTraces: 'Z\u00e9ro traces',
   },
 
@@ -103,6 +103,9 @@ const fr: Translations = {
     stealthMetaAddresses: 'M\u00e9ta-adresses furtives',
     subscriptionVaults: 'Coffres d\u2019abonnement',
     multiHopRouting: 'Routage multi-sauts',
+    noteSplitting: 'Fractionnement de notes',
+    privacyRouter: 'Routeur de confidentialit\u00e9',
+    serviceRegistry: 'Registre de services',
     exploreDocs: 'EXPLORER LA DOCUMENTATION \u2192',
   },
 
@@ -130,6 +133,7 @@ const fr: Translations = {
     deployment: 'D\u00e9ploiement',
     starkProver: 'Prouveur STARK',
     ellipticCurve: 'Courbe elliptique',
+    friHash: 'Hash FRI',
     quantumSafeField: 'Corps r\u00e9sistant au quantique',
     ecdh: 'ECDH',
     dataStructure: 'Structure de donn\u00e9es',
@@ -364,6 +368,54 @@ const fr: Translations = {
         title: 'Mugen Exchange (P2P fiat)',
         desc: 'Marketplace P2P fiat-to-crypto à thème Gojo — sans KYC, escrow via wSOL on-chain, couche Treasury Buffer, stack privacy MagicBlock PER + Arcium + FROST + Nym. Intégration mobile native avec reçu privé + UI cycle de vie des trades. Déployé sur Vercel.',
       },
+      v3StarkE2E: {
+        title: 'STARK V3 valide bout en bout',
+        desc: 'Transfer STARK V3 valide bout en bout sur devnet (sender vers encoded vers import vers maturation vers unshield, +0,995 SOL net sur la tx test). Parite Goldilocks Poseidon verrouillee entre mobile, extension et verifier on-chain. BN254 retire de toutes les paths de spend.',
+      },
+      txOpacityRelayer: {
+        title: 'Tx-Opacite Phase A — Relayer V3 cable',
+        desc: 'p01_relayer integre dans les flows V3 shield/unshield/transfer. IP du submitter RPC plus correlable au device user. Outer relay-job fee_payer = ephemeral aleatoire. Encryption v1 X25519 (overhead 73 octets) choisie pour tenir dans le cap encrypted_tx 1280 octets.',
+      },
+      txOpacityEvents: {
+        title: 'Tx-Opacite Phase B — Scrub events on-chain',
+        desc: 'Retire depositor, recipient, denomination, fee protocole et timestamps de tous les events V3. Inner unshield logs valides vides sur devnet. La surveillance tier indexer (Helius, Solscan, Chainalysis) ne lit plus rien d\'utile dans les events emis.',
+      },
+      uniformStarkProofs: {
+        title: 'Preuves STARK uniformes (Phase C v1)',
+        desc: 'Tous les buffers de preuve STARK paddes a UNIFORM_PROOF_SIZE = 145 KB peu importe le circuit. Fingerprinting tx-level par taille de preuve elimine. Combine a Phase E fee_escrow PDAs, le delta de lamports ne leak plus la denomination des transactions individuelles.',
+      },
+      multiRelayerRotation: {
+        title: 'Sprint 3 — Rotation multi-relayer',
+        desc: 'Auto-rotation mobile entre relayers enregistres + filtre liveness via last_active_slot. Ferme le gap strict-mode-on-first-failure. Chunked submit_job ix scaffolded pour les preuves au-dessus du cap par-tx. Decay reputation lazy anti-Sybil.',
+      },
+      poolV4Migration: {
+        title: 'Migration Denominated Pool V4',
+        desc: 'Seed du programme bumpe vers denominated_pool_v4. 13 nouveaux pools (6 SOL + 7 USDC) deployes sur devnet. Echappe les legacy LeafInserted events un-decodables qui cassaient le Merkle rebuild sur les pools V3. Pools V3 deprecies, drainables via cancel_job.',
+      },
+      subscribePrivateV3: {
+        title: 'Subscribe_Private V3',
+        desc: 'Ix subscribe_private_stark portee V2 vers V3 on-chain (mismatch discriminator Anchor fixe). Builder ix mobile : placeholders Option<Account>, stark_proof_buffer writable, ReferenceError isRelayCall ferme, semantique min_epoch corrigee. Creation vault PDA validee live bout en bout sur devnet.',
+      },
+      cancelPrivateV3: {
+        title: 'Port cancel_private_stark V3',
+        desc: 'Porter l\'ix cancel on-chain vers V3 — insert_with_root_v3 a une signature differente (subtrees + flag c6_verified). Necessite le calcul cote client des nouveaux subtrees par re-shielded note. Tracke separement de subscribe_private_stark V3.',
+      },
+      arciumConfidentialRelay: {
+        title: 'Phase D — Arcium confidentialRelay',
+        desc: 'Scaffold submit_confidential_relay ix livre dans p01_arcium (commit 7c0841c). Cache le recipient meme au relayer via decryption MPC threshold. Compose avec l\'enforcement stealth recipient pour fermer le threat model T3 (relayer compromis).',
+      },
+      quantumWallet: {
+        title: 'Quantum Wallet (p01_quantum_wallet)',
+        desc: 'Wallet smart-contract authorise par STARK qui remplace la custody Ed25519. Fonds depenses via preuve de connaissance du preimage Poseidon (Goldilocks, post-quantum), pas par signature. Meme quand Shor casse Ed25519 (>= 2030), un attaquant qui vole la cle de gas ne peut pas mover les fonds. Environ 9 a 11 semaines solo, gate sur fermeture audit V3.',
+      },
+      coverTraffic: {
+        title: 'Cover Traffic (dummies self-loop)',
+        desc: 'Transactions dummies cote user, byte-identiques a un round-trip shield vers unshield reel, qui noient l\'activite reelle dans du bruit indistinguable. Ferme la correlation timing (L20) et degrade le signal programs-touched (L11). Plafond d\'indistinguishability 5/5. Zero surface protocole, zero cout infra.',
+      },
+      feederPool: {
+        title: 'Feeder Pool (Phase A.5)',
+        desc: 'Ferme le leak depositor-visible-sur-shield (L1/L2). L\'implementation honnete requiert soit attestation TEE (Marlin Oyster) soit N >= 3 relayers geo-distribues avec stake/slashing. Sans l\'un des deux, ce serait trust-shift, pas privacy-gain. Gate sur disponibilite infra.',
+      },
       colosseumFrontier: {
         title: 'Colosseum Frontier 2026',
         desc: 'Soumis le 23/04/2026 dans la région Irlande (affiliation Superteam IE). Track accelerator activé. Tagged publiquement par Superteam Ireland comme une des 5 équipes irlandaises actives sur Arcium.',
@@ -386,7 +438,7 @@ const fr: Translations = {
       },
       securityAudit: {
         title: 'Audit de s\u00e9curit\u00e9 externe',
-        desc: 'Audit complet des 14 programmes, 6 AIRs STARK, du v\u00e9rificateur FRI on-chain personnalis\u00e9 et des 17 SDKs par OtterSec, Neodyme ou Trail of Bits avant le d\u00e9ploiement mainnet.',
+        desc: 'Audit complet des 12 programmes, 6 AIRs STARK, du v\u00e9rificateur FRI on-chain personnalis\u00e9 et des 10 SDKs par OtterSec, Neodyme ou Trail of Bits avant le d\u00e9ploiement mainnet.',
       },
       trustedSetup: {
         title: 'C\u00e9r\u00e9monie de setup de confiance \u2014 Retir\u00e9e',
@@ -973,6 +1025,18 @@ const fr: Translations = {
         detail13: 'M\u00e9moire (3) : sauvegarder, lire, lister la m\u00e9moire persistante de l\u2019agent',
         detail14: 'Boucle d\u2019outils : jusqu\u2019\u00e0 3 tours d\u2019ex\u00e9cution d\u2019outils par message',
       },
+      quantumWallet: {
+        title: 'Quantum Wallet (à venir)',
+        desc: 'Wallet smart-contract autorisé par STARK qui remplace la custody Ed25519. Fonds dépensés via preuve de connaissance du préimage Poseidon (Goldilocks, post-quantique), pas par signature. Même UX qu\'un wallet Solana classique — votre adresse semble identique, vos amis envoient pareil — mais Shor ne peut pas mover vos fonds. Doc design livré le 2026-05-09, environ 9 à 11 semaines solo gate sur fermeture audit V3.',
+        detail1: 'Custody : ed25519 vers preuve STARK de connaissance du préimage de Poseidon(seed_secret, salt) sur Goldilocks',
+        detail2: 'Adresse wallet = PDA owned par p01_quantum_wallet (32 octets, indistinguable d\'une pubkey classique pour les senders)',
+        detail3: 'Receive : tout wallet (Phantom, exchange, ami) envoie sur votre PDA via SystemProgram.transfer — aucune intégration spéciale requise côté sender',
+        detail4: 'Send : preuve STARK du préimage autorise l\'ix withdraw. Environ 20 à 30s par envoi (proof gen + upload buffer + verify + execute). Coût de la sécurité post-quantique',
+        detail5: 'Threat model après ship : quand Shor cassera Ed25519 (>= 2030), un attaquant qui vole votre keypair Solana peut payer du gas en votre nom mais ne peut pas mover les fonds. Custody = connaissance du préimage, pas signature',
+        detail6: 'Migration : auto-drain Ed25519 vers quantum wallet au premier launch post-update (1 tx silencieuse, ~3s). L\'utilisateur voit son wallet existant upgrade in place — pas de nouvelle seed, pas de transfert manuel',
+        detail7: 'Recovery : clé SPHINCS+ optionnelle pour recovery "même si seed perdue". MVP ship sans (la seed phrase suffit)',
+        detail8: 'Réutilise le verifier STARK V3 (DGY37k…) avec un nouveau circuit_id = 7 pour wallet-auth. Même Goldilocks Poseidon, même chunked buffer upload, même rotation multi-relayer. Zéro nouvelle infrastructure',
+      },
       migrationHistory: {
         title: 'Legacy / Historique de migration',
         desc: 'Ce que nous avons retir\u00e9 et ce qui l\u2019a remplac\u00e9. Protocol 01 est post-quantique par d\u00e9faut \u2014 chaque chemin Groth16/BN254 a \u00e9t\u00e9 retir\u00e9 en avril 2026 au profit des STARKs sur le corps de Goldilocks. Cette entr\u00e9e documente la migration pour que les consommateurs SDK et auditeurs voient exactement ce qui a chang\u00e9 et pourquoi.',
@@ -1067,7 +1131,7 @@ const fr: Translations = {
   // ── Founder ─────────────────────────────────────────────
   founder: {
     role: 'Fondateur & Développeur Solo — Protocol 01',
-    bio: '24 ans, basé à Paris.\nDiplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement.\nJ\'ai construit Protocol 01 seul en 90 jours, 14 programmes Solana, 10 circuits ZK, 6 STARKs, 3 applications client et 17 SDKs.\nPas d\'équipe, pas de financement, que de l\'exécution.',
+    bio: '24 ans, basé à Paris.\nDiplômé d\'Epitech avec un Master en Cybersécurité et 7+ ans d\'expérience en développement.\nJ\'ai construit Protocol 01 seul depuis janvier 2026 : 12 programmes Solana, 6 circuits ZK, 6 AIRs STARK, 9 circuits MPC, 3 applications client et 10 SDKs.\nPas d\'équipe, pas de financement, que de l\'exécution.',
     missionBadge: 'Mission',
     missionTitle: 'Pourquoi je construis ça',
     mission1: 'Je crois que la vie privée financière est un droit fondamental, pas une fonctionnalité.\nChaque transaction blockchain aujourd\'hui crée une trace permanente, votre salaire, vos abonnements, vos dons, tout est public.\nCe n\'est pas de la transparence, c\'est de la surveillance.',
@@ -1083,7 +1147,7 @@ const fr: Translations = {
       captnboat: { title: 'CaptNBoat — Dev & PM', desc: 'Développeur full-stack et chef de projet. Direction des initiatives cybersécurité pendant 2 ans.' },
       master: { title: 'Master — Cybersécurité', desc: 'Epitech Paris. Spécialisé en sécurité offensive, cryptographie et architecture sécurisée.' },
       freelance: { title: 'Freelance & Hackathons', desc: 'Indépendant. Participation aux hackathons Solana. Première version de Protocol 01.' },
-      protocol01: { title: 'Protocol 01 — Temps Plein', desc: 'Développement solo continu depuis janvier 2026. 14 programmes, 10 circuits ZK, 6 STARKs, 9 circuits MPC, 3 apps, 17 SDKs. Soumis au Colosseum Frontier 2026.' },
+      protocol01: { title: 'Protocol 01 — Temps Plein', desc: 'Développement solo continu depuis janvier 2026. 12 programmes, 6 circuits ZK, 6 AIRs STARK, 9 circuits MPC, 3 apps, 10 SDKs. Soumis au Colosseum Frontier 2026.' },
     },
     stats: {
       yearsCode: 'Ans de Code',
