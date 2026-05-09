@@ -122,14 +122,14 @@ solana airdrop 2 --url devnet
 | Program | ID |
 |---|---|
 | Registry (stealth + services) | `QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB` |
-| STARK Verifier (6 circuits) | `EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z` |
-| ZK Shielded Pool | `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` |
+| STARK Verifier (6 circuits) | `DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs` |
+| ZK Shielded Pool (V4) | `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` |
 | zkSPL (confidential balances) | `EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah` |
 | Specter (stealth + streams) | `2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp` |
 | Relayer (trustless, on-chain) | `2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW` |
 | Quantum Vault (WOTS+) | `HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o` |
 | Arcium MPC Bridge | `FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT` |
-| Liquidity Pool (instant unshield) | `6PfFkvj…` |
+| Liquidity Pool (instant unshield) | `6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg` |
 | Fee Splitter | `UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM` |
 | Mugen P2P Escrow | `EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN` |
 
@@ -180,20 +180,21 @@ protocol-01/
 │   ├── rpc-config/         # Shared RPC connection manager
 │   └── ui/                 # Shared design tokens + components
 ├── circuits/                   # Legacy Circom circuits (retired 2026-03, kept for migration history)
-├── programs/                   # 14 Anchor programs
-│   ├── zk_shielded/            # Shielded pool — shield/transfer/unshield/subscribe/cancel (STARK)
+├── programs/                   # 15 Anchor programs (12 deployed on devnet)
+│   ├── zk_shielded/            # Shielded pool V4 — shield/transfer/unshield/subscribe/cancel (STARK V3)
 │   ├── p01_zkspl/              # Confidential SPL balances (Poseidon commitments)
 │   ├── specter/                # Stealth address registry + private streams
-│   ├── p01_arcium/             # MPC circuits — 9 Arcis circuits on Arcium network
-│   ├── p01_relayer/            # On-chain trustless relay + fee accounting
-│   ├── p01_quantum_vault/      # WOTS+ signatures, hash-timelock, commit-reveal
+│   ├── p01_arcium/             # MPC bridge — 9 Arcis circuits + Phase D confidentialRelay scaffold
+│   ├── p01_relayer/            # On-chain trustless relay + chunked submit + reputation decay
+│   ├── p01_quantum_vault/      # WOTS+ 67-chain, hash-timelock, commit-reveal
 │   ├── p01_registry/           # Stealth meta-address directory + Service Registry (retailers)
-│   ├── p01_stark_verifier/     # Custom FRI verifier (6 circuits, Goldilocks field)
+│   ├── p01_stark_verifier/     # Custom FRI verifier (6 circuits + DEEP-ALI, Goldilocks)
 │   ├── p01_liquidity/          # Instant-unshield liquidity pool (prefund)
 │   ├── p01_mugen/              # Mugen P2P escrow
-│   ├── subscription/           # Recurring payment vaults with STARK ownership proofs
-│   ├── stream/                 # Time-locked payment streaming (escrow)
-│   ├── whitelist/              # Developer access control
+│   ├── p01_bundler/            # (in repo, not deployed) Tx bundling helper
+│   ├── subscription/           # (in repo, logic merged into zk_shielded V3)
+│   ├── stream/                 # (in repo, not deployed) Time-locked payment streaming
+│   ├── whitelist/              # (in repo, not deployed) Developer access control
 │   └── p01-fee-splitter/       # Fee routing (0.3–0.5% protocol fee)
 └── stark/                      # Winterfell STARK prover (Goldilocks field, Poseidon AIR, WASM)
 ```
@@ -408,7 +409,7 @@ await mpc.privateLookup(targetHash);
 | Session keys | Stored in SecureStore (Keychain/Keystore), never AsyncStorage |
 | Key management | Spending key never leaves the device — backend prover fallback removed |
 | STARK soundness | 124-bit, DEEP-ALI on all six circuits, sha256 syscall migration |
-| Double-spend | Nullifiers as on-chain PDAs (`p01_trustless`-style pattern inside `zk_shielded`) |
+| Double-spend | Nullifiers as on-chain PDAs inside `zk_shielded` |
 | Quantum resistance | STARK (hash-based) + WOTS+ + ML-KEM-768 for stealth |
 | PIN | SHA-256(`p01_pin_v1:` + pin) via expo-crypto, progressive lockout (5→30 s, 8→60 s, 10→300 s) |
 | App lock | Device-level auth enforced even when `security_method='none'` |
@@ -469,16 +470,24 @@ solana program deploy target/sbf-solana-solana/release/<program_name>.so \
 
 | Layer | Suite | Tests | Status |
 |---|---|---|---|
-| On-chain programs | Anchor/Rust (14 programs) | 340+ | Localnet / Devnet |
+| On-chain programs | Anchor/Rust (12 deployed) | 340+ | Localnet / Devnet |
 | STARK verifier | Custom FRI + 6 circuits, DEEP-ALI on all | 103 STARK + 35 verifier | Passing |
-| specter-sdk | Stealth, wallet, transfers, registry | 129+ | Passing |
-| privacy-sdk | Shield / transfer / unshield / denominated | 40+ | Passing |
-| zkspl-sdk | Confidential balances, Poseidon commitments | 40+ | Passing |
-| Mobile app | Stores, services, crypto | 426 | Passing |
-| Extension | Components + services | 195 | Passing |
-| Web app | Components + API | 369 | Passing |
+| specter-sdk | Stealth, wallet, transfers, registry | 44 | Passing |
+| privacy-sdk | Shield / transfer / unshield / denominated | 238 | Passing |
+| privacy-toolkit | Merkle, Goldilocks-Poseidon, commitments | 100 | Passing |
+| zk-sdk | Note + Merkle primitives | 85 | Passing |
+| arcium-sdk | MPC client, Mugen P2P, encryption | 18 | Passing |
+| auth-sdk | Login with P-01 | 123 | Passing |
+| whitelist-sdk | Encrypted access requests + IPFS | 40 | Passing |
+| p01-js | Merchant pay button + browser SDK | 99 | Passing |
+| stark-prover | WASM packaging + license | 23 | Passing |
+| rpc-config | RPC connection manager | 361 | Passing |
+| Mobile app | Stores, services, crypto, payments | 208 (CI) | Passing |
+| Extension | Shared utils + services (popup tests deferred) | 45 (CI) | Passing |
+| Web app | API + lib utils (component tests deferred) | 24 (CI) | Passing |
 | E2E devnet | Shield → subscribe → cancel → recover | 8/8 | Green |
-| **Total** | **~2,400 tests, 70+ files** | | |
+| **CI total** | TS unit suite | **~1,400 tests** | Green |
+| **Plus** | On-chain Anchor + STARK + e2e | **~480 more** | Local/devnet |
 
 ```bash
 pnpm test                             # all unit tests
@@ -507,14 +516,29 @@ anchor test                           # on-chain programs (localnet)
 - [x] Arcium MPC integration (9 circuits, 6 use cases, mobile wired)
 - [x] On-chain trustless relayer + Tor-routed RPC middleware
 - [x] Mugen — reference fiat-to-crypto P2P exchange
+- [x] **V3 STARK migration end-to-end** (transfer/shield/unshield validated live, Goldilocks parity-locked)
+- [x] **Tx-Opacity Phase A** — `p01_relayer` wired V3 (closes RPC IP leak L19)
+- [x] **Tx-Opacity Phase B** — on-chain event scrub (closes L5-L10)
+- [x] **Tx-Opacity Phase C v1** — uniform 145 KB STARK proof padding
+- [x] **Tx-Opacity Phase E v1** — `fee_escrow` PDAs (closes lamport-delta denomination leak)
+- [x] **Sprint 3 multi-relayer** — auto-rotation + liveness filter + chunked submit_job + lazy reputation decay
+- [x] **V4 pool migration** — seed `denominated_pool_v4`, 13 fresh pools, escapes legacy un-decodable events
+- [x] **Subscribe_private V3** — V2→V3 structs, ix builder placeholders, vault PDA création validated live
 
 ### In Progress
 
+- [ ] **Subscribe_private renewal** live validation (Pay Now flow under logcat)
+- [ ] **`cancel_private_stark` V3 port** — port the on-chain cancel ix to `insert_with_root_v3` (subtrees + c6_verified)
+- [ ] **Phase D Arcium `confidentialRelay` deploy** — scaffold landed (`7c0841c`), pending devnet ship + mobile wiring
 - [ ] On-chain atomic dust-to-stealth routing in `cancel_private_stark`
+- [ ] Universal `LeafInserted` canonical event
 - [ ] DeFi composability spec (balance proof verification for lending/DEX)
 
 ### Future
 
+- [ ] **Quantum Wallet** (`p01_quantum_wallet`) — STARK-authorized smart-contract wallet, custody via Poseidon preimage proof. Design doc shipped 2026-05-09 (see `docs/quantum-wallet-ux-design.md`)
+- [ ] **Cover traffic self-loop** — user-side dummy round-trips for indistinguishability
+- [ ] **Phase A.5 feeder pool** — close shield depositor leak (gated on TEE attestation OR N-relayer registry)
 - [ ] External security audit (OtterSec / Neodyme / Trail of Bits)
 - [ ] Mainnet deployment
 - [ ] iOS build
