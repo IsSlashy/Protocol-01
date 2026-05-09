@@ -955,11 +955,32 @@ export async function submitAndVerifyStarkProof(
   // Step 2: Upload proof chunks in parallel
   await uploadChunksParallel(conn, proof.proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
 
-  // Step 3a: Phase 1 — verify_stark_proof_v2 (FRI + trace-aligned + boundary)
+  // Step 3a: Phase 1 verification — circuit_id-aware dispatch.
+  //
+  // Circuit 0 (subscriber_ownership) uses the LEGACY proof format
+  // (`CompactStarkProof`). The on-chain verifier exposes two ix:
+  //   - `verify_stark_proof`     → for C0 ONLY: parses CompactStarkProof and
+  //                                runs `verify_subscriber_ownership`.
+  //   - `verify_stark_proof_v2`  → for C1..C6: parses GenericCompactProof and
+  //                                runs `verify_generic`.
+  //
+  // The two formats are byte-compatible enough to parse through either
+  // entry point (FRI / Merkle / OOD all pass), but `verify_generic`'s
+  // trace-aligned constraint reader interprets columns differently than
+  // the C0 trace layout, so step 4 (transition constraints) silently
+  // fails with InvalidProof. Without this branch, pause / resume /
+  // cancel of V3 vaults all simulate-fail with custom error 0x1773.
+  // (See programs/p01_stark_verifier/src/lib.rs:108-114 for the legacy
+  // dispatch, vs lib.rs:149-178 which always goes generic.)
   onProgress?.('Verifying STARK proof phase 1...');
   const verifyTx = new Transaction()
-    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
-    .add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
+  if (proof.circuitId === 0) {
+    // Legacy ix takes a single u64 commitment, not a vec of public_inputs.
+    verifyTx.add(buildVerifyStarkProofIx(proof.publicInputs[0], proofBuffer, authority));
+  } else {
+    verifyTx.add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
+  }
   const txSig = await signSendConfirm(conn, verifyTx, keypair, walletSigner);
 
   // Step 3b: Phase 2 — DEEP-ALI at OOD. Mandatory for circuits 1-6 (C0 runs
