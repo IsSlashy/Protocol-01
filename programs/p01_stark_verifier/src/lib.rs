@@ -377,7 +377,17 @@ pub mod p01_stark_verifier {
 
         // Probe order: V3 active circuits only (1=pool_commitment, 3=merkle_path,
         // 5=transfer, 6=merkle_update). C0/C2/C4 are not used in V3 hot paths.
-        const PROBE_ORDER: [u8; 4] = [1, 3, 5, 6];
+        //
+        // C6 MUST come before C3/C5: C3 and C5 share IDENTICAL config bytes
+        // (tw=6, len=512, queries=22, lde=8192, fri_final=16); C6 differs only
+        // by trace_width=10 (vs 6). A C6 proof fed to a C3/C5 parser would
+        // partial-parse — `from_bytes` reads tw*8=48 bytes for ood_current/next,
+        // leaving the C6's remaining 32 bytes per ood field as drift, then
+        // step-4 transition constraints fail with InvalidProof. Probing C6
+        // first means its strict tw=10 length checks (`data.len() < cursor +
+        // 80`) reject any C3/C5-shaped proof, so genuine C3/C5 proofs fall
+        // through to C3, while genuine C6 proofs match C6 cleanly.
+        const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;
         for &cid in PROBE_ORDER.iter() {

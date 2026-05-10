@@ -858,7 +858,10 @@ function buildPausePrivateStarkIx(
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: false },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    // pause_private_stark.rs:73 declares `#[account(mut)] stark_proof_buffer`
+    // because the handler invalidates the buffer (verified=false) post-use.
+    // Passing isWritable: false → Anchor 2000 ConstraintMut (0x7d0).
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -880,7 +883,9 @@ function buildResumePrivateStarkIx(
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: false },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    // resume_private_stark also declares stark_proof_buffer as `mut` (handler
+    // invalidates the buffer post-use). See pause builder above for context.
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });

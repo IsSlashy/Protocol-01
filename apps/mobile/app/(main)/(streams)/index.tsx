@@ -303,8 +303,13 @@ export default function StreamsDashboard() {
                 </View>
               ) : (
                 registryServices.map((svc, i) => {
+                  // Treat paused subscriptions as subscribed too, otherwise they
+                  // become invisible: personal tab excludes registry-named streams,
+                  // and services tab would otherwise only flag 'active'. The user
+                  // can still resume/cancel by tapping into the detail screen.
                   const subscribed = serviceStreams.some(s =>
-                    s.name.toLowerCase().includes(svc.name.toLowerCase()) && s.status === 'active'
+                    s.name.toLowerCase().includes(svc.name.toLowerCase()) &&
+                    (s.status === 'active' || s.status === 'paused')
                   );
                   return (
                     <ServiceCard key={svc.pda.toBase58()} service={svc} index={i} subscribed={subscribed}
