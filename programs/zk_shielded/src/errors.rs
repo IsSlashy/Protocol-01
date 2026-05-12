@@ -170,4 +170,7 @@ pub enum ZkShieldedError {
 
     #[msg("PDA derivation does not match the provided account")]
     InvalidPda,
+
+    #[msg("Slot mismatch — caller-supplied slot must match current clock within drift window")]
+    SlotMismatch,
 }

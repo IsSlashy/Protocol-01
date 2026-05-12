@@ -19,6 +19,7 @@ use crate::state::pool_v3::DenominatedPoolV3;
 /// for off-chain audit. Sweep is idempotent per (pool, slot) — re-sweeping in
 /// the same slot fails on the SweepRecord init constraint.
 #[derive(Accounts)]
+#[instruction(amount: u64, slot: u64)]
 pub struct SweepFeeEscrow<'info> {
     /// Treasury authority — must match the hardcoded `TREASURY_AUTHORITY`.
     /// Pays for tx fees + SweepRecord rent.
@@ -57,7 +58,7 @@ pub struct SweepFeeEscrow<'info> {
         seeds = [
             b"fee_sweep",
             denominated_pool.key().as_ref(),
-            &Clock::get()?.slot.to_le_bytes(),
+            &slot.to_le_bytes(),
         ],
         bump,
     )]
@@ -88,7 +89,17 @@ impl SweepRecord {
         + 1; // bump
 }
 
-pub fn handler(ctx: Context<SweepFeeEscrow>, amount: u64) -> Result<()> {
+pub fn handler(ctx: Context<SweepFeeEscrow>, amount: u64, slot: u64) -> Result<()> {
+    // Validate the caller-supplied slot matches the current clock within a
+    // small drift window. Slot must be recent (not arbitrary future grinding)
+    // and not too stale (caller can't pick an old slot to bypass the per-slot
+    // idempotency). 25 slots ≈ 10s, enough to absorb tx propagation jitter.
+    let current_slot = Clock::get()?.slot;
+    require!(
+        slot <= current_slot && current_slot.saturating_sub(slot) <= 25,
+        ZkShieldedError::SlotMismatch
+    );
+
     let escrow = ctx.accounts.fee_escrow.to_account_info();
     let escrow_lamports = escrow.lamports();
 
@@ -112,7 +123,7 @@ pub fn handler(ctx: Context<SweepFeeEscrow>, amount: u64) -> Result<()> {
 
     let record = &mut ctx.accounts.sweep_record;
     record.pool = ctx.accounts.denominated_pool.key();
-    record.slot = Clock::get()?.slot;
+    record.slot = slot;
     record.amount = amount;
     record.destination_prefix = dest_prefix;
     record.bump = ctx.bumps.sweep_record;

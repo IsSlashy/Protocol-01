@@ -305,8 +305,9 @@ pub mod zk_shielded {
     pub fn sweep_fee_escrow(
         ctx: Context<SweepFeeEscrow>,
         amount: u64,
+        slot: u64,
     ) -> Result<()> {
-        instructions::sweep_fee_escrow::handler(ctx, amount)
+        instructions::sweep_fee_escrow::handler(ctx, amount, slot)
     }
 
     /// V3 transfer of a note within a denominated pool using THREE STARK proofs:
