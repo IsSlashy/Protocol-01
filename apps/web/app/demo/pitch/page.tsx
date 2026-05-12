@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -19,7 +20,7 @@ import {
 // Slide content
 // ----------------------------------------------------------------------------
 
-const SLIDES: Array<() => JSX.Element> = [
+const SLIDES: Array<() => ReactElement> = [
   Slide1Title,
   Slide2Problem,
   Slide3Stack,

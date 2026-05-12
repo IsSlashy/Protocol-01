@@ -1,3 +1,26 @@
+#![allow(unknown_lints, dead_code, unused_imports)]
+#![allow(
+    clippy::collapsible_if,
+    clippy::derivable_impls,
+    clippy::doc_lazy_continuation,
+    clippy::doc_overindented_list_items,
+    clippy::empty_line_after_doc_comments,
+    clippy::get_first,
+    clippy::if_same_then_else,
+    clippy::int_plus_one,
+    clippy::manual_checked_ops,
+    clippy::manual_hash_one,
+    clippy::manual_is_multiple_of,
+    clippy::manual_range_contains,
+    clippy::manual_range_patterns,
+    clippy::manual_saturating_arithmetic,
+    clippy::manual_unwrap_or,
+    clippy::manual_unwrap_or_default,
+    clippy::needless_range_loop,
+    clippy::should_implement_trait,
+    clippy::too_many_arguments
+)]
+
 use anchor_lang::prelude::*;
 
 pub mod compact_proof;
