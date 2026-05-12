@@ -12,8 +12,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors, FontSize } from '@/constants/theme';
 import type { CancelPreview } from '@/services/subscriptionVault';
+import OperationProgressBar from '@/components/ui/OperationProgressBar';
 
 export type CancelPhase = 'preview' | 'processing' | 'success' | 'error';
+
+/**
+ * Refund-via-relayer flavor for the cancel preview/success copy. Set this
+ * (alongside `preview`) when the vault has `client_stealth_meta != null` and
+ * the residual lamports clear the keeper-fee floor. When `kind === 'refund'`,
+ * the "Coming back to you" section is replaced by the relayer-delivery copy;
+ * `kind === 'dust-only'` is used when the vault has stealth meta but residual
+ * is below `REFUND_MIN_RESIDUAL` (no refund, dust forfeited).
+ */
+export type RefundInfo =
+  | { kind: 'refund'; netLamports: bigint; keeperFeeLamports: bigint }
+  | { kind: 'dust-only'; residualLamports: bigint };
 
 interface CancelConfirmModalProps {
   visible: boolean;
@@ -29,6 +42,8 @@ interface CancelConfirmModalProps {
   errorMessage: string | null;
   /** Tx signature after success */
   txSignature: string | null;
+  /** Refund-via-relayer info (only set when the vault has stealth meta). */
+  refundInfo?: RefundInfo;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -49,6 +64,7 @@ export default function CancelConfirmModal({
   progress,
   errorMessage,
   txSignature,
+  refundInfo,
   onConfirm,
   onClose,
 }: CancelConfirmModalProps) {
@@ -70,6 +86,7 @@ export default function CancelConfirmModal({
               preview={preview}
               denominationLabel={denominationLabel}
               retailerLabel={retailerLabel}
+              refundInfo={refundInfo}
               onConfirm={onConfirm}
               onClose={onClose}
             />
@@ -81,6 +98,7 @@ export default function CancelConfirmModal({
             <SuccessContent
               preview={preview}
               txSignature={txSignature}
+              refundInfo={refundInfo}
               onClose={onClose}
             />
           )}
@@ -108,18 +126,22 @@ function PreviewContent({
   preview,
   denominationLabel,
   retailerLabel,
+  refundInfo,
   onConfirm,
   onClose,
 }: {
   preview: CancelPreview;
   denominationLabel: string;
   retailerLabel: string;
+  refundInfo?: RefundInfo;
   onConfirm: () => void;
   onClose: () => void;
 }) {
   const notesN = Number(preview.notesToReshield);
   const hasNotes = notesN > 0;
   const hasDust = preview.dustAmount > 0n;
+  const isRefund = refundInfo?.kind === 'refund';
+  const isDustOnly = refundInfo?.kind === 'dust-only';
 
   return (
     <>
@@ -146,30 +168,74 @@ function PreviewContent({
           />
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionHead}>Coming back to you (private)</Text>
-          <Row
-            label={`${notesN}× ${denominationLabel} notes`}
-            value={`${formatSol(preview.refundable - preview.dustAmount)} SOL`}
-            accent={hasNotes ? P01Colors.cyan : undefined}
-          />
-          <Row
-            label="Stealth dust (residual)"
-            value={`${formatSol(preview.dustAmount)} SOL`}
-            accent={hasDust ? P01Colors.pink : Colors.textTertiary}
-          />
-          <View style={styles.divider} />
-          <Row
-            label="Total recovered"
-            value={`${formatSol(preview.refundable)} SOL`}
-            accent={Colors.text}
-          />
-        </View>
+        {isRefund ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionHead}>Coming back to you (private note)</Text>
+            <Row
+              label="Refund (via relayer)"
+              value={`${formatSol(refundInfo!.netLamports)} SOL`}
+              accent={P01Colors.cyan}
+            />
+            <Row
+              label="Keeper fee"
+              value={`${formatSol(refundInfo!.keeperFeeLamports)} SOL`}
+              accent={Colors.textTertiary}
+            />
+            <View style={styles.divider} />
+            <Row
+              label="Total residual"
+              value={`${formatSol(preview.refundable)} SOL`}
+              accent={Colors.text}
+            />
+          </View>
+        ) : isDustOnly ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionHead}>Residual</Text>
+            <Row
+              label="Too low for refund"
+              value={`${formatSol(refundInfo!.residualLamports)} SOL`}
+              accent={Colors.textTertiary}
+            />
+          </View>
+        ) : (
+          <View style={styles.section}>
+            <Text style={styles.sectionHead}>Coming back to you (private)</Text>
+            <Row
+              label={`${notesN}× ${denominationLabel} notes`}
+              value={`${formatSol(preview.refundable - preview.dustAmount)} SOL`}
+              accent={hasNotes ? P01Colors.cyan : undefined}
+            />
+            <Row
+              label="Stealth dust (residual)"
+              value={`${formatSol(preview.dustAmount)} SOL`}
+              accent={hasDust ? P01Colors.pink : Colors.textTertiary}
+            />
+            <View style={styles.divider} />
+            <Row
+              label="Total recovered"
+              value={`${formatSol(preview.refundable)} SOL`}
+              accent={Colors.text}
+            />
+          </View>
+        )}
 
-        <Text style={styles.footnote}>
-          Notes are re-shielded into the same pool. Dust is routed to a
-          self-stealth address so no clear balance lands on your wallet.
-        </Text>
+        {isRefund ? (
+          <Text style={styles.footnote}>
+            A keeper relayer will deliver the refund as a private note in the
+            same pool (typically a few minutes). The keeper fee covers the
+            relayer&apos;s on-chain costs.
+          </Text>
+        ) : isDustOnly ? (
+          <Text style={styles.footnote}>
+            The residual is below the relayer floor (covers fees only). It will
+            be forfeited when the vault closes.
+          </Text>
+        ) : (
+          <Text style={styles.footnote}>
+            Notes are re-shielded into the same pool. Dust is routed to a
+            self-stealth address so no clear balance lands on your wallet.
+          </Text>
+        )}
       </ScrollView>
 
       <View style={styles.buttonRow}>
@@ -189,9 +255,7 @@ function ProcessingContent({ progress }: { progress: string | null }) {
     <View style={styles.centerState}>
       <ActivityIndicator size="large" color={P01Colors.cyan} />
       <Text style={styles.title}>Cancelling…</Text>
-      <Text style={styles.subtitle}>
-        {progress ?? 'Submitting transaction…'}
-      </Text>
+      <OperationProgressBar progress={progress} variant="inline" />
       <Text style={styles.blockingNote}>
         Do not close the app until this completes.
       </Text>
@@ -202,36 +266,67 @@ function ProcessingContent({ progress }: { progress: string | null }) {
 function SuccessContent({
   preview,
   txSignature,
+  refundInfo,
   onClose,
 }: {
   preview: CancelPreview;
   txSignature: string | null;
+  refundInfo?: RefundInfo;
   onClose: () => void;
 }) {
   const notesN = Number(preview.notesToReshield);
+  const isRefund = refundInfo?.kind === 'refund';
+  const isDustOnly = refundInfo?.kind === 'dust-only';
   return (
     <>
       <View style={[styles.iconWrap, styles.iconWrapSuccess]}>
         <Ionicons name="checkmark-circle" size={48} color={P01Colors.cyan} />
       </View>
 
-      <Text style={styles.title}>Cancelled</Text>
+      <Text style={styles.title}>{isRefund ? 'Refund queued' : 'Cancelled'}</Text>
       <Text style={styles.subtitle}>
-        Recovered {formatSol(preview.refundable)} SOL privately.
+        {isRefund
+          ? `Refund of ${formatSol(refundInfo!.netLamports)} SOL queued — a private note will land in your inbox shortly.`
+          : isDustOnly
+            ? 'Vault closed. Residual was below the refund floor.'
+            : `Recovered ${formatSol(preview.refundable)} SOL privately.`}
       </Text>
 
       <View style={styles.section}>
-        <Row
-          label={`${notesN} note${notesN === 1 ? '' : 's'} re-shielded`}
-          value={`${formatSol(preview.refundable - preview.dustAmount)} SOL`}
-          accent={P01Colors.cyan}
-        />
-        {preview.dustAmount > 0n && (
+        {isRefund ? (
+          <>
+            <Row
+              label="Net refund"
+              value={`${formatSol(refundInfo!.netLamports)} SOL`}
+              accent={P01Colors.cyan}
+            />
+            <Row
+              label="Keeper fee"
+              value={`${formatSol(refundInfo!.keeperFeeLamports)} SOL`}
+              accent={Colors.textTertiary}
+            />
+          </>
+        ) : isDustOnly ? (
           <Row
-            label="Dust → self-stealth"
-            value={`${formatSol(preview.dustAmount)} SOL`}
-            accent={P01Colors.pink}
+            label="Dust forfeited"
+            value={`${formatSol(refundInfo!.residualLamports)} SOL`}
+            accent={Colors.textTertiary}
           />
+        ) : (
+          <>
+            <Row
+              label={`${notesN} note${notesN === 1 ? '' : 's'} re-shielded`}
+              value={`${formatSol(preview.refundable - preview.dustAmount)} SOL`}
+              accent={P01Colors.cyan}
+            />
+            {preview.dustAmount > 0n && (
+              <Row
+                label="Dust → self-stealth"
+                value={`${formatSol(preview.dustAmount)} SOL`}
+                accent={P01Colors.pink}
+              />
+            )}
+          </>
         )}
         {txSignature && (
           <Row

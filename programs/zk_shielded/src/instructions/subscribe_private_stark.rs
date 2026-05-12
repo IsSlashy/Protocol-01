@@ -67,7 +67,8 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
     rate: u64,
     interval_slots: u64,
     vk_hash_subscriber: [u8; 32],
-    stark_commitment: u64
+    stark_commitment: u64,
+    client_stealth_meta: Option<[u8; 64]>
 )]
 pub struct SubscribePrivateStark<'info> {
     /// Transaction payer
@@ -168,6 +169,7 @@ pub fn handler(
     interval_slots: u64,
     vk_hash_subscriber: [u8; 32],
     stark_commitment: u64,
+    client_stealth_meta: Option<[u8; 64]>,
 ) -> Result<()> {
     require!(rate > 0, ZkShieldedError::InvalidRate);
     require!(interval_slots > 0, ZkShieldedError::InvalidInterval);
@@ -331,6 +333,9 @@ pub fn handler(
     vault.vk_hash_subscriber = vk_hash_subscriber;
     vault.source_pool = Some(pool_key);
     vault.bump = ctx.bumps.vault;
+    vault.client_stealth_meta = client_stealth_meta;
+
+    let has_stealth_meta = client_stealth_meta.is_some();
 
     emit!(SubscribePrivateStarkEvent {
         vault: vault.key(),
@@ -343,6 +348,7 @@ pub fn handler(
         source_pool: pool_key,
         nullifier,
         start_slot: clock.slot as i64,
+        has_stealth_meta,
     });
 
     Ok(())
@@ -360,4 +366,7 @@ pub struct SubscribePrivateStarkEvent {
     pub source_pool: Pubkey,
     pub nullifier: [u8; 32],
     pub start_slot: i64,
+    /// True if the vault was created with a stealth meta address (refund-via-relayer
+    /// path will trigger on cancel). The 64 raw bytes are NOT emitted to avoid leaks.
+    pub has_stealth_meta: bool,
 }

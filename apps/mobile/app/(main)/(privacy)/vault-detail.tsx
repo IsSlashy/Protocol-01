@@ -17,6 +17,8 @@ import {
   type VaultInfo,
   type CancelPreview,
   computeCancelPreview,
+  REFUND_KEEPER_FEE,
+  REFUND_MIN_RESIDUAL,
 } from '@/services/subscriptionVault';
 import { ALL_POOLS } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
@@ -25,6 +27,7 @@ import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constant
 import { p01Alert } from '@/stores/alertStore';
 import CancelConfirmModal, {
   type CancelPhase,
+  type RefundInfo,
 } from '@/components/privacy/CancelConfirmModal';
 
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
@@ -342,6 +345,22 @@ export default function VaultDetailScreen() {
         progress={cancelProgress ?? progress ?? null}
         errorMessage={cancelError}
         txSignature={cancelTx}
+        refundInfo={
+          // Mirror [id].tsx: surface refund-via-relayer copy only when the
+          // vault has a stealth meta. Legacy vaults keep the reshield UX.
+          vaultInfo?.clientStealthMeta && cancelPreview
+            ? (cancelPreview.refundable >= REFUND_MIN_RESIDUAL
+                ? {
+                    kind: 'refund' as const,
+                    keeperFeeLamports: REFUND_KEEPER_FEE,
+                    netLamports: cancelPreview.refundable - REFUND_KEEPER_FEE,
+                  }
+                : {
+                    kind: 'dust-only' as const,
+                    residualLamports: cancelPreview.refundable,
+                  }) satisfies RefundInfo
+            : undefined
+        }
         onConfirm={confirmCancel}
         onClose={closeCancelModal}
       />

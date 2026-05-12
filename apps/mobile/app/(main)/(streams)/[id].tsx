@@ -34,12 +34,19 @@ import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStor
 import {
   computeCancelPreview,
   fetchVault,
+  REFUND_KEEPER_FEE,
+  REFUND_MIN_RESIDUAL,
   type CancelPreview,
+  type VaultInfo,
 } from '../../../services/subscriptionVault';
-import CancelConfirmModal, { type CancelPhase } from '../../../components/privacy/CancelConfirmModal';
+import CancelConfirmModal, {
+  type CancelPhase,
+  type RefundInfo,
+} from '../../../components/privacy/CancelConfirmModal';
 import { withKeepAwake } from '../../../utils/keepAwakeDuring';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
+import OperationProgressBar from '@/components/ui/OperationProgressBar';
 
 /** Prefix used by vault-detail.tsx + subscriptionVaultStore to save the
  * subscriber secret in SecureStore, keyed by vault PDA. Must match. */
@@ -68,6 +75,8 @@ function DetailContent() {
   const [paying, setPaying] = useState(false);
   const [payProgress, setPayProgress] = useState<string | null>(null);
   const [starkStatus, setStarkStatus] = useState<string | null>(null);
+  const [isStarkBusy, setIsStarkBusy] = useState(false);
+  const [starkStep, setStarkStep] = useState<{ current: number; total: number } | null>(null);
 
   // Cancel modal state (ZK vault path) ────────────────────────────
   const [cancelVisible, setCancelVisible] = useState(false);
@@ -77,6 +86,10 @@ function DetailContent() {
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelTx, setCancelTx] = useState<string | null>(null);
   const [cancelPoolLabel, setCancelPoolLabel] = useState<string>('');
+  /** Cached vault info — used by the cancel modal to decide between legacy
+   *  reshield and refund-via-relayer UX. Captured once when the preview is
+   *  opened so subsequent renders don't refetch. */
+  const [cancelVault, setCancelVault] = useState<VaultInfo | null>(null);
 
   useEffect(() => { setStream(streams.find(s => s.id === id) || null); }, [streams, id]);
 
@@ -157,31 +170,37 @@ function DetailContent() {
         p01Alert('Prover initializing', 'STARK prover not ready — try again in a moment.');
         return;
       }
+      const isPause = stream.status === 'active';
+      const verb = isPause ? 'Pausing' : 'Resuming';
       try {
+        setIsStarkBusy(true);
         await withKeepAwake('p01-vault-pause-resume', async () => {
           const secret = await loadVaultSecret(stream.vaultAddress!);
-          setStarkStatus('Generating STARK ownership proof...');
+          setStarkStep({ current: 1, total: 2 });
+          setStarkStatus(`${verb} · 1/2 — Generating ownership proof (STARK)`);
           const starkResult = await starkGenerate(secret.toString());
           const proofData = {
             proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
             commitment: BigInt(starkResult.commitment),
             proofSize: starkResult.proofSize,
           };
-          if (stream.status === 'active') {
-            setStarkStatus('Submitting STARK pause...');
+          setStarkStep({ current: 2, total: 2 });
+          setStarkStatus(`${verb} · 2/2 — Uploading proof & sending transaction`);
+          if (isPause) {
             await pausePrivateStarkAction(stream.vaultAddress!, proofData);
             await updateStreamRecord(stream.id, { status: 'paused' });
           } else {
-            setStarkStatus('Submitting STARK resume...');
             await resumePrivateStarkAction(stream.vaultAddress!, proofData);
             await updateStreamRecord(stream.id, { status: 'active' });
           }
         });
-        setStarkStatus(null);
         await refresh();
       } catch (err) {
-        setStarkStatus(null);
         p01Alert('Error', (err as Error).message);
+      } finally {
+        setIsStarkBusy(false);
+        setStarkStatus(null);
+        setStarkStep(null);
       }
       return;
     }
@@ -248,9 +267,13 @@ function DetailContent() {
       const vaultPDA = new PublicKey(stream.vaultAddress);
       const vault = await fetchVault(vaultPDA);
       if (!vault) throw new Error('Vault not found on-chain — may have been closed already.');
-      const pool = ALL_POOLS.find(p => p.poolPDA.toBase58() === vault.sourcePool);
+      // Use the V2+V3-aware lookup — V4 pools live in ALL_POOLS_V3, so a pure
+      // ALL_POOLS scan misses every post-2026-05-07 vault. The guard below is
+      // load-bearing for BOTH paths: legacy needs the denomination + tree for
+      // reshield, refund-via-relayer needs target_pool + target_tree.
+      const pool = findPoolByPDA(vault.sourcePool ?? '');
       // Bail before opening the preview — the cancel action does the same
-      // ALL_POOLS lookup and throws, so without this guard the user waits
+      // findPoolByPDA lookup and throws, so without this guard the user waits
       // ~60s for a STARK proof before seeing "Source pool not found", and
       // the preview UI misleadingly shows "0 notes re-shielded, all dust".
       if (!pool) {
@@ -264,6 +287,7 @@ function DetailContent() {
       const slot = await connection.getSlot('confirmed');
       setCancelPreview(computeCancelPreview(vault, slot, pool.denominationAtomic));
       setCancelPoolLabel(`${pool.denomination} ${pool.token}`);
+      setCancelVault(vault);
       setCancelPhase('preview');
       setCancelProgress(null);
       setCancelError(null);
@@ -276,20 +300,29 @@ function DetailContent() {
 
   const confirmCancel = async () => {
     if (!stream.vaultAddress) return;
+    // /3 totals when the refund-via-relayer CPI is reachable (stealth meta + non-dust residual)
+    const useRefundJob =
+      !!cancelVault?.clientStealthMeta &&
+      !!cancelPreview &&
+      cancelPreview.refundable >= REFUND_MIN_RESIDUAL;
+    const total = useRefundJob ? 3 : 2;
     setCancelPhase('processing');
-    setCancelProgress('Preparing...');
+    setCancelProgress(`1/${total} — Generating ownership proof (STARK)`);
     try {
       if (!starkReady) throw new Error('STARK prover not ready — try again in a moment.');
       await withKeepAwake('p01-vault-cancel', async () => {
         const secret = await loadVaultSecret(stream.vaultAddress!);
-        setCancelProgress('Generating STARK ownership proof...');
+        setCancelProgress(`1/${total} — Generating ownership proof (STARK)`);
         const starkResult = await starkGenerate(secret.toString());
-        setCancelProgress('Submitting cancel transaction...');
+        setCancelProgress(`2/${total} — Uploading proof & sending transaction`);
         const sig = await cancelPrivateStarkAction(stream.vaultAddress!, secret, {
           proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
           commitment: BigInt(starkResult.commitment),
           proofSize: starkResult.proofSize,
         });
+        if (useRefundJob) {
+          setCancelProgress(`3/${total} — Routing residual to refund job`);
+        }
         setCancelTx(sig);
       });
       setCancelPhase('success');
@@ -519,6 +552,17 @@ function DetailContent() {
         <View style={{ width: 40 }} />
       </View>
 
+      {/* Sticky STARK progress bar — pause/resume only */}
+      {isStarkBusy && starkStatus && (
+        <OperationProgressBar
+          progress={starkStatus}
+          variant="sticky"
+          onCancel={() => { setIsStarkBusy(false); setStarkStatus(null); setStarkStep(null); }}
+          step={starkStep ?? undefined}
+          showKeepOpenWarning={true}
+        />
+      )}
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         {/* Status pill */}
         <Animated.View entering={FadeIn.duration(250)} style={{ alignItems: 'center', marginBottom: 20 }}>
@@ -629,15 +673,6 @@ function DetailContent() {
           </Animated.View>
         )}
 
-        {/* STARK pause/resume progress — visible during on-chain ZK actions */}
-        {starkStatus && (
-          <Animated.View entering={FadeIn.duration(200)}
-            style={[st.card, { flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
-            <ActivityIndicator size="small" color={P01Colors.cyan} />
-            <Text style={[st.smallWhite, { color: P01Colors.cyan }]}>{starkStatus}</Text>
-          </Animated.View>
-        )}
-
         {/* Payment History */}
         {stream.paymentHistory.length > 0 && (
           <Animated.View entering={FadeInDown.delay(360).duration(250)} style={st.card}>
@@ -671,6 +706,23 @@ function DetailContent() {
         progress={cancelProgress}
         errorMessage={cancelError}
         txSignature={cancelTx}
+        refundInfo={
+          // Refund-via-relayer UX only when the vault has a stealth meta
+          // address. Without it, the legacy reshield copy is correct.
+          cancelVault?.clientStealthMeta && cancelPreview
+            ? (cancelPreview.refundable >= REFUND_MIN_RESIDUAL
+                ? {
+                    kind: 'refund' as const,
+                    keeperFeeLamports: REFUND_KEEPER_FEE,
+                    netLamports:
+                      cancelPreview.refundable - REFUND_KEEPER_FEE,
+                  }
+                : {
+                    kind: 'dust-only' as const,
+                    residualLamports: cancelPreview.refundable,
+                  }) satisfies RefundInfo
+            : undefined
+        }
         onConfirm={confirmCancel}
         onClose={closeCancelModal}
       />

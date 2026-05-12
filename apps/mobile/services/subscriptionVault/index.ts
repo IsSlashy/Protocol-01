@@ -59,6 +59,35 @@ export const ZK_SHIELDED_PROGRAM_ID = new PublicKey(
   'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'
 );
 
+/**
+ * p01_relayer program ID — used by the refund-via-relayer path on cancel.
+ * The `refund_job` PDA derives from `[b"refund_job", source_vault]` and is
+ * initialized by `cancel_private_stark` via CPI to `submit_refund_job`.
+ */
+export const P01_RELAYER_PROGRAM_ID = new PublicKey(
+  '2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'
+);
+
+/** Below this lamports residual, refund-via-relayer falls back to forfeit-dust
+ * (keeper fee + rent costs eat the residual). Mirrors `REFUND_MIN_RESIDUAL`
+ * in p01_relayer constants. */
+export const REFUND_MIN_RESIDUAL: bigint = 100_000n;
+
+/** Lamports paid to the keeper that processes a RefundJob. Mirrors
+ * `REFUND_KEEPER_FEE` in p01_relayer constants. */
+export const REFUND_KEEPER_FEE: bigint = 50_000n;
+
+/**
+ * Derive the `refund_job` PDA for a given source vault. Matches the on-chain
+ * seed `[b"refund_job", source_vault.as_ref()]` in p01_relayer.
+ */
+export function deriveRefundJobPDA(sourceVault: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from('refund_job'), sourceVault.toBuffer()],
+    P01_RELAYER_PROGRAM_ID,
+  );
+}
+
 const NATIVE_SOL_MINT = SystemProgram.programId;
 
 const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey(
@@ -103,6 +132,12 @@ export interface VaultInfo {
   sourcePool: string | null;
   isNormalMode: boolean;
   isPrivateMode: boolean;
+  /**
+   * v1 stealth meta address `[spending_pub(32) | viewing_pub(32)]` if the
+   * vault was created with refund-via-relayer enabled. Legacy V4 vaults that
+   * predate the field decode as `null` (trailing-zero padding → Option tag 0).
+   */
+  clientStealthMeta: Uint8Array | null;
 }
 
 export interface SubscribeNormalConfig {
@@ -528,6 +563,7 @@ export async function subscribePrivateStark(
   starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
+  clientStealthMeta?: Uint8Array,
 ): Promise<string> {
   payLog('zk-recurring', 'subscribePrivateStark-start', {
     retailer: vaultConfig.retailer.toBase58(),
@@ -607,6 +643,12 @@ export async function subscribePrivateStark(
 
   const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
 
+  if (clientStealthMeta && clientStealthMeta.length !== 64) {
+    throw new Error(
+      `subscribePrivateStark: clientStealthMeta must be 64 bytes, got ${clientStealthMeta.length}`,
+    );
+  }
+
   const ix = buildSubscribePrivateStarkIx(
     walletPubkey,
     vaultConfig.retailer,
@@ -623,6 +665,7 @@ export async function subscribePrivateStark(
     vaultConfig.intervalSlots,
     vkHashSubscriber,
     starkCommitment,
+    clientStealthMeta,
   );
 
   onProgress?.('Sending subscription transaction...');
@@ -798,13 +841,17 @@ function buildSubscribePrivateStarkIx(
   intervalSlots: bigint,
   vkHashSubscriber: Uint8Array,
   starkCommitment: bigint,
+  clientStealthMeta?: Uint8Array,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
 
   // Args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64,
   //       subscriber_commitment: [u8;32], rate: u64, interval_slots: u64,
-  //       vk_hash_subscriber: [u8;32], stark_commitment: u64
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8);
+  //       vk_hash_subscriber: [u8;32], stark_commitment: u64,
+  //       client_stealth_meta: Option<[u8;64]> (1-byte tag + 64 bytes if Some)
+  const hasMeta = !!clientStealthMeta && clientStealthMeta.length === 64;
+  const optionSize = 1 + (hasMeta ? 64 : 0);
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + optionSize);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -814,7 +861,18 @@ function buildSubscribePrivateStarkIx(
   data.writeBigUInt64LE(rate, offset); offset += 8;
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
   Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(starkCommitment, offset);
+  data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+
+  // Borsh Option<[u8;64]>: tag (0=None, 1=Some) followed by 64 bytes if Some.
+  // Refund-via-relayer: when set, cancel routes residual through p01_relayer
+  // RefundJob instead of legacy reshield. Persisted on-chain in
+  // `vault.client_stealth_meta`.
+  if (hasMeta) {
+    data.writeUInt8(1, offset); offset += 1;
+    Buffer.from(clientStealthMeta!).copy(data, offset); offset += 64;
+  } else {
+    data.writeUInt8(0, offset); offset += 1;
+  }
 
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
@@ -897,15 +955,38 @@ function buildResumePrivateStarkIx(
  * re-shields `notes_to_reshield = refundable / denomination` outputs into the source pool,
  * pays `claimable_periods * rate` to the retailer, and closes the vault to the payer.
  */
+/**
+ * Build `cancel_private_stark` instruction. Supports two paths:
+ *
+ * - **Legacy reshield** (`refundJobPDA === undefined`): caller supplies
+ *   `newCommitments` + `newRoots` for the on-chain reshield into the source
+ *   denominated pool. `denominatedPoolPDA` and `merkleTreePDA` are required.
+ * - **Refund-via-relayer** (`refundJobPDA !== undefined`): on-chain handler
+ *   CPI's `p01_relayer::submit_refund_job` to create the RefundJob PDA and
+ *   transfers the residual lamports into it. `newCommitments`/`newRoots` must
+ *   be empty; `merkleTreePDA` is still REQUIRED (used as `target_tree` for
+ *   the keeper). Only `denominatedPoolPDA` may be omitted on this path.
+ *
+ * Account list (final, per Agent A):
+ *   `payer (signer mut), retailer (ro), vault (mut),
+ *    denominated_pool? (mut), merkle_tree (mut), stark_proof_buffer (mut),
+ *    refund_job? (mut), p01_relayer_program? (ro), system_program (ro),
+ *    token_program? (ro), vault_token_account? (mut),
+ *    pool_vault? (mut), retailer_token_account? (mut)`
+ *
+ * Args stay `(new_commitments: Vec<[u8;32]>, new_roots: Vec<[u8;32]>)` —
+ * empty Vecs on the refund path.
+ */
 function buildCancelPrivateStarkIx(
   payer: PublicKey,
   retailer: PublicKey,
   vaultPDA: PublicKey,
-  denominatedPoolPDA: PublicKey,
+  denominatedPoolPDA: PublicKey | undefined,
   merkleTreePDA: PublicKey,
   starkProofBuffer: PublicKey,
   newCommitments: number[][],
   newRoots: number[][],
+  refundJobPDA?: PublicKey,
 ): TransactionInstruction {
   const disc = getDiscriminator('cancel_private_stark');
 
@@ -913,6 +994,12 @@ function buildCancelPrivateStarkIx(
   const n = newCommitments.length;
   if (newRoots.length !== n) {
     throw new Error('new_commitments and new_roots must have the same length');
+  }
+  const useRefundJob = !!refundJobPDA;
+  if (useRefundJob && n > 0) {
+    throw new Error(
+      'cancel_private_stark refund-via-relayer path expects empty new_commitments/new_roots',
+    );
   }
   const data = Buffer.alloc(8 + 4 + n * 32 + 4 + n * 32);
   let offset = 0;
@@ -926,14 +1013,38 @@ function buildCancelPrivateStarkIx(
     Buffer.from(r).copy(data, offset); offset += 32;
   }
 
+  // Anchor 0.32 needs placeholder accounts even when None. Use the executing
+  // program ID as the sentinel that the handler interprets as `None` for the
+  // optional pool/SPL-token accounts on the refund-via-relayer path. Same
+  // convention used for SPL-token optional accounts in subscribe/pause/resume.
+  const poolKey = denominatedPoolPDA ?? ZK_SHIELDED_PROGRAM_ID;
+  const refundJobKey = refundJobPDA ?? ZK_SHIELDED_PROGRAM_ID;
+  const relayerProgKey = useRefundJob ? P01_RELAYER_PROGRAM_ID : ZK_SHIELDED_PROGRAM_ID;
+
+  // Order matches Agent A's final contract. Even on the refund path
+  // `merkle_tree` is required (CPI argument target_tree for the keeper).
+  // Optional accounts use ZK_SHIELDED_PROGRAM_ID as Anchor's None sentinel.
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
     { pubkey: retailer, isSigner: false, isWritable: true },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: denominatedPoolPDA, isSigner: false, isWritable: true },
+    // denominated_pool — optional on refund path, required on legacy path.
+    { pubkey: poolKey, isSigner: false, isWritable: !!denominatedPoolPDA },
+    // merkle_tree — REQUIRED for both paths (target_tree on refund path).
     { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
     { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
+    // refund_job / p01_relayer_program — optional on legacy path. Anchor
+    // requires placeholder accounts even when None, so we always pass them.
+    { pubkey: refundJobKey, isSigner: false, isWritable: useRefundJob },
+    { pubkey: relayerProgKey, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // SPL-token optional tail — none of the mobile paths use SPL today
+    // (SOL-only vaults). Always pass the program-ID sentinel so AccountNotEnoughKeys
+    // can't surface if future handler revisions read these slots.
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false }, // vault_token_account
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false }, // pool_vault
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false }, // retailer_token_account
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
@@ -963,13 +1074,24 @@ export async function cancelPrivateStark(
   starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
+  /**
+   * When set, routes the residual through `p01_relayer::submit_refund_job`
+   * instead of the legacy reshield path. Caller must have already verified
+   * that `vault.client_stealth_meta != null` and `residual >= REFUND_MIN_RESIDUAL`.
+   * `newCommitmentBytes` / `newRootBytes` should be empty in this case.
+   *
+   * **NOTE:** `sourcePool.treePDA` is REQUIRED on both paths — even on the
+   * refund path it is forwarded to the CPI as `target_tree` for the keeper.
+   * Only `denominatedPoolPDA` is optional on the refund path.
+   */
+  useRefundJob?: boolean,
 ): Promise<string> {
   payLog('vault-cancel', 'cancelPrivateStark-start', {
     vault: vaultPDA.toBase58(),
     retailer: retailer.toBase58(),
     pool: sourcePool.poolPDA.toBase58(),
     reShieldCount: newCommitmentBytes.length,
-    flavor: 'zk',
+    flavor: useRefundJob ? 'zk-refund-job' : 'zk',
   });
 
   const {
@@ -1004,15 +1126,21 @@ export async function cancelPrivateStark(
   const commitmentArrays = newCommitmentBytes.map(b => Array.from(b));
   const rootArrays = newRootBytes.map(b => Array.from(b));
 
+  // Refund-via-relayer path: derive refund_job PDA from the source vault.
+  // Legacy reshield path: refund_job is undefined and denominated_pool is required.
+  // merkle_tree is always required (target_tree on refund path).
+  const refundJobPDA = useRefundJob ? deriveRefundJobPDA(vaultPDA)[0] : undefined;
+
   const ix = buildCancelPrivateStarkIx(
     payerPubkey,
     retailer,
     vaultPDA,
-    sourcePool.poolPDA,
+    useRefundJob ? undefined : sourcePool.poolPDA,
     sourcePool.treePDA,
     proofBuffer,
     commitmentArrays,
     rootArrays,
+    refundJobPDA,
   );
 
   onProgress?.('Sending cancel transaction...');
@@ -1035,7 +1163,7 @@ export async function cancelPrivateStark(
   markPayComplete('vault-cancel', {
     signature: sig,
     vault: vaultPDA.toBase58(),
-    flavor: 'zk',
+    flavor: useRefundJob ? 'zk-refund-job' : 'zk',
   });
   return sig;
 }
@@ -1051,14 +1179,15 @@ export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null>
   const data = account.data;
   let offset = 8; // skip discriminator
 
-  // Option<Pubkey> subscriber_pubkey
+  // Option<Pubkey> subscriber_pubkey — Borsh: 1-byte tag, then 32 bytes only if Some
   const hasSubscriberPubkey = data[offset] === 1; offset += 1;
-  const subscriberPubkey = hasSubscriberPubkey
-    ? new PublicKey(data.slice(offset, offset + 32)).toBase58()
-    : null;
-  offset += 32;
+  let subscriberPubkey: string | null = null;
+  if (hasSubscriberPubkey) {
+    subscriberPubkey = new PublicKey(data.slice(offset, offset + 32)).toBase58();
+    offset += 32;
+  }
 
-  // Option<[u8;32]> subscriber_commitment
+  // Option<[u8;32]> subscriber_commitment — Borsh: 1-byte tag, then 32 bytes only if Some
   const hasCommitment = data[offset] === 1; offset += 1;
   let subscriberCommitment: bigint | null = null;
   if (hasCommitment) {
@@ -1067,8 +1196,8 @@ export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null>
       val = (val << 8n) | BigInt(data[offset + b]);
     }
     subscriberCommitment = val;
+    offset += 32;
   }
-  offset += 32;
 
   // Pubkey retailer
   const retailer = new PublicKey(data.slice(offset, offset + 32)).toBase58(); offset += 32;
@@ -1097,10 +1226,13 @@ export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null>
   // bool is_paused
   const isPaused = data[offset] === 1; offset += 1;
 
-  // Option<i64> pause_slot
+  // Option<i64> pause_slot — Borsh: 1-byte tag, then 8 bytes only if Some
   const hasPauseSlot = data[offset] === 1; offset += 1;
-  const pauseSlot = hasPauseSlot ? data.readBigInt64LE(offset) : null;
-  offset += 8;
+  let pauseSlot: bigint | null = null;
+  if (hasPauseSlot) {
+    pauseSlot = data.readBigInt64LE(offset);
+    offset += 8;
+  }
 
   // i64 total_paused_slots
   const totalPausedSlots = data.readBigInt64LE(offset); offset += 8;
@@ -1108,11 +1240,35 @@ export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null>
   // [u8;32] vk_hash_subscriber (skip)
   offset += 32;
 
-  // Option<Pubkey> source_pool
+  // Option<Pubkey> source_pool — Borsh: 1-byte tag, then 32 bytes only if Some
   const hasSourcePool = data[offset] === 1; offset += 1;
-  const sourcePool = hasSourcePool
-    ? new PublicKey(data.slice(offset, offset + 32)).toBase58()
-    : null;
+  let sourcePool: string | null = null;
+  if (hasSourcePool) {
+    sourcePool = new PublicKey(data.slice(offset, offset + 32)).toBase58();
+    offset += 32;
+  }
+
+  // u8 bump
+  // Some old V4 vaults may stop here (account length = 263 bytes), with the
+  // `client_stealth_meta` Option field appended later by the program upgrade.
+  // Guard against truncated reads below.
+  if (offset < data.length) {
+    offset += 1; // skip bump
+  }
+
+  // Option<[u8;64]> client_stealth_meta — Borsh: 1-byte tag, then 64 bytes only if Some
+  // Legacy V4 vaults (account size 263 bytes) end right after bump and have no
+  // tag byte → decode as None. New vaults (account size 373 bytes) include the
+  // full Option. Trailing zero padding on old vaults also decodes as None.
+  let clientStealthMeta: Uint8Array | null = null;
+  if (offset + 1 <= data.length) {
+    const tag = data[offset];
+    offset += 1;
+    if (tag === 1 && offset + 64 <= data.length) {
+      clientStealthMeta = new Uint8Array(data.slice(offset, offset + 64));
+      offset += 64;
+    }
+  }
 
   return {
     address: vaultPDA.toBase58(),
@@ -1132,6 +1288,7 @@ export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null>
     sourcePool,
     isNormalMode: hasSubscriberPubkey,
     isPrivateMode: hasCommitment,
+    clientStealthMeta,
   };
 }
 

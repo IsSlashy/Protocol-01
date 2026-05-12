@@ -28,6 +28,7 @@ import { useWalletStore } from '@/stores/walletStore';
 import { PublicKey } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { OperationProgressBar } from '@/components/ui/OperationProgressBar';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
 import { p01Alert } from '@/stores/alertStore';
@@ -563,7 +564,7 @@ export default function DenominatedUnshieldScreen() {
               </>
             )}
           </TouchableOpacity>
-          {isLoading && <UnshieldProgressBar progress={progress} />}
+          {isLoading && <OperationProgressBar progress={progress} variant="inline" />}
         </Animated.View>
 
         {/* ── Privacy Footer ── */}
@@ -599,40 +600,6 @@ function ToggleBtn({ label, icon, active, color, onPress }: {
       {icon && <Ionicons name={icon as any} size={14} color={active ? color : Colors.textTertiary} />}
       <Text style={[st.toggleText, active && { color }]}>{label}</Text>
     </TouchableOpacity>
-  );
-}
-
-function UnshieldProgressBar({ progress }: { progress: string | null }) {
-  const text = progress || '';
-  const batchMatch = text.match(/batch\s+(\d+)\s*\/\s*(\d+)/i);
-  const resizeMatch = text.match(/resize|Resizing/i);
-  const provingMatch = text.match(/proof|commitment|STARK/i);
-
-  let current = 0;
-  let total = 0;
-  let label = text;
-
-  if (batchMatch) {
-    current = parseInt(batchMatch[1], 10);
-    total = parseInt(batchMatch[2], 10);
-    label = `Uploading proof · batch ${current}/${total}`;
-  } else if (resizeMatch) {
-    label = 'Resizing proof buffer';
-  } else if (provingMatch) {
-    label = text;
-  }
-
-  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : (text ? 8 : 0);
-  return (
-    <View style={st.progressWrap}>
-      <View style={st.progressRow}>
-        <Text style={st.progressLabel} numberOfLines={1}>{label}</Text>
-        {total > 0 && <Text style={st.progressCount}>{current}/{total}</Text>}
-      </View>
-      <View style={st.progressTrack}>
-        <View style={[st.progressFill, { width: `${pct}%` }]} />
-      </View>
-    </View>
   );
 }
 

@@ -160,4 +160,14 @@ pub enum ZkShieldedError {
 
     #[msg("Recipient pubkey does not match recipient arg")]
     MismatchedRecipient,
+
+    // Refund-via-relayer (cancel_private_stark) errors
+    #[msg("Required account is missing for this code path")]
+    MissingAccount,
+
+    #[msg("Provided program account does not match the expected program id")]
+    InvalidProgramId,
+
+    #[msg("PDA derivation does not match the provided account")]
+    InvalidPda,
 }

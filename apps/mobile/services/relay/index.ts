@@ -529,7 +529,7 @@ export async function submitRelayJob(
     keys: [
       { pubkey: ephemeral.publicKey, isSigner: true, isWritable: true }, // submitter
       { pubkey: configPDA, isSigner: false, isWritable: true },          // config
-      { pubkey: relayerNodePDA, isSigner: false, isWritable: false },    // relayer_node
+      { pubkey: relayerNodePDA, isSigner: false, isWritable: true },     // relayer_node (mut: apply_decay)
       { pubkey: jobPDA, isSigner: false, isWritable: true },             // relay_job (init)
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
@@ -752,7 +752,7 @@ export async function submitChunkedRelayJob(
     keys: [
       { pubkey: ephemeral.publicKey, isSigner: true, isWritable: true },
       { pubkey: configPDA, isSigner: false, isWritable: true },
-      { pubkey: relayerNodePDA, isSigner: false, isWritable: false },
+      { pubkey: relayerNodePDA, isSigner: false, isWritable: true },
       { pubkey: jobPDA, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],

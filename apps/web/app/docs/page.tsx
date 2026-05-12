@@ -82,7 +82,7 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);
     i18nKey: "shieldedPool",
     icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Shielded pool flow (v0.9.11 — STARK V3, quantum-safe)
+    codeExample: `// Shielded pool flow (v1.0.0 — STARK V3, quantum-safe)
 // 1. User generates a STARK proof locally (no remote prover)
 const starkProof = await starkProver.generateProof(noteInputs);
 
@@ -143,7 +143,7 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     i18nKey: "solanaIntegration",
     icon: <Cpu className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// v0.9.11 — Every spend verifies through the custom on-chain
+    codeExample: `// v1.0.0 — Every spend verifies through the custom on-chain
 // FRI verifier (no Winterfell dep, Goldilocks + Blake3, ~889K CU).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
@@ -154,7 +154,7 @@ for pos in positions {
 // LEGACY (pre-April 2026, now retired from every spend path) —
 // BN254 Groth16 pairing via the sol_alt_bn128 syscall. Kept here
 // only for historical reference; the code still exists in the
-// repo history but no instruction dispatches to it in v0.9.11+.
+// repo history but no instruction dispatches to it in v1.0.0+.
 //
 //   let pairing_result = sol_alt_bn128_pairing(&[...]);
 //   require!(pairing_result == 1, "Invalid Groth16 proof");`,
@@ -164,7 +164,7 @@ for pos in positions {
     i18nKey: "privateRelay",
     icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// Trustless on-chain relay flow (v0.9.11 — STARK V3 + relayer-routed)
+    codeExample: `// Trustless on-chain relay flow (v1.0.0 — STARK V3 + relayer-routed)
 // 1. Client generates a STARK proof locally via the WASM prover
 //    (spending key stays on device; no remote prover fallback)
 const starkProof = await starkProver.generateProof({

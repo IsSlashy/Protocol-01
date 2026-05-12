@@ -59,6 +59,13 @@ pub struct SubscriptionVault {
 
     /// PDA bump seed
     pub bump: u8,
+
+    /// Stealth meta address (v1) for refund-via-relayer delivery on cancel.
+    /// Layout: `[spending_pub(32) | viewing_pub(32)]`.
+    /// `None` for legacy V4 vaults — those fall back to the legacy reshield
+    /// path in `cancel_private_stark`. Appended at the end so existing
+    /// vaults decode as `None` from trailing zero padding.
+    pub client_stealth_meta: Option<[u8; 64]>,
 }
 
 impl SubscriptionVault {
@@ -85,7 +92,8 @@ impl SubscriptionVault {
         + 8    // total_paused_slots (i64)
         + 32   // vk_hash_subscriber
         + 33   // source_pool: Option<Pubkey>
-        + 1;   // bump
+        + 1    // bump
+        + 65;  // client_stealth_meta: Option<[u8; 64]> (1 tag + 64 value)
 
     /// Returns the subscriber ID bytes used in the PDA seed.
     /// Normal mode: subscriber pubkey bytes
@@ -123,13 +131,29 @@ impl SubscriptionVault {
         }
 
         let total_periods = (effective_elapsed as u64) / self.interval_slots;
-        total_periods.saturating_sub(self.claimed_periods)
+        let unclaimed = total_periods.saturating_sub(self.claimed_periods);
+
+        // Cap at remaining funded periods so retailer payout never exceeds
+        // the residual vault balance (prevents u64 underflow when cancelling
+        // a vault whose elapsed window outran its funding).
+        let max_funded = if self.rate == 0 {
+            0
+        } else {
+            (self.total_deposited / self.rate).saturating_sub(self.claimed_periods)
+        };
+        unclaimed.min(max_funded)
     }
 
     /// Compute effective elapsed slots (subtracting paused time)
     fn effective_elapsed_slots(&self, current_slot: i64) -> i64 {
         let elapsed = current_slot - self.start_slot;
         elapsed - self.total_paused_slots
+    }
+
+    /// Returns true when this vault has a stealth meta address registered
+    /// for refund-via-relayer routing on cancel.
+    pub fn has_stealth_refund(&self) -> bool {
+        self.client_stealth_meta.is_some()
     }
 
     /// Amount available to refund on cancellation

@@ -34,6 +34,7 @@ import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { iconKeyToIonicons, formatPriceSOL, formatInterval } from '../../../services/solana/serviceRegistry';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
+import OperationProgressBar from '@/components/ui/OperationProgressBar';
 
 /**
  * SPL Memo program — used to attach an invoice tag to one-shot unshield
@@ -95,6 +96,12 @@ function SubscribeContent() {
 
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [stepInfo, setStepInfo] = useState<{ current: number; total: number } | null>(null);
+  // Combined progress + step setter — keeps sticky bar and CTA text in sync.
+  const setProgressStep = (current: number, total: number, label: string) => {
+    setStepInfo({ current, total });
+    setProgress(label);
+  };
   const [enablePrivacy, setEnablePrivacy] = useState(false);
   const [duration, setDuration] = useState<1 | 6 | 12>(1);
   // User-chosen note for the vault funding. `null` = auto-pick smallest
@@ -165,7 +172,7 @@ function SubscribeContent() {
     // app gets paused mid-upload by Android.
     await withKeepAwake('p01-subscribe-stream', async () => {
     try {
-      setIsSubscribing(true); setProgress(null);
+      setIsSubscribing(true); setProgress(null); setStepInfo(null);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       const now = Date.now();
@@ -256,7 +263,7 @@ function SubscribeContent() {
         // each time). subscribe_private_stark on-chain ix needs the current
         // root + path embedded in the receipt → rebuild here.
         if (noteIsV3) {
-          setProgress('Rebuilding merkle proof…');
+          setProgressStep(1, 4, 'Rebuilding Merkle proof');
           const conn = getConnection();
           const SIG_SCAN_LIMIT = 5000;
           let leafScan = await fetchPoolLeavesByIndex(conn, poolConfig.poolPDA, { maxSignatures: SIG_SCAN_LIMIT });
@@ -304,11 +311,11 @@ function SubscribeContent() {
           receipt.merklePathIndices = merkleProof.pathIndices;
         }
 
-        setProgress(t('shieldUnshield.generatingProof'));
+        setProgressStep(2, 4, 'Generating ownership proof (STARK)');
         const ownershipResult = await starkGenerate(subscriberSecret.toString());
         const vkHashSubscriber = sha256(Buffer.from(ownershipResult.commitment, 'hex'));
 
-        setProgress(t('shieldUnshield.generatingProof'));
+        setProgressStep(3, 4, 'Generating pool commitment proof');
         const poolProof = await generatePoolCommitmentProof(
           receipt.nullifierPreimage.toString(),
           receipt.secret.toString(),
@@ -316,7 +323,14 @@ function SubscribeContent() {
           receipt.tokenMint.toString(),
         );
 
-        setProgress(t('shieldUnshield.sendingTransaction'));
+        setProgressStep(4, 4, 'Uploading proof & sending transaction');
+        // Persist the user's v1 stealth meta on the vault — enables
+        // refund-via-relayer routing on future cancel. 64 raw bytes:
+        // [spending_pub(32) || viewing_pub(32)]. Same keys as the inbox
+        // scanner already uses, so the keeper-delivered refund note shows up
+        // through the existing stealth scan path.
+        const { getOrCreateStealthMetaV1 } = await import('../../../services/stealth/keys');
+        const clientStealthMeta = await getOrCreateStealthMetaV1();
         const subscribeResult = await subscribePrivateStarkAction(
           receipt,
           poolConfig,
@@ -333,6 +347,7 @@ function SubscribeContent() {
             publicInputs: poolProof.publicInputs.map((s: string) => BigInt(s)),
             proofSize: poolProof.proofSize,
           },
+          clientStealthMeta,
         );
         sig = subscribeResult.signature;
         vaultAddress = subscribeResult.vaultAddress;
@@ -387,7 +402,7 @@ function SubscribeContent() {
           }
 
           // C1 — pool_commitment proof.
-          setProgress(t('shieldUnshield.generatingProof'));
+          setProgressStep(1, 4, 'Generating pool commitment proof');
           const c1Result = await generatePoolCommitmentProof(
             receipt.nullifierPreimage.toString(),
             receipt.secret.toString(),
@@ -397,6 +412,7 @@ function SubscribeContent() {
           console.log('[Sub:OneShot] V3 C1 ready', { proofSize: c1Result.proofSize });
 
           // Build merkle path against the current on-chain V3 tree.
+          setProgressStep(2, 4, 'Building Merkle proof');
           const conn = getConnection();
           const SIG_SCAN_LIMIT = 5000;
           let leafScan = await fetchPoolLeavesByIndex(conn, pool.poolPDA, { maxSignatures: SIG_SCAN_LIMIT });
@@ -445,6 +461,7 @@ function SubscribeContent() {
           receipt.merklePathIndices = c3Indices;
 
           // C3 — merkle_path proof.
+          setProgressStep(3, 4, 'Generating Merkle path proof');
           const U64 = (1n << 64n) - 1n;
           const c3Result = await generateMerklePathProof(
             (receipt.commitment & U64).toString(),
@@ -453,7 +470,7 @@ function SubscribeContent() {
           );
           console.log('[Sub:OneShot] V3 C3 ready', { proofSize: c3Result.proofSize });
 
-          setProgress(t('shieldUnshield.sendingTransaction'));
+          setProgressStep(4, 4, 'Uploading proof & sending transaction');
           sig = await unshieldNoteStarkV3(
             note.id,
             retailerAddr,
@@ -472,13 +489,14 @@ function SubscribeContent() {
           console.log('[Sub:OneShot] V3 sig', { sigPrefix: sig.slice(0, 16) });
         } else {
           // V2/BN254 path — single C1 proof.
-          setProgress(t('shieldUnshield.generatingProof'));
+          setProgressStep(1, 2, 'Generating proof (STARK)');
           const starkResult = await generatePoolCommitmentProof(
             receipt.nullifierPreimage.toString(),
             receipt.secret.toString(),
             receipt.depositEpoch.toString(),
             receipt.tokenMint.toString(),
           );
+          setProgressStep(2, 2, 'Sending transaction');
           sig = await store.unshieldNoteStark(note.id, retailerAddr, {
             proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
             publicInputs: starkResult.publicInputs.map((s: string) => BigInt(s)),
@@ -488,7 +506,8 @@ function SubscribeContent() {
         paid = note.denomination;
       } else if (enablePrivacy) {
         // ───────── Wallet + Privacy Shield (stealth + ephemeral) ─────────
-        setProgress(t('shieldUnshield.sendingTransaction'));
+        setProgress('Sending private transaction');
+        setStepInfo(null);
         const privySigner = getPrivySigner();
         const kp = await getKeypair();
 
@@ -516,7 +535,8 @@ function SubscribeContent() {
         sig = r.signature;
       } else {
         // ───────── Plain wallet transfer (+ invoice memo) ─────────
-        setProgress(t('shieldUnshield.sendingTransaction'));
+        setProgress('Sending transaction');
+        setStepInfo(null);
         const privySigner = getPrivySigner();
         const conn = getConnection();
         const lamports = Math.round(price * 1e9);
@@ -541,7 +561,8 @@ function SubscribeContent() {
         }
       }
 
-      setProgress(t('common.processing'));
+      setProgress('Recording subscription…');
+      setStepInfo(null);
       const stream = await createNewStream({
         id: streamId,
         name: serviceName, recipientAddress: retailerAddr, totalAmount: totalPrice,
@@ -569,7 +590,7 @@ function SubscribeContent() {
     } catch (e: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('common.error'), e.message || t('alerts.subscriptionFailed'), undefined, 'error');
-    } finally { setIsSubscribing(false); setProgress(null); }
+    } finally { setIsSubscribing(false); setProgress(null); setStepInfo(null); }
     });
   };
 
@@ -586,6 +607,16 @@ function SubscribeContent() {
         <Text style={st.headerTitle}>{t('subscribe.title')}</Text>
         <View style={{ width: 40 }} />
       </View>
+
+      {isSubscribing && (
+        <OperationProgressBar
+          progress={progress}
+          variant="sticky"
+          onCancel={() => { setIsSubscribing(false); setProgress(null); setStepInfo(null); }}
+          showKeepOpenWarning={true}
+          step={stepInfo ?? undefined}
+        />
+      )}
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 140 }} showsVerticalScrollIndicator={false}>
         {/* Service Hero */}

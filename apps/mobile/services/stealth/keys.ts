@@ -127,4 +127,37 @@ export function deriveStealthForRecipient(recipientMetaAddress: string): Stealth
   );
 }
 
+/**
+ * Return the user's v1 stealth meta address as 64 raw bytes:
+ * `[spending_ed25519_pub(32) | viewing_x25519_pub(32)]`.
+ *
+ * This is the on-chain layout expected by `SubscriptionVault.client_stealth_meta`
+ * (refund-via-relayer): the keeper splits it into the two 32-byte halves to
+ * derive a one-time stealth address for the refund note.
+ *
+ * - Loads or derives the user's persistent stealth keypairs via
+ *   `getOrCreateStealthKeys` (cached, persisted in SecureStore).
+ * - Drops any v2 KEM material — only the v1 portion (spending + viewing) is
+ *   encoded since the on-chain field is fixed-size `[u8; 64]`.
+ *
+ * Stable across sessions: re-invoking on the same device returns the same
+ * 64 bytes, which is what enables cross-session refund-note recovery.
+ */
+export async function getOrCreateStealthMetaV1(): Promise<Uint8Array> {
+  const keys = await getOrCreateStealthKeys();
+  const spendingBytes = keys.spendingKey.publicKey.toBytes(); // 32 bytes (Ed25519)
+  const viewingBytes = keys.viewingPublicKey;                 // 32 bytes (X25519)
+
+  if (spendingBytes.length !== 32 || viewingBytes.length !== 32) {
+    throw new Error(
+      `[getOrCreateStealthMetaV1] unexpected key sizes: spending=${spendingBytes.length}, viewing=${viewingBytes.length}`,
+    );
+  }
+
+  const out = new Uint8Array(64);
+  out.set(spendingBytes, 0);
+  out.set(viewingBytes, 32);
+  return out;
+}
+
 export { isMetaAddress, parseMetaAddress };

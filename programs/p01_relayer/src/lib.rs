@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+pub mod constants;
 pub mod errors;
 pub mod instructions;
 pub mod state;
@@ -175,5 +176,55 @@ pub mod p01_relayer {
     /// rent to the original submitter. Caller pays the tx fee only.
     pub fn expire_pending_job(ctx: Context<ExpirePendingJob>) -> Result<()> {
         instructions::expire_pending_job::handler(ctx)
+    }
+
+    // -----------------------------------------------------------------------
+    // Refund pipeline (sprint 2026-05-11)
+    // -----------------------------------------------------------------------
+
+    /// Initialise a RefundJob PDA for a cancelled private subscription.
+    /// Called via CPI by `zk_shielded::cancel_private_stark` on the new
+    /// path (vault carries `client_stealth_meta`). The caller is responsible
+    /// for transferring the residual `amount` lamports into the PDA via
+    /// direct lamport manipulation immediately after this ix.
+    pub fn submit_refund_job(
+        ctx: Context<SubmitRefundJob>,
+        amount: u64,
+        stealth_meta: [u8; 64],
+        target_pool: Pubkey,
+        target_tree: Pubkey,
+    ) -> Result<()> {
+        instructions::submit_refund_job::handler(ctx, amount, stealth_meta, target_pool, target_tree)
+    }
+
+    /// Permissionless keeper ix. Validates the pending RefundJob, emits
+    /// the stealth announcement event (`RefundProcessedEvent`), pays the
+    /// keeper their fee + drains the PDA to the keeper, and marks status
+    /// Completed. The keeper MUST forward the residual into the pool via
+    /// a follow-up `zk_shielded::shield_denominated` tx — see ix-level
+    /// docs for the MVP trust model.
+    pub fn process_refund_job(
+        ctx: Context<ProcessRefundJob>,
+        commitment: [u8; 32],
+        new_root: [u8; 32],
+        ephemeral_pub: [u8; 32],
+        view_tag: u8,
+        ciphertext: Vec<u8>,
+    ) -> Result<()> {
+        instructions::process_refund_job::handler(
+            ctx,
+            commitment,
+            new_root,
+            ephemeral_pub,
+            view_tag,
+            ciphertext,
+        )
+    }
+
+    /// Permissionless GC for an unprocessed RefundJob past its deadline.
+    /// Closes the account; rent + residual lamports return to the
+    /// original subscriber (`original_payer`). Caller pays only the tx fee.
+    pub fn expire_refund_job(ctx: Context<ExpireRefundJob>) -> Result<()> {
+        instructions::expire_refund_job::handler(ctx)
     }
 }

@@ -76,7 +76,7 @@ const updates: WeekUpdate[] = [
       "Pete Townsend's talk on Finding PMF in Web3 @ Buildstation — re-shaped the roadmap",
       "Merkle root divergence fixed via replayMerkleProofFromEvents — every shielded note recoverable",
       "Unshield lifecycle: 5 cascading bugs closed, per-pool counter via findSafeShieldCounter",
-      "V3 STARK pools live on devnet — v0.9.11 tagged, foundation stable for enterprise SDKs",
+      "V3 STARK pools live on devnet — v1.0.0 tagged, foundation stable for enterprise SDKs",
       "Applied to CastleDAO Ireland (August 2026)",
     ],
   },

@@ -211,7 +211,10 @@ pub mod zk_shielded {
         instructions::subscribe_normal::handler(ctx, rate, interval_slots, amount, token_mint, vk_hash_subscriber)
     }
 
-    /// Create a private subscription vault using STARK proof (quantum-resistant)
+    /// Create a private subscription vault using STARK proof (quantum-resistant).
+    /// `client_stealth_meta`: optional 64-byte stealth address
+    /// (`[spending_pub(32) | viewing_pub(32)]`) used to route the refund
+    /// through `p01_relayer` on cancel. `None` keeps the legacy reshield path.
     pub fn subscribe_private_stark(
         ctx: Context<SubscribePrivateStark>,
         nullifier: [u8; 32],
@@ -222,8 +225,9 @@ pub mod zk_shielded {
         interval_slots: u64,
         vk_hash_subscriber: [u8; 32],
         stark_commitment: u64,
+        client_stealth_meta: Option<[u8; 64]>,
     ) -> Result<()> {
-        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment)
+        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, client_stealth_meta)
     }
 
     /// Pause a private subscription vault using STARK proof (quantum-resistant)
