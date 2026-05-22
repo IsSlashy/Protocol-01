@@ -50,11 +50,23 @@ pub const BPS_DENOMINATOR: u64 = 10_000;
 
 /// Calculate fee amount from denomination and basis points.
 /// Returns (fee, net_amount) where net_amount = denomination - fee.
+///
+/// Audit 2026-04-01 HIGH #3: the previous implementation used
+/// `denomination.checked_mul(fee_bps).unwrap_or(0)` which silently zeroed the
+/// fee for extreme denominations (`denomination * fee_bps` > 2^64). That would
+/// let an attacker construct a giant-denomination pool that pays no protocol
+/// fee at all. Widening to u128 makes overflow impossible for any u64 inputs:
+/// `2^64 * 2^64 = 2^128`, which the intermediate u128 represents exactly. The
+/// final divided-down result always fits back into u64 because
+/// `fee = denomination * fee_bps / 10_000 <= denomination`.
 pub fn calculate_fee(denomination: u64, fee_bps: u64) -> (u64, u64) {
-    let fee = denomination
-        .checked_mul(fee_bps)
-        .unwrap_or(0)
-        / BPS_DENOMINATOR;
+    let fee_u128 = (denomination as u128)
+        .saturating_mul(fee_bps as u128)
+        / (BPS_DENOMINATOR as u128);
+    // fee <= denomination (since fee_bps <= BPS_DENOMINATOR in all callers),
+    // so the cast back to u64 is lossless. Clamp defensively in case a future
+    // caller passes fee_bps > BPS_DENOMINATOR.
+    let fee = fee_u128.min(denomination as u128) as u64;
     let net = denomination.saturating_sub(fee);
     (fee, net)
 }

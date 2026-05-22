@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Protocol 01 · Plan financier</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --cyan-dim: rgba(57, 197, 187, 0.15);
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --red: #ff3366;
+    --green: #4ade80;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 10.5pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    padding: 18mm 22mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  h1, h2, h3, h4 { font-family: 'Orbitron', sans-serif; font-weight: 700; }
+  h2 { font-size: 20pt; letter-spacing: 0.04em; margin-bottom: 4px; color: var(--text); }
+  h2 .num {
+    display: inline-block;
+    margin-right: 14px;
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 400;
+    font-size: 14pt;
+    vertical-align: middle;
+  }
+  h3 { font-size: 13pt; letter-spacing: 0.03em; color: var(--cyan); margin-top: 16px; margin-bottom: 8px; }
+  h4 { font-size: 11pt; letter-spacing: 0.02em; color: var(--pink); margin-bottom: 4px; }
+
+  .subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 20px;
+  }
+  .lead {
+    font-size: 12pt;
+    line-height: 1.5;
+    color: var(--text);
+    margin-top: 8px;
+    margin-bottom: 14px;
+    font-weight: 500;
+  }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .small { font-size: 9pt; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .bold { font-weight: 700; }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .red { color: var(--red); }
+  .green { color: var(--green); }
+  strong { color: var(--text); font-weight: 700; }
+
+  .page-footer {
+    position: absolute;
+    bottom: 10mm;
+    left: 22mm;
+    right: 22mm;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .card {
+    background: #151518;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .card-cyan { border-color: rgba(57, 197, 187, 0.3); background: #12211e; }
+  .card-pink { border-color: rgba(255, 119, 168, 0.3); background: #1f141a; }
+  .card-yellow { border-color: rgba(255, 204, 0, 0.3); background: #1c1a0e; }
+  .card-red { border-color: rgba(255, 51, 102, 0.35); background: #1f0f13; }
+  .card-green { border-color: rgba(74, 222, 128, 0.3); background: #102117; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+    margin: 10px 0;
+  }
+  th {
+    text-align: left;
+    padding: 8px 10px;
+    background: rgba(57, 197, 187, 0.08);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(42, 42, 48, 0.5);
+    vertical-align: top;
+  }
+  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  tr.total td { background: rgba(57, 197, 187, 0.06); font-weight: 700; }
+  ul { padding-left: 18px; margin: 6px 0 6px 0; }
+  li { margin-bottom: 4px; }
+
+  .stat-box {
+    text-align: center;
+    padding: 14px;
+    background: rgba(21, 21, 24, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .stat-number {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 32pt;
+    color: var(--cyan);
+    line-height: 1;
+  }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  .highlight {
+    background: linear-gradient(90deg, rgba(57, 197, 187, 0.1), transparent);
+    border-left: 3px solid var(--cyan);
+    padding: 10px 14px;
+    margin: 12px 0;
+    font-style: italic;
+    font-size: 11pt;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== PAGE 1: COVER ==================== -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+  <div style="margin-bottom: 24px;">
+    <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 120pt; color: var(--cyan); line-height: 1; text-shadow: 0 0 40px rgba(57, 197, 187, 0.3);">01</div>
+    <div style="font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 24pt; letter-spacing: 0.15em; margin-top: -4px;">PROTOCOL</div>
+  </div>
+
+  <div style="width: 80px; height: 2px; background: linear-gradient(90deg, var(--cyan), var(--pink)); margin: 24px auto;"></div>
+
+  <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 18pt; letter-spacing: 0.06em; margin-bottom: 10px;">
+    Plan financier
+  </div>
+  <p class="muted" style="max-width: 460px; font-size: 10.5pt;">
+    Prévisionnel S2 2026 &middot; 2027 &middot; 2028. Hypothèses, besoin de financement, allocation, sensibilité.
+  </p>
+
+  <div style="margin-top: 50px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; width: 80%;">
+    <div class="stat-box">
+      <div class="stat-number" style="font-size: 26pt;">300&ndash;500 K€</div>
+      <div class="stat-label">Demande seed</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color: var(--cyan-bright); font-size: 26pt;">M14&ndash;M18</div>
+      <div class="stat-label">Break-even cible</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color: var(--pink); font-size: 26pt;">750 K€</div>
+      <div class="stat-label">Revenus 2028 base</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 60px;">
+    <div class="mono small dim">PLAN FINANCIER &middot; PLUG&amp;START 2026</div>
+    <div class="mono small dim" style="margin-top: 4px;">v1.0.0 &middot; Mai 2026</div>
+    <div class="mono small dim" style="margin-top: 4px;">Ramy Chatbi &middot; Volta Team</div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>1 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 2: SYNTHÈSE ==================== -->
+<div class="page">
+  <div class="subtitle">01 &middot; Synthèse exécutive</div>
+  <h2><span class="num">01</span>Trois flux, deux ans pour le break-even</h2>
+
+  <p class="lead">Projet solo lancé fin janvier 2026, livré en v1.0.0 le 11 mai 2026, sans aucun capital levé.<br>L'objectif financier est <strong>simple et chiffré</strong> : sécuriser 300 à 500 K€ avant fin 2026 pour passer l'audit mainnet, salarier le founder et le premier hire, et atteindre le break-even mensuel au second semestre 2027.</p>
+
+  <div class="grid-3" style="margin-top: 16px;">
+    <div class="card card-cyan">
+      <h4 style="color: var(--cyan);">Flux 1 &middot; Fees protocolaires</h4>
+      <p class="small">0,1 à 0,3% sur le volume shieldé. Encaissé automatiquement on-chain, distribué par smart contract.<br><strong class="cyan">240 K€ annuels en 2028</strong> sur scénario base.</p>
+    </div>
+    <div class="card card-pink">
+      <h4 style="color: var(--pink);">Flux 2 &middot; SDK B2B</h4>
+      <p class="small">Licences 5 à 15 K€ par client et par an. Cible : wallets mobiles, services d'abonnement, applications DeFi.<br><strong class="pink">390 K€ annuels en 2028</strong> sur scénario base.</p>
+    </div>
+    <div class="card card-yellow">
+      <h4 style="color: var(--yellow);">Flux 3 &middot; Mugen Exchange</h4>
+      <p class="small">Place de marché P2P fiat-to-crypto sans KYC, déjà opérationnelle. 0,5% sur volume échangé.<br><strong class="yellow">120 K€ annuels en 2028</strong> sur scénario base.</p>
+    </div>
+  </div>
+
+  <h3>Trajectoire en une ligne</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Période</th>
+        <th class="num">Revenus</th>
+        <th class="num">Coûts</th>
+        <th class="num">Résultat opérationnel</th>
+        <th>Jalon clé</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="bold">S2 2026</td>
+        <td class="num cyan">11 000 €</td>
+        <td class="num">102 200 €</td>
+        <td class="num red">(91 200 €)</td>
+        <td class="small muted">Audit livré, mainnet beta</td>
+      </tr>
+      <tr>
+        <td class="bold">2027</td>
+        <td class="num cyan">178 000 €</td>
+        <td class="num">276 600 €</td>
+        <td class="num red">(98 600 €)</td>
+        <td class="small muted">Mainnet GA, premiers clients SDK</td>
+      </tr>
+      <tr class="total">
+        <td class="bold">2028</td>
+        <td class="num cyan">750 000 €</td>
+        <td class="num">432 000 €</td>
+        <td class="num green">+318 000 €</td>
+        <td class="small muted">Effet réseau, marge 42%</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="highlight">
+    Cumul des résultats négatifs S2 2026 + 2027 : ~190 K€.<br>Avec une marge de trésorerie de 100 K€, le besoin de financement total se situe entre <strong>300 et 500 K€</strong>.
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>2 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 3: HYPOTHÈSES REVENUS ==================== -->
+<div class="page">
+  <div class="subtitle">02 &middot; Hypothèses de revenus</div>
+  <h2><span class="num">02</span>Trois moteurs, indépendants l'un de l'autre</h2>
+
+  <h3>Flux 1. Fees protocolaires sur paiements privés</h3>
+  <p class="small muted">Commission prélevée sur chaque opération de déshield et chaque paiement marchand routé par le protocole. Taux retenu : 0,2% en scénario base.</p>
+  <table>
+    <thead>
+      <tr><th>Année</th><th>Volume mensuel moyen</th><th class="num">Volume annuel</th><th class="num">Fees encaissés</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">S2 2026</td><td>nul (pre-mainnet)</td><td class="num">0 €</td><td class="num cyan">0 €</td></tr>
+      <tr><td class="bold">2027</td><td>2 M€ par mois</td><td class="num">24 M€</td><td class="num cyan">48 000 €</td></tr>
+      <tr><td class="bold">2028</td><td>10 M€ par mois</td><td class="num">120 M€</td><td class="num cyan">240 000 €</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Flux 2. SDK B2B sous licence</h3>
+  <p class="small muted">Tarif d'entrée 5 K€ par an et par client (Pro), palier moyen 10 à 15 K€ pour intégrations à fort volume (Enterprise). Cibles prioritaires : portefeuilles mobiles, services d'abonnement crypto, applications DeFi.</p>
+  <table>
+    <thead>
+      <tr><th>Année</th><th>Clients actifs</th><th class="num">Panier moyen</th><th class="num">Revenus annuels</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">S2 2026</td><td>1 à 2 pilotes signés</td><td class="num">5 000 €</td><td class="num pink">8 000 €</td></tr>
+      <tr><td class="bold">2027</td><td>8 à 12</td><td class="num">10 000 €</td><td class="num pink">100 000 €</td></tr>
+      <tr><td class="bold">2028</td><td>25 à 40</td><td class="num">12 000 €</td><td class="num pink">390 000 €</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Flux 3. Mugen Exchange, P2P fiat-crypto</h3>
+  <p class="small muted">Commission 0,5% sur volume P2P, perçue côté plateforme. Mugen est déjà opérationnel sur la même infrastructure (programme `p01_mugen` + app dédiée), donc pas de coût de développement supplémentaire.</p>
+  <table>
+    <thead>
+      <tr><th>Année</th><th>Volume mensuel</th><th class="num">Volume annuel</th><th class="num">Fees encaissés</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">S2 2026</td><td>50 K€ par mois (pilote)</td><td class="num">600 K€</td><td class="num yellow">3 000 €</td></tr>
+      <tr><td class="bold">2027</td><td>500 K€ par mois</td><td class="num">6 M€</td><td class="num yellow">30 000 €</td></tr>
+      <tr><td class="bold">2028</td><td>2 M€ par mois</td><td class="num">24 M€</td><td class="num yellow">120 000 €</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Trois scénarios</h3>
+  <table>
+    <thead>
+      <tr><th>Scénario</th><th class="num">S2 2026</th><th class="num">2027</th><th class="num">2028</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold red">Downside</td><td class="num">0 €</td><td class="num">70 000 €</td><td class="num">280 000 €</td></tr>
+      <tr><td class="bold cyan">Base</td><td class="num">11 000 €</td><td class="num">178 000 €</td><td class="num">750 000 €</td></tr>
+      <tr><td class="bold green">Upside</td><td class="num">18 000 €</td><td class="num">310 000 €</td><td class="num">1 150 000 €</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>3 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 4: HYPOTHÈSES COÛTS ==================== -->
+<div class="page">
+  <div class="subtitle">03 &middot; Hypothèses de coûts</div>
+  <h2><span class="num">03</span>Structure de coûts maîtrisée, audit en priorité absolue</h2>
+
+  <h3>Personnel</h3>
+  <p class="small muted">Founder seul sans rémunération en S2 2026 (ARE). Co-founder Marketing en equity-only sans cash. Embauches phasées sur 2027 et 2028.</p>
+  <table>
+    <thead>
+      <tr><th>Année</th><th>Effectif</th><th class="num">Salaires bruts</th><th class="num">Total chargé</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">S2 2026</td><td>1 (founder, sans salaire)</td><td class="num">0 €</td><td class="num">0 €</td></tr>
+      <tr><td class="bold">2027</td><td>2 (founder + dev senior)</td><td class="num">135 000 €</td><td class="num">200 000 €</td></tr>
+      <tr><td class="bold">2028</td><td>3 (+ produit/commercial)</td><td class="num">215 000 €</td><td class="num">316 000 €</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Coûts opérationnels et structurels</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Poste</th>
+        <th class="num">S2 2026</th>
+        <th class="num">2027</th>
+        <th class="num">2028</th>
+        <th>Justification</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="bold">Audit sécurité tiers</td>
+        <td class="num">80 000 €</td>
+        <td class="num">30 000 €</td>
+        <td class="num">30 000 €</td>
+        <td class="small">OtterSec, Neodyme ou Trail of Bits. 15 programmes + 6 STARK AIRs + 9 circuits MPC à couvrir. Audit annuel ensuite.</td>
+      </tr>
+      <tr>
+        <td class="bold">Trusted setup ceremony</td>
+        <td class="num">8 000 €</td>
+        <td class="num">0 €</td>
+        <td class="num">0 €</td>
+        <td class="small">Coordination 3+ contributeurs, infra cérémonie, communication publique. One-shot avant mainnet.</td>
+      </tr>
+      <tr>
+        <td class="bold">Infrastructure</td>
+        <td class="num">1 200 €</td>
+        <td class="num">9 600 €</td>
+        <td class="num">18 000 €</td>
+        <td class="small">Railway relayer, RPC Helius, monitoring, analytics. Montée en charge mainnet 2027.</td>
+      </tr>
+      <tr>
+        <td class="bold">Marketing et événements</td>
+        <td class="num">5 000 €</td>
+        <td class="num">25 000 €</td>
+        <td class="num">50 000 €</td>
+        <td class="small">Plug&amp;Start, Dogpatch Labs Dublin, Solana Breakpoint, Token2049 sélectif, content.</td>
+      </tr>
+      <tr>
+        <td class="bold">Légal et administratif</td>
+        <td class="num">8 000 €</td>
+        <td class="num">12 000 €</td>
+        <td class="num">18 000 €</td>
+        <td class="small">Création SAS, IP, conventions co-founder, contrats SDK, comptabilité.</td>
+      </tr>
+      <tr class="total">
+        <td class="bold">Sous-total ops</td>
+        <td class="num cyan">102 200 €</td>
+        <td class="num cyan">76 600 €</td>
+        <td class="num cyan">116 000 €</td>
+        <td class="small dim">Hors personnel</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Total coûts</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Poste</th>
+        <th class="num">S2 2026</th>
+        <th class="num">2027</th>
+        <th class="num">2028</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Personnel chargé</td><td class="num">0 €</td><td class="num">200 000 €</td><td class="num">316 000 €</td></tr>
+      <tr><td>Opérationnel et structurel</td><td class="num">102 200 €</td><td class="num">76 600 €</td><td class="num">116 000 €</td></tr>
+      <tr class="total">
+        <td class="bold">Total coûts</td>
+        <td class="num cyan">102 200 €</td>
+        <td class="num cyan">276 600 €</td>
+        <td class="num cyan">432 000 €</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>4 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 5: P&L 3 ANS ==================== -->
+<div class="page">
+  <div class="subtitle">04 &middot; Compte de résultat prévisionnel</div>
+  <h2><span class="num">04</span>P&amp;L synthétique, scénario base</h2>
+
+  <table style="margin-top: 16px;">
+    <thead>
+      <tr>
+        <th>Ligne</th>
+        <th class="num">S2 2026</th>
+        <th class="num">2027</th>
+        <th class="num">2028</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold cyan">Revenus</td><td class="num cyan">11 000 €</td><td class="num cyan">178 000 €</td><td class="num cyan">750 000 €</td></tr>
+      <tr><td class="dim">dont fees protocolaires</td><td class="num small">0 €</td><td class="num small">48 000 €</td><td class="num small">240 000 €</td></tr>
+      <tr><td class="dim">dont SDK B2B</td><td class="num small">8 000 €</td><td class="num small">100 000 €</td><td class="num small">390 000 €</td></tr>
+      <tr><td class="dim">dont Mugen Exchange</td><td class="num small">3 000 €</td><td class="num small">30 000 €</td><td class="num small">120 000 €</td></tr>
+
+      <tr><td class="bold red">Coûts totaux</td><td class="num red">102 200 €</td><td class="num red">276 600 €</td><td class="num red">432 000 €</td></tr>
+      <tr><td class="dim">dont personnel chargé</td><td class="num small">0 €</td><td class="num small">200 000 €</td><td class="num small">316 000 €</td></tr>
+      <tr><td class="dim">dont audit sécurité</td><td class="num small">80 000 €</td><td class="num small">30 000 €</td><td class="num small">30 000 €</td></tr>
+      <tr><td class="dim">dont trusted setup</td><td class="num small">8 000 €</td><td class="num small">0 €</td><td class="num small">0 €</td></tr>
+      <tr><td class="dim">dont infra</td><td class="num small">1 200 €</td><td class="num small">9 600 €</td><td class="num small">18 000 €</td></tr>
+      <tr><td class="dim">dont marketing</td><td class="num small">5 000 €</td><td class="num small">25 000 €</td><td class="num small">50 000 €</td></tr>
+      <tr><td class="dim">dont légal</td><td class="num small">8 000 €</td><td class="num small">12 000 €</td><td class="num small">18 000 €</td></tr>
+
+      <tr class="total">
+        <td class="bold">Résultat opérationnel</td>
+        <td class="num red">(91 200 €)</td>
+        <td class="num red">(98 600 €)</td>
+        <td class="num green">+318 000 €</td>
+      </tr>
+      <tr>
+        <td>Marge opérationnelle</td>
+        <td class="num small dim">n/a</td>
+        <td class="num small dim">n/a</td>
+        <td class="num small green">42,4%</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Trésorerie cumulée (avec levée de 400 K€ en Q4 2026)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th class="num">Encaissement</th>
+        <th class="num">Décaissement</th>
+        <th class="num">Trésorerie de fin</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Fin S2 2026</td><td class="num green">+411 000 €</td><td class="num red">(102 200 €)</td><td class="num cyan">308 800 €</td></tr>
+      <tr><td>Fin 2027</td><td class="num green">+178 000 €</td><td class="num red">(276 600 €)</td><td class="num cyan">210 200 €</td></tr>
+      <tr><td>Fin 2028</td><td class="num green">+750 000 €</td><td class="num red">(432 000 €)</td><td class="num cyan">528 200 €</td></tr>
+    </tbody>
+  </table>
+
+  <div class="highlight">
+    Break-even mensuel atteint courant <strong>S2 2027</strong> si scénario base tient.<br>Trésorerie jamais en zone rouge sur 24 mois avec une levée de 400 K€ bouclée fin Q4 2026.
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>5 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 6: BESOIN + ALLOCATION + ROADMAP ==================== -->
+<div class="page">
+  <div class="subtitle">05 &middot; Besoin de financement</div>
+  <h2><span class="num">05</span>300 à 500 K€, alloués sur 18 mois</h2>
+
+  <div class="grid-2" style="margin-top: 16px;">
+    <div class="card card-cyan">
+      <h4 style="color: var(--cyan);">Demande totale</h4>
+      <div style="font-family: 'Orbitron'; font-size: 26pt; font-weight: 700; color: var(--cyan); margin-top: 4px;">300 à 500 K€</div>
+      <p class="small muted" style="margin-top: 8px;">Cumul des résultats négatifs S2 2026 + 2027 (~190 K€) + marge de trésorerie de 100 K€ + marge de manœuvre opérationnelle.</p>
+    </div>
+    <div class="card card-pink">
+      <h4 style="color: var(--pink);">Structure visée</h4>
+      <p class="small" style="margin-top: 4px;">Round seed equity classique, dilutif 15 à 20% selon ticket final.<br>Founder à 71%, co-founder Marketing à 27%, pool advisors à 2%.<br>Calendrier : closing avant fin Q4 2026.</p>
+    </div>
+  </div>
+
+  <h3>Allocation des fonds (sur base 400 K€)</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Poste</th>
+        <th class="num">Montant</th>
+        <th class="num">Part</th>
+        <th>Pourquoi</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">Audit sécurité tiers</td><td class="num cyan">80 000 €</td><td class="num">20%</td><td class="small">Audit obligatoire avant mainnet. Choix entre OtterSec, Neodyme et Trail of Bits, devis comparatifs en cours.</td></tr>
+      <tr><td class="bold">Salaires founder + premier hire (12 mois)</td><td class="num cyan">200 000 €</td><td class="num">50%</td><td class="small">Founder 60 K€ brut, dev senior 75 K€ brut. Charges sociales incluses.</td></tr>
+      <tr><td class="bold">Trusted setup ceremony</td><td class="num cyan">8 000 €</td><td class="num">2%</td><td class="small">Coordination 3+ contributeurs externes, infra cérémonie, communication publique.</td></tr>
+      <tr><td class="bold">Infra production et RPC mainnet</td><td class="num cyan">10 000 €</td><td class="num">2,5%</td><td class="small">RPC Helius mainnet, Railway, monitoring renforcé.</td></tr>
+      <tr><td class="bold">Marketing, conférences, contenu</td><td class="num cyan">30 000 €</td><td class="num">7,5%</td><td class="small">Solana Breakpoint, conférences ZK Europe, contenus avec le co-founder Marketing.</td></tr>
+      <tr><td class="bold">Légal, IP, structuration</td><td class="num cyan">15 000 €</td><td class="num">3,75%</td><td class="small">Création SAS, conventions co-founder, contrats SDK, dépôts marque.</td></tr>
+      <tr><td class="bold">Trésorerie de sécurité</td><td class="num cyan">57 000 €</td><td class="num">14,25%</td><td class="small">Marge de 6 mois de runway minimum à tout moment.</td></tr>
+      <tr class="total"><td class="bold">Total</td><td class="num cyan">400 000 €</td><td class="num cyan">100%</td><td class="small dim"></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>6 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 7: ROADMAP + SENSIBILITÉ ==================== -->
+<div class="page">
+  <div class="subtitle">06 &middot; Roadmap et sensibilité</div>
+  <h2><span class="num">06</span>Calendrier des revenus, risques identifiés</h2>
+
+  <h3>Roadmap revenue</h3>
+  <table>
+    <thead>
+      <tr><th>Trimestre</th><th>Jalon</th><th class="num">Impact revenu</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold cyan">T3 2026</td><td>Création SAS, audit sécurité kick-off, premier pilote SDK signé</td><td class="num small muted">+5 K€</td></tr>
+      <tr><td class="bold cyan">T4 2026</td><td>Audit livré, trusted setup, mainnet beta, deuxième pilote SDK</td><td class="num small muted">+6 K€</td></tr>
+      <tr><td class="bold cyan">T1 2027</td><td>Mainnet GA, ouverture grand public Mugen Exchange</td><td class="num small muted">+30 K€</td></tr>
+      <tr><td class="bold cyan">T2 2027</td><td>5 clients SDK actifs, premier mois positif cash sur Mugen</td><td class="num small muted">+40 K€</td></tr>
+      <tr><td class="bold cyan">T4 2027</td><td>Break-even mensuel atteint si scénario base tient</td><td class="num small green">break-even</td></tr>
+      <tr><td class="bold cyan">2028</td><td>Croissance soutenue, préparation d'un éventuel round Series A</td><td class="num small green">+ 750 K€</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Sensibilité et risques</h3>
+  <table>
+    <thead>
+      <tr><th style="width: 20%;">Risque</th><th>Impact</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="bold red">Mainnet retardé</td>
+        <td class="small">Audit révèle une issue critique nécessitant un re-design partiel. Glissement de 3 à 6 mois, revenus 2027 divisés par deux.</td>
+        <td class="small cyan">Sprints de hardening 1 à 3 déjà livrés, environ 80% du code en posture audit-ready aujourd'hui.</td>
+      </tr>
+      <tr>
+        <td class="bold red">Adoption SDK</td>
+        <td class="small">Marché B2B SDK privacy peu validé sur Solana, peu de comparables monétisés.</td>
+        <td class="small cyan">4 marchands démo attestés on-chain, 2 pilotes Q4 2026 en qualification, prix d'entrée bas pour amorcer.</td>
+      </tr>
+      <tr>
+        <td class="bold red">Concurrentiel</td>
+        <td class="small">Acteur Ethereum reconnu (Aztec, Railgun, Penumbra) peut porter sa stack sur Solana en 6 à 9 mois.</td>
+        <td class="small cyan">Fenêtre 6 à 12 mois pour verrouiller intégrations B2B et installer la marque privacy de Solana.</td>
+      </tr>
+      <tr>
+        <td class="bold red">Founder solo</td>
+        <td class="small">Projet aujourd'hui dépendant d'une seule personne, risque de bus factor élevé.</td>
+        <td class="small cyan">Co-founder Marketing en recrutement, premier hire technique T1 2027 post-seed, code et docs publics depuis avril 2026.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>7 / 8</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 8: CAPITALISATION + CONTACT ==================== -->
+<div class="page">
+  <div class="subtitle">07 &middot; Capitalisation et contact</div>
+  <h2><span class="num">07</span>Cap table prévisionnelle</h2>
+
+  <h3>Capitalisation actuelle et prévue</h3>
+  <table>
+    <thead>
+      <tr><th>Étape</th><th class="num">Founder</th><th class="num">Co-founder Marketing</th><th class="num">Advisors</th><th class="num">Investisseurs</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">Création SAS (T3 2026)</td><td class="num cyan">100%</td><td class="num">0%</td><td class="num">0%</td><td class="num">0%</td></tr>
+      <tr><td class="bold">Trial co-founder (T3 2026)</td><td class="num cyan">98%</td><td class="num">2% (advisor)</td><td class="num">0%</td><td class="num">0%</td></tr>
+      <tr><td class="bold">Conversion full-time (T4 2026)</td><td class="num cyan">71%</td><td class="num">27%</td><td class="num">2%</td><td class="num">0%</td></tr>
+      <tr><td class="bold">Post round seed (T4 2026)</td><td class="num cyan">~58%</td><td class="num">~22%</td><td class="num">~2%</td><td class="num">15 à 20%</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted" style="margin-top: 4px;">Capital social prévu à la création : 1 000 € (formalité). Termes du trial co-founder précisés dans le document <span class="mono cyan">cofounder-profile.md</span> public sur le repo.</p>
+
+  <h3>Contact</h3>
+  <div class="grid-2">
+    <div class="card">
+      <p class="small muted mono">FONDATEUR</p>
+      <p class="bold">Ramy Chatbi &middot; Slashy</p>
+      <p class="small muted mono" style="margin-top: 10px;">EMAIL</p>
+      <p class="bold">amirramy.chatbi@gmail.com</p>
+    </div>
+    <div class="card">
+      <p class="small muted mono">SITE</p>
+      <p class="bold">protocol-01.dev</p>
+      <p class="small muted mono" style="margin-top: 10px;">GITHUB</p>
+      <p class="bold">github.com/IsSlashy/Protocol-01</p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 &middot; CONFIDENTIEL</span>
+    <span>8 / 8</span>
+  </div>
+</div>
+
+</body>
+</html>

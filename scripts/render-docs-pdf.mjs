@@ -65,6 +65,16 @@ const TARGETS = {
     docsPdf: resolve(DOCS, 'project-tree.pdf'),
     webPdf: null,
   },
+  plugstart: {
+    html: resolve(DOCS, 'pitch-deck-plugstart.html'),
+    docsPdf: resolve(DOCS, 'pitch-deck-plugstart.pdf'),
+    webPdf: null,
+  },
+  'plugstart-finance': {
+    html: resolve(DOCS, 'plan-financier-plugstart.html'),
+    docsPdf: resolve(DOCS, 'plan-financier-plugstart.pdf'),
+    webPdf: null,
+  },
 };
 
 const arg = process.argv[2];

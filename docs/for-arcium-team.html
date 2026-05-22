@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Protocol 01 · Arcium Integration Note</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --cyan-dim: rgba(57, 197, 187, 0.15);
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --green: #4ade80;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 10.5pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    padding: 18mm 22mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  h1, h2, h3, h4 { font-family: 'Orbitron', sans-serif; font-weight: 700; }
+  h2 { font-size: 20pt; letter-spacing: 0.04em; margin-bottom: 4px; color: var(--text); }
+  h2 .num {
+    display: inline-block;
+    margin-right: 14px;
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 400;
+    font-size: 14pt;
+    vertical-align: middle;
+  }
+  h3 { font-size: 12pt; letter-spacing: 0.03em; color: var(--cyan); margin-top: 14px; margin-bottom: 6px; }
+  h4 { font-size: 10pt; letter-spacing: 0.02em; color: var(--pink); margin-bottom: 4px; }
+
+  p { margin-bottom: 8px; }
+
+  .subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 18px;
+  }
+  .lead {
+    font-size: 11.5pt;
+    line-height: 1.55;
+    color: var(--text);
+    margin-top: 8px;
+    margin-bottom: 14px;
+    font-weight: 500;
+  }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .small { font-size: 9pt; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .green { color: var(--green); }
+  .red { color: var(--red); }
+  strong { color: var(--text); font-weight: 700; }
+
+  .page-footer {
+    position: absolute;
+    bottom: 10mm;
+    left: 22mm;
+    right: 22mm;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .card {
+    background: #151518;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .card-cyan { border-color: rgba(57, 197, 187, 0.3); background: #12211e; }
+  .card-pink { border-color: rgba(255, 119, 168, 0.3); background: #1f141a; }
+  .card-yellow { border-color: rgba(255, 204, 0, 0.3); background: #1c1a0e; }
+  .card-green { border-color: rgba(74, 222, 128, 0.3); background: #102018; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+    margin: 8px 0;
+  }
+  th {
+    text-align: left;
+    padding: 7px 9px;
+    background: rgba(57, 197, 187, 0.08);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 7px 9px;
+    border-bottom: 1px solid rgba(42, 42, 48, 0.5);
+    vertical-align: top;
+  }
+  ul { padding-left: 18px; margin: 6px 0 6px 0; }
+  li { margin-bottom: 4px; }
+
+  .stat-box {
+    text-align: center;
+    padding: 14px;
+    background: rgba(21, 21, 24, 0.5);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .stat-number {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 28pt;
+    color: var(--cyan);
+    line-height: 1;
+  }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  .kpi {
+    display: inline-block;
+    padding: 3px 9px;
+    background: rgba(57, 197, 187, 0.12);
+    border: 1px solid rgba(57, 197, 187, 0.3);
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    letter-spacing: 0.08em;
+    border-radius: 3px;
+    margin-right: 4px;
+  }
+  .kpi-pink { background: rgba(255, 119, 168, 0.12); border-color: rgba(255, 119, 168, 0.3); color: var(--pink); }
+  .kpi-yellow { background: rgba(255, 204, 0, 0.12); border-color: rgba(255, 204, 0, 0.3); color: var(--yellow); }
+  .kpi-green { background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.3); color: var(--green); }
+  .kpi-dim { background: rgba(80, 80, 92, 0.1); border-color: rgba(80, 80, 92, 0.3); color: var(--text-muted); }
+
+  .highlight {
+    background: rgba(57, 197, 187, 0.06);
+    border-left: 3px solid var(--cyan);
+    padding: 10px 14px;
+    margin: 10px 0;
+    font-size: 10.5pt;
+  }
+
+  .flow {
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 12px;
+    margin-bottom: 10px;
+    align-items: start;
+  }
+  .flow-num {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 22pt;
+    color: var(--cyan);
+    line-height: 1;
+    text-align: right;
+  }
+  .flow-title {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 10.5pt;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .flow-body {
+    font-size: 10pt;
+    color: var(--text-muted);
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    background: rgba(57, 197, 187, 0.08);
+    color: var(--cyan);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border) 20%, var(--border) 80%, transparent);
+    margin: 14px 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== COVER ==================== -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+
+  <div style="margin-bottom: 24px;">
+    <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 120pt; color: var(--cyan); line-height: 1; text-shadow: 0 0 40px rgba(57, 197, 187, 0.3);">01</div>
+    <div style="font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 24pt; letter-spacing: 0.15em; margin-top: -4px;">PROTOCOL</div>
+  </div>
+
+  <div style="width: 80px; height: 2px; background: linear-gradient(90deg, var(--cyan), var(--pink)); margin: 22px auto;"></div>
+
+  <div style="font-family: 'Orbitron'; font-weight: 700; font-size: 18pt; letter-spacing: 0.06em; margin-bottom: 10px;">
+    Arcium Integration Note
+  </div>
+  <p class="muted" style="max-width: 460px; font-size: 11pt;">
+    How Protocol 01 uses Arcium MPC, where it sits in the privacy stack, and how the on-chain flow stays inside Solana's transaction limits.
+  </p>
+
+  <div style="margin-top: 50px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; width: 78%;">
+    <div class="stat-box">
+      <div class="stat-number">9</div>
+      <div class="stat-label">MPC Circuits</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number">3</div>
+      <div class="stat-label">Wired In App</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number">12</div>
+      <div class="stat-label">Accounts / Queue</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="font-size: 22pt;">200B</div>
+      <div class="stat-label">Max Payload</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 60px; font-family: 'JetBrains Mono', monospace; font-size: 8.5pt; color: var(--text-dim); letter-spacing: 0.18em;">
+    PREPARED FOR THE ARCIUM TEAM · 2026-05-12
+  </div>
+</div>
+
+<!-- ==================== PAGE 1: WHY ==================== -->
+<div class="page">
+  <div class="subtitle">Section 01 · Why we picked Arcium</div>
+  <h2><span class="num">01</span>The gap that ZK doesn't fill</h2>
+
+  <p class="lead">
+    Protocol 01 is the privacy layer Solana doesn't have yet. The core of our stack is post-quantum ZK-STARKs, stealth addresses, and on-chain verification. That covers the cases where a single user proves a single statement about their own state. It does not cover what Arcium does.
+  </p>
+
+  <div class="grid-3" style="margin-top: 14px;">
+    <div class="card card-cyan">
+      <h4 class="cyan">ZK-STARKs</h4>
+      <p class="small muted">Winterfell, Poseidon over Goldilocks. Six AIRs verified on-chain in under 1.4M CU. Shield, unshield, transfer, balance, pool, Merkle update.</p>
+      <div style="margin-top: 8px;">
+        <span class="kpi">Solo prover</span>
+      </div>
+    </div>
+    <div class="card card-pink">
+      <h4 class="pink">Stealth addresses</h4>
+      <p class="small muted">X25519 plus ML-KEM-768 (NIST PQC). One-time addresses, sender-receiver unlinkable, post-quantum receive side.</p>
+      <div style="margin-top: 8px;">
+        <span class="kpi kpi-pink">Receive privacy</span>
+      </div>
+    </div>
+    <div class="card card-yellow">
+      <h4 class="yellow">Arcium MPC</h4>
+      <p class="small muted">Joint computation over N parties. Sealed inputs. Threshold reveal. Everything ZK alone cannot express cleanly.</p>
+      <div style="margin-top: 8px;">
+        <span class="kpi kpi-yellow">Multi-party</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="highlight">
+    We did not want to fake MPC with a trusted off-chain service, and we did not want to skip the multi-party use cases entirely. Arcium gave us a real path: secret shares over an actual network, threshold reveal, signed callbacks on Solana.
+  </div>
+
+  <h3>Where each primitive owns the problem</h3>
+
+  <table>
+    <thead>
+      <tr><th style="width: 28%;">Problem</th><th style="width: 24%;">Best primitive</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="cyan">User proves their own state</td>
+        <td class="mono small">ZK-STARK</td>
+        <td class="muted small">Single prover, single statement, single tx, verifier on-chain.</td>
+      </tr>
+      <tr>
+        <td class="pink">Recipient identity privacy</td>
+        <td class="mono small">Stealth</td>
+        <td class="muted small">Sender cannot guess the recipient's actual address. ECDH derivation.</td>
+      </tr>
+      <tr>
+        <td class="yellow">Inputs from N parties</td>
+        <td class="mono small">Arcium MPC</td>
+        <td class="muted small">No single party holds all inputs, so no single prover can produce a ZK proof.</td>
+      </tr>
+      <tr>
+        <td class="yellow">Sealed inputs after reveal</td>
+        <td class="mono small">Arcium MPC</td>
+        <td class="muted small">Only the aggregated result becomes public. Individual inputs stay encrypted forever.</td>
+      </tr>
+      <tr>
+        <td class="yellow">Threshold operations</td>
+        <td class="mono small">Arcium MPC</td>
+        <td class="muted small">N-of-M reveal. No single node ever recovers the plaintext.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>Protocol 01 · For the Arcium team</span>
+    <span>01 / 05</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 2: CIRCUITS ==================== -->
+<div class="page">
+  <div class="subtitle">Section 02 · What we built on top</div>
+  <h2><span class="num">02</span>Nine confidential computations, eight SDK modules</h2>
+
+  <p class="muted small" style="margin-bottom: 10px;">
+    One Solana program (<code>p01_arcium</code>, ~3.5k lines including encrypted instructions). One TypeScript SDK (<code>@protocol-01/arcium-sdk</code>, ~2400 lines, organised by use case rather than raw circuit). Every circuit has a typed queue plus callback pair, registered through <code>init_computation_definition_accounts</code>.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 22%;">Module</th>
+        <th style="width: 26%;">Arcium circuit</th>
+        <th>What it does</th>
+        <th style="width: 18%;">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="cyan">Relay</td>
+        <td class="mono small">threshold_decrypt</td>
+        <td class="muted small">N-of-M MPC nodes jointly decrypt and submit a Solana transaction. The user wallet never appears as the fee payer or as a signer on-chain.</td>
+        <td><span class="kpi kpi-green">Wired</span></td>
+      </tr>
+      <tr>
+        <td class="cyan">Nullifier</td>
+        <td class="mono small">nullifier_commit</td>
+        <td class="muted small">SHA3 commitment over a nullifier computed inside MPC. Prevents double-spend without revealing the actual nullifier value.</td>
+        <td><span class="kpi kpi-green">Wired</span></td>
+      </tr>
+      <tr>
+        <td class="cyan">Registry</td>
+        <td class="mono small">private_lookup</td>
+        <td class="muted small">Look up a meta-address without revealing which key is being queried, so RPC nodes cannot correlate the lookup.</td>
+        <td><span class="kpi kpi-green">Wired</span></td>
+      </tr>
+      <tr>
+        <td class="pink">Stealth</td>
+        <td class="mono small">register_viewing_key<br>stealth_scan_single</td>
+        <td class="muted small">Viewing keys stored under MPC. Scanning runs so that no single node ever reconstructs the viewing key in clear.</td>
+        <td><span class="kpi kpi-dim">SDK ready</span></td>
+      </tr>
+      <tr>
+        <td class="pink">Audit</td>
+        <td class="mono small">balance_audit<br>finalize_audit</td>
+        <td class="muted small">Confidential aggregation of many encrypted balances, then threshold reveal of just the total. Solvency proof without exposing individual balances.</td>
+        <td><span class="kpi kpi-dim">SDK ready</span></td>
+      </tr>
+      <tr>
+        <td class="pink">Governance</td>
+        <td class="mono small">private_vote<br>finalize_tally<br>(+ binary variants)</td>
+        <td class="muted small">Encrypted ballots, tally computed inside MPC, only the totals released. Binary variant optimised for yes-no votes.</td>
+        <td><span class="kpi kpi-dim">SDK ready</span></td>
+      </tr>
+      <tr>
+        <td class="pink">Auction</td>
+        <td class="mono small">sealed_bid_auction<br>finalize_auction</td>
+        <td class="muted small">Encrypted bid matching. Winner revealed by MPC. Losing bids stay confidential after settlement.</td>
+        <td><span class="kpi kpi-dim">SDK ready</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="grid-2" style="margin-top: 12px;">
+    <div class="card card-green">
+      <h4 class="green">Wired today</h4>
+      <p class="small muted">Three modules live behind an opt-in flag in the mobile app (<code>apps/mobile/services/arcium/</code> plus <code>arciumStore.mpcEnabled</code>). They meaningfully change the trust model of the wallet.</p>
+    </div>
+    <div class="card">
+      <h4 class="muted">SDK ready</h4>
+      <p class="small muted">Six circuit families ship as ready-to-call SDK modules but do not yet have a deployed UI caller. They are on the roadmap, not vaporware.</p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · For the Arcium team</span>
+    <span>02 / 05</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 3: FLOW + TX SIZE ==================== -->
+<div class="page">
+  <div class="subtitle">Section 03 · How the flow actually runs</div>
+  <h2><span class="num">03</span>Three phases, two transactions, one async pattern</h2>
+
+  <p class="muted small" style="margin-bottom: 10px;">
+    Every Arcium interaction follows the same shape. This is also the answer to the transaction-size question: nothing tries to fit submission, computation, and result into a single Solana tx.
+  </p>
+
+  <div class="flow">
+    <div class="flow-num">1</div>
+    <div>
+      <div class="flow-title">Submission (user-signed Solana tx)</div>
+      <div class="flow-body">
+        Client calls <code>ArciumClient.initialize()</code> to establish an x25519 shared secret with the MXE. It encrypts inputs with RescueCipher, picks a fresh 64-bit <code>computation_offset</code>, and invokes the matching queue instruction. The program CPIs into the Arcium runtime via <code>queue_computation(...)</code>.
+      </div>
+    </div>
+  </div>
+
+  <div class="flow">
+    <div class="flow-num">2</div>
+    <div>
+      <div class="flow-title">Off-chain MPC (no Solana tx)</div>
+      <div class="flow-body">
+        ARX nodes pick up the queued computation and run the circuit on secret shares. Cerberus guarantees that as long as at least one node is honest, no single node ever sees the plaintext inputs. Typically completes in a few seconds.
+      </div>
+    </div>
+  </div>
+
+  <div class="flow">
+    <div class="flow-num">3</div>
+    <div>
+      <div class="flow-title">Callback (Arcium-signed Solana tx)</div>
+      <div class="flow-body">
+        The cluster posts a callback transaction with a <code>SignedComputationOutputs&lt;T&gt;</code> payload. Our <code>*_callback</code> handler verifies the signature against <code>cluster_account</code> and <code>computation_account</code>, then emits a typed event or updates a PDA. The user decrypts revealed values locally.
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <h3>Transaction-size analysis</h3>
+
+  <p class="small muted">
+    Solana enforces 1232 bytes per serialised message and 64 unique accounts per tx (35 writable in v0). The Arcium queue instructions sit far below both limits.
+  </p>
+
+  <div class="grid-2" style="margin-top: 8px;">
+    <div class="card">
+      <h4 class="cyan">Accounts in a queue ix</h4>
+      <p class="small mono" style="color: var(--text-muted); line-height: 1.7;">
+        1. payer (signer, mut)<br>
+        2. sign_pda_account<br>
+        3. mxe_account<br>
+        4. mempool_account (mut)<br>
+        5. executing_pool (mut)<br>
+        6. computation_account (mut)<br>
+        7. comp_def_account<br>
+        8. cluster_account (mut)<br>
+        9. pool_account (mut, fixed)<br>
+        10. clock_account (mut, fixed)<br>
+        11. system_program<br>
+        12. arcium_program
+      </p>
+      <p class="small" style="margin-top: 8px;">
+        <span class="kpi kpi-green">12 / 64</span>
+        <span class="muted small">far below the ceiling</span>
+      </p>
+    </div>
+
+    <div class="card">
+      <h4 class="cyan">Data payload per submission</h4>
+      <table style="margin-top: 4px;">
+        <tr><td class="small muted">computation_offset</td><td class="small mono cyan">8 B</td></tr>
+        <tr><td class="small muted">ephemeral x25519 pubkey</td><td class="small mono cyan">32 B</td></tr>
+        <tr><td class="small muted">nonce (u128)</td><td class="small mono cyan">16 B</td></tr>
+        <tr><td class="small muted">encrypted blocks (1 to 5)</td><td class="small mono cyan">32 to 160 B</td></tr>
+        <tr><td class="small"><strong>Total ix data</strong></td><td class="small mono cyan"><strong>64 to 216 B</strong></td></tr>
+      </table>
+      <p class="small" style="margin-top: 8px;">
+        <span class="kpi kpi-green">~600 B / 1232 B</span>
+        <span class="muted small">full serialised tx, worst case</span>
+      </p>
+    </div>
+  </div>
+
+  <div class="card card-cyan" style="margin-top: 10px;">
+    <p class="small" style="color: var(--text);">
+      <strong class="cyan">Why this works.</strong>
+      <span class="muted">The submission and the callback are two separate transactions. The off-chain MPC happens between them. We never try to fit the whole computation into one tx, which is why the 1232-byte and 64-account limits stay theoretical concerns in our case. The largest observed real submission, with five encrypted arguments, lands around 400 bytes serialised.</span>
+    </p>
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · For the Arcium team</span>
+    <span>03 / 05</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 4: STATUS ==================== -->
+<div class="page">
+  <div class="subtitle">Section 04 · What is live, what is pending</div>
+  <h2><span class="num">04</span>Honest status</h2>
+
+  <p class="muted small" style="margin-bottom: 12px;">
+    We try not to overclaim. The wiring is real. The full per-circuit devnet validation pass is still in progress.
+  </p>
+
+  <h3 class="green">What works today</h3>
+  <div class="card card-green">
+    <ul class="small">
+      <li>The Rust program compiles. The encrypted instructions in <code>encrypted-ixs/src/lib.rs</code> build through the Arcium toolchain.</li>
+      <li>The TypeScript SDK is complete, builds green, exports all nine circuit families with typed wrappers.</li>
+      <li>The mobile app wires three modules (<span class="cyan">threshold_decrypt</span>, <span class="cyan">nullifier_commit</span>, <span class="cyan">private_lookup</span>) into user-facing flows behind an opt-in flag.</li>
+      <li>The previously deployed program ID on devnet, <code>9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ</code>, remains live and resolvable.</li>
+    </ul>
+  </div>
+
+  <h3 class="yellow">What is still in progress</h3>
+  <div class="card card-yellow">
+    <ul class="small">
+      <li>A per-circuit devnet validation pass with recorded transaction signatures for each callback is pending. The wiring exists; the public artifacts do not yet.</li>
+      <li><code>p01_arcium</code> is temporarily excluded from <code>[programs.devnet]</code> and <code>[programs.localnet]</code> in <code>Anchor.toml</code> (commits <code>70fbab9</code> and <code>2bc6b0f</code>, 2026-05-12). The devnet deployment is frozen at the program ID above and continues to run.</li>
+    </ul>
+  </div>
+
+  <h3 class="pink">Why <code>p01_arcium</code> is currently out of the CI build</h3>
+  <p class="small muted" style="margin-bottom: 8px;">
+    Three reasons stack. None of them are about the protocol design, they are toolchain integration items.
+  </p>
+  <div class="grid-3">
+    <div class="card card-pink">
+      <h4 class="pink">.arcis artifacts</h4>
+      <p class="small muted">Compiled circuit binaries (<code>.arcis</code>) are produced by the Arcium toolchain at build time and are not checked into git. CI does not yet run the Arcis compiler.</p>
+    </div>
+    <div class="card card-pink">
+      <h4 class="pink">Anchor program tables</h4>
+      <p class="small muted"><code>anchor build</code> walks the <code>[programs.*]</code> map independently of the Cargo workspace exclude rules, so simply removing the crate from the workspace did not unblock the whole-workspace build.</p>
+    </div>
+    <div class="card card-pink">
+      <h4 class="pink">SBF stack overflow</h4>
+      <p class="small muted"><code>arcium-client</code> 0.9.7 has a stack frame that overflows the 4 KB SBF stack limit, which blocked the SBF build of every other program in the workspace.</p>
+    </div>
+  </div>
+
+  <div class="highlight" style="margin-top: 14px;">
+    Resolution path: bring the Arcis compiler into our CI image, then re-enable <code>p01_arcium</code> in the Anchor program tables and run the full per-circuit validation pass. This is the next milestone on the Arcium side.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · For the Arcium team</span>
+    <span>04 / 05</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 5: CLOSING ==================== -->
+<div class="page">
+  <div class="subtitle">Section 05 · Closing</div>
+  <h2><span class="num">05</span>What we would like to learn from you</h2>
+
+  <p class="lead">
+    Protocol 01 is solo built (Volta Team, end of January 2026 to today). We picked Arcium deliberately, not as a checkbox. Six of the nine circuits are SDK-ready scaffolding for now because they belong on the roadmap, not to inflate a feature count. The three wired today are the ones that meaningfully change the trust model of the mobile app.
+  </p>
+
+  <div class="grid-2" style="margin-top: 14px;">
+    <div class="card card-cyan">
+      <h4 class="cyan">Where feedback would help most</h4>
+      <ul class="small muted">
+        <li>Arcis idioms for circuits we have not yet pushed to devnet, especially <code>stealth_scan_single</code> and the audit pair.</li>
+        <li>Best practice for integrating the Arcis compiler into a multi-program Anchor workspace CI.</li>
+        <li>Whether our 12-account queue layout matches what you would recommend, or if we are missing an idiomatic pattern.</li>
+      </ul>
+    </div>
+    <div class="card card-pink">
+      <h4 class="pink">What we are happy to share</h4>
+      <ul class="small muted">
+        <li>Full source for <code>p01_arcium</code> and the SDK modules.</li>
+        <li>Concrete numbers from devnet (CU usage, queue tx size, callback latency) once the validation pass is complete.</li>
+        <li>Any pattern that turned out useful when wrapping Arcium for a multi-platform client.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 18px;">Where to look in the repo</h3>
+  <table>
+    <tr><td class="mono small cyan" style="width: 38%;">programs/p01_arcium/src/lib.rs</td><td class="small muted">Program entrypoints, queue and callback pairs (lines 100 to 1430).</td></tr>
+    <tr><td class="mono small cyan">programs/p01_arcium/encrypted-ixs/</td><td class="small muted">The actual circuits in Arcis (687 lines).</td></tr>
+    <tr><td class="mono small cyan">packages/arcium-sdk/src/client.ts</td><td class="small muted">Encryption pipeline, ephemeral key rotation, PDA derivation.</td></tr>
+    <tr><td class="mono small cyan">packages/arcium-sdk/src/{module}/</td><td class="small muted">Eight typed wrappers (relay, nullifier, registry, audit, governance, auction, stealth, plus one not covered here).</td></tr>
+    <tr><td class="mono small cyan">apps/mobile/services/arcium/</td><td class="small muted">Live wiring for the three opt-in flows.</td></tr>
+  </table>
+
+  <div class="divider"></div>
+
+  <div style="text-align: center; margin-top: 22px;">
+    <div style="font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 13pt; color: var(--cyan); letter-spacing: 0.04em; margin-bottom: 6px;">
+      Thank you for reading
+    </div>
+    <p class="muted small" style="max-width: 460px; margin: 0 auto;">
+      If anything in this note reads wrong from the inside, we would rather hear it now than ship it. Feedback, integration hints, or a pointer toward the right Arcis idioms are very welcome.
+    </p>
+    <div style="margin-top: 22px; font-family: 'JetBrains Mono', monospace; font-size: 9pt; color: var(--text-muted); letter-spacing: 0.1em;">
+      protocol-01.dev · github.com/IsSlashy/Protocol-01
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · For the Arcium team</span>
+    <span>05 / 05</span>
+  </div>
+</div>
+
+</body>
+</html>
