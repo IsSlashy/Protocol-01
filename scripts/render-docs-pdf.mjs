@@ -75,6 +75,11 @@ const TARGETS = {
     docsPdf: resolve(DOCS, 'plan-financier-plugstart.pdf'),
     webPdf: null,
   },
+  onboarding: {
+    html: resolve(DOCS, 'onboarding-cryptography.html'),
+    docsPdf: resolve(DOCS, 'onboarding-cryptography.pdf'),
+    webPdf: null,
+  },
 };
 
 const arg = process.argv[2];
