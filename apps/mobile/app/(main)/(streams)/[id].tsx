@@ -47,6 +47,7 @@ import { withKeepAwake } from '../../../utils/keepAwakeDuring';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
 import OperationProgressBar from '@/components/ui/OperationProgressBar';
+import { LicenseKeyCard } from '@/components/LicenseKeyCard';
 
 /** Prefix used by vault-detail.tsx + subscriptionVaultStore to save the
  * subscriber secret in SecureStore, keyed by vault PDA. Must match. */
@@ -570,6 +571,18 @@ function DetailContent() {
             <View style={[st.statusDot, { backgroundColor: statusColor }]} />
             <Text style={[st.statusText, { color: statusColor }]}>{stream.status.toUpperCase()}</Text>
           </View>
+        </Animated.View>
+
+        {/* License key — persistent on-chain-derived access token, no PII */}
+        <Animated.View entering={FadeInDown.delay(40).duration(250)}>
+          <LicenseKeyCard
+            status={stream.status as 'active' | 'paused' | 'completed' | 'cancelled'}
+            streamId={stream.id}
+            serviceId={stream.serviceId}
+            serviceName={stream.serviceName || serviceInfo?.name}
+            vaultAddress={stream.vaultAddress}
+            walletPubkey={publicKey || undefined}
+          />
         </Animated.View>
 
         {/* Main amount card */}
