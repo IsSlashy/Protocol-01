@@ -132,7 +132,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
             pendingRequests.current.delete(id);
             reject(new Error('STARK proof generation timed out'));
           }
-        }, 60000); // 60s for larger proofs
+        }, 180000); // 180s — bumped from 60s 2026-05-23, circuit 1/3 on Nothing A001 was timing out
 
         pendingRequests.current.set(id, {
           resolve: (v: any) => { clearTimeout(timer); resolve(v); },
