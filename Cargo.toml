@@ -10,6 +10,7 @@ members = [
     "programs/p01_relayer",
     "programs/p01_stark_verifier",
     "programs/p01_quantum_vault",
+    "programs/p01_quantum_wallet",
     "programs/p01_registry",
     "programs/p01_bundler",
     "programs/p01_mugen",

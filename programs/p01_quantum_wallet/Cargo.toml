@@ -1,0 +1,46 @@
+[package]
+name = "p01_quantum_wallet"
+version = "0.1.0"
+description = "Protocol 01 - Quantum-safe smart-contract wallet. Funds are authorized by STARK proofs of preimage knowledge, with SPHINCS+ emergency recovery."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "p01_quantum_wallet"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+
+# SHA-256 syscall wrapper. Used for proof-buffer parsing, recovery payload
+# hashing, and (future) SPHINCS+ verify hot loop. On `target_os = "solana"`
+# this compiles to `sol_sha256` (~85 CU/call), ~20x cheaper than the `sha2`
+# crate compiled to BPF.
+solana-sha256-hasher = "2.3"
+
+# TODO(quantum-wallet#sphincs+): wire `slh-dsa = "=0.1.0"` for
+# `emergency_recover`. Blocked 2026-05-23 by a workspace-wide cargo
+# resolution conflict — slh-dsa 0.1.0 requires `signature >=2.3.0-pre.4`,
+# but `ed25519-dalek 2.1.0` (transitively pulled by `specter`) pins
+# `signature ^2.0`. Resolutions in order of preference:
+#   (a) bump `ed25519-dalek` workspace-wide so `signature 2.3+` is the only
+#       selected version (likely cascades into 3-4 other programs);
+#   (b) vendor `slh-dsa` into a local crate with the signature dep patched
+#       (~30 LOC fork);
+#   (c) gate SPHINCS+ behind a non-default cargo feature so this program
+#       remains buildable while we plan (a).
+# Either way, see `instructions/recover.rs` for the digest-adapter design.
+
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = [
+    'cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))',
+    'cfg(target_os, values("solana"))',
+]

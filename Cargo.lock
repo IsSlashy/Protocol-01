@@ -1287,6 +1287,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "p01_quantum_wallet"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "solana-sha256-hasher",
+]
+
+[[package]]
 name = "p01_registry"
 version = "0.1.0"
 dependencies = [
