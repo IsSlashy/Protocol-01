@@ -39,6 +39,11 @@ name = "gen_proof"
 path = "src/bin/gen_proof.rs"
 required-features = ["std"]
 
+[[bin]]
+name = "probe_ood"
+path = "src/bin/probe_ood.rs"
+required-features = ["std"]
+
 [dev-dependencies]
 rand = "0.8"
 hex = "0.4"

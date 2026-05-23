@@ -137,8 +137,8 @@ fn main() {
 
             let proof_data = p01_stark::compact::generate_compact_proof(secret);
             println!("{{");
-            println!("  \"secret\": {},", secret);
-            println!("  \"commitment\": {},", proof_data.commitment);
+            println!("  \"secret\": \"{}\",", secret);
+            println!("  \"commitment\": \"{}\",", proof_data.commitment);
             println!("  \"proof_size\": {},", proof_data.proof_bytes.len());
             println!("  \"proof_hex\": \"{}\"", hex::encode(&proof_data.proof_bytes));
             println!("}}");
