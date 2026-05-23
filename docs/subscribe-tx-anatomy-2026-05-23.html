@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Protocol 01 · Anatomy of a private subscribe</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 10pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    padding: 16mm 20mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+
+  h1, h2, h3, h4 { font-family: 'Orbitron', sans-serif; font-weight: 700; }
+  h1 { font-size: 24pt; letter-spacing: 0.02em; line-height: 1.1; }
+  h2 { font-size: 18pt; letter-spacing: 0.03em; margin-bottom: 4px; color: var(--text); }
+  h2 .num {
+    display: inline-block;
+    margin-right: 12px;
+    color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 400;
+    font-size: 13pt;
+    vertical-align: middle;
+  }
+  h3 { font-size: 12pt; letter-spacing: 0.02em; color: var(--cyan); margin-top: 14px; margin-bottom: 6px; }
+  h4 { font-size: 10.5pt; letter-spacing: 0.02em; color: var(--pink); margin-bottom: 3px; }
+
+  .subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8.5pt;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 16px;
+  }
+  .lead {
+    font-size: 11pt;
+    line-height: 1.5;
+    color: var(--text);
+    margin: 6px 0 12px;
+    font-weight: 500;
+  }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .small { font-size: 8.5pt; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .red { color: var(--red); }
+  strong { color: var(--text); font-weight: 700; }
+  em { color: var(--cyan-bright); font-style: normal; }
+
+  .page-footer {
+    position: absolute;
+    bottom: 8mm;
+    left: 20mm;
+    right: 20mm;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .card {
+    background: #151518;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .card-cyan { border-left: 3px solid var(--cyan); background: #12211e; }
+  .card-pink { border-left: 3px solid var(--pink); background: #1f141a; }
+  .card-yellow { border-left: 3px solid var(--yellow); background: #1c1a0e; }
+  .card-red { border-left: 3px solid var(--red); background: #1f0f13; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  ul { padding-left: 16px; margin: 4px 0; }
+  li { margin-bottom: 2px; font-size: 9.5pt; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin: 8px 0; }
+  th {
+    text-align: left;
+    padding: 6px 8px;
+    background: rgba(57, 197, 187, 0.08);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(42, 42, 48, 0.5);
+    vertical-align: top;
+  }
+
+  .actor-card {
+    background: #151518;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+  }
+  .actor-card .actor-num {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    background: var(--cyan);
+    color: var(--void);
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 800;
+    font-size: 11pt;
+    text-align: center;
+    line-height: 22px;
+    border-radius: 3px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  .actor-card .actor-role {
+    display: inline-block;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 11.5pt;
+    color: var(--text);
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+  }
+  .actor-card .actor-addr {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    color: var(--cyan);
+    background: var(--void);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    display: inline-block;
+    margin-top: 4px;
+    word-break: break-all;
+  }
+  .actor-card .role-tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    padding: 2px 6px;
+    background: rgba(255, 119, 168, 0.12);
+    border: 1px solid rgba(255, 119, 168, 0.3);
+    color: var(--pink);
+    border-radius: 3px;
+    margin-left: 6px;
+    letter-spacing: 0.06em;
+    vertical-align: middle;
+  }
+  .actor-card .hides {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(57, 197, 187, 0.05);
+    border-left: 2px solid var(--cyan);
+    border-radius: 2px;
+    font-size: 9pt;
+  }
+  .actor-card .leaks {
+    margin-top: 4px;
+    padding: 8px 10px;
+    background: rgba(255, 51, 102, 0.05);
+    border-left: 2px solid var(--red);
+    border-radius: 2px;
+    font-size: 9pt;
+  }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .stat {
+    text-align: center;
+    padding: 10px 6px;
+    background: rgba(21, 21, 24, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .stat-num {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 18pt;
+    color: var(--cyan);
+    line-height: 1;
+  }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .highlight {
+    background: linear-gradient(90deg, rgba(57, 197, 187, 0.08), transparent 90%);
+    border-left: 3px solid var(--cyan);
+    padding: 10px 14px;
+    margin: 10px 0;
+    font-size: 10pt;
+    line-height: 1.5;
+  }
+
+  pre {
+    background: var(--void);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--cyan);
+    border-radius: 3px;
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    line-height: 1.5;
+    overflow-x: hidden;
+    word-break: break-all;
+    white-space: pre-wrap;
+    margin: 6px 0;
+    color: var(--text-muted);
+  }
+  pre .cyan { color: var(--cyan); }
+  pre .pink { color: var(--pink); }
+  pre .yellow { color: var(--yellow); }
+
+  .timeline {
+    margin: 10px 0;
+  }
+  .timeline-step {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 10px;
+    margin-bottom: 8px;
+    align-items: start;
+  }
+  .timeline-step .ts-num {
+    width: 26px;
+    height: 26px;
+    background: var(--surface);
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 10pt;
+    text-align: center;
+    line-height: 24px;
+    border-radius: 50%;
+  }
+  .timeline-step .ts-body {
+    padding-top: 2px;
+  }
+  .timeline-step .ts-title {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 9.5pt;
+    color: var(--text);
+  }
+  .timeline-step .ts-desc {
+    font-size: 8.5pt;
+    color: var(--text-muted);
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+
+  .check-yes { color: var(--cyan); font-weight: 700; }
+  .check-no { color: var(--red); font-weight: 700; }
+  .check-partial { color: var(--yellow); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<!-- ==================== PAGE 1: COVER + TX RECEIPT ==================== -->
+<div class="page">
+  <div style="margin-top: 8mm;">
+    <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 72pt; color: var(--cyan); line-height: 1; text-shadow: 0 0 30px rgba(57, 197, 187, 0.3);">01</div>
+    <div style="font-family: 'Orbitron'; font-weight: 900; font-size: 16pt; letter-spacing: 0.15em; margin-top: -2px;">PROTOCOL</div>
+  </div>
+
+  <div style="width: 60px; height: 2px; background: linear-gradient(90deg, var(--cyan), var(--pink)); margin: 16px 0 24px;"></div>
+
+  <div class="subtitle">Anatomy of a private subscribe tx</div>
+  <h1>Who acts on this transaction,<br><span style="color: var(--cyan);">and how each one hides</span> what needs to be hidden.</h1>
+
+  <p class="lead" style="margin-top: 18px; max-width: 165mm;">
+    On May 23, 2026 at 17:05 GMT+1, a user subscribed to a private service through Protocol 01. The Solana transaction is public, finalized. Yet no observer (not the merchant, not an attacker, not even the relayer itself) knows <em>who</em> paid, <em>how much</em>, or <em>for which service</em>. Here is how.
+  </p>
+
+  <div class="card card-cyan" style="margin-top: 18px;">
+    <h4>Reference tx</h4>
+    <div class="mono small" style="word-break: break-all; color: var(--cyan-bright); margin-top: 4px;">
+      2sQJzSreFhtMZz9Y3HkYpfAFgLRNqPoDfkjFk8kpFhUnYXAiENtmXyY3fgjBGVGM5vpDDbTvbtxVu3WeRSQ7DeqR
+    </div>
+    <div class="small muted" style="margin-top: 6px;">
+      Devnet · Slot 464,392,604 · May 23, 2026 17:05:56 GMT+1 · Status: Success, Finalized
+    </div>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat">
+      <div class="stat-num">6</div>
+      <div class="stat-label">On-chain actors</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" style="color: var(--pink);">1</div>
+      <div class="stat-label">Instruction</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" style="color: var(--yellow);">18,533</div>
+      <div class="stat-label">Compute units</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" style="color: var(--cyan-bright);">0.000005</div>
+      <div class="stat-label">SOL fee</div>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 18px;">What to remember</h3>
+  <p style="font-size: 9.5pt; max-width: 170mm; color: var(--text);">
+    Only one instruction is visible: <span class="mono cyan">P01Relayer: SubmitJob</span>. Everything else (the STARK proof, the note commitment, the merchant identity, the subscriber identity) is <strong>encrypted in a Base64 payload</strong> that only the assigned relayer can decrypt, just-in-time. Nobody else can ever read it.
+  </p>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>1 / 5</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 2: THE BIG PICTURE ==================== -->
+<div class="page">
+  <div class="subtitle">01 · Big picture</div>
+  <h2><span class="num">01</span>Phase D · Confidential relay</h2>
+
+  <p class="lead">This tx is the <em>entry point</em> of the protocol. The subscribe itself (with its 80 KB STARK proof) will be executed <strong>later, by an assigned keeper</strong>, in a second tx that nobody can link back to you.</p>
+
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="ts-num">1</div>
+      <div class="ts-body">
+        <div class="ts-title">Mobile generates 2 STARK proofs on-device</div>
+        <div class="ts-desc">Circuit 0 (subscriber ownership) + Circuit 1 (pool commitment). About 12 s + 50 s on a Nothing A001. The spending key never leaves the phone.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">2</div>
+      <div class="ts-body">
+        <div class="ts-title">Mobile builds the full subscribe tx (~1.5 KB)</div>
+        <div class="ts-desc">Discriminator <span class="mono cyan">subscribe_private_stark</span>, merchant pubkey, fee escrow, STARK proof buffer reference, vk_hash subscriber. This tx is <em>never</em> published in cleartext.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">3</div>
+      <div class="ts-body">
+        <div class="ts-title">Mobile encrypts the tx for the relayer (ML-KEM 768 + AES-GCM)</div>
+        <div class="ts-desc">The encrypted payload (~1.4 KB) is readable <strong>only</strong> by the keypair of the assigned relayer. If the relayer loses its key, nobody can recover it.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">4</div>
+      <div class="ts-body">
+        <div class="ts-title">Ephemeral submitter POSTs to p01_relayer · <span class="cyan">THIS IS THE TX WE ANALYZE</span></div>
+        <div class="ts-desc">The submitter is a keypair generated on the fly for this tx only. It pays 0.000005 SOL of gas plus deposits 0.01 SOL into fee escrow for the keeper.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">5</div>
+      <div class="ts-body">
+        <div class="ts-title">Keeper DEjW41... decrypts the payload</div>
+        <div class="ts-desc">The keeper sees the subscribe tx in cleartext for <em>a few milliseconds</em>, just long enough to submit it on-chain. It does not know <strong>who</strong> is behind the ephemeral submitter.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">6</div>
+      <div class="ts-body">
+        <div class="ts-title">Keeper submits the real subscribe tx (2nd tx, within 1-2 min)</div>
+        <div class="ts-desc">This second tx contains the on-chain STARK verify plus the opening of the SubscriberVault. The signer of this tx is the <em>keeper</em>, not you. No graph link between your wallet and the subscribe.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="highlight" style="margin-top: 14px;">
+    <strong>The key insight</strong>: this tx does not contain the subscribe. It contains an <em>encrypted order</em> to subscribe. The subscribe itself is <em>decoupled in time and in signer</em> from your action.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>2 / 5</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 3: ACTORS 1-3 ==================== -->
+<div class="page">
+  <div class="subtitle">02 · Actors 1 to 3</div>
+  <h2><span class="num">02</span>Who signs, who pays, who holds the payload</h2>
+
+  <div class="actor-card">
+    <span class="actor-num">1</span>
+    <span class="actor-role">Submitter</span>
+    <span class="role-tag">SIGNER · FEE PAYER · WRITABLE</span>
+    <div class="actor-addr">94eNVrzobxDdrYkuukDkP2af8Udoo3TmWeYL8Cv7Rp3Z</div>
+    <p class="small muted" style="margin-top: 6px;">
+      Ephemeral keypair generated on the mobile, <strong>never reused</strong>. Receives just enough SOL from the user wallet to pay this tx (0.02 SOL), then burns. Off-chain, nothing ties it back to the user.
+    </p>
+    <div class="hides">
+      <strong class="cyan">What it HIDES</strong>: the user wallet identity. An on-chain observer sees <span class="mono">94eNVr…</span> as the gas payer but cannot trace back to the user wallet that funded the submitter (the funding can flow through a mixer, an exchange withdrawal, etc).
+    </div>
+    <div class="leaks">
+      <strong class="red">What it does NOT prevent</strong>: funding correlation. If the submitter is funded directly from your wallet in one hop, a graph analyzer can trace back. Mitigation: stealth funding via a Solana Pay link, or pre-funding through a mixer.
+    </div>
+  </div>
+
+  <div class="actor-card">
+    <span class="actor-num">2</span>
+    <span class="actor-role">Job PDA</span>
+    <span class="role-tag">WRITABLE · CREATED IN THIS TX · 1419 BYTES</span>
+    <div class="actor-addr">2jf5iVZWjrNNghjDnQMH7A6jh2JAsaQ9ZUeCwPVLohno</div>
+    <p class="small muted" style="margin-top: 6px;">
+      PDA derived from <span class="mono">["relay_job", job_id]</span> where job_id is a random 32-byte nonce generated on the mobile. Stores the encrypted payload (~1.4 KB) plus routing metadata.
+    </p>
+    <div class="hides">
+      <strong class="cyan">What it HIDES</strong>: the content of the subscribe tx. The <span class="mono yellow">Encrypted Tx</span> field is ~1.4 KB of unreadable base64 (ML-KEM 768 + AES-GCM, post-quantum). Nobody outside the assigned relayer can decrypt it, ever.
+    </div>
+    <div class="leaks">
+      <strong class="red">What it does NOT prevent</strong>: the payload size is observable (1419 bytes). An indexer can know <em>that</em> a privacy operation is happening, and roughly its size. Mitigation: uniform padding (Phase C v1) on STARK upload, to be extended to the relayer in Phase E.
+    </div>
+  </div>
+
+  <div class="actor-card">
+    <span class="actor-num">3</span>
+    <span class="actor-role">Assigned Relayer (Keeper PDA)</span>
+    <span class="role-tag">WRITABLE · STATE UPDATE</span>
+    <div class="actor-addr">DEjW41JAmTLTq5BwtNRBzvBwPL3RxPXPEhvyYLuyxdBR</div>
+    <p class="small muted" style="margin-top: 6px;">
+      PDA of the keeper assigned in the <span class="mono">p01_relayer</span> registry. Its ML-KEM keypair is published at registration time; this is the <em>public key</em> the mobile used to encrypt the payload in step 3.
+    </p>
+    <div class="hides">
+      <strong class="cyan">What it HIDES</strong>: the link between user wallet and subscribe tx. The keeper will sign the second tx (subscribe + STARK verify) on your behalf. On Solana, an observer sees <em>"the keeper subscribed someone"</em> and that is all. The keeper-side job queue introduces a non-deterministic delay (1 to 120 s), breaking timing correlation.
+    </div>
+    <div class="leaks">
+      <strong class="red">Trust assumption</strong>: the keeper sees the payload in cleartext for a few ms during submission. Current mitigation: multi-relayer registry, the mobile picks randomly among N active keepers. Future mitigation (Phase E): Intel SGX/TDX TEE so even the keeper never sees the cleartext.
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>3 / 5</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 4: ACTORS 4-6 ==================== -->
+<div class="page">
+  <div class="subtitle">03 · Actors 4 to 6</div>
+  <h2><span class="num">03</span>Who orchestrates, who validates, who transfers</h2>
+
+  <div class="actor-card">
+    <span class="actor-num">4</span>
+    <span class="actor-role">Config PDA</span>
+    <span class="role-tag">WRITABLE · 128 BYTES · REGISTRY STATE</span>
+    <div class="actor-addr">G4eABk8c8pAerK28ECvnXwGVmvUSQQVaERw3UL1B4kVZ</div>
+    <p class="small muted" style="margin-top: 6px;">
+      Singleton PDA of the <span class="mono">p01_relayer</span> program. Holds the list of registered keepers (their PDAs plus ML-KEM public keys plus last_active_slot for failover) and fee parameters.
+    </p>
+    <div class="hides">
+      <strong class="cyan">What it HIDES indirectly</strong>: the identity of the <em>chosen relayer</em>. The mobile picks randomly among active keepers read from this Config. An attacker watching one specific keeper only captures a subset of the global traffic.
+    </div>
+  </div>
+
+  <div class="actor-card">
+    <span class="actor-num">5</span>
+    <span class="actor-role">System Program</span>
+    <span class="role-tag">INFRASTRUCTURE</span>
+    <div class="actor-addr">11111111111111111111111111111111</div>
+    <p class="small muted" style="margin-top: 6px;">
+      The Solana System Program. Used here for two inner instructions: create the Job PDA (1419 bytes, 0.01077 SOL rent), then transfer 0.01 SOL from the submitter to the Job (fee escrow for the keeper).
+    </p>
+    <div class="hides">
+      <strong class="cyan">Privacy role</strong>: none. This is Solana plumbing. But note that <em>no instruction</em> in this tx touches a privacy custom program directly (zk_shielded, etc). Everything flows through the <span class="mono">p01_relayer</span> abstraction.
+    </div>
+  </div>
+
+  <div class="actor-card">
+    <span class="actor-num">6</span>
+    <span class="actor-role">P01 Relayer Program</span>
+    <span class="role-tag">PROGRAM · INVOKED</span>
+    <div class="actor-addr">2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW</div>
+    <p class="small muted" style="margin-top: 6px;">
+      The on-chain <span class="mono">p01_relayer</span> program we wrote. Receives the <span class="mono">SubmitJob</span> ix, validates the payload format, creates the Job PDA, and emits the <span class="mono">JobSubmittedEvent</span> with the assigned relayer, fee, and deadline.
+    </p>
+    <div class="hides">
+      <strong class="cyan">What it HIDES by design</strong>: nothing in this ix is in cleartext. Visible arguments are <span class="mono">job_id (32 random bytes)</span> plus <span class="mono">encrypted_tx (~1.4 KB encrypted)</span> plus routing metadata. No information about the subscriber, the merchant, the amount, or the STARK proof.
+    </div>
+    <div class="leaks">
+      <strong class="yellow">Published event</strong>: <span class="mono">JobSubmittedEvent</span> publishes the assigned relayer, the fee (10 M lamports = 0.01 SOL), and the deadline (slot 464,392,904). The fixed fee is fine; the deadline timing could help correlate with the keeper's second tx. Mitigation: randomized deadline in Phase E.
+    </div>
+  </div>
+
+  <div class="highlight" style="margin-top: 8px;">
+    <strong>Total</strong>: 6 visible actors, 0 privacy custom programs invoked directly, 0 leakage of the subscriber or merchant identity. Everything flows through the <span class="mono cyan">SubmitJob → Encrypted Payload</span> abstraction.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>4 / 5</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 5: PHASE A · SHIELD ==================== -->
+<div class="page">
+  <div class="subtitle">04 · Phase A · Before this tx</div>
+  <h2><span class="num">04</span>How the note was born · the shield deposit</h2>
+
+  <p class="lead">The note we are spending today was created weeks ago by a separate shield tx. The user deposited a fixed denomination of SOL into the public pool. From that moment on, the user holds a private claim to that SOL, identified only by a Poseidon hash.</p>
+
+  <h3>What happens in a shield tx</h3>
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="ts-num">1</div>
+      <div class="ts-body">
+        <div class="ts-title">Mobile generates a fresh note locally</div>
+        <div class="ts-desc">A 32-byte secret is sampled from a CSPRNG, then <span class="mono cyan">commitment = Poseidon(secret, leaf_index, denomination)</span> is computed in the WebView WASM module. Secret never leaves the device, stored in Android SecureStore (PBKDF2 600K rounds).</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">2</div>
+      <div class="ts-body">
+        <div class="ts-title">Mobile signs and sends a shield tx</div>
+        <div class="ts-desc">Calls <span class="mono cyan">zk_shielded::shield_denominated</span> with two ixs: (a) System Program transfers N SOL from the user wallet to the pool vault, (b) zk_shielded receives the commitment, inserts it as the next leaf in the Merkle tree, and updates the pool root.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">3</div>
+      <div class="ts-body">
+        <div class="ts-title">On-chain emits a LeafInserted event</div>
+        <div class="ts-desc">The event contains the commitment plus its leaf index. Other client devices use this event to reconstruct the Merkle path later, when they need to spend their own notes.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">4</div>
+      <div class="ts-body">
+        <div class="ts-title">After K confirmations the note is mature</div>
+        <div class="ts-desc">The client waits ~32 slots for the Merkle root to be stable (no reorg risk). After that, the note is spendable for any private operation: unshield, transfer, or subscribe.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top: 12px;">
+    <div class="card card-cyan">
+      <h4>What is PUBLIC on-chain</h4>
+      <ul class="small" style="margin-top: 4px;">
+        <li>The total deposits in the pool (vault balance)</li>
+        <li>The list of all commitments (anonymity set)</li>
+        <li>The current Merkle root and recent history</li>
+        <li>The fact that a wallet shielded at slot X</li>
+      </ul>
+    </div>
+    <div class="card card-pink">
+      <h4>What stays PRIVATE</h4>
+      <ul class="small" style="margin-top: 4px;">
+        <li>Which commitment belongs to which wallet</li>
+        <li>The secret behind any commitment</li>
+        <li>What the user will do with the note later</li>
+        <li>Any link between shield wallet and future spend wallet</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="highlight" style="margin-top: 10px;">
+    The anonymity set at this stage is <em>every other holder of a same-denomination note</em>. After 100 wallets shield 1 SOL each, your commitment is indistinguishable from 99 others.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>5 / 9</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 6: PHASE B · KEEPER EXECUTION ==================== -->
+<div class="page">
+  <div class="subtitle">05 · Phase B · After this tx</div>
+  <h2><span class="num">05</span>The keeper executes · the second tx, signed by the keeper</h2>
+
+  <p class="lead">Within 1 to 120 seconds of the SubmitJob, the assigned keeper picks up the encrypted payload, decrypts it, and submits the real subscribe tx on-chain. This is where the STARK proof is verified by the blockchain and the fund moves to the merchant.</p>
+
+  <h3>What happens in tx #2 (keeper-signed)</h3>
+  <div class="timeline">
+    <div class="timeline-step">
+      <div class="ts-num">1</div>
+      <div class="ts-body">
+        <div class="ts-title">Keeper polls its assigned Jobs queue</div>
+        <div class="ts-desc">Reads the Config PDA, finds the Job with its keeper PDA listed as <span class="mono">assigned_relayer</span>. Decrypts the payload with its ML-KEM private key. The decrypted blob is the full subscribe tx (~1.5 KB).</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">2</div>
+      <div class="ts-body">
+        <div class="ts-title">Keeper submits the on-chain STARK verify (ix 1 of tx #2)</div>
+        <div class="ts-desc"><span class="mono cyan">p01_stark_verifier::verify_stark_proof_v2</span> reads the previously uploaded ProofBuffer (circuit 1 = pool_commitment), runs FRI fold checks, Merkle proof checks, OOD constraints. About 1.3 M CU. On success, marks the buffer <span class="mono">verified=true</span>.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">3</div>
+      <div class="ts-body">
+        <div class="ts-title">Keeper invokes subscribe on zk_shielded (ix 2 of tx #2)</div>
+        <div class="ts-desc"><span class="mono cyan">zk_shielded::subscribe_private_stark</span> reads the verified ProofBuffer, checks the public inputs include a valid pool root + nullifier, ensures the nullifier PDA does not yet exist (no replay), then creates two new accounts in one atomic ix.</div>
+      </div>
+    </div>
+    <div class="timeline-step">
+      <div class="ts-num">4</div>
+      <div class="ts-body">
+        <div class="ts-title">Atomic state changes on success</div>
+        <div class="ts-desc"><strong>Nullifier PDA</strong> created at <span class="mono">["nullifier", nullifier_bytes]</span>: prevents double-spend forever. <strong>SubscriberVault PDA</strong> created at <span class="mono">["sub_vault", merchant, commitment]</span>: holds (service_id, subscriber_commitment, state=Active, period_start_slot). <strong>Pool vault → merchant fee escrow</strong>: the note's denomination is debited from the pool and credited to the merchant.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-cyan" style="margin-top: 8px;">
+    <h4>Crucially: the keeper signs, not you</h4>
+    <p class="small" style="margin-top: 4px;">
+      The fee payer and the sole signer of tx #2 is the keeper's PDA. On Solana Explorer, this second tx shows up as <em>"keeper subscribed someone to merchant M"</em>. There is no on-chain graph link between your wallet (which paid for tx #1 via an ephemeral submitter) and the actual subscribe. The merchant receives the SOL from the pool vault, never from a wallet that could identify you.
+    </p>
+  </div>
+
+  <div class="highlight" style="margin-top: 8px;">
+    The SubscriberVault stores only one field that ties to a user: <span class="mono cyan">subscriber_commitment: [u8; 32]</span>. That commitment is the Goldilocks field element from the STARK proof. It is a hash. The merchant never sees a wallet, a name, or an email.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>6 / 9</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 7: PHASE C · DISTRIBUTION & VALIDATION ==================== -->
+<div class="page">
+  <div class="subtitle">06 · Phase C · Distribution &amp; validation</div>
+  <h2><span class="num">06</span>The blockchain is the medium · both sides validate without revealing</h2>
+
+  <p class="lead">The license key is never <em>transmitted</em> between client and merchant. It is <em>derived</em> on each side from the same on-chain SubscriberVault state, by the same deterministic hash. The blockchain is the distribution channel by being a shared, immutable, public state.</p>
+
+  <h3>How both sides derive the same key from on-chain state</h3>
+<pre><code><span class="cyan">// Identical computation, run independently by client and merchant.</span>
+<span class="pink">license_key</span> = BLAKE3(
+  <span class="yellow">"p01-license-v1"</span>      <span class="cyan">// domain separator</span>
+  || vault_pda            <span class="cyan">// SubscriberVault PDA, 32 opaque bytes</span>
+  || service_id           <span class="cyan">// "disney-plus" from Service Registry</span>
+)[:15]                     <span class="cyan">// 120 bits of entropy</span>
+
+<span class="pink">display</span> = <span class="yellow">"P01-"</span> + crockford_base32(<span class="pink">license_key</span>).match(/.{4}/g).join(<span class="yellow">"-"</span>)
+<span class="cyan">// → "P01-XQ8B-3F2A-K7M5-9PRD-WCNT-Y4ZH"</span>
+</code></pre>
+
+  <h3>What each side validates · what each side reveals (nothing)</h3>
+  <div class="grid-2" style="margin-top: 4px;">
+    <div class="card card-cyan">
+      <h4>Client side</h4>
+      <ul class="small" style="margin-top: 4px;">
+        <li>Reads the SubscriberVault PDA from Solana (state, period bounds)</li>
+        <li>Re-derives the key on every render — no local storage</li>
+        <li>Shows it in the <span class="mono">LicenseKeyCard</span> component (shipped 2026-05-23, <span class="mono">apps/mobile/components</span>)</li>
+        <li><strong class="cyan">Reveals nothing</strong>: the displayed string is opaque without the vault PDA and the service salt</li>
+      </ul>
+    </div>
+    <div class="card card-cyan">
+      <h4>Merchant side</h4>
+      <ul class="small" style="margin-top: 4px;">
+        <li>Scans <span class="mono">getProgramAccounts(zk_shielded)</span> filtered by their merchant pubkey</li>
+        <li>For each active SubscriberVault, recomputes the expected key</li>
+        <li>Matches against the presented key (O(N) over active subs, &lt; 50 ms typical)</li>
+        <li><strong class="cyan">Reveals nothing</strong>: no oracle calls, no off-chain DB of subscribers, no PII handling</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>SDK · the merchant integration in one line</h3>
+<pre><code><span class="pink">import</span> { hasAccess } <span class="pink">from</span> <span class="yellow">'@protocol01/specter-sdk'</span>;
+
+<span class="cyan">// On every authenticated API call from the client:</span>
+<span class="pink">const</span> ok = <span class="pink">await</span> hasAccess(commitment, <span class="yellow">'disney-plus'</span>);
+<span class="pink">if</span> (!ok) <span class="pink">return</span> res.status(<span class="cyan">402</span>).json({ error: <span class="yellow">'subscription required'</span> });
+<span class="pink">return</span> res.json({ <span class="cyan">/* content */</span> });
+</code></pre>
+
+  <h3>What <span class="mono">hasAccess</span> does — pure on-chain, no tokens to issue</h3>
+  <ul class="small">
+    <li><strong class="cyan">Single on-chain read</strong>: <span class="mono">connection.getAccountInfo(SubscriberVault_PDA)</span>, derived from <span class="mono">[merchant_pubkey, commitment, service_id]</span>. Returns the vault, or <span class="mono">null</span>.</li>
+    <li><strong class="cyan">Decision</strong>: returns <span class="cyan">true</span> if <span class="mono">vault.state == Active</span> and the current slot is inside an active period. Else <span class="cyan">false</span>.</li>
+    <li><strong class="cyan">No token issuance</strong>: the SubscriberVault PDA <em>is</em> the credential. No JWT to sign, no session cookie to store, no off-chain database to maintain. The merchant's "session" lives entirely on Solana.</li>
+    <li><strong class="cyan">Optional cache</strong>: for perf, the merchant can cache <span class="mono">(commitment → vault.state)</span> in Redis with a 10-30 slot TTL. Pure speed-up — the system works without it.</li>
+  </ul>
+
+  <div class="highlight" style="margin-top: 8px;">
+    The NordVPN analogy in one sentence: <em>the user gets login credentials without revealing identity to the provider</em>. Here we go one step further. The merchant has zero off-chain durable state about users. Their "database" is Solana itself. Nothing to leak, nothing to hack, nothing to comply on under GDPR.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>7 / 9</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 8: LIFECYCLE STATE MACHINE ==================== -->
+<div class="page">
+  <div class="subtitle">07 · Lifecycle state machine</div>
+  <h2><span class="num">07</span>Active · paused · expired · deleted</h2>
+
+  <p class="lead">A subscription transitions through a four-state machine on-chain. The merchant's "ephemeral account" mirrors that state automatically — frozen on pause, deleted on expiry — without the merchant ever learning who the user is.</p>
+
+  <h3>State transitions · what each one triggers</h3>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 17%;">From → To</th>
+        <th style="width: 25%;">Trigger</th>
+        <th>On-chain effect</th>
+        <th style="width: 25%;">Merchant ephemeral account</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong class="cyan">Active → Paused</strong></td>
+        <td>Client signs <span class="mono">pause_private_stark</span> with a fresh circuit-0 STARK proof of ownership.</td>
+        <td>Vault.state = Paused. Pause slot stored to track elapsed time across the freeze.</td>
+        <td>Next <span class="mono">hasAccess</span> read returns <span class="cyan">false</span>. Access frozen instantly the moment the on-chain tx confirms. Any cached "active" entry on the merchant side ages out within 10-30 slots.</td>
+      </tr>
+      <tr>
+        <td><strong class="cyan">Paused → Active</strong></td>
+        <td>Client signs <span class="mono">resume_private_stark</span> with a fresh STARK proof.</td>
+        <td>Vault.state = Active. The period boundary rolls forward by the pause duration so the user gets back the time they paused.</td>
+        <td>Next <span class="mono">hasAccess</span> read returns <span class="cyan">true</span> again. Access resumes seamlessly on the very next API call.</td>
+      </tr>
+      <tr>
+        <td><strong class="yellow">Active → Expired</strong></td>
+        <td>Note balance &lt; next-period rate at the period boundary. Keeper detects and calls <span class="mono">close_expired_vault</span>.</td>
+        <td>Vault closed, PDA deleted. Residual rent refunded to a fresh shielded note (anonymity preserved). Last paid period fully honored before close.</td>
+        <td>Next <span class="mono">hasAccess</span> read returns <span class="cyan">null</span> (vault not found) → access refused. User invited to re-subscribe with a new note.</td>
+      </tr>
+      <tr>
+        <td><strong class="red">Active → Cancelled</strong></td>
+        <td>Client signs <span class="mono">cancel_private_stark</span> with a fresh STARK proof.</td>
+        <td>Residual lamports routed via <span class="mono">p01_relayer</span> RefundJob as a new shielded note. Vault closed in the same atomic flow.</td>
+        <td>Same as Expired: <span class="mono">hasAccess</span> returns <span class="cyan">null</span> → access refused.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>The merchant's "ephemeral account" is the vault PDA itself</h3>
+<pre><code><span class="cyan"># The merchant has no users table, no sessions table, no JWT signing key.</span>
+<span class="cyan"># Their only off-chain state is an optional cache, for performance only.</span>
+
+cache: dict[Commitment, VaultState] = {}  <span class="cyan"># Redis or in-memory, TTL ~10-30 slots</span>
+
+<span class="pink">def</span> hasAccess(commitment: bytes, service_id: str) -> bool:
+    vault = cache.get(commitment) <span class="pink">or</span> chain.read_vault(
+        SubscriberVault_PDA(merchant_pubkey, commitment, service_id)
+    )
+    <span class="pink">if</span> vault <span class="pink">is None</span>: <span class="pink">return False</span>     <span class="cyan"># Vault closed → access refused</span>
+    <span class="pink">if</span> vault.state != <span class="yellow">'Active'</span>: <span class="pink">return False</span>  <span class="cyan"># Paused/cancelled → frozen</span>
+    <span class="pink">if</span> now_slot() &gt;= vault.period_end: <span class="pink">return False</span>  <span class="cyan"># Period expired</span>
+    <span class="pink">return True</span>
+
+<span class="cyan"># NO name. NO email. NO card. NO wallet. NO IP. NO JWT. NO database.</span>
+<span class="cyan"># A merchant breach leaks: an optional cache of public on-chain state.</span>
+<span class="cyan"># Worth nothing.</span>
+</code></pre>
+
+  <h3>The expiry path · no renewal, no PII to delete</h3>
+  <p style="font-size: 9.5pt; line-height: 1.5;">
+    When the underlying note runs out of funds and the subscriber chose <em>no</em> auto-renewal, the keeper's cron job triggers <span class="mono cyan">close_expired_vault</span> at the next period boundary. The vault PDA is deleted, the rent is refunded as a fresh shielded note (anonymity preserved), and the merchant's reconciliation loop sees <span class="mono">[absent]</span> at the next tick and removes the row. <strong>No GDPR "right to be forgotten" process needed</strong> — there was never any personal data to forget.
+  </p>
+
+  <div class="highlight" style="margin-top: 10px;">
+    <strong>Client UX</strong>: the <span class="mono">LicenseKeyCard</span> on mobile (shipped 2026-05-23) reads <span class="mono">vault.state</span> live. Active = key shown vibrant. Paused = key greyed with a <span class="yellow">PAUSED</span> pill. Expired or Cancelled = card removed from the screen. The user always sees a key that matches the on-chain reality, with no manual refresh needed.
+  </div>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>8 / 9</span>
+  </div>
+</div>
+
+<!-- ==================== PAGE 9: SYNTHESIS ==================== -->
+<div class="page">
+  <div class="subtitle">08 · Synthesis</div>
+  <h2><span class="num">08</span>Who hides what · summary by data point</h2>
+
+  <p class="lead">Each row is a data point an attacker would want to correlate. Each column is an actor of the tx. Green means hidden, red means leak, yellow means partially hidden.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 30%;">Data point</th>
+        <th>Submitter</th>
+        <th>Job PDA</th>
+        <th>Keeper</th>
+        <th>Program</th>
+        <th>Native crypto</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>User wallet</strong></td>
+        <td><span class="check-yes">✓</span> broken</td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> stealth</td>
+      </tr>
+      <tr>
+        <td><strong>Merchant identity</strong></td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> encrypted</td>
+        <td><span class="check-no">×</span> sees cleartext</td>
+        <td><span class="check-yes">✓</span> never on-chain in clear</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><strong>Spent note (which one)</strong></td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> encrypted</td>
+        <td><span class="check-no">×</span> sees cleartext</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> nullifier + STARK ownership</td>
+      </tr>
+      <tr>
+        <td><strong>Note amount</strong></td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> encrypted</td>
+        <td><span class="check-no">×</span> sees cleartext</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> denominated pool, anonymity set N</td>
+      </tr>
+      <tr>
+        <td><strong>Spending key</strong></td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> never leaves the device</td>
+      </tr>
+      <tr>
+        <td><strong>STARK proof (80 KB)</strong></td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> encrypted in payload</td>
+        <td><span class="check-no">×</span> sees cleartext</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> zero-knowledge (no witness leak)</td>
+      </tr>
+      <tr>
+        <td><strong>IP / network metadata</strong></td>
+        <td><span class="check-yes">✓</span> mobile RPC is the client</td>
+        <td>—</td>
+        <td><span class="check-partial">~</span> keeper sees submitter IP (but ephemeral)</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><strong>Subscribe timing</strong></td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> queue introduces a 1-120 s delay</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><strong>Wallet → subscribe graph</strong></td>
+        <td><span class="check-yes">✓</span> 1 ephemeral hop</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> 2nd tx signed by keeper</td>
+        <td>—</td>
+        <td><span class="check-yes">✓</span> uncorrelated nullifier</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top: 14px;">Residual trust assumptions</h3>
+  <div class="grid-2">
+    <div class="card card-cyan">
+      <h4>Trust 1 · The keeper</h4>
+      <p class="small">The assigned keeper sees the payload in cleartext for a few ms. Mitigation: multi-relayer registry (mobile picks among N keepers), automatic failover, and roadmap TEE (Intel SGX/TDX) so even the keeper never sees the cleartext.</p>
+    </div>
+    <div class="card card-cyan">
+      <h4>Trust 2 · Solana validators</h4>
+      <p class="small">Same assumption as for any Solana tx. PoS, ~3000 active validators, supermajority finality. No extra trust specific to Protocol 01.</p>
+    </div>
+  </div>
+
+  <div class="highlight" style="margin-top: 12px; border-left-color: var(--pink); background: linear-gradient(90deg, rgba(255, 119, 168, 0.08), transparent 90%);">
+    <strong class="pink">VS Umbra (Arcium MPC + Groth16)</strong>: two trust assumptions on their side too, but heavier. (1) Arcium's MPC committee: if <em>t+1</em> nodes collude, the cleartext leaks (and the nodes are identified on-chain). (2) Groth16's trusted setup: the toxic waste of the ceremony compromises everything. On our side: transparent STARK (no ceremony) plus Goldilocks/Poseidon (no elliptic curves, therefore Shor-resistant).
+  </div>
+
+  <p style="margin-top: 12px; font-size: 9pt; color: var(--text-muted); text-align: center;">
+    Analyzed tx: <span class="mono cyan">2sQJzSre…RSQ7DeqR</span> · Slot 464,392,604 · Devnet · May 23, 2026
+  </p>
+
+  <div class="page-footer">
+    <span>Protocol 01 · Subscribe Anatomy</span>
+    <span>9 / 9</span>
+  </div>
+</div>
+
+</body>
+</html>

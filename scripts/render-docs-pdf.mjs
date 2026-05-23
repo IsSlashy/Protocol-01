@@ -80,6 +80,11 @@ const TARGETS = {
     docsPdf: resolve(DOCS, 'onboarding-cryptography.pdf'),
     webPdf: null,
   },
+  'subscribe-tx': {
+    html: resolve(DOCS, 'subscribe-tx-anatomy-2026-05-23.html'),
+    docsPdf: resolve(DOCS, 'subscribe-tx-anatomy-2026-05-23.pdf'),
+    webPdf: null,
+  },
 };
 
 const arg = process.argv[2];
