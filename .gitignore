@@ -16,6 +16,7 @@ PROMPT_RESTAURATION.md
 RESTORE_P01.bat
 restore_p01.ps1
 debug.keystore.backup
+*.keystore.*.bak
 %TEMP%*
 P01-Extension-*.zip
 *.zip
