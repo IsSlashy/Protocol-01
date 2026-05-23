@@ -24,13 +24,13 @@
 
 import {
   Connection,
-  Keypair,
   PublicKey,
   Transaction,
   ComputeBudgetProgram,
 } from '@solana/web3.js';
 import { buildWithdrawIx } from './index';
 import { AuthProofRecord } from './authProof';
+import type { WalletSigner } from './signer';
 
 export interface SendIntent {
   /** Stable client-generated id (uuid). */
@@ -48,13 +48,13 @@ export interface SendResult {
 export async function executeSend(args: {
   connection: Connection;
   intent: SendIntent;
-  ownerKeypair: Keypair;
+  signer: WalletSigner;
   authProof: AuthProofRecord;
   expectedNonce: bigint;
 }): Promise<SendResult> {
   const ix = buildWithdrawIx({
-    payer: args.ownerKeypair.publicKey,
-    ownerId: args.ownerKeypair.publicKey,
+    payer: args.signer.publicKey,
+    ownerId: args.signer.publicKey,
     recipient: args.intent.recipient,
     proofBuffer: args.authProof.proofBuffer,
     amount: args.intent.amountLamports,
@@ -66,10 +66,10 @@ export async function executeSend(args: {
     .add(ix);
   const { blockhash } = await args.connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = blockhash;
-  tx.feePayer = args.ownerKeypair.publicKey;
-  tx.partialSign(args.ownerKeypair);
+  tx.feePayer = args.signer.publicKey;
+  const signed = await args.signer.signTransaction(tx);
 
-  const sig = await args.connection.sendRawTransaction(tx.serialize(), {
+  const sig = await args.connection.sendRawTransaction(signed.serialize(), {
     skipPreflight: false,
     preflightCommitment: 'confirmed',
   });

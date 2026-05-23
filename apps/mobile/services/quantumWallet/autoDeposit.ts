@@ -14,9 +14,7 @@
 
 import {
   Connection,
-  Keypair,
   PublicKey,
-  SystemProgram,
   Transaction,
 } from '@solana/web3.js';
 import {
@@ -24,6 +22,7 @@ import {
   AUTO_DEPOSIT_TRIGGER_LAMPORTS,
   buildDepositIx,
 } from './index';
+import type { WalletSigner } from './signer';
 
 export interface AutoDepositResult {
   txSignature: string;
@@ -33,32 +32,31 @@ export interface AutoDepositResult {
 /** One-shot: if Ed25519 balance is above the trigger, sweep the surplus into
  *  the quantum wallet. Returns null if nothing to do.
  *
- *  `ownerKeypair` is the Ed25519 keypair that owns the lamports — used to
- *  sign the deposit. In production this lives in SecureStore. For Privy
- *  wallets we'd swap to a WalletSigner. */
+ *  `signer` abstracts over local Keypair vs Privy embedded wallet — the deposit
+ *  tx is signed by whichever wallet owns the Ed25519 lamports. */
 export async function autoDepositOnce(args: {
   connection: Connection;
-  ownerKeypair: Keypair;
+  signer: WalletSigner;
 }): Promise<AutoDepositResult | null> {
-  const balance = await args.connection.getBalance(args.ownerKeypair.publicKey, 'confirmed');
+  const balance = await args.connection.getBalance(args.signer.publicKey, 'confirmed');
   if (balance < AUTO_DEPOSIT_TRIGGER_LAMPORTS) return null;
 
   const surplus = balance - AUTO_DEPOSIT_KEEP_LAMPORTS;
   if (surplus <= 0) return null;
 
   const ix = buildDepositIx({
-    depositor: args.ownerKeypair.publicKey,
-    ownerId: args.ownerKeypair.publicKey,
+    depositor: args.signer.publicKey,
+    ownerId: args.signer.publicKey,
     amount: surplus,
   });
 
   const tx = new Transaction().add(ix);
   const { blockhash } = await args.connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = blockhash;
-  tx.feePayer = args.ownerKeypair.publicKey;
-  tx.partialSign(args.ownerKeypair);
+  tx.feePayer = args.signer.publicKey;
+  const signed = await args.signer.signTransaction(tx);
 
-  const sig = await args.connection.sendRawTransaction(tx.serialize(), {
+  const sig = await args.connection.sendRawTransaction(signed.serialize(), {
     skipPreflight: false,
     preflightCommitment: 'confirmed',
   });

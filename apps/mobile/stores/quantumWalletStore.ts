@@ -25,6 +25,7 @@ import { Buffer } from 'buffer';
 
 import { getConnection } from '../services/solana/connection';
 import { getKeypair } from '../services/solana/wallet';
+import { getCurrentWalletSigner } from '../services/quantumWallet/signer';
 import {
   buildInitQuantumWalletIx,
   buildDepositIx,
@@ -267,12 +268,11 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
         const commitmentFelt = await prover.computeCommitment(secret);
         const commitmentBytes = feltStringToCommitment(commitmentFelt);
 
-        // The Ed25519 keypair is the user's existing wallet — same identity
-        // as walletStore. We use its pubkey as `owner_id` (PDA seed material,
-        // NOT spending key).
-        const kp = await getKeypair();
-        if (!kp) throw new Error('Local Ed25519 keypair not found.');
-        const ownerId = kp.publicKey;
+        // The wallet signer (local Ed25519 or Privy) drives the init tx. The
+        // signer's publicKey becomes `owner_id` (PDA seed material, NOT a
+        // spending key — fund custody is the STARK proof).
+        const signer = await getCurrentWalletSigner();
+        const ownerId = signer.publicKey;
         const [walletPda] = getQuantumWalletPDA(ownerId);
 
         // TODO[sphincs+]: when slh-dsa wiring lands, gen a SPHINCS+ keypair
@@ -294,8 +294,8 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
           const { blockhash } = await conn.getLatestBlockhash('confirmed');
           tx.recentBlockhash = blockhash;
           tx.feePayer = ownerId;
-          tx.partialSign(kp);
-          const sig = await conn.sendRawTransaction(tx.serialize(), {
+          const signed = await signer.signTransaction(tx);
+          const sig = await conn.sendRawTransaction(signed.serialize(), {
             skipPreflight: false,
             preflightCommitment: 'confirmed',
           });
@@ -342,13 +342,11 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
 
         // Initial probe — sweep any standing balance right away.
         try {
-          const kp = await getKeypair();
-          if (kp) {
-            const res = await autoDepositOnce({ connection: conn, ownerKeypair: kp });
-            if (res) {
-              console.log(`[QuantumWallet] auto-deposit swept ${res.depositedLamports} lamports`);
-              await get().refreshOnChainState();
-            }
+          const signer = await getCurrentWalletSigner();
+          const res = await autoDepositOnce({ connection: conn, signer });
+          if (res) {
+            console.log(`[QuantumWallet] auto-deposit swept ${res.depositedLamports} lamports`);
+            await get().refreshOnChainState();
           }
         } catch (err: any) {
           console.warn('[QuantumWallet] initial auto-deposit failed:', err.message);
@@ -361,9 +359,8 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
           onChange: async (lamports) => {
             set({ ed25519BalanceLamports: lamports });
             try {
-              const kp = await getKeypair();
-              if (!kp) return;
-              const res = await autoDepositOnce({ connection: conn, ownerKeypair: kp });
+              const signer = await getCurrentWalletSigner();
+              const res = await autoDepositOnce({ connection: conn, signer });
               if (res) {
                 console.log(`[QuantumWallet] auto-deposit swept ${res.depositedLamports} lamports on change`);
                 await get().refreshOnChainState();
@@ -450,11 +447,13 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
             const next = get().pendingSends.find((p) => p.status === 'pending');
             if (!next) break;
             const conn = getConnection();
-            const kp = await getKeypair();
-            if (!kp) {
+            let signer;
+            try {
+              signer = await getCurrentWalletSigner();
+            } catch (err: any) {
               set((s) => ({
                 pendingSends: s.pendingSends.map((p) =>
-                  p.id === next.id ? { ...p, status: 'failed', error: 'No keypair' } : p,
+                  p.id === next.id ? { ...p, status: 'failed', error: err.message ?? 'No wallet signer' } : p,
                 ),
               }));
               continue;
@@ -473,7 +472,7 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
               if (state.cachedProofBufferB58 && state.cachedProofCommitmentFelt) {
                 const cached = {
                   proofBuffer: new PublicKey(state.cachedProofBufferB58),
-                  authority: kp.publicKey,
+                  authority: signer.publicKey,
                   verifiedAtSlot: state.cachedProofVerifiedAtSlot ?? 0,
                   commitmentFelt: state.cachedProofCommitmentFelt,
                 };
@@ -486,13 +485,7 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
                 record = await buildAndSubmitAuthProof({
                   prover,
                   secret,
-                  walletSigner: {
-                    publicKey: kp.publicKey,
-                    signTransaction: async (tx) => {
-                      tx.partialSign(kp);
-                      return tx;
-                    },
-                  },
+                  walletSigner: signer,
                   connection: conn,
                 });
                 set({
@@ -516,7 +509,7 @@ export const useQuantumWalletStore = create<QuantumWalletState>()(
                   recipient,
                   amountLamports: next.amountLamports,
                 },
-                ownerKeypair: kp,
+                signer,
                 authProof: record,
                 expectedNonce: BigInt(next.expectedNonce),
               });
@@ -581,12 +574,16 @@ export async function preProveQuantumAuth(prover: ProverHandle): Promise<void> {
   if (!state.initialized || !state.ownerIdB58 || !state.commitmentFelt) return;
   if (!prover.isReady) return;
   const conn = getConnection();
-  const kp = await getKeypair();
-  if (!kp) return;
+  let signer;
+  try {
+    signer = await getCurrentWalletSigner();
+  } catch {
+    return;
+  }
   if (state.cachedProofBufferB58) {
     const cached = {
       proofBuffer: new PublicKey(state.cachedProofBufferB58),
-      authority: kp.publicKey,
+      authority: signer.publicKey,
       verifiedAtSlot: state.cachedProofVerifiedAtSlot ?? 0,
       commitmentFelt: state.cachedProofCommitmentFelt ?? '',
     };
@@ -599,13 +596,7 @@ export async function preProveQuantumAuth(prover: ProverHandle): Promise<void> {
     const record = await buildAndSubmitAuthProof({
       prover,
       secret,
-      walletSigner: {
-        publicKey: kp.publicKey,
-        signTransaction: async (tx) => {
-          tx.partialSign(kp);
-          return tx;
-        },
-      },
+      walletSigner: signer,
       connection: conn,
     });
     useQuantumWalletStore.setState({

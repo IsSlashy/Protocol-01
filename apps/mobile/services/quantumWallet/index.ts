@@ -46,12 +46,19 @@ const D = {
   recover: Buffer.from([96, 6, 221, 204, 54, 90, 245, 254]),
 };
 
-/** Minimum lamports kept on the Ed25519 (owner_id) to pay future tx fees
- * (auto-deposit, etc). Anything above this gets swept into the quantum vault. */
-export const AUTO_DEPOSIT_KEEP_LAMPORTS = 5_000_000; // 0.005 SOL
+/** Minimum lamports kept on the Ed25519 (owner_id) to cover transient rent
+ * for STARK proof-buffer ops. Rent-exempt formula for 80076 bytes (circuit-0
+ * proof, PROOF_DATA_OFFSET + 79993 proof_size) = (80076 + 128) * 6960 lamports
+ * = 0.558 SOL. We keep 0.6 SOL with a small safety margin for tx fees + future
+ * UNIFORM_PROOF_SIZE (145 KB) headroom. Rent is refunded when the proof buffer
+ * closes after verify, so user funds aren't lost — just kept liquid for the
+ * next send. Re-tuned 2026-05-23 from 0.35 after observing 0x1 (InsufficientFunds)
+ * sim failures on init+resize at 0.35 SOL Ed25519 balance. */
+export const AUTO_DEPOSIT_KEEP_LAMPORTS = 600_000_000; // 0.6 SOL
 
-/** Minimum lamports on Ed25519 to trigger an auto-deposit at all. */
-export const AUTO_DEPOSIT_TRIGGER_LAMPORTS = 10_000_000; // 0.01 SOL
+/** Minimum lamports on Ed25519 to trigger an auto-deposit at all. Set just
+ * above the keep amount so we only sweep when there's a meaningful surplus. */
+export const AUTO_DEPOSIT_TRIGGER_LAMPORTS = 620_000_000; // 0.62 SOL
 
 // ---------------------------------------------------------------------------
 // PDAs
