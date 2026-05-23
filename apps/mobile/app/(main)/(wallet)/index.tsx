@@ -261,6 +261,40 @@ export default function WalletHomeScreen() {
           onPress={() => router.push('/(main)/(privacy)')}
         />
 
+        {/* Quantum Wallet CTA — new in v0.10 */}
+        <TouchableOpacity
+          onPress={() => router.push('/(main)/(wallet)/quantum')}
+          style={{
+            marginHorizontal: 20,
+            marginTop: 12,
+            backgroundColor: '#151518',
+            borderColor: 'rgba(57, 197, 187, 0.35)',
+            borderWidth: 1,
+            borderRadius: 16,
+            padding: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Open Quantum Wallet"
+        >
+          <View style={{
+            width: 44, height: 44, borderRadius: 22,
+            backgroundColor: 'rgba(57, 197, 187, 0.15)',
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Ionicons name="shield" size={22} color="#39c5bb" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Quantum Wallet</Text>
+            <Text style={{ color: '#888892', fontSize: 11, marginTop: 2 }}>
+              STARK-gated custody · post-quantum safe
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#39c5bb" />
+        </TouchableOpacity>
+
         {/* Assets — owned tokens only */}
         <AssetsList
           solBalance={formattedSolBalance}
