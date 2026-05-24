@@ -113,6 +113,32 @@ export default function ZkProgressOverlay({
   const isComplete = progressStep >= 100;
   const brighterColor = brighten(config.color, 0.4);
 
+  // Real-time sub-step fill: when progressMessage carries a fine-grained
+  // X/Y counter ("Resizing 5/11", "batch 3/8"), interpolate inside the
+  // current threshold band so the bar advances smoothly during long ops
+  // instead of pausing at a coarse step value (e.g. 35 → 55).
+  let displayPct = progressStep;
+  const subProgressMatch = progressMessage.match(/(\d+)\s*\/\s*(\d+)/);
+  if (subProgressMatch && !isComplete) {
+    const x = parseInt(subProgressMatch[1], 10);
+    const y = parseInt(subProgressMatch[2], 10);
+    if (y > 0 && x <= y) {
+      let stepEnd = 100;
+      let stepStart = 0;
+      for (let i = 0; i < stepThresholds.length; i++) {
+        if (progressStep < stepThresholds[i]) {
+          stepEnd = stepThresholds[i];
+          stepStart = i > 0 ? stepThresholds[i - 1] : 0;
+          break;
+        }
+      }
+      // Cap at stepEnd-1 so we never cross into the next step from sub-progress
+      // alone — the caller advancing progressStep is what unlocks the next band.
+      const interpolated = stepStart + (x / y) * (stepEnd - stepStart);
+      displayPct = Math.max(progressStep, Math.min(stepEnd - 1, interpolated));
+    }
+  }
+
   /**
    * Determine step state:
    * - 'done': progressStep >= threshold for this step
@@ -159,7 +185,7 @@ export default function ZkProgressOverlay({
           {/* Progress bar with gradient fill */}
           <View style={styles.barContainer}>
             <View style={styles.barTrack}>
-              <View style={[styles.barFillWrapper, { width: `${Math.min(progressStep, 100)}%` }]}>
+              <View style={[styles.barFillWrapper, { width: `${Math.min(displayPct, 100)}%` }]}>
                 <LinearGradient
                   colors={[config.color, brighterColor] as [string, string]}
                   start={{ x: 0, y: 0 }}
@@ -178,7 +204,7 @@ export default function ZkProgressOverlay({
                 />
               </View>
             </View>
-            <Text style={styles.percent}>{Math.round(progressStep)}%</Text>
+            <Text style={styles.percent}>{Math.round(displayPct)}%</Text>
           </View>
 
           {/* Status message */}

@@ -21,7 +21,8 @@ export function OperationProgressBar({
 }: OperationProgressBarProps) {
   const text = progress || '';
   const batchMatch = text.match(/batch\s+(\d+)\s*\/\s*(\d+)/i);
-  const resizeMatch = text.match(/resize|Resizing/i);
+  // Resize emits `Resizing proof buffer (X/Y)...` — same pattern, different verb.
+  const resizeXYMatch = text.match(/resiz[a-z]*\s+[^()]*\((\d+)\s*\/\s*(\d+)\)/i);
   const provingMatch = text.match(/proof|commitment|STARK/i);
 
   let current = 0;
@@ -32,8 +33,10 @@ export function OperationProgressBar({
     current = parseInt(batchMatch[1], 10);
     total = parseInt(batchMatch[2], 10);
     label = `Uploading proof · batch ${current}/${total}`;
-  } else if (resizeMatch) {
-    label = 'Resizing proof buffer';
+  } else if (resizeXYMatch) {
+    current = parseInt(resizeXYMatch[1], 10);
+    total = parseInt(resizeXYMatch[2], 10);
+    label = `Resizing proof buffer · ${current}/${total}`;
   } else if (provingMatch) {
     label = text;
   }
@@ -42,7 +45,23 @@ export function OperationProgressBar({
     label = `Step ${step.current}/${step.total} · ${label}`;
   }
 
-  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : (text ? 8 : 0);
+  // Bar fill: interpolate batch X/Y inside the current step's range so the
+  // fill advances smoothly across long sub-phases (e.g. 11-tx resize bursts,
+  // N-batch proof uploads). Falls back to coarse step.current/step.total
+  // when no sub-progress is parsed, and to an 8% idle hint when neither is
+  // available but a status string is present.
+  let pct = 0;
+  if (step && total > 0) {
+    const stepSpan = 100 / step.total;
+    const stepStart = (step.current - 1) * stepSpan;
+    pct = Math.min(100, Math.round(stepStart + (current / total) * stepSpan));
+  } else if (total > 0) {
+    pct = Math.min(100, Math.round((current / total) * 100));
+  } else if (step) {
+    pct = Math.min(100, Math.round((step.current / step.total) * 100));
+  } else if (text) {
+    pct = 8;
+  }
 
   const fill = (
     <View style={st.progressWrap}>

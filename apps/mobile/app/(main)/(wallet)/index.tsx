@@ -261,7 +261,10 @@ export default function WalletHomeScreen() {
           onPress={() => router.push('/(main)/(privacy)')}
         />
 
-        {/* Quantum Wallet CTA — new in v0.10 */}
+        {/* Quantum Wallet CTA — hidden for Dublin demo (scope-locked 2026-05-24).
+            PQ wallet send path still has issues (rent drain on retries, AUTO_DEPOSIT_KEEP).
+            Code kept for post-hackathon pickup. Re-enable by uncommenting. */}
+        {/*
         <TouchableOpacity
           onPress={() => router.push('/(main)/(wallet)/quantum')}
           style={{
@@ -294,6 +297,7 @@ export default function WalletHomeScreen() {
           </View>
           <Ionicons name="chevron-forward" size={18} color="#39c5bb" />
         </TouchableOpacity>
+        */}
 
         {/* Assets — owned tokens only */}
         <AssetsList
