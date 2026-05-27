@@ -12,8 +12,7 @@
  */
 
 import { PublicKey, Transaction } from '@solana/web3.js';
-import { getConnection } from '../solana/connection';
-import { getMpcClient, getArciumProgram, isMpcClientReady } from './mpcClient';
+import { isMpcClientReady } from './mpcClient';
 import { useArciumStore } from '../../stores/arciumStore';
 
 export interface RelayJobResult {
@@ -57,29 +56,28 @@ export async function confidentialRelay(
 }
 
 /**
- * MPC threshold relay — N nodes jointly decrypt the TX.
+ * MPC threshold relay — Phase D Alt 1 (recipient-only sidecar).
+ *
+ * The legacy maximal-design (encrypt the full serialized TX, let MPC
+ * decrypt + broadcast) was replaced on 2026-05-27 by the Alt 1 model
+ * that encrypts ONLY the recipient pubkey and keeps the rest of the
+ * unshield flowing through the existing Phase A `p01_relayer`. The
+ * new SDK API requires the caller to coordinate two ix submissions
+ * (Phase A submit_job + Phase D submit_confidential_relay) — a
+ * restructuring of this mobile call-site, tracked in D.6.
+ *
+ * For now: surface a clear error so the standard fallback path
+ * activates. mpcEnabled can stay on; this just routes through the
+ * trusted single-relayer until the Alt 1 mobile wiring lands.
+ *
+ * @internal Migration tracked in docs/phase-d-orchestration-decision.md
  */
 async function mpcRelay(
-  serializedTx: Uint8Array,
-  feeLamports?: bigint
+  _serializedTx: Uint8Array,
+  _feeLamports?: bigint
 ): Promise<RelayJobResult> {
-  const client = await getMpcClient();
-  const program = await getArciumProgram();
-  if (!client || !program) throw new Error('MPC client not ready');
-
-  const { relayTransaction: sdkRelay } = await import('@protocol-01/arcium-sdk');
-
-  // Get a deadline ~100 slots from now (~40 seconds)
-  const connection = getConnection();
-  const slot = await connection.getSlot('confirmed');
-  const deadlineSlot = BigInt(slot) + 100n;
-  const fee = feeLamports ?? 10_000_000n; // Default 0.01 SOL
-
-  const result = await sdkRelay(client, program, serializedTx, fee, deadlineSlot);
-
-  return {
-    signature: result.relayedTxSignature || result.signature,
-    feePaid: result.feePaid,
-    wasMpcProtected: true,
-  };
+  throw new Error(
+    'MPC confidential relay is being migrated to Phase D Alt 1 (recipient-only). ' +
+    'Mobile wiring lands in a follow-up; falling back to standard relayer.'
+  );
 }

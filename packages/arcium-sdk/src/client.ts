@@ -60,6 +60,8 @@ export const CIRCUITS = {
   STEALTH_SCAN: 'stealth_scan',
   /** Confidential relay -- threshold TX decryption and submission. */
   THRESHOLD_DECRYPT: 'threshold_decrypt',
+  /** Phase D Alt 1 -- recipient-only threshold decrypt for confidential relay. */
+  DECRYPT_RECIPIENT: 'decrypt_recipient',
   /** Sealed-bid auction -- encrypted bid comparison (submit phase). */
   SEALED_BID_AUCTION: 'sealed_bid_auction',
   /** Sealed-bid auction -- finalization and winner reveal. */

@@ -13,14 +13,14 @@
 export { ArciumClient, P01_ARCIUM_PROGRAM_ID, ARCIUM_CLUSTER_OFFSET, CIRCUITS } from './client';
 export type { ArciumClientConfig, EncryptedPayload, ComputationResult, CircuitName } from './client';
 
-// ── UC1: Confidential Relay -- threshold TX decryption ─────────────────────
+// ── UC1: Confidential Relay -- Phase D Alt 1 (recipient-only) ─────────────
 export {
   submitConfidentialRelayJob,
-  awaitRelayCompletion,
-  relayTransaction,
+  awaitRecipientDecryption,
+  relayRecipient,
   getRelayJobAddress,
 } from './relay';
-export type { ConfidentialRelayJob, RelayResult } from './relay';
+export type { ConfidentialRelayJob, DecryptedRecipient } from './relay';
 
 // ── UC2: Anonymous Registry Lookup -- private meta-address query ───────────
 export { privateLookup, getRegistryAddress } from './registry';
