@@ -69,14 +69,39 @@ The trust assumption added by Path B vs Path A (hypothetical) is: a competent ec
 
 ## Decision
 
-**Path B — off-chain executor with on-chain `RelayJobReady` event.**
+**Path B (off-chain executor) — scoped down to "recipient-only MPC" (Alt 1, 2026-05-27 pivot).**
 
-This is the only path that:
-- Preserves Phase D's privacy property today
-- Doesn't depend on the delayed `p01_quantum_wallet` (Sprint 4)
-- Fits inside the existing Sprint 3 infrastructure (relayer worker, heartbeat, reputation)
+Initial design encrypted the full inner unshield (~800B → ~13 MPC calls per submit). On reflection that:
+1. Adds a non-PQ layer (Arcium MXE uses x25519 ephemeral, classical ECC) over a system whose privacy story is post-quantum via STARK Goldilocks. Wrapping a PQ-safe payload in a non-PQ envelope is a regression of the PQ claim.
+2. Yields a marginal privacy gain — the executor still learns the recipient at broadcast time. Without `p01_quantum_wallet` (Sprint 4, delayed), the fee payer Ed25519 irreducible remains.
+3. Adds 35-58h of work for that marginal gain.
 
-Trust model gets honestly documented as part of D.6 / D.7: privacy of depositor ↔ recipient link holds iff MPC threshold honest AND executor pool diverse OR user broadcasts the decrypted event themselves.
+**Revised scope — Phase D Alt 1:** encrypt only the 32-byte recipient pubkey, not the whole inner tx. Everything else (amount, nullifier, root, STARK proof) keeps flowing through the existing `p01_relayer` (Phase A, shipped). The MPC sidecar's only job is to deliver the recipient just-in-time to the relayer worker.
+
+**Flow:**
+1. Client generates STARK proof with recipient as private (Poseidon-committed) input.
+2. Client encrypts the 32-byte recipient pubkey to the MXE cluster pubkey.
+3. Client submits two ixs (same tx or separate):
+   - `p01_relayer::submit_job` carrying the plaintext payload (amount, nullifier, root, proof).
+   - `p01_arcium::submit_confidential_relay` carrying `encrypted_recipient: [u8; 32] × 4` (one `TxChunk` worth — recipient is 4 × u64) plus a `relayer_job_id` link.
+4. `submit_confidential_relay` queues **one** `queue_computation(threshold_decrypt)` on the recipient `TxChunk`.
+5. Callback `confidential_relay_callback` extracts the first 4 u64 of the decrypted `TxChunk`, repacks them into 32 bytes, emits `RecipientDecrypted { relayer_job_id, recipient_bytes }`. The trailing 4 u64 of the `TxChunk` are unused (zero-padded by client).
+6. The existing `services/relayer` worker subscribes to `RecipientDecrypted`, joins it against the `RelayerJob` PDA's plaintext payload it already holds, constructs the unshield tx with the now-known recipient, broadcasts.
+
+**What this preserves:**
+- Recipient hidden from the relayer service until MPC threshold-decrypts.
+- Existing Phase A infra (multi-relayer registry, heartbeat, reputation decay, failover) keeps working — Phase D Alt 1 is a sidecar, not a replacement.
+- STARK Goldilocks PQ story for the spent note + spend authority is untouched.
+
+**What this gives up vs the original Phase D maximal design:**
+- The rest of the unshield bytes (~800B) are still observable to the relayer node. The depositor↔recipient link via `p01_relayer` (Phase A) was already broken pre-Phase-D, so what remains is: relayer sees amount + nullifier (already public on-chain post-unshield) + the recipient now hidden until MPC decrypt.
+
+**Trust model documented honestly:**
+- Pre-MPC: recipient hidden from relayer node, MPC threshold protects against single-node compromise on the recipient.
+- Post-MPC: recipient becomes visible to the executor that broadcasts (necessary for the unshield to land). If executor = relayer node (typical), the relayer node learns the recipient one step before broadcast.
+- The 32-byte MXE encryption uses x25519 ephemeral → not post-quantum on the recipient field during the in-flight window. Documented as a known limitation pending Arcium PQ keys or Sprint 4 quantum wallet.
+
+**This is no longer Path B vs Path A. It's "minimal MPC sidecar over Phase A".** Path A's on-chain CPI forwarder problem (recipient in callback accounts) doesn't even arise here because the on-chain callback only emits the recipient via event — no CPI to the unshield is attempted.
 
 ## Implementation impact on D.2 → D.8
 
