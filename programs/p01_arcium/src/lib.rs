@@ -1308,40 +1308,35 @@ pub mod p01_arcium {
     /// jointly decrypts and an off-chain executor (or a future on-chain
     /// threshold-EdDSA verifier) submits the relayed tx.
     ///
+    /// Phase D Alt 1 — recipient-only confidential relay sidecar.
+    ///
+    /// Initializes a `RelayJob` PDA storing the X25519-encrypted recipient
+    /// pubkey (4 × 32-byte ciphertexts = 4 encrypted u64 fields = the 32
+    /// plaintext bytes of a Pubkey). Pairs with a Phase A
+    /// `p01_relayer::RelayJob` identified by `relayer_job_id` that carries
+    /// the rest of the unshield payload in plaintext.
+    ///
     /// **Args**:
     /// - `computation_offset`: Arcium MPC computation offset (also the seed
-    ///   suffix for the RelayJob PDA — matches SDK derivation).
-    /// - `ciphertexts`: per-chunk MXE-encrypted payload (each chunk = 32B
-    ///   encrypted from 8B plaintext). At most `RelayJob::MAX_CHUNK_COUNT`.
+    ///   suffix for the `RelayJob` PDA — matches SDK derivation).
+    /// - `encrypted_recipient`: 4 X25519-encrypted u64 chunks of the
+    ///   32-byte recipient pubkey, little-endian.
     /// - `encryption_pubkey`: SDK-generated X25519 ephemeral pubkey.
     /// - `nonce`: 16-byte AEAD nonce, encoded as u128 LE.
+    /// - `relayer_job_id`: PDA of the matching Phase A relayer job.
     /// - `fee`: lamports offered to the relayer cluster.
     /// - `deadline_slot`: Solana slot after which a permissionless GC may
-    ///   refund rent + fee to `submitter`.
-    /// - `original_tx_len`: unpadded length of the serialized inner tx, so
-    ///   the executor can trim the trailing zero-padding from the last chunk.
+    ///   refund rent + fee to `submitter` via `expire_relay_job`.
     pub fn submit_confidential_relay(
         ctx: Context<SubmitConfidentialRelay>,
         _computation_offset: u64,
-        ciphertexts: Vec<[u8; 32]>,
+        encrypted_recipient: [[u8; 32]; 4],
         encryption_pubkey: [u8; 32],
         nonce: u128,
+        relayer_job_id: Pubkey,
         fee: u64,
         deadline_slot: u64,
-        original_tx_len: u32,
     ) -> Result<()> {
-        let chunk_count = ciphertexts.len();
-        require!(chunk_count > 0, ErrorCode::InvalidRelayPayload);
-        require!(
-            chunk_count <= RelayJob::MAX_CHUNK_COUNT as usize,
-            ErrorCode::RelayPayloadTooLarge
-        );
-        // 8 plaintext bytes per ciphertext — `original_tx_len` must fit.
-        require!(
-            (original_tx_len as usize) <= chunk_count * 8,
-            ErrorCode::InvalidRelayPayload
-        );
-
         let clock = Clock::get()?;
         require!(
             deadline_slot > clock.slot,
@@ -1351,39 +1346,35 @@ pub mod p01_arcium {
         let job = &mut ctx.accounts.relay_job;
         job.submitter = ctx.accounts.payer.key();
         job.status = RelayJobStatus::Pending;
-        job.chunk_count = chunk_count as u16;
-        job.chunks_decrypted = 0;
+        job.relayer_job_id = relayer_job_id;
+        job.encrypted_recipient = encrypted_recipient;
+        job.decrypted_recipient = [0u8; 32];
         job.encryption_pubkey = encryption_pubkey;
         job.nonce = nonce;
-        job.original_tx_len = original_tx_len;
         job.fee = fee;
         job.deadline_slot = deadline_slot;
         job.posted_at_slot = clock.slot;
         job.bump = ctx.bumps.relay_job;
-        job.encrypted_chunks = ciphertexts;
 
         emit!(ConfidentialRelayJobSubmitted {
             job: job.key(),
             submitter: job.submitter,
-            chunk_count: job.chunk_count,
+            relayer_job_id,
             fee,
             deadline_slot,
             posted_at_slot: clock.slot,
         });
 
-        // TODO(phase-d-orchestration):
-        //   1. queue_computation(threshold_decrypt) for each chunk OR a batch
-        //      circuit that decrypts all N at once. Per-chunk approach is
-        //      simpler but linear-cost; batch needs a new MXE circuit.
-        //   2. callback updates `chunks_decrypted` and transitions status to
-        //      `Decrypted` when `chunks_decrypted == chunk_count`.
-        //   3. Decide submission path: (a) on-chain threshold-EdDSA verifier
-        //      (no Solana primitive — needs custom verification gadget) OR
-        //      (b) emit a `RelayJobReady` event carrying the decrypted bytes
-        //      for an off-chain Arcium executor to forward.
-        // Until the orchestration ships, the SDK's `awaitRelayCompletion`
-        // will time out — the SDK should detect a `Pending` status > X
-        // seconds and surface a clear "MPC orchestration not deployed" error.
+        // TODO(D.4 — MPC wiring):
+        //   queue_computation(COMP_DEF_DECRYPT_RECIPIENT) on the 4 encrypted
+        //   u64s. Callback `decrypt_recipient_callback` will populate
+        //   `relay_job.decrypted_recipient`, transition status to Decrypted,
+        //   and emit `RecipientDecrypted` for the off-chain executor.
+        //
+        //   Pending wiring: the SDK's `awaitRelayCompletion` will see status
+        //   = Pending past a threshold and surface "MPC orchestration not
+        //   yet deployed". Once D.4 ships, the Pending → Decrypted
+        //   transition happens automatically after one MPC call.
 
         Ok(())
     }
@@ -2656,9 +2647,9 @@ pub struct MugenCancelOfferCallback<'info> {
 // Phase D — Confidential Relay accounts + event
 // ============================================================================
 
-/// Accounts for `submit_confidential_relay`. The relay_job PDA is keyed
-/// by the same `computation_offset` the SDK uses for the matching Arcium
-/// MPC computation, so callers can find it deterministically.
+/// Accounts for `submit_confidential_relay` (Phase D Alt 1 — recipient-only).
+/// The `relay_job` PDA is keyed by `computation_offset` so the SDK can derive
+/// it deterministically and the MPC callback can resolve the same address.
 #[derive(Accounts)]
 #[instruction(computation_offset: u64)]
 pub struct SubmitConfidentialRelay<'info> {
@@ -2668,13 +2659,7 @@ pub struct SubmitConfidentialRelay<'info> {
     #[account(
         init,
         payer = payer,
-        // Worst-case 256 chunks × 32B + fixed header. Generous over-alloc
-        // is fine — we don't yet know `chunk_count` at the macro expansion
-        // site, and Anchor `init` requires a constant-ish space. The exact
-        // tight size lives in `RelayJob::space(chunk_count)` for off-chain
-        // bookkeeping. Future optimization: split into init_relay_job +
-        // append_chunk pattern (mirrors p01_relayer's chunked submit).
-        space = RelayJob::space(RelayJob::MAX_CHUNK_COUNT),
+        space = RelayJob::SPACE,
         seeds = [
             RelayJob::SEED_PREFIX,
             &computation_offset.to_le_bytes(),
@@ -2686,14 +2671,29 @@ pub struct SubmitConfidentialRelay<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Emitted by `submit_confidential_relay` once the job PDA is initialized.
+/// The off-chain executor uses `relayer_job_id` to join this MPC sidecar
+/// with the matching Phase A `p01_relayer::RelayJob` it already holds.
 #[event]
 pub struct ConfidentialRelayJobSubmitted {
     pub job: Pubkey,
     pub submitter: Pubkey,
-    pub chunk_count: u16,
+    pub relayer_job_id: Pubkey,
     pub fee: u64,
     pub deadline_slot: u64,
     pub posted_at_slot: u64,
+}
+
+/// Emitted by `decrypt_recipient_callback` once the MPC threshold reveals
+/// the plaintext recipient. The off-chain executor subscribes to this
+/// event, joins the recipient with the Phase A payload identified by
+/// `relayer_job_id`, and broadcasts the unshield.
+#[event]
+pub struct RecipientDecrypted {
+    pub job: Pubkey,
+    pub relayer_job_id: Pubkey,
+    pub recipient: Pubkey,
+    pub decrypted_at_slot: u64,
 }
 
 /// Accounts for `expire_relay_job`.
@@ -2762,9 +2762,12 @@ pub enum ErrorCode {
     AuctionAlreadyFinalized,
 
     // Phase D — Confidential Relay
-    #[msg("Relay payload is empty or malformed")]
+    // (`InvalidRelayPayload` and `RelayPayloadTooLarge` remain in the
+    // discriminant for backward IDL compat with the pre-Alt-1 scaffold;
+    // they are no longer thrown by `submit_confidential_relay`.)
+    #[msg("Relay payload is empty or malformed (deprecated, kept for IDL compat)")]
     InvalidRelayPayload,
-    #[msg("Relay payload exceeds RelayJob::MAX_CHUNK_COUNT chunks")]
+    #[msg("Relay payload too large (deprecated, kept for IDL compat)")]
     RelayPayloadTooLarge,
     #[msg("Relay deadline_slot must be in the future")]
     RelayDeadlineInPast,
