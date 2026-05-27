@@ -531,9 +531,42 @@
     </div>
   </section>
 
-  <!-- ============ SLIDE 3 · SOLUTION ============ -->
+  <!-- ============ SLIDE 3 · CRYPTO-AGILITY FRAMEWORK ============ -->
   <section class="slide" data-section="pitch">
-    <div class="eyebrow"><span class="num">02</span> The solution</div>
+    <div class="eyebrow"><span class="num">02</span> Crypto-agility framework</div>
+    <h2>We <span class="accent">separate the transport</span> from the lock.</h2>
+    <p class="lead">Crypto-agility isn&rsquo;t a feature you bolt on — it&rsquo;s an architectural choice. We split the wallet stack into two independently-swappable layers.</p>
+
+    <div class="grid-3" style="margin-top: 1.5em;">
+      <div class="card card-yellow">
+        <div style="font-family: var(--font-mono); font-size: .7rem; letter-spacing: .15em; color: var(--text-muted); margin-bottom: 8px;">LAYER 1 &middot; SWAPPABLE</div>
+        <h4 style="color: var(--yellow);">Transport signature</h4>
+        <p class="small">Today: <strong>Ed25519</strong> (Solana protocol-level).<br>
+        Tomorrow: <strong>Dilithium / Falcon</strong> when validators migrate.<br>
+        Bridge: <strong>ephemeral submitter</strong> &mdash; single-slot key, thrown away.</p>
+      </div>
+      <div class="card card-cyan">
+        <div style="font-family: var(--font-mono); font-size: .7rem; letter-spacing: .15em; color: var(--text-muted); margin-bottom: 8px;">LAYER 2 &middot; POST-QUANTUM</div>
+        <h4>Spend authorization</h4>
+        <p class="small">STARK over <strong>Goldilocks</strong> + <strong>Poseidon</strong> hashes.<br>
+        Zero elliptic curves in the auth path.<br>
+        Shor-immune by design &mdash; Grover only halves hash security.</p>
+      </div>
+      <div class="card">
+        <div style="font-family: var(--font-mono); font-size: .7rem; letter-spacing: .15em; color: var(--text-muted); margin-bottom: 8px;">RESULT</div>
+        <h4 style="color: var(--text);">Funds stay safe</h4>
+        <p class="small">Even if Ed25519 falls. Even if validators haven&rsquo;t migrated yet. <strong>No fork, no migration, no asset risk</strong> &mdash; each layer rotates on its own schedule.</p>
+      </div>
+    </div>
+
+    <div class="quote" style="margin-top: 1em;">
+      &laquo; Ed25519 is the postman. STARK is the lock. &raquo;
+    </div>
+  </section>
+
+  <!-- ============ SLIDE 4 · SOLUTION ============ -->
+  <section class="slide" data-section="pitch">
+    <div class="eyebrow"><span class="num">03</span> The solution</div>
     <h2>Three guarantees. <span class="accent">Live on devnet today.</span></h2>
 
     <div class="grid-3" style="margin-top: 1.5em;">
@@ -556,9 +589,9 @@
     </div>
   </section>
 
-  <!-- ============ SLIDE 4 · HOW IT WORKS ============ -->
+  <!-- ============ SLIDE 5 · HOW IT WORKS ============ -->
   <section class="slide" data-section="pitch">
-    <div class="eyebrow"><span class="num">03</span> How it works</div>
+    <div class="eyebrow"><span class="num">04</span> How it works</div>
     <h2>The subscription lifecycle, <span class="accent">end to end private</span>.</h2>
 
     <div class="flow">
@@ -581,18 +614,84 @@
 <span style="color: var(--text-dim);">// No wallet. No email. No card. Just a hash.</span></code></pre>
   </section>
 
-  <!-- ============ SLIDE 5 · DEMO ============ -->
+  <!-- ============ SLIDE 6 · IMPACT & REACH ============ -->
+  <section class="slide" data-section="pitch">
+    <div class="eyebrow"><span class="num">05</span> Impact &amp; reach</div>
+    <h2>One primitive. <span class="accent">Every digital asset use case.</span></h2>
+
+    <div class="grid-3" style="margin-top: 1.2em;">
+      <div class="card card-cyan">
+        <h4>Subscriptions <span style="font-size: .65rem; color: var(--cyan); letter-spacing: .1em; margin-left: 6px;">SHIPPED</span></h4>
+        <p class="small">SaaS, streaming, recurring DAO dues. Replaces Stripe-style PCI/PII storage with 32-byte commitments. <strong>~$0.0015 / op.</strong></p>
+      </div>
+      <div class="card card-pink">
+        <h4>Custody &amp; wallets</h4>
+        <p class="small">STARK-gated smart-contract wallet (<code>p01_quantum_vault</code>). Spending key never signs an EC curve. SPHINCS+ recovery path.</p>
+      </div>
+      <div class="card card-yellow">
+        <h4>Payments &amp; micropayments</h4>
+        <p class="small">Anonymity-set-backed transfers. Same denominated-pool primitive scales to per-API-call billing, paywalls, anonymous tipping.</p>
+      </div>
+      <div class="card card-cyan">
+        <h4>Identity &amp; attestations</h4>
+        <p class="small">Optional zk-attestation slots (OFAC, age, KYC). Plug in zkPass / Reclaim &mdash; merchant accepts proofs privately, no PII handling.</p>
+      </div>
+      <div class="card card-pink">
+        <h4>DeFi &amp; DAOs</h4>
+        <p class="small">Confidential balance proofs (circuit 1). Vote weight without revealing wallet. Yield routing without leaking position size.</p>
+      </div>
+      <div class="card card-yellow">
+        <h4>Gaming &amp; in-app</h4>
+        <p class="small">Per-asset commitments &mdash; character ownership without revealing player. Streamer monetization without sponsor leak.</p>
+      </div>
+    </div>
+
+    <div class="highlight" style="margin-top: 1.2em;">
+      <strong>SDK integration:</strong> <code>verifySubscription(commitment, serviceId)</code> &rarr; 402 or 200. <strong>3 lines of TypeScript</strong>, drop-in for any merchant backend.
+    </div>
+  </section>
+
+  <!-- ============ SLIDE 7 · ARCHITECTURE & FEASIBILITY ============ -->
+  <section class="slide" data-section="pitch">
+    <div class="eyebrow"><span class="num">06</span> Architecture &amp; feasibility</div>
+    <h2><span class="accent">Solana-native.</span> Mainnet-ready primitives.</h2>
+
+    <div class="grid-2" style="margin-top: 1em; align-items: stretch;">
+      <div class="card card-cyan">
+        <h4>What runs where</h4>
+        <ul style="font-size: .95rem;">
+          <li><strong>On-device:</strong> Winterfell STARK prover (WASM, Goldilocks, Poseidon AIR). 8&ndash;15s per proof on mid-range Android.</li>
+          <li><strong>On-chain:</strong> 12 Solana programs (Anchor 0.32). STARK verifier &asymp; 1.3M CU. Buffer rent recoverable (&lt;0.001 SOL/op).</li>
+          <li><strong>Off-chain (opt-in):</strong> N-relayer registry. Liveness-filtered, auto-rotating. Mobile fallback to direct submission.</li>
+        </ul>
+      </div>
+      <div class="card card-pink">
+        <h4>Deployment trajectory</h4>
+        <ul style="font-size: .95rem;">
+          <li><strong>Today:</strong> Devnet &middot; 12 programs &middot; 6 circuits &middot; real subscriptions billed in SOL.</li>
+          <li><strong>Q3 2026:</strong> External audit &middot; STARK multi-spend vault &middot; mainnet beta.</li>
+          <li><strong>2027&ndash;2030:</strong> Transport sig migrates to Dilithium when Solana validators adopt PQ. <em>Zero protocol changes required</em> &mdash; lock layer is already PQ.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="highlight" style="margin-top: 1em;">
+      <strong>Trade-offs:</strong> STARK proofs &asymp; 145 KB (vs 256 B Groth16) &rarr; chunked upload + buffer rent. <strong>Mitigated by</strong> pre-computed proof pool roadmap, rent refund on close. <strong>Decentralisation:</strong> relayer is privacy-enhancing, not load-bearing &mdash; auth runs on Solana validators only.
+    </div>
+  </section>
+
+  <!-- ============ SLIDE 8 · DEMO ============ -->
   <section class="slide" data-section="pitch" style="text-align: center; align-items: center;">
-    <div class="eyebrow" style="justify-content: center;"><span class="num">04</span> Live demo</div>
+    <div class="eyebrow" style="justify-content: center;"><span class="num">07</span> Live demo</div>
     <h2 style="text-align: center;">Subscribe &middot; pause &middot; resume &middot; cancel<br><span class="accent">on Solana devnet.</span></h2>
     <p class="lead" style="text-align: center; margin: 0 auto 2em;">All STARK-authenticated. All on-device. End-to-end private.</p>
     <div style="font-family: var(--font-display); font-weight: 900; font-size: clamp(5rem, 12vw, 9rem); color: var(--cyan); text-shadow: 0 0 60px rgba(57, 197, 187, 0.4); line-height: 1;">60s</div>
     <p class="mono small dim" style="margin-top: 2em; letter-spacing: 0.15em;">apps/mobile &middot; release v0.9.11 &middot; physical device</p>
   </section>
 
-  <!-- ============ SLIDE 6 · SHIPPED & ASK ============ -->
+  <!-- ============ SLIDE 9 · SHIPPED & ASK ============ -->
   <section class="slide" data-section="pitch">
-    <div class="eyebrow"><span class="num">05</span> What we ship &middot; what we need</div>
+    <div class="eyebrow"><span class="num">08</span> What we ship &middot; what we need</div>
 
     <div class="grid-2" style="margin-top: 1em; align-items: stretch;">
       <div class="card card-cyan">

@@ -1,0 +1,64 @@
+%%{init: {'theme':'dark','themeVariables':{'primaryColor':'#151518','primaryTextColor':'#ffffff','primaryBorderColor':'#39c5bb','lineColor':'#39c5bb','secondaryColor':'#1a1a1e','tertiaryColor':'#0a0a0c','fontFamily':'Inter,sans-serif'}}}%%
+flowchart TB
+  subgraph User["👤 User device (Android / iOS)"]
+    direction TB
+    UI["Mobile app<br/>(Expo 54 · React Native)"]
+    Wallet{{"Wallet signer<br/>Ed25519 (Privy or local)"}}
+    Prover["STARK prover (WASM)<br/>Winterfell · Goldilocks · Poseidon"]
+    Secrets[["SecureStore<br/>spending key · subscriber secrets"]]
+    UI --> Wallet
+    UI --> Prover
+    UI --> Secrets
+  end
+
+  subgraph Relay["☁️ Optional privacy relayer (off-chain)"]
+    direction TB
+    R1["p01_relayer worker<br/>(Railway / TEE-ready)"]
+    R2[["Registry of N relayers<br/>liveness-filtered, auto-rotated"]]
+    R1 --- R2
+  end
+
+  subgraph Chain["⛓ Solana programs (devnet today · mainnet-ready)"]
+    direction TB
+    Verifier{{"p01_stark_verifier<br/>· Phase-1 FRI verify<br/>· Phase-2 DEEP-ALI<br/>· Uniform proof buffer"}}
+    ZkShielded["zk_shielded<br/>denominated pools<br/>· anonymity set<br/>· Merkle tree (Goldilocks)"]
+    Subs["subscription<br/>SubscriberVault PDA<br/>· state machine<br/>· period accounting"]
+    QVault["p01_quantum_vault<br/>STARK-gated wallet<br/>· withdraw<br/>· rotate_secret<br/>· SPHINCS+ recovery"]
+    Relayer["p01_relayer (on-chain)<br/>· job registry<br/>· RefundJob lifecycle"]
+    Registry["p01_registry<br/>service attestations"]
+    Fee["p01-fee-splitter"]
+    Verifier <-->|"verified ProofBuffer"| ZkShielded
+    Verifier <-->|"verified ProofBuffer"| Subs
+    Verifier <-->|"verified ProofBuffer"| QVault
+    Subs --- Registry
+    Subs --- Fee
+    ZkShielded --- Relayer
+  end
+
+  subgraph Merchant["🏪 Merchant integration"]
+    direction TB
+    SDK["@protocol01/sdk<br/>verifySubscription()<br/>issueAccessToken()"]
+    MerchBack[("Merchant backend<br/>stores only 32-byte commitments<br/>NO PII, NO PAN, NO email")]
+    SDK -.->|read SubscriberVault| Subs
+    SDK --> MerchBack
+  end
+
+  UI -->|"shield / subscribe / pay / pause / cancel TX<br/>(client signs Ed25519, proof in calldata)"| Chain
+  UI -.->|"opt-in: blind-forward TX"| Relay
+  Relay -->|"submitter rotates per-job"| Chain
+  Prover -.->|"proof bytes (uploaded via chunked TX)"| Verifier
+
+  classDef cryptoAgileSwap fill:#0f0f12,stroke:#ffcc00,stroke-width:2px,color:#ffcc00,font-style:italic;
+  Wallet:::cryptoAgileSwap
+  Prover:::cryptoAgileSwap
+
+  classDef onchain fill:#151518,stroke:#39c5bb,stroke-width:2px,color:#ffffff;
+  Verifier:::onchain
+  ZkShielded:::onchain
+  Subs:::onchain
+  QVault:::onchain
+
+  %% Legend (read-only)
+  L1["🔁  YELLOW boxes = swappable crypto primitives<br/>(Ed25519 → Dilithium · Poseidon → other hash · STARK circuit upgrade)"]
+  L2["🔒  Auth path: STARK over Goldilocks/Poseidon — Shor-immune<br/>Ed25519 only signs the calldata wrapper (replaceable, no fund exposure)"]
+  L1 ~~~ L2
