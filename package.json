@@ -40,25 +40,25 @@
     "@solana/web3.js": "^1.98.4",
     "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^22.15.0",
+    "@types/node": "^22.19.19",
     "chai": "^6.2.2",
     "circomlib": "^2.0.5",
     "circomlibjs": "^0.1.7",
-    "mocha": "^11.7.5",
+    "mocha": "^11.7.6",
     "poseidon-lite": "^0.3.0",
     "pptxgenjs": "^4.0.1",
-    "snarkjs": "^0.7.5",
+    "snarkjs": "^0.7.6",
     "ts-mocha": "^11.1.0",
-    "tsx": "^4.21.0",
-    "turbo": "^2.8.20",
-    "typescript": "^5.9.0"
+    "tsx": "^4.22.3",
+    "turbo": "^2.9.15",
+    "typescript": "^5.9.3"
   },
   "packageManager": "pnpm@10.34.0",
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "expo": "~54.0.32",
+    "expo": "~54.0.34",
     "js-sha3": "^0.9.3",
     "react": "19.1.0",
     "react-native": "0.81.5"

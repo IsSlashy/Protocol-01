@@ -71,18 +71,18 @@
     "@protocol-01/stark-prover": "workspace:*",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "bn.js": "^5.2.1",
+    "bn.js": "^5.2.3",
     "bs58": "^6.0.0",
     "poseidon-lite": "^0.3.0",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "@types/bn.js": "^5.1.6",
-    "@types/node": "^22.15.0",
-    "eslint": "^8.56.0",
-    "tsup": "^8.4.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^22.19.19",
+    "eslint": "^8.57.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
     "@protocol-01/privacy-sdk": "workspace:*",

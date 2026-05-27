@@ -9,29 +9,29 @@
     "env:export-keypairs": "tsx scripts/export-keypairs-env.ts"
   },
   "dependencies": {
-    "@magicblock-labs/ephemeral-rollups-sdk": "^0.10.5",
+    "@magicblock-labs/ephemeral-rollups-sdk": "^0.10.9",
     "@nymproject/mix-fetch-full-fat": "^1.4.4",
     "@protocol-01/arcium-sdk": "workspace:*",
     "@protocol-01/privacy-sdk": "workspace:*",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "@upstash/redis": "^1.37.0",
+    "@upstash/redis": "^1.38.0",
     "bs58": "^6.0.0",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.28.1",
+    "framer-motion": "^12.40.0",
     "lucide-react": "^0.562.0",
-    "next": "^16.1.4",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "tailwind-merge": "^2.3.0",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tailwind-merge": "^2.6.1",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
-    "@types/node": "^22.15.21",
-    "@types/react": "^19.2.9",
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^22.19.19",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "tailwindcss": "^4.1.18",
+    "tailwindcss": "^4.3.0",
     "typescript": "^5.9.3"
   }
 }

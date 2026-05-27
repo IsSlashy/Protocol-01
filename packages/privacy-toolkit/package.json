@@ -9,7 +9,15 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "keywords": ["solana", "zk", "privacy", "merkle", "poseidon", "stark", "protocol-01"],
+  "keywords": [
+    "solana",
+    "zk",
+    "privacy",
+    "merkle",
+    "poseidon",
+    "stark",
+    "protocol-01"
+  ],
   "license": "MIT",
   "author": "Protocol 01",
   "homepage": "https://github.com/IsSlashy/Protocol-01",
@@ -22,7 +30,7 @@
     "poseidon-lite": "^0.3.0"
   },
   "devDependencies": {
-    "vitest": "^3.2.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

@@ -92,11 +92,11 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
-    "eslint": "^8.56.0",
-    "tsup": "^8.4.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "@types/node": "^22.19.19",
+    "eslint": "^8.57.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
     "@solana/web3.js": "^1.98.0"

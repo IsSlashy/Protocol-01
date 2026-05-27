@@ -46,15 +46,15 @@
     "@noble/hashes": "^2.2.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "bn.js": "^5.2.1",
+    "bn.js": "^5.2.3",
     "poseidon-lite": "^0.3.0"
   },
   "devDependencies": {
-    "@types/bn.js": "^5.1.6",
-    "@types/node": "^22.15.0",
-    "tsup": "^8.4.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^22.19.19",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
     "@solana/web3.js": "^1.98.0"
