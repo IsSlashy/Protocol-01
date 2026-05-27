@@ -1335,7 +1335,7 @@ pub mod p01_arcium {
     ///   refund rent + fee to `submitter` via `expire_relay_job`.
     pub fn submit_confidential_relay(
         ctx: Context<SubmitConfidentialRelay>,
-        _computation_offset: u64,
+        computation_offset: u64,
         encrypted_recipient: [[u8; 32]; 4],
         encryption_pubkey: [u8; 32],
         nonce: u128,
@@ -1349,8 +1349,11 @@ pub mod p01_arcium {
             ErrorCode::RelayDeadlineInPast
         );
 
+        let payer_key = ctx.accounts.payer.key();
+        let job_key = ctx.accounts.relay_job.key();
+
         let job = &mut ctx.accounts.relay_job;
-        job.submitter = ctx.accounts.payer.key();
+        job.submitter = payer_key;
         job.status = RelayJobStatus::Pending;
         job.relayer_job_id = relayer_job_id;
         job.encrypted_recipient = encrypted_recipient;
@@ -1363,25 +1366,115 @@ pub mod p01_arcium {
         job.bump = ctx.bumps.relay_job;
 
         emit!(ConfidentialRelayJobSubmitted {
-            job: job.key(),
-            submitter: job.submitter,
+            job: job_key,
+            submitter: payer_key,
             relayer_job_id,
             fee,
             deadline_slot,
             posted_at_slot: clock.slot,
         });
 
-        // TODO(D.4 — MPC wiring):
-        //   queue_computation(COMP_DEF_DECRYPT_RECIPIENT) on the 4 encrypted
-        //   u64s. Callback `decrypt_recipient_callback` will populate
-        //   `relay_job.decrypted_recipient`, transition status to Decrypted,
-        //   and emit `RecipientDecrypted` for the off-chain executor.
-        //
-        //   Pending wiring: the SDK's `awaitRelayCompletion` will see status
-        //   = Pending past a threshold and surface "MPC orchestration not
-        //   yet deployed". Once D.4 ships, the Pending → Decrypted
-        //   transition happens automatically after one MPC call.
+        // ---- Trigger MPC threshold-decrypt of the recipient -------------
+        // The Arcis `decrypt_recipient` circuit takes one `Enc<Shared, TxChunk>`
+        // (8 u64). The SDK packs the 32-byte recipient pubkey into d0..d3 and
+        // zero-pads d4..d7. Encoded as four `encrypted_u64` ArgBuilder slots.
+        let args = ArgBuilder::new()
+            .x25519_pubkey(encryption_pubkey)
+            .plaintext_u128(nonce)
+            .encrypted_u64(encrypted_recipient[0])
+            .encrypted_u64(encrypted_recipient[1])
+            .encrypted_u64(encrypted_recipient[2])
+            .encrypted_u64(encrypted_recipient[3])
+            .encrypted_u64([0u8; 32])
+            .encrypted_u64([0u8; 32])
+            .encrypted_u64([0u8; 32])
+            .encrypted_u64([0u8; 32])
+            .build();
 
+        ctx.accounts.sign_pda_account.bump = ctx.bumps.sign_pda_account;
+
+        queue_computation(
+            ctx.accounts,
+            computation_offset,
+            args,
+            vec![DecryptRecipientCallback::callback_ix(
+                computation_offset,
+                &ctx.accounts.mxe_account,
+                &[],
+            )?],
+            1,
+            0,
+        )?;
+
+        Ok(())
+    }
+
+    /// Arcium callback for the recipient decrypt. Fires once the MXE cluster
+    /// has threshold-decrypted the encrypted_recipient. Extracts the first 4
+    /// u64 of the revealed `TxChunk` into a 32-byte Pubkey, writes it back
+    /// into the `RelayJob` PDA (passed via `remaining_accounts[0]` from the
+    /// queue ix), transitions status to `Decrypted`, and emits
+    /// `RecipientDecrypted` so the off-chain executor can broadcast the
+    /// matching Phase A unshield.
+    #[arcium_callback(encrypted_ix = "decrypt_recipient")]
+    pub fn decrypt_recipient_callback(
+        ctx: Context<DecryptRecipientCallback>,
+        output: SignedComputationOutputs<DecryptRecipientOutput>,
+    ) -> Result<()> {
+        let o = match output.verify_output(
+            &ctx.accounts.cluster_account,
+            &ctx.accounts.computation_account,
+        ) {
+            Ok(o) => o,
+            Err(_) => return Err(ErrorCode::AbortedComputation.into()),
+        };
+
+        // Reconstruct the 32-byte recipient pubkey from the first 4 u64 of
+        // the decrypted TxChunk (d0..d3 — see decrypt_recipient circuit).
+        let chunk = &o.field_0;
+        let mut recipient_bytes = [0u8; 32];
+        recipient_bytes[0..8].copy_from_slice(&chunk.field_0.to_le_bytes());
+        recipient_bytes[8..16].copy_from_slice(&chunk.field_1.to_le_bytes());
+        recipient_bytes[16..24].copy_from_slice(&chunk.field_2.to_le_bytes());
+        recipient_bytes[24..32].copy_from_slice(&chunk.field_3.to_le_bytes());
+
+        // Update the RelayJob PDA via remaining_accounts (mirrors the
+        // finalize_auction_callback pattern). The SDK MUST pass the RelayJob
+        // PDA as the first remaining_account on the queue ix invocation so
+        // it propagates here.
+        let remaining = &ctx.remaining_accounts;
+        let mut relayer_job_id = Pubkey::default();
+        if !remaining.is_empty() {
+            let relay_info = &remaining[0];
+            if relay_info.owner == &crate::ID && relay_info.is_writable {
+                let mut relay_data = relay_info.try_borrow_mut_data()?;
+                if relay_data.len() >= RelayJob::SPACE {
+                    // Layout (post D.3 slim):
+                    //   8  disc
+                    //  32  submitter
+                    //   1  status              <- byte 40
+                    //  32  relayer_job_id      <- bytes 41..73
+                    // 128  encrypted_recipient <- bytes 73..201
+                    //  32  decrypted_recipient <- bytes 201..233
+                    relay_data[40] = RelayJobStatus::Decrypted as u8;
+                    let mut id_bytes = [0u8; 32];
+                    id_bytes.copy_from_slice(&relay_data[41..73]);
+                    relayer_job_id = Pubkey::new_from_array(id_bytes);
+                    relay_data[201..233].copy_from_slice(&recipient_bytes);
+                }
+            }
+        }
+
+        let clock = Clock::get()?;
+        let recipient_pubkey = Pubkey::new_from_array(recipient_bytes);
+        emit!(RecipientDecrypted {
+            job: if !remaining.is_empty() { *remaining[0].key } else { Pubkey::default() },
+            relayer_job_id,
+            recipient: recipient_pubkey,
+            decrypted_at_slot: clock.slot,
+        });
+
+        msg!("RecipientDecrypted");
         Ok(())
     }
 
@@ -2487,6 +2580,23 @@ pub struct ThresholdDecryptCallback<'info> {
     pub instructions_sysvar: AccountInfo<'info>,
 }
 
+#[callback_accounts("decrypt_recipient")]
+#[derive(Accounts)]
+pub struct DecryptRecipientCallback<'info> {
+    pub arcium_program: Program<'info, Arcium>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_DECRYPT_RECIPIENT))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(address = ::anchor_lang::solana_program::sysvar::instructions::ID)]
+    /// CHECK: instructions_sysvar
+    pub instructions_sysvar: AccountInfo<'info>,
+}
+
 #[callback_accounts("private_vote_binary")]
 #[derive(Accounts)]
 pub struct PrivateVoteBinaryCallback<'info> {
@@ -2675,7 +2785,9 @@ pub struct MugenCancelOfferCallback<'info> {
 
 /// Accounts for `submit_confidential_relay` (Phase D Alt 1 — recipient-only).
 /// The `relay_job` PDA is keyed by `computation_offset` so the SDK can derive
-/// it deterministically and the MPC callback can resolve the same address.
+/// it deterministically. The remaining accounts mirror `ThresholdDecryptQueue`
+/// — they are the standard Arcium queue boilerplate required by
+/// `queue_computation`.
 #[derive(Accounts)]
 #[instruction(computation_offset: u64)]
 pub struct SubmitConfidentialRelay<'info> {
@@ -2694,7 +2806,35 @@ pub struct SubmitConfidentialRelay<'info> {
     )]
     pub relay_job: Account<'info, RelayJob>,
 
+    // ---- Arcium queue boilerplate (mirror of ThresholdDecryptQueue) ----
+    #[account(
+        init_if_needed, space = 9, payer = payer,
+        seeds = [&SIGN_PDA_SEED], bump,
+        address = derive_sign_pda!(),
+    )]
+    pub sign_pda_account: Account<'info, ArciumSignerAccount>,
+    #[account(address = derive_mxe_pda!())]
+    pub mxe_account: Account<'info, MXEAccount>,
+    #[account(mut, address = derive_mempool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: mempool_account
+    pub mempool_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_execpool_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: executing_pool
+    pub executing_pool: UncheckedAccount<'info>,
+    #[account(mut, address = derive_comp_pda!(computation_offset, mxe_account, ErrorCode::ClusterNotSet))]
+    /// CHECK: computation_account
+    pub computation_account: UncheckedAccount<'info>,
+    #[account(address = derive_comp_def_pda!(COMP_DEF_DECRYPT_RECIPIENT))]
+    pub comp_def_account: Account<'info, ComputationDefinitionAccount>,
+    #[account(mut, address = derive_cluster_pda!(mxe_account, ErrorCode::ClusterNotSet))]
+    pub cluster_account: Account<'info, Cluster>,
+    #[account(mut, address = ARCIUM_FEE_POOL_ACCOUNT_ADDRESS)]
+    pub pool_account: Account<'info, FeePool>,
+    #[account(mut, address = ARCIUM_CLOCK_ACCOUNT_ADDRESS)]
+    pub clock_account: Account<'info, ClockAccount>,
+
     pub system_program: Program<'info, System>,
+    pub arcium_program: Program<'info, Arcium>,
 }
 
 /// Emitted by `submit_confidential_relay` once the job PDA is initialized.
