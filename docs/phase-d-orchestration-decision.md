@@ -88,9 +88,43 @@ Trust model gets honestly documented as part of D.6 / D.7: privacy of depositor 
 - **D.7** — E2E test: full shield → confidential relay → unshield on devnet. Assert depositor tx doesn't contain recipient; executor tx does; the two are unlinkable from chain observation alone.
 - **D.8** — Deploy `p01_arcium` redeploy + executor service to Railway alongside `p01-relayer-node`. Live smoke.
 
+## D.2 follow-up — `threshold_decrypt` circuit already exists
+
+Investigation confirms the encrypted instruction is already shipped at
+`programs/p01_arcium/encrypted-ixs/src/lib.rs:472`:
+
+```rust
+#[instruction]
+pub fn threshold_decrypt(
+    encrypted_chunk: Enc<Shared, TxChunk>,
+) -> TxChunk { ... }   // TxChunk = 8 × u64 = 64 plaintext bytes
+```
+
+The Solana-side `init_threshold_decrypt_comp_def` (lib.rs:152) bootstraps
+the comp def. The MPC threshold-decrypts a whole `TxChunk` per call.
+
+**Mismatch with the current scaffold:** `submit_confidential_relay`
+declares `ciphertexts: Vec<[u8; 32]>` and treats each `[u8; 32]` as
+"one encrypted u64 / 8 plaintext bytes". The circuit, by contrast,
+batches 8 u64s per call. If we wire 1:1 from ciphertext to MPC call
+we run 8× more MPC computations than necessary.
+
+**D.3 wiring strategy:** group 8 ciphertexts into one `TxChunk` arg,
+queue 1 `queue_computation(threshold_decrypt)` per group → at most
+`ceil(chunk_count / 8)` MPC calls instead of `chunk_count`. For a
+typical Solana unshield (~800-bytes inner tx, ~100 ciphertext chunks)
+that's ~13 MPC calls instead of ~100.
+
+`RelayJob.chunks_decrypted` advances by the group size (8 for full
+groups, less for the trailing group), so the existing
+`chunks_decrypted == chunk_count` terminal check still works
+unchanged.
+
 ## Open questions deferred to the implementation phase
 
-- **Batch vs per-chunk MXE decrypt:** start per-chunk (simpler, more queue_computation calls); add batch circuit later if MPC latency becomes the bottleneck.
+- **Batch vs per-chunk MXE decrypt:** D.2 found the existing
+  `threshold_decrypt` is already a TxChunk batch (8 u64 per call). The
+  unit of work is the TxChunk group, not the single ciphertext.
 - **Executor anti-MEV:** does Solana's leader-rotation already break MEV on these unshield txs? Likely yes since the payload is opaque pre-broadcast and the executor's tx is just a normal `zk_shielded::unshield`. Document and move on.
 - **Multiple executors race:** first-to-land wins. Loser executor wastes a tx fee. Consider a "claim" ix that locks an executor to a job for a slot window (similar to relay job claiming in existing relayer). Defer.
 - **Slashing for equivocation:** the existing relayer reputation can be extended. Add only if observed in practice.
