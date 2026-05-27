@@ -53,7 +53,7 @@
     "turbo": "^2.8.20",
     "typescript": "^5.9.0"
   },
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@10.34.0",
   "engines": {
     "node": ">=22"
   },
@@ -76,15 +76,14 @@
       "llama.rn@0.11.2": "patches/llama.rn@0.11.2.patch",
       "react-native-worklets@0.8.1": "patches/react-native-worklets@0.8.1.patch"
     },
-    "neverBuiltDependencies": [
-      "bigint-buffer",
-      "blake-hash",
-      "bufferutil",
-      "cpu-features",
-      "dtrace-provider",
-      "ssh2",
-      "tiny-secp256k1",
-      "utf-8-validate"
+    "onlyBuiltDependencies": [
+      "@reown/appkit",
+      "@stellar/stellar-sdk",
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver",
+      "usb"
     ]
   }
 }
