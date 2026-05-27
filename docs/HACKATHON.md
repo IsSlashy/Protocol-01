@@ -52,7 +52,7 @@ Pick one of the three options below. They are independent.
 
 ### Option B. Inspect and build the code
 
-Prerequisites: Node 22+, pnpm 9.15.9, Rust 1.94 + Anchor CLI 0.32.1, Solana CLI 2.2.14, JDK 17.
+Prerequisites: Node 22+, pnpm 10.34.0, Rust 1.94 + Anchor CLI 0.32.1, Solana CLI 2.2.14, JDK 17.
 
 ```bash
 git clone https://github.com/IsSlashy/Protocol-01.git

@@ -6,7 +6,7 @@
   "build": {
     "base": {
       "node": "22.18.0",
-      "pnpm": "9.15.9",
+      "pnpm": "10.34.0",
       "env": {
         "EXPO_PUBLIC_SOLANA_NETWORK": "devnet"
       }

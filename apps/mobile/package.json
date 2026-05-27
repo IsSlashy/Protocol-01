@@ -2,7 +2,7 @@
   "name": "@protocol-01/mobile",
   "version": "1.0.1",
   "private": true,
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@10.34.0",
   "main": "./index.js",
   "scripts": {
     "start": "expo start",
