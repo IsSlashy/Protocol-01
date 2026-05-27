@@ -22,6 +22,7 @@ const COMP_DEF_PRIVATE_LOOKUP: u32 = comp_def_offset("private_lookup");
 const COMP_DEF_REGISTER_VIEWING_KEY: u32 = comp_def_offset("register_viewing_key");
 const COMP_DEF_STEALTH_SCAN: u32 = comp_def_offset("stealth_scan_single");
 const COMP_DEF_THRESHOLD_DECRYPT: u32 = comp_def_offset("threshold_decrypt");
+const COMP_DEF_DECRYPT_RECIPIENT: u32 = comp_def_offset("decrypt_recipient");
 const COMP_DEF_PRIVATE_VOTE_BINARY: u32 = comp_def_offset("private_vote_binary");
 const COMP_DEF_FINALIZE_TALLY_BINARY: u32 = comp_def_offset("finalize_tally_binary");
 const COMP_DEF_SEALED_BID_AUCTION: u32 = comp_def_offset("sealed_bid_auction");
@@ -150,6 +151,11 @@ pub mod p01_arcium {
     }
 
     pub fn init_threshold_decrypt_comp_def(ctx: Context<InitThresholdDecryptCompDef>) -> Result<()> {
+        init_comp_def(ctx.accounts, None, None)?;
+        Ok(())
+    }
+
+    pub fn init_decrypt_recipient_comp_def(ctx: Context<InitDecryptRecipientCompDef>) -> Result<()> {
         init_comp_def(ctx.accounts, None, None)?;
         Ok(())
     }
@@ -1754,6 +1760,26 @@ pub struct InitStealthScanSingleCompDef<'info> {
 #[init_computation_definition_accounts("threshold_decrypt", payer)]
 #[derive(Accounts)]
 pub struct InitThresholdDecryptCompDef<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut, address = derive_mxe_pda!())]
+    pub mxe_account: Box<Account<'info, MXEAccount>>,
+    #[account(mut)]
+    /// CHECK: comp_def_account
+    pub comp_def_account: UncheckedAccount<'info>,
+    #[account(mut, address = derive_mxe_lut_pda!(mxe_account.lut_offset_slot))]
+    /// CHECK: address_lookup_table
+    pub address_lookup_table: UncheckedAccount<'info>,
+    #[account(address = LUT_PROGRAM_ID)]
+    /// CHECK: lut_program
+    pub lut_program: UncheckedAccount<'info>,
+    pub arcium_program: Program<'info, Arcium>,
+    pub system_program: Program<'info, System>,
+}
+
+#[init_computation_definition_accounts("decrypt_recipient", payer)]
+#[derive(Accounts)]
+pub struct InitDecryptRecipientCompDef<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
     #[account(mut, address = derive_mxe_pda!())]

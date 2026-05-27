@@ -489,6 +489,39 @@ mod circuits {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // UC1.1: Phase D Alt 1 — Recipient-only Confidential Relay
+    // -------------------------------------------------------------------------
+    //
+    // Same MPC primitive as `threshold_decrypt` but bound to a distinct
+    // encrypted_ix name so that Phase D's `submit_confidential_relay` ix
+    // can attach its own callback (`decrypt_recipient_callback` in lib.rs)
+    // that emits the plaintext recipient pubkey, instead of the privacy-
+    // preserving hash-emit of the legacy `threshold_decrypt_callback`.
+    //
+    // The first 4 of the 8 u64 fields carry the 32-byte recipient pubkey
+    // in little-endian order; the trailing 4 are zero-padded by the SDK
+    // and ignored by the callback.
+
+    /// MPC threshold-decrypts a `TxChunk` whose first 4 u64 fields encode
+    /// a Solana Pubkey. Bound to the Phase D confidential-relay flow.
+    #[instruction]
+    pub fn decrypt_recipient(
+        encrypted_chunk: Enc<Shared, TxChunk>,
+    ) -> TxChunk {
+        let chunk = encrypted_chunk.to_arcis();
+        TxChunk {
+            d0: chunk.d0.reveal(),
+            d1: chunk.d1.reveal(),
+            d2: chunk.d2.reveal(),
+            d3: chunk.d3.reveal(),
+            d4: chunk.d4.reveal(),
+            d5: chunk.d5.reveal(),
+            d6: chunk.d6.reveal(),
+            d7: chunk.d7.reveal(),
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════��═════
     // UC8: MUGEN P2P EXCHANGE — Encrypted Order Matching
     //
