@@ -53,7 +53,7 @@
     "turbo": "^2.9.15",
     "typescript": "^5.9.3"
   },
-  "packageManager": "pnpm@10.34.0",
+  "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=22"
   },
@@ -70,7 +70,8 @@
       "@types/react-dom": "^19.2.3",
       "@noble/ciphers": "^2.2.0",
       "@noble/post-quantum": "^0.6.1",
-      "brace-expansion@1>balanced-match": "1.0.2"
+      "brace-expansion@1>balanced-match": "1.0.2",
+      "@solana/web3.js>@noble/curves": "^1.8.1"
     },
     "patchedDependencies": {
       "llama.rn@0.11.2": "patches/llama.rn@0.11.2.patch",
