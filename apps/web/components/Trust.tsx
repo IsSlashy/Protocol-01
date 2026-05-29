@@ -3,17 +3,22 @@
 import { memo } from "react";
 
 /**
- * Trust — monochrome (white) logo marquee, scrolling left → right, on a
- * transparent background with a soft glow that bleeds into the page.
+ * Trust — monochrome (white) logo marquee, scrolling left → right.
+ *
+ * Sits between the hero and the demo with NO hard section edge: the background
+ * is transparent and a soft cyan bloom extends past the section vertically, so
+ * it diffuses into the sections above and below instead of reading as a band.
  *
  * Honest signals only ($0 raised — no investors/backers). Founder-provided
  * brand logos, trimmed and forced to pure white. Per-logo heights balance the
- * very different aspect ratios (wide wordmarks vs square marks).
+ * different aspect ratios (wide wordmarks vs square marks).
  */
 type Brand = { name: string; logo: string; h: string };
 
 const brands: Brand[] = [
   { name: "Solana", logo: "/logos/solana.png", h: "h-12" },
+  { name: "Helius", logo: "/logos/helius.png", h: "h-12" },
+  { name: "Jupiter", logo: "/logos/jupiter.png", h: "h-12" },
   { name: "Arcium", logo: "/logos/arcium.png", h: "h-8" },
   { name: "Superteam Ireland", logo: "/logos/superteam.png", h: "h-14" },
   { name: "Dev3pack", logo: "/logos/dev3pack.png", h: "h-14" },
@@ -37,13 +42,16 @@ function Trust() {
   // Duplicate the set so the marquee loops seamlessly.
   const track = [...brands, ...brands];
   return (
-    <section className="relative bg-transparent py-14">
-      {/* Soft glow that bleeds into the page — no hard edges */}
+    <section className="relative bg-transparent py-16">
+      {/* Diffuse bloom — extends well past the section so it melts into the
+          hero above and the demo below, no hard cut. */}
       <div
-        className="pointer-events-none absolute inset-0"
+        className="pointer-events-none absolute left-0 right-0"
         style={{
+          top: "-200px",
+          bottom: "-200px",
           background:
-            "radial-gradient(ellipse 55% 130% at 50% 50%, rgba(57,197,187,0.06), transparent 70%)",
+            "radial-gradient(ellipse 60% 55% at 50% 50%, rgba(57,197,187,0.10), rgba(57,197,187,0.04) 45%, transparent 72%)",
         }}
       />
       <p className="relative mb-10 text-center font-mono text-xs uppercase tracking-[0.3em] text-[#555560]">
