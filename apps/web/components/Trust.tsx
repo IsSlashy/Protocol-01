@@ -8,12 +8,12 @@ import { memo } from "react";
  *
  * Honest signals only ($0 raised — no investors/backers). Brand logos provided
  * by the founder, forced to pure white via `brightness(0) invert(1)` for a
- * uniform strip. Solana keeps its real 3-bar glyph.
+ * uniform strip.
  */
-type Brand = { name: string; logo?: string; glyph?: "solana" };
+type Brand = { name: string; logo: string };
 
 const brands: Brand[] = [
-  { name: "Solana", glyph: "solana" },
+  { name: "Solana", logo: "/logos/solana.png" },
   { name: "Arcium", logo: "/logos/arcium.png" },
   { name: "Superteam Ireland", logo: "/logos/superteam.webp" },
   { name: "Dev3pack", logo: "/logos/dev3pack.png" },
@@ -21,32 +21,15 @@ const brands: Brand[] = [
   { name: "npm", logo: "/logos/npm.png" },
 ];
 
-const SolanaGlyph = () => (
-  <div className="flex items-center gap-2.5 text-white">
-    <svg width="30" height="23" viewBox="0 0 24 18" fill="none" aria-hidden className="shrink-0">
-      <path d="M4 13.5h15.5L16 17H0.5L4 13.5Z" fill="currentColor" />
-      <path d="M4 7.25h15.5L16 10.75H0.5L4 7.25Z" fill="currentColor" />
-      <path d="M4 1h15.5L16 4.5H0.5L4 1Z" fill="currentColor" />
-    </svg>
-    <span className="text-2xl font-bold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
-      Solana
-    </span>
-  </div>
-);
-
 const Logo = ({ b }: { b: Brand }) => (
   <div className="mx-10 flex shrink-0 items-center opacity-70 transition-opacity duration-300 hover:opacity-100">
-    {b.glyph === "solana" ? (
-      <SolanaGlyph />
-    ) : (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={b.logo}
-        alt={b.name}
-        className="h-8 w-auto object-contain"
-        style={{ filter: "brightness(0) invert(1)" }}
-      />
-    )}
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img
+      src={b.logo}
+      alt={b.name}
+      className="h-8 w-auto object-contain"
+      style={{ filter: "brightness(0) invert(1)" }}
+    />
   </div>
 );
 
