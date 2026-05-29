@@ -11,9 +11,9 @@ const downloadOptions = [
     platform: "android",
     icon: Smartphone,
     description: "androidDesc",
-    filename: "protocol-01-v1.0.0.apk",
-    link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.0/protocol-01-v1.0.0.apk",
-    size: "119 MB",
+    filename: "protocol-01-v1.0.1.apk",
+    link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk",
+    size: "120 MB",
   },
   {
     platform: "chromeExtension",
