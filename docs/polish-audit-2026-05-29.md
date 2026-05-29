@@ -35,15 +35,15 @@ the CLI is needed: pin `packageManager` to `pnpm@9.15.9`.
 
 ---
 
-## DECISIONS NEEDED (flagged, deliberately NOT touched)
-These need your call — they involve product intent or were intentional.
+## DECISIONS — RESOLVED 2026-05-29 (round 2)
+All six were put to the user. Resolutions:
 
-- **A. Screenshot blocking is OFF on purpose (demo recording).** `useSecuritySettings.ts:155-159` + `security.tsx:357-369` have `TEMP: demo recording` code that unconditionally calls `allowScreenCaptureAsync()`, so the global "Block screenshots" toggle is a **no-op app-wide** (contradicts SECURITY.md). Seed/view-keys screens still self-protect. → Re-enable now, or keep off for recording? (HIGH if shipping.)
-- **B. View Keys are random mocks.** `view-keys.tsx` generates 32 random bytes (`generateMockKey`, `setTimeout` "simulate"), then offers QR/Copy/**Share** as if real FVK/IVK/OVK. An auditor/user who shares one shares a non-functional key. → Gate behind "Preview / not active" + disable Share, or wire real derivation? (HIGH — relevant to "let people audit the app".)
-- **C. Extension Shield tab is on a dead Groth16 path** (`apps/extension`): fake no-tx shield that navigates as success; `unshieldNote` always throws; seed v1 vs mobile v4. Working pool is `/shielded`. → Repoint Shield to `/shielded` or gate `/denominated`. (Extension is ~6mo behind mobile.)
-- **D. "-10%" discount is advertised but never applied** (`subscribe.tsx` duration badges + summary row). Trust issue on a payments screen. → Remove the badge/row, or implement a real prepay discount (larger change)?
-- **E. `send-confirm.tsx` is orphaned dead code** with a fabricated "Privacy Fee" + fake `setTimeout` auth/signing delays. No code path navigates to it. → Delete after confirming no deep link targets `/send-confirm`.
-- **F. Weak PINs accepted** (`000000`/`123456`) and seed-verify is skippable. SECURITY.md references a `utils/validation/pin.ts` that doesn't exist. → Add a small weak-PIN denylist?
+- **A. Screenshot blocking → KEEP OFF for now.** Deliberate, for demo recording. Re-enable before any public/store release. No code change. (`useSecuritySettings.ts:155-159` + `security.tsx:357-369` still force `allowScreenCaptureAsync()`.)
+- **B. View Keys → export real IVK only.** ✅ DONE (`40ec122`). The app uses an ECDH stealth scheme, not Zcash FVK/IVK/OVK; only the IVK has a real basis (= X25519 viewing secret). IVK now derives the real key; FVK/OVK tagged "Coming soon". **Still missing: a watch-only scanner that consumes an imported IVK** — import remains inert (tracked, not built).
+- **C. Extension Shield → repoint to `/shielded`.** ✅ DONE (`b6f4ad0`). Shield tab now lands on the working ShieldedWallet; `/denominated` cluster unreachable from nav.
+- **D. "-10%" discount → build real prepay (public path only).** ✅ DONE (`98e6610`). There was NO upfront prepayment at all — every path charged one period now, rest monthly; the total + discount were both fiction. Added a real opt-in prepay toggle (classic mode, charges `price×duration×0.9` once, marks `prepaid`, scheduler never re-bills). **ZK note path stays monthly** (fixed denominations can't settle an arbitrary discounted amount). NEEDS DEVICE VALIDATION (money path).
+- **E. `send-confirm.tsx` → delete.** ✅ DONE (`de667e2`). Removed file + Stack route; nothing navigated to it.
+- **F. Weak PINs → LEAVE AS-IS.** User declined a denylist for now. (`000000`/`123456` still accepted; no `utils/validation/pin.ts`.)
 
 ---
 
@@ -111,4 +111,7 @@ Priority order — the first two validate the regressions fixed this session:
 5. **Streams create**: still creates a stream + first payment (the frequency type fix).
 6. **Agent — Stop button** (b223bb4): start a cloud (Groq/Gemini) generation, tap Stop mid-stream → generation halts, partial text stays in the bubble, no error toast. Repeat for on-device (llama-local) provider. No raw `​```tool` JSON visible in any bubble.
 7. **Agent — model lifecycle** (b223bb4): with llama-local loaded, background the app then return → model reloads (brief loading), generation still works. Cloud providers: backgrounding does nothing.
-8. **Regression sweep** (must be unchanged): shield, unshield, transfer, send SOL, swap.
+8. **Prepay (MONEY PATH)** (98e6610): classic mode, pick 6 or 12 months, enable "Prepay" toggle → confirm summary shows the discounted "Pay now" total and the charge sent is `price×duration×0.9` (test both plain and stealth/privacy-shield). Then confirm NO recurring charge fires and the sub stays active. Monthly (toggle off) must be unchanged. ZK/private mode must NOT show the prepay toggle.
+9. **View Keys** (40ec122): IVK generates a real key (same value across taps); FVK/OVK show "Coming soon" and don't mint a key.
+10. **Extension Shield** (b6f4ad0): Shield tab opens the working ShieldedWallet, not the denominated pools.
+11. **Regression sweep** (must be unchanged): shield, unshield, transfer, send SOL, swap.
