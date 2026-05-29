@@ -6,11 +6,11 @@ import { cn } from '@/shared/utils';
 const navItems = [
   { path: '/', icon: Wallet, label: 'Wallet' },
   { path: '/subscriptions', icon: Repeat, label: 'Streams' },
-  // Route to the denominated-pools landing page so users land on the STARK
-  // path (fixed denominations 0.1/1/10/100 SOL + 1/10/100/1000 USDC) by default.
-  // The legacy `/shielded` route still resolves for code that navigates to it
-  // directly, but it's a Groth16-era flow without denominations.
-  { path: '/denominated', icon: Shield, label: 'Shield' },
+  // Route to `/shielded` (the working shielded-wallet flow). The `/denominated`
+  // pages are on a stale Groth16 path that no longer matches mobile (fake
+  // shield, throwing unshield, seed v1 vs mobile v4); they still resolve for
+  // direct navigation but are not the default landing surface.
+  { path: '/shielded', icon: Shield, label: 'Shield' },
   { path: '/agent', icon: Sparkles, label: 'Agent' },
 ];
 
