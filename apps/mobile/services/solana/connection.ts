@@ -83,6 +83,21 @@ async function resilientFetch(
       let resp: Response;
       try {
         resp = await fetch(url as any, { ...sanitizedOptions, signal: controller.signal } as any);
+      } catch (netErr) {
+        clearTimeout(timer);
+        // Transient network failure or timeout — RN throws "Network request
+        // failed" / aborts on a flaky link. The 429 loop below only handles
+        // HTTP/JSON-RPC rate limits; without this, a single dropped fetch
+        // failed the whole tx (and tripped the crash-sweep). Retry with the
+        // same backoff for BOTH relay and direct RPC so an in-flight batch
+        // (e.g. 145 STARK chunks) survives momentary connectivity blips.
+        if (attempt < MAX_429_RETRIES) {
+          const backoff = Math.min(BACKOFF_MAX_MS, 250 * Math.pow(2, attempt)) + Math.floor(Math.random() * 200);
+          console.warn(`[RPC] network error (${(netErr as Error)?.message ?? String(netErr)}), retry ${attempt + 1}/${MAX_429_RETRIES} in ${backoff}ms`);
+          await sleep(backoff);
+          continue;
+        }
+        throw netErr;
       } finally {
         clearTimeout(timer);
       }

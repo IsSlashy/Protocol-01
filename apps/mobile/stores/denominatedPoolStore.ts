@@ -1619,13 +1619,23 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         } catch (err) {
           console.error('[DenomPool/V3] STARK unshield error:', err);
 
-          // Crash-sweep — recover ephemeral signer balance
+          // Crash-sweep — recover ephemeral signer balance.
+          // Retry with a FRESH balance each attempt: in-flight upload TXs keep
+          // draining the ephemeral after a mid-batch failure, so a one-shot
+          // sweep computed from a stale getBalance overshoots and fails with
+          // "insufficient lamports" (the funds then strand). Re-reading the
+          // balance after a short delay lets the pending TXs settle so the
+          // amount matches; this also rides the RPC retry in resilientFetch.
           if (stealthKp) {
-            try {
-              const connection = getConnection();
-              const stealthBal = await connection.getBalance(stealthKp.publicKey);
-              const FEE_RESERVE = 5000;
-              if (stealthBal > FEE_RESERVE) {
+            const connection = getConnection();
+            const FEE_RESERVE = 5000;
+            const SWEEP_ATTEMPTS = 5;
+            let swept = false;
+            for (let a = 0; a < SWEEP_ATTEMPTS && !swept; a++) {
+              try {
+                if (a > 0) await new Promise(r => setTimeout(r, 2000));
+                const stealthBal = await connection.getBalance(stealthKp.publicKey);
+                if (stealthBal <= FEE_RESERVE) { swept = true; break; } // nothing to recover
                 const sweepAmount = stealthBal - FEE_RESERVE;
                 const sweepTx = new Transaction().add(
                   SystemProgram.transfer({
@@ -1640,13 +1650,16 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
                 sweepTx.sign(stealthKp);
                 const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
                 await connection.confirmTransaction(sweepSig, 'confirmed');
-                console.log(`[DenomStore/V3] 🛟 crash-sweep: ${(sweepAmount / 1e9).toFixed(4)} SOL recovered`);
+                console.log(`[DenomStore/V3] 🛟 crash-sweep: ${(sweepAmount / 1e9).toFixed(4)} SOL recovered (attempt ${a + 1})`);
+                swept = true;
+              } catch (sweepErr: any) {
+                if (a === SWEEP_ATTEMPTS - 1) {
+                  console.error(
+                    `[DenomStore/V3] ❌ crash-sweep FAILED after ${SWEEP_ATTEMPTS} attempts — funds at ${stealthKp.publicKey.toBase58()} (re-run this note's unshield to recover; ephemeral is deterministically derived):`,
+                    sweepErr.message,
+                  );
+                }
               }
-            } catch (sweepErr: any) {
-              console.error(
-                `[DenomStore/V3] ❌ crash-sweep FAILED — funds stuck at ${stealthKp.publicKey.toBase58()}:`,
-                sweepErr.message,
-              );
             }
           }
 
