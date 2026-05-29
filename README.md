@@ -16,6 +16,12 @@
   <a href="https://discord.gg/KfmhPFAHNH">Discord</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/IsSlashy/Protocol-01-releases/releases/latest"><img src="https://img.shields.io/github/v/release/IsSlashy/Protocol-01-releases?color=39c5bb" alt="Latest release" /></a>
+  &middot;
+  <a href="https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk"><strong>Download Android APK (v1.0.1)</strong></a>
+</p>
+
 ---
 
 > **PROPRIETARY SOFTWARE &mdash; ALL RIGHTS RESERVED**
@@ -498,6 +504,14 @@ anchor test                           # on-chain programs (localnet)
 ---
 
 ## Roadmap
+
+### Latest release — v1.0.1 (hotfix · 2026-05-29)
+
+- Privy embedded-wallet recovery & signing fixed (`PrivyElements` mounted, deterministic note-seed persisted in SecureStore for offline recovery)
+- `Transaction.serialize()` restored after the `@noble/curves` v2 migration (every on-chain op had been throwing)
+- C3 `merkle_path` STARK verifier fixed — padding rows (480–511) were counted as active Poseidon rounds, rejecting valid V3 unshield proofs; verifier rebuilt + redeployed on devnet
+- Transient RPC retry + ephemeral crash-sweep; pnpm 10 monorepo Android autolinking
+- Verified end-to-end on device (devnet): shield, emergency unshield + sweep, private merchant subscribe, classic local-keypair flow
 
 ### Shipped
 
