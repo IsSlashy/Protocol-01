@@ -123,9 +123,9 @@ export default function Problem() {
             {t("problem.title")}{" "}
             <span className="text-[#ffcc00]">{t("problem.titleHighlight")}</span>
           </h2>
-          <div className="section-subtitle space-y-1">
-            <p>{t("problem.subtitle1")}</p>
-            <p>{t("problem.subtitle2")}</p>
+          <div className="section-subtitle space-y-1 [&_strong]:font-semibold [&_strong]:text-white">
+            <p dangerouslySetInnerHTML={{ __html: t("problem.subtitle1") }} />
+            <p dangerouslySetInnerHTML={{ __html: t("problem.subtitle2") }} />
           </div>
         </motion.div>
 

@@ -5,6 +5,7 @@ import Trust from "@/components/Trust";
 import Problem from "@/components/Problem";
 import HowItWorks from "@/components/HowItWorks";
 import Features from "@/components/Features";
+import ValueProp from "@/components/ValueProp";
 import Ecosystem from "@/components/Ecosystem";
 import CTA from "@/components/CTA";
 import Footer from "@/components/Footer";
@@ -75,6 +76,9 @@ export default function Home() {
       <div id="features">
         <Features />
       </div>
+
+      {/* Why it pays — value per audience */}
+      <ValueProp />
 
       <Ecosystem />
 
