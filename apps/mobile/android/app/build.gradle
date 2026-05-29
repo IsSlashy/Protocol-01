@@ -196,6 +196,14 @@ dependencies {
     // to prevent react-native-ble-plx crash on BLE disconnect (NPE in SafePromise.reject)
     implementation("io.reactivex.rxjava2:rxjava:2.2.21")
 
+    // androidx.core:core-splashscreen brings the Theme.SplashScreen style
+    // referenced from app/src/main/res/values/styles.xml. expo-splash-screen
+    // declares it transitively but only on its java-runtime variant — its
+    // prebuilt-AAR java-api variant has no deps, so the `api` add from
+    // expo-modules-autolinking does NOT pull it. Declare here so the
+    // resource linker finds the style at app:processReleaseResources.
+    implementation("androidx.core:core-splashscreen:1.2.0-alpha02")
+
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
     def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";

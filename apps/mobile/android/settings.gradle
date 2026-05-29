@@ -22,11 +22,38 @@ plugins {
   id("expo-autolinking-settings")
 }
 
+// pnpm 10 monorepo: apps/mobile/node_modules is sparse. Override autolinking
+// to walk the workspace root's node_modules where pnpm hoists everything.
+//
+// projectRoot is set to apps/mobile (one level up from settings.rootDir =
+// apps/mobile/android) so:
+// (a) expo-modules-autolinking reads expo.autolinking from apps/mobile/
+//     package.json (with android.buildFromSource = [".*"] opt-out forcing
+//     every Expo module to compile from source — prebuilt AARs ship with
+//     broken java-api variant metadata that strips transitive resource
+//     deps, so Theme.SplashScreen + secure_store rules vanish).
+// (b) react-native-config picks up apps/mobile/react-native.config.js
+//     whose discoverNativeModules() injects every native module hoisted
+//     to the workspace root (~30 deps incl. AsyncStorage, ble-plx, etc.).
+//     Without this, PackageList.java codegen emits only ExpoModulesPackage
+//     and the app crashes at boot with "AsyncStorage is null".
+expoAutolinking.projectRoot = new File(settings.rootDir, "..")
+expoAutolinking.searchPaths = ["../../node_modules"]
+
 extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') == '1') {
     ex.autolinkLibrariesFromCommand()
   } else {
-    ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)
+    // pnpm 10 monorepo: apps/mobile/node_modules is sparse. The default
+    // rnConfigCommand only walks from there and misses native modules
+    // hoisted to the workspace root (e.g. @react-native-async-storage/
+    // async-storage, react-native-ble-plx, ...). Append the root
+    // node_modules as a positional searchPath so RN autolinking sees
+    // them. Without this the app crashes at boot with
+    // "NativeModule: AsyncStorage is null".
+    def rnCmd = new ArrayList(expoAutolinking.rnConfigCommand)
+    rnCmd.add("../../../node_modules")
+    ex.autolinkLibrariesFromCommand(rnCmd as List<String>)
   }
 }
 expoAutolinking.useExpoModules()
