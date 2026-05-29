@@ -11,7 +11,7 @@ const cols = [
     tag: "Traders & whales",
     title: "Move before the crowd does",
     body:
-      "On a public chain, watchers track big wallets in real time. The moment a whale loads up, snipers front-run the entry; the moment it exits, the chain dumps with it. Here your accumulation, your size and your exits stay invisible until you choose to reveal them. You trade on your information, not everyone else's.",
+      "Watchers track big wallets and front-run their every move. Here your size, entries and exits stay invisible until you choose to reveal them.",
   },
   {
     icon: Store,
@@ -19,7 +19,7 @@ const cols = [
     tag: "Merchants",
     title: "Get paid, prove it, store nothing",
     body:
-      "Accept private payments and verify a subscriber's license without ever holding their wallet or identity. The key is re-derived from on-chain state, so there is no customer database to secure, no breach to leak, and no compliance liability for data you never collected.",
+      "Accept private payments and verify subscribers without ever holding their wallet or identity. No database, no breach, no compliance liability.",
   },
   {
     icon: Code2,
@@ -27,7 +27,7 @@ const cols = [
     tag: "Builders",
     title: "Ship privacy without building it",
     body:
-      "Adding privacy yourself means hiring cryptographers, writing and auditing circuits, and running proving servers and relayers. With the SDK you import a few functions; the proofs, the encryption and the on-chain settlement are handled for you. You skip the multi-month build, the specialist hires and the server costs. Time to market goes from quarters to days, and the recurring infra bill is close to zero because the chain does the work.",
+      "Import a few functions and ship. Proofs, encryption and settlement are handled for you. No cryptographers to hire, no proving servers to run. Live in days, not quarters.",
   },
 ];
 

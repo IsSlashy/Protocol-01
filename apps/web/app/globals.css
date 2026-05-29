@@ -997,6 +997,19 @@
 }
 
 
+/* ===== Trust logo marquee (scroll left → right) ===== */
+@keyframes trust-marquee-ltr {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0); }
+}
+.trust-track-anim {
+  animation: trust-marquee-ltr 30s linear infinite;
+  will-change: transform;
+}
+.trust-marquee-wrap:hover .trust-track-anim {
+  animation-play-state: paused;
+}
+
 /* ===== Print Styles ===== */
 @media print {
   .no-print {
