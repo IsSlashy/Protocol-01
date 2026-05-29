@@ -88,7 +88,11 @@ export default function CreatePersonalStreamScreen() {
 
       const now = Date.now();
       const endDate = now + data.duration * 86_400_000;
-      const frequency: StreamFrequency = data.frequency;
+      // Widen to the full StreamFrequency union: the form (PaymentFrequency)
+      // only surfaces 4 of the 6 cadences today, but the freqCode /
+      // SLOTS_PER_PERIOD / intervalMsByFreq lookups below all cover the full
+      // range. data.frequency is a strict subset, so this is a safe upcast.
+      const frequency = data.frequency as StreamFrequency;
 
       // Fire the first payment IMMEDIATELY to match subscribe.tsx semantics:
       // creating a recurring payment is a "subscribe = pay first now" action,

@@ -77,6 +77,10 @@ export default function DenominatedImportScreen() {
       importNote(noteData.trim(), source);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setImported(true);
+      // Resolve the imported note's true on-chain status (mature vs maturing)
+      // so the notes list reflects reality on arrival rather than a brief stale
+      // 'imported' flash. Read-only, idempotent, non-fatal on error.
+      useDenominatedPoolStore.getState().refreshNoteStatuses().catch(() => {});
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Import Failed', (err as Error).message);

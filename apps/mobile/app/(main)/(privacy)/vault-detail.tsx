@@ -20,7 +20,7 @@ import {
   REFUND_KEEPER_FEE,
   REFUND_MIN_RESIDUAL,
 } from '@/services/subscriptionVault';
-import { ALL_POOLS } from '@/services/denominatedPool';
+import { findPoolByPDA } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -147,14 +147,22 @@ export default function VaultDetailScreen() {
   const openCancelModal = async () => {
     if (!vaultAddress || !vaultInfo) return;
     try {
+      // V2+V3/V4-aware lookup. V4 pools live in ALL_POOLS_V3, so the old
+      // ALL_POOLS.find missed every post-2026-05-07 vault and fell back to
+      // denom=0n — a misleading "all dust" refund preview. Guard before
+      // showing anything (mirrors (streams)/[id].tsx).
+      const pool = findPoolByPDA(vaultInfo.sourcePool ?? '');
+      if (!pool) {
+        p01Alert(
+          'Pool config missing',
+          `Source pool ${vaultInfo.sourcePool ?? 'unknown'} is not in this build. Update the app or contact support.`,
+        );
+        return;
+      }
       const connection = getConnection();
       const slot = await connection.getSlot('confirmed');
-      const pool = ALL_POOLS.find(
-        p => p.poolPDA.toBase58() === vaultInfo.sourcePool,
-      );
-      const denom = pool?.denominationAtomic ?? 0n;
-      setCancelPreview(computeCancelPreview(vaultInfo, slot, denom));
-      setCancelPoolLabel(pool ? `${pool.denomination} ${pool.token}` : '—');
+      setCancelPreview(computeCancelPreview(vaultInfo, slot, pool.denominationAtomic));
+      setCancelPoolLabel(`${pool.denomination} ${pool.token}`);
       setCancelPhase('preview');
       setCancelProgress(null);
       setCancelError(null);

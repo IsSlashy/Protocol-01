@@ -590,7 +590,7 @@ export default function BackupRecoveryScreen() {
               <TouchableOpacity style={styles.secondaryButton} onPress={handleCopySeed} activeOpacity={0.7}>
                 <Ionicons name={seedCopied ? 'checkmark' : 'copy-outline'} size={18} color={seedCopied ? P01Colors.cyan : Colors.text} />
                 <Text style={[styles.secondaryButtonText, seedCopied && { color: P01Colors.cyan }]}>
-                  {seedCopied ? t('common.copied') : t('common.paste')}
+                  {seedCopied ? t('common.copied') : t('onboarding.copyAll')}
                 </Text>
               </TouchableOpacity>
             </Animated.View>

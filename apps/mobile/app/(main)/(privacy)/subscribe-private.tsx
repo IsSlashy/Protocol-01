@@ -19,7 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
-import { receiptFromJSON, findPool } from '@/services/denominatedPool';
+import { receiptFromJSON, findPoolByPDA } from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -120,7 +120,11 @@ export default function SubscribePrivateScreen() {
       p01Alert('Note Not Found', 'Selected note could not be located — try selecting another.');
       return;
     }
-    const poolConfig = findPool(note.token, note.denomination);
+    // V2+V3/V4-aware lookup by poolPDA. The 2026-05-07 V4 seed bump moved active
+    // pools into ALL_POOLS_V3, so the old findPool(token, denomination) (V2-only)
+    // rejected every current note with "Pool Unavailable". Mirrors the working
+    // (streams)/subscribe.tsx path.
+    const poolConfig = findPoolByPDA(note.poolPDA);
     if (!poolConfig) {
       p01Alert('Pool Unavailable', `No pool registered for ${note.token} ${note.denomination}.`);
       return;

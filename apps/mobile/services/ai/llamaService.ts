@@ -504,5 +504,5 @@ export const MODEL_INFO = {
   quantization: 'Q4_K_M',
   parameterCount: '1B',
   fileSizeMB: MODEL_SIZE_MB,
-  contextLength: 2048,
+  contextLength: 4096, // matches initLlama n_ctx:4096 (previously mislabeled 2048)
 };

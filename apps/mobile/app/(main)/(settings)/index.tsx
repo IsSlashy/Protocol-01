@@ -311,7 +311,7 @@ export default function SettingsScreen() {
         </GlassCard>
 
         {/* PRIVACY FEATURES */}
-        <SectionTitle title={t('settings.privacy').toUpperCase()} delay={230} />
+        <SectionTitle title={t('settings.privacyFeatures').toUpperCase()} delay={230} />
         <GlassCard delay={250}>
           <ToggleRow
             label="Shielded Wallet (Legacy)"
@@ -440,7 +440,7 @@ export default function SettingsScreen() {
             accessibilityLabel={showAdvanced ? 'Hide advanced options' : 'Show advanced options'}
           >
             <Text style={styles.advancedToggleText}>
-              {showAdvanced ? t('settings.dangerZone') : t('settings.dangerZone')}
+              {showAdvanced ? t('common.close') : t('settings.dangerZone')}
             </Text>
             <Ionicons
               name={showAdvanced ? 'chevron-up' : 'chevron-down'}
