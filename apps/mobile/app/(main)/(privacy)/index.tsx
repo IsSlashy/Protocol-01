@@ -27,8 +27,8 @@ import { useT } from '@/i18n';
 const ACTION_CONFIGS = [
   { key: 'deposit', i18nKey: 'privacy.deposit', icon: 'arrow-down-circle' as const, route: '/(main)/(privacy)/denominated-shield', color: P01Colors.cyan, bg: P01Colors.cyanDim },
   { key: 'withdraw', i18nKey: 'privacy.withdraw', icon: 'arrow-up-circle' as const, route: '/(main)/(privacy)/denominated-unshield', color: P01Colors.pink, bg: P01Colors.pinkDim },
-  { key: 'send', i18nKey: 'common.send', icon: 'paper-plane' as const, route: '/(main)/(privacy)/denominated-transfer', color: '#8B8BFF', bg: 'rgba(139, 139, 255, 0.12)' },
-  { key: 'receive', i18nKey: 'common.receive', icon: 'download' as const, route: '/(main)/(privacy)/receive-note', color: '#8B8BFF', bg: 'rgba(139, 139, 255, 0.12)' },
+  { key: 'send', i18nKey: 'common.send', icon: 'paper-plane' as const, route: '/(main)/(privacy)/denominated-transfer', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)' },
+  { key: 'receive', i18nKey: 'common.receive', icon: 'download' as const, route: '/(main)/(privacy)/receive-note', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)' },
 ] as const;
 
 // ─── Protection indicators (simple, no jargon) ─────────────────

@@ -306,9 +306,9 @@ export default function DenominatedNotesScreen() {
   const statusCfg = (s: NoteStatus) => ({
     mature:      { icon: 'checkmark-circle' as const, color: P01Colors.cyan, label: t('common.ready') },
     pending:     { icon: 'time' as const, color: P01Colors.yellow, label: t('privacy.maturing') },
-    imported:    { icon: 'download' as const, color: '#8B8BFF', label: t('privacy.imported') },
+    imported:    { icon: 'download' as const, color: '#3b82f6', label: t('privacy.imported') },
     spent:       { icon: 'close-circle' as const, color: Colors.textTertiary, label: t('privacy.spent') },
-    transferred: { icon: 'swap-horizontal' as const, color: '#8B8BFF', label: t('common.send') },
+    transferred: { icon: 'swap-horizontal' as const, color: '#3b82f6', label: t('common.send') },
     locked:      { icon: 'lock-closed' as const, color: P01Colors.pink, label: t('privacy.locked') },
   }[s]);
 
@@ -418,7 +418,7 @@ export default function DenominatedNotesScreen() {
                 <TouchableOpacity style={st.detailRow}
                   onPress={() => Share.share({ message: note.transferredTo!, title: 'P01 Note' })}>
                   <Text style={st.detailLabel}>{t('privacy.transferred')}</Text>
-                  <Text style={[st.detailValue, { color: '#8B8BFF' }]}>{t('privacy.reshare')} ↗</Text>
+                  <Text style={[st.detailValue, { color: '#3b82f6' }]}>{t('privacy.reshare')} ↗</Text>
                 </TouchableOpacity>
               )}
 
@@ -551,7 +551,7 @@ export default function DenominatedNotesScreen() {
               <TouchableOpacity style={st.emptyBtn} onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}>
                 <Text style={st.emptyBtnText}>{t('privacy.shield')}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[st.emptyBtn, { backgroundColor: '#8B8BFF' }]}
+              <TouchableOpacity style={[st.emptyBtn, { backgroundColor: '#3b82f6' }]}
                 onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}>
                 <Text style={st.emptyBtnText}>{t('privacy.import')}</Text>
               </TouchableOpacity>

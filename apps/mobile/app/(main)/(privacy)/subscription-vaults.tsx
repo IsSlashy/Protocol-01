@@ -258,7 +258,7 @@ export default function SubscriptionVaultsScreen() {
                   <Text style={styles.emptyActionText}>Normal</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.emptyAction, { backgroundColor: '#8B8BFF' }]}
+                  style={[styles.emptyAction, { backgroundColor: '#3b82f6' }]}
                   onPress={() => router.push('/(main)/(privacy)/subscribe-private' as any)}
                 >
                   <Ionicons name="shield-checkmark" size={18} color="#000" />

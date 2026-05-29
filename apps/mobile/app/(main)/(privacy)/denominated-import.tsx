@@ -308,7 +308,7 @@ const st = StyleSheet.create({
   footer: { paddingHorizontal: Spacing.xl },
   importBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 16, borderRadius: 14, backgroundColor: '#8B8BFF',
+    paddingVertical: 16, borderRadius: 14, backgroundColor: '#3b82f6',
   },
   importBtnDisabled: { opacity: 0.4 },
   importBtnText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
@@ -322,7 +322,7 @@ const st = StyleSheet.create({
   },
   successIcon: { marginBottom: 8 },
   successTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  successAmount: { fontSize: 18, fontFamily: FontFamily.semibold, color: '#8B8BFF' },
+  successAmount: { fontSize: 18, fontFamily: FontFamily.semibold, color: '#3b82f6' },
   successHint: {
     fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
     textAlign: 'center', marginTop: 8, lineHeight: 19,

@@ -424,15 +424,15 @@ const st = StyleSheet.create({
     padding: 16, borderRadius: 16, backgroundColor: '#0f0f12',
     borderWidth: 1.5, borderColor: 'transparent',
   },
-  noteCardSelected: { borderColor: '#8B8BFF' },
+  noteCardSelected: { borderColor: '#3b82f6' },
   noteIcon: {
     width: 40, height: 40, borderRadius: 12,
-    backgroundColor: 'rgba(139, 139, 255, 0.1)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     alignItems: 'center', justifyContent: 'center',
   },
-  noteIconSelected: { backgroundColor: 'rgba(139, 139, 255, 0.2)' },
-  noteIconText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#8B8BFF' },
-  noteIconTextSelected: { color: '#8B8BFF' },
+  noteIconSelected: { backgroundColor: 'rgba(59, 130, 246, 0.2)' },
+  noteIconText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#3b82f6' },
+  noteIconTextSelected: { color: '#3b82f6' },
   noteInfo: { flex: 1 },
   noteAmount: { fontSize: 16, fontFamily: FontFamily.bold, color: Colors.text },
   noteId: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2 },
@@ -441,8 +441,8 @@ const st = StyleSheet.create({
     borderWidth: 2, borderColor: Colors.border,
     alignItems: 'center', justifyContent: 'center',
   },
-  radioSelected: { borderColor: '#8B8BFF' },
-  radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#8B8BFF' },
+  radioSelected: { borderColor: '#3b82f6' },
+  radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#3b82f6' },
 
   // Empty state
   emptyState: {
@@ -471,7 +471,7 @@ const st = StyleSheet.create({
   footer: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.md },
   sendBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 16, borderRadius: 14, backgroundColor: '#8B8BFF',
+    paddingVertical: 16, borderRadius: 14, backgroundColor: '#3b82f6',
   },
   sendBtnDisabled: { opacity: 0.4 },
   sendBtnText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
@@ -481,7 +481,7 @@ const st = StyleSheet.create({
   resultContent: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
   resultIcon: { marginBottom: 8 },
   resultTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  resultAmount: { fontSize: 18, fontFamily: FontFamily.semibold, color: '#8B8BFF' },
+  resultAmount: { fontSize: 18, fontFamily: FontFamily.semibold, color: '#3b82f6' },
   resultTx: { fontSize: 12, fontFamily: FontFamily.mono, color: Colors.textTertiary },
   resultHint: {
     fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,

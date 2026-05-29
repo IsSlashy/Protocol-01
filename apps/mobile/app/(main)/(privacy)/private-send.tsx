@@ -191,7 +191,7 @@ export default function PrivateSendScreen() {
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {[
               { key: 'wallet' as const, icon: 'wallet-outline', title: t('privateSend.walletSource'), sub: `${solBalance.toFixed(2)} SOL`, color: P01Colors.cyan },
-              { key: 'note' as const, icon: 'shield-checkmark-outline', title: t('privateSend.noteSource'), sub: t('privateSend.notesAvailable', { count: availableNotes.length }), color: '#8B8BFF', disabled: availableNotes.length === 0 },
+              { key: 'note' as const, icon: 'shield-checkmark-outline', title: t('privateSend.noteSource'), sub: t('privateSend.notesAvailable', { count: availableNotes.length }), color: '#3b82f6', disabled: availableNotes.length === 0 },
             ].map(s => (
               <TouchableOpacity key={s.key} onPress={() => { setSource(s.key); if (s.key === 'wallet') setSelectedNoteId(null); }}
                 disabled={s.disabled} activeOpacity={0.7}
@@ -208,9 +208,9 @@ export default function PrivateSendScreen() {
             <View style={{ marginTop: 10, gap: 6 }}>
               {availableNotes.map(n => (
                 <TouchableOpacity key={n.id} onPress={() => handleSelectNote(n.id)} activeOpacity={0.7}
-                  style={[st.noteRow, selectedNoteId === n.id && { backgroundColor: 'rgba(139,139,255,0.1)', borderColor: '#8B8BFF' }]}>
+                  style={[st.noteRow, selectedNoteId === n.id && { backgroundColor: 'rgba(59,130,246,0.1)', borderColor: '#3b82f6' }]}>
                   <Ionicons name={selectedNoteId === n.id ? 'radio-button-on' : 'radio-button-off'} size={16}
-                    color={selectedNoteId === n.id ? '#8B8BFF' : Colors.textTertiary} />
+                    color={selectedNoteId === n.id ? '#3b82f6' : Colors.textTertiary} />
                   <Text style={st.noteDenom}>{n.denomination} SOL</Text>
                   <View style={[st.badge, { backgroundColor: 'rgba(16,185,129,0.15)' }]}>
                     <Text style={[st.badgeText, { color: P01Colors.green }]}>{t('privacy.mature').toUpperCase()}</Text>
