@@ -2,7 +2,6 @@
 
 import { memo } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { useT } from "@/i18n";
 import PhoneMockup from "./PhoneMockup";
 
@@ -308,10 +307,24 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <a
-                href={APK_URL}
+              <button
+                onClick={() => {
+                  document.getElementById('problem')?.scrollIntoView({ behavior: 'smooth' });
+                }}
                 className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors"
               >
+                <svg
+                  className="w-5 h-5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+                {t('hero.initProtocol')}
+              </button>
+              <a href={APK_URL} className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
                 <svg
                   className="w-5 h-5"
                   viewBox="0 0 24 24"
@@ -325,19 +338,6 @@ function Hero() {
                 </svg>
                 {t('hero.downloadApp')}
               </a>
-              <Link href="/docs" className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
-                <svg
-                  className="w-5 h-5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                </svg>
-                {t('hero.documentation')}
-              </Link>
             </div>
 
             {/* Stats Row - industrial style */}

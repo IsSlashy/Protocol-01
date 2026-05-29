@@ -11,20 +11,20 @@ import {
 import { useT } from "@/i18n";
 
 const features = [
-  { icon: Shield, name: "autoShield", color: "#39c5bb" },
-  { icon: Wallet, name: "stealthTransfers", color: "#ff2d7a" },
-  { icon: Layers, name: "privacyPools", color: "#39c5bb" },
-  { icon: Radio, name: "privateSubscriptions", color: "#00ffe5" },
-  { icon: ArrowLeftRight, name: "tokenSwap", color: "#39c5bb" },
-  { icon: Bot, name: "aiAgent", color: "#ffcc00" },
-  { icon: Lock, name: "zkProofs", color: "#ff2d7a" },
-  { icon: Eye, name: "confidentialBalances", color: "#39c5bb" },
-  { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a" },
-  { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00" },
-  { icon: Zap, name: "multiHopRouting", color: "#00ffe5" },
-  { icon: GitBranch, name: "noteSplitting", color: "#39c5bb" },
-  { icon: Network, name: "privacyRouter", color: "#ff2d7a" },
-  { icon: FileText, name: "serviceRegistry", color: "#00ffe5" },
+  { icon: Shield, name: "autoShield", color: "#39c5bb", desc: "Funds move into the private pool automatically, so your balance never sits exposed on the public ledger." },
+  { icon: Wallet, name: "stealthTransfers", color: "#ff2d7a", desc: "Send to a one-time address that nobody can link back to the receiver's real wallet." },
+  { icon: Layers, name: "privacyPools", color: "#39c5bb", desc: "Deposit into a shared pool and withdraw later, with no on-chain link between the two." },
+  { icon: Radio, name: "privateSubscriptions", color: "#00ffe5", desc: "Pay recurring bills without the merchant or the chain seeing your wallet or the amount." },
+  { icon: ArrowLeftRight, name: "tokenSwap", color: "#39c5bb", desc: "Trade one token for another without broadcasting your move to front-runners." },
+  { icon: Bot, name: "aiAgent", color: "#ffcc00", desc: "An on-device assistant that runs your privacy actions (shield, pay, rebalance) on command." },
+  { icon: Lock, name: "zkProofs", color: "#ff2d7a", desc: "Prove a payment is valid without revealing any of its details." },
+  { icon: Eye, name: "confidentialBalances", color: "#39c5bb", desc: "Token balances stay encrypted on-chain, readable only by you." },
+  { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a", desc: "One shareable address spawns a fresh, unlinkable address for every payment you receive." },
+  { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00", desc: "An on-chain account that pays a merchant a fixed amount over time, privately." },
+  { icon: Zap, name: "multiHopRouting", color: "#00ffe5", desc: "Payments bounce through several hops so no observer can trace the path end to end." },
+  { icon: GitBranch, name: "noteSplitting", color: "#39c5bb", desc: "Split a private balance into smaller notes so a withdrawal never reveals your total." },
+  { icon: Network, name: "privacyRouter", color: "#ff2d7a", desc: "Automatically picks the best private path (relayer, hops, pool) for each transaction." },
+  { icon: FileText, name: "serviceRegistry", color: "#00ffe5", desc: "Merchants register on-chain, so you can subscribe to real services with no account." },
 ];
 
 export default function Features() {
@@ -58,7 +58,7 @@ export default function Features() {
         </motion.div>
 
         {/* Liquid Glass Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           {features.map((feature, i) => (
             <motion.div
               key={feature.name}
@@ -74,10 +74,10 @@ export default function Features() {
               />
 
               {/* Card */}
-              <div className="relative flex flex-col items-center text-center p-5 sm:p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300 cursor-default h-full">
+              <div className="relative flex flex-col p-5 sm:p-6 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300 cursor-default h-full">
                 {/* Icon */}
                 <div
-                  className="w-11 h-11 rounded-xl flex items-center justify-center mb-3 transition-transform duration-300 group-hover:scale-110"
+                  className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 transition-transform duration-300 group-hover:scale-110"
                   style={{
                     backgroundColor: `${feature.color}12`,
                     border: `1px solid ${feature.color}25`,
@@ -88,9 +88,14 @@ export default function Features() {
                 </div>
 
                 {/* Name */}
-                <h3 className="text-sm font-semibold text-white/90 font-display tracking-wide">
+                <h3 className="text-base font-semibold text-white font-display tracking-wide mb-1.5">
                   {t(`features.${feature.name}`)}
                 </h3>
+
+                {/* Description */}
+                <p className="text-[13px] leading-relaxed text-[#888892]">
+                  {feature.desc}
+                </p>
               </div>
             </motion.div>
           ))}

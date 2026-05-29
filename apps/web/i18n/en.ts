@@ -18,7 +18,7 @@ const en = {
   // ── Hero ───────────────────────────────────────────────────
   hero: {
     systemStatus: '[ SYSTEM STATUS ]',
-    kicker: 'EVERYTHING YOU NEED.',
+    kicker: 'WHO YOU PAY. WHAT YOU BUY. HOW MUCH.',
     headline: 'NOTHING THEY CAN TRACE.',
     ready: 'READY',
     protocolActive: 'Protocol Active',
@@ -29,9 +29,9 @@ const en = {
     initProtocol: 'Initialize Protocol',
     downloadApp: 'Download the app',
     documentation: 'Read the docs',
-    recurring: 'Recurring',
-    private: 'Private',
-    traces: 'Traces',
+    recurring: 'Private subscriptions',
+    private: 'Self-custody',
+    traces: 'Traces left on-chain',
     scroll: 'Scroll',
   },
 
