@@ -11,7 +11,6 @@ export default function WalletLayout() {
     >
       <Stack.Screen name="index" />
       <Stack.Screen name="send" />
-      <Stack.Screen name="send-confirm" />
       <Stack.Screen name="send-success" />
       <Stack.Screen name="send-split" />
       <Stack.Screen name="receive" />
