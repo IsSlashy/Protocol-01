@@ -104,6 +104,8 @@ function SubscribeContent() {
   };
   const [enablePrivacy, setEnablePrivacy] = useState(false);
   const [duration, setDuration] = useState<1 | 6 | 12>(1);
+  // Prepay all N months upfront at a discount (public wallet path only).
+  const [prepay, setPrepay] = useState(false);
   // User-chosen note for the vault funding. `null` = auto-pick smallest
   // mature note ≥ rate (legacy behaviour).
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -152,9 +154,19 @@ function SubscribeContent() {
   const sourceBalance = uiMode === 'private' ? privateBalance : walletSol;
   const canAffordDuration = (months: number) => sourceBalance >= price * months;
 
+  // Prepay (pay all N months now at -10%) is offered ONLY on the public wallet
+  // path. The ZK note path settles fixed denominations and can't pay an
+  // arbitrary discounted amount, so it stays monthly (see decision D).
+  const PREPAY_DISCOUNT = 0.1;
+  const canPrepay = uiMode === 'classic' && duration > 1;
+  const isPrepay = canPrepay && prepay;
+  // Amount actually charged now: full discounted lifetime for prepay, else one period.
+  const chargeNow = isPrepay
+    ? Math.round(price * duration * (1 - PREPAY_DISCOUNT) * 1e9) / 1e9
+    : price;
   // Duration only applies to one-shot flows; vault is open-ended.
-  const totalPrice = useZkVault ? price : price * duration;
-  const discount = !useZkVault && duration > 1;
+  const totalPrice = useZkVault ? price : (isPrepay ? chargeNow : price * duration);
+  const discount = isPrepay;
 
   const handleSubscribe = async () => {
     if (!publicKey) return p01Alert(t('alerts.walletRequired'), t('alerts.walletRequiredDesc'), undefined, 'warning');
@@ -199,15 +211,20 @@ function SubscribeContent() {
         s: 'a',
         np: Math.floor((now + duration * 30 * 86_400_000) / 1000),
         mp: duration > 0 ? duration : 0,
-        // pm:1 — the subscribe flow always pays the first period now, so the
-        // memo MUST reflect that or recovery will display "0/N completed"
-        // for an already-paid first period (UX bug surfaced 2026-05-02).
-        pm: 1,
+        // pm — periods paid now. Monthly flows pay the first period (1);
+        // prepay pays all `duration` periods upfront. Recovery uses this to
+        // render "X/N completed" (the 1-vs-0 bug surfaced 2026-05-02).
+        pm: isPrepay ? duration : 1,
+        // pp:1 marks a fully-prepaid (discounted upfront) subscription so
+        // recovery doesn't reschedule monthly charges.
+        pp: isPrepay ? 1 : 0,
         c: Math.floor(now / 1000),
       };
       const invoiceMemo = `P01_SUB_V1:${JSON.stringify(subMemoPayload)}`;
       let sig: string;
-      let paid = price;
+      // Wallet path pays `chargeNow` (discounted lifetime when prepaying, else
+      // one period); the ZK paths overwrite this with the note denomination.
+      let paid = chargeNow;
       // Set when the subscribe uses the on-chain ZK vault path so we can route
       // pause/resume/cancel from the Streams UI straight to the STARK actions.
       let vaultAddress: string | undefined;
@@ -530,7 +547,7 @@ function SubscribeContent() {
           throw new Error('No wallet signer available');
         }
 
-        const r = await sendSolPrivate(stealthAddress, price, walletPub, signTx);
+        const r = await sendSolPrivate(stealthAddress, chargeNow, walletPub, signTx);
         if (!r.success || !r.signature) throw new Error(r.error || 'Private transaction failed');
         sig = r.signature;
       } else {
@@ -539,11 +556,11 @@ function SubscribeContent() {
         setStepInfo(null);
         const privySigner = getPrivySigner();
         const conn = getConnection();
-        const lamports = Math.round(price * 1e9);
+        const lamports = Math.round(chargeNow * 1e9);
         if (isPrivyWallet && privySigner && publicKey) {
           // sendSolWithSigner doesn't expose a memo hook; add a follow-up
           // memo-only TX so the merchant still sees the invoice tag.
-          const r = await sendSolWithSigner(retailerAddr, price, new PublicKey(publicKey), privySigner);
+          const r = await sendSolWithSigner(retailerAddr, chargeNow, new PublicKey(publicKey), privySigner);
           if (!r.success || !r.signature) throw new Error(r.error || 'Transaction failed');
           sig = r.signature;
         } else {
@@ -571,7 +588,12 @@ function SubscribeContent() {
         useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault, useZkVault,
       });
       await updateStreamRecord(stream.id, {
-        amountStreamed: paid, paymentsCompleted: 1,
+        amountStreamed: paid,
+        // Prepay settles every period now → mark them all complete, flag the
+        // stream prepaid (scheduler skips billing), and push the next charge out
+        // to the end date as a belt-and-braces guard.
+        paymentsCompleted: isPrepay ? duration : 1,
+        ...(isPrepay ? { prepaid: true, nextPaymentDate: endDate } : {}),
         paymentHistory: [{ id: `pay-${stream.id}-0`, amount: paid, actualAmount: paid, signature: sig, timestamp: now, status: 'success' }],
         ...(vaultAddress ? { vaultAddress } : {}),
       });
@@ -659,11 +681,6 @@ function SubscribeContent() {
                     <Text style={[st.durationUnit, sel && affordable && { color: '#000' }]}>
                       {m === 1 ? t('subscribe.month') : t('subscribe.months')}
                     </Text>
-                    {m > 1 && affordable && (
-                      <View style={[st.saveBadge, sel && { backgroundColor: 'rgba(0,0,0,0.2)' }]}>
-                        <Text style={[st.saveText, sel && { color: '#000' }]}>-10%</Text>
-                      </View>
-                    )}
                     {!affordable && (
                       <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 2 }}>
                         {(price * m).toFixed(2)} SOL needed
@@ -808,6 +825,21 @@ function SubscribeContent() {
               </View>
             </TouchableOpacity>
           )}
+
+          {/* Prepay toggle — pay all N months now and save 10% (wallet path only) */}
+          {canPrepay && (
+            <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setPrepay(!prepay); }}
+              style={[st.privacyToggle, prepay && { backgroundColor: P01Colors.cyanDim }]} activeOpacity={0.8}>
+              <Ionicons name="cash-outline" size={18} color={prepay ? P01Colors.cyan : Colors.textSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text style={st.methodTitle}>Prepay {duration} months</Text>
+                <Text style={st.methodDesc}>Pay once now and save 10% ({chargeNow.toFixed(4)} SOL)</Text>
+              </View>
+              <View style={[st.switchTrack, prepay && { backgroundColor: P01Colors.cyan }]}>
+                <View style={[st.switchThumb, prepay && { alignSelf: 'flex-end' }]} />
+              </View>
+            </TouchableOpacity>
+          )}
         </Animated.View>
 
         {/* Summary */}
@@ -838,8 +870,8 @@ function SubscribeContent() {
               )}
               <View style={st.summaryDivider} />
               <View style={st.summaryRow}>
-                <Text style={st.summaryTotal}>{t('subscribe.firstPayment')}</Text>
-                <Text style={[st.summaryTotal, { color: accent }]}>{price.toFixed(4)} SOL</Text>
+                <Text style={st.summaryTotal}>{isPrepay ? 'Pay now' : t('subscribe.firstPayment')}</Text>
+                <Text style={[st.summaryTotal, { color: accent }]}>{(isPrepay ? chargeNow : price).toFixed(4)} SOL</Text>
               </View>
             </>
           )}

@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import AsyncStorage from '../../test/__mocks__/async-storage';
-import { createStream, processStreamPayment, getStream, pauseStream } from './streams';
+import { createStream, processStreamPayment, getStream, pauseStream, updateStream } from './streams';
 
 // ===================================================================
 // Static module mocks
@@ -289,5 +289,30 @@ describe('Streams Service -- Payment Guard Conditions', () => {
   it('returns null for unknown stream IDs', async () => {
     const payment = await processStreamPayment('nonexistent-id');
     expect(payment).toBeNull();
+  });
+
+  it('never re-bills a prepaid stream within its term (stays active)', async () => {
+    const stream = await makeStream({ endDate: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+    await updateStream(stream.id, { prepaid: true });
+
+    const payment = await processStreamPayment(stream.id);
+    expect(payment).toBeNull();
+
+    const { sendSol } = await import('./transactions');
+    expect(sendSol).not.toHaveBeenCalled();
+    expect((await getStream(stream.id))?.status).toBe('active');
+  });
+
+  it('completes a prepaid stream once past its end date, without charging', async () => {
+    const stream = await makeStream({ endDate: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+    // Flag prepaid AND move the end date into the past to simulate term end.
+    await updateStream(stream.id, { prepaid: true, endDate: Date.now() - 1000 });
+
+    const payment = await processStreamPayment(stream.id);
+    expect(payment).toBeNull();
+
+    const { sendSol } = await import('./transactions');
+    expect(sendSol).not.toHaveBeenCalled();
+    expect((await getStream(stream.id))?.status).toBe('completed');
   });
 });

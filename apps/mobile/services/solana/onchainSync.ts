@@ -43,6 +43,7 @@ interface OnChainSubscription {
   np: number;                // Next payment timestamp (seconds)
   mp: number;                // Max payments (0 = unlimited)
   pm: number;                // Payments made
+  pp?: number;               // 1 = fully prepaid upfront (never re-bill)
   c: number;                 // Created at timestamp (seconds)
   // Privacy settings
   an?: number;               // Amount noise %
@@ -107,6 +108,7 @@ function convertToStream(sub: OnChainSubscription, walletAddress: string): Strea
     amountStreamed: amountInToken * sub.pm,
     paymentsCompleted: sub.pm,
     totalPayments: sub.mp > 0 ? sub.mp : undefined,
+    prepaid: sub.pp === 1,
     status,
     direction: 'outgoing',
     // Privacy options from on-chain data

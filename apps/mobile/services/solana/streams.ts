@@ -58,6 +58,10 @@ export interface Stream {
    *  `useZkPool=true`) so vaultAddress backfill does not wire one-shots to unrelated
    *  vaults. Absent on legacy records — check explicitly with `=== true`. */
   useZkVault?: boolean;
+  /** True when the user paid all periods upfront (discounted) at subscribe time.
+   *  Prepaid streams are never re-billed by the scheduler; they simply complete
+   *  once `endDate` is reached. Absent on legacy/monthly records. */
+  prepaid?: boolean;
 
   // Amount noise tracking (for balancing over time)
   noiseAdjustment?: NoiseAdjustment; // Tracks cumulative overpay/underpay from noise
@@ -677,6 +681,15 @@ export async function processStreamPayment(streamId: string): Promise<StreamPaym
 async function _processStreamPaymentInner(streamId: string): Promise<StreamPayment | null> {
   const stream = await getStream(streamId);
   if (!stream || stream.status !== 'active') return null;
+
+  // Prepaid subscriptions settled every period upfront — never re-bill them.
+  // They stay active (service usable) until the end date, then complete.
+  if (stream.prepaid) {
+    if (stream.endDate && Date.now() >= stream.endDate) {
+      await updateStream(streamId, { status: 'completed' });
+    }
+    return null;
+  }
 
   // Determine effective payment-mode tag for the diagnostic logs.
   const streamMode: PaymentMode = stream.useZkPool
