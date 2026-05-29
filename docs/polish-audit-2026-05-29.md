@@ -72,10 +72,10 @@ product-facing. Listed highest-leverage first within each area.
 - `subscribe.tsx`: services with non-standard cadence (e.g. every 3 days) are recorded/recovered as "monthly". (low)
 
 ### On-device LLM agent
-- `agent.ts`: 40+ tools are **dead in cloud chat** — the streaming path never parses `​```tool` blocks (only the on-device non-streaming path does). Either stop injecting tool prompts for streaming, or run the tool loop after streaming. (medium)
-- `aiStore.ts`: raw `​```tool` JSON can render in the assistant bubble (streaming path doesn't strip it). (medium)
-- `index.tsx`: no Stop button for in-progress generation (`LlamaService.stopCompletion()` exists, unwired). (medium)
-- `llamaService.ts`: loaded model holds ~800MB forever — never released on blur/background (only manual unload). (medium)
+- ✅ **DONE (b223bb4)** `aiStore.ts`: raw `​```tool` JSON could render in the assistant bubble — streaming path now strips fences via `stripToolBlocks()` (displayed + persisted). (was medium)
+- ✅ **DONE (b223bb4)** `index.tsx`: Stop button wired — aborts cloud stream (AbortController through `sendMessageStreaming`) + `LlamaService.stopCompletion()` on-device; partial text kept, no error. (was medium)
+- ✅ **DONE (b223bb4)** `llamaService.ts`/`index.tsx`: model now released on app background and reloaded on return (llama-local only); no longer resident forever. (was medium)
+- `agent.ts`: 40+ tools are **dead in cloud chat** — the streaming path never parses `​```tool` blocks (only the on-device non-streaming path does). Either stop injecting tool prompts for streaming, or run the tool loop after streaming. (medium — **still open**, design decision)
 - `aiStore.ts`: every streamed token re-maps the whole messages array (long-chat jank). (low)
 - `ActionPreview`/`ExecutionProgress` built + exported but rendered nowhere; `gemma.ts` orphaned. (low)
 
@@ -109,4 +109,6 @@ Priority order — the first two validate the regressions fixed this session:
 3. **Import note**: import a received note → notes list reflects correct status on arrival.
 4. **Settings**: no duplicate "PRIVACY" header (2nd reads "Privacy Features"); Advanced toggle reads "Close" when expanded; Backup seed copy button reads "Copy All".
 5. **Streams create**: still creates a stream + first payment (the frequency type fix).
-6. **Regression sweep** (must be unchanged): shield, unshield, transfer, send SOL, swap.
+6. **Agent — Stop button** (b223bb4): start a cloud (Groq/Gemini) generation, tap Stop mid-stream → generation halts, partial text stays in the bubble, no error toast. Repeat for on-device (llama-local) provider. No raw `​```tool` JSON visible in any bubble.
+7. **Agent — model lifecycle** (b223bb4): with llama-local loaded, background the app then return → model reloads (brief loading), generation still works. Cloud providers: backgrounding does nothing.
+8. **Regression sweep** (must be unchanged): shield, unshield, transfer, send SOL, swap.
