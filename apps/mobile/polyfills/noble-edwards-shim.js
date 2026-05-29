@@ -19,7 +19,9 @@
 // because the resolver's subpath logic resolves esm/abstract/edwards → the real file
 var realModule;
 try {
-  realModule = require('@noble/curves/esm/abstract/edwards');
+  // v2.2.0 layout: abstract modules live at top-level `abstract/*.js` (no esm/).
+  // The `.js` suffix avoids the Metro redirect on `@noble/curves/abstract/edwards`.
+  realModule = require('@noble/curves/abstract/edwards.js');
 } catch (e) {
   console.warn('[noble-edwards-shim] Failed to load real edwards module:', e.message);
   realModule = {};

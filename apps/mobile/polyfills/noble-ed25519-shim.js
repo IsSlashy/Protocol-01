@@ -20,7 +20,11 @@ var realModule = null;
 var realEd25519 = null;
 var realX25519 = null;
 try {
-  realModule = require('@noble/curves/esm/ed25519');
+  // @noble/curves v2.2.0 ships the real module at the top-level `ed25519.js`
+  // (no `esm/` subdir). The `.js` suffix avoids the Metro redirect that
+  // intercepts the exact `@noble/curves/ed25519` specifier and resolves to the
+  // real implementation (which has working sign/verify/getPublicKey/Point).
+  realModule = require('@noble/curves/ed25519.js');
   realEd25519 = realModule.ed25519;
   realX25519 = realModule.x25519;
 } catch (e) {
@@ -124,10 +128,19 @@ if (realEd25519 && realEd25519.CURVE && typeof realEd25519.CURVE.n === 'bigint')
       try { patchedEd25519[keys[i]] = realEd25519[keys[i]]; } catch(e) {}
     }
   }
-  // Override/add CURVE and Point with our working constants
+  // Override CURVE with our working constants (for @arcium-hq/client, which
+  // reads CURVE.n / Point.Fp and breaks if twistedEdwards produced no wrapper).
   patchedEd25519.CURVE = patchedCURVE;
-  patchedEd25519.Point = Object.freeze({ Fp: Fp, Fn: Fn, BYTES: 32 });
-  patchedEd25519.ExtendedPoint = patchedEd25519.Point;
+  // Preserve the REAL curve point class — v2 exposes `Point`, while
+  // @solana/web3.js expects `ed25519.ExtendedPoint` (with `.fromHex`). Alias
+  // them to the real implementation; only fall back to a constants-only stub
+  // if the real module exposed no point class at all.
+  if (!patchedEd25519.Point) {
+    patchedEd25519.Point = Object.freeze({ Fp: Fp, Fn: Fn, BYTES: 32 });
+  }
+  patchedEd25519.ExtendedPoint = realEd25519 && (realEd25519.ExtendedPoint || realEd25519.Point)
+    ? (realEd25519.ExtendedPoint || realEd25519.Point)
+    : patchedEd25519.Point;
 
   // If real ed25519 didn't have utils, add minimal
   if (!patchedEd25519.utils) {
