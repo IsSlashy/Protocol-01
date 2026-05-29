@@ -24,7 +24,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import * as Sharing from 'expo-sharing';
 import * as ScreenCapture from 'expo-screen-capture';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -117,7 +116,9 @@ export default function ViewKeysScreen() {
         label: 'Incoming Viewing Key',
         key: `IVK_${ivkHex}`,
         createdAt: Date.now(),
-        permissions: ['View incoming only', 'View balance'],
+        // Honest about the current scheme: this secret detects incoming payments
+        // AND can spend them (view/spend are not yet separated — see redesign doc).
+        permissions: ['Detects incoming payments', 'Can also SPEND received funds'],
       };
 
       setGeneratedKeys(prev => [...prev.filter(k => k.type !== 'ivk'), newKey]);
@@ -147,29 +148,22 @@ export default function ViewKeysScreen() {
     }, 60000);
   };
 
-  const shareKey = async (viewingKey: ViewingKey) => {
-    const message = `Specter Protocol Viewing Key\n\nType: ${viewingKey.label}\nPermissions: ${viewingKey.permissions.join(', ')}\n\nKey:\n${viewingKey.key}\n\nImport this key in Specter Protocol to view transactions.`;
+  // Gate any export of the key behind an explicit spend-risk confirmation.
+  // In the current stealth scheme this key can spend received funds, so handing
+  // it out is equivalent to handing out spend authority.
+  const confirmThenExpose = (onConfirm: () => void) => {
+    p01Alert(
+      'This key can spend your funds',
+      'Anyone you share this key with can SPEND the stealth payments you receive — not just view them. Only continue if you fully trust the recipient.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'I understand, continue', style: 'destructive', onPress: onConfirm },
+      ],
+    );
+  };
 
-    try {
-      if (await Sharing.isAvailableAsync()) {
-        // Create a temporary file for sharing
-        p01Alert(
-          'Share Viewing Key',
-          'How would you like to share?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Copy to Clipboard',
-              onPress: () => copyKey(viewingKey.key),
-            },
-          ]
-        );
-      } else {
-        copyKey(viewingKey.key);
-      }
-    } catch (error) {
-      copyKey(viewingKey.key);
-    }
+  const shareKey = async (viewingKey: ViewingKey) => {
+    confirmThenExpose(() => copyKey(viewingKey.key));
   };
 
   const handleImport = () => {
@@ -238,8 +232,9 @@ export default function ViewKeysScreen() {
             <View style={styles.infoBannerContent}>
               <Text style={styles.infoBannerTitle}>What are Viewing Keys?</Text>
               <Text style={styles.infoBannerText}>
-                Viewing keys let others see your transactions without being able to spend
-                your funds. Share with auditors, accountants, or for transparency.
+                A viewing key lets someone detect payments you receive. IMPORTANT: in the
+                current scheme this key can ALSO spend those funds — it is not yet view-only.
+                Treat it like a secret key and share only with someone you fully trust.
               </Text>
             </View>
           </View>
@@ -378,8 +373,9 @@ export default function ViewKeysScreen() {
         <Animated.View entering={FadeInDown.delay(400)} style={styles.warningCard}>
           <Ionicons name="warning" size={20} color={P01.yellow} />
           <Text style={styles.warningText}>
-            Anyone with your viewing key can see your transaction history.
-            Only share with trusted parties for auditing purposes.
+            ⚠ This key can SPEND the stealth payments you receive, not just view them.
+            Anyone you give it to can take those funds. Only share with someone you fully
+            trust, and never publicly.
           </Text>
         </Animated.View>
       </ScrollView>
@@ -428,7 +424,7 @@ export default function ViewKeysScreen() {
                 <View style={styles.modalActions}>
                   <TouchableOpacity
                     style={styles.modalActionButton}
-                    onPress={() => copyKey(selectedKey.key)}
+                    onPress={() => confirmThenExpose(() => copyKey(selectedKey.key))}
                   >
                     <Ionicons name="copy" size={20} color={P01.cyan} />
                     <Text style={styles.modalActionText}>Copy</Text>
