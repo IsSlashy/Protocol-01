@@ -4,39 +4,49 @@ import { memo } from "react";
 
 /**
  * Trust — monochrome (white) logo marquee, scrolling left → right, on a
- * transparent background with a soft glow that bleeds into the rest of the
- * page (no hard section cut).
+ * transparent background with a soft glow that bleeds into the page.
  *
- * Honest signals only ($0 raised — no investors/backers). Marks are clean white
- * wordmarks (Solana keeps its real 3-bar glyph). Drop official white SVGs into
- * /public/logos and swap the wordmark for <img src="/logos/{slug}.svg"> for a
- * pixel-perfect set.
+ * Honest signals only ($0 raised — no investors/backers). Brand logos provided
+ * by the founder, forced to pure white via `brightness(0) invert(1)` for a
+ * uniform strip. Solana keeps its real 3-bar glyph.
  */
-type Brand = { name: string; glyph?: "solana" };
+type Brand = { name: string; logo?: string; glyph?: "solana" };
 
 const brands: Brand[] = [
   { name: "Solana", glyph: "solana" },
-  { name: "Arcium" },
-  { name: "Superteam" },
-  { name: "Dev3pack" },
-  { name: "Colosseum" },
-  { name: "npm" },
+  { name: "Arcium", logo: "/logos/arcium.png" },
+  { name: "Superteam Ireland", logo: "/logos/superteam.webp" },
+  { name: "Dev3pack", logo: "/logos/dev3pack.png" },
+  { name: "Colosseum Frontier", logo: "/logos/colosseum.png" },
+  { name: "npm", logo: "/logos/npm.png" },
 ];
 
 const SolanaGlyph = () => (
-  <svg width="30" height="23" viewBox="0 0 24 18" fill="none" aria-hidden className="shrink-0">
-    <path d="M4 13.5h15.5L16 17H0.5L4 13.5Z" fill="currentColor" />
-    <path d="M4 7.25h15.5L16 10.75H0.5L4 7.25Z" fill="currentColor" />
-    <path d="M4 1h15.5L16 4.5H0.5L4 1Z" fill="currentColor" />
-  </svg>
+  <div className="flex items-center gap-2.5 text-white">
+    <svg width="30" height="23" viewBox="0 0 24 18" fill="none" aria-hidden className="shrink-0">
+      <path d="M4 13.5h15.5L16 17H0.5L4 13.5Z" fill="currentColor" />
+      <path d="M4 7.25h15.5L16 10.75H0.5L4 7.25Z" fill="currentColor" />
+      <path d="M4 1h15.5L16 4.5H0.5L4 1Z" fill="currentColor" />
+    </svg>
+    <span className="text-2xl font-bold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
+      Solana
+    </span>
+  </div>
 );
 
 const Logo = ({ b }: { b: Brand }) => (
-  <div className="mx-10 flex shrink-0 items-center gap-3 text-white/70 transition-colors duration-300 hover:text-white">
-    {b.glyph === "solana" && <SolanaGlyph />}
-    <span className="text-2xl font-bold tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
-      {b.name}
-    </span>
+  <div className="mx-10 flex shrink-0 items-center opacity-70 transition-opacity duration-300 hover:opacity-100">
+    {b.glyph === "solana" ? (
+      <SolanaGlyph />
+    ) : (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={b.logo}
+        alt={b.name}
+        className="h-8 w-auto object-contain"
+        style={{ filter: "brightness(0) invert(1)" }}
+      />
+    )}
   </div>
 );
 
