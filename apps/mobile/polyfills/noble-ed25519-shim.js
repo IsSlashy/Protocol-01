@@ -142,16 +142,23 @@ if (realEd25519 && realEd25519.CURVE && typeof realEd25519.CURVE.n === 'bigint')
     ? (realEd25519.ExtendedPoint || realEd25519.Point)
     : patchedEd25519.Point;
 
-  // If real ed25519 didn't have utils, add minimal
-  if (!patchedEd25519.utils) {
-    patchedEd25519.utils = {
-      randomPrivateKey: function() {
-        var bytes = new Uint8Array(32);
-        globalThis.crypto.getRandomValues(bytes);
-        return adjustScalarBytes(bytes);
-      },
+  // @noble/curves v2 renamed utils.randomPrivateKey → randomSecretKey. web3.js
+  // (v1 API) calls ed25519.utils.randomPrivateKey() in Keypair.generate(), so
+  // ALWAYS expose that name — alias to the v2 randomSecretKey, with a CSPRNG
+  // fallback. (Build a fresh utils object since the real one is frozen.)
+  var realUtils = patchedEd25519.utils || {};
+  var randomSeedFn =
+    realUtils.randomPrivateKey ||
+    realUtils.randomSecretKey ||
+    function() {
+      var bytes = new Uint8Array(32);
+      globalThis.crypto.getRandomValues(bytes);
+      return bytes;
     };
-  }
+  patchedEd25519.utils = Object.assign({}, realUtils, {
+    randomPrivateKey: randomSeedFn,
+    randomSecretKey: realUtils.randomSecretKey || randomSeedFn,
+  });
 
   Object.freeze(patchedEd25519);
 
