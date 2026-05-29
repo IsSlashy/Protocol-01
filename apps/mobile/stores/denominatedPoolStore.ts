@@ -43,7 +43,7 @@ import {
   deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore, getPrivySigner, getPrivyMessageSigner } from './walletStore';
-import { deriveSeedFromSigner, rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
+import { deriveSeedFromSigner, getPersistedNoteSeed, rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
 
 /**
  * Walk the counter forward until we find one whose derived nullifier PDAs
@@ -2187,17 +2187,27 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           throw new Error('No pool to rescan');
         }
 
-        // Resolve seed: local kp first, otherwise prompt Privy signMessage
-        // (rescan is user-initiated, so a signature dialog is acceptable).
+        // Resolve seed, cheapest/most-reliable source first:
+        //   1. local keypair (offline)
+        //   2. persisted note seed for this pubkey (offline — survives reboot,
+        //      so a returning Privy wallet recovers WITHOUT a network round-trip)
+        //   3. Privy signMessage (network — only the first time per install;
+        //      hangs if the embedded-wallet WebView can't load, so it's last)
         const localKp = await getKeypair().catch(() => null);
         let walletSeed: Uint8Array | null = null;
         if (localKp) {
           walletSeed = localKp.secretKey.slice(0, 32);
         } else {
-          const signer = getWalletSignerIfPrivy();
-          if (signer?.signMessage) {
-            set({ progress: 'Authorizing note recovery key...' });
-            walletSeed = await deriveSeedFromSigner(signer);
+          const privyPubkey = useWalletStore.getState().publicKey;
+          if (privyPubkey) {
+            walletSeed = await getPersistedNoteSeed(privyPubkey).catch(() => null);
+          }
+          if (!walletSeed) {
+            const signer = getWalletSignerIfPrivy();
+            if (signer?.signMessage) {
+              set({ progress: 'Authorizing note recovery key...' });
+              walletSeed = await deriveSeedFromSigner(signer);
+            }
           }
         }
         if (!walletSeed) {

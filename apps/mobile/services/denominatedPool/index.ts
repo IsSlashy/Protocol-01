@@ -34,6 +34,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
+import * as SecureStore from 'expo-secure-store';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1423,24 +1424,77 @@ export const NOTE_SEED_DOMAIN = 'protocol01:note-seed:v1' as const;
 
 const noteSeedCache = new Map<string, Uint8Array>();
 
+// The derived note seed is deterministic (Ed25519 signatures over a fixed
+// message are RFC-8032 deterministic → same wallet always yields the same
+// seed). We persist it in the secure enclave keyed by pubkey so recovery on
+// reboot works OFFLINE — without it, a Privy wallet must re-hit the remote
+// embedded-wallet WebView on every boot, and a degraded network makes that
+// signMessage hang, breaking RecoveryBootModal. Persisting is no more
+// sensitive than the local keypair we already store the same way.
+const NOTE_SEED_KEY_PREFIX = 'p01_note_seed_v1_';
+const NOTE_SEED_SECURE_OPTIONS = {
+  keychainService: 'protocol-01',
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+} as const;
+
+function noteSeedStoreKey(pubkeyBase58: string): string {
+  // SecureStore keys are alphanumeric + ._- only; base58 is safe but guard anyway.
+  return NOTE_SEED_KEY_PREFIX + pubkeyBase58.replace(/[^A-Za-z0-9._-]/g, '');
+}
+
+async function persistNoteSeed(pubkeyBase58: string, seed: Uint8Array): Promise<void> {
+  try {
+    const hex = Array.from(seed, b => b.toString(16).padStart(2, '0')).join('');
+    await SecureStore.setItemAsync(noteSeedStoreKey(pubkeyBase58), hex, NOTE_SEED_SECURE_OPTIONS);
+  } catch {
+    // Persistence is best-effort — derivation still succeeds in-memory.
+  }
+}
+
+/**
+ * Read a previously-persisted note seed directly from the secure enclave,
+ * WITHOUT any signMessage prompt or Privy round-trip. Used by boot recovery
+ * so a returning Privy wallet can rescan offline (no network dependency).
+ * Returns null if the wallet has never derived a seed on this install.
+ */
+export async function getPersistedNoteSeed(pubkeyBase58: string): Promise<Uint8Array | null> {
+  const inMem = noteSeedCache.get(pubkeyBase58);
+  if (inMem) return inMem;
+  try {
+    const hex = await SecureStore.getItemAsync(noteSeedStoreKey(pubkeyBase58), NOTE_SEED_SECURE_OPTIONS);
+    if (!hex || hex.length !== 64) return null;
+    const seed = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) seed[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    noteSeedCache.set(pubkeyBase58, seed);
+    return seed;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Derive a 32-byte note seed from a wallet that exposes signMessage. The
  * signature over a fixed, domain-separated message is hashed to produce a
  * deterministic seed: any device holding the same wallet can reproduce it,
  * so notes shielded under that seed are recoverable on reinstall.
  *
- * Cached in-memory per pubkey for the session — the user is prompted to
- * sign once, not on every shield. Cache is cleared on logout via
- * {@link clearNoteSeedCache}.
+ * Resolution order: in-memory cache → persisted secure-store seed (offline) →
+ * signMessage (network). The signature prompt only fires the first time per
+ * install; thereafter the seed is read back from the enclave with no Privy
+ * round-trip. Cleared on logout via {@link clearNoteSeedCache}.
  */
 export async function deriveSeedFromSigner(signer: WalletSigner): Promise<Uint8Array> {
-  if (typeof signer.signMessage !== 'function') {
-    throw new Error('Wallet signer does not expose signMessage — cannot derive note seed');
-  }
   const cacheKey = signer.publicKey.toBase58();
   const cached = noteSeedCache.get(cacheKey);
   if (cached) return cached;
 
+  // Offline fast path — a prior session already derived + persisted the seed.
+  const persisted = await getPersistedNoteSeed(cacheKey);
+  if (persisted) return persisted;
+
+  if (typeof signer.signMessage !== 'function') {
+    throw new Error('Wallet signer does not expose signMessage — cannot derive note seed');
+  }
   const message = utf8ToBytes(NOTE_SEED_DOMAIN);
   const signature = await signer.signMessage(message);
   if (!(signature instanceof Uint8Array) || signature.length === 0) {
@@ -1448,12 +1502,21 @@ export async function deriveSeedFromSigner(signer: WalletSigner): Promise<Uint8A
   }
   const seed = sha256(signature);
   noteSeedCache.set(cacheKey, seed);
+  await persistNoteSeed(cacheKey, seed);
   return seed;
 }
 
-/** Clear the in-memory note-seed cache (call on logout). */
+/**
+ * Clear the in-memory note-seed cache AND wipe persisted seeds for every
+ * pubkey seen this session (call on logout). Reinstall wipes SecureStore
+ * anyway; this covers same-session logout.
+ */
 export function clearNoteSeedCache(): void {
+  const seenPubkeys = Array.from(noteSeedCache.keys());
   noteSeedCache.clear();
+  for (const pk of seenPubkeys) {
+    SecureStore.deleteItemAsync(noteSeedStoreKey(pk), NOTE_SEED_SECURE_OPTIONS).catch(() => {});
+  }
 }
 
 /**
