@@ -2995,7 +2995,17 @@ fn verify_constraints_merkle_path(
             let trace_row = (pos / config.blowup) % config.trace_length;
             let pos_in_cycle = trace_row % hash_cycle_len;
             let is_cycle_boundary = pos_in_cycle == hash_cycle_len - 1;
-            let active_rows = config.trace_length;
+            // [FIX 2026-05-29] C3 trace is 512 rows, but only the first
+            // CANONICAL_DEPTH(15) * 32 = 480 rows are active Poseidon rounds;
+            // rows 480-511 are frozen padding (round_active=0 in the AIR, and
+            // build_merkle_trace fills them with identity). Using
+            // config.trace_length (512) here treated those 32 padding rows as
+            // active hash rounds, so any trace-aligned FRI query landing in
+            // 480-511 demanded next==poseidon_round(current) while the prover
+            // had next==current → TransitionConstraintFailed → InvalidProof,
+            // deterministically per note (query positions derive from the
+            // trace via Fiat-Shamir). Mirrors C1's `cycle < 3` bound.
+            let active_rows = 15 * hash_cycle_len; // CANONICAL_DEPTH * HASH_CYCLE_LEN = 480
 
             if trace_row < active_rows && pos_in_cycle < config.num_rounds {
                 let current = [query.trace_value(0), query.trace_value(1), query.trace_value(2)];
