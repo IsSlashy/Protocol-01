@@ -42,12 +42,14 @@ export default function ReceiveScreen() {
   const [metaAddress, setMetaAddress] = useState<string | null>(null);
   const [showPublic, setShowPublic] = useState(false);
 
-  // Generate a fresh stealth address + load meta-address on mount
+  // Generate the one-time stealth address + load meta-address once per screen
+  // open. Cached across Public↔Private toggles so flipping back doesn't churn a
+  // brand-new address each time (re-enter the screen for a fresh one).
   useEffect(() => {
     let mounted = true;
     (async () => {
       await load();
-      if (!showPublic && publicKey) {
+      if (!showPublic && publicKey && !stealthAddress) {
         try {
           const addr = await generateReceiveAddress();
           if (mounted) setStealthAddress(addr);
@@ -61,7 +63,7 @@ export default function ReceiveScreen() {
       }
     })();
     return () => { mounted = false; };
-  }, [showPublic]);
+  }, [showPublic, publicKey, stealthAddress]);
 
   const displayAddress = showPublic ? publicKey : stealthAddress;
   const isPrivate = !showPublic && !!stealthAddress;

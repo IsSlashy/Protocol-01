@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { formatUSD, formatPriceChange } from '@/utils/format/currency';
 import { useWalletStore } from '@/stores/walletStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
+import { p01Alert } from '@/stores/alertStore';
 
 const { width } = Dimensions.get('window');
 
@@ -422,12 +423,23 @@ export default function TokenDetailScreen() {
           <View className="flex-row gap-3">
             <TouchableOpacity
               className="flex-1 bg-p01-cyan py-4 rounded-xl items-center flex-row justify-center"
-              onPress={() =>
-                router.push({
-                  pathname: '/(main)/(wallet)/send',
-                  params: { token: token.symbol },
-                })
-              }
+              onPress={() => {
+                // send.tsx only sends native SOL. Routing an SPL token here
+                // would silently send SOL instead — so for non-SOL tokens,
+                // steer the user to Swap rather than the SOL-only screen.
+                if (token.symbol === 'SOL') {
+                  router.push('/(main)/(wallet)/send');
+                } else {
+                  p01Alert(
+                    'Send not available yet',
+                    `Sending ${token.symbol} directly isn't supported yet. You can Swap ${token.symbol} to SOL first, then send SOL.`,
+                    [
+                      { text: 'Swap', onPress: () => router.push('/(main)/(wallet)/swap') },
+                      { text: 'Cancel', style: 'cancel' },
+                    ],
+                  );
+                }
+              }}
             >
               <Ionicons name="arrow-up" size={20} color="#0a0a0a" />
               <Text className="text-p01-void font-semibold ml-2">Send</Text>

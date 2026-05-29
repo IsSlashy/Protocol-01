@@ -15,7 +15,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
-import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { isValidSolanaAddress } from '@/utils/format/address';
 import { isP01AuthRequest, parseAuthQR } from '@/services/auth/p01Auth';
@@ -390,30 +389,6 @@ export default function ScanScreen() {
                 )}
               </View>
 
-              {/* Example Addresses */}
-              <Card variant="outlined" padding="md">
-                <Text className="text-p01-text-muted text-sm mb-3">
-                  Examples:
-                </Text>
-                <View className="gap-2">
-                  <TouchableOpacity
-                    onPress={() =>
-                      setManualAddress(
-                        '7nxQB4Hy9LmPdTJ3kYfPq8WvNs2jKmRt4xFc6dZe8fKm'
-                      )
-                    }
-                  >
-                    <Text className="text-p01-cyan text-xs font-mono">
-                      7nxQB4Hy9Lm...8fKm (Address)
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setManualAddress('p01.sol')}>
-                    <Text className="text-p01-cyan text-xs font-mono">
-                      p01.sol (Domain)
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </Card>
             </View>
 
             {/* Bottom Button */}

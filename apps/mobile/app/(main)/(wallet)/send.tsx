@@ -38,6 +38,7 @@ export default function SendScreen() {
     balance,
     sendTransaction,
     loading,
+    publicKey,
   } = useWalletStore();
   const { authenticateForSend } = useSecuritySettings();
 
@@ -59,6 +60,10 @@ export default function SendScreen() {
 
   // Get SOL balance
   const solBalance = balance?.sol || 0;
+  // Amount held back from MAX so the account keeps enough for the network fee
+  // (and a little headroom). The base fee is ~0.000005 SOL; we reserve more to
+  // stay safe against priority fees. Surfaced in the info card so MAX is honest.
+  const FEE_RESERVE_SOL = 0.001;
   const solPrice = balance?.solUsd ? balance.solUsd / (solBalance || 1) : 0;
   const amountNum = parseFloat(amount) || 0;
   const usdValue = amountNum * solPrice;
@@ -74,9 +79,14 @@ export default function SendScreen() {
       return false;
     }
 
+    if (publicKey && value === publicKey) {
+      setRecipientError("That's your own wallet address");
+      return false;
+    }
+
     setRecipientError('');
     return true;
-  }, []);
+  }, [publicKey]);
 
   // Auto-populate recipient from QR scan
   useEffect(() => {
@@ -98,8 +108,8 @@ export default function SendScreen() {
       return false;
     }
 
-    // Account for transaction fee (~0.000005 SOL)
-    const maxAmount = solBalance - 0.001;
+    // Reserve fee headroom (see FEE_RESERVE_SOL)
+    const maxAmount = solBalance - FEE_RESERVE_SOL;
     if (num > maxAmount) {
       setAmountError('Insufficient balance (need to reserve for fees)');
       return false;
@@ -127,7 +137,7 @@ export default function SendScreen() {
   };
 
   const handlePercentage = (percent: number) => {
-    const maxAmount = Math.max(0, solBalance - 0.001);
+    const maxAmount = Math.max(0, solBalance - FEE_RESERVE_SOL);
     const value = (maxAmount * percent).toFixed(6);
     setAmount(value);
     validateAmount(value);
@@ -334,6 +344,11 @@ export default function SendScreen() {
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Network Fee</Text>
               <Text style={styles.infoValue}>~0.000005 SOL</Text>
+            </View>
+            <View style={styles.infoDivider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Reserved (MAX)</Text>
+              <Text style={styles.infoValue}>{FEE_RESERVE_SOL} SOL</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoRow}>
