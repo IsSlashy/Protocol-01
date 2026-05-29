@@ -26,6 +26,12 @@ import {
   useEmbeddedSolanaWallet,
   useLoginWithOAuth,
 } from '@privy-io/expo';
+// PrivyElements renders Privy's UI layer (embedded-wallet recovery/unlock,
+// MFA, confirmation prompts). The SDK requires it to be mounted to "invoke
+// any UI related functionality" — without it, an embedded-wallet signMessage
+// that needs a recovery passcode hangs forever ("user-signer:sign" timeout),
+// which broke recovery on device. Must live INSIDE the PrivyProvider tree.
+import { PrivyElements } from '@privy-io/expo/ui';
 
 const PRIVY_CLIENT_ID = Constants.expoConfig?.extra?.privyClientId || process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID || '';
 
@@ -106,6 +112,9 @@ export function P01PrivyProvider({ children }: PrivyProviderProps) {
         clientId={PRIVY_CLIENT_ID}
       >
         <PrivyBridge>{children}</PrivyBridge>
+        {/* Mounts Privy's UI layer so embedded-wallet unlock/recovery/MFA
+            prompts can actually render — required for signMessage to resolve. */}
+        <PrivyElements />
       </PrivySDKProvider>
     );
   }
