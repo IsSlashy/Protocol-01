@@ -761,6 +761,7 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
 
 function PhoneMockup() {
   const [activeTab, setActiveTab] = useState<Tab>("wallet");
+  const [hasInteracted, setHasInteracted] = useState(false);
   const activeIndex = TABS.findIndex((t) => t.id === activeTab);
 
   return (
@@ -930,6 +931,26 @@ function PhoneMockup() {
 
             {/* Glass Tab Bar — 4 interactive tabs */}
             <div className="absolute bottom-3 left-3 right-3">
+              {/* Discreet affordance — invites the user to actually tap the
+                  tabs; fades out the moment they interact. */}
+              <style dangerouslySetInnerHTML={{ __html: `
+                @keyframes mockup-hint { 0%,100% { opacity:0.6; transform:translate(-50%,0); } 50% { opacity:1; transform:translate(-50%,-3px); } }
+                @media (prefers-reduced-motion: reduce){ [data-mockup-hint]{ animation:none !important; } }
+              `}} />
+              {!hasInteracted && (
+                <div
+                  data-mockup-hint
+                  className="absolute -top-9 left-1/2 flex items-center gap-1.5 px-3 py-1 rounded-full whitespace-nowrap pointer-events-none z-20"
+                  style={{
+                    background: "rgba(57,197,187,0.12)",
+                    border: "0.5px solid rgba(57,197,187,0.35)",
+                    animation: "mockup-hint 2s ease-in-out infinite",
+                  }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#39c5bb]" />
+                  <span className="text-[9px] font-mono uppercase tracking-wider text-[#39c5bb]">Tap to explore</span>
+                </div>
+              )}
               <div
                 className="flex items-center py-1.5 rounded-[20px] relative overflow-hidden"
                 style={{
@@ -964,7 +985,7 @@ function PhoneMockup() {
                     <button
                       key={tab.id}
                       type="button"
-                      onClick={() => setActiveTab(tab.id)}
+                      onClick={() => { setActiveTab(tab.id); setHasInteracted(true); }}
                       className="flex flex-col items-center gap-[2px] py-1.5 z-10 cursor-pointer bg-transparent border-none"
                       style={{ width: `${100 / TABS.length}%` }}
                     >
