@@ -29,8 +29,11 @@ import * as ScreenCapture from 'expo-screen-capture';
 import QRCode from 'react-native-qrcode-svg';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
+import { bytesToHex } from '@noble/hashes/utils.js';
+
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { p01Alert } from '@/stores/alertStore';
+import { getOrCreateStealthKeys } from '@/services/stealth/keys';
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 
 // P-01 Design System Colors
@@ -87,59 +90,46 @@ export default function ViewKeysScreen() {
   }, [isInitialized]);
 
   const generateViewingKey = async (type: KeyType) => {
+    // Only the Incoming Viewing Key has a real cryptographic basis in this
+    // ECDH stealth scheme: it IS the X25519 viewing secret, which is what
+    // lets a holder detect/decrypt incoming stealth payments. Full and
+    // Outgoing viewing keys (Zcash-style) don't exist here yet.
+    if (type !== 'ivk') {
+      p01Alert(
+        'Coming soon',
+        `${type === 'fvk' ? 'Full' : 'Outgoing'} Viewing Keys aren't available yet. ` +
+        `Use the Incoming Viewing Key to let an auditor detect payments you receive.`,
+      );
+      return;
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsGenerating(true);
 
     try {
-      // Simulate key generation (in production, derive from actual spending key)
-      await new Promise(r => setTimeout(r, 1500));
-
-      const labels: Record<KeyType, string> = {
-        fvk: 'Full Viewing Key',
-        ivk: 'Incoming Viewing Key',
-        ovk: 'Outgoing Viewing Key',
-      };
-
-      const permissions: Record<KeyType, string[]> = {
-        fvk: ['View all transactions', 'View balance', 'Detect spent notes'],
-        ivk: ['View incoming only', 'View balance'],
-        ovk: ['View outgoing only'],
-      };
-
-      // Generate mock key (in production, use real derivation)
-      const mockKey = generateMockKey(type);
+      // Real derivation: the IVK is the user's persistent X25519 viewing
+      // secret key (32 bytes → 64 hex chars, matching the import validator).
+      const keys = await getOrCreateStealthKeys();
+      const ivkHex = bytesToHex(keys.viewingSecretKey.slice(0, 32));
 
       const newKey: ViewingKey = {
-        type,
-        label: labels[type],
-        key: mockKey,
+        type: 'ivk',
+        label: 'Incoming Viewing Key',
+        key: `IVK_${ivkHex}`,
         createdAt: Date.now(),
-        permissions: permissions[type],
+        permissions: ['View incoming only', 'View balance'],
       };
 
-      setGeneratedKeys(prev => [...prev, newKey]);
+      setGeneratedKeys(prev => [...prev.filter(k => k.type !== 'ivk'), newKey]);
       setSelectedKey(newKey);
       setShowKeyModal(true);
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
-      p01Alert('Error', 'Failed to generate viewing key');
+      p01Alert('Error', 'Failed to derive incoming viewing key');
     } finally {
       setIsGenerating(false);
     }
-  };
-
-  const generateMockKey = (type: KeyType): string => {
-    const prefix = type.toUpperCase();
-    // Use crypto.getRandomValues for secure random key generation
-    const bytes = new Uint8Array(32);
-    if (typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues) {
-      globalThis.crypto.getRandomValues(bytes);
-    } else {
-      throw new Error('CSPRNG not available — cannot generate secure random bytes');
-    }
-    const randomPart = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
-    return `${prefix}_${randomPart}`;
   };
 
   const copyKey = async (key: string) => {
@@ -280,8 +270,8 @@ export default function ViewKeysScreen() {
                   View all transactions, balance, and spent notes
                 </Text>
                 <View style={styles.permissionTags}>
-                  <View style={[styles.tag, { backgroundColor: P01.cyanDim }]}>
-                    <Text style={[styles.tagText, { color: P01.cyan }]}>All Access</Text>
+                  <View style={[styles.tag, { backgroundColor: P01.yellowDim }]}>
+                    <Text style={[styles.tagText, { color: P01.yellow }]}>Coming soon</Text>
                   </View>
                 </View>
               </View>
@@ -340,8 +330,8 @@ export default function ViewKeysScreen() {
                   View only outgoing transactions (for sender records)
                 </Text>
                 <View style={styles.permissionTags}>
-                  <View style={[styles.tag, { backgroundColor: P01.pinkDim }]}>
-                    <Text style={[styles.tagText, { color: P01.pink }]}>Send Only</Text>
+                  <View style={[styles.tag, { backgroundColor: P01.yellowDim }]}>
+                    <Text style={[styles.tagText, { color: P01.yellow }]}>Coming soon</Text>
                   </View>
                 </View>
               </View>
