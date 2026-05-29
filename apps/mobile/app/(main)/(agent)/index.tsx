@@ -10,6 +10,7 @@ import {
   Dimensions,
   ActivityIndicator,
   RefreshControl,
+  AppState,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -60,10 +61,13 @@ export default function AgentDashboard() {
     initialize,
     sendMessageStreaming,
     sendMessage,
+    stopGeneration,
     clearError,
     clearMessages,
     refreshMarketData,
     createConversation,
+    initModel,
+    releaseModel,
     config,
     isRecording,
     isTranscribing,
@@ -117,6 +121,29 @@ export default function AgentDashboard() {
     );
     return () => { showSub.remove(); hideSub.remove(); };
   }, [messages.length]);
+
+  // Free the ~800MB on-device model while the app is backgrounded, then reload
+  // it on return (on-device provider only). Without this the model stays
+  // resident in RAM until a manual unload.
+  const autoReleasedRef = useRef(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background') {
+        if (LlamaService.isModelLoaded()) {
+          autoReleasedRef.current = true;
+          releaseModel();
+        }
+      } else if (next === 'active') {
+        if (autoReleasedRef.current && config.provider === 'llama-local') {
+          autoReleasedRef.current = false;
+          initModel();
+        } else {
+          autoReleasedRef.current = false;
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [config.provider, releaseModel, initModel]);
 
   // ── KV Cache Pre-warming ──────────────────────────────────────────────────
   // When the on-device model is loaded and the user starts typing, pre-warm
@@ -552,7 +579,7 @@ export default function AgentDashboard() {
                 />
               </View>
 
-              {/* Mic / Send toggle */}
+              {/* Stop / Mic / Send toggle */}
               {isTranscribing ? (
                 <View
                   style={{
@@ -568,29 +595,38 @@ export default function AgentDashboard() {
                 >
                   <ActivityIndicator size="small" color={Colors.primary} />
                 </View>
-              ) : inputText.trim() ? (
+              ) : isLoading ? (
                 <TouchableOpacity
-                  onPress={handleSend}
-                  disabled={isLoading}
+                  onPress={stopGeneration}
                   accessibilityRole="button"
-                  accessibilityLabel="Send message"
-                  accessibilityState={{ disabled: isLoading }}
+                  accessibilityLabel="Stop generating"
+                  accessibilityHint="Stops the AI response in progress"
                   style={{
                     width: 44,
                     height: 44,
                     borderRadius: 22,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    backgroundColor: isLoading
-                      ? Colors.primaryDim
-                      : Colors.primary,
+                    backgroundColor: Colors.primaryDim,
                   }}
                 >
-                  {isLoading ? (
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                  ) : (
-                    <Ionicons name="arrow-up" size={22} color={Colors.background} />
-                  )}
+                  <Ionicons name="stop" size={20} color={Colors.primary} />
+                </TouchableOpacity>
+              ) : inputText.trim() ? (
+                <TouchableOpacity
+                  onPress={handleSend}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: Colors.primary,
+                  }}
+                >
+                  <Ionicons name="arrow-up" size={22} color={Colors.background} />
                 </TouchableOpacity>
               ) : (
                 <VoiceButton

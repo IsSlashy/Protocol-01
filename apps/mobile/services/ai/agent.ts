@@ -376,7 +376,7 @@ export async function sendMessage(
     }
 
     // Strip tool blocks from the response, append tool results, and ask AI to continue
-    const cleanedResponse = response.message.replace(/```tool\s*\n?[\s\S]*?```/gi, '').trim();
+    const cleanedResponse = stripToolBlocks(response.message);
     if (cleanedResponse) {
       allMessages.push({ role: 'assistant', content: cleanedResponse });
     }
@@ -431,11 +431,24 @@ async function sendToProvider(
  *
  * Fallback chain: Groq SSE > Gemini SSE > Gemma Local > non-streaming fallback
  */
+/**
+ * Strip ```tool fenced blocks from text for display. Removes complete fences
+ * and any trailing unclosed fence, so partial tool JSON never flashes in the
+ * assistant bubble mid-stream.
+ */
+export function stripToolBlocks(text: string): string {
+  return text
+    .replace(/```tool\s*\n?[\s\S]*?```/gi, '')
+    .replace(/```tool[\s\S]*$/i, '')
+    .trim();
+}
+
 export async function sendMessageStreaming(
   messages: ChatMessage[],
   onToken: (token: string) => void,
   config?: AIConfig,
-  context?: AIContext
+  context?: AIContext,
+  signal?: AbortSignal
 ): Promise<string> {
   const activeConfig = config || await loadConfig();
   const enhancedPrompt = buildEnhancedPrompt(activeConfig, context);
@@ -458,8 +471,9 @@ export async function sendMessageStreaming(
   const groqKey = activeConfig.groqApiKey || GROQ_API_KEY;
   if (groqKey && (activeConfig.provider === 'groq' || activeConfig.provider === 'gemma' || activeConfig.provider === 'gemma-cloud')) {
     try {
-      return await streamFromGroq(allMessages, groqKey, activeConfig, onToken);
+      return await streamFromGroq(allMessages, groqKey, activeConfig, onToken, signal);
     } catch (error: any) {
+      if (signal?.aborted) throw error;
       console.warn('[AI] Groq streaming failed, trying Gemini:', error.message);
     }
   }
@@ -468,8 +482,9 @@ export async function sendMessageStreaming(
   const geminiKey = activeConfig.apiKey || GEMINI_API_KEY;
   if (geminiKey) {
     try {
-      return await streamFromGemini(allMessages, geminiKey, activeConfig, onToken);
+      return await streamFromGemini(allMessages, geminiKey, activeConfig, onToken, signal);
     } catch (error: any) {
+      if (signal?.aborted) throw error;
       console.warn('[AI] Gemini streaming failed, trying local:', error.message);
     }
   }
@@ -501,7 +516,8 @@ async function streamFromGroq(
   messages: ChatMessage[],
   apiKey: string,
   config: AIConfig,
-  onToken: (token: string) => void
+  onToken: (token: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -516,6 +532,7 @@ async function streamFromGroq(
       max_tokens: config.maxTokens || 1024,
       stream: true,
     }),
+    signal,
   });
 
   if (!response.ok) {
@@ -523,7 +540,7 @@ async function streamFromGroq(
     throw new Error(`Groq error (${response.status}): ${err}`);
   }
 
-  return await parseSSEStream(response, onToken);
+  return await parseSSEStream(response, onToken, signal);
 }
 
 /**
@@ -533,7 +550,8 @@ async function streamFromGemini(
   messages: ChatMessage[],
   apiKey: string,
   config: AIConfig,
-  onToken: (token: string) => void
+  onToken: (token: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   const systemPrompt = messages.find(m => m.role === 'system')?.content || '';
   const chatMessages = messages
@@ -559,6 +577,7 @@ async function streamFromGemini(
           maxOutputTokens: config.maxTokens || 1024,
         },
       }),
+      signal,
     }
   );
 
@@ -576,7 +595,15 @@ async function streamFromGemini(
   let buffer = '';
 
   while (true) {
-    const { done, value } = await reader.read();
+    if (signal?.aborted) break;
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      if (signal?.aborted) break; // user stopped generation — return partial text
+      throw e;
+    }
+    const { done, value } = chunk;
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
@@ -648,7 +675,8 @@ async function streamFromLocal(
  */
 async function parseSSEStream(
   response: Response,
-  onToken: (token: string) => void
+  onToken: (token: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   let fullText = '';
   const reader = response.body?.getReader();
@@ -658,7 +686,15 @@ async function parseSSEStream(
   let buffer = '';
 
   while (true) {
-    const { done, value } = await reader.read();
+    if (signal?.aborted) break;
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      if (signal?.aborted) break; // user stopped generation — return partial text
+      throw e;
+    }
+    const { done, value } = chunk;
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });

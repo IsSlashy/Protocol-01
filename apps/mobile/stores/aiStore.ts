@@ -12,6 +12,7 @@ import {
   sendMessageStreaming as sendAIMessageStreaming,
   DEFAULT_CONFIGS,
   extractSuggestions,
+  stripToolBlocks,
 } from '../services/ai/agent';
 import { getMarketSummary, MarketSummary } from '../services/crypto/marketData';
 import * as LlamaService from '../services/ai/llamaService';
@@ -78,6 +79,7 @@ interface AIState {
   // Chat actions
   sendMessage: (content: string) => Promise<void>;
   sendMessageStreaming: (content: string) => Promise<void>;
+  stopGeneration: () => void;
   clearMessages: () => void;
   clearError: () => void;
 
@@ -107,6 +109,10 @@ let messageIdCounter = 0;
 function nextId(): string {
   return `msg_${Date.now()}_${++messageIdCounter}`;
 }
+
+// Aborts the in-flight cloud streaming request when the user taps Stop.
+// On-device generation is interrupted separately via LlamaService.stopCompletion().
+let activeAbort: AbortController | null = null;
 
 function conversationId(): string {
   return `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -366,26 +372,30 @@ export const useAIStore = create<AIState>((set, get) => ({
       }));
 
       let accumulated = '';
+      activeAbort = new AbortController();
 
       const fullText = await sendAIMessageStreaming(
         chatMessages,
         (token: string) => {
           accumulated += token;
-          // Update the placeholder message content in-place
+          // Strip tool fences so raw ```tool JSON never renders in the bubble
+          const display = stripToolBlocks(accumulated);
           const currentMessages = get().messages;
           const updated = currentMessages.map(m =>
-            m.id === assistantId ? { ...m, content: accumulated } : m
+            m.id === assistantId ? { ...m, content: display } : m
           );
-          set({ messages: updated, streamingMessage: accumulated });
+          set({ messages: updated, streamingMessage: display });
         },
         config,
-        context
+        context,
+        activeAbort.signal
       );
 
-      const suggestions = extractSuggestions(content, fullText);
+      const cleanText = stripToolBlocks(fullText);
+      const suggestions = extractSuggestions(content, cleanText);
       const currentMessages = get().messages;
       const finalMessages = currentMessages.map(m =>
-        m.id === assistantId ? { ...m, content: fullText, suggestions } : m
+        m.id === assistantId ? { ...m, content: cleanText, suggestions } : m
       ).slice(-MAX_MESSAGES_PER_CONVERSATION);
 
       set({
@@ -395,16 +405,36 @@ export const useAIStore = create<AIState>((set, get) => ({
       });
       get()._persistConversation(finalMessages, convId!);
     } catch (error: any) {
-      // Remove the empty placeholder on error
-      const currentMessages = get().messages;
-      const cleaned = currentMessages.filter(m => m.id !== assistantId || m.content.length > 0);
-      set({
-        messages: cleaned,
-        error: error.message || 'Streaming failed',
-        isLoading: false,
-        streamingMessage: null,
-      });
+      // User-initiated stop: keep whatever streamed so far, no error toast
+      if (activeAbort?.signal.aborted || error?.name === 'AbortError') {
+        const currentMessages = get().messages;
+        const kept = currentMessages
+          .filter(m => m.id !== assistantId || m.content.length > 0)
+          .map(m => m.id === assistantId ? { ...m, content: stripToolBlocks(m.content) } : m)
+          .slice(-MAX_MESSAGES_PER_CONVERSATION);
+        set({ messages: kept, isLoading: false, streamingMessage: null });
+        if (convId) get()._persistConversation(kept, convId);
+      } else {
+        // Remove the empty placeholder on a real error
+        const currentMessages = get().messages;
+        const cleaned = currentMessages.filter(m => m.id !== assistantId || m.content.length > 0);
+        set({
+          messages: cleaned,
+          error: error.message || 'Streaming failed',
+          isLoading: false,
+          streamingMessage: null,
+        });
+      }
+    } finally {
+      activeAbort = null;
     }
+  },
+
+  stopGeneration: () => {
+    // Cancel cloud streaming (fetch) and on-device generation, then finalize UI.
+    if (activeAbort) activeAbort.abort();
+    LlamaService.stopCompletion().catch(() => {});
+    set({ isLoading: false, streamingMessage: null });
   },
 
   clearMessages: () => {
