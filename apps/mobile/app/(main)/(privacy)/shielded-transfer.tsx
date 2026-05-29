@@ -96,6 +96,7 @@ export default function ShieldedTransferScreen() {
     setProofProgress(0);
     setProofStatus('Preparing transaction...');
 
+    let progressInterval: ReturnType<typeof setInterval> | undefined;
     try {
       let walletPubkey: PublicKey;
       let signTransaction: (tx: Transaction) => Promise<Transaction>;
@@ -146,7 +147,7 @@ export default function ShieldedTransferScreen() {
       }
 
       let currentProgress = starkReady ? 50 : 0;
-      const progressInterval = setInterval(() => {
+      progressInterval = setInterval(() => {
         if (currentProgress >= 90) { currentProgress = 90; } else {
           currentProgress = currentProgress + Math.random() * 15;
           if (currentProgress > 90) currentProgress = 90;
@@ -186,6 +187,7 @@ export default function ShieldedTransferScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Transfer Failed', (err as Error).message);
     } finally {
+      if (progressInterval) clearInterval(progressInterval);
       setIsProcessing(false);
       setProofProgress(0);
       setProofStatus(null);

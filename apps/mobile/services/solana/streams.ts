@@ -706,7 +706,7 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
         .filter((n: any) => n.token === 'SOL' && n.status === 'mature');
       const availableNote = matureNotes.find((n: any) => n.denomination >= stream.amountPerPayment);
 
-      if (1) {
+      if (__DEV__) {
         console.log('[Sub:Renew:Auto] precheck', {
           streamId,
           streamName: stream.name,
@@ -743,7 +743,7 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
       }
     } catch (e) {
       console.warn('[Streams] Failed to check denomination pool notes:', e);
-      if (1) {
+      if (__DEV__) {
         console.warn('[Sub:Renew:Auto] precheck threw', {
           streamId,
           message: (e as Error).message,
@@ -803,7 +803,7 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
       // useZkPool ⇒ no auto path. The user has to be in-app to tap Pay Now,
       // and Pay Now itself currently uses the V2 unshield path (see
       // app/(main)/(streams)/[id].tsx:332) which fails on V3+ notes.
-      if (1) {
+      if (__DEV__) {
         console.log('[Sub:Renew:Skip] ZK stream skipped by processDuePayments', {
           streamId,
           streamName: stream.name,

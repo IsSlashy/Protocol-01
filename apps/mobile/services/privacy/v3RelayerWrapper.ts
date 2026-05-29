@@ -307,12 +307,3 @@ export function inferV1InnerTxBudget(): number {
   const V1_ENCRYPT_OVERHEAD = 73;
   return SOLANA_TX_CAP - OUTER_SUBMIT_JOB_FIXED - IX_DATA_FIXED - V1_ENCRYPT_OVERHEAD;
 }
-
-/**
- * @deprecated Use `inferV1InnerTxBudget()` directly + an inequality. Kept
- * for backward compat; the original 1207B figure was wrong (omitted outer
- * tx overhead).
- */
-export function fitsInRelayerEnvelope(serializedTxBytes: number): boolean {
-  return serializedTxBytes <= inferV1InnerTxBudget();
-}

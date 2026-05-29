@@ -378,7 +378,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       ) => {
         set({ isLoading: true, error: null, progress: 'Preparing STARK subscription...' });
 
-        if (1) {
+        if (__DEV__) {
           console.log('[Sub:Create:Store] subscribePrivateStarkAction begin', {
             poolPDA: poolConfig.poolPDA.toBase58(),
             poolVersion: (poolConfig as any).version ?? 'v2',
@@ -434,7 +434,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
           // Save secret to SecureStore (not AsyncStorage)
           await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
-          if (1) {
+          if (__DEV__) {
             // Verify the round-trip — SecureStore can silently fail on locked
             // device or 2 KB key-size cap. A vault that exists on-chain but
             // whose secret isn't retrievable later is the canonical
@@ -465,7 +465,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             const { fetchVault } = await import('../services/subscriptionVault');
             const { upsertStreamFromVault } = await import('../services/solana/streams');
             const vaultInfo = await fetchVault(vaultPDA);
-            if (1) {
+            if (__DEV__) {
               console.log('[Sub:Create:Store] stream sync', {
                 vaultFetched: !!vaultInfo,
                 vaultPDA: vaultPDA.toBase58(),
@@ -482,7 +482,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             { transactionId: sig },
           );
 
-          if (1) {
+          if (__DEV__) {
             console.log('[Sub:Create:Store] subscribePrivateStarkAction success', {
               vaultPDA: vaultPDA.toBase58(),
               sigPrefix: sig.slice(0, 16),
@@ -492,7 +492,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           return { signature: sig, vaultAddress: vaultPDA.toBase58() };
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
-          if (1) {
+          if (__DEV__) {
             console.warn('[Sub:Create:Store] FAILED', {
               message: (err as Error).message,
               poolPDA: poolConfig.poolPDA.toBase58(),
@@ -915,7 +915,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         //    prover — pass `computeStarkCommitment` from `useStarkProver().computeCommitment`.
         const connection = getConnection();
         const { notes } = useDenominatedPoolStore.getState();
-        if (1) {
+        if (__DEV__) {
           console.log('[Sub:Recovery] begin', {
             totalNotes: notes.length,
             hasStarkProver: !!computeStarkCommitment,
@@ -1019,7 +1019,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           set(state => ({ vaults: [...newStoredVaults, ...state.vaults] }));
         }
 
-        if (1) {
+        if (__DEV__) {
           console.log('[Sub:Recovery] done', {
             scanned: allAccounts.length,
             recovered,

@@ -174,13 +174,14 @@ export default function ShieldedWalletScreen() {
     setProgressStep(0);
     setProgressMessage('Preparing wallet...');
 
+    let interval: ReturnType<typeof setInterval> | undefined;
     try {
       setProgressStep(10);
       setProgressMessage('Connecting to wallet...');
       const { walletPubkey, signTransaction } = await getWalletSigner();
       setProgressStep(20);
 
-      const interval = runProgress(20, [[40, 'Computing commitment...'], [65, 'Signing transaction...'], [100, 'Confirming on Solana...']]);
+      interval = runProgress(20, [[40, 'Computing commitment...'], [65, 'Signing transaction...'], [100, 'Confirming on Solana...']]);
       await shield(parseFloat(amount), walletPubkey, signTransaction);
       clearInterval(interval);
 
@@ -196,6 +197,7 @@ export default function ShieldedWalletScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
     } finally {
+      if (interval) clearInterval(interval);
       setIsProcessing(false);
       setProgressOperation(null);
       setProgressStep(0);
@@ -221,6 +223,7 @@ export default function ShieldedWalletScreen() {
     setProgressStep(0);
     setProgressMessage('Preparing withdrawal...');
 
+    let interval: ReturnType<typeof setInterval> | undefined;
     try {
       setProgressStep(10);
       const { walletPubkey, signTransaction } = await getWalletSigner();
@@ -263,7 +266,7 @@ export default function ShieldedWalletScreen() {
 
         setProgressStep(55);
         setProgressMessage('Executing unshield...');
-        const interval = runProgress(55, [[70, 'Generating ZK proof...'], [85, 'Signing transaction...'], [100, 'Confirming on Solana...']]);
+        interval = runProgress(55, [[70, 'Generating ZK proof...'], [85, 'Signing transaction...'], [100, 'Confirming on Solana...']]);
         await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction, false);
         clearInterval(interval);
       } else {
@@ -271,7 +274,7 @@ export default function ShieldedWalletScreen() {
         const progressSteps = useRelay
           ? [[20, 'Preparing proof...'], [40, 'Generating ZK proof...'], [55, 'Encrypting for relayer...'], [70, 'Submitting relay job...'], [85, 'Waiting for relayer...'], [100, 'Confirming on Solana...']]
           : [[30, 'Preparing proof...'], [50, 'Generating ZK proof...'], [70, 'Signing transaction...'], [100, 'Confirming on Solana...']];
-        const interval = runProgress(15, progressSteps as [number, string][]);
+        interval = runProgress(15, progressSteps as [number, string][]);
         await unshield(parseFloat(amount), walletPubkey, walletPubkey, signTransaction, useRelay);
         clearInterval(interval);
       }
@@ -289,6 +292,7 @@ export default function ShieldedWalletScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
     } finally {
+      if (interval) clearInterval(interval);
       setIsProcessing(false);
       setProgressOperation(null);
       setProgressStep(0);

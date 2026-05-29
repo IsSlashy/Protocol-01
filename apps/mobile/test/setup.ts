@@ -7,6 +7,13 @@
 
 import { vi } from 'vitest';
 
+// React Native injects __DEV__ as a global at bundle time; it is undefined in
+// the Node test env, so guards like `if (__DEV__)` throw ReferenceError. Define
+// it here to mirror the device runtime.
+if (typeof (globalThis as any).__DEV__ === 'undefined') {
+  (globalThis as any).__DEV__ = true;
+}
+
 // Polyfill TextEncoder / TextDecoder for Node environments
 import { TextEncoder, TextDecoder } from 'util';
 if (typeof globalThis.TextEncoder === 'undefined') {

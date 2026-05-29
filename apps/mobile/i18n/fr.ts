@@ -438,6 +438,7 @@ export default {
     general: 'G\u00e9n\u00e9ral',
     security: 'S\u00e9curit\u00e9',
     privacy: 'Confidentialit\u00e9',
+    privacyFeatures: 'Options de confidentialit\u00e9',
     network: 'R\u00e9seau',
     backup: 'Sauvegarde',
     about: '\u00c0 propos',

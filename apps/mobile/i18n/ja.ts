@@ -438,6 +438,7 @@ export default {
     general: '\u4e00\u822c',
     security: '\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3',
     privacy: '\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc',
+    privacyFeatures: '\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u6a5f\u80fd',
     network: '\u30cd\u30c3\u30c8\u30ef\u30fc\u30af',
     backup: '\u30d0\u30c3\u30af\u30a2\u30c3\u30d7',
     about: '\u30a2\u30d7\u30ea\u306b\u3064\u3044\u3066',

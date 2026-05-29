@@ -2660,7 +2660,7 @@ export function deriveSplitOutputSecretsV3(parentSecret: bigint, count: number):
 }
 
 // ---------------------------------------------------------------------------
-// V3 pool config — TODO fill after devnet v3 deploy
+// V3/V4 pool config (live on devnet)
 // ---------------------------------------------------------------------------
 
 // V3 pools deployed on devnet 2026-05-03 via scripts/setup-v3-pools.mjs.

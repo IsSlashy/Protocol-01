@@ -142,6 +142,7 @@ export default function ConfidentialBalanceScreen() {
     setProgressStep(0);
     setProgressMessage(`Preparing ${tokenSymbol} deposit...`);
 
+    let interval: ReturnType<typeof setInterval> | undefined;
     try {
       if (!starkReady) {
         throw new Error('STARK prover is still initializing. Please try again in a moment.');
@@ -163,7 +164,7 @@ export default function ConfidentialBalanceScreen() {
 
       setProgressStep(40);
       setProgressMessage('Verifying STARK proof on-chain...');
-      const interval = runProgress(40, [[60, 'Submitting deposit...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
+      interval = runProgress(40, [[60, 'Submitting deposit...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
       await depositStark(selectedToken, parseFloat(amount), {
         proofBytes,
         publicInputs,
@@ -179,7 +180,7 @@ export default function ConfidentialBalanceScreen() {
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
-    } finally { resetProgress(); }
+    } finally { if (interval) clearInterval(interval); resetProgress(); }
   };
 
   const handleWithdraw = async () => {
@@ -200,6 +201,7 @@ export default function ConfidentialBalanceScreen() {
     setProgressStep(0);
     setProgressMessage(`Preparing ${tokenSymbol} withdrawal...`);
 
+    let interval: ReturnType<typeof setInterval> | undefined;
     try {
       if (!starkReady) {
         throw new Error('STARK prover is still initializing. Please try again in a moment.');
@@ -221,7 +223,7 @@ export default function ConfidentialBalanceScreen() {
 
       setProgressStep(40);
       setProgressMessage('Verifying STARK proof on-chain...');
-      const interval = runProgress(40, [[60, 'Submitting withdrawal...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
+      interval = runProgress(40, [[60, 'Submitting withdrawal...'], [80, 'Confirming on Solana...'], [100, 'Complete!']]);
       await withdrawStark(selectedToken, parseFloat(amount), {
         proofBytes,
         publicInputs,
@@ -237,7 +239,7 @@ export default function ConfidentialBalanceScreen() {
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
-    } finally { resetProgress(); }
+    } finally { if (interval) clearInterval(interval); resetProgress(); }
   };
 
   const handleTransfer = async () => {
@@ -252,6 +254,7 @@ export default function ConfidentialBalanceScreen() {
     setProgressStep(0);
     setProgressMessage(`Preparing ${tokenSymbol} transfer...`);
 
+    let interval: ReturnType<typeof setInterval> | undefined;
     try {
       if (!starkReady) {
         throw new Error('STARK prover is still initializing. Please try again in a moment.');
@@ -277,7 +280,7 @@ export default function ConfidentialBalanceScreen() {
 
       setProgressStep(40);
       setProgressMessage('Verifying STARK proof on-chain...');
-      const interval = runProgress(40, [[55, 'Creating commitment...'], [70, 'Submitting transfer...'], [85, 'Confirming on Solana...'], [100, 'Complete!']]);
+      interval = runProgress(40, [[55, 'Creating commitment...'], [70, 'Submitting transfer...'], [85, 'Confirming on Solana...'], [100, 'Complete!']]);
       await confidentialTransferStark(
         selectedToken,
         recipientAddress.trim(),
@@ -305,7 +308,7 @@ export default function ConfidentialBalanceScreen() {
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert('Error', (err as Error).message);
-    } finally { resetProgress(); }
+    } finally { if (interval) clearInterval(interval); resetProgress(); }
   };
 
   const handleSweepToMain = async () => {
