@@ -6,6 +6,9 @@ import Link from "next/link";
 import { useT } from "@/i18n";
 import PhoneMockup from "./PhoneMockup";
 
+const APK_URL =
+  "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk";
+
 /**
  * Hero - Optimized version
  *
@@ -305,10 +308,8 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <button
-                onClick={() => {
-                  document.getElementById('problem')?.scrollIntoView({ behavior: 'smooth' });
-                }}
+              <a
+                href={APK_URL}
                 className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors"
               >
                 <svg
@@ -318,10 +319,12 @@ function Hero() {
                   stroke="currentColor"
                   strokeWidth="2"
                 >
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
-                {t('hero.initProtocol')}
-              </button>
+                {t('hero.downloadApp')}
+              </a>
               <Link href="/docs" className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
                 <svg
                   className="w-5 h-5"

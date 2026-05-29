@@ -1,6 +1,7 @@
 "use client";
 
 import Hero from "@/components/Hero";
+import Trust from "@/components/Trust";
 import Problem from "@/components/Problem";
 import HowItWorks from "@/components/HowItWorks";
 import Features from "@/components/Features";
@@ -43,6 +44,9 @@ export default function Home() {
 
       {/* Main Content */}
       <Hero />
+
+      {/* Trust — built on / recognized by */}
+      <Trust />
 
       {/* Demo Video */}
       <section className="relative py-16 px-4">
