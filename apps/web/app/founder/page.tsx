@@ -1,22 +1,55 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useInView } from "framer-motion";
+import { useRef, useState, useEffect, type ComponentType } from "react";
+import {
+  Terminal, Code2, ShoppingCart, GraduationCap, Briefcase, Shield, Rocket, Lock,
+  Box, Smartphone, Cpu,
+} from "lucide-react";
 import { useT } from "@/i18n";
 import Footer from "@/components/Footer";
 import SiteHeader from "@/components/SiteHeader";
 
 const fadeUp = { hidden: { opacity: 0, y: 30 }, visible: { opacity: 1, y: 0 } };
 
-const timeline = [
-  { year: "2007", key: "origin", icon: "terminal" },
-  { year: "2019", key: "coding", icon: "code" },
-  { year: "2022", key: "ecommerce", icon: "shopping-cart" },
-  { year: "2023", key: "bachelor", icon: "graduation-cap" },
-  { year: "2023-24", key: "captnboat", icon: "briefcase" },
-  { year: "2025", key: "master", icon: "shield" },
-  { year: "2025", key: "freelance", icon: "rocket" },
-  { year: "2026", key: "protocol01", icon: "lock" },
+type Icon = ComponentType<{ size?: number; className?: string }>;
+
+const timeline: { year: string; key: string; Icon: Icon }[] = [
+  { year: "2007", key: "origin", Icon: Terminal },
+  { year: "2019", key: "coding", Icon: Code2 },
+  { year: "2022", key: "ecommerce", Icon: ShoppingCart },
+  { year: "2023", key: "bachelor", Icon: GraduationCap },
+  { year: "2023-24", key: "captnboat", Icon: Briefcase },
+  { year: "2025", key: "master", Icon: Shield },
+  { year: "2025", key: "freelance", Icon: Rocket },
+  { year: "2026", key: "protocol01", Icon: Lock },
 ];
+
+// Counts up to the numeric part of a value (e.g. "7+", "12", "134"), keeping any suffix.
+function CountUp({ value, play }: { value: string; play: boolean }) {
+  const target = parseInt(value, 10) || 0;
+  const suffix = value.replace(/^\d+/, "");
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!play) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const p = Math.min((now - start) / 1100, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setN(Math.round(eased * target));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [play, target]);
+  return (
+    <>
+      {n}
+      {suffix}
+    </>
+  );
+}
 
 // Project start: January 18, 2026
 const PROJECT_START = new Date('2026-01-18');
@@ -33,13 +66,34 @@ const stats = [
 
 export default function FounderPage() {
   const t = useT();
+  const statsRef = useRef(null);
+  const statsInView = useInView(statsRef, { once: true, margin: "-50px" });
 
   return (
     <>
       <SiteHeader />
 
-      <main className="min-h-screen pt-20 pb-16 px-4">
-        <div className="max-w-4xl mx-auto">
+      <main className="relative min-h-screen pt-20 pb-16 px-4 overflow-hidden">
+        {/* Ambient depth — soft cyan glow behind the hero + faint grid */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 h-[640px]"
+          style={{
+            background:
+              "radial-gradient(ellipse 55% 60% at 50% 18%, rgba(57,197,187,0.10), transparent 70%)",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.4]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, rgba(57,197,187,0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(57,197,187,0.03) 1px, transparent 1px)",
+            backgroundSize: "56px 56px",
+            maskImage: "radial-gradient(ellipse 70% 50% at 50% 10%, black, transparent 75%)",
+            WebkitMaskImage: "radial-gradient(ellipse 70% 50% at 50% 10%, black, transparent 75%)",
+          }}
+        />
+
+        <div className="relative max-w-4xl mx-auto">
 
           {/* Hero — Photo + Identity */}
           <motion.section
@@ -48,14 +102,24 @@ export default function FounderPage() {
             variants={{ visible: { transition: { staggerChildren: 0.15 } } }}
           >
             <motion.div variants={fadeUp} className="relative inline-block mb-6">
-              <div className="w-32 h-32 rounded-2xl overflow-hidden border-2 border-p01-cyan/40 shadow-[0_0_40px_rgba(57,197,187,0.2)] mx-auto">
+              {/* Soft halo behind the portrait */}
+              <div
+                className="pointer-events-none absolute -inset-6 -z-10"
+                style={{ background: "radial-gradient(circle, rgba(57,197,187,0.22), transparent 70%)" }}
+              />
+              <div className="relative w-32 h-32 rounded-2xl overflow-hidden border-2 border-p01-cyan/40 shadow-[0_0_40px_rgba(57,197,187,0.25)] mx-auto">
                 <img
                   src="/images/founder-slashy.png"
                   alt="Slashy"
                   className="w-full h-full object-cover"
                 />
               </div>
-              <div className="absolute -bottom-2 -right-2 bg-p01-cyan text-p01-void text-[10px] font-mono font-bold px-2 py-0.5 rounded-md">
+              {/* Corner accents — cyber motif */}
+              <div className="absolute -top-1.5 -left-1.5 w-4 h-4 border-t-2 border-l-2 border-p01-cyan" />
+              <div className="absolute -top-1.5 -right-1.5 w-4 h-4 border-t-2 border-r-2 border-p01-cyan" />
+              <div className="absolute -bottom-1.5 -left-1.5 w-4 h-4 border-b-2 border-l-2 border-p01-cyan" />
+              <div className="absolute -bottom-1.5 -right-1.5 w-4 h-4 border-b-2 border-r-2 border-p01-cyan" />
+              <div className="absolute -bottom-2 -right-2 bg-p01-cyan text-p01-void text-[10px] font-mono font-bold px-2 py-0.5 rounded-md shadow-[0_0_16px_rgba(57,197,187,0.5)]">
                 SOLO DEV
               </div>
             </motion.div>
@@ -94,6 +158,7 @@ export default function FounderPage() {
 
           {/* Stats Grid */}
           <motion.section
+            ref={statsRef}
             className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-20"
             initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-50px" }}
             variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
@@ -102,9 +167,11 @@ export default function FounderPage() {
               <motion.div
                 key={s.labelKey}
                 variants={fadeUp}
-                className="bg-p01-surface border border-p01-border rounded-xl p-4 text-center"
+                className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-xl p-4 text-center hover:border-p01-cyan/30 hover:bg-white/[0.04] transition-colors"
               >
-                <div className="text-2xl font-bold text-p01-cyan font-mono">{s.value}</div>
+                <div className="text-2xl font-bold text-p01-cyan font-mono">
+                  <CountUp value={s.value} play={statsInView} />
+                </div>
                 <div className="text-[10px] text-p01-text-dim font-mono uppercase tracking-wider mt-1">
                   {t(`founder.stats.${s.labelKey}`)}
                 </div>
@@ -123,7 +190,7 @@ export default function FounderPage() {
               <h2 className="text-2xl sm:text-3xl font-bold text-white mt-2 font-display">{t('founder.missionTitle')}</h2>
             </motion.div>
             <motion.div variants={fadeUp}
-              className="bg-p01-surface border border-p01-border rounded-2xl p-6 sm:p-8 space-y-4 text-p01-text-secondary leading-relaxed"
+              className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-2xl p-6 sm:p-8 space-y-4 text-p01-text-secondary leading-relaxed"
             >
               <p className="whitespace-pre-line">{t('founder.mission1')}</p>
               <p className="whitespace-pre-line">{t('founder.mission2')}</p>
@@ -154,8 +221,10 @@ export default function FounderPage() {
                     i % 2 === 0 ? "sm:flex-row" : "sm:flex-row-reverse"
                   }`}
                 >
-                  {/* Dot */}
-                  <div className="absolute left-[18px] sm:left-1/2 sm:-translate-x-1/2 w-[9px] h-[9px] rounded-full bg-p01-cyan border-2 border-p01-void shadow-[0_0_12px_rgba(57,197,187,0.5)] z-10 mt-5" />
+                  {/* Node — icon chip on the line */}
+                  <div className="absolute left-[22px] sm:left-1/2 -translate-x-1/2 z-10 mt-1 w-8 h-8 rounded-full bg-p01-void border border-p01-cyan/40 flex items-center justify-center shadow-[0_0_14px_rgba(57,197,187,0.35)]">
+                    <item.Icon size={14} className="text-p01-cyan" />
+                  </div>
 
                   {/* Content */}
                   <div className={`ml-12 sm:ml-0 sm:w-[calc(50%-2rem)] ${i % 2 === 0 ? "sm:text-right sm:pr-8" : "sm:pl-8"}`}>
@@ -181,17 +250,22 @@ export default function FounderPage() {
 
             <div className="grid sm:grid-cols-2 gap-3">
               {[
-                { icon: "cube", titleKey: "onchain", items: ["12 Solana programs (Anchor/Rust)", "6 STARK AIRs (Winterfell, hot path)", "Custom on-chain FRI verifier (Goldilocks)", "On-chain relayer + fee splitter"] },
-                { icon: "phone", titleKey: "clients", items: ["Mobile app (Expo/React Native)", "Chrome extension (MV3)", "Next.js 16 web app", "SDK demo + documentation"] },
-                { icon: "shield", titleKey: "privacy", items: ["Stealth addresses (ECDH + ML-KEM-768)", "Denominated privacy pools", "Multi-hop mixing router", "On-chain p01_relayer (encrypted submission)"] },
-                { icon: "cpu", titleKey: "quantum", items: ["STARK migration (post-quantum)", "Winternitz OTS vault (WOTS+)", "Hash-timelock vault", "Commit-then-reveal auth"] },
+                { Icon: Box, titleKey: "onchain", items: ["12 Solana programs (Anchor/Rust)", "6 STARK AIRs (Winterfell, hot path)", "Custom on-chain FRI verifier (Goldilocks)", "On-chain relayer + fee splitter"] },
+                { Icon: Smartphone, titleKey: "clients", items: ["Mobile app (Expo/React Native)", "Chrome extension (MV3)", "Next.js 16 web app", "SDK demo + documentation"] },
+                { Icon: Shield, titleKey: "privacy", items: ["Stealth addresses (ECDH + ML-KEM-768)", "Denominated privacy pools", "Multi-hop mixing router", "On-chain p01_relayer (encrypted submission)"] },
+                { Icon: Cpu, titleKey: "quantum", items: ["STARK migration (post-quantum)", "Winternitz OTS vault (WOTS+)", "Hash-timelock vault", "Commit-then-reveal auth"] },
               ].map((card) => (
                 <motion.div
                   key={card.titleKey}
                   variants={fadeUp}
-                  className="bg-p01-surface border border-p01-border rounded-xl p-5 hover:border-p01-cyan/30 transition-colors"
+                  className="group bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-xl p-5 hover:border-p01-cyan/30 hover:bg-white/[0.04] transition-colors"
                 >
-                  <h3 className="text-white font-semibold text-sm mb-3">{t(`founder.built.${card.titleKey}`)}</h3>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-9 h-9 rounded-lg bg-p01-cyan/10 border border-p01-cyan/20 flex items-center justify-center text-p01-cyan shrink-0 group-hover:bg-p01-cyan/15 transition-colors">
+                      <card.Icon size={18} />
+                    </div>
+                    <h3 className="text-white font-semibold text-sm">{t(`founder.built.${card.titleKey}`)}</h3>
+                  </div>
                   <ul className="space-y-1.5">
                     {card.items.map((item, j) => (
                       <li key={j} className="text-p01-text-dim text-xs flex items-start gap-2">
