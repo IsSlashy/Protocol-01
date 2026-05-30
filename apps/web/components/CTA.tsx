@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
-import { Github, Smartphone, Chrome, Download } from "lucide-react";
+import { Github, Chrome, Download } from "lucide-react";
 import { useT } from "@/i18n";
 
 const APK_URL =
@@ -92,7 +92,10 @@ export default function CTA() {
                 className="group flex items-center gap-4 p-5 rounded-2xl border border-p01-cyan/40 bg-p01-cyan/[0.06] hover:bg-p01-cyan/[0.12] hover:border-p01-cyan/70 transition-all duration-300 no-underline"
               >
                 <div className="w-12 h-12 rounded-xl bg-p01-cyan/15 flex items-center justify-center text-p01-cyan shrink-0">
-                  <Smartphone size={24} />
+                  {/* Android robot — rendered in cyan to respect the no-green palette */}
+                  <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor" aria-hidden>
+                    <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 0 0-.83.22l-1.88 3.24a11.46 11.46 0 0 0-8.94 0L5.65 5.67a.643.643 0 0 0-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z" />
+                  </svg>
                 </div>
                 <div className="text-left flex-1 min-w-0">
                   <div className="font-semibold font-display text-white group-hover:text-p01-cyan transition-colors">
