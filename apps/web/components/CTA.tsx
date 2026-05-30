@@ -6,25 +6,8 @@ import { useRef } from "react";
 import { Github, Smartphone, Chrome, Download } from "lucide-react";
 import { useT } from "@/i18n";
 
-const downloadOptions = [
-  {
-    platform: "android",
-    icon: Smartphone,
-    description: "androidDesc",
-    filename: "protocol-01-v1.0.1.apk",
-    link: "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk",
-    size: "120 MB",
-  },
-  {
-    platform: "chromeExtension",
-    icon: Chrome,
-    description: "chromeDesc",
-    filename: "",
-    link: "",
-    size: "Beta",
-    disabled: true,
-  },
-];
+const APK_URL =
+  "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk";
 
 
 export default function CTA() {
@@ -96,51 +79,37 @@ export default function CTA() {
               <p>{t('cta.subtitle2')}</p>
             </motion.div>
 
-            {/* Download Buttons */}
+            {/* Download — Android is the primary action, Chrome is a discreet "soon" line */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.5, delay: 0.5 }}
-              className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto mb-12"
+              className="max-w-md mx-auto mb-10"
             >
-              {downloadOptions.map((option) => {
-                const isDisabled = !!(option as any).disabled;
-                const Tag = isDisabled ? 'div' : 'a';
-                return (
-                  <Tag
-                    key={option.platform}
-                    {...(isDisabled ? {} : { href: option.link, download: option.filename })}
-                    className={`group flex items-center gap-4 p-4 rounded-2xl bg-white/[0.02] backdrop-blur-md border transition-all duration-300 no-underline ${
-                      isDisabled
-                        ? 'border-white/[0.04] opacity-50 cursor-not-allowed'
-                        : 'border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12] cursor-pointer'
-                    }`}
-                  >
-                    <div className={`w-12 h-12 rounded-xl bg-p01-surface flex items-center justify-center transition-colors ${
-                      isDisabled ? 'text-p01-text-dim' : 'text-p01-text-muted group-hover:text-p01-cyan'
-                    }`}>
-                      <option.icon size={24} />
-                    </div>
-                    <div className="text-left flex-1">
-                      <div className={`font-semibold font-display transition-colors ${
-                        isDisabled ? 'text-p01-text-muted' : 'text-white group-hover:text-p01-cyan'
-                      }`}>
-                        {t(`cta.${option.platform}`)}
-                      </div>
-                      <div className="text-sm text-p01-text-dim">
-                        {t(`cta.${option.description}`)} ({option.size})
-                      </div>
-                    </div>
-                    {isDisabled ? (
-                      <span className="text-[10px] font-mono text-[#ffcc00] border border-[#ffcc00]/30 bg-[#ffcc00]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                        {t('cta.soon')}
-                      </span>
-                    ) : (
-                      <Download size={20} className="text-p01-text-muted group-hover:text-p01-cyan transition-colors" />
-                    )}
-                  </Tag>
-                );
-              })}
+              <a
+                href={APK_URL}
+                download="protocol-01-v1.0.1.apk"
+                className="group flex items-center gap-4 p-5 rounded-2xl border border-p01-cyan/40 bg-p01-cyan/[0.06] hover:bg-p01-cyan/[0.12] hover:border-p01-cyan/70 transition-all duration-300 no-underline"
+              >
+                <div className="w-12 h-12 rounded-xl bg-p01-cyan/15 flex items-center justify-center text-p01-cyan shrink-0">
+                  <Smartphone size={24} />
+                </div>
+                <div className="text-left flex-1 min-w-0">
+                  <div className="font-semibold font-display text-white group-hover:text-p01-cyan transition-colors">
+                    {t('cta.android')}
+                  </div>
+                  <div className="text-sm text-p01-text-dim">{t('cta.androidDesc')} (120 MB)</div>
+                </div>
+                <Download size={20} className="text-p01-cyan shrink-0" />
+              </a>
+
+              <div className="mt-3 flex items-center justify-center gap-2 text-sm text-p01-text-dim">
+                <Chrome size={15} className="shrink-0" />
+                <span>{t('cta.chromeExtension')}</span>
+                <span className="text-[10px] font-mono text-[#ffcc00] border border-[#ffcc00]/30 bg-[#ffcc00]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                  {t('cta.soon')}
+                </span>
+              </div>
             </motion.div>
 
             {/* Secondary Actions */}
@@ -173,28 +142,28 @@ export default function CTA() {
               </a>
             </motion.div>
 
-          </div>
-        </motion.div>
+            {/* Trust stats — integrated divided strip */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={isInView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.5, delay: 0.7 }}
+              className="mt-10 pt-8 border-t border-p01-border/50 grid grid-cols-3 divide-x divide-p01-border/50"
+            >
+              {[
+                { value: "100%", label: "selfCustody" },
+                { value: "0", label: "kycRequired" },
+                { value: "∞", label: "privacy" },
+              ].map((stat) => (
+                <div key={stat.label} className="px-2 text-center">
+                  <div className="text-2xl sm:text-3xl font-bold font-display text-white">
+                    {stat.value}
+                  </div>
+                  <div className="text-xs sm:text-sm text-p01-text-muted mt-1">{t(`cta.${stat.label}`)}</div>
+                </div>
+              ))}
+            </motion.div>
 
-        {/* Stats */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ duration: 0.5, delay: 0.7 }}
-          className="mt-16 grid grid-cols-3 gap-8"
-        >
-          {[
-            { value: "100%", label: "selfCustody" },
-            { value: "0", label: "kycRequired" },
-            { value: "∞", label: "privacy" },
-          ].map((stat) => (
-            <div key={stat.label} className="text-center bg-white/[0.03] backdrop-blur-sm border border-white/[0.06] rounded-2xl px-6 py-4 hover:bg-white/[0.05] hover:border-white/[0.12] transition-all duration-300">
-              <div className="text-3xl sm:text-4xl font-bold font-display text-white mb-2">
-                {stat.value}
-              </div>
-              <div className="text-sm text-p01-text-muted">{t(`cta.${stat.label}`)}</div>
-            </div>
-          ))}
+          </div>
         </motion.div>
       </div>
     </section>

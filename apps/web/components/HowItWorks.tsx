@@ -94,12 +94,12 @@ export default function HowItWorks() {
             />
           </div>
 
-          {/* Animated dot traveling along the line */}
+          {/* Animated comet traveling along the line */}
           <motion.div
-            className="hidden md:block absolute top-[69px] w-2 h-2"
+            className="hidden md:block absolute top-[68px] w-2.5 h-2.5 rounded-full"
             style={{
               background: "linear-gradient(135deg, #39c5bb, #00ffe5)",
-              boxShadow: "0 0 12px #39c5bb80",
+              boxShadow: "0 0 16px #39c5bbcc, 0 0 32px #00ffe566",
               left: "12.5%",
             }}
             initial={{ left: "12.5%", opacity: 0 }}
@@ -123,14 +123,29 @@ export default function HowItWorks() {
           {steps.map((step, i) => (
             <motion.div
               key={step.num}
-              initial={{ opacity: 0, y: 30 }}
-              animate={isInView ? { opacity: 1, y: 0 } : {}}
-              transition={{ duration: 0.5, delay: 0.3 + i * 0.15 }}
-              className="flex flex-col items-center text-center relative px-4"
+              initial={{ opacity: 0, y: 30, scale: 0.9 }}
+              animate={isInView ? { opacity: 1, y: 0, scale: 1 } : {}}
+              transition={{
+                duration: 0.5,
+                delay: 0.3 + i * 0.15,
+                type: "spring",
+                stiffness: 120,
+                damping: 14,
+              }}
+              className="group flex flex-col items-center text-center relative px-4"
             >
+              {/* Oversized faint step number behind the icon */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-0 z-0 select-none font-display font-black leading-none"
+                style={{ fontSize: "6rem", color: `${step.color}14` }}
+              >
+                {step.num}
+              </div>
+
               {/* Step label */}
               <div
-                className="text-[10px] font-mono tracking-[0.3em] mb-3 uppercase"
+                className="relative z-10 text-[10px] font-mono tracking-[0.3em] mb-3 uppercase"
                 style={{ color: `${step.color}90` }}
               >
                 {t('howItWorks.step')} {step.num}
@@ -138,49 +153,51 @@ export default function HowItWorks() {
 
               {/* Icon container */}
               <div
-                className="w-20 h-20 flex items-center justify-center border mb-5 relative transition-all duration-500 group"
+                className="relative z-10 w-20 h-20 flex items-center justify-center border mb-5 transition-transform duration-500 ease-out group-hover:scale-110 group-hover:-translate-y-1"
                 style={{
                   borderColor: `${step.color}35`,
                   backgroundColor: `${step.color}06`,
                 }}
               >
-                {/* Pulse glow on hover */}
-                <div
-                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-                  style={{
-                    boxShadow: `0 0 40px ${step.color}20, inset 0 0 30px ${step.color}08`,
+                {/* Breathing glow — always alive, intensifies on hover */}
+                <motion.div
+                  className="absolute inset-0 group-hover:!opacity-100"
+                  animate={{
+                    boxShadow: [
+                      `0 0 0px ${step.color}00, inset 0 0 0px ${step.color}00`,
+                      `0 0 26px ${step.color}33, inset 0 0 16px ${step.color}12`,
+                      `0 0 0px ${step.color}00, inset 0 0 0px ${step.color}00`,
+                    ],
+                  }}
+                  transition={{
+                    duration: 3,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                    delay: i * 0.4,
                   }}
                 />
                 {/* Corner accents */}
-                <div
-                  className="absolute -top-px -left-px w-3 h-3 border-t border-l"
-                  style={{ borderColor: step.color }}
+                <div className="absolute -top-px -left-px w-3 h-3 border-t border-l" style={{ borderColor: step.color }} />
+                <div className="absolute -top-px -right-px w-3 h-3 border-t border-r" style={{ borderColor: step.color }} />
+                <div className="absolute -bottom-px -left-px w-3 h-3 border-b border-l" style={{ borderColor: step.color }} />
+                <div className="absolute -bottom-px -right-px w-3 h-3 border-b border-r" style={{ borderColor: step.color }} />
+                <step.icon
+                  size={30}
+                  style={{ color: step.color }}
+                  className="relative transition-transform duration-500 group-hover:scale-110"
                 />
-                <div
-                  className="absolute -top-px -right-px w-3 h-3 border-t border-r"
-                  style={{ borderColor: step.color }}
-                />
-                <div
-                  className="absolute -bottom-px -left-px w-3 h-3 border-b border-l"
-                  style={{ borderColor: step.color }}
-                />
-                <div
-                  className="absolute -bottom-px -right-px w-3 h-3 border-b border-r"
-                  style={{ borderColor: step.color }}
-                />
-                <step.icon size={30} style={{ color: step.color }} />
               </div>
 
               {/* Title */}
               <h3
-                className="text-base font-bold font-display tracking-[0.15em] mb-2"
+                className="relative z-10 text-base font-bold font-display tracking-[0.15em] mb-2"
                 style={{ color: step.color }}
               >
                 {t(`howItWorks.${step.title}`)}
               </h3>
 
               {/* Description */}
-              <p className="text-sm text-[#888892] max-w-[200px] font-mono leading-relaxed">
+              <p className="relative z-10 text-sm text-[#888892] max-w-[200px] font-mono leading-relaxed">
                 {t(`howItWorks.${step.desc}`)}
               </p>
 
@@ -192,10 +209,7 @@ export default function HowItWorks() {
                   animate={isInView ? { opacity: 1 } : {}}
                   transition={{ delay: 0.5 + i * 0.15 }}
                 >
-                  <div
-                    className="w-px h-6"
-                    style={{ backgroundColor: `${step.color}40` }}
-                  />
+                  <div className="w-px h-6" style={{ backgroundColor: `${step.color}40` }} />
                   <div
                     className="w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent"
                     style={{ borderTopColor: `${step.color}60` }}
