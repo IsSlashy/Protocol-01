@@ -50,8 +50,8 @@ function CountUp({
 const stats = [
   {
     icon: Eye,
-    value: "100%",
-    countUp: { end: 100, suffix: "%" },
+    value: "Anyone",
+    countUp: undefined,
     label: "problem.stat1Label" as const,
     description: "problem.stat1Desc" as const,
   },
