@@ -10,9 +10,6 @@ import { useT } from "@/i18n";
 // engine below stays compiled so reactivation is a single boolean flip.
 const SHOW_VOID_EGG = false;
 
-const APK_URL =
-  "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk";
-
 // ─── Easter egg glitch engine ───────────────────────────────────────────────
 const ZA = '\u0300\u0301\u0302\u0303\u0304\u0305\u0306\u0307\u0308\u030A\u030B\u030C\u030D\u030E\u030F\u0310\u0311\u0312\u0313\u0314\u0315\u031A\u033D\u034A\u034B\u034C';
 const ZM = '\u0334\u0335\u0336\u0337\u0338\u0339\u033A\u033B\u033C\u0347\u0348\u0349';
@@ -93,7 +90,7 @@ const socialLinks = [
   { icon: DiscordIcon, href: "https://discord.gg/KfmhPFAHNH", label: "Discord" },
 ];
 
-export default function Footer({ cta = true }: { cta?: boolean }) {
+export default function Footer() {
   const t = useT();
   const router = useRouter();
   const [eggState, setEggState] = useState(0);
@@ -137,36 +134,8 @@ export default function Footer({ cta = true }: { cta?: boolean }) {
         }}
       />
 
-      {/* CTA band — skipped on pages that already show the CTA section (landing) */}
-      {cta && (
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12 text-center">
-          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold font-display text-white tracking-tight">
-            {t('footer.ctaHeadline')}{' '}
-            <span className="bg-gradient-to-r from-p01-cyan to-[#00ffe5] bg-clip-text text-transparent">
-              {t('footer.ctaHighlight')}
-            </span>
-          </h2>
-          <p className="text-p01-text-muted text-sm mt-3">{t('footer.ctaSubtitle')}</p>
-          <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
-            <a href={APK_URL} className="btn-primary text-sm px-6 py-2.5">
-              {t('hero.downloadApp')}
-            </a>
-            <a
-              href="/docs"
-              className="text-sm px-6 py-2.5 border border-p01-cyan/40 text-p01-cyan hover:bg-p01-cyan/10 transition-colors font-bold uppercase tracking-wider"
-            >
-              {t('hero.documentation')}
-            </a>
-          </div>
-        </div>
-      )}
-
       {/* Main Footer */}
-      <div
-        className={`relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-14 ${
-          cta ? "pt-10 border-t border-p01-border/40" : "pt-16"
-        }`}
-      >
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-14">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-8 lg:gap-12">
           {/* Brand Column */}
           <div className="col-span-2">

@@ -61,7 +61,7 @@ export default function Home() {
         <CTA />
       </div>
 
-      <Footer cta={false} />
+      <Footer />
     </>
   );
 }
