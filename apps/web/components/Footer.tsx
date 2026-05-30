@@ -56,7 +56,6 @@ const footerLinks: Record<string, FooterSection> = {
       { name: "mobileApp", href: "#download" },
       { name: "chromeExtension", href: "#download" },
       { name: "features", href: "#features" },
-      { name: "sdkDemo", href: "/sdk-demo" },
       { name: "roadmap", href: "/roadmap" },
     ],
   },
@@ -65,7 +64,6 @@ const footerLinks: Record<string, FooterSection> = {
     links: [
       { name: "sdkDemo", href: "/sdk-demo" },
       { name: "documentation", href: "/docs" },
-      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
     ],
   },
   community: {
@@ -184,7 +182,7 @@ export default function Footer({ cta = true }: { cta?: boolean }) {
               <p>{t('footer.brandDesc2')}</p>
             </div>
             <p className="text-p01-cyan text-xs font-mono mb-6">
-              &gt; {t('footer.tagline')}
+              {t('footer.tagline')}
             </p>
             {/* Social Links - industrial squares */}
             <div className="flex items-center gap-4">
@@ -277,7 +275,7 @@ export default function Footer({ cta = true }: { cta?: boolean }) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-3 text-xs text-p01-text-dim font-mono">
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan rounded">Beta</span>
-            <span>&copy; {new Date().getFullYear()} {t('footer.copyright')}</span>
+            <span>&copy; {new Date().getFullYear()} PROTOCOL 01 · {t('footer.copyright')}</span>
           </div>
           <div className="flex items-center gap-5 text-xs font-mono text-p01-text-dim">
             <a href="/privacy" className="hover:text-p01-cyan transition-colors">{t('footer.privacy')}</a>
