@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState } from "react";
+import { useT } from "@/i18n";
 
 /**
  * PhoneMockup — Interactive wallet UI preview.
@@ -68,7 +69,9 @@ const BonkLogo = ({ size = 36 }: { size?: number }) => (
 // Tab views — one per bottom-tab
 // ─────────────────────────────────────────────────────────────────────────────
 
-const WalletView = () => (
+const WalletView = () => {
+  const t = useT();
+  return (
   <>
     {/* Balance Card */}
     <div
@@ -77,7 +80,7 @@ const WalletView = () => (
     >
       <div className="text-center">
         <span className="text-[#606068] text-[9px] tracking-[0.18em] font-mono uppercase">
-          Total balance
+          {t("mockup.totalBalance")}
         </span>
         <p className="text-white text-[28px] font-bold tracking-tight mt-1">
           $2,847
@@ -93,21 +96,21 @@ const WalletView = () => (
     {/* Action Buttons */}
     <div className="flex justify-center gap-4 py-3 px-4">
       <ActionButton
-        label="Send"
+        label={t("mockup.send")}
         labelColor="white/80"
         bg="linear-gradient(135deg, #39c5bb 0%, #00ffe5 100%)"
         iconStroke="#0a0a0c"
         path="M12 19V5M5 12l7-7 7 7"
       />
       <ActionButton
-        label="Receive"
+        label={t("mockup.receive")}
         labelColor="#39c5bb"
         bg="rgba(57,197,187,0.15)"
         iconStroke="#39c5bb"
         path="M12 5v14M5 12l7 7 7-7"
       />
       <ActionButton
-        label="Swap"
+        label={t("mockup.swap")}
         labelColor="#3b82f6"
         bg="rgba(59,130,246,0.15)"
         iconStroke="#3b82f6"
@@ -137,7 +140,7 @@ const WalletView = () => (
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <p className="text-white/80 font-medium text-[10px] tracking-wide">
-              Private balance
+              {t("mockup.privateBalance")}
             </p>
             <span
               className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded"
@@ -166,29 +169,32 @@ const WalletView = () => (
 
     {/* Assets */}
     <div className="px-3 mb-2.5">
-      <p className="text-[#606068] text-[8px] tracking-[0.12em] mb-2 font-semibold">ASSETS</p>
+      <p className="text-[#606068] text-[8px] tracking-[0.12em] mb-2 font-semibold">{t("mockup.assets")}</p>
 
-      <AssetRow icon={<SolLogo />} name="Solana" symbol="SOL" amount="12.5000" fiat="$2,847.63" />
-      <AssetRow icon={<UsdcLogo />} name="USD Coin" symbol="USDC" amount="250.00" fiat="$250.00" />
-      <AssetRow icon={<BonkLogo />} name="Bonk" symbol="BONK" amount="5.2M" fiat="$42.18" last />
+      <AssetRow icon={<SolLogo />} name={t("mockup.solanaName")} symbol="SOL" amount="12.5000" fiat="$2,847.63" />
+      <AssetRow icon={<UsdcLogo />} name={t("mockup.usdcName")} symbol="USDC" amount="250.00" fiat="$250.00" />
+      <AssetRow icon={<BonkLogo />} name={t("mockup.bonkName")} symbol="BONK" amount="5.2M" fiat="$42.18" last />
     </div>
 
     {/* Recent Activity */}
     <div className="px-3 pb-20">
       <div className="flex justify-between items-center mb-2">
-        <p className="text-[#606068] text-[8px] tracking-[0.12em] font-semibold">RECENT ACTIVITY</p>
-        <span className="text-[#39c5bb] text-[8px] font-medium">See All</span>
+        <p className="text-[#606068] text-[8px] tracking-[0.12em] font-semibold">{t("mockup.recentActivity")}</p>
+        <span className="text-[#39c5bb] text-[8px] font-medium">{t("mockup.seeAll")}</span>
       </div>
       <div className="space-y-1.5">
-        <ActivityRow type="send" label="Sent SOL" to="to 7xM4...kR2p" amount="-0.5 SOL" time="2m ago" color="#ff77a8" />
-        <ActivityRow type="receive" label="Received SOL" to="from Faucet" amount="+1.0 SOL" time="15m ago" color="#39c5bb" />
-        <ActivityRow type="shield" label="Shield" to="ZK Pool" amount="-2.0 SOL" time="1h ago" color="#39c5bb" />
+        <ActivityRow type="send" label={t("mockup.sentSol")} to={t("mockup.toPeer")} amount="-0.5 SOL" time={t("mockup.time2m")} color="#ff77a8" />
+        <ActivityRow type="receive" label={t("mockup.receivedSol")} to={t("mockup.fromFaucet")} amount="+1.0 SOL" time={t("mockup.time15m")} color="#39c5bb" />
+        <ActivityRow type="shield" label={t("mockup.shield")} to={t("mockup.zkPool")} amount="-2.0 SOL" time={t("mockup.time1h")} color="#39c5bb" />
       </div>
     </div>
   </>
-);
+  );
+};
 
-const PrivacyView = () => (
+const PrivacyView = () => {
+  const t = useT();
+  return (
   <div className="px-4 pb-20">
     {/* Hero card — matches PrivacyDashboard's heroCard:
         icon chip top-left + "Shielded Balance" label, big balance
@@ -212,7 +218,7 @@ const PrivacyView = () => (
           </svg>
         </div>
         <span className="text-[#a0a0a8] text-[10px] tracking-wide font-medium">
-          Shielded balance
+          {t("mockup.shieldedBalance")}
         </span>
       </div>
 
@@ -223,11 +229,11 @@ const PrivacyView = () => (
       <div className="flex items-center gap-2 mt-3">
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-full" style={{ backgroundColor: "rgba(57,197,187,0.12)" }}>
           <span className="w-1.5 h-1.5 rounded-full bg-[#39c5bb]" />
-          <span className="text-[#39c5bb] text-[9px] font-semibold">2 ready</span>
+          <span className="text-[#39c5bb] text-[9px] font-semibold">{t("mockup.notesReady")}</span>
         </div>
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-full" style={{ backgroundColor: "rgba(255,204,0,0.1)" }}>
           <span className="w-1.5 h-1.5 rounded-full bg-[#ffcc00]" />
-          <span className="text-[#ffcc00] text-[9px] font-semibold">1 maturing</span>
+          <span className="text-[#ffcc00] text-[9px] font-semibold">{t("mockup.notesMaturing")}</span>
         </div>
       </div>
     </div>
@@ -236,19 +242,19 @@ const PrivacyView = () => (
         PrivacyDashboard: Deposit / Withdraw / Send / Receive, each with
         its native accent color and Ionicons-style glyph. */}
     <div className="grid grid-cols-2 gap-2 mb-3">
-      <PrivacyActionBtn label="Deposit" accent="#39c5bb" bg="rgba(57,197,187,0.14)">
+      <PrivacyActionBtn label={t("mockup.deposit")} accent="#39c5bb" bg="rgba(57,197,187,0.14)">
         <circle cx="12" cy="12" r="10" />
         <path d="M12 8v8M8 12l4 4 4-4" />
       </PrivacyActionBtn>
-      <PrivacyActionBtn label="Withdraw" accent="#ff77a8" bg="rgba(255,119,168,0.14)">
+      <PrivacyActionBtn label={t("mockup.withdraw")} accent="#ff77a8" bg="rgba(255,119,168,0.14)">
         <circle cx="12" cy="12" r="10" />
         <path d="M12 16V8M8 12l4-4 4 4" />
       </PrivacyActionBtn>
-      <PrivacyActionBtn label="Send" accent="#8B8BFF" bg="rgba(139,139,255,0.14)">
+      <PrivacyActionBtn label={t("mockup.send")} accent="#8B8BFF" bg="rgba(139,139,255,0.14)">
         <path d="M22 2L11 13" />
         <path d="M22 2l-7 20-4-9-9-4z" />
       </PrivacyActionBtn>
-      <PrivacyActionBtn label="Receive" accent="#8B8BFF" bg="rgba(139,139,255,0.14)">
+      <PrivacyActionBtn label={t("mockup.receive")} accent="#8B8BFF" bg="rgba(139,139,255,0.14)">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
         <path d="M7 10l5 5 5-5M12 15V3" />
       </PrivacyActionBtn>
@@ -272,7 +278,7 @@ const PrivacyView = () => (
       </div>
       <div className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-1.5">
-          <p className="text-white font-semibold text-[11px]">Private Send</p>
+          <p className="text-white font-semibold text-[11px]">{t("mockup.privateSend")}</p>
           <span
             className="px-1 py-[1px] rounded text-[6px] font-bold tracking-wider"
             style={{ background: "linear-gradient(90deg, #39c5bb 0%, #00ffe5 100%)", color: "#0a0a0c" }}
@@ -281,7 +287,7 @@ const PrivacyView = () => (
           </span>
         </div>
         <p className="text-[#808088] text-[8.5px] mt-0.5">
-          Route through multiple wallets with time delays
+          {t("mockup.privateSendDesc")}
         </p>
       </div>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#606068" strokeWidth="2" strokeLinecap="round">
@@ -291,7 +297,7 @@ const PrivacyView = () => (
 
     {/* Your notes — collapsible header + a few rows like the real app */}
     <div className="mb-2 flex items-center justify-between px-1">
-      <p className="text-white text-[11px] font-semibold">Your notes</p>
+      <p className="text-white text-[11px] font-semibold">{t("mockup.yourNotes")}</p>
       <div className="flex items-center gap-1.5">
         <span className="text-[#606068] text-[10px] font-semibold">3</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#606068" strokeWidth="2" strokeLinecap="round">
@@ -305,22 +311,24 @@ const PrivacyView = () => (
       <NoteRow amount="0.2000" status="maturing" />
     </div>
   </div>
-);
+  );
+};
 
 const StreamsView = () => {
+  const t = useT();
   const [section, setSection] = useState<"personal" | "services">("services");
 
   // Personal = peer-to-peer recurring payments the user set up themselves
   const personal = [
-    { service: "Gym membership",  tag: "Recurring payment", amount: "0.02", period: "monthly", next: "in 7 days",  progress: 0.77, color: "#f59e0b", initial: "G", logo: "generic" as const },
-    { service: "Rent (Anna)",     tag: "Recurring payment", amount: "1.20", period: "monthly", next: "in 3 days",  progress: 0.9,  color: "#8b5cf6", initial: "A", logo: "generic" as const },
+    { service: t("mockup.gymMembership"), tag: t("mockup.recurringPayment"), amount: "0.02", period: t("mockup.monthly"), next: t("mockup.next7"), progress: 0.77, color: "#f59e0b", initial: "G", logo: "generic" as const },
+    { service: t("mockup.rentAnna"),      tag: t("mockup.recurringPayment"), amount: "1.20", period: t("mockup.monthly"), next: t("mockup.next3"), progress: 0.9,  color: "#8b5cf6", initial: "A", logo: "generic" as const },
   ];
 
   // Services = attested subscriptions from the on-chain service registry
   const services = [
-    { service: "Netflix",         tag: "Entertainment",     amount: "0.10", period: "monthly", next: "in 4 days",  progress: 0.87, color: "#e50914", initial: "N", logo: "netflix" as const, verified: true },
-    { service: "Spotify",         tag: "Music",             amount: "0.05", period: "monthly", next: "in 11 days", progress: 0.65, color: "#1db954", initial: "S", logo: "spotify" as const, verified: true },
-    { service: "YouTube Premium", tag: "Entertainment",     amount: "0.08", period: "monthly", next: "in 18 days", progress: 0.4,  color: "#ff0000", initial: "Y", logo: "youtube" as const, verified: true },
+    { service: "Netflix",         tag: t("mockup.entertainment"), amount: "0.10", period: t("mockup.monthly"), next: t("mockup.next4"),  progress: 0.87, color: "#e50914", initial: "N", logo: "netflix" as const, verified: true },
+    { service: "Spotify",         tag: t("mockup.music"),         amount: "0.05", period: t("mockup.monthly"), next: t("mockup.next11"), progress: 0.65, color: "#1db954", initial: "S", logo: "spotify" as const, verified: true },
+    { service: "YouTube Premium", tag: t("mockup.entertainment"), amount: "0.08", period: t("mockup.monthly"), next: t("mockup.next18"), progress: 0.4,  color: "#ff0000", initial: "Y", logo: "youtube" as const, verified: true },
   ];
 
   const list = section === "personal" ? personal : services;
@@ -331,7 +339,7 @@ const StreamsView = () => {
     <div className="px-4 pb-20">
       {/* Header with title + action button */}
       <div className="flex items-center justify-between mb-3">
-        <p className="text-white font-semibold text-[14px]">Streams</p>
+        <p className="text-white font-semibold text-[14px]">{t("mockup.streams")}</p>
         <div className="flex items-center gap-1.5">
           <div className="w-7 h-7 rounded-full bg-[#151518] flex items-center justify-center">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round">
@@ -354,17 +362,17 @@ const StreamsView = () => {
       >
         <div className="text-center flex-1">
           <p className="text-white text-[15px] font-bold">{list.length}</p>
-          <p className="text-[#606068] text-[8px] tracking-wider uppercase mt-0.5">Active</p>
+          <p className="text-[#606068] text-[8px] tracking-wider uppercase mt-0.5">{t("mockup.active")}</p>
         </div>
         <div className="w-px h-6 bg-[#2a2a30]" />
         <div className="text-center flex-1">
-          <p className="text-[#39c5bb] text-[15px] font-bold">{totalMonthly.toFixed(2)} <span className="text-[9px] text-[#39c5bb]/60 font-medium">SOL/mo</span></p>
-          <p className="text-[#606068] text-[8px] tracking-wider uppercase mt-0.5">Total</p>
+          <p className="text-[#39c5bb] text-[15px] font-bold">{totalMonthly.toFixed(2)} <span className="text-[9px] text-[#39c5bb]/60 font-medium">{t("mockup.solPerMo")}</span></p>
+          <p className="text-[#606068] text-[8px] tracking-wider uppercase mt-0.5">{t("mockup.total")}</p>
         </div>
         <div className="w-px h-6 bg-[#2a2a30]" />
         <div className="text-center flex-1">
           <p className="text-white text-[15px] font-bold">{nextDays}d</p>
-          <p className="text-[#606068] text-[8px] tracking-wider uppercase mt-0.5">Next</p>
+          <p className="text-[#606068] text-[8px] tracking-wider uppercase mt-0.5">{t("mockup.next")}</p>
         </div>
       </div>
 
@@ -386,7 +394,7 @@ const StreamsView = () => {
                 background: active ? "rgba(57,197,187,0.14)" : "transparent",
               }}
             >
-              {id === "personal" ? "Personal" : "Services"}
+              {id === "personal" ? t("mockup.personal") : t("mockup.services")}
             </button>
           );
         })}
@@ -402,7 +410,9 @@ const StreamsView = () => {
   );
 };
 
-const AgentView = () => (
+const AgentView = () => {
+  const t = useT();
+  return (
   <div className="flex flex-col h-full px-4 pt-1 pb-16">
     <div className="flex items-center gap-2 mb-3">
       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #39c5bb 0%, #00ffe5 100%)" }}>
@@ -411,26 +421,23 @@ const AgentView = () => (
         </svg>
       </div>
       <div>
-        <p className="text-white font-semibold text-[11px]">Privacy Agent</p>
-        <p className="text-[#606068] text-[8px]">Claude · 4.7 · encrypted</p>
+        <p className="text-white font-semibold text-[11px]">{t("mockup.privacyAgent")}</p>
+        <p className="text-[#606068] text-[8px]">{t("mockup.agentStatus")}</p>
       </div>
     </div>
 
     <div className="flex-1 space-y-2 overflow-hidden">
-      <AgentMsg from="user" text="Can I unshield 1 SOL without leaking timing?" />
-      <AgentMsg
-        from="agent"
-        text="Yes. I'll route via p01_liquidity.prefund, split the output across 3 stealth recipients, and add 1-4s jitter. No chain observer can correlate the unshield with your main wallet."
-      />
-      <AgentMsg from="user" text="Go" />
-      <AgentMsg from="agent" text="Started. Stealth signer funded (0.85 SOL rent). Proof upload: batch 2/7." loading />
+      <AgentMsg from="user" text={t("mockup.agentUser1")} />
+      <AgentMsg from="agent" text={t("mockup.agentReply1")} />
+      <AgentMsg from="user" text={t("mockup.agentUser2")} />
+      <AgentMsg from="agent" text={t("mockup.agentReply2")} loading />
     </div>
 
     <div
       className="mt-2 flex items-center gap-2 px-3 py-2 rounded-full"
       style={{ backgroundColor: "#151518", border: "1px solid rgba(57,197,187,0.12)" }}
     >
-      <span className="text-[#606068] text-[10px] flex-1">Ask anything…</span>
+      <span className="text-[#606068] text-[10px] flex-1">{t("mockup.askAnything")}</span>
       <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: "linear-gradient(135deg, #39c5bb 0%, #00ffe5 100%)" }}>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0a0a0c" strokeWidth="3" strokeLinecap="round">
           <path d="M12 19V5M5 12l7-7 7 7" />
@@ -438,7 +445,8 @@ const AgentView = () => (
       </div>
     </div>
   </div>
-);
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Small primitives used by the views above
@@ -522,6 +530,7 @@ const PrivacyActionBtn = ({ label, accent, bg, children }: {
 );
 
 const NoteRow = ({ amount, status }: { amount: string; status: "mature" | "maturing" }) => {
+  const t = useT();
   const color = status === "mature" ? "#39c5bb" : "#ffcc00";
   const bg = status === "mature" ? "rgba(57,197,187,0.14)" : "rgba(255,204,0,0.1)";
   return (
@@ -541,7 +550,7 @@ const NoteRow = ({ amount, status }: { amount: string; status: "mature" | "matur
       </div>
       <div className="flex-1">
         <p className="text-white text-[11px] font-semibold">{amount} SOL</p>
-        <p className="text-[#606068] text-[8.5px]">{status === "mature" ? "Ready to use" : "Maturing…"}</p>
+        <p className="text-[#606068] text-[8.5px]">{status === "mature" ? t("mockup.readyToUse") : t("mockup.maturingDots")}</p>
       </div>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#606068" strokeWidth="2" strokeLinecap="round">
         <path d="M9 18l6-6-6-6" />
@@ -717,7 +726,7 @@ type Tab = "wallet" | "privacy" | "streams" | "agent";
 const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode }[] = [
   {
     id: "wallet",
-    label: "Wallet",
+    label: "mockup.tabWallet",
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill={active ? "#39c5bb" : "none"} stroke={active ? "none" : "#606068"} strokeWidth="2">
         <path d="M19 7h-1V6a3 3 0 0 0-3-3H5a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-8a3 3 0 0 0-3-3zm-3 8a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
@@ -726,7 +735,7 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
   },
   {
     id: "privacy",
-    label: "Privacy",
+    label: "mockup.tabPrivacy",
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill={active ? "#39c5bb" : "none"} stroke={active ? "none" : "#606068"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -736,7 +745,7 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
   },
   {
     id: "streams",
-    label: "Streams",
+    label: "mockup.tabStreams",
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill={active ? "#39c5bb" : "none"} stroke={active ? "none" : "#606068"} strokeWidth="2" strokeLinecap="round">
         <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
@@ -745,7 +754,7 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
   },
   {
     id: "agent",
-    label: "Agent",
+    label: "mockup.tabAgent",
     icon: (active) => (
       <svg width="18" height="18" viewBox="0 0 24 24" fill={active ? "#39c5bb" : "none"} stroke={active ? "none" : "#606068"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z" />
@@ -760,9 +769,10 @@ const TABS: { id: Tab; label: string; icon: (active: boolean) => React.ReactNode
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PhoneMockup() {
+  const t = useT();
   const [activeTab, setActiveTab] = useState<Tab>("wallet");
   const [hasInteracted, setHasInteracted] = useState(false);
-  const activeIndex = TABS.findIndex((t) => t.id === activeTab);
+  const activeIndex = TABS.findIndex((tab) => tab.id === activeTab);
 
   return (
     <div className="relative w-[340px] h-[700px]">
@@ -948,7 +958,7 @@ function PhoneMockup() {
                   }}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-[#39c5bb]" />
-                  <span className="text-[9px] font-mono uppercase tracking-wider text-[#39c5bb]">Tap to explore</span>
+                  <span className="text-[9px] font-mono uppercase tracking-wider text-[#39c5bb]">{t("mockup.tapToExplore")}</span>
                 </div>
               )}
               <div
@@ -994,7 +1004,7 @@ function PhoneMockup() {
                         className="text-[8px] font-medium transition-colors"
                         style={{ color: active ? "#39c5bb" : "#606068" }}
                       >
-                        {tab.label}
+                        {t(tab.label)}
                       </span>
                     </button>
                   );

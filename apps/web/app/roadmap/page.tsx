@@ -1,12 +1,13 @@
 "use client";
 
-import React from "react";
-import { motion } from "framer-motion";
+import React, { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useT } from "@/i18n";
 import {
   ArrowLeft,
   CheckCircle,
+  ChevronDown,
   Clock,
   Shield,
   Zap,
@@ -87,6 +88,77 @@ const PHASE_LABELS: Record<PhaseStatus, string> = {
   next: "roadmap.inProgress",
   future: "roadmap.planned",
 };
+
+// ── Shipped-item categorization ────────────────────────────────
+// Keyed by the item's i18n key stem (roadmap.items.<stem>.title) so the
+// data array below stays untouched.
+type CategoryKey =
+  | "privacyCore"
+  | "poolsNotes"
+  | "payments"
+  | "infrastructure"
+  | "appsSdk"
+  | "ecosystem";
+
+const CATEGORY_ORDER: CategoryKey[] = [
+  "privacyCore",
+  "poolsNotes",
+  "payments",
+  "infrastructure",
+  "appsSdk",
+  "ecosystem",
+];
+
+const SHIPPED_CATEGORY: Record<string, CategoryKey> = {
+  stealthAddresses: "privacyCore",
+  zkShieldedPool: "privacyCore",
+  instantZk: "privacyCore",
+  advancedPrivacy: "privacyCore",
+  starkMigration: "privacyCore",
+  arciumMpc: "privacyCore",
+  autoShieldReceive: "privacyCore",
+  stealthMetaAddresses: "privacyCore",
+  multiHopRouter: "privacyCore",
+  fullStealthUnshield: "privacyCore",
+  stealthAirdrops: "privacyCore",
+  complianceZk: "privacyCore",
+  deterministicStealth: "privacyCore",
+  v3StarkE2E: "privacyCore",
+  uniformStarkProofs: "privacyCore",
+  denominatedPools: "poolsNotes",
+  confidentialBalances: "poolsNotes",
+  p2pNoteSharing: "poolsNotes",
+  crossPoolSplitting: "poolsNotes",
+  perWalletNotes: "poolsNotes",
+  poolV2Migration: "poolsNotes",
+  poolV4Migration: "poolsNotes",
+  paymentStreams: "payments",
+  subscriptionVaults: "payments",
+  subscribePrivateV3: "payments",
+  onChainRelayer: "infrastructure",
+  onChainContracts: "infrastructure",
+  onChainRegistry: "infrastructure",
+  rpcFallback: "infrastructure",
+  instantUnshield: "infrastructure",
+  multiLayoutDecoder: "infrastructure",
+  txOpacityRelayer: "infrastructure",
+  txOpacityEvents: "infrastructure",
+  multiRelayerRotation: "infrastructure",
+  automatedTests: "infrastructure",
+  securityHardening: "infrastructure",
+  mobileApp: "appsSdk",
+  aiAgent: "appsSdk",
+  aiAgent56Tools: "appsSdk",
+  i18n: "appsSdk",
+  privacySdkNpm: "appsSdk",
+  jupiterSwap: "appsSdk",
+  zeroTsErrors: "appsSdk",
+  mugenExchange: "ecosystem",
+  colosseumFrontier: "ecosystem",
+};
+
+// Extract the stem from a "roadmap.items.<stem>.title" key.
+const itemStem = (titleKey: string): string => titleKey.split(".")[2] ?? "";
 
 const roadmap: RoadmapPhase[] = [
   {
@@ -413,8 +485,76 @@ const roadmap: RoadmapPhase[] = [
   },
 ];
 
+function ItemCard({
+  item,
+  status,
+  t,
+}: {
+  item: RoadmapItem;
+  status: PhaseStatus;
+  t: (k: string) => string;
+}) {
+  const styles = PHASE_STYLES[status];
+  return (
+    <div className="rounded-2xl border p-5 transition-colors bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]">
+      <div className="flex items-start gap-4">
+        <div
+          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: styles.glowColor + "15", color: styles.glowColor }}
+        >
+          {item.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <h4 className="font-semibold text-sm">{t(item.title)}</h4>
+            {status === "shipped" && (
+              <CheckCircle className="w-4 h-4 flex-shrink-0" style={{ color: THEME.primaryColor }} />
+            )}
+            {status === "next" && (
+              <Clock className="w-4 h-4 flex-shrink-0" style={{ color: THEME.secondaryColor }} />
+            )}
+          </div>
+          <p className="text-xs leading-relaxed" style={{ color: THEME.mutedColor }}>
+            {t(item.description)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RoadmapPage() {
   const t = useT();
+  const [activeTab, setActiveTab] = useState<PhaseStatus>("next");
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({ privacyCore: true });
+
+  const shippedPhase = roadmap.find((p) => p.status === "shipped")!;
+  const nextPhase = roadmap.find((p) => p.status === "next")!;
+  const futurePhase = roadmap.find((p) => p.status === "future")!;
+  const counts: Record<PhaseStatus, number> = {
+    shipped: shippedPhase.items.length,
+    next: nextPhase.items.length,
+    future: futurePhase.items.length,
+  };
+  const total = counts.shipped + counts.next + counts.future;
+  const pct = Math.round((counts.shipped / total) * 100);
+  const activePhase = roadmap.find((p) => p.status === activeTab)!;
+  const focusItem = nextPhase.items[0];
+
+  // Group shipped items by category (ordered).
+  const shippedByCat = CATEGORY_ORDER.reduce(
+    (acc, c) => ({ ...acc, [c]: [] as RoadmapItem[] }),
+    {} as Record<CategoryKey, RoadmapItem[]>,
+  );
+  shippedPhase.items.forEach((it) => {
+    const cat = SHIPPED_CATEGORY[itemStem(it.title)] ?? "ecosystem";
+    shippedByCat[cat].push(it);
+  });
+
+  const TABS: PhaseStatus[] = ["shipped", "next", "future"];
+  const RING_R = 34;
+  const RING_C = 2 * Math.PI * RING_R;
+
   return (
     <div
       className="min-h-screen"
@@ -456,112 +596,174 @@ export default function RoadmapPage() {
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12">
+      {/* Compact hero */}
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-2">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="text-center"
         >
-          <p
-            className="text-xs font-mono tracking-[0.2em] mb-4"
-            style={{ color: THEME.primaryColor }}
-          >
+          <p className="text-xs font-mono tracking-[0.2em] mb-3" style={{ color: THEME.primaryColor }}>
             {t('roadmap.heroSubtitle')}
           </p>
-          <h2 className="text-3xl sm:text-4xl font-bold font-display tracking-wide mb-4">
+          <h2 className="text-2xl sm:text-3xl font-bold font-display tracking-wide mb-2">
             {t('roadmap.heroTitle')}
           </h2>
-          <p className="text-base max-w-2xl mx-auto" style={{ color: THEME.mutedColor }}>
+          <p className="text-sm max-w-2xl" style={{ color: THEME.mutedColor }}>
             {t('roadmap.heroDesc')}
           </p>
         </motion.div>
       </section>
 
-      {/* Timeline */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pb-24">
-        <div className="space-y-16">
-          {roadmap.map((phase, phaseIndex) => {
-            const styles = PHASE_STYLES[phase.status];
-            return (
-              <motion.div
-                key={phase.id}
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: phaseIndex * 0.15 }}
-              >
-                {/* Phase Header */}
-                <div className="flex items-center gap-4 mb-8">
-                  <span
-                    className={`px-3 py-1 text-[11px] font-mono font-bold tracking-wider border rounded ${styles.badge} ${styles.badgeBg}`}
-                  >
-                    {t(PHASE_LABELS[phase.status])}
-                  </span>
-                  <div>
-                    <h3 className="text-xl font-bold font-display tracking-wide">
-                      {t(phase.title)}
-                    </h3>
-                    <p className="text-sm" style={{ color: THEME.dimColor }}>
-                      {t(phase.subtitle)}
-                    </p>
-                  </div>
-                </div>
+      {/* Dashboard — counts double as phase tabs */}
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="rounded-2xl border p-6 bg-white/[0.02] backdrop-blur-sm border-white/[0.06]"
+        >
+          <div className="flex flex-col sm:flex-row items-center gap-6">
+            {/* Progress ring */}
+            <div className="relative flex-shrink-0" style={{ width: 96, height: 96 }}>
+              <svg width="96" height="96" viewBox="0 0 96 96" className="-rotate-90">
+                <circle cx="48" cy="48" r={RING_R} fill="none" stroke={THEME.borderColor} strokeWidth="7" />
+                <circle
+                  cx="48"
+                  cy="48"
+                  r={RING_R}
+                  fill="none"
+                  stroke={THEME.primaryColor}
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeDasharray={RING_C}
+                  strokeDashoffset={RING_C * (1 - pct / 100)}
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-xl font-bold font-display" style={{ color: THEME.textColor }}>
+                  {pct}%
+                </span>
+                <span className="text-[9px] font-mono uppercase tracking-wider" style={{ color: THEME.dimColor }}>
+                  {t('roadmap.shippedLabel')}
+                </span>
+              </div>
+            </div>
 
-                {/* Items Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {phase.items.map((item, itemIndex) => (
-                    <motion.div
-                      key={item.title}
-                      initial={{ opacity: 0, y: 15 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{
-                        duration: 0.4,
-                        delay: phaseIndex * 0.15 + itemIndex * 0.06,
-                      }}
-                      className={`rounded-2xl border p-5 transition-colors bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]`}
+            {/* Stat tiles = phase tabs */}
+            <div className="grid grid-cols-3 gap-3 w-full">
+              {TABS.map((status) => {
+                const s = PHASE_STYLES[status];
+                const active = activeTab === status;
+                return (
+                  <button
+                    key={status}
+                    onClick={() => setActiveTab(status)}
+                    className="rounded-xl border p-4 text-left transition-all"
+                    style={{
+                      borderColor: active ? s.glowColor + "60" : THEME.borderColor,
+                      backgroundColor: active ? s.glowColor + "12" : "rgba(255,255,255,0.02)",
+                    }}
+                  >
+                    <div className="text-2xl font-bold font-display" style={{ color: s.glowColor }}>
+                      {counts[status]}
+                    </div>
+                    <div
+                      className="text-[10px] font-mono uppercase tracking-wider mt-1"
+                      style={{ color: active ? s.glowColor : THEME.dimColor }}
                     >
-                      <div className="flex items-start gap-4">
-                        <div
-                          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                          style={{
-                            backgroundColor: styles.glowColor + "15",
-                            color: styles.glowColor,
-                          }}
-                        >
-                          {item.icon}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h4 className="font-semibold text-sm">{t(item.title)}</h4>
-                            {phase.status === "shipped" && (
-                              <CheckCircle
-                                className="w-4 h-4 flex-shrink-0"
-                                style={{ color: THEME.primaryColor }}
-                              />
-                            )}
-                            {phase.status === "next" && (
-                              <Clock
-                                className="w-4 h-4 flex-shrink-0"
-                                style={{ color: THEME.secondaryColor }}
-                              />
-                            )}
-                          </div>
-                          <p
-                            className="text-xs leading-relaxed"
-                            style={{ color: THEME.mutedColor }}
-                          >
-                            {t(item.description)}
-                          </p>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.div>
-            );
-          })}
+                      {t(PHASE_LABELS[status])}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Current focus */}
+          {focusItem && (
+            <div
+              className="mt-5 pt-4 border-t flex items-center gap-2 flex-wrap"
+              style={{ borderColor: THEME.borderColor }}
+            >
+              <span
+                className="text-[10px] font-mono uppercase tracking-wider"
+                style={{ color: THEME.secondaryColor }}
+              >
+                {t('roadmap.currentFocus')}
+              </span>
+              <span className="text-sm" style={{ color: THEME.mutedColor }}>
+                {t(focusItem.title)}
+              </span>
+            </div>
+          )}
+        </motion.div>
+      </section>
+
+      {/* Active phase content */}
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-24">
+        <div className="mb-6">
+          <h3 className="text-lg font-bold font-display tracking-wide">{t(activePhase.title)}</h3>
+          <p className="text-sm" style={{ color: THEME.dimColor }}>{t(activePhase.subtitle)}</p>
         </div>
+
+        {activeTab === "shipped" ? (
+          <div className="space-y-3">
+            {CATEGORY_ORDER.map((cat) => {
+              const items = shippedByCat[cat];
+              if (!items.length) return null;
+              const open = openCats[cat];
+              return (
+                <div
+                  key={cat}
+                  className="rounded-2xl border overflow-hidden bg-white/[0.02] backdrop-blur-sm border-white/[0.06]"
+                >
+                  <button
+                    onClick={() => setOpenCats((p) => ({ ...p, [cat]: !p[cat] }))}
+                    className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/[0.03] transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold text-sm">{t(`roadmap.categories.${cat}`)}</span>
+                      <span
+                        className="text-[11px] font-mono px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: THEME.primaryColor + "15", color: THEME.primaryColor }}
+                      >
+                        {items.length}
+                      </span>
+                    </div>
+                    <ChevronDown
+                      className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
+                      style={{ color: THEME.dimColor }}
+                    />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {open && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-5 pb-5">
+                          {items.map((it) => (
+                            <ItemCard key={it.title} item={it} status="shipped" t={t} />
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {activePhase.items.map((it) => (
+              <ItemCard key={it.title} item={it} status={activeTab} t={t} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* CTA */}

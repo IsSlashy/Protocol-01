@@ -3,35 +3,16 @@
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
 import { TrendingUp, Store, Code2 } from "lucide-react";
+import { useT } from "@/i18n";
 
 const cols = [
-  {
-    icon: TrendingUp,
-    color: "#39c5bb",
-    tag: "Traders & whales",
-    title: "Move before the crowd does",
-    body:
-      "Watchers track big wallets and front-run their every move. Here your size, entries and exits stay invisible until you choose to reveal them.",
-  },
-  {
-    icon: Store,
-    color: "#ff2d7a",
-    tag: "Merchants",
-    title: "Get paid, prove it, store nothing",
-    body:
-      "Accept private payments and verify subscribers without ever holding their wallet or identity. No database, no breach, no compliance liability.",
-  },
-  {
-    icon: Code2,
-    color: "#ffcc00",
-    tag: "Builders",
-    title: "Ship privacy without building it",
-    body:
-      "Import a few functions and ship. Proofs, encryption and settlement are handled for you. No cryptographers to hire, no proving servers to run. Live in days, not quarters.",
-  },
-];
+  { icon: TrendingUp, color: "#39c5bb", key: "traders" },
+  { icon: Store, color: "#ff2d7a", key: "merchants" },
+  { icon: Code2, color: "#ffcc00", key: "builders" },
+] as const;
 
 export default function ValueProp() {
+  const t = useT();
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
@@ -47,14 +28,14 @@ export default function ValueProp() {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#39c5bb]/8 border border-[#39c5bb]/15 rounded-full mb-6">
             <div className="w-1 h-1 bg-[#39c5bb] rounded-full" />
             <span className="text-[10px] font-mono text-[#39c5bb] uppercase tracking-[0.25em]">
-              Why it pays
+              {t("valueProp.badge")}
             </span>
           </div>
           <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white tracking-tight">
-            Privacy that makes
+            {t("valueProp.titleLine1")}
             <br />
             <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
-              or saves you money.
+              {t("valueProp.titleLine2")}
             </span>
           </h2>
         </motion.div>
@@ -62,7 +43,7 @@ export default function ValueProp() {
         <div className="grid gap-4 md:grid-cols-3">
           {cols.map((c, i) => (
             <motion.div
-              key={c.tag}
+              key={c.key}
               initial={{ opacity: 0, y: 20 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.5, delay: i * 0.1 }}
@@ -82,10 +63,14 @@ export default function ValueProp() {
                 className="mb-2 font-mono text-[11px] uppercase tracking-wider"
                 style={{ color: c.color }}
               >
-                {c.tag}
+                {t(`valueProp.${c.key}Tag`)}
               </span>
-              <h3 className="mb-3 text-xl font-bold text-white font-display">{c.title}</h3>
-              <p className="text-sm leading-relaxed text-[#888892]">{c.body}</p>
+              <h3 className="mb-3 text-xl font-bold text-white font-display">
+                {t(`valueProp.${c.key}Title`)}
+              </h3>
+              <p className="text-sm leading-relaxed text-[#888892]">
+                {t(`valueProp.${c.key}Body`)}
+              </p>
             </motion.div>
           ))}
         </div>

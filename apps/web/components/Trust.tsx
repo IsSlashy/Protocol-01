@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import { useT } from "@/i18n";
 
 /**
  * Trust — monochrome (white) logo marquee, scrolling left → right.
@@ -39,6 +40,7 @@ const Logo = ({ b }: { b: Brand }) => (
 );
 
 function Trust() {
+  const t = useT();
   // Duplicate the set so the marquee loops seamlessly.
   const track = [...brands, ...brands];
   return (
@@ -55,7 +57,7 @@ function Trust() {
         }}
       />
       <p className="relative mb-10 text-center font-mono text-xs uppercase tracking-[0.3em] text-[#555560]">
-        Built on, and recognized across the Solana ecosystem
+        {t("trust.tagline")}
       </p>
       <div
         className="trust-marquee-wrap relative overflow-hidden"

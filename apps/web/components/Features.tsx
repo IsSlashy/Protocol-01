@@ -11,20 +11,20 @@ import {
 import { useT } from "@/i18n";
 
 const features = [
-  { icon: Shield, name: "autoShield", color: "#39c5bb", desc: "Funds move into the private pool automatically, so your balance never sits exposed on the public ledger." },
-  { icon: Wallet, name: "stealthTransfers", color: "#ff2d7a", desc: "Send to a one-time address that nobody can link back to the receiver's real wallet." },
-  { icon: Layers, name: "privacyPools", color: "#39c5bb", desc: "Deposit into a shared pool and withdraw later, with no on-chain link between the two." },
-  { icon: Radio, name: "privateSubscriptions", color: "#00ffe5", desc: "Pay recurring bills without the merchant or the chain seeing your wallet or the amount." },
-  { icon: ArrowLeftRight, name: "tokenSwap", color: "#39c5bb", desc: "Trade one token for another without broadcasting your move to front-runners." },
-  { icon: Bot, name: "aiAgent", color: "#ffcc00", desc: "An on-device assistant that runs your privacy actions (shield, pay, rebalance) on command." },
-  { icon: Lock, name: "zkProofs", color: "#ff2d7a", desc: "Prove a payment is valid without revealing any of its details." },
-  { icon: Eye, name: "confidentialBalances", color: "#39c5bb", desc: "Token balances stay encrypted on-chain, readable only by you." },
-  { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a", desc: "One shareable address spawns a fresh, unlinkable address for every payment you receive." },
-  { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00", desc: "An on-chain account that pays a merchant a fixed amount over time, privately." },
-  { icon: Zap, name: "multiHopRouting", color: "#00ffe5", desc: "Payments bounce through several hops so no observer can trace the path end to end." },
-  { icon: GitBranch, name: "noteSplitting", color: "#39c5bb", desc: "Split a private balance into smaller notes so a withdrawal never reveals your total." },
-  { icon: Network, name: "privacyRouter", color: "#ff2d7a", desc: "Automatically picks the best private path (relayer, hops, pool) for each transaction." },
-  { icon: FileText, name: "serviceRegistry", color: "#00ffe5", desc: "Merchants register on-chain, so you can subscribe to real services with no account." },
+  { icon: Shield, name: "autoShield", color: "#39c5bb" },
+  { icon: Wallet, name: "stealthTransfers", color: "#ff2d7a" },
+  { icon: Layers, name: "privacyPools", color: "#39c5bb" },
+  { icon: Radio, name: "privateSubscriptions", color: "#00ffe5" },
+  { icon: ArrowLeftRight, name: "tokenSwap", color: "#39c5bb" },
+  { icon: Bot, name: "aiAgent", color: "#ffcc00" },
+  { icon: Lock, name: "zkProofs", color: "#ff2d7a" },
+  { icon: Eye, name: "confidentialBalances", color: "#39c5bb" },
+  { icon: Fingerprint, name: "stealthMetaAddresses", color: "#ff2d7a" },
+  { icon: Calendar, name: "subscriptionVaults", color: "#ffcc00" },
+  { icon: Zap, name: "multiHopRouting", color: "#00ffe5" },
+  { icon: GitBranch, name: "noteSplitting", color: "#39c5bb" },
+  { icon: Network, name: "privacyRouter", color: "#ff2d7a" },
+  { icon: FileText, name: "serviceRegistry", color: "#00ffe5" },
 ];
 
 export default function Features() {
@@ -94,7 +94,7 @@ export default function Features() {
 
                 {/* Description */}
                 <p className="text-[13px] leading-relaxed text-[#888892]">
-                  {feature.desc}
+                  {t(`features.desc.${feature.name}`)}
                 </p>
               </div>
             </motion.div>

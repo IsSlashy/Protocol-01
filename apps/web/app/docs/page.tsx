@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useT } from "@/i18n";
@@ -17,13 +17,20 @@ import {
   GitBranch,
   Cpu,
   ArrowLeft,
-  ExternalLink,
   CheckCircle,
   Network,
   Download,
   FileText,
   Archive,
+  Menu,
+  Search,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
+import Sidebar, { type ResolvedGroup } from "@/components/docs/Sidebar";
+import TopicToc, { type TocItem } from "@/components/docs/TopicToc";
+import DocsSearch, { type SearchItem } from "@/components/docs/DocsSearch";
+import { NAV_GROUPS, TOPIC_ORDER, SPECIAL_TITLE_KEYS } from "@/components/docs/nav";
 
 // ============ P-01 Theme Constants ============
 const THEME = {
@@ -748,82 +755,407 @@ const ArchitectureDiagram = ({ t }: { t: (key: string) => string }) => (
   </div>
 );
 
-function TechAccordion({ tech, index, t }: { tech: TechSection; index: number; t: (key: string) => string }) {
-  const [open, setOpen] = React.useState(false);
+// A single technology rendered as a full docs topic (always open).
+function TechTopic({ tech, t }: { tech: TechSection; t: (key: string) => string }) {
   const title = t(`docs.sections.${tech.i18nKey}.title`);
   const description = t(`docs.sections.${tech.i18nKey}.desc`);
-  const details = Array.from({ length: tech.detailCount }, (_, i) => t(`docs.sections.${tech.i18nKey}.detail${i + 1}`));
+  const details = Array.from({ length: tech.detailCount }, (_, i) =>
+    t(`docs.sections.${tech.i18nKey}.detail${i + 1}`),
+  );
 
   return (
-    <motion.div
-      id={tech.id}
-      initial={{ opacity: 0, y: 10 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ delay: index * 0.03 }}
-      className="border border-white/[0.06] rounded-2xl overflow-hidden bg-white/[0.02] backdrop-blur-sm hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors"
-    >
-      {/* Header — always visible, clickable */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-4 p-4 sm:p-5 text-left cursor-pointer hover:bg-[#1a1a1f] transition-colors"
-      >
-        <div className="w-10 h-10 bg-[#39c5bb]/10 border border-[#39c5bb]/30 flex items-center justify-center text-[#39c5bb] shrink-0">
+    <article>
+      <div className="flex items-center gap-4 mb-5">
+        <div className="w-12 h-12 bg-[#39c5bb]/10 border border-[#39c5bb]/30 rounded-xl flex items-center justify-center text-[#39c5bb] shrink-0">
           {tech.icon}
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-base font-bold text-white">{title}</h3>
-          <p className="text-xs text-[#888892] mt-0.5 truncate">{description}</p>
-        </div>
-        <motion.div
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
-          className="text-[#555560] shrink-0"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </motion.div>
-      </button>
+        <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">{title}</h1>
+      </div>
 
-      {/* Expandable content */}
-      <motion.div
-        initial={false}
-        animate={{
-          height: open ? "auto" : 0,
-          opacity: open ? 1 : 0,
-        }}
-        transition={{ duration: 0.3, ease: "easeInOut" }}
-        className="overflow-hidden"
-      >
-        <div className="px-4 sm:px-5 pb-5 pt-1 border-t border-[#2a2a30]">
-          <p className="text-[#888892] text-sm leading-relaxed mb-4">{description}</p>
+      <section id={`${tech.id}-overview`} className="scroll-mt-24">
+        <p className="text-[#888892] leading-relaxed mb-8">{description}</p>
+      </section>
 
-          <h4 className="text-xs font-bold text-[#39c5bb] uppercase tracking-wider mb-3">
-            {t('docs.keyFeatures')}
-          </h4>
-          <ul className="space-y-1.5 mb-5">
-            {details.map((detail, i) => (
-              <li key={i} className="flex items-start gap-2.5 text-sm text-[#888892]">
-                <CheckCircle className="w-3.5 h-3.5 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                <span className="break-words">{detail}</span>
+      <section id={`${tech.id}-features`} className="scroll-mt-24 mb-8">
+        <h2 className="text-xs font-bold text-[#39c5bb] uppercase tracking-wider mb-3">
+          {t('docs.keyFeatures')}
+        </h2>
+        <ul className="space-y-2">
+          {details.map((detail, i) => (
+            <li key={i} className="flex items-start gap-2.5 text-sm text-[#888892]">
+              <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+              <span className="break-words">{detail}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      {tech.codeExample && (
+        <section id={`${tech.id}-code`} className="scroll-mt-24">
+          <h2 className="text-xs font-bold text-[#ff77a8] uppercase tracking-wider mb-2">
+            {t('docs.codeExample')}
+          </h2>
+          <pre className="bg-[#0a0a0c] border border-[#2a2a30] p-4 rounded-xl overflow-x-auto text-xs font-mono text-[#888892] whitespace-pre-wrap break-words">
+            {tech.codeExample}
+          </pre>
+        </section>
+      )}
+    </article>
+  );
+}
+
+// ── Special (non-technologies) topics ──────────────────────────
+function ArchitectureTopic({ t }: { t: (k: string) => string }) {
+  return (
+    <article>
+      <h1 className="text-2xl sm:text-3xl font-bold text-white mb-3 tracking-tight">
+        {t('docs.heroTitle1')}{' '}
+        <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
+          {t('docs.heroTitle2')}
+        </span>
+      </h1>
+      <p className="text-[#888892] leading-relaxed max-w-2xl mb-6">{t('docs.heroSubtitle')}</p>
+      <div className="flex flex-wrap items-center gap-5 text-sm mb-10">
+        <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-[#39c5bb]" /><span className="text-[#888892]"><span className="text-white font-bold">10</span> {t('docs.statCircuits')}</span></div>
+        <div className="flex items-center gap-2"><Cpu className="w-4 h-4 text-[#ff77a8]" /><span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statPrograms')}</span></div>
+        <div className="flex items-center gap-2"><Code className="w-4 h-4 text-[#00ffe5]" /><span className="text-[#888892]"><span className="text-white font-bold">17</span> {t('docs.statSdks')}</span></div>
+        <div className="flex items-center gap-2"><Layers className="w-4 h-4 text-[#ffcc00]" /><span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statModules')}</span></div>
+      </div>
+      <section id="architecture-diagram" className="scroll-mt-24">
+        <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
+          <Layers className="w-5 h-5 text-[#39c5bb]" />
+          {t('docs.archSectionTitle')}
+        </h2>
+        <ArchitectureDiagram t={t} />
+      </section>
+    </article>
+  );
+}
+
+function SecurityTopic({ t }: { t: (k: string) => string }) {
+  const threats = ['threatObservers', 'threatAmounts', 'threatPatterns', 'threatBalance'];
+  const guarantees = ['guaranteeSound', 'guaranteeComplete', 'guaranteeZk', 'guaranteeNoDouble', 'guaranteeMpc'];
+  const harden = [
+    ['hardenSpendingKey', 'hardenPin', 'hardenLockout'],
+    ['hardenSecureStore', 'hardenClipboard', 'hardenBlur'],
+    ['hardenBackup', 'hardenBiometric', 'hardenLockScreen'],
+  ];
+  return (
+    <article>
+      <h1 className="text-2xl sm:text-3xl font-bold text-white mb-6 flex items-center gap-3 tracking-tight">
+        <Shield className="w-7 h-7 text-[#ff2d7a]" />
+        {t('docs.securityTitle')}
+      </h1>
+      <div id="security-model" className="scroll-mt-24 grid md:grid-cols-2 gap-6">
+        <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
+          <h2 className="text-lg font-bold text-white mb-4">{t('docs.threatModel')}</h2>
+          <ul className="space-y-2 text-sm text-[#888892]">
+            {threats.map((k) => (
+              <li key={k} className="flex items-start gap-2">
+                <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
+                <span>{t(`docs.${k}`)}</span>
               </li>
             ))}
           </ul>
-
-          {tech.codeExample && (
-            <>
-              <h4 className="text-xs font-bold text-[#ff77a8] uppercase tracking-wider mb-2">
-                {t('docs.codeExample')}
-              </h4>
-              <pre className="bg-[#0a0a0c] border border-[#2a2a30] p-3 rounded-lg overflow-x-auto text-xs font-mono text-[#888892] whitespace-pre-wrap break-words">
-                {tech.codeExample}
-              </pre>
-            </>
-          )}
         </div>
-      </motion.div>
-    </motion.div>
+        <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
+          <h2 className="text-lg font-bold text-white mb-4">{t('docs.guarantees')}</h2>
+          <ul className="space-y-2 text-sm text-[#888892]">
+            {guarantees.map((k) => (
+              <li key={k} className="flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                <span>{t(`docs.${k}`)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <div id="security-hardening" className="scroll-mt-24 mt-6 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
+        <h2 className="text-lg font-bold text-white mb-4">{t('docs.securityHardening')}</h2>
+        <div className="grid md:grid-cols-3 gap-4 text-sm text-[#888892]">
+          {harden.map((col, ci) => (
+            <ul key={ci} className="space-y-2">
+              {col.map((k) => (
+                <li key={k} className="flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
+                  <span>{t(`docs.${k}`)}</span>
+                </li>
+              ))}
+            </ul>
+          ))}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function MpcTopic({ t }: { t: (k: string) => string }) {
+  return (
+    <article>
+      <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2 flex items-center gap-3 tracking-tight">
+        <Network className="w-7 h-7 text-[#f59e0b]" />
+        {t('docs.mpcTitle')}
+      </h1>
+      <p className="text-[#888892] mb-8 max-w-3xl">
+        {t('docs.mpcDesc')}{' '}
+        {t('docs.mpcArciumIs')} <strong className="text-white">{t('docs.mpcDescUpgrade')}</strong> {t('docs.mpcDescRest')}
+      </p>
+
+      <div className="overflow-x-auto bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-2xl">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[#2a2a30]">
+              <th className="text-left py-3 px-4 text-[#555560] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableOperation')}</th>
+              <th className="text-left py-3 px-4 text-[#39c5bb] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWithout')}</th>
+              <th className="text-left py-3 px-4 text-[#f59e0b] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWith')}</th>
+            </tr>
+          </thead>
+          <tbody className="text-[#888892]">
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAmounts')}</td>
+              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
+              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
+            </tr>
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowLink')}</td>
+              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
+              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
+            </tr>
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowNullifier')}</td>
+              <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowNullifierWithout')}</td>
+              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowNullifierWith')}</td>
+            </tr>
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRelay')}</td>
+              <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRelayWithout')}</td>
+              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRelayWith')}</td>
+            </tr>
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRegistry')}</td>
+              <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRegistryWithout')}</td>
+              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRegistryWith')}</td>
+            </tr>
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAudit')}</td>
+              <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowAuditWithout')}</td>
+              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowAuditWith')}</td>
+            </tr>
+            <tr className="border-b border-[#2a2a30]/50">
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowVote')}</td>
+              <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowVoteWithout')}</td>
+              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowVoteWith')}</td>
+            </tr>
+            <tr>
+              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowTrust')}</td>
+              <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWithout')}</td>
+              <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWith')}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6 mt-8">
+        <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
+          <div className="flex items-center gap-3 mb-4">
+            <Shield className="w-5 h-5 text-[#39c5bb]" />
+            <h2 className="text-lg font-bold text-white">{t('docs.mpcOffTitle')}</h2>
+          </div>
+          <ul className="space-y-2 text-sm text-[#888892]">
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem1')}</span></li>
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem2')}</span></li>
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem3')}</span></li>
+            <li className="flex items-start gap-2"><Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem4')}</span></li>
+          </ul>
+        </div>
+        <div className="bg-white/[0.03] backdrop-blur-sm border border-white/[0.08] p-6 rounded-2xl">
+          <div className="flex items-center gap-3 mb-4">
+            <Network className="w-5 h-5 text-[#f59e0b]" />
+            <h2 className="text-lg font-bold text-white">{t('docs.mpcOnTitle')}</h2>
+          </div>
+          <ul className="space-y-2 text-sm text-[#888892]">
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem1')}</span></li>
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem2')}</span></li>
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem3')}</span></li>
+            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem4')}</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <p className="text-xs text-[#555560] mt-6 font-mono">{t('docs.mpcFootnote')}</p>
+    </article>
+  );
+}
+
+// Resolve which component renders a given topic id.
+function TopicContent({ id, t }: { id: string; t: (k: string) => string }) {
+  if (id === 'architecture') return <ArchitectureTopic t={t} />;
+  if (id === 'security') return <SecurityTopic t={t} />;
+  if (id === 'mpc-comparison') return <MpcTopic t={t} />;
+  const tech = technologies.find((x) => x.id === id);
+  return tech ? <TechTopic tech={tech} t={t} /> : null;
+}
+
+// The sidebar + content-switcher + on-this-page shell.
+function DocsBody({ t }: { t: (k: string) => string }) {
+  const [activeId, setActiveId] = useState<string>(TOPIC_ORDER[0]);
+  const [navOpen, setNavOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const titleFor = (id: string): string => {
+    if (SPECIAL_TITLE_KEYS[id]) return t(SPECIAL_TITLE_KEYS[id]);
+    const tech = technologies.find((x) => x.id === id);
+    return tech ? t(`docs.sections.${tech.i18nKey}.title`) : id;
+  };
+
+  const groups: ResolvedGroup[] = useMemo(
+    () =>
+      NAV_GROUPS.map((g) => ({
+        label: t(g.labelKey),
+        items: g.ids.map((id) => ({ id, title: titleFor(id) })),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t],
+  );
+
+  const searchItems: SearchItem[] = useMemo(
+    () =>
+      NAV_GROUPS.flatMap((g) =>
+        g.ids.map((id) => ({ id, title: titleFor(id), group: t(g.labelKey) })),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t],
+  );
+
+  // Open the topic referenced by the URL hash on first load (deep-links).
+  useEffect(() => {
+    const h = window.location.hash.replace('#', '');
+    if (h && TOPIC_ORDER.includes(h)) setActiveId(h);
+  }, []);
+
+  // Ctrl/Cmd+K toggles search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const go = (id: string) => {
+    setActiveId(id);
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', `#${id}`);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const idx = TOPIC_ORDER.indexOf(activeId);
+  const prevId = idx > 0 ? TOPIC_ORDER[idx - 1] : null;
+  const nextId = idx >= 0 && idx < TOPIC_ORDER.length - 1 ? TOPIC_ORDER[idx + 1] : null;
+
+  const toc: TocItem[] = (() => {
+    if (activeId === 'security') {
+      return [
+        { href: '#security-model', label: t('docs.threatModel') },
+        { href: '#security-hardening', label: t('docs.securityHardening') },
+      ];
+    }
+    const tech = technologies.find((x) => x.id === activeId);
+    if (tech) {
+      const items: TocItem[] = [
+        { href: `#${tech.id}-overview`, label: t('docs.overview') },
+        { href: `#${tech.id}-features`, label: t('docs.keyFeatures') },
+      ];
+      if (tech.codeExample) items.push({ href: `#${tech.id}-code`, label: t('docs.codeExample') });
+      return items;
+    }
+    return [];
+  })();
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Mobile controls */}
+      <div className="lg:hidden flex items-center justify-between mb-6">
+        <button
+          onClick={() => setNavOpen(true)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#2a2a30] text-[#888892] text-sm hover:text-white transition-colors"
+        >
+          <Menu className="w-4 h-4" />
+          {t('docs.menu')}
+        </button>
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="flex items-center justify-center w-9 h-9 rounded-lg border border-[#2a2a30] text-[#888892] hover:text-white transition-colors"
+          aria-label={t('docs.searchPlaceholder')}
+        >
+          <Search className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="flex gap-8">
+        <Sidebar
+          groups={groups}
+          activeId={activeId}
+          onSelect={go}
+          open={navOpen}
+          onClose={() => setNavOpen(false)}
+          onOpenSearch={() => setSearchOpen(true)}
+          searchLabel={t('docs.searchPlaceholder')}
+          searchHint={t('docs.searchHint')}
+        />
+
+        <main className="flex-1 min-w-0 pb-10">
+          <TopicContent id={activeId} t={t} />
+
+          {/* Prev / Next pager */}
+          <div className="mt-12 pt-6 border-t border-[#2a2a30] flex items-center justify-between gap-4">
+            {prevId ? (
+              <button
+                onClick={() => go(prevId)}
+                className="group flex items-center gap-2 text-left px-4 py-3 rounded-xl border border-[#2a2a30] hover:border-[#39c5bb]/40 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb]" />
+                <span>
+                  <span className="block text-[10px] font-mono uppercase tracking-wider text-[#555560]">{t('docs.previous')}</span>
+                  <span className="text-sm text-white">{titleFor(prevId)}</span>
+                </span>
+              </button>
+            ) : (
+              <span />
+            )}
+            {nextId ? (
+              <button
+                onClick={() => go(nextId)}
+                className="group flex items-center gap-2 text-right px-4 py-3 rounded-xl border border-[#2a2a30] hover:border-[#39c5bb]/40 transition-colors ml-auto"
+              >
+                <span>
+                  <span className="block text-[10px] font-mono uppercase tracking-wider text-[#555560]">{t('docs.next')}</span>
+                  <span className="text-sm text-white">{titleFor(nextId)}</span>
+                </span>
+                <ChevronRight className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb]" />
+              </button>
+            ) : (
+              <span />
+            )}
+          </div>
+        </main>
+
+        <TopicToc items={toc} title={t('docs.onThisPage')} />
+      </div>
+
+      <DocsSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        items={searchItems}
+        onSelect={go}
+        placeholder={t('docs.searchPlaceholder')}
+        emptyLabel={t('docs.searchEmpty')}
+      />
+    </div>
   );
 }
 
@@ -863,339 +1195,7 @@ export default function DocsPage() {
         </div>
       </header>
 
-      {/* Hero — compact + impactful */}
-      <section className="relative overflow-hidden border-b border-[#2a2a30]">
-        {/* Subtle gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#39c5bb]/[0.03] via-transparent to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#ff77a8]/[0.02] via-transparent to-[#39c5bb]/[0.02]" />
-
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-20">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center"
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#39c5bb]/10 border border-[#39c5bb]/20 rounded-full mb-6">
-              <div className="w-1.5 h-1.5 bg-[#39c5bb] rounded-full animate-pulse" />
-              <span className="text-xs font-mono text-[#39c5bb] uppercase tracking-widest">{t('docs.badge')}</span>
-            </div>
-
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-5 tracking-tight">
-              {t('docs.heroTitle1')}{" "}
-              <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
-                {t('docs.heroTitle2')}
-              </span>
-            </h1>
-
-            <p className="text-base sm:text-lg text-[#888892] max-w-2xl mx-auto leading-relaxed mb-8">
-              {t('docs.heroSubtitle')}
-            </p>
-
-            {/* Quick stats */}
-            <div className="flex flex-wrap items-center justify-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-[#39c5bb]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">10</span> {t('docs.statCircuits')}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-[#ff77a8]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statPrograms')}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Code className="w-4 h-4 text-[#00ffe5]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">17</span> {t('docs.statSdks')}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Layers className="w-4 h-4 text-[#ffcc00]" />
-                <span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statModules')}</span>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
-      {/* Architecture Overview */}
-      <section className="py-12 px-4 sm:px-6 lg:px-8 border-b border-[#2a2a30]">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-            <Layers className="w-6 h-6 text-[#39c5bb]" />
-            {t('docs.archSectionTitle')}
-          </h2>
-          <ArchitectureDiagram t={t} />
-        </div>
-      </section>
-
-      {/* Technologies — Collapsible Accordion */}
-      <section className="py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-3">
-            <Zap className="w-6 h-6 text-[#ff77a8]" />
-            {t('docs.coreTechTitle')}
-          </h2>
-          <p className="text-[#888892] mb-8 text-sm">
-            {technologies.length} {t('docs.coreTechDesc')}
-          </p>
-
-          <div className="space-y-2">
-            {technologies.map((tech, index) => (
-              <TechAccordion key={tech.id} tech={tech} index={index} t={t} />
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Security Considerations */}
-      <section className="py-12 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
-            <Shield className="w-6 h-6 text-[#ff2d7a]" />
-            {t('docs.securityTitle')}
-          </h2>
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-              <h3 className="text-lg font-bold text-white mb-4">{t('docs.threatModel')}</h3>
-              <ul className="space-y-2 text-sm text-[#888892]">
-                <li className="flex items-start gap-2">
-                  <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.threatObservers')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.threatAmounts')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.threatPatterns')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.threatBalance')}</span>
-                </li>
-              </ul>
-            </div>
-            <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-              <h3 className="text-lg font-bold text-white mb-4">{t('docs.guarantees')}</h3>
-              <ul className="space-y-2 text-sm text-[#888892]">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.guaranteeSound')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.guaranteeComplete')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.guaranteeZk')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.guaranteeNoDouble')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.guaranteeMpc')}</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Security Hardening */}
-          <div className="mt-6 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-            <h3 className="text-lg font-bold text-white mb-4">{t('docs.securityHardening')}</h3>
-            <div className="grid md:grid-cols-3 gap-4 text-sm text-[#888892]">
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenSpendingKey')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenPin')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenLockout')}</span>
-                </li>
-              </ul>
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenSecureStore')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenClipboard')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenBlur')}</span>
-                </li>
-              </ul>
-              <ul className="space-y-2">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenBackup')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenBiometric')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.hardenLockScreen')}</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Privacy: With vs Without MPC */}
-      <section id="mpc-comparison" className="py-12 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-3">
-            <Network className="w-6 h-6 text-[#f59e0b]" />
-            {t('docs.mpcTitle')}
-          </h2>
-          <p className="text-[#888892] mb-8 max-w-3xl">
-            {t('docs.mpcDesc')}{' '}
-            {t('docs.mpcArciumIs')} <strong className="text-white">{t('docs.mpcDescUpgrade')}</strong> {t('docs.mpcDescRest')}
-          </p>
-
-          {/* Comparison table */}
-          <div className="overflow-x-auto bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-2xl">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#2a2a30]">
-                  <th className="text-left py-3 px-4 text-[#555560] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableOperation')}</th>
-                  <th className="text-left py-3 px-4 text-[#39c5bb] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWithout')}</th>
-                  <th className="text-left py-3 px-4 text-[#f59e0b] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWith')}</th>
-                </tr>
-              </thead>
-              <tbody className="text-[#888892]">
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAmounts')}</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
-                </tr>
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowLink')}</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
-                  <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
-                </tr>
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowNullifier')}</td>
-                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowNullifierWithout')}</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowNullifierWith')}</td>
-                </tr>
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRelay')}</td>
-                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRelayWithout')}</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRelayWith')}</td>
-                </tr>
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRegistry')}</td>
-                  <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRegistryWithout')}</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRegistryWith')}</td>
-                </tr>
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAudit')}</td>
-                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowAuditWithout')}</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowAuditWith')}</td>
-                </tr>
-                <tr className="border-b border-[#2a2a30]/50">
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowVote')}</td>
-                  <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowVoteWithout')}</td>
-                  <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowVoteWith')}</td>
-                </tr>
-                <tr>
-                  <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowTrust')}</td>
-                  <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWithout')}</td>
-                  <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWith')}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* Visual summary */}
-          <div className="grid md:grid-cols-2 gap-6 mt-8">
-            <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <Shield className="w-5 h-5 text-[#39c5bb]" />
-                <h3 className="text-lg font-bold text-white">{t('docs.mpcOffTitle')}</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-[#888892]">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOffItem1')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOffItem2')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOffItem3')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOffItem4')}</span>
-                </li>
-              </ul>
-            </div>
-            <div className="bg-white/[0.03] backdrop-blur-sm border border-white/[0.08] p-6 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors">
-              <div className="flex items-center gap-3 mb-4">
-                <Network className="w-5 h-5 text-[#f59e0b]" />
-                <h3 className="text-lg font-bold text-white">{t('docs.mpcOnTitle')}</h3>
-              </div>
-              <ul className="space-y-2 text-sm text-[#888892]">
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOnItem1')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOnItem2')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOnItem3')}</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" />
-                  <span>{t('docs.mpcOnItem4')}</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <p className="text-xs text-[#555560] mt-6 text-center font-mono">
-            {t('docs.mpcFootnote')}
-          </p>
-        </div>
-      </section>
-
-      {/* Quick Links */}
-      <section className="py-12 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-6">{t('docs.quickNav')}</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {technologies.map((tech) => (
-              <a
-                key={tech.id}
-                href={`#${tech.id}`}
-                className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-4 rounded-2xl hover:bg-white/[0.05] hover:border-white/[0.12] transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-[#39c5bb]">{tech.icon}</span>
-                  <span className="text-sm text-white font-medium">{t(`docs.sections.${tech.i18nKey}.title`).split(' ')[0]}</span>
-                </div>
-              </a>
-            ))}
-          </div>
-        </div>
-      </section>
+      <DocsBody t={t} />
 
       {/* Design Document Download */}
       <section className="py-8 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
