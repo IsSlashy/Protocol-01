@@ -21,13 +21,13 @@ import { useT, LanguageSwitcher } from "@/i18n";
  * Keeps the art direction intact: cyan accent, uppercase monospace links, sharp
  * primary button.
  */
-const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean }[] = [
+const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; glow?: boolean }[] = [
   { href: "/docs", i18nKey: "nav.docs" },
   { href: "/roadmap", i18nKey: "nav.roadmap" },
   // Updates page kept at /updates but removed from the nav (replaced by SDK).
   // { href: "/updates", label: "Updates" },
   { href: "/sdk-demo", label: "SDK" },
-  { href: "/founder", label: "Founder", dim: true },
+  { href: "/founder", label: "Founder", glow: true },
 ];
 
 function SiteHeader() {
@@ -61,6 +61,17 @@ function SiteHeader() {
           {/* Primary nav */}
           <nav className="hidden md:flex items-center gap-7">
             {LINKS.map((l) => {
+              if (l.glow) {
+                return (
+                  <a
+                    key={l.href}
+                    href={l.href}
+                    className="founder-glow text-xs font-mono font-semibold uppercase tracking-wider"
+                  >
+                    {l.i18nKey ? t(l.i18nKey) : l.label}
+                  </a>
+                );
+              }
               const active =
                 pathname === l.href || (l.href !== "/" && !!pathname?.startsWith(l.href));
               const base = l.dim

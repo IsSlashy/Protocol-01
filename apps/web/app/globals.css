@@ -1016,3 +1016,44 @@
     display: none !important;
   }
 }
+
+/* ===== Founder nav shimmer =====
+   A cyan -> white -> bright-cyan light sweeps across the word, with a soft
+   cyan halo. Keeps the site palette (no RGB), gives the link a living glow. */
+@keyframes founder-shimmer {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+.founder-glow {
+  background-image: linear-gradient(
+    110deg,
+    #39c5bb 0%,
+    #ffffff 25%,
+    #00ffe5 50%,
+    #ffffff 75%,
+    #39c5bb 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: founder-shimmer 4.5s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(57, 197, 187, 0.35));
+  transition: filter 0.3s ease;
+}
+
+.founder-glow:hover {
+  filter: drop-shadow(0 0 10px rgba(57, 197, 187, 0.6));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .founder-glow {
+    animation: none;
+  }
+}
