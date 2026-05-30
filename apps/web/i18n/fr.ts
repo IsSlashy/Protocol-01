@@ -589,6 +589,8 @@ const fr: Translations = {
   sdkDemo: {
     // Header
     headerTitle: 'D\u00e9mo SDK',
+    heroKicker: 'Aper\u00e7u d\u00e9veloppeur',
+    heroSubtitle: 'De la confidentialit\u00e9 pr\u00eate \u00e0 l\u2019emploi pour n\u2019importe quelle app Solana. Adresses furtives, preuves ZK, soldes confidentiels et abonnements priv\u00e9s, v\u00e9rifi\u00e9s on-chain, sans serveur \u00e0 g\u00e9rer.',
     serverless: '100% sans serveur',
     onChainVerification: 'V\u00e9rification on-chain',
     // Tabs

@@ -589,6 +589,8 @@ const en = {
   sdkDemo: {
     // Header
     headerTitle: 'SDK Demo',
+    heroKicker: 'Developer Preview',
+    heroSubtitle: 'Drop-in privacy for any Solana app. Stealth addresses, ZK proofs, confidential balances and private subscriptions, verified on-chain, no servers to run.',
     serverless: '100% Serverless',
     onChainVerification: 'On-chain verification',
     // Tabs

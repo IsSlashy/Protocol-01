@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { motion } from "framer-motion";
-import Link from "next/link";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { useT } from "@/i18n";
 import {
@@ -26,8 +25,9 @@ import {
   FileText,
   Eye,
   Shield,
-  Download
+  Copy
 } from "lucide-react";
+import SiteHeader from "@/components/SiteHeader";
 
 // ============ P-01 Theme Constants ============
 // Inspired by: Hatsune Miku (cyan), NEEDY STREAMER OVERLOAD (pink), ULTRAKILL (red)
@@ -320,61 +320,78 @@ function SDKDemoContent() {
   const [activeTab, setActiveTab] = useState<"devnet" | "privacy" | "streams" | "widgets" | "buttons" | "cards">("devnet");
   const t = useT();
 
+  const tabs = [
+    { id: "devnet" as const, label: t('sdkDemo.tabDevnet'), icon: Cpu, accent: "text-yellow-500" },
+    { id: "privacy" as const, label: t('sdkDemo.tabPrivacy'), icon: Shield, accent: "text-p01-cyan" },
+    { id: "streams" as const, label: t('sdkDemo.tabStreams'), icon: RefreshCw, accent: "text-p01-pink" },
+    { id: "widgets" as const, label: t('sdkDemo.tabWidgets'), icon: CreditCard, accent: "text-p01-cyan" },
+    { id: "buttons" as const, label: t('sdkDemo.tabButtons'), icon: Zap, accent: "text-p01-cyan" },
+    { id: "cards" as const, label: t('sdkDemo.tabCards'), icon: FileText, accent: "text-p01-cyan" },
+  ];
+
   return (
     <div className="min-h-screen bg-p01-void">
-      {/* Header */}
-      <header className="border-b border-p01-border/50 bg-p01-surface/50 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="flex items-center gap-2">
-              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
-            </Link>
-            <span className="text-p01-text-dim">/</span>
-            <span className="text-white font-medium">{t('sdkDemo.headerTitle')}</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-p01-elevated px-3 py-1.5 rounded-lg border border-p01-border">
-              <div className="w-2 h-2 bg-p01-cyan animate-pulse" />
-              <span className="text-p01-cyan text-sm font-mono">{t('sdkDemo.serverless')}</span>
-            </div>
-            <div className="flex items-center gap-2 bg-p01-elevated px-3 py-1.5 rounded-lg border border-p01-pink/30">
-              <span className="text-p01-pink text-sm font-mono">{t('sdkDemo.onChainVerification')}</span>
-            </div>
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
-      {/* Tab Navigation */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="flex gap-2 mb-8 flex-wrap">
-          {[
-            { id: "devnet" as const, label: t('sdkDemo.tabDevnet'), icon: Cpu, color: "yellow" },
-            { id: "privacy" as const, label: t('sdkDemo.tabPrivacy'), icon: Shield, color: "cyan" },
-            { id: "streams" as const, label: t('sdkDemo.tabStreams'), icon: RefreshCw, color: "pink" },
-            { id: "widgets" as const, label: t('sdkDemo.tabWidgets'), icon: CreditCard, color: "cyan" },
-            { id: "buttons" as const, label: t('sdkDemo.tabButtons'), icon: Zap, color: "cyan" },
-            { id: "cards" as const, label: t('sdkDemo.tabCards'), icon: FileText, color: "cyan" },
-          ].map((tab) => {
-            const isActive = activeTab === tab.id;
-            const IconComponent = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 font-medium text-sm transition-all font-display uppercase tracking-wider ${
-                  isActive
-                    ? "bg-p01-cyan text-p01-void"
-                    : "bg-p01-surface text-p01-text-muted hover:text-white border border-p01-border hover:border-p01-cyan/50"
-                }`}
-              >
-                <IconComponent size={16} className={isActive ? "text-p01-void" : tab.color === "yellow" ? "text-yellow-500" : tab.color === "pink" ? "text-p01-pink" : "text-p01-cyan"} />
-                {tab.label}
-              </button>
-            );
-          })}
+      {/* Hero */}
+      <section className="max-w-7xl mx-auto px-6 pt-28 pb-8">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-p01-cyan/25 bg-p01-cyan/10 mb-5">
+          <span className="w-1.5 h-1.5 rounded-full bg-p01-cyan animate-pulse" />
+          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-p01-cyan">
+            {t('sdkDemo.heroKicker')}
+          </span>
+        </div>
+        <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white font-display tracking-tight mb-4">
+          {t('sdkDemo.headerTitle')}
+        </h1>
+        <p className="text-p01-text-muted max-w-2xl leading-relaxed mb-6">{t('sdkDemo.heroSubtitle')}</p>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-p01-cyan/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-p01-cyan animate-pulse" />
+            <span className="text-xs font-mono text-p01-cyan">{t('sdkDemo.serverless')}</span>
+          </span>
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-p01-pink/30">
+            <span className="text-xs font-mono text-p01-pink">{t('sdkDemo.onChainVerification')}</span>
+          </span>
+          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-yellow-500/30">
+            <span className="text-xs font-mono text-yellow-500">{t('sdkDemo.tabDevnet')}</span>
+          </span>
         </div>
 
-        {/* Content */}
+        <div className="mt-7 max-w-md">
+          <CodeBlock title={t('sdkDemo.installCodeTitle')} code="pnpm add @protocol-01/privacy-sdk" />
+        </div>
+      </section>
+
+      {/* Sticky pill tabs */}
+      <div className="sticky top-16 z-40 bg-p01-void/80 backdrop-blur-xl border-b border-p01-border/40">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex gap-2 py-3 overflow-x-auto">
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const IconComponent = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-display uppercase tracking-wider transition-all ${
+                    isActive
+                      ? "bg-p01-cyan text-p01-void"
+                      : "bg-white/[0.03] text-p01-text-muted hover:text-white border border-p01-border hover:border-p01-cyan/50"
+                  }`}
+                >
+                  <IconComponent size={15} className={isActive ? "text-p01-void" : tab.accent} />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-6 py-10">
         <motion.div
           key={activeTab}
           initial={{ opacity: 0, y: 10 }}
@@ -410,23 +427,47 @@ function SDKDemoContent() {
   );
 }
 
+// ============ Shared section header ============
+function SectionHeader({
+  icon: Icon,
+  title,
+  subtitle,
+  accent = "cyan",
+}: {
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  title: string;
+  subtitle?: string;
+  accent?: "cyan" | "pink" | "yellow";
+}) {
+  const map = {
+    cyan: { box: "bg-p01-cyan/10 border-p01-cyan/30", icon: "text-p01-cyan" },
+    pink: { box: "bg-p01-pink/10 border-p01-pink/30", icon: "text-p01-pink" },
+    yellow: { box: "bg-yellow-500/10 border-yellow-500/30", icon: "text-yellow-500" },
+  }[accent];
+  return (
+    <div className="flex items-center gap-3">
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${map.box}`}>
+        <Icon size={20} className={map.icon} />
+      </div>
+      <div>
+        <h2 className="text-2xl font-bold text-white font-display tracking-tight">{title}</h2>
+        {subtitle && <p className="text-p01-text-muted text-sm mt-0.5">{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
 // ============ Privacy SDKs Section ============
 function PrivacySDKSection() {
   const t = useT();
   return (
     <div className="space-y-8">
-      {/* Section Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-          <Shield size={20} className="text-p01-cyan" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-bold text-white font-display">{t('sdkDemo.privacySdksTitle')}</h2>
-          <p className="text-p01-text-muted text-sm">
-            {t('sdkDemo.privacySdksDesc')}
-          </p>
-        </div>
-      </div>
+      <SectionHeader
+        icon={Shield}
+        title={t('sdkDemo.privacySdksTitle')}
+        subtitle={t('sdkDemo.privacySdksDesc')}
+        accent="cyan"
+      />
 
       {/* SDK Overview Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -440,7 +481,7 @@ function PrivacySDKSection() {
           { name: "@protocol-01/p01-js", desc: t('sdkDemo.sdkP01JsDesc'), color: "pink" },
           { name: "@protocol-01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc'), color: "cyan" },
         ].map((sdk) => (
-          <div key={sdk.name} className="bg-p01-surface p-4 border border-p01-border hover:border-p01-cyan/50 transition-all group">
+          <div key={sdk.name} className="bg-p01-surface rounded-xl p-4 border border-p01-border hover:border-p01-cyan/50 transition-all group">
             <p className={`text-sm font-mono font-bold mb-1 ${sdk.color === "cyan" ? "text-p01-cyan" : "text-p01-pink"}`}>{sdk.name}</p>
             <p className="text-p01-text-dim text-xs">{sdk.desc}</p>
           </div>
@@ -448,7 +489,7 @@ function PrivacySDKSection() {
       </div>
 
       {/* Stealth Addresses */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.stealthTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
           {t('sdkDemo.stealthDesc')}
@@ -476,7 +517,7 @@ const payments = await scanForPayments({
       </div>
 
       {/* ZK Proofs */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.zkProofsTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
           {t('sdkDemo.zkProofsDesc')}
@@ -503,7 +544,7 @@ const tx = await submitShieldedTransfer(connection, wallet, {
       </div>
 
       {/* Confidential SPL */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.confSplTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
           {t('sdkDemo.confSplDesc')}
@@ -531,7 +572,7 @@ const unshieldResult = await unshieldTokens({
       </div>
 
       {/* Privacy Toolkit */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.privacyToolkitTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
           {t('sdkDemo.privacyToolkitDesc')}
@@ -556,7 +597,7 @@ const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
       </div>
 
       {/* Arcium MPC */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.arciumTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
           {t('sdkDemo.arciumDesc')}
@@ -582,7 +623,7 @@ const result = await arcium.execute({
       </div>
 
       {/* Architecture callout */}
-      <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
+      <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
         <h4 className="text-white font-semibold mb-4 font-display text-center">{t('sdkDemo.archTitle')}</h4>
         <div className="flex items-center justify-center gap-4 text-center py-4 flex-wrap">
           {[
@@ -613,7 +654,7 @@ const result = await arcium.execute({
       </div>
 
       {/* Install */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.installTitle')}</h3>
         <CodeBlock
           title={t('sdkDemo.installCodeTitle')}
@@ -754,21 +795,15 @@ function DevnetSection() {
 
   return (
     <div className="space-y-8">
-      {/* Section Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-center">
-          <Cpu size={20} className="text-yellow-500" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-bold text-white font-display">{t('sdkDemo.devnetTitle')}</h2>
-          <p className="text-p01-text-muted text-sm">
-            {t('sdkDemo.devnetDesc')}
-          </p>
-        </div>
-      </div>
+      <SectionHeader
+        icon={Cpu}
+        title={t('sdkDemo.devnetTitle')}
+        subtitle={t('sdkDemo.devnetDesc')}
+        accent="yellow"
+      />
 
       {/* Wallet Connection Card */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.connectWalletTitle')}</h3>
 
         {!walletAvailable ? (
@@ -1045,21 +1080,15 @@ function StreamSDKSection() {
 
   return (
     <div className="space-y-8">
-      {/* Section Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-p01-pink/10 border border-p01-pink/30 flex items-center justify-center">
-          <RefreshCw size={20} className="text-p01-pink" />
-        </div>
-        <div>
-          <h2 className="text-2xl font-bold text-white font-display">{t('sdkDemo.streamTitle')}</h2>
-          <p className="text-p01-text-muted text-sm">
-            {t('sdkDemo.streamDesc')}
-          </p>
-        </div>
-      </div>
+      <SectionHeader
+        icon={RefreshCw}
+        title={t('sdkDemo.streamTitle')}
+        subtitle={t('sdkDemo.streamDesc')}
+        accent="pink"
+      />
 
       {/* Simple Explanation for Beginners */}
-      <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
+      <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
         <h3 className="text-lg font-semibold text-white mb-4 font-display flex items-center gap-2">
           <Eye size={18} className="text-p01-cyan" />
           {t('sdkDemo.simpleTermsTitle')}
@@ -1106,7 +1135,7 @@ function StreamSDKSection() {
           const colorClass = feature.color === "cyan" ? "text-p01-cyan" : "text-p01-pink";
           const bgClass = feature.color === "cyan" ? "bg-p01-cyan/10 border-p01-cyan/30" : "bg-p01-pink/10 border-p01-pink/30";
           return (
-            <div key={feature.title} className="bg-p01-surface p-4 border border-p01-border group hover:border-p01-cyan/50 transition-all">
+            <div key={feature.title} className="bg-p01-surface rounded-xl p-4 border border-p01-border group hover:border-p01-cyan/50 transition-all">
               <div className={`w-10 h-10 ${bgClass} border flex items-center justify-center mb-3`}>
                 <IconComponent size={20} className={colorClass} />
               </div>
@@ -1159,7 +1188,7 @@ function StreamSDKSection() {
       </div>
 
       {/* Developer Access Card */}
-      <div className="bg-p01-surface p-6 border border-p01-border">
+      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.devAccessTitle')}</h3>
         <p className="text-p01-text-muted text-sm mb-4">
           {t('sdkDemo.devAccessDesc')}
@@ -1400,7 +1429,7 @@ await p01.streams.cancel({
       </div>
 
       {/* Architecture Diagram */}
-      <div className="bg-p01-elevated/50 p-6 border border-p01-border/50">
+      <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
         <h4 className="text-white font-semibold mb-6 font-display text-center">{t('sdkDemo.archNoServerTitle')}</h4>
         <div className="flex items-center justify-center gap-6 text-center py-4">
           <div className="flex flex-col items-center gap-3">
@@ -1511,13 +1540,12 @@ function WidgetsSection() {
   const t = useT();
   return (
     <div className="space-y-12">
-      {/* Section Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.widgetsTitle')}</h2>
-        <p className="text-p01-text-muted">
-          {t('sdkDemo.widgetsDesc')}<span className="text-p01-pink">{t('sdkDemo.widgetsDescHighlight')}</span>
-        </p>
-      </div>
+      <SectionHeader
+        icon={CreditCard}
+        title={t('sdkDemo.widgetsTitle')}
+        subtitle={`${t('sdkDemo.widgetsDesc')}${t('sdkDemo.widgetsDescHighlight')}`}
+        accent="cyan"
+      />
 
       {/* Customer Protection Banner */}
       <div className="flex items-center gap-4 p-4 bg-p01-cyan/10 border border-p01-cyan/30">
@@ -1580,6 +1608,7 @@ function ButtonsSection() {
   const t = useT();
   return (
     <div className="space-y-12">
+      <SectionHeader icon={Zap} title={t('sdkDemo.tabButtons')} accent="cyan" />
       {/* Wallet Button */}
       <div>
         <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.walletButtonTitle')}</h2>
@@ -1682,8 +1711,14 @@ function CardsSection() {
   return (
     <div className="space-y-12">
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.subscriptionCardTitle')}</h2>
-        <p className="text-p01-text-muted mb-6">{t('sdkDemo.subscriptionCardDesc')}</p>
+        <div className="mb-6">
+          <SectionHeader
+            icon={FileText}
+            title={t('sdkDemo.subscriptionCardTitle')}
+            subtitle={t('sdkDemo.subscriptionCardDesc')}
+            accent="cyan"
+          />
+        </div>
 
         <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -2497,17 +2532,18 @@ function CodeBlock({ title, code }: { title: string; code: string }) {
   };
 
   return (
-    <div className="mt-6">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-p01-text-dim text-sm font-mono">{title}</span>
+    <div className="mt-6 rounded-xl overflow-hidden border border-p01-border bg-p01-elevated">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-p01-border/60 bg-white/[0.02]">
+        <span className="text-p01-text-dim text-xs font-mono tracking-wide">{title}</span>
         <button
           onClick={copyCode}
-          className="text-p01-text-dim hover:text-white text-sm transition-colors"
+          className="flex items-center gap-1.5 text-p01-text-dim hover:text-p01-cyan text-xs font-mono transition-colors"
         >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? t('sdkDemo.copied') : t('sdkDemo.copy')}
         </button>
       </div>
-      <pre className="bg-p01-elevated border border-p01-border rounded-xl p-4 overflow-x-auto">
+      <pre className="p-4 overflow-x-auto">
         <code className="text-sm text-p01-text-muted font-mono whitespace-pre">{code}</code>
       </pre>
     </div>
