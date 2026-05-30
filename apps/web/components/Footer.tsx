@@ -95,7 +95,7 @@ const socialLinks = [
   { icon: DiscordIcon, href: "https://discord.gg/KfmhPFAHNH", label: "Discord" },
 ];
 
-export default function Footer() {
+export default function Footer({ cta = true }: { cta?: boolean }) {
   const t = useT();
   const router = useRouter();
   const [eggState, setEggState] = useState(0);
@@ -139,30 +139,36 @@ export default function Footer() {
         }}
       />
 
-      {/* CTA band */}
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12 text-center">
-        <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold font-display text-white tracking-tight">
-          {t('footer.ctaHeadline')}{' '}
-          <span className="bg-gradient-to-r from-p01-cyan to-[#00ffe5] bg-clip-text text-transparent">
-            {t('footer.ctaHighlight')}
-          </span>
-        </h2>
-        <p className="text-p01-text-muted text-sm mt-3">{t('footer.ctaSubtitle')}</p>
-        <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
-          <a href={APK_URL} className="btn-primary text-sm px-6 py-2.5">
-            {t('hero.downloadApp')}
-          </a>
-          <a
-            href="/docs"
-            className="text-sm px-6 py-2.5 border border-p01-cyan/40 text-p01-cyan hover:bg-p01-cyan/10 transition-colors font-bold uppercase tracking-wider"
-          >
-            {t('hero.documentation')}
-          </a>
+      {/* CTA band — skipped on pages that already show the CTA section (landing) */}
+      {cta && (
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12 text-center">
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold font-display text-white tracking-tight">
+            {t('footer.ctaHeadline')}{' '}
+            <span className="bg-gradient-to-r from-p01-cyan to-[#00ffe5] bg-clip-text text-transparent">
+              {t('footer.ctaHighlight')}
+            </span>
+          </h2>
+          <p className="text-p01-text-muted text-sm mt-3">{t('footer.ctaSubtitle')}</p>
+          <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+            <a href={APK_URL} className="btn-primary text-sm px-6 py-2.5">
+              {t('hero.downloadApp')}
+            </a>
+            <a
+              href="/docs"
+              className="text-sm px-6 py-2.5 border border-p01-cyan/40 text-p01-cyan hover:bg-p01-cyan/10 transition-colors font-bold uppercase tracking-wider"
+            >
+              {t('hero.documentation')}
+            </a>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main Footer */}
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-14 border-t border-p01-border/40">
+      <div
+        className={`relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-14 ${
+          cta ? "pt-10 border-t border-p01-border/40" : "pt-16"
+        }`}
+      >
         <div className="grid grid-cols-2 md:grid-cols-5 gap-8 lg:gap-12">
           {/* Brand Column */}
           <div className="col-span-2">
