@@ -55,18 +55,9 @@
   }
   .page:last-child { page-break-after: avoid; }
 
-  /* Page background grid */
-  .page::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(to right, rgba(57,197,187,0.03) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(57,197,187,0.03) 1px, transparent 1px);
-    background-size: 30px 30px;
-    pointer-events: none;
-    z-index: 0;
-  }
+  /* Decorative grid removed — a masked grid forces every page to rasterize to
+     a high-res bitmap, bloating the PDF and making it scroll-sluggishly.
+     Flat void background reads cleaner (matches the pitch deck). */
   .page > * { position: relative; z-index: 1; }
 
   /* Page footer */
@@ -142,9 +133,12 @@
     padding: 14px;
     margin-bottom: 10px;
   }
-  .card-cyan { border-color: rgba(57,197,187,0.3); background: linear-gradient(135deg, rgba(57,197,187,0.05), transparent); }
-  .card-pink { border-color: rgba(255,119,168,0.3); background: linear-gradient(135deg, rgba(255,119,168,0.05), transparent); }
-  .card-yellow { border-color: rgba(255,204,0,0.3); background: linear-gradient(135deg, rgba(255,204,0,0.05), transparent); }
+  /* Flat tinted fills (no gradients) — matches the pitch deck and keeps each
+     PDF page light instead of rasterizing a gradient per card. */
+  .card-cyan { border-color: rgba(57,197,187,0.3); background: #12211e; }
+  .card-pink { border-color: rgba(255,119,168,0.3); background: #1f141a; }
+  .card-yellow { border-color: rgba(255,204,0,0.3); background: #1c1a0e; }
+  .card-red { border-color: rgba(255,51,102,0.35); background: #1f0f13; }
 
   /* Grid */
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -346,7 +340,7 @@
 
   <div style="margin-top: 60px;">
     <div class="mono small dim">DESIGN & ARCHITECTURE DOCUMENT</div>
-    <div class="mono small dim" style="margin-top: 4px;">v0.9.9 &middot; April 2026</div>
+    <div class="mono small dim" style="margin-top: 4px;">v1.0.1 &middot; May 2026</div>
     <div class="mono small dim" style="margin-top: 4px;">Volta Team &middot; Developed by Slashy Fx</div>
   </div>
 
@@ -649,8 +643,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
   <h2 style="margin-top:0;">ZK CIRCUITS & STARK AIRs</h2>
   <p class="lead">6 STARK AIRs over Goldilocks (quantum-resistant, active on every spend path) plus 9 Arcis MPC circuits for confidential compute. The 7 legacy Groth16 circuits are retired as of v0.9.9 &mdash; kept for reference only.</p>
 
-  <h3>Legacy ZK Circuits (Groth16 &mdash; retired)</h3>
-  <table style="font-size: 10pt;">
+  <h3 style="margin-top: 10px;">Legacy ZK Circuits (Groth16 &mdash; retired)</h3>
+  <table style="font-size: 8.5pt;">
     <thead>
       <tr><th>Circuit</th><th>Constraints</th><th>Public Inputs</th><th>Purpose</th></tr>
     </thead>
@@ -665,8 +659,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     </tbody>
   </table>
 
-  <h3>STARK AIRs (Quantum-Resistant)</h3>
-  <table style="font-size: 10pt;">
+  <h3 style="margin-top: 10px;">STARK AIRs (Quantum-Resistant)</h3>
+  <table style="font-size: 8.5pt;">
     <thead>
       <tr><th>Circuit ID</th><th>AIR</th><th>Width</th><th>Length</th><th>LDE Blowup</th><th>Proof Size</th></tr>
     </thead>
@@ -680,18 +674,18 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
     </tbody>
   </table>
 
-  <h3 style="margin-top: 20px;">Proof Pipeline</h3>
+  <h3 style="margin-top: 10px;">Proof Pipeline</h3>
   <div class="grid-2">
     <div class="card card-pink no-break">
       <h4 style="color: var(--pink);">STARK (active &mdash; quantum-safe)</h4>
-      <div class="code-block"><span class="cyan">p01-stark</span> build AIR trace (Winterfell v0.10)
+      <div class="code-block" style="font-size: 7.5pt;"><span class="cyan">p01-stark</span> build AIR trace (Winterfell v0.10)
 <span class="cyan">compact</span> NTT → LDE → Merkle (Blake3)
 <span class="cyan">Fiat-Shamir</span> Blake3(trace_root || commitment)
 <span class="cyan">FRI</span> 16 queries → <span class="pink">9-15 KB</span> proof</div>
     </div>
     <div class="card no-break" style="border-color: var(--text-dim); opacity: 0.55;">
       <h4 style="color: var(--text-dim);">Groth16 (retired &mdash; reference only)</h4>
-      <div class="code-block"><span class="dim">circom</span> circuit.circom --r1cs --wasm --sym
+      <div class="code-block" style="font-size: 7.5pt;"><span class="dim">circom</span> circuit.circom --r1cs --wasm --sym
 <span class="dim">snarkjs</span> groth16 setup circuit.r1cs pot20_final.ptau
 <span class="dim">snarkjs</span> zkey contribute → beacon finalize
 <span class="dim">snarkjs</span> groth16 prove → <span class="dim">256 bytes</span> proof
@@ -910,16 +904,17 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
 <!-- ==================== PAGE 10: PRIVACY INFRASTRUCTURE ==================== -->
 <div class="page" style="padding: 16mm 20mm;">
   <h2 style="margin-top:0; margin-bottom: 6px;">PRIVACY INFRASTRUCTURE</h2>
-  <p class="small muted" style="margin-bottom: 8px;">Six systems that eliminate metadata leakage, automate shielding, route across denominations, batch deposits atomically, and (new in v0.9.9) enable instant unshield via a keeper-backed liquidity pool and absorb event-decoder drift with a universal MerkleRootChanged emitter.</p>
+  <p class="small muted" style="margin-bottom: 8px;">Six systems that eliminate metadata leakage, automate shielding, route across denominations, and batch deposits atomically &mdash; and, as of v1.0.1, wrap every spend in transaction-level opacity: relayer-submitted, on-chain-event-scrubbed, uniform-size STARK proofs, with recipient-hiding MPC relay.</p>
 
-  <!-- v0.9.9 bundle highlight -->
+  <!-- v1.0.1 bundle highlight -->
   <div class="card card-pink no-break" style="padding: 10px 12px; margin-bottom: 8px; background: linear-gradient(90deg, rgba(255,119,168,0.08), transparent);">
-    <div class="small mono pink" style="letter-spacing: 0.1em; text-transform: uppercase;">v0.9.9 &middot; Frost Release</div>
+    <div class="small mono pink" style="letter-spacing: 0.1em; text-transform: uppercase;">v1.0.1 &middot; Tx-Opacity Release</div>
     <div class="small" style="margin-top: 4px;">
-      <strong>Instant unshield</strong> via <span class="mono">p01_liquidity</span> (no user-fronted rent) &middot;
-      <strong>Fresh <span class="mono">denominated_pool_v2</span> PDAs</strong> with canonical <span class="mono">MerkleRootChanged</span> events &middot;
-      <strong>Deterministic stealth signer + crash-sweep</strong> (no more trapped 0.85 SOL on failed ops) &middot;
-      <strong>Full STARK migration</strong> (Groth16 removed from every spend).
+      <strong>V3 STARK transfers end-to-end</strong> (Goldilocks Poseidon parity across mobile, extension &amp; on-chain verifier) &middot;
+      <strong><span class="mono">denominated_pool_v4</span> migration</strong> (escapes un-decodable legacy events) &middot;
+      <strong>Tx-Opacity A/B/C:</strong> <span class="mono">p01_relayer</span> wired into every V3 flow, on-chain events scrubbed (depositor / recipient / amount), proofs padded to a uniform 145&nbsp;KB &middot;
+      <strong>Phase D Arcium <span class="mono">confidentialRelay</span></strong> (recipient hidden even from the relayer via threshold MPC) &middot;
+      <strong>Multi-relayer rotation</strong> with liveness filtering.
     </div>
   </div>
 
@@ -992,22 +987,22 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
   <h3 style="margin-top: 6px; margin-bottom: 4px;">Tab Navigation</h3>
   <div class="grid-4" style="margin-top: 4px; gap: 6px;">
     <div class="card card-cyan center no-break" style="padding: 8px;">
-      <div style="font-size: 16pt;">&#128179;</div>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#39c5bb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 4px;"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="17" cy="14.5" r="1.1" fill="#39c5bb" stroke="none"/></svg>
       <div class="small bold cyan">Wallet</div>
       <div class="small muted">Balance, send, receive, swap</div>
     </div>
     <div class="card card-cyan center no-break" style="padding: 8px;">
-      <div style="font-size: 16pt;">&#128737;</div>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#39c5bb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 4px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
       <div class="small bold cyan">Privacy</div>
       <div class="small muted">Pools, shielded, confidential</div>
     </div>
     <div class="card card-pink center no-break" style="padding: 8px;">
-      <div style="font-size: 16pt;">&#128167;</div>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff77a8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto 4px;"><path d="M12 2.7l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
       <div class="small bold pink">Streams</div>
       <div class="small muted">Recurring, subscriptions</div>
     </div>
     <div class="card card-yellow center no-break" style="padding: 8px;">
-      <div style="font-size: 16pt;">&#128302;</div>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="#ffcc00" style="margin: 0 auto 4px;"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/></svg>
       <div class="small bold yellow">Agent</div>
       <div class="small muted">AI, voice, market data</div>
     </div>
@@ -1447,7 +1442,8 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
         <li>Quantum vault (WOTS+, HTL, CR) + hybrid stealth (ECDH + ML-KEM-768)</li>
         <li>Privacy Relay, Auto-Shield, Privacy Router, On-chain bundler</li>
         <li>On-chain Service Registry + 4 attested services</li>
-        <li><strong>v0.9.9 Frost:</strong> instant unshield, per-wallet note isolation (HKDF), deterministic stealth signer + crash-sweep, <span class="mono">denominated_pool_v2</span> migration, universal event decoder (6 layouts)</li>
+        <li><strong>v0.9.9 Frost:</strong> instant unshield, per-wallet note isolation (HKDF), deterministic stealth signer + crash-sweep, <span class="mono">denominated_pool_v2</span> migration, universal event decoder</li>
+        <li><strong>v1.0 Tx-Opacity:</strong> V3 STARK transfers E2E, <span class="mono">denominated_pool_v4</span> migration, relayer-wired + event-scrubbed + uniform 145&nbsp;KB proofs (Phases A/B/C), Phase D Arcium recipient-hiding relay, multi-relayer rotation</li>
         <li>Mugen Exchange (P2P fiat) live on Vercel</li>
         <li>Colosseum Frontier 2026 submission, Superteam Ireland tag</li>
       </ul>
