@@ -30,6 +30,7 @@ import TopicToc, { type TocItem } from "@/components/docs/TopicToc";
 import DocsSearch, { type SearchItem } from "@/components/docs/DocsSearch";
 import { NAV_GROUPS, TOPIC_ORDER, SPECIAL_TITLE_KEYS } from "@/components/docs/nav";
 import SiteHeader from "@/components/SiteHeader";
+import Footer from "@/components/Footer";
 
 // ============ P-01 Theme Constants ============
 const THEME = {
@@ -1190,25 +1191,7 @@ export default function DocsPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-[#2a2a30] py-8 px-4">
-        <div className="max-w-7xl mx-auto text-center space-y-3">
-          <div className="flex items-center justify-center gap-2">
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-[#39c5bb]/30 text-[#39c5bb] rounded">
-              {t('docs.footerBeta')}
-            </span>
-            <span className="text-[#2a2a30]">·</span>
-            <span className="text-[10px] font-mono text-[#555560] uppercase tracking-wider">
-              {t('docs.footerDevnet')}
-            </span>
-          </div>
-          <p className="text-[#555560] text-sm font-mono">
-            &copy; {new Date().getFullYear()} PROTOCOL 01 | {t('docs.footerBuilt')}
-          </p>
-          <p className="text-[10px] text-[#555560]/50 font-mono">
-            {t('docs.footerDisclaimer')}
-          </p>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

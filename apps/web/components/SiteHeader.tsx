@@ -24,8 +24,9 @@ import { useT, LanguageSwitcher } from "@/i18n";
 const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean }[] = [
   { href: "/docs", i18nKey: "nav.docs" },
   { href: "/roadmap", i18nKey: "nav.roadmap" },
-  { href: "/updates", label: "Updates" },
-  { href: "/sdk-demo", label: "SDK", dim: true },
+  // Updates page kept at /updates but removed from the nav (replaced by SDK).
+  // { href: "/updates", label: "Updates" },
+  { href: "/sdk-demo", label: "SDK" },
   { href: "/founder", label: "Founder", dim: true },
 ];
 

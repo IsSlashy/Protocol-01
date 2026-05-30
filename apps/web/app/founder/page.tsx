@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { useT } from "@/i18n";
 import Footer from "@/components/Footer";
-import { LanguageSwitcher } from "@/i18n";
+import SiteHeader from "@/components/SiteHeader";
 
 const fadeUp = { hidden: { opacity: 0, y: 30 }, visible: { opacity: 1, y: 0 } };
 
@@ -36,27 +36,7 @@ export default function FounderPage() {
 
   return (
     <>
-      {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-p01-void/80 backdrop-blur-lg border-b border-p01-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-14">
-            <a href="/" className="flex items-center gap-2.5">
-              <img src="/icon.png" alt="Protocol 01" className="w-7 h-7 rounded-md" />
-              <span className="text-sm font-bold text-white tracking-wider hidden sm:inline">PROTOCOL 01</span>
-            </a>
-            <div className="hidden md:flex items-center gap-5">
-              <a href="/docs" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Docs</a>
-              <a href="/roadmap" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Roadmap</a>
-              <a href="/updates" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Updates</a>
-              <a href="/founder" className="text-xs text-p01-cyan hover:text-white transition-colors font-mono uppercase tracking-wider">Founder</a>
-            </div>
-            <div className="flex items-center gap-2">
-              <LanguageSwitcher className="hidden sm:flex" />
-              <a href="/#download" className="btn-primary text-xs px-4 py-1.5">{t('nav.download')}</a>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <SiteHeader />
 
       <main className="min-h-screen pt-20 pb-16 px-4">
         <div className="max-w-4xl mx-auto">

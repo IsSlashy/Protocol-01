@@ -28,6 +28,7 @@ import {
   Copy
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
+import Footer from "@/components/Footer";
 
 // ============ P-01 Theme Constants ============
 // Inspired by: Hatsune Miku (cyan), NEEDY STREAMER OVERLOAD (pink), ULTRAKILL (red)
@@ -407,22 +408,7 @@ function SDKDemoContent() {
         </motion.div>
       </div>
 
-      {/* Beta Footer */}
-      <footer className="border-t border-p01-border mt-16">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3 text-sm text-p01-text-dim font-mono">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan">{t('sdkDemo.beta')}</span>
-              <span>&copy; {new Date().getFullYear()} {t('sdkDemo.copyright')}</span>
-            </div>
-            <div className="flex items-center gap-6">
-              <a href="https://x.com/Protocol01_" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Twitter / X</a>
-              <a href="https://github.com/IsSlashy/Protocol-01-releases" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">GitHub</a>
-              <a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-sm text-p01-text-dim hover:text-p01-text-muted transition-colors">Discord</a>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

@@ -291,6 +291,14 @@ const fr: Translations = {
     documentation: 'Documentation',
     community: 'Communaut\u00e9',
     copyright: 'Devnet uniquement \u2014 non audit\u00e9.',
+    legal: 'L\u00e9gal',
+    privacy: 'Confidentialit\u00e9',
+    terms: 'Conditions',
+    licenses: 'Licences',
+    disclaimer: 'En d\u00e9veloppement actif. Non audit\u00e9. Utilisez \u00e0 vos propres risques.',
+    ctaHeadline: 'Pr\u00eat \u00e0 devenir',
+    ctaHighlight: 'invisible',
+    ctaSubtitle: 'Auto-conservation, open source, sans KYC. En ligne sur devnet.',
   },
 
   // ── 404 ────────────────────────────────────────────────────

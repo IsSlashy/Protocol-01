@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useT } from "@/i18n";
 import SiteHeader from "@/components/SiteHeader";
+import Footer from "@/components/Footer";
 import {
   CheckCircle,
   ChevronDown,
@@ -793,35 +794,7 @@ export default function RoadmapPage() {
         {t('roadmap.lastRevision')}
       </p>
 
-      {/* Footer */}
-      <footer className="border-t py-8 px-4" style={{ borderColor: THEME.borderColor }}>
-        <div className="max-w-5xl mx-auto text-center space-y-3">
-          <div className="flex items-center justify-center gap-2">
-            <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border rounded"
-              style={{ borderColor: THEME.primaryColor + "50", color: THEME.primaryColor }}>
-              Beta
-            </span>
-            <span style={{ color: THEME.borderColor }}>&middot;</span>
-            <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: THEME.dimColor }}>
-              {t('roadmap.devnetOnly')}
-            </span>
-          </div>
-          <p className="text-sm font-mono" style={{ color: THEME.dimColor }}>
-            &copy; {new Date().getFullYear()} PROTOCOL 01 | {t('roadmap.builtFromScratch')}
-          </p>
-          <p className="text-[10px] font-mono" style={{ color: THEME.dimColor + "80" }}>
-            {t('roadmap.disclaimer')}
-          </p>
-        </div>
-      </footer>
-
-      {/* Bottom glow line */}
-      <div
-        className="h-px"
-        style={{
-          background: `linear-gradient(to right, transparent, ${THEME.primaryColor}80, transparent)`,
-        }}
-      />
+      <Footer />
     </div>
   );
 }

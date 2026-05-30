@@ -290,6 +290,14 @@ const en = {
     documentation: 'Documentation',
     community: 'Community',
     copyright: 'Devnet only \u2014 not audited.',
+    legal: 'Legal',
+    privacy: 'Privacy',
+    terms: 'Terms',
+    licenses: 'Licenses',
+    disclaimer: 'In active development. Not audited. Use at your own risk.',
+    ctaHeadline: 'Ready to become',
+    ctaHighlight: 'invisible',
+    ctaSubtitle: 'Self-custody, open source, no KYC. Live on devnet.',
   },
 
   // ── 404 ────────────────────────────────────────────────────

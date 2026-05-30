@@ -252,17 +252,17 @@ function Ecosystem() {
               {row1.map((tech, i) => (
                 <div
                   key={`r1-${i}`}
-                  className="flex items-center gap-3 px-4 py-2.5 border border-[#2a2a30] bg-[#111114] whitespace-nowrap hover:border-[#39c5bb]/30 transition-colors duration-300 group"
+                  className="flex items-center gap-3 pl-2 pr-4 py-2 rounded-xl border border-white/[0.07] bg-white/[0.02] backdrop-blur-sm whitespace-nowrap hover:border-p01-cyan/40 hover:bg-white/[0.04] transition-colors group"
                 >
-                  <div className="text-[#39c5bb] group-hover:drop-shadow-[0_0_6px_#39c5bb80] transition-all flex-shrink-0">
-                    {techLogos[tech.name] || <div className="w-4 h-4 bg-[#39c5bb]" />}
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-p01-cyan/10 text-p01-cyan flex-shrink-0 group-hover:bg-p01-cyan/15 transition-colors">
+                    {techLogos[tech.name] || <div className="w-4 h-4 rounded bg-p01-cyan" />}
                   </div>
-                  <span className="text-sm font-mono text-white font-medium">
-                    {tech.name}
-                  </span>
-                  <span className="text-[10px] font-mono text-[#555560]">
-                    {t(`ecosystem.${tech.category}`)}
-                  </span>
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-sm font-mono text-white font-medium">{tech.name}</span>
+                    <span className="text-[10px] font-mono text-p01-text-dim uppercase tracking-wide">
+                      {t(`ecosystem.${tech.category}`)}
+                    </span>
+                  </div>
                 </div>
               ))}
             </motion.div>
@@ -279,17 +279,17 @@ function Ecosystem() {
               {row2.map((tech, i) => (
                 <div
                   key={`r2-${i}`}
-                  className="flex items-center gap-3 px-4 py-2.5 border border-[#2a2a30] bg-[#111114] whitespace-nowrap hover:border-[#ff77a8]/30 transition-colors duration-300 group"
+                  className="flex items-center gap-3 pl-2 pr-4 py-2 rounded-xl border border-white/[0.07] bg-white/[0.02] backdrop-blur-sm whitespace-nowrap hover:border-p01-pink/40 hover:bg-white/[0.04] transition-colors group"
                 >
-                  <div className="text-[#ff77a8] group-hover:drop-shadow-[0_0_6px_#ff77a880] transition-all flex-shrink-0">
-                    {techLogos[tech.name] || <div className="w-4 h-4 bg-[#ff77a8]" />}
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-p01-pink/10 text-p01-pink flex-shrink-0 group-hover:bg-p01-pink/15 transition-colors">
+                    {techLogos[tech.name] || <div className="w-4 h-4 rounded bg-p01-pink" />}
                   </div>
-                  <span className="text-sm font-mono text-white font-medium">
-                    {tech.name}
-                  </span>
-                  <span className="text-[10px] font-mono text-[#555560]">
-                    {t(`ecosystem.${tech.category}`)}
-                  </span>
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-sm font-mono text-white font-medium">{tech.name}</span>
+                    <span className="text-[10px] font-mono text-p01-text-dim uppercase tracking-wide">
+                      {t(`ecosystem.${tech.category}`)}
+                    </span>
+                  </div>
                 </div>
               ))}
             </motion.div>
