@@ -134,15 +134,6 @@ export default function HowItWorks() {
               }}
               className="group flex flex-col items-center text-center relative px-4"
             >
-              {/* Oversized faint step number behind the icon */}
-              <div
-                aria-hidden
-                className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-0 z-0 select-none font-display font-black leading-none"
-                style={{ fontSize: "6rem", color: `${step.color}14` }}
-              >
-                {step.num}
-              </div>
-
               {/* Step label */}
               <div
                 className="relative z-10 text-[10px] font-mono tracking-[0.3em] mb-3 uppercase"
@@ -159,6 +150,12 @@ export default function HowItWorks() {
                   backgroundColor: `${step.color}06`,
                 }}
               >
+                {/* Soft radial halo for depth — discreet, on-brand */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -inset-5"
+                  style={{ background: `radial-gradient(circle, ${step.color}22, transparent 70%)` }}
+                />
                 {/* Breathing glow — always alive, intensifies on hover */}
                 <motion.div
                   className="absolute inset-0 group-hover:!opacity-100"
