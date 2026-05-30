@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import SiteHeader from "@/components/SiteHeader";
+import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
   title: "Open Source Licenses | PROTOCOL-01",
@@ -83,29 +85,7 @@ const DEPENDENCIES = [
 export default function OpenSourceLicenses() {
   return (
     <div className="min-h-screen bg-p01-void">
-      {/* Nav */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-p01-void/80 backdrop-blur-lg border-b border-p01-border">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <Link href="/" className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-                <span className="text-p01-cyan font-mono font-bold text-xs">
-                  P01
-                </span>
-              </div>
-              <span className="text-lg font-bold font-display text-white tracking-wider">
-                PROTOCOL 01
-              </span>
-            </Link>
-            <Link
-              href="/"
-              className="text-sm text-p01-text-muted hover:text-white transition-colors"
-            >
-              Back to Home
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <SiteHeader />
 
       {/* Content */}
       <article className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-24">
@@ -296,6 +276,8 @@ export default function OpenSourceLicenses() {
           </Link>
         </div>
       </article>
+
+      <Footer />
     </div>
   );
 }
