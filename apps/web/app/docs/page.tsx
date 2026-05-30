@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
-import Link from "next/link";
 import { useT } from "@/i18n";
 import {
   Shield,
@@ -16,7 +15,6 @@ import {
   Hash,
   GitBranch,
   Cpu,
-  ArrowLeft,
   CheckCircle,
   Network,
   Download,
@@ -31,6 +29,7 @@ import Sidebar, { type ResolvedGroup } from "@/components/docs/Sidebar";
 import TopicToc, { type TocItem } from "@/components/docs/TopicToc";
 import DocsSearch, { type SearchItem } from "@/components/docs/DocsSearch";
 import { NAV_GROUPS, TOPIC_ORDER, SPECIAL_TITLE_KEYS } from "@/components/docs/nav";
+import SiteHeader from "@/components/SiteHeader";
 
 // ============ P-01 Theme Constants ============
 const THEME = {
@@ -1077,7 +1076,7 @@ function DocsBody({ t }: { t: (k: string) => string }) {
   })();
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-8">
       {/* Mobile controls */}
       <div className="lg:hidden flex items-center justify-between mb-6">
         <button
@@ -1163,37 +1162,7 @@ export default function DocsPage() {
   const t = useT();
   return (
     <div className="min-h-screen bg-[#0a0a0c]" style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-      {/* Header — sticky nav */}
-      <header className="border-b border-[#2a2a30] bg-[#0a0a0c]/90 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-          <div className="flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-3 group">
-              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
-              <div className="hidden sm:flex items-center gap-2">
-                <span className="text-sm font-bold text-white tracking-wider">PROTOCOL 01</span>
-                <span className="text-[#555560]">/</span>
-                <span className="text-sm font-mono text-[#39c5bb] tracking-wider">DOCS</span>
-              </div>
-              <span className="sm:hidden text-sm font-mono text-[#39c5bb] tracking-wider">DOCS</span>
-            </Link>
-            <div className="flex items-center gap-4">
-              <Link href="/roadmap" className="hidden sm:flex text-xs font-mono text-[#555560] hover:text-[#888892] transition-colors uppercase tracking-wider">
-                {t('docs.navRoadmap')}
-              </Link>
-              <Link href="/#download" className="hidden sm:flex text-xs font-mono text-[#555560] hover:text-[#888892] transition-colors uppercase tracking-wider">
-                {t('docs.navDownload')}
-              </Link>
-              <Link
-                href="/"
-                className="flex items-center gap-1.5 text-sm text-[#888892] hover:text-[#39c5bb] transition-colors"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">{t('docs.navHome')}</span>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       <DocsBody t={t} />
 

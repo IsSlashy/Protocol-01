@@ -9,39 +9,14 @@ import ValueProp from "@/components/ValueProp";
 import Ecosystem from "@/components/Ecosystem";
 import CTA from "@/components/CTA";
 import Footer from "@/components/Footer";
-import { useT, LanguageSwitcher } from "@/i18n";
+import SiteHeader from "@/components/SiteHeader";
+import { useT } from "@/i18n";
 
 export default function Home() {
   const t = useT();
   return (
     <>
-      {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-p01-void/80 backdrop-blur-lg border-b border-p01-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-14">
-            {/* Logo */}
-            <a href="/" className="flex items-center gap-2.5">
-              <img src="/icon.png" alt="Protocol 01" className="w-7 h-7 rounded-md" />
-              <span className="text-sm font-bold text-white tracking-wider hidden sm:inline">PROTOCOL 01</span>
-            </a>
-
-            {/* Nav Links — essentials only */}
-            <div className="hidden md:flex items-center gap-5">
-              <a href="/docs" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">{t('nav.docs')}</a>
-              <a href="/roadmap" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">{t('nav.roadmap')}</a>
-              <a href="/updates" className="text-xs text-p01-text-muted hover:text-white transition-colors font-mono uppercase tracking-wider">Updates</a>
-              <a href="/sdk-demo" className="text-xs text-p01-text-dim hover:text-p01-text-muted transition-colors font-mono uppercase tracking-wider">SDK</a>
-              <a href="/founder" className="text-xs text-p01-text-dim hover:text-p01-text-muted transition-colors font-mono uppercase tracking-wider">Founder</a>
-            </div>
-
-            {/* Right — language + download */}
-            <div className="flex items-center gap-2">
-              <LanguageSwitcher className="hidden sm:flex" />
-              <a href="#download" className="btn-primary text-xs px-4 py-1.5">{t('nav.download')}</a>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <SiteHeader />
 
       {/* Main Content */}
       <Hero />

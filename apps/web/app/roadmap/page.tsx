@@ -2,10 +2,9 @@
 
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
 import { useT } from "@/i18n";
+import SiteHeader from "@/components/SiteHeader";
 import {
-  ArrowLeft,
   CheckCircle,
   ChevronDown,
   Clock,
@@ -560,44 +559,10 @@ export default function RoadmapPage() {
       className="min-h-screen"
       style={{ backgroundColor: THEME.backgroundColor, color: THEME.textColor }}
     >
-      {/* Sticky Header */}
-      <header
-        className="sticky top-0 z-50 backdrop-blur-lg border-b"
-        style={{
-          backgroundColor: THEME.backgroundColor + "cc",
-          borderColor: THEME.borderColor,
-        }}
-      >
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm hover:text-white transition-colors"
-              style={{ color: THEME.mutedColor }}
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="hidden sm:inline font-mono">{t('nav.back')}</span>
-            </Link>
-            <div className="h-6 w-px" style={{ backgroundColor: THEME.borderColor }} />
-            <div className="flex items-center gap-3">
-              <img src="/icon.png" alt="Protocol 01" className="w-8 h-8 rounded-lg" />
-              <h1 className="text-lg font-bold font-display tracking-wider">{t('roadmap.title')}</h1>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link
-              href="/docs"
-              className="text-xs font-mono uppercase tracking-wider hover:text-white transition-colors"
-              style={{ color: THEME.mutedColor }}
-            >
-              {t('nav.docs')}
-            </Link>
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       {/* Compact hero */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-2">
+      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-2">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
