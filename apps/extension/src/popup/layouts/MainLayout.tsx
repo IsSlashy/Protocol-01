@@ -6,11 +6,10 @@ import { cn } from '@/shared/utils';
 const navItems = [
   { path: '/', icon: Wallet, label: 'Wallet' },
   { path: '/subscriptions', icon: Repeat, label: 'Streams' },
-  // Shield = denominated V3 Goldilocks pools (fixed 0.1/1/10/100/1000), matching
-  // the mobile app. The legacy continuous `/shielded` pool used an incompatible
-  // 256-bit (BN254-era) root and never verified; the denominated pools are real
-  // Goldilocks (u64 root) and produce matching proofs.
-  { path: '/denominated-shield', icon: Shield, label: 'Shield' },
+  // Shield tab opens the shielded WALLET dashboard (balance + funds, reads the
+  // denominated notes). Its "Shield" button then routes to /denominated-shield
+  // (the fixed 0.1/1/10/100/1000 denomination picker). Wallet first, picker on tap.
+  { path: '/shielded', icon: Shield, label: 'Shield' },
   { path: '/agent', icon: Sparkles, label: 'Agent' },
 ];
 
