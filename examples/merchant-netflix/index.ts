@@ -37,9 +37,14 @@ import {
 // Config — swap these for your real values.
 // ---------------------------------------------------------------------------
 
+// Set RPC_URL in your environment to a Helius or Alchemy devnet/mainnet endpoint.
+// Never hardcode API keys in source files — use environment variables.
+//
+// Example (.env):
+//   RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY
 const RPC_URL =
   process.env.RPC_URL ??
-  'https://devnet.helius-rpc.com/?api-key=ad0d91ac-dda3-4906-81ef-37338de04caa';
+  'https://api.devnet.solana.com';
 
 /** Path to the merchant's signing keypair. Controls service registration. */
 const MERCHANT_KEYPAIR_PATH =

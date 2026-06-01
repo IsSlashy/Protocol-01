@@ -14,7 +14,8 @@ import {
   type RegisterServiceArgs,
   type UpdateServiceArgs,
   type ServiceEntry,
-} from '@protocol-01/specter-sdk';
+} from '@protocol-01/specter-sdk/service-registry';
+import { type MerchantSdkConfig, resolveProgramIds } from './config';
 
 /**
  * Pick either native SOL (via `SystemProgram.programId`) or an SPL mint
@@ -30,6 +31,20 @@ export const NATIVE_SOL_MINT = SystemProgram.programId;
 export interface MerchantRegistrationConfig extends RegisterServiceArgs {
   /** Skip re-registration if a PDA already exists for `(owner, slug)`. */
   skipIfExists?: boolean;
+  /**
+   * SDK-level configuration (cluster + program ID overrides).
+   * Use this to point at a mainnet registry program once it is deployed.
+   *
+   * @example
+   * ```ts
+   * const sdkConfig: MerchantSdkConfig = {
+   *   cluster: 'mainnet-beta',
+   *   programIds: { registry: new PublicKey('YOUR_MAINNET_REGISTRY') },
+   * };
+   * await registerServiceOnChain(connection, kp, { ...args, sdkConfig });
+   * ```
+   */
+  sdkConfig?: MerchantSdkConfig;
 }
 
 export interface MerchantRegistrationResult {
@@ -54,9 +69,15 @@ export async function registerServiceOnChain(
   merchantSigner: Keypair,
   config: MerchantRegistrationConfig,
 ): Promise<MerchantRegistrationResult> {
-  const { skipIfExists = true, ...args } = config;
+  const { skipIfExists = true, sdkConfig, ...args } = config;
+  const programIds = resolveProgramIds(sdkConfig);
 
-  const existing = await fetchService(connection, merchantSigner.publicKey, args.slug);
+  const existing = await fetchService(
+    connection,
+    merchantSigner.publicKey,
+    args.slug,
+    programIds.registry,
+  );
   if (existing && skipIfExists) {
     return {
       pda: existing.pda,
@@ -72,13 +93,18 @@ export async function registerServiceOnChain(
     );
   }
 
-  const ix = buildRegisterServiceIx(merchantSigner.publicKey, args);
+  const ix = buildRegisterServiceIx(merchantSigner.publicKey, args, programIds.registry);
   const tx = new Transaction().add(ix);
   const sig = await sendAndConfirmTransaction(connection, tx, [merchantSigner], {
     commitment: 'confirmed',
   });
 
-  const entry = await fetchService(connection, merchantSigner.publicKey, args.slug);
+  const entry = await fetchService(
+    connection,
+    merchantSigner.publicKey,
+    args.slug,
+    programIds.registry,
+  );
   if (!entry) {
     throw new Error(`registration confirmed but PDA not found — check RPC`);
   }
@@ -98,8 +124,10 @@ export async function updateServiceOnChain(
   connection: Connection,
   merchantSigner: Keypair,
   args: UpdateServiceArgs,
+  sdkConfig?: MerchantSdkConfig,
 ): Promise<string> {
-  const ix = buildUpdateServiceIx(merchantSigner.publicKey, args);
+  const { registry } = resolveProgramIds(sdkConfig);
+  const ix = buildUpdateServiceIx(merchantSigner.publicKey, args, registry);
   const tx = new Transaction().add(ix);
   return sendAndConfirmTransaction(connection, tx, [merchantSigner], {
     commitment: 'confirmed',
@@ -114,8 +142,10 @@ export async function deregisterServiceOnChain(
   connection: Connection,
   merchantSigner: Keypair,
   slug: string,
+  sdkConfig?: MerchantSdkConfig,
 ): Promise<string> {
-  const ix = buildDeregisterServiceIx(merchantSigner.publicKey, slug);
+  const { registry } = resolveProgramIds(sdkConfig);
+  const ix = buildDeregisterServiceIx(merchantSigner.publicKey, slug, registry);
   const tx = new Transaction().add(ix);
   return sendAndConfirmTransaction(connection, tx, [merchantSigner], {
     commitment: 'confirmed',
@@ -133,6 +163,8 @@ export async function getRegisteredService(
   connection: Connection,
   merchantPubkey: PublicKey,
   slug: string,
+  sdkConfig?: MerchantSdkConfig,
 ): Promise<ServiceEntry | null> {
-  return fetchService(connection, merchantPubkey, slug);
+  const { registry } = resolveProgramIds(sdkConfig);
+  return fetchService(connection, merchantPubkey, slug, registry);
 }

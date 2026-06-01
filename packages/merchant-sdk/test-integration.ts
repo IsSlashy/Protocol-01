@@ -26,7 +26,7 @@ import {
 
 const RPC_URL =
   process.env.RPC_URL ??
-  'https://devnet.helius-rpc.com/?api-key=ad0d91ac-dda3-4906-81ef-37338de04caa';
+  'https://api.devnet.solana.com';
 
 async function main(): Promise<void> {
   const connection = new Connection(RPC_URL, 'confirmed');

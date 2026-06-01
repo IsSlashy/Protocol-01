@@ -1,14 +1,15 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { type MerchantSdkConfig, resolveProgramIds, ZK_SHIELDED_PROGRAM_ID_DEVNET } from './config';
 
 /**
- * `zk_shielded` program ID on devnet. Swap for the mainnet ID in production.
- * Matches `Anchor.toml [programs.devnet]` / `localnet` entries that were in
- * sync with the mobile at v0.9.9.
+ * Default `zk_shielded` program ID (devnet, v0.9.9+ / V4 pool seed).
+ *
+ * @deprecated Use `MerchantSdkConfig.programIds.zkShielded` instead so
+ *   mainnet merchants can supply the correct ID without editing this file.
+ *   This constant remains here as a convenience alias for the devnet value.
  */
-export const ZK_SHIELDED_PROGRAM_ID = new PublicKey(
-  'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c',
-);
+export const ZK_SHIELDED_PROGRAM_ID = ZK_SHIELDED_PROGRAM_ID_DEVNET;
 
 /**
  * Anchor account discriminator for `SubscriptionVault`
@@ -154,8 +155,18 @@ export interface ListVaultsOptions {
   tokenMint?: PublicKey;
   /** Commitment. Default `confirmed`. */
   commitment?: 'processed' | 'confirmed' | 'finalized';
-  /** Override the `zk_shielded` program ID (e.g. mainnet). */
+  /**
+   * Override the `zk_shielded` program ID directly.
+   *
+   * @deprecated Prefer passing a full `MerchantSdkConfig` as the `sdkConfig`
+   *   option — it supports both program overrides and cluster selection.
+   */
   programId?: PublicKey;
+  /**
+   * SDK-level configuration (cluster + program ID overrides).
+   * When provided, `programId` is ignored.
+   */
+  sdkConfig?: MerchantSdkConfig;
 }
 
 /**
@@ -171,7 +182,9 @@ export async function listVaultsForRetailer(
   retailer: PublicKey,
   opts: ListVaultsOptions = {},
 ): Promise<SubscriptionVaultAccount[]> {
-  const programId = opts.programId ?? ZK_SHIELDED_PROGRAM_ID;
+  const programId = opts.sdkConfig
+    ? resolveProgramIds(opts.sdkConfig).zkShielded
+    : (opts.programId ?? ZK_SHIELDED_PROGRAM_ID);
   const commitment = opts.commitment ?? 'confirmed';
 
   const filters = [

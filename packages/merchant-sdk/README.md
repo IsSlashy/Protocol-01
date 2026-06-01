@@ -4,15 +4,99 @@ Server-side SDK for merchants integrating Protocol 01 subscriptions on Solana.
 
 Register a service on-chain, detect incoming ZK payments, watch private subscription vaults, and issue signed access tokens — all framework-agnostic (Node.js, Next.js routes, Cloudflare Workers, Deno).
 
-## Installation
+## Status
+
+**This package is not yet published to npm.**
+
+The programs are currently live on **devnet only** — mainnet deployment is pending.  Until both `@protocol-01/merchant-sdk` and its dependency `@protocol-01/specter-sdk` are published, use one of the two paths below to install:
+
+### Option A — npm pack (recommended for integration testing)
 
 ```bash
-npm install @protocol-01/merchant-sdk @solana/web3.js
-# or
-pnpm add @protocol-01/merchant-sdk @solana/web3.js
+# From the repo root
+pnpm --filter @protocol-01/specter-sdk build
+pnpm --filter @protocol-01/merchant-sdk build
+
+cd packages/specter-sdk  && npm pack   # produces protocol-01-specter-sdk-*.tgz
+cd packages/merchant-sdk && npm pack   # produces protocol-01-merchant-sdk-*.tgz
+
+# In your project
+npm install /path/to/protocol-01-specter-sdk-0.x.y.tgz \
+            /path/to/protocol-01-merchant-sdk-0.x.y.tgz \
+            @solana/web3.js
 ```
 
-Requires Node.js >= 22.
+### Option B — workspace reference (monorepo consumers)
+
+If your project is inside this monorepo (or a pnpm workspace that links to it):
+
+```json
+{
+  "dependencies": {
+    "@protocol-01/merchant-sdk": "workspace:*",
+    "@protocol-01/specter-sdk":  "workspace:*"
+  }
+}
+```
+
+> Note: `@protocol-01/specter-sdk` must be published (or vendored) alongside
+> merchant-sdk because it provides the on-chain instruction builders and account
+> decoders for the service registry.  It is not bundled into merchant-sdk to
+> avoid duplicating ~670 LOC that are also used by mobile and extension clients.
+
+## Configuration
+
+### RPC endpoint
+
+**Never hardcode API keys.**  Pass the RPC URL via an environment variable:
+
+```bash
+# .env
+RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY
+```
+
+```typescript
+import { Connection } from '@solana/web3.js';
+
+const connection = new Connection(
+  process.env.RPC_URL ?? 'https://api.devnet.solana.com',
+  'confirmed',
+);
+```
+
+### Program IDs and cluster
+
+By default the SDK targets **devnet**.  Use `MerchantSdkConfig` to point at
+a different cluster or to override individual program IDs:
+
+```typescript
+import { type MerchantSdkConfig } from '@protocol-01/merchant-sdk';
+
+// Devnet — default, no config needed.
+const devnetConfig: MerchantSdkConfig = { cluster: 'devnet' };
+
+// Mainnet — requires explicit program ID overrides until the programs ship.
+const mainnetConfig: MerchantSdkConfig = {
+  cluster: 'mainnet-beta',
+  programIds: {
+    zkShielded: new PublicKey('YOUR_MAINNET_ZK_SHIELDED_PROGRAM_ID'),
+    registry:   new PublicKey('YOUR_MAINNET_REGISTRY_PROGRAM_ID'),
+  },
+};
+```
+
+Pass the config to any SDK function that accepts it:
+
+```typescript
+await registerServiceOnChain(connection, kp, { ...args, sdkConfig: mainnetConfig });
+await listVaultsForRetailer(connection, retailer, { sdkConfig: mainnetConfig });
+await updateServiceOnChain(connection, kp, args, mainnetConfig);
+await deregisterServiceOnChain(connection, kp, slug, mainnetConfig);
+await getRegisteredService(connection, kp.publicKey, slug, mainnetConfig);
+```
+
+If you omit `sdkConfig` the devnet defaults apply, so existing code continues
+to work unchanged.
 
 ## Quick start
 
@@ -28,7 +112,9 @@ import {
   NATIVE_SOL_MINT,
 } from '@protocol-01/merchant-sdk';
 
-const connection = new Connection('https://api.devnet.solana.com');
+const connection = new Connection(
+  process.env.RPC_URL ?? 'https://api.devnet.solana.com',
+);
 const merchantKp = Keypair.fromSecretKey(/* … */);
 ```
 
@@ -46,7 +132,7 @@ await registerServiceOnChain(connection, merchantKp, {
   retailer: merchantKp.publicKey,   // who receives payments (can differ from owner)
   tokenMint: NATIVE_SOL_MINT,       // or an SPL mint (e.g. USDC) — required
   priceAtomic: 50_000_000n,         // 0.05 SOL in lamports (per billing period)
-  intervalSlots: 6_480_000n,        // ≈ 30 days at 0.4 s/slot
+  intervalSlots: 6_480_000n,        // ~30 days at 0.4 s/slot
   supportsOneshot: true,            // accepts single unshield payments
   supportsVault: true,              // accepts recurring subscription vaults
   skipIfExists: true,               // idempotent boot — don't re-register
@@ -66,10 +152,10 @@ const receipts = await pollPaymentsForRetailer(connection, merchantKp.publicKey,
 });
 
 for (const r of receipts) {
-  console.log(`${r.signature.slice(0,8)}… +${r.sol} SOL — memo ${r.memo?.raw}`);
-  // r.memo?.slug   → service slug ("my-saas-pro")
-  // r.memo?.extras → optional [periods, nonce, ...] suffix the client tagged
-  // → grant access for the configured intervalDays * (extras[0] ?? 1)
+  console.log(`${r.signature.slice(0,8)}... +${r.sol} SOL — memo ${r.memo?.raw}`);
+  // r.memo?.slug   -> service slug ("my-saas-pro")
+  // r.memo?.extras -> optional [periods, nonce, ...] suffix the client tagged
+  // grant access for the configured intervalDays * (extras[0] ?? 1)
 }
 ```
 
@@ -84,7 +170,7 @@ const vaults = await listVaultsForRetailer(connection, merchantKp.publicKey, {
 
 for (const v of vaults) {
   console.log(
-    `vault ${v.pda.toBase58().slice(0,12)}… ` +
+    `vault ${v.pda.toBase58().slice(0,12)}... ` +
     `rate=${Number(v.rate) / 1e9} SOL ` +
     `paused=${v.isPaused} private=${v.subscriberCommitment !== null}`,
   );
@@ -113,27 +199,34 @@ if (!result.valid) return Response.json({ error: result.reason }, { status: 401 
 ## API surface
 
 ```
+// Config
+MerchantSdkConfig                                 { cluster?, programIds?, rpcUrl? }
+
 // Registration (server-side, signs as the merchant)
-registerServiceOnChain(connection, kp, config)        → MerchantRegistrationResult
-updateServiceOnChain(connection, kp, args)            → TxSig
-deregisterServiceOnChain(connection, kp, slug)        → TxSig
-getRegisteredService(connection, ownerPubkey, slug)   → ServiceEntry | null
+registerServiceOnChain(connection, kp, config)        MerchantRegistrationResult
+updateServiceOnChain(connection, kp, args, cfg?)      TxSig
+deregisterServiceOnChain(connection, kp, slug, cfg?)  TxSig
+getRegisteredService(connection, owner, slug, cfg?)   ServiceEntry | null
 
 // Read (any caller)
-fetchService(connection, owner, slug)                 → ServiceEntry | null
-fetchServiceByPda(connection, pda)                    → ServiceEntry | null
-fetchAllServices(connection, opts?)                   → ServiceEntry[]
+fetchService(connection, owner, slug)                 ServiceEntry | null
+fetchServiceByPda(connection, pda)                    ServiceEntry | null
+fetchAllServices(connection, opts?)                   ServiceEntry[]
 
 // Payments + vaults
-verifyOneShotPayment(connection, signature, opts?)    → PaymentReceipt | null
-pollPaymentsForRetailer(connection, retailer, opts?)  → PaymentReceipt[]
-parseInvoiceMemo(memo)                                → ParsedInvoiceMemo | null
-listVaultsForRetailer(connection, retailer, opts?)    → SubscriptionVaultAccount[]
-hasActiveVaultAccess(connection, retailer, subscriber)→ boolean
+verifyOneShotPayment(connection, signature, opts?)    PaymentReceipt
+pollPaymentsForRetailer(connection, retailer, opts?)  PaymentReceipt[]
+parseInvoiceMemo(memo)                                ParsedInvoiceMemo | null
+listVaultsForRetailer(connection, retailer, opts?)    SubscriptionVaultAccount[]
+hasActiveVaultAccess(connection, retailer, subscriber) SubscriptionVaultAccount | null
 
 // Access tokens (Ed25519-signed, no DB required)
-issueAccessToken(opts)                                → string
-verifyAccessToken(token, merchantPubkey)              → { valid, claims?, reason? }
+issueAccessToken(opts)                                string
+verifyAccessToken(token, merchantPubkey)              { valid, claims?, reason? }
+
+// Constants
+ZK_SHIELDED_PROGRAM_ID_DEVNET
+REGISTRY_PROGRAM_ID_DEVNET
 ```
 
 Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) are re-exported from `@protocol-01/specter-sdk` for callers that need to assemble custom transactions.
@@ -142,11 +235,16 @@ Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) ar
 
 - **Framework-agnostic.** No wallet adapter dependency; callers bring a `Keypair` or a `signTransaction` callback.
 - **No side effects at import.** Connecting to an RPC is always explicit.
-- **No server state required.** Access tokens are self-contained + signed — verify them anywhere.
+- **No server state required.** Access tokens are self-contained and signed — verify them anywhere.
+- **Configurable programs.** `MerchantSdkConfig` lets mainnet merchants supply the correct program IDs without forking the package.
 
 ## Example: complete Netflix-style integration
 
-See [`examples/merchant-netflix`](../../examples/merchant-netflix/) in the repo for a runnable end-to-end script (register → poll payments → issue token → verify).
+See [`examples/merchant-netflix`](../../examples/merchant-netflix/) in the repo for a runnable end-to-end script (register, poll payments, issue token, verify).
+
+## Dependency note
+
+This SDK depends on `@protocol-01/specter-sdk` for the service-registry instruction builders and account decoders.  That package must be published (or vendored) before this one can be installed from npm.  The ~670 LOC of service-registry code is intentionally not bundled here to avoid duplication with the mobile and extension clients.
 
 ## License
 

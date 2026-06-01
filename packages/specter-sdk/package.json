@@ -45,6 +45,11 @@
       "import": "./dist/relay/index.mjs",
       "require": "./dist/relay/index.js",
       "types": "./dist/relay/index.d.ts"
+    },
+    "./service-registry": {
+      "import": "./dist/service-registry/index.mjs",
+      "require": "./dist/service-registry/index.js",
+      "types": "./dist/service-registry/index.d.ts"
     }
   },
   "files": [
@@ -52,8 +57,8 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/wallet/index.ts src/stealth/index.ts src/transfer/index.ts src/streams/index.ts src/proving/index.ts src/indexing/index.ts src/relay/index.ts --format cjs,esm --dts --clean --out-dir dist",
-    "dev": "tsup src/index.ts src/wallet/index.ts src/stealth/index.ts src/transfer/index.ts src/streams/index.ts src/proving/index.ts src/indexing/index.ts src/relay/index.ts --format cjs,esm --dts --watch",
+    "build": "tsup src/index.ts src/wallet/index.ts src/stealth/index.ts src/transfer/index.ts src/streams/index.ts src/proving/index.ts src/indexing/index.ts src/relay/index.ts src/service-registry/index.ts --format cjs,esm --dts --clean --out-dir dist",
+    "dev": "tsup src/index.ts src/wallet/index.ts src/stealth/index.ts src/transfer/index.ts src/streams/index.ts src/proving/index.ts src/indexing/index.ts src/relay/index.ts src/service-registry/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

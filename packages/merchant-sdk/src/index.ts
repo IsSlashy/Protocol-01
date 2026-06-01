@@ -23,6 +23,7 @@
  *     and are re-exported here for ergonomics.
  */
 
+export * from './config';
 export * from './registration';
 export * from './payments';
 export * from './vaults';
@@ -49,4 +50,4 @@ export {
   type RegisterServiceArgs,
   type UpdateServiceArgs,
   type FetchServicesOptions,
-} from '@protocol-01/specter-sdk';
+} from '@protocol-01/specter-sdk/service-registry';
