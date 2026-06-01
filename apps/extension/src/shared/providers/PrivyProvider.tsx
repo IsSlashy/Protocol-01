@@ -67,9 +67,12 @@ function PrivyBridge({ children }: { children: React.ReactNode }) {
       }
     }
 
-    return () => {
-      setPrivySigner(null);
-    };
+    // NOTE: deliberately NO cleanup that nulls the signer. This effect re-runs
+    // whenever `wallets` changes identity during Privy hydration; a cleanup that
+    // cleared the signer on every re-run left it transiently null at click time
+    // (the "Privy wallet is not ready" flakiness). The signer is cleared
+    // explicitly in the not-authenticated branch above (logout), and a popup
+    // teardown destroys the module state anyway.
   }, [authenticated, ready, wallets]);
 
   return <>{children}</>;

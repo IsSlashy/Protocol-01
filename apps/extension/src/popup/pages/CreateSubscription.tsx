@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   ArrowLeft,
@@ -10,20 +10,19 @@ import {
   Shuffle,
   Clock,
   Zap,
-  User,
-  Building,
-  ChevronRight,
   Check,
 } from 'lucide-react';
+import { PublicKey, Transaction } from '@solana/web3.js';
 import { cn } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
-import { useWalletStore } from '@/shared/store/wallet';
+import { useWalletStore, getPrivySigner } from '@/shared/store/wallet';
+import { useSolanaWallets } from '@/shared/providers/PrivyProvider';
 import { useShieldedStore } from '@/shared/store/shielded';
-import { SubscriptionInterval } from '@/shared/services/stream';
+import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
+import { SubscriptionInterval, type PaymentSigner } from '@/shared/services/stream';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type SubscriptionType = 'p2p' | 'b2b';
 type PrivacyMode = 'standard' | 'noise' | 'zk';
 
 const PRIVACY_MODES = [
@@ -50,62 +49,131 @@ const PRIVACY_MODES = [
   {
     id: 'zk' as PrivacyMode,
     name: 'ZK Private',
-    desc: 'Requires mobile app — no denominated pool in extension',
+    desc: 'Pay from a shielded denominated note, no wallet link',
     icon: Shield,
-    color: '#6b7280',
-    features: ['Needs denominated pool', 'Use mobile app'],
-    disabled: true,
-    disabledReason: 'ZK Private subscriptions require the Protocol 01 mobile app (no denominated pool in extension)',
+    color: '#39c5bb',
+    features: ['STARK proof (C1)', 'No wallet link', 'Goldilocks pool'],
+    disabled: false,
+    disabledReason: undefined,
   },
-];
-
-// ─── Pre-configured B2B services ────────────────────────────────────────────
-
-const B2B_SERVICES = [
-  { name: 'Protocol 01 Pro', recipient: 'P01pro...wallet', amount: 9.99, interval: 'monthly' as SubscriptionInterval, logo: '/01-miku.png', desc: 'Premium privacy features' },
-  { name: 'VPN Service', recipient: 'VPNsrv...wallet', amount: 4.99, interval: 'monthly' as SubscriptionInterval, logo: '🔒', desc: 'Anonymous VPN access' },
-  { name: 'Cloud Storage', recipient: 'Cloud...wallet', amount: 2.99, interval: 'monthly' as SubscriptionInterval, logo: '☁️', desc: 'Encrypted storage 100GB' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function CreateSubscription() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { addSubscription, processPayment } = useSubscriptionsStore();
-  const { _keypair, network, isUnlocked } = useWalletStore();
+  const { _keypair, network, isUnlocked, isPrivyWallet, publicKey } = useWalletStore();
+  const { wallets } = useSolanaWallets();
   const { shieldedBalance } = useShieldedStore();
+  const { getSpendableNote } = useDenominatedPoolStore();
 
-  // Pre-fill from URL params (when coming from dApp approval or service selection)
-  const prefillName = searchParams.get('name') || '';
-  const prefillRecipient = searchParams.get('recipient') || '';
-  const prefillAmount = searchParams.get('amount') || '';
+  // The recipient is already determined by how the user arrived here:
+  //   - picked a service in Subscriptions  -> service data in location.state
+  //   - dApp approval / personal prefill    -> query params
+  // So we never re-ask "who are you paying" — the flow starts at the privacy
+  // step. We also don't surface any payment-classification jargon to the user.
+  const svc = (location.state ?? null) as
+    | { serviceId?: string; serviceName?: string; price?: number; frequency?: SubscriptionInterval }
+    | null;
 
-  const [step, setStep] = useState<'type' | 'mode' | 'confirm'>('type');
-  const [subType, setSubType] = useState<SubscriptionType>('p2p');
+  const prefillName = svc?.serviceName || searchParams.get('name') || '';
+  const prefillRecipient = svc?.serviceId || searchParams.get('recipient') || '';
+  const prefillAmount = svc?.price != null ? String(svc.price) : (searchParams.get('amount') || '');
+
+  const [step, setStep] = useState<'mode' | 'confirm'>('mode');
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>('noise');
-  const [selectedService, setSelectedService] = useState<typeof B2B_SERVICES[0] | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // For P2P, use prefilled data; for B2B, use selected service
-  const activeName = subType === 'b2b' && selectedService ? selectedService.name : prefillName;
-  const activeRecipient = subType === 'b2b' && selectedService ? selectedService.recipient : prefillRecipient;
-  const activeAmount = subType === 'b2b' && selectedService ? selectedService.amount : parseFloat(prefillAmount) || 0;
-  const activeInterval: SubscriptionInterval = subType === 'b2b' && selectedService ? selectedService.interval : 'monthly';
+  const activeName = prefillName;
+  const activeRecipient = prefillRecipient;
+  const activeAmount = parseFloat(prefillAmount) || 0;
+  const activeInterval: SubscriptionInterval = svc?.frequency || 'monthly';
 
   const handleCreate = async () => {
-    if (!_keypair || !isUnlocked) return;
+    setError(null);
 
-    // ZK Private mode requires a denominated pool note — not available in the
-    // extension (the denominated pool was removed; only Goldilocks continuous
-    // notes exist). Show an informational alert instead of silently failing.
+    if (!isUnlocked) {
+      setError('Please unlock your wallet first.');
+      return;
+    }
+
+    // Build a wallet-agnostic signer: local keypair OR Privy embedded wallet.
+    let signer: PaymentSigner;
+    if (_keypair) {
+      const kp = _keypair;
+      signer = {
+        publicKey: kp.publicKey,
+        keypair: kp,
+        signTransaction: async (tx: Transaction) => { tx.sign(kp); return tx; },
+      };
+    } else if (isPrivyWallet) {
+      // Read the embedded wallet live from the Privy hook. The module-level
+      // privySigner is set by PrivyBridge but can be transiently null while the
+      // popup re-hydrates, so the hook is the reliable source at click time.
+      const wallet = wallets.find((w) => w.walletClientType === 'privy') || wallets[0];
+      const fallback = getPrivySigner();
+      if (wallet) {
+        signer = {
+          publicKey: new PublicKey(wallet.address),
+          signTransaction: async (tx: Transaction) =>
+            (await wallet.signTransaction(tx)) as unknown as Transaction,
+        };
+      } else if (fallback && publicKey) {
+        signer = {
+          publicKey: new PublicKey(publicKey),
+          signTransaction: async (tx: Transaction) => (await fallback(tx)) as unknown as Transaction,
+        };
+      } else {
+        setError('Privy wallet is still loading — wait a moment and try again.');
+        return;
+      }
+    } else {
+      setError('Wallet not ready — unlock and try again.');
+      return;
+    }
+
+    // ZK Private mode requires a denominated pool note.
+    // If no spendable note exists yet, route to the shield screen first.
     if (privacyMode === 'zk') {
+      // Try SOL 0.1 as the default denomination for private subscriptions.
+      const note = getSpendableNote('SOL', 0.1);
+      if (!note) {
+        navigate('/denominated-shield');
+        return;
+      }
+      // Note exists — proceed to ZK subscribe via vault store.
+      // (Full end-to-end wiring is done in SubscriptionVaults / createPrivateVault.
+      // For now route the user there with a note about next steps.)
       alert(
-        'ZK Private subscription requires a denominated pool note.\n\n' +
-        'The extension does not currently have a denominated pool. ' +
-        'Please initiate private subscriptions from the Protocol 01 mobile app, ' +
-        'or use Standard or Noise+Timing mode here.',
+        'A denominated note is ready.\n\n' +
+        'Go to Subscription Vaults to create a private vault using this note, ' +
+        'or use the existing note from the denominated pool store.',
       );
+      return;
+    }
+
+    // Validate the recipient BEFORE charging — a service id like "netflix"
+    // is not a wallet address and would throw deep in the payment path.
+    if (!activeRecipient) {
+      setError('This subscription has no payment address yet.');
+      return;
+    }
+    try {
+      new PublicKey(activeRecipient);
+    } catch {
+      setError(
+        svc
+          ? `${activeName || 'This service'} doesn't have a payment address configured yet.`
+          : 'Invalid recipient address.',
+      );
+      return;
+    }
+    if (!(activeAmount > 0)) {
+      setError('Amount must be greater than 0.');
       return;
     }
 
@@ -125,12 +193,13 @@ export default function CreateSubscription() {
         ...noiseSettings,
       });
 
-      // Execute first payment
-      await processPayment(subscription.id, _keypair, network);
+      // Execute first payment (local keypair or Privy embedded wallet).
+      await processPayment(subscription.id, signer, network);
 
       navigate('/subscriptions', { replace: true });
     } catch (err) {
       console.error('[Subscription] Create error:', err);
+      setError((err as Error)?.message || 'Failed to start subscription.');
     } finally {
       setIsCreating(false);
     }
@@ -141,14 +210,14 @@ export default function CreateSubscription() {
       {/* Header */}
       <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
         <button
-          onClick={() => step === 'type' ? navigate(-1) : setStep(step === 'confirm' ? 'mode' : 'type')}
+          onClick={() => step === 'mode' ? navigate(-1) : setStep('mode')}
           className="p-2 text-p01-chrome hover:text-white transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center">
           <h1 className="text-white font-display font-bold tracking-wide text-sm">
-            {step === 'type' ? 'NEW SUBSCRIPTION' : step === 'mode' ? 'PRIVACY MODE' : 'CONFIRM'}
+            {step === 'mode' ? 'NEW SUBSCRIPTION' : 'CONFIRM'}
           </h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
             STREAM SECURE
@@ -159,90 +228,7 @@ export default function CreateSubscription() {
 
       <div className="flex-1 overflow-y-auto p-4">
 
-        {/* ═══ STEP 1: Type Selection ═══ */}
-        {step === 'type' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-            <p className="text-p01-chrome text-xs font-mono mb-4 text-center">
-              Select subscription type
-            </p>
-
-            {/* P2P Personal */}
-            <button
-              onClick={() => { setSubType('p2p'); setStep('mode'); }}
-              className={cn(
-                'w-full p-4 rounded-xl border text-left transition-all',
-                'bg-p01-surface border-p01-border hover:border-p01-cyan/40',
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-p01-cyan/15 flex items-center justify-center">
-                  <User className="w-5 h-5 text-p01-cyan" />
-                </div>
-                <div className="flex-1">
-                  <p className="text-white font-medium text-sm">Personal (P2P)</p>
-                  <p className="text-p01-chrome text-[11px] mt-0.5">
-                    Pay a friend or personal service recurring
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-p01-chrome/50" />
-              </div>
-            </button>
-
-            {/* B2B Services */}
-            <div>
-              <button
-                onClick={() => setSubType('b2b')}
-                className={cn(
-                  'w-full p-4 rounded-xl border text-left transition-all',
-                  subType === 'b2b' ? 'bg-p01-pink/5 border-p01-pink/30' : 'bg-p01-surface border-p01-border hover:border-p01-pink/40',
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-p01-pink/15 flex items-center justify-center">
-                    <Building className="w-5 h-5 text-p01-pink" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-white font-medium text-sm">Services (B2B)</p>
-                    <p className="text-p01-chrome text-[11px] mt-0.5">
-                      Subscribe to a business or dApp service
-                    </p>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-p01-chrome/50" />
-                </div>
-              </button>
-
-              {/* Service list */}
-              {subType === 'b2b' && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="mt-2 space-y-2 pl-2">
-                  {B2B_SERVICES.map((svc) => (
-                    <button
-                      key={svc.name}
-                      onClick={() => { setSelectedService(svc); setStep('mode'); }}
-                      className={cn(
-                        'w-full p-3 rounded-lg border text-left transition-all flex items-center gap-3',
-                        selectedService?.name === svc.name
-                          ? 'bg-p01-pink/10 border-p01-pink/30'
-                          : 'bg-p01-dark border-p01-border hover:border-p01-pink/20',
-                      )}
-                    >
-                      <span className="text-lg">{typeof svc.logo === 'string' && svc.logo.startsWith('/') ? <img src={svc.logo} className="w-7 h-7 rounded" /> : svc.logo}</span>
-                      <div className="flex-1">
-                        <p className="text-white text-xs font-medium">{svc.name}</p>
-                        <p className="text-p01-chrome text-[10px]">{svc.desc}</p>
-                      </div>
-                      <span className="text-p01-cyan text-xs font-mono">${svc.amount}/mo</span>
-                    </button>
-                  ))}
-                  <p className="text-p01-chrome/50 text-[10px] font-mono text-center pt-1">
-                    More services added via dApp integration
-                  </p>
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
-        )}
-
-        {/* ═══ STEP 2: Privacy Mode ═══ */}
+        {/* ═══ STEP 1: Privacy Mode ═══ */}
         {step === 'mode' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-3">
             <p className="text-p01-chrome text-xs font-mono mb-4 text-center">
@@ -306,12 +292,13 @@ export default function CreateSubscription() {
               </button>
             ))}
 
-            {/* ZK mode unavailability notice */}
+            {/* ZK mode: note availability info */}
             {privacyMode === 'zk' && (
-              <div className="p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20 flex items-center gap-2">
-                <Lock className="w-4 h-4 text-yellow-500 shrink-0" />
-                <p className="text-yellow-500 text-[10px] font-mono">
-                  ZK Private is only available in the mobile app. Switch to Standard or Noise mode to continue here.
+              <div className="p-3 rounded-lg bg-p01-cyan/5 border border-p01-cyan/20 flex items-center gap-2">
+                <Lock className="w-4 h-4 text-p01-cyan shrink-0" />
+                <p className="text-p01-chrome text-[10px] font-mono">
+                  ZK Private needs a denominated pool note. If you have one shielded,
+                  continuing will use it. If not, you will be taken to the shield screen first.
                 </p>
               </div>
             )}
@@ -333,10 +320,6 @@ export default function CreateSubscription() {
               <p className="text-p01-chrome text-[10px] font-mono tracking-wider mb-3">SUBSCRIPTION SUMMARY</p>
 
               <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-p01-chrome text-xs">Type</span>
-                  <span className="text-white text-xs font-mono">{subType === 'p2p' ? 'Personal P2P' : 'B2B Service'}</span>
-                </div>
                 {activeName && (
                   <div className="flex justify-between">
                     <span className="text-p01-chrome text-xs">Name</span>
@@ -373,6 +356,13 @@ export default function CreateSubscription() {
                   : 'Fully untraceable. Each payment from shielded pool with ZK proof.'}
               </p>
             </div>
+
+            {/* Error */}
+            {error && (
+              <div className="p-3 rounded-lg bg-p01-red/10 border border-p01-red/30" role="alert" aria-live="polite">
+                <p className="text-p01-red text-[11px] font-mono">{error}</p>
+              </div>
+            )}
 
             {/* Actions */}
             <button

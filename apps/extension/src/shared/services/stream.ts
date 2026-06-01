@@ -362,11 +362,22 @@ export function calculateNextPayment(
 }
 
 /**
+ * Wallet-agnostic signer for subscription payments. Local-keypair wallets
+ * provide `keypair` (which also enables stealth-address derivation); Privy
+ * wallets provide only `publicKey` + `signTransaction`.
+ */
+export interface PaymentSigner {
+  publicKey: PublicKey;
+  signTransaction: (tx: Transaction) => Promise<Transaction>;
+  keypair?: Keypair;
+}
+
+/**
  * Execute a subscription payment
  */
 export async function executeSubscriptionPayment(
   sub: StreamSubscription,
-  keypair: Keypair,
+  signer: PaymentSigner,
   network: NetworkType
 ): Promise<{ signature: string; payment: PaymentRecord }> {
 
@@ -380,8 +391,9 @@ export async function executeSubscriptionPayment(
     throw new Error('Maximum payments reached');
   }
 
-  // Calculate payment with noise
-  const calculatedPayment = calculateNextPayment(sub, keypair);
+  // Calculate payment with noise. Stealth-address derivation needs a raw
+  // keypair; Privy wallets (no keypair) fall back to the plain recipient.
+  const calculatedPayment = calculateNextPayment(sub, signer.keypair);
 
   // Get connection
   const connection = getConnection(network);
@@ -389,9 +401,12 @@ export async function executeSubscriptionPayment(
   let signature: string;
 
   if (sub.tokenMint) {
-    // SPL token payment
+    // SPL token payment — keypair-only for now.
+    if (!signer.keypair) {
+      throw new Error('SPL-token subscriptions need a local-keypair wallet (Privy SPL support coming).');
+    }
     signature = await sendSplToken(
-      keypair,
+      signer.keypair,
       calculatedPayment.recipient,
       sub.tokenMint,
       calculatedPayment.amount,
@@ -405,20 +420,20 @@ export async function executeSubscriptionPayment(
 
     const transaction = new Transaction().add(
       SystemProgram.transfer({
-        fromPubkey: keypair.publicKey,
+        fromPubkey: signer.publicKey,
         toPubkey: recipientPubkey,
         lamports,
       })
     );
 
-    // Sign and send transaction
+    // Sign (local keypair or Privy embedded wallet) and send.
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     transaction.recentBlockhash = blockhash;
-    transaction.feePayer = keypair.publicKey;
+    transaction.feePayer = signer.publicKey;
 
-    transaction.sign(keypair);
+    const signed = await signer.signTransaction(transaction);
 
-    signature = await connection.sendRawTransaction(transaction.serialize());
+    signature = await connection.sendRawTransaction(signed.serialize());
 
     // Wait for confirmation
     await connection.confirmTransaction({

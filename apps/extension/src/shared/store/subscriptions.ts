@@ -21,6 +21,7 @@ import {
   calculateYearlyCost,
   getDueSubscriptions,
   executeSubscriptionPayment,
+  type PaymentSigner,
 } from '../services/stream';
 import { NetworkType } from '../services/wallet';
 import { fetchSubscriptionsFromChain, mergeSubscriptions } from '../services/onchain-sync';
@@ -52,7 +53,7 @@ export interface SubscriptionsState {
   ) => void;
 
   // Payment processing
-  processPayment: (id: string, keypair: Keypair, network: NetworkType) => Promise<string>;
+  processPayment: (id: string, signer: PaymentSigner, network: NetworkType) => Promise<string>;
   addPaymentRecord: (subscriptionId: string, payment: PaymentRecord) => void;
 
   // Queries
@@ -181,7 +182,7 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
       },
 
       // Process a payment for a subscription
-      processPayment: async (id: string, keypair: Keypair, network: NetworkType) => {
+      processPayment: async (id: string, signer: PaymentSigner, network: NetworkType) => {
         const { subscriptions } = get();
         const sub = subscriptions.find(s => s.id === id);
 
@@ -196,7 +197,7 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
         set({ isLoading: true, error: null });
 
         try {
-          const { signature, payment } = await executeSubscriptionPayment(sub, keypair, network);
+          const { signature, payment } = await executeSubscriptionPayment(sub, signer, network);
 
           // Update subscription with payment record
           set((state) => {
