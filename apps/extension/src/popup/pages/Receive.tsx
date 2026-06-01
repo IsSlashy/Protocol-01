@@ -229,7 +229,7 @@ export default function Receive() {
         {/* Address Display - Industrial */}
         <div className="bg-p01-surface border border-p01-border p-3 rounded-xl">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-[#555560] font-mono tracking-wider">
+            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">
               {stealthModeEnabled ? 'YOUR STEALTH META-ADDRESS' : 'YOUR SOLANA ADDRESS'}
             </span>
             {!stealthModeEnabled && publicKey && (
@@ -349,7 +349,7 @@ export default function Receive() {
               >
                 [ {stealthModeEnabled ? 'PRIVATE RECEIVING' : 'RECEIVING'} ]
               </p>
-              <p className="text-[10px] text-[#555560] font-mono tracking-wider leading-relaxed">
+              <p className="text-[10px] text-p01-text-dim font-mono tracking-wider leading-relaxed">
                 {stealthModeEnabled
                   ? 'SHARE THIS META-ADDRESS FOR PRIVATE PAYMENTS. EACH PAYMENT WILL BE SENT TO A UNIQUE STEALTH ADDRESS.'
                   : `SCAN THIS QR CODE OR SHARE YOUR ADDRESS TO RECEIVE SOL OR SPL TOKENS ON THE ${network.toUpperCase()} NETWORK.`}
@@ -369,7 +369,7 @@ export default function Receive() {
                 <p className="text-[10px] font-mono font-bold text-yellow-500 tracking-wider mb-1">
                   [ DEVNET ]
                 </p>
-                <p className="text-[10px] text-[#555560] font-mono tracking-wider leading-relaxed">
+                <p className="text-[10px] text-p01-text-dim font-mono tracking-wider leading-relaxed">
                   THIS IS A DEVNET ADDRESS. ONLY SEND DEVNET TOKENS TO THIS ADDRESS. REAL TOKENS
                   WILL BE LOST.
                 </p>

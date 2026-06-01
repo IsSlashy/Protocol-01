@@ -188,7 +188,7 @@ export default function Swap() {
   });
 
   const impactSeverity = quote ? getPriceImpactSeverity(quote.priceImpactPct) : 'low';
-  const impactColor = impactSeverity === 'low' ? 'text-green-400' : impactSeverity === 'medium' ? 'text-yellow-400' : 'text-red-400';
+  const impactColor = impactSeverity === 'low' ? 'text-p01-cyan' : impactSeverity === 'medium' ? 'text-warning' : 'text-error';
 
   const getButtonText = () => {
     if (isDevnet) return 'Swap unavailable on devnet';
@@ -384,8 +384,8 @@ export default function Swap() {
             exit={{ opacity: 0 }}
             className="absolute inset-0 bg-p01-void/95 flex flex-col items-center justify-center p-6 z-50"
           >
-            <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mb-4">
-              <Check className="w-8 h-8 text-green-400" />
+            <div className="w-16 h-16 rounded-full bg-p01-cyan/20 flex items-center justify-center mb-4">
+              <Check className="w-8 h-8 text-p01-cyan" />
             </div>
             <h2 className="text-xl font-bold text-white mb-2">Swap Successful</h2>
             <p className="text-p01-chrome text-sm text-center mb-1">

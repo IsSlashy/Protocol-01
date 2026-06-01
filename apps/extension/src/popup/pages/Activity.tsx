@@ -155,9 +155,9 @@ function TransactionRow({
         return 'text-red-400 bg-red-400/10';
       case 'receive':
       case 'claim':
-        return 'text-green-400 bg-green-400/10';
+        return 'text-p01-cyan bg-p01-cyan/10';
       case 'swap':
-        return 'text-blue-400 bg-blue-400/10';
+        return 'text-p01-blue bg-p01-blue/10';
       case 'subscription':
         return 'text-streams bg-streams/10';
       default:
@@ -254,8 +254,8 @@ function TransactionRow({
           className={cn(
             'text-sm font-medium',
             tx.type === 'send' || tx.type === 'subscription'
-              ? 'text-red-400'
-              : 'text-green-400'
+              ? 'text-error'
+              : 'text-p01-cyan'
           )}
         >
           {tx.type === 'send' || tx.type === 'subscription' ? '-' : '+'}

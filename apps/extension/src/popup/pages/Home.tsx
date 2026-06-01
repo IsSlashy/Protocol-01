@@ -164,7 +164,7 @@ export default function Home() {
         <motion.div
           initial={{ y: 10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="mx-4 bg-p01-surface rounded-2xl p-5"
+          className="mx-4 bg-p01-gradient-card border border-p01-border rounded-2xl p-5"
         >
           {/* Wallet Address */}
           <div className="flex items-center justify-center gap-2 text-p01-chrome text-sm mb-1">
@@ -249,7 +249,7 @@ export default function Home() {
           >
             <div className="flex items-center gap-3">
               {/* Solana gradient icon */}
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-yellow to-p01-yellow/60 flex items-center justify-center">
                 {faucetLoading ? (
                   <Loader2 className="w-5 h-5 text-white animate-spin" />
                 ) : faucetSuccess ? (
@@ -269,7 +269,7 @@ export default function Home() {
             </div>
             <ChevronRight className={cn(
               'w-5 h-5',
-              faucetSuccess ? 'text-green-500' : faucetError ? 'text-red-400' : 'text-p01-pink'
+              faucetSuccess ? 'text-p01-cyan' : faucetError ? 'text-error' : 'text-p01-pink'
             )} />
           </motion.button>
         )}
@@ -280,7 +280,7 @@ export default function Home() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.15 }}
           onClick={() => navigate('/shielded')}
-          className="mx-4 mb-4 bg-gradient-to-r from-p01-surface to-p01-dark rounded-xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:from-p01-surface/90 hover:to-p01-dark/90 transition-all border border-p01-cyan/20"
+          className="mx-4 mb-4 bg-p01-gradient-card rounded-2xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:opacity-90 transition-all border border-p01-cyan/20"
         >
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
@@ -367,7 +367,7 @@ export default function Home() {
               className="bg-p01-surface rounded-xl p-4 flex items-center justify-between mb-2"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-cyan-700 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
                   <span className="text-white font-bold text-xs">
                     {token.symbol.slice(0, 2)}
                   </span>
@@ -449,7 +449,7 @@ function ActionButton({
     cyan: 'bg-p01-cyan text-p01-void',
     pink: 'bg-p01-pink text-white',
     violet: 'bg-p01-cyan text-white',
-    orange: 'bg-orange-500 text-white',
+    orange: 'bg-p01-yellow text-p01-void',
   };
 
   return (
@@ -497,10 +497,10 @@ function RecentTransactionRow({
   const getIconColor = () => {
     switch (tx.type) {
       case 'send':
-        return 'text-red-400 bg-red-400/10';
+        return 'text-error bg-error/10';
       case 'receive':
       case 'claim':
-        return 'text-green-400 bg-green-400/10';
+        return 'text-p01-cyan bg-p01-cyan/10';
       default:
         return 'text-p01-chrome/60 bg-p01-surface';
     }
@@ -563,8 +563,8 @@ function RecentTransactionRow({
           className={cn(
             'text-sm font-medium',
             tx.type === 'send' || tx.type === 'subscription'
-              ? 'text-red-400'
-              : 'text-green-400'
+              ? 'text-error'
+              : 'text-p01-cyan'
           )}
         >
           {tx.type === 'send' || tx.type === 'subscription' ? '-' : '+'}

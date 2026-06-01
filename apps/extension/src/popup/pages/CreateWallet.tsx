@@ -137,7 +137,7 @@ export default function CreateWallet() {
                       'h-1 flex-1 transition-colors',
                       password.length >= i * 3
                         ? password.length >= 12
-                          ? 'bg-green-500'
+                          ? 'bg-p01-cyan'
                           : password.length >= 8
                           ? 'bg-p01-cyan'
                           : 'bg-p01-yellow'

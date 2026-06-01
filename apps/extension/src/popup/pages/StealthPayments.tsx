@@ -176,7 +176,7 @@ export default function StealthPayments() {
               aria-label={`Show claimed payments (${claimedPayments.length})`}
             >
               <div className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-green-500" />
+                <Check className="w-4 h-4 text-p01-cyan" />
                 <span className="text-[11px] font-mono font-bold text-p01-chrome tracking-wider">
                   CLAIMED ({claimedPayments.length})
                 </span>
@@ -324,12 +324,12 @@ function PaymentCard({
             className={cn(
               'w-10 h-10 rounded-lg flex items-center justify-center',
               isClaimed
-                ? 'bg-green-500/20 border border-green-500/30'
+                ? 'bg-p01-cyan/20 border border-p01-cyan/30'
                 : 'bg-p01-cyan/20 border border-p01-cyan/30'
             )}
           >
             {isClaimed ? (
-              <Check className="w-5 h-5 text-green-500" />
+              <Check className="w-5 h-5 text-p01-cyan" />
             ) : (
               <EyeOff className="w-5 h-5 text-p01-cyan" />
             )}
@@ -357,7 +357,7 @@ function PaymentCard({
                 isClaiming
                   ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
                   : isClaimSuccess
-                  ? 'bg-green-500 text-white'
+                  ? 'bg-p01-cyan text-p01-void'
                   : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
               )}
             >
@@ -437,7 +437,7 @@ function PaymentCard({
                     href={`https://solscan.io/tx/${payment.claimSignature}?cluster=${network}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-[10px] text-green-500 font-mono hover:underline"
+                    className="flex items-center gap-1 text-[10px] text-p01-cyan font-mono hover:underline"
                   >
                     {truncateAddress(payment.claimSignature, 8)}
                     <ExternalLink className="w-3 h-3" />

@@ -21,10 +21,10 @@ import { useAIStore, type DisplayMessage } from '../../shared/store/ai';
 import { DEFAULT_CONFIGS, type AIConfig } from '../../shared/services/ai/agent';
 
 const QUICK_ACTIONS = [
-  { label: 'SOL Price', icon: TrendingUp, color: 'text-green-400' },
-  { label: 'Fear & Greed', icon: BarChart3, color: 'text-yellow-400' },
+  { label: 'SOL Price', icon: TrendingUp, color: 'text-p01-cyan' },
+  { label: 'Fear & Greed', icon: BarChart3, color: 'text-warning' },
   { label: 'My Portfolio', icon: Wallet, color: 'text-p01-cyan' },
-  { label: 'Market Summary', icon: TrendingUp, color: 'text-purple-400' },
+  { label: 'Market Summary', icon: TrendingUp, color: 'text-p01-pink' },
   { label: 'Help', icon: HelpCircle, color: 'text-p01-chrome' },
 ];
 
@@ -236,7 +236,7 @@ export default function Agent() {
               </div>
 
               {testResult && (
-                <div className={`flex items-center gap-2 text-xs ${testResult.success ? 'text-green-400' : 'text-red-400'}`} role="status" aria-live="polite">
+                <div className={`flex items-center gap-2 text-xs ${testResult.success ? 'text-p01-cyan' : 'text-error'}`} role="status" aria-live="polite">
                   {testResult.success ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
                   {testResult.success ? 'Connected!' : testResult.error || 'Connection failed'}
                 </div>
@@ -304,7 +304,7 @@ export default function Agent() {
                 {solPrice && <span className="text-xs text-white">SOL ${solPrice.toFixed(2)}</span>}
                 {solPrice && fearGreed && <span className="text-p01-chrome text-xs">|</span>}
                 {fearGreed && (
-                  <span className={`text-xs ${fearGreed.value < 30 ? 'text-red-400' : fearGreed.value > 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                  <span className={`text-xs ${fearGreed.value < 30 ? 'text-error' : fearGreed.value > 70 ? 'text-p01-cyan' : 'text-warning'}`}>
                     F&G: {fearGreed.value}
                   </span>
                 )}

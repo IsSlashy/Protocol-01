@@ -512,9 +512,9 @@ export default function SubscriptionDetails() {
 
 function PaymentHistoryItem({ payment }: { payment: PaymentRecord }) {
   const statusColors = {
-    confirmed: 'text-green-500',
-    pending: 'text-yellow-500',
-    failed: 'text-red-500',
+    confirmed: 'text-p01-cyan',
+    pending: 'text-warning',
+    failed: 'text-error',
   };
 
   return (

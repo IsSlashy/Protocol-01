@@ -166,7 +166,7 @@ export default function Unlock() {
 
           {/* Lockout warning */}
           {isLockedOut && (
-            <div className="flex items-center gap-2 p-3 bg-orange-500/10 border border-orange-500/30 text-orange-400" role="alert" aria-live="polite">
+            <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/30 text-warning" role="alert" aria-live="polite">
               <Lock className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs font-mono">
                 Too many failed attempts. Try again in {lockoutSeconds}s

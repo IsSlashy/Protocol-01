@@ -125,7 +125,7 @@ export default function SendCryptoModal({
               {/* Header */}
               <div className="flex items-center justify-between p-4 border-b border-p01-border">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
                     <Send className="w-5 h-5 text-white" />
                   </div>
                   <div>
@@ -230,7 +230,7 @@ export default function SendCryptoModal({
                       PREVIEW
                     </p>
                     <p className="text-white text-sm">
-                      Sending <span className="font-mono font-bold text-green-400">{parseFloat(amount).toFixed(4)} {selectedToken.symbol}</span> to @{displayName}
+                      Sending <span className="font-mono font-bold text-p01-cyan">{parseFloat(amount).toFixed(4)} {selectedToken.symbol}</span> to @{displayName}
                       {note && <span className="text-p01-chrome"> - "{note}"</span>}
                     </p>
                     <p className="text-p01-chrome/60 text-xs mt-1">
@@ -256,7 +256,7 @@ export default function SendCryptoModal({
                     'flex-1 py-3 rounded-xl font-display font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
                     !amount || parseFloat(amount) <= 0 || isProcessing
                       ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
-                      : 'bg-green-500 text-white hover:bg-green-600'
+                      : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90'
                   )}
                 >
                   {isProcessing ? (

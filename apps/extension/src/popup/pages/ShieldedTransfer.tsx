@@ -128,7 +128,7 @@ export default function ShieldedTransfer() {
         <motion.div
           initial={{ y: 10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="bg-gradient-to-br from-p01-surface to-p01-dark rounded-xl p-4 border border-p01-cyan/20"
+          className="bg-p01-gradient-card rounded-2xl p-4 border border-p01-cyan/20"
         >
           <div className="flex items-center gap-2 mb-2">
             <Shield className="w-4 h-4 text-p01-cyan" />
@@ -287,13 +287,13 @@ export default function ShieldedTransfer() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="p-3 bg-green-500/10 rounded-lg border border-green-500/30"
+            className="p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/30"
             role="status"
             aria-live="polite"
           >
             <div className="flex items-start gap-2">
-              <Check className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-              <p className="text-green-400 text-xs">{success}</p>
+              <Check className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
+              <p className="text-p01-cyan text-xs">{success}</p>
             </div>
           </motion.div>
         )}

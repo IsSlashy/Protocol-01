@@ -311,12 +311,12 @@ export default function ConfidentialWallet() {
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-4 mt-3 p-3 bg-green-500/10 rounded-lg border border-green-500/30 flex items-center gap-2"
+            className="mx-4 mt-3 p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/30 flex items-center gap-2"
             role="status"
             aria-live="polite"
           >
-            <Check className="w-4 h-4 text-green-400" />
-            <p className="text-green-400 text-xs">{successMsg}</p>
+            <Check className="w-4 h-4 text-p01-cyan" />
+            <p className="text-p01-cyan text-xs">{successMsg}</p>
           </motion.div>
         )}
 

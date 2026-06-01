@@ -285,13 +285,13 @@ export default function Welcome() {
                   <motion.div
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
-                    className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center"
+                    className="w-12 h-12 rounded-full bg-p01-cyan/20 flex items-center justify-center"
                   >
-                    <svg className="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <svg className="w-6 h-6 text-p01-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </motion.div>
-                  <p className="text-green-400 text-xs font-mono">Connected!</p>
+                  <p className="text-p01-cyan text-xs font-mono">Connected!</p>
                 </div>
               ) : (
                 <>

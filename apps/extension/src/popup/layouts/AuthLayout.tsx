@@ -23,15 +23,15 @@ export default function AuthLayout() {
             transition={{ delay: 0.4, duration: 0.4 }}
             className="mt-6 flex flex-col items-center"
           >
-            <span className="text-[#ff2d7a] text-[10px] font-bold tracking-[6px] font-mono mb-1">
+            <span className="text-p01-pink-hot text-[10px] font-bold tracking-[6px] font-mono mb-1">
               [ SYSTEM STATUS ]
             </span>
             <span className="text-white text-lg font-black tracking-wider">
               UNTRACEABLE
             </span>
             <div className="flex items-center mt-2">
-              <div className="w-2 h-2 bg-[#39c5bb] mr-2" />
-              <span className="text-[#555560] text-[10px] tracking-[4px] font-mono">
+              <div className="w-2 h-2 bg-p01-cyan mr-2" />
+              <span className="text-p01-text-dim text-[10px] tracking-[4px] font-mono">
                 READY
               </span>
             </div>
@@ -46,7 +46,7 @@ export default function AuthLayout() {
 
       {/* Footer - Raw industrial style */}
       <footer className="py-3 text-center border-t border-p01-border">
-        <p className="text-[10px] text-[#555560] tracking-[2px] font-mono uppercase">
+        <p className="text-[10px] text-p01-text-dim tracking-[2px] font-mono uppercase">
           Solana Network
         </p>
       </footer>

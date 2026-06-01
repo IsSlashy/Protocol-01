@@ -143,7 +143,7 @@ export default function Send() {
 
         {/* Available Balance */}
         <div className="bg-p01-surface border border-p01-border p-3 rounded-lg">
-          <p className="text-[10px] text-[#555560] font-mono tracking-wider mb-1">
+          <p className="text-[10px] text-p01-text-dim font-mono tracking-wider mb-1">
             AVAILABLE BALANCE
           </p>
           <p className="text-lg font-mono font-bold text-white">{solBalance.toFixed(4)} SOL</p>
@@ -176,7 +176,7 @@ export default function Send() {
 
         {/* Recipient Input */}
         <div>
-          <label htmlFor="send-recipient" className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
+          <label htmlFor="send-recipient" className="text-[10px] text-p01-text-dim mb-1.5 block font-mono tracking-wider">
             RECIPIENT ADDRESS {isStealthSend && <span className="text-p01-cyan">(STEALTH)</span>}
           </label>
           <div className="relative">
@@ -190,7 +190,7 @@ export default function Send() {
               }}
               placeholder="Enter Solana address or st:01... meta-address"
               className={cn(
-                'w-full bg-p01-surface border px-3 py-2.5 text-xs font-mono text-white placeholder-[#555560] focus:outline-none transition-colors rounded-lg',
+                'w-full bg-p01-surface border px-3 py-2.5 text-xs font-mono text-white placeholder-p01-text-dim focus:outline-none transition-colors rounded-lg',
                 isStealthSend && stealthAddressValid
                   ? 'border-p01-cyan focus:border-p01-cyan'
                   : 'border-p01-border focus:border-p01-cyan'
@@ -206,7 +206,7 @@ export default function Send() {
 
         {/* Amount Input */}
         <div>
-          <label htmlFor="send-amount" className="text-[10px] text-[#555560] mb-1.5 block font-mono tracking-wider">
+          <label htmlFor="send-amount" className="text-[10px] text-p01-text-dim mb-1.5 block font-mono tracking-wider">
             AMOUNT (SOL)
           </label>
           <div className="bg-p01-surface border border-p01-border p-4 rounded-lg">
@@ -222,7 +222,7 @@ export default function Send() {
               step="0.0001"
               min="0"
               max={solBalance}
-              className="w-full bg-transparent text-2xl font-mono font-bold text-white placeholder-[#555560] focus:outline-none"
+              className="w-full bg-transparent text-2xl font-mono font-bold text-white placeholder-p01-text-dim focus:outline-none"
             />
             <div className="flex gap-2 mt-3">
               {percentButtons.map((percent) => (
@@ -277,7 +277,7 @@ export default function Send() {
         {/* Fee estimate */}
         <div className="bg-p01-surface border border-p01-border p-3 rounded-lg">
           <div className="flex justify-between items-center">
-            <span className="text-[10px] text-[#555560] font-mono tracking-wider">
+            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">
               ESTIMATED FEE
             </span>
             <span className="text-xs text-p01-chrome font-mono">~0.000005 SOL</span>

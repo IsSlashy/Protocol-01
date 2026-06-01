@@ -407,8 +407,8 @@ export default function Settings() {
               className="w-full flex items-center justify-between p-4 hover:bg-p01-void/50 transition-colors"
             >
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-orange-500/20 flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-orange-400" />
+                <div className="w-9 h-9 rounded-lg bg-warning/20 flex items-center justify-center">
+                  <Bell className="w-5 h-5 text-warning" />
                 </div>
                 <div className="text-left">
                   <p className="text-white font-medium">Notifications</p>
@@ -534,8 +534,8 @@ export default function Settings() {
                 className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-green-500/20 flex items-center justify-center">
-                    <Lock className="w-5 h-5 text-green-400" />
+                  <div className="w-9 h-9 rounded-lg bg-p01-cyan/20 flex items-center justify-center">
+                    <Lock className="w-5 h-5 text-p01-cyan" />
                   </div>
                   <div className="text-left">
                     <p className="text-white font-medium">Change Password</p>
@@ -552,8 +552,8 @@ export default function Settings() {
               className="w-full flex items-center justify-between p-4 hover:bg-p01-void/50 transition-colors"
             >
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <Globe className="w-5 h-5 text-blue-400" />
+                <div className="w-9 h-9 rounded-lg bg-p01-blue/20 flex items-center justify-center">
+                  <Globe className="w-5 h-5 text-p01-blue" />
                 </div>
                 <div className="text-left">
                   <p className="text-white font-medium">Connected Sites</p>
@@ -726,8 +726,8 @@ export default function Settings() {
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-orange-400" />
+                <div className="w-10 h-10 rounded-full bg-warning/20 flex items-center justify-center">
+                  <Bell className="w-5 h-5 text-warning" />
                 </div>
                 <h3 id="notif-modal-title" className="text-lg font-display font-bold text-white">
                   Notifications
@@ -978,8 +978,8 @@ export default function Settings() {
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-                  <Lock className="w-5 h-5 text-green-400" />
+                <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
+                  <Lock className="w-5 h-5 text-p01-cyan" />
                 </div>
                 <h3 id="password-modal-title" className="text-lg font-display font-bold text-white">
                   Change Password
@@ -996,8 +996,8 @@ export default function Settings() {
 
             {passwordSuccess ? (
               <div className="text-center py-4">
-                <div className="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
-                  <Check className="w-8 h-8 text-green-400" />
+                <div className="w-16 h-16 rounded-full bg-p01-cyan/20 flex items-center justify-center mx-auto mb-4">
+                  <Check className="w-8 h-8 text-p01-cyan" />
                 </div>
                 <p className="text-white font-medium">Password Changed!</p>
                 <p className="text-p01-chrome/60 text-sm mt-1">Redirecting to unlock...</p>
@@ -1066,7 +1066,7 @@ export default function Settings() {
                   <button
                     onClick={handleChangePassword}
                     disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
-                    className="flex-1 py-3 bg-green-500 text-white font-medium rounded-xl hover:bg-green-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 py-3 bg-p01-cyan text-p01-void font-medium rounded-xl hover:bg-p01-cyan/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {passwordLoading ? (
                       <>

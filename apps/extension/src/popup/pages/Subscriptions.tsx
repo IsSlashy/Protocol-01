@@ -165,7 +165,7 @@ export default function Subscriptions() {
         <motion.div
           initial={{ y: 10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="bg-gradient-to-br from-p01-cyan/20 to-p01-surface rounded-xl p-4 border border-p01-cyan/30"
+          className="bg-p01-gradient-card rounded-2xl p-4 border border-p01-cyan/30"
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -360,7 +360,7 @@ export default function Subscriptions() {
           {serviceStreams.length > 0 && (
             <div className="mt-6">
               <div className="flex items-center gap-2 mb-3">
-                <CheckCircle className="w-4 h-4 text-green-400" />
+                <CheckCircle className="w-4 h-4 text-p01-cyan" />
                 <span className="text-sm font-semibold text-white">
                   Your Subscriptions ({serviceStreams.length})
                 </span>
@@ -481,7 +481,7 @@ function ServiceCard({
       className={cn(
         'w-full flex items-center gap-3 p-3.5 bg-p01-surface rounded-xl transition-colors text-left',
         isSubscribed
-          ? 'border border-green-500/30'
+          ? 'border border-p01-cyan/30'
           : 'border border-p01-border hover:bg-p01-elevated'
       )}
     >
@@ -489,10 +489,10 @@ function ServiceCard({
       <div
         className={cn(
           'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
-          isSubscribed ? 'bg-green-500/10' : 'bg-p01-pink/10'
+          isSubscribed ? 'bg-p01-cyan/10' : 'bg-p01-pink/10'
         )}
       >
-        <Icon className={cn('w-5 h-5', isSubscribed ? 'text-green-400' : 'text-p01-pink')} />
+        <Icon className={cn('w-5 h-5', isSubscribed ? 'text-p01-cyan' : 'text-p01-pink')} />
       </div>
 
       {/* Info */}
@@ -500,7 +500,7 @@ function ServiceCard({
         <p className="text-sm font-medium text-white truncate">{service.name}</p>
         <div className="flex items-center gap-1.5 mt-0.5">
           {isSubscribed && (
-            <span className="px-1.5 py-0.5 text-[9px] bg-green-500/20 text-green-400 rounded font-medium">
+            <span className="px-1.5 py-0.5 text-[9px] bg-p01-cyan/20 text-p01-cyan rounded font-medium">
               ACTIVE
             </span>
           )}

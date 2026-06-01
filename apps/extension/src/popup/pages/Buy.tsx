@@ -156,10 +156,10 @@ export default function Buy() {
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-orange-500/10 border border-orange-500/30 rounded-xl p-3 flex items-center gap-3"
+            className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-center gap-3"
           >
-            <Zap className="w-5 h-5 text-orange-400 flex-shrink-0" />
-            <p className="text-orange-400 text-xs">
+            <Zap className="w-5 h-5 text-warning flex-shrink-0" />
+            <p className="text-warning text-xs">
               Switch to mainnet to buy real crypto.
             </p>
           </motion.div>
@@ -337,7 +337,7 @@ export default function Buy() {
           className="bg-p01-surface rounded-xl border border-p01-border p-3 space-y-2"
         >
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-green-400" />
+            <Shield className="w-4 h-4 text-p01-cyan" />
             <span className="text-p01-chrome text-xs">Secure payment processing</span>
           </div>
           <div className="flex items-center gap-2">
