@@ -27,6 +27,7 @@ import {
 } from '../../shared/services/jupiter';
 import { useWalletStore } from '../../shared/store/wallet';
 import { getConnection } from '../../shared/services/wallet';
+import { getSolscanUrl } from '../../shared/services/transactions';
 import { VersionedTransaction } from '@solana/web3.js';
 
 type SwapStatus = 'idle' | 'quoting' | 'signing' | 'swapping' | 'success' | 'error';
@@ -393,7 +394,7 @@ export default function Swap() {
             </p>
             {successSig && (
               <a
-                href={`https://solscan.io/tx/${successSig}`}
+                href={getSolscanUrl('tx', successSig, network)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-p01-cyan flex items-center gap-1 mt-2 hover:underline"

@@ -30,6 +30,7 @@ import { cn, truncateAddress } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
 import { useWalletStore } from '@/shared/store/wallet';
 import { formatInterval, calculateNextPayment, PaymentRecord } from '@/shared/services/stream';
+import { getSolscanUrl } from '@/shared/services/transactions';
 import {
   detectServiceFromName,
   detectServiceFromOrigin,
@@ -511,6 +512,7 @@ export default function SubscriptionDetails() {
 }
 
 function PaymentHistoryItem({ payment }: { payment: PaymentRecord }) {
+  const { network } = useWalletStore();
   const statusColors = {
     confirmed: 'text-p01-cyan',
     pending: 'text-warning',
@@ -541,7 +543,7 @@ function PaymentHistoryItem({ payment }: { payment: PaymentRecord }) {
           {payment.status}
         </p>
         <a
-          href={`https://solscan.io/tx/${payment.signature}`}
+          href={getSolscanUrl('tx', payment.signature, network)}
           target="_blank"
           rel="noopener noreferrer"
           aria-label="View transaction on Solscan"
