@@ -32,9 +32,6 @@ import ApproveTransaction from './pages/ApproveTransaction';
 import ApproveSubscription from './pages/ApproveSubscription';
 import ConnectedSites from './pages/ConnectedSites';
 import SubscriptionVaults from './pages/SubscriptionVaults';
-import DenominatedPools from './pages/DenominatedPools';
-import DenominatedShield from './pages/DenominatedShield';
-import DenominatedUnshield from './pages/DenominatedUnshield';
 import MugenExchange from './pages/MugenExchange';
 
 function App() {
@@ -214,9 +211,6 @@ function App() {
           <Route path="/shielded/transfer" element={<ShieldedTransfer />} />
           <Route path="/confidential" element={<ConfidentialWallet />} />
           <Route path="/subscription-vaults" element={<SubscriptionVaults />} />
-          <Route path="/denominated" element={<DenominatedPools />} />
-          <Route path="/denominated/shield" element={<DenominatedShield />} />
-          <Route path="/denominated/unshield" element={<DenominatedUnshield />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />
         </Route>
 
