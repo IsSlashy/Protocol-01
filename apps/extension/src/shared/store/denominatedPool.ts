@@ -109,6 +109,9 @@ interface DenominatedPoolState {
 
   // Actions
   addNote: (receipt: ShieldReceipt) => void;
+  /** Drop a note from the local picker by its commitment string (e.g. once it
+   * has been spent by a subscription, or detected spent on-chain). */
+  removeNote: (noteId: string) => void;
   shieldNote: (params: {
     token: 'SOL' | 'USDC';
     denomination: number;
@@ -208,6 +211,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       addNote: (receipt) => {
         set((state) => ({
           serializedNotes: [...state.serializedNotes, serializeReceipt(receipt)],
+        }));
+      },
+
+      removeNote: (noteId) => {
+        set((state) => ({
+          serializedNotes: state.serializedNotes.filter((n) => n.commitment !== noteId),
         }));
       },
 

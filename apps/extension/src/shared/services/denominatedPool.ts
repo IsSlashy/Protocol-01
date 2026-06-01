@@ -564,6 +564,31 @@ export function deriveNullifierPDA(
   );
 }
 
+/**
+ * Check whether a note has already been spent (subscribed or unshielded) by
+ * looking up its on-chain NullifierRecord PDA at
+ * [b"nullifier", pool, goldilocksU64To32(nullifier)].
+ *
+ * Cheap pre-flight: a single getAccountInfo, no proof. Lets callers fail fast
+ * instead of burning a ~2-minute STARK proof + buffer rent on a note the
+ * on-chain double-spend guard would reject anyway (subscribe_private_stark
+ * inits the NullifierRecord, so a live record => "Allocate ... already in use").
+ * The nullifier value is recomputed locally via `createNullifierV3` (identical
+ * to the C1 public input), so no proof generation is needed.
+ */
+export async function isNullifierSpent(
+  connection: Connection,
+  poolPDA: PublicKey,
+  nullifierPreimage: bigint,
+  secret: bigint,
+): Promise<boolean> {
+  const nullifier = createNullifierV3(nullifierPreimage, secret);
+  const nullifierBytes = goldilocksU64To32(nullifier);
+  const [nullifierPDA] = deriveNullifierPDA(poolPDA, nullifierBytes);
+  const info = await connection.getAccountInfo(nullifierPDA);
+  return info !== null;
+}
+
 // ---------------------------------------------------------------------------
 // goldilocksU64To32 (mirrors mobile/subscriptionVault line 44 + extension)
 // ---------------------------------------------------------------------------
@@ -819,7 +844,12 @@ export async function prepareShieldInsert(
   onProgress?.('Reading on-chain tree state...');
   const treeInfo = await connection.getAccountInfo(poolConfig.treePDA);
   if (!treeInfo) throw new Error(`Tree account not found: ${poolConfig.treePDA.toBase58()}`);
-  const { leafCount, subtrees } = parseFilledSubtrees(Buffer.from(treeInfo.data));
+  const treeBuf = Buffer.from(treeInfo.data);
+  const { leafCount, subtrees } = parseFilledSubtrees(treeBuf);
+
+  // On-chain current root (low 8 bytes LE of MerkleTreeStateV3.root @ offset 8+32).
+  let onChainRoot = 0n;
+  for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(treeBuf[8 + 32 + b]);
 
   // 2. Derive note material.
   onProgress?.('Deriving note material...');
@@ -838,9 +868,39 @@ export async function prepareShieldInsert(
   const newLeaf = commitment;
 
   // 5. Compute new root + path from filledSubtrees.
+  //
+  // The C6 proof's old_root public input MUST equal the live on-chain
+  // merkle_tree.root (shield_denominated_v3.rs:104-105 binds it). old_root is
+  // the WASM folding an EMPTY leaf (0) up through `pathElements`, and
+  // pathElements are derived from the per-level sibling array. The on-chain
+  // `filled_subtrees` Vec stores the last leaf at index 0 and the level-i
+  // sibling at index i+1 (merkle_tree_v3.rs:176-184), BUT past extension
+  // shields wrote that array shifted, so the canonical convention can't be
+  // assumed. Rather than trust one layout, reconstruct old_root BOTH ways and
+  // use whichever reproduces the on-chain root — then we only generate the
+  // (~2-minute) proof when it will actually verify.
   onProgress?.('Computing Merkle path...');
-  const { newRoot, updatedSubtrees, pathElements, pathIndices } =
-    computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees);
+  const direct = computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees);
+  const sliced = computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees.slice(1));
+  const oldRootDirect = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees).newRoot;
+  const oldRootSliced = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees.slice(1)).newRoot;
+
+  let chosen: typeof direct;
+  if (oldRootDirect === onChainRoot) {
+    chosen = direct;
+  } else if (oldRootSliced === onChainRoot) {
+    chosen = sliced;
+  } else {
+    throw new Error(
+      `Shield pre-flight failed: cannot reconstruct the on-chain Merkle root ` +
+      `(${onChainRoot}) from the pool's filled_subtrees for leaf #${leafCount}. ` +
+      `Neither layout matched (direct=${oldRootDirect}, shifted=${oldRootSliced}). ` +
+      `The tree state has diverged from this client — refusing to burn proof rent ` +
+      `on a guaranteed InvalidProof. Retry shortly; if it persists the pool tree ` +
+      `was advanced by an incompatible client.`,
+    );
+  }
+  const { newRoot, updatedSubtrees, pathElements, pathIndices } = chosen;
 
   // 6. Generate C6 STARK proof.
   onProgress?.('Generating C6 (merkle_update) STARK proof (30-60s)...');

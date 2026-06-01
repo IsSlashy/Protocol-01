@@ -51,7 +51,25 @@ import { starkProver } from './starkProver';
 import {
   deriveNullifierPDA,
   bigintToLeBytes32,
+  isNullifierSpent,
 } from './denominatedPool';
+
+/**
+ * Thrown when the selected note's nullifier already exists on-chain — the note
+ * was already spent (a prior subscription or unshield). Carries `noteId` so the
+ * UI/store can drop the stale note from the local picker.
+ */
+export class NoteAlreadySpentError extends Error {
+  readonly noteId: string;
+  constructor(noteId: string) {
+    super(
+      'This shielded note has already been spent (used for a prior subscription ' +
+      'or withdrawal). Pick a different note, or shield a new one.',
+    );
+    this.name = 'NoteAlreadySpentError';
+    this.noteId = noteId;
+  }
+}
 
 // Re-export types
 export type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData };
@@ -814,6 +832,21 @@ export async function subscribePrivate(params: {
   const retailerPubkey = new PublicKey(retailer);
   const poolPDA = new PublicKey(poolPDAStr);
   const treePDA = new PublicKey(treePDAStr);
+
+  // Fail-fast: a note is single-use. If its nullifier record already exists
+  // on-chain (prior subscribe/unshield), subscribe_private_stark will reject
+  // it with "Allocate ... already in use" — but only AFTER we've spent ~2min
+  // generating + uploading the C1 proof. Check the (cheap) nullifier PDA first.
+  onProgress?.('Checking note is unspent...');
+  const alreadySpent = await isNullifierSpent(
+    connection,
+    poolPDA,
+    receipt.nullifierPreimage,
+    receipt.secret,
+  );
+  if (alreadySpent) {
+    throw new NoteAlreadySpentError(receipt.commitment.toString());
+  }
 
   onProgress?.('Encoding subscriber commitment...');
   const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);

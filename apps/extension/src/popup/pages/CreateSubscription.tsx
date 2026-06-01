@@ -22,7 +22,12 @@ import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { useSubscriptionVaultStore } from '@/shared/store/subscriptionVault';
 import { SubscriptionInterval, type PaymentSigner } from '@/shared/services/stream';
 import { getConnection, type NetworkType } from '@/shared/services/wallet';
-import { findPoolV3 } from '@/shared/services/denominatedPool';
+import {
+  findPoolV3,
+  createNullifierV3,
+  goldilocksU64To32,
+  deriveNullifierPDA,
+} from '@/shared/services/denominatedPool';
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
 
@@ -150,7 +155,7 @@ export default function CreateSubscription() {
   const { _keypair, network, isUnlocked, isPrivyWallet, isRemoteWallet, publicKey } = useWalletStore();
   const { wallets } = useSolanaWallets();
   const { shieldedBalance } = useShieldedStore();
-  const { getSpendableNote, getNotes } = useDenominatedPoolStore();
+  const { getSpendableNote, getNotes, removeNote } = useDenominatedPoolStore();
   const { createPrivateVault, saveSecret } = useSubscriptionVaultStore();
 
   // The recipient is already determined by how the user arrived here:
@@ -193,6 +198,39 @@ export default function CreateSubscription() {
     const refetch = setInterval(fetchSlot, 30_000);
     const tick = setInterval(() => setNowTs(Date.now()), 1000);
     return () => { cancelled = true; clearInterval(refetch); clearInterval(tick); };
+  }, [network]);
+
+  // Spent-note scan: a denominated note is single-use (one note = one
+  // subscription/withdrawal). After it's spent, its on-chain NullifierRecord
+  // PDA exists. The local picker can go stale (e.g. spent on another device, or
+  // a tx that landed despite a client-side RPC timeout), so on mount we batch
+  // getMultipleAccountsInfo over every note's nullifier PDA and drop any that
+  // are already spent — otherwise they'd show "✓ Ready" and fail ~2min in.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const notes = getNotes();
+        if (notes.length === 0) return;
+        const conn = getConnection(network);
+        const entries = notes
+          .map((n) => {
+            const pool = findPoolV3(n.token, n.denominationHuman);
+            if (!pool) return null;
+            const nul = createNullifierV3(n.nullifierPreimage, n.secret);
+            const [pda] = deriveNullifierPDA(pool.poolPDA, goldilocksU64To32(nul));
+            return { noteId: n.commitment.toString(), pda };
+          })
+          .filter((e): e is { noteId: string; pda: PublicKey } => e !== null);
+        if (entries.length === 0) return;
+        const infos = await conn.getMultipleAccountsInfo(entries.map((e) => e.pda));
+        if (cancelled) return;
+        infos.forEach((info, i) => {
+          if (info !== null) removeNote(entries[i].noteId);
+        });
+      } catch { /* best-effort — fail-fast in subscribePrivate still guards */ }
+    })();
+    return () => { cancelled = true; };
   }, [network]);
 
   const activeName = prefillName;
@@ -409,9 +447,19 @@ export default function CreateSubscription() {
         );
         saveSecret(vaultPDA.toBase58(), subscriberSecret.toString());
 
+        // Note is now spent (one note funds exactly one subscription). Drop it
+        // from the local picker so it can't be re-selected (would collide on the
+        // nullifier record on-chain).
+        removeNote(note.commitment.toString());
+
         navigate('/subscriptions', { replace: true });
       } catch (err) {
         console.error('[Subscription/ZK] Create error:', err);
+        // If the note was already spent on-chain (stale local picker entry),
+        // drop it so the user doesn't keep hitting the same dead note.
+        if ((err as Error)?.name === 'NoteAlreadySpentError') {
+          removeNote(note.commitment.toString());
+        }
         setError((err as Error)?.message || 'Failed to start ZK subscription.');
       } finally {
         setIsCreating(false);
