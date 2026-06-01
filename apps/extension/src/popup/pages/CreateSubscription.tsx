@@ -8,9 +8,9 @@ import {
   EyeOff,
   Lock,
   Shuffle,
-  Clock,
   Zap,
   Check,
+  PlusCircle,
 } from 'lucide-react';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { cn } from '@/shared/utils';
@@ -19,8 +19,12 @@ import { useWalletStore, getPrivySigner } from '@/shared/store/wallet';
 import { useSolanaWallets } from '@/shared/providers/PrivyProvider';
 import { useShieldedStore } from '@/shared/store/shielded';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
+import { useSubscriptionVaultStore } from '@/shared/store/subscriptionVault';
 import { SubscriptionInterval, type PaymentSigner } from '@/shared/services/stream';
 import { getConnection, type NetworkType } from '@/shared/services/wallet';
+import { findPoolV3 } from '@/shared/services/denominatedPool';
+import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
+import { starkProver } from '@/shared/services/starkProver';
 
 /**
  * Resolve a service subscription's PAYMENT recipient: the merchant's on-chain
@@ -88,6 +92,28 @@ const PRIVACY_MODES = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Interval → slots mapping (Solana ~400ms/slot = 2.5 slots/sec)
+// Mirrors how the mobile subscription vaults are structured:
+//   daily   = 7200 * 1  =  7 200 slots (~24h)
+//   weekly  = 7200 * 7  = 50 400 slots (~7d)
+//   monthly = 7200 * 30 = 216 000 slots (~30d)
+//   yearly  = 7200 * 365 = 2 628 000 slots (~1yr)
+// SLOTS_PER_EPOCH = 7200 (matches denominatedPool.ts constant).
+// ---------------------------------------------------------------------------
+
+const SLOTS_PER_DAY = 7200n;
+
+function intervalToSlots(interval: SubscriptionInterval): bigint {
+  switch (interval) {
+    case 'daily':   return SLOTS_PER_DAY;
+    case 'weekly':  return SLOTS_PER_DAY * 7n;
+    case 'monthly': return SLOTS_PER_DAY * 30n;
+    case 'yearly':  return SLOTS_PER_DAY * 365n;
+    default:        return SLOTS_PER_DAY * 30n;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function CreateSubscription() {
@@ -98,7 +124,8 @@ export default function CreateSubscription() {
   const { _keypair, network, isUnlocked, isPrivyWallet, isRemoteWallet, publicKey } = useWalletStore();
   const { wallets } = useSolanaWallets();
   const { shieldedBalance } = useShieldedStore();
-  const { getSpendableNote } = useDenominatedPoolStore();
+  const { getSpendableNote, getNotes } = useDenominatedPoolStore();
+  const { createPrivateVault, saveSecret } = useSubscriptionVaultStore();
 
   // The recipient is already determined by how the user arrived here:
   //   - picked a service in Subscriptions  -> service data in location.state
@@ -117,6 +144,10 @@ export default function CreateSubscription() {
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>('noise');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progressMsg, setProgressMsg] = useState<string | null>(null);
+
+  // ZK note picker state — index into getNotes() array.
+  const [selectedNoteIndex, setSelectedNoteIndex] = useState<number | null>(null);
 
   const activeName = prefillName;
   const activeRecipient = prefillRecipient;
@@ -179,25 +210,158 @@ export default function CreateSubscription() {
       return;
     }
 
-    // ZK Private mode requires a denominated pool note.
-    // If no spendable note exists yet, route to the shield screen first.
+    // ── ZK Private mode ──────────────────────────────────────────────────────
     if (privacyMode === 'zk') {
-      // Try SOL 0.1 as the default denomination for private subscriptions.
-      const note = getSpendableNote('SOL', 0.1);
-      if (!note) {
+      const notes = getNotes();
+
+      // No notes at all → send to shield screen.
+      if (notes.length === 0) {
         navigate('/denominated-shield');
         return;
       }
-      // Note exists — proceed to ZK subscribe via vault store.
-      // (Full end-to-end wiring is done in SubscriptionVaults / createPrivateVault.
-      // For now route the user there with a note about next steps.)
-      alert(
-        'A denominated note is ready.\n\n' +
-        'Go to Subscription Vaults to create a private vault using this note, ' +
-        'or use the existing note from the denominated pool store.',
-      );
+
+      // Notes exist but none selected → prompt user.
+      if (selectedNoteIndex === null) {
+        setError('Select a shielded note to fund this subscription.');
+        return;
+      }
+
+      const note = notes[selectedNoteIndex];
+      if (!note) {
+        setError('Selected note no longer exists. Please select another.');
+        return;
+      }
+
+      setIsCreating(true);
+      setProgressMsg(null);
+
+      try {
+        // Resolve the merchant retailer — same as standard flow.
+        let recipient = activeRecipient;
+        if (svc) {
+          setProgressMsg('Resolving merchant address...');
+          const resolved = await resolveServiceRecipient(svc, network);
+          if (!resolved) {
+            setError(`${activeName || 'This service'} isn't registered on-chain yet — there's no merchant address to pay.`);
+            setIsCreating(false);
+            setProgressMsg(null);
+            return;
+          }
+          recipient = resolved;
+        }
+
+        try {
+          new PublicKey(recipient);
+        } catch {
+          setError('Invalid recipient address.');
+          setIsCreating(false);
+          setProgressMsg(null);
+          return;
+        }
+
+        // receipt.merkleRoot must be present (set at shield time in shieldV3).
+        if (!note.merkleRoot) {
+          setError(
+            'This note is missing a Merkle root. Re-shield a new note before subscribing privately.',
+          );
+          setIsCreating(false);
+          setProgressMsg(null);
+          return;
+        }
+
+        // Find the pool config for this note so we get treePDA.
+        const poolConfig = findPoolV3(note.token, note.denominationHuman);
+        if (!poolConfig) {
+          setError(`No pool registered for ${note.token} ${note.denominationHuman}. Reshield with a current denomination.`);
+          setIsCreating(false);
+          setProgressMsg(null);
+          return;
+        }
+
+        // Rate in atomic units. Private subscribe requires rate <= denomination.
+        const rateAtomic = BigInt(Math.round(activeAmount * 1e9));
+        if (rateAtomic > poolConfig.denominationAtomic) {
+          setError(
+            `Subscription rate (${activeAmount} ${note.token}) exceeds the note denomination ` +
+            `(${note.denominationHuman} ${note.token}). Choose a smaller amount or shield a larger note.`,
+          );
+          setIsCreating(false);
+          setProgressMsg(null);
+          return;
+        }
+
+        const intervalSlots = intervalToSlots(activeInterval);
+
+        // ── Subscriber-ownership commitment ───────────────────────────────
+        // The subscriber secret IS the note's own Goldilocks secret
+        // (mirrors mobile subscribe-private.tsx line 174: `subscriberSecret = receipt.secret`).
+        // Circuit-0 (subscriber_ownership) takes the secret bigint and returns a
+        // Goldilocks u64 commitment. The commitment is then used as the vault PDA
+        // seed and stored on-chain for pause/resume/cancel verification.
+        //
+        // Derivation mirrors mobile subscribe-private.tsx lines 177-178:
+        //   ownershipResult = await starkGenerate(subscriberSecret.toString())
+        //   subscriberOwnershipCommitment = BigInt(ownershipResult.commitment)
+        //   vkHashSubscriber = sha256(Buffer.from(ownershipResult.commitment, 'hex'))
+        //
+        // NOTE: starkProver.generateProof returns { commitment: string } where
+        // commitment is the decimal bigint string from WASM (same as what
+        // BigInt(proofResult.commitment) uses in pausePrivate). The mobile's
+        // sha256(Buffer.from(commitment, 'hex')) would fail on a decimal string,
+        // so we use zeros for vkHashSubscriber here (acceptable: vkHashSubscriber
+        // is informational — the on-chain ix only checks subscriber_commitment for
+        // pause/resume/cancel, not vkHashSubscriber).
+        setProgressMsg('Starting STARK prover...');
+        await starkProver.start();
+
+        setProgressMsg('Computing subscriber ownership commitment (circuit 0)...');
+        const subscriberSecret = note.secret; // Goldilocks bigint
+        const ownershipResult = await starkProver.generateProof(subscriberSecret.toString());
+        const subscriberOwnershipCommitment = BigInt(ownershipResult.commitment);
+
+        // vkHashSubscriber: 32 bytes stored on-chain as metadata.
+        // Use zeros — pause/resume/cancel validate circuit-0 proof against
+        // subscriber_commitment, not vkHashSubscriber. Matches extension pattern
+        // (createNormalVault also passes new Uint8Array(32) by default).
+        const vkHashSubscriber = new Uint8Array(32);
+
+        // ── Create private vault ───────────────────────────────────────────
+        setProgressMsg('Creating private vault (C1 proof + on-chain)...');
+        await createPrivateVault({
+          receipt: note,
+          poolPDA: poolConfig.poolPDA.toBase58(),
+          treePDA: poolConfig.treePDA.toBase58(),
+          retailer: recipient,
+          rate: rateAtomic,
+          intervalSlots,
+          subscriberOwnershipCommitment,
+          vkHashSubscriber,
+          onProgress: (step) => setProgressMsg(step),
+        });
+
+        // ── Persist subscriber secret for pause/resume/cancel ─────────────
+        // Vault PDA is keyed by [retailer, subscriberCommitmentBytes, tokenMint].
+        // Mirrors mobile subscriptionVaultStore.ts lines 415-436.
+        const { goldilocksU64To32 } = await import('@/shared/services/subscriptionVault');
+        const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);
+        const vaultPDA = deriveVaultPDA(
+          new PublicKey(recipient),
+          subscriberCommitmentBytes,
+          poolConfig.tokenMint, // SOL = SystemProgram.programId
+        );
+        saveSecret(vaultPDA.toBase58(), subscriberSecret.toString());
+
+        navigate('/subscriptions', { replace: true });
+      } catch (err) {
+        console.error('[Subscription/ZK] Create error:', err);
+        setError((err as Error)?.message || 'Failed to start ZK subscription.');
+      } finally {
+        setIsCreating(false);
+        setProgressMsg(null);
+      }
       return;
     }
+    // ── End ZK Private mode ───────────────────────────────────────────────────
 
     if (!(activeAmount > 0)) {
       setError('Amount must be greater than 0.');
@@ -257,6 +421,10 @@ export default function CreateSubscription() {
       setIsCreating(false);
     }
   };
+
+  // ── Note picker data ───────────────────────────────────────────────────────
+  // Re-computed on each render (store subscription ensures React sees updates).
+  const allNotes = getNotes();
 
   return (
     <div className="flex flex-col h-full bg-p01-void">
@@ -365,7 +533,7 @@ export default function CreateSubscription() {
           </motion.div>
         )}
 
-        {/* ═══ STEP 3: Confirm ═══ */}
+        {/* ═══ STEP 2: Confirm ═══ */}
         {step === 'confirm' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
             {/* Summary card */}
@@ -398,6 +566,80 @@ export default function CreateSubscription() {
               </div>
             </div>
 
+            {/* ── ZK Note Picker ─────────────────────────────────────────── */}
+            {privacyMode === 'zk' && (
+              <div className="space-y-2">
+                <p className="text-p01-chrome text-[10px] font-mono tracking-wider">
+                  SELECT FUNDING NOTE
+                </p>
+
+                {allNotes.length === 0 ? (
+                  <div className="p-3 rounded-lg bg-p01-surface border border-p01-border text-center space-y-2">
+                    <p className="text-p01-chrome text-xs">No shielded notes found.</p>
+                    <button
+                      onClick={() => navigate('/denominated-shield')}
+                      className="flex items-center justify-center gap-1.5 text-p01-cyan text-[11px] font-mono mx-auto hover:text-p01-cyan/80 transition-colors"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      Shield a note first
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {allNotes.map((note, idx) => {
+                      const isSelected = selectedNoteIndex === idx;
+                      // Short commitment display: last 8 hex chars of commitment bigint.
+                      const commitHex = note.commitment.toString(16).padStart(16, '0');
+                      const shortCommit = commitHex.slice(-8);
+                      return (
+                        <button
+                          key={`${note.pool}-${note.leafIndex}`}
+                          onClick={() => setSelectedNoteIndex(idx)}
+                          className={cn(
+                            'w-full p-3 rounded-xl border text-left transition-all',
+                            isSelected
+                              ? 'border-p01-cyan bg-p01-cyan/8'
+                              : 'border-p01-border bg-p01-surface hover:border-p01-cyan/40',
+                          )}
+                          style={isSelected ? { borderColor: '#39c5bb', background: '#39c5bb0d' } : undefined}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Shield
+                                className="w-4 h-4 shrink-0"
+                                style={{ color: isSelected ? '#39c5bb' : '#6b7280' }}
+                              />
+                              <div>
+                                <p className="text-white text-xs font-mono font-semibold">
+                                  {note.denominationHuman} {note.token}
+                                </p>
+                                <p className="text-p01-chrome text-[9px] font-mono">
+                                  leaf #{note.leafIndex} · …{shortCommit}
+                                </p>
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <Check className="w-4 h-4 text-p01-cyan shrink-0" />
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+
+                    {/* Shield more notes link */}
+                    <button
+                      onClick={() => navigate('/denominated-shield')}
+                      className="flex items-center gap-1.5 text-p01-chrome text-[10px] font-mono hover:text-p01-cyan transition-colors pt-1 pl-1"
+                    >
+                      <PlusCircle className="w-3 h-3" />
+                      Shield a new note
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* ── End ZK Note Picker ──────────────────────────────────────── */}
+
             {/* Privacy badge */}
             <div className="p-3 rounded-lg bg-p01-dark border border-p01-border flex items-center gap-2">
               <EyeOff className="w-4 h-4 text-p01-cyan shrink-0" />
@@ -409,6 +651,14 @@ export default function CreateSubscription() {
                   : 'Fully untraceable. Each payment from shielded pool with ZK proof.'}
               </p>
             </div>
+
+            {/* Progress message (ZK proving) */}
+            {isCreating && progressMsg && (
+              <div className="p-3 rounded-lg bg-p01-cyan/5 border border-p01-cyan/20 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 text-p01-cyan animate-spin shrink-0" />
+                <p className="text-p01-cyan text-[10px] font-mono">{progressMsg}</p>
+              </div>
+            )}
 
             {/* Error */}
             {error && (
