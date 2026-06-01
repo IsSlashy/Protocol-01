@@ -39,6 +39,13 @@ export default function SubscriptionVaults() {
     getClaimableAmount,
     getRefundable,
     getNextClaimableSlot,
+    pauseNormalVault,
+    resumeNormalVault,
+    cancelNormalVault,
+    claimVaultPeriod,
+    pausePrivateVault,
+    resumePrivateVault,
+    cancelPrivateVault,
   } = useSubscriptionVaultStore();
 
   const [showBalance, setShowBalance] = useState(true);
@@ -84,6 +91,8 @@ export default function SubscriptionVaults() {
     return () => clearInterval(interval);
   }, []);
 
+  const [zkProgress, setZkProgress] = useState<string | null>(null);
+
   const handlePause = async () => {
     if (!selectedVault) return;
     const vault = vaults.find(v => v.address === selectedVault);
@@ -91,17 +100,22 @@ export default function SubscriptionVaults() {
 
     setIsProcessing(true);
     setError(null);
+    setZkProgress(null);
 
     try {
-      // TODO: Implement pause logic
+      if (vault.isPrivateMode) {
+        await pausePrivateVault(selectedVault, (step) => setZkProgress(step));
+      } else {
+        await pauseNormalVault(selectedVault);
+      }
       setSuccessMsg('Vault paused successfully');
       setActionModal(null);
-      await refreshVault(selectedVault);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setIsProcessing(false);
+      setZkProgress(null);
     }
   };
 
@@ -112,17 +126,22 @@ export default function SubscriptionVaults() {
 
     setIsProcessing(true);
     setError(null);
+    setZkProgress(null);
 
     try {
-      // TODO: Implement resume logic
+      if (vault.isPrivateMode) {
+        await resumePrivateVault(selectedVault, (step) => setZkProgress(step));
+      } else {
+        await resumeNormalVault(selectedVault);
+      }
       setSuccessMsg('Vault resumed successfully');
       setActionModal(null);
-      await refreshVault(selectedVault);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setIsProcessing(false);
+      setZkProgress(null);
     }
   };
 
@@ -133,17 +152,22 @@ export default function SubscriptionVaults() {
 
     setIsProcessing(true);
     setError(null);
+    setZkProgress(null);
 
     try {
-      // TODO: Implement cancel logic
+      if (vault.isPrivateMode) {
+        await cancelPrivateVault(selectedVault, (step) => setZkProgress(step));
+      } else {
+        await cancelNormalVault(selectedVault);
+      }
       setSuccessMsg('Vault cancelled successfully');
       setActionModal(null);
-      await refreshVault(selectedVault);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setIsProcessing(false);
+      setZkProgress(null);
     }
   };
 
@@ -156,10 +180,9 @@ export default function SubscriptionVaults() {
     setError(null);
 
     try {
-      // TODO: Implement claim logic
+      await claimVaultPeriod(selectedVault);
       setSuccessMsg('Periods claimed successfully');
       setActionModal(null);
-      await refreshVault(selectedVault);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
       setError((err as Error).message);
@@ -195,7 +218,7 @@ export default function SubscriptionVaults() {
   return (
     <div className="flex flex-col h-full bg-p01-void">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-p01-dark bg-p01-surface">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-p01-border bg-p01-surface">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/shielded')}
@@ -234,12 +257,12 @@ export default function SubscriptionVaults() {
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mx-4 mt-3 p-3 bg-green-500/10 rounded-lg border border-green-500/30 flex items-center gap-2"
+            className="mx-4 mt-3 p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/30 flex items-center gap-2"
             role="status"
             aria-live="polite"
           >
-            <Check className="w-4 h-4 text-green-400" aria-hidden="true" />
-            <p className="text-green-400 text-xs">{successMsg}</p>
+            <Check className="w-4 h-4 text-p01-cyan" aria-hidden="true" />
+            <p className="text-p01-cyan text-xs">{successMsg}</p>
           </motion.div>
         )}
 
@@ -264,7 +287,7 @@ export default function SubscriptionVaults() {
             animate={{ y: 0, opacity: 1 }}
             className="mx-4 mt-6"
           >
-            <div className="bg-p01-surface rounded-xl p-6 text-center border border-p01-dark">
+            <div className="bg-p01-surface rounded-xl p-6 text-center border border-p01-border">
               <Calendar className="w-12 h-12 text-p01-chrome/40 mx-auto mb-3" />
               <p className="text-white font-medium mb-1">No subscription vaults yet</p>
               <p className="text-p01-chrome text-xs mb-4">
@@ -296,7 +319,7 @@ export default function SubscriptionVaults() {
                   key={vault.address}
                   initial={{ y: 10, opacity: 0 }}
                   animate={{ y: 0, opacity: 1 }}
-                  className="bg-gradient-to-br from-p01-surface to-p01-dark rounded-xl p-4 border border-p01-cyan/20"
+                  className="bg-p01-gradient-card rounded-2xl p-4 border border-p01-cyan/20"
                 >
                   {/* Header */}
                   <div className="flex items-start justify-between mb-3">
@@ -322,12 +345,12 @@ export default function SubscriptionVaults() {
                         </span>
                       )}
                       {vault.isActive && !vault.isPaused && (
-                        <span className="text-[10px] font-mono font-medium text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full border border-green-400/20">
+                        <span className="text-[10px] font-mono font-medium text-p01-cyan bg-p01-cyan/10 px-2 py-0.5 rounded-full border border-p01-cyan/20">
                           ACTIVE
                         </span>
                       )}
                       {!vault.isActive && (
-                        <span className="text-[10px] font-mono font-medium text-p01-chrome bg-p01-void px-2 py-0.5 rounded-full border border-p01-dark">
+                        <span className="text-[10px] font-mono font-medium text-p01-chrome bg-p01-void px-2 py-0.5 rounded-full border border-p01-border">
                           INACTIVE
                         </span>
                       )}
@@ -488,6 +511,14 @@ export default function SubscriptionVaults() {
                 </p>
               </div>
             </div>
+
+            {/* ZK proof progress */}
+            {zkProgress && (
+              <div className="mb-4 p-3 bg-p01-cyan/5 rounded-lg border border-p01-cyan/20 flex items-center gap-2" aria-live="polite">
+                <Loader2 className="w-4 h-4 text-p01-cyan flex-shrink-0 animate-spin" aria-hidden="true" />
+                <p className="text-p01-cyan text-xs font-mono">{zkProgress}</p>
+              </div>
+            )}
 
             {/* Error */}
             {error && (

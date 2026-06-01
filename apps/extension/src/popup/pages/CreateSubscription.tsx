@@ -34,6 +34,8 @@ const PRIVACY_MODES = [
     icon: Zap,
     color: '#39c5bb',
     features: ['Fast execution', 'Lowest fees'],
+    disabled: false,
+    disabledReason: undefined,
   },
   {
     id: 'noise' as PrivacyMode,
@@ -42,14 +44,18 @@ const PRIVACY_MODES = [
     icon: Shuffle,
     color: '#ff77a8',
     features: ['±15% amount noise', '±4h timing jitter', 'Pattern-resistant'],
+    disabled: false,
+    disabledReason: undefined,
   },
   {
     id: 'zk' as PrivacyMode,
     name: 'ZK Private',
-    desc: 'Pay from shielded pool — untraceable',
+    desc: 'Requires mobile app — no denominated pool in extension',
     icon: Shield,
-    color: '#00ffe5',
-    features: ['Zero-knowledge proof', 'Fully untraceable', 'Consumes shielded note'],
+    color: '#6b7280',
+    features: ['Needs denominated pool', 'Use mobile app'],
+    disabled: true,
+    disabledReason: 'ZK Private subscriptions require the Protocol 01 mobile app (no denominated pool in extension)',
   },
 ];
 
@@ -89,13 +95,25 @@ export default function CreateSubscription() {
 
   const handleCreate = async () => {
     if (!_keypair || !isUnlocked) return;
+
+    // ZK Private mode requires a denominated pool note — not available in the
+    // extension (the denominated pool was removed; only Goldilocks continuous
+    // notes exist). Show an informational alert instead of silently failing.
+    if (privacyMode === 'zk') {
+      alert(
+        'ZK Private subscription requires a denominated pool note.\n\n' +
+        'The extension does not currently have a denominated pool. ' +
+        'Please initiate private subscriptions from the Protocol 01 mobile app, ' +
+        'or use Standard or Noise+Timing mode here.',
+      );
+      return;
+    }
+
     setIsCreating(true);
 
     try {
       const noiseSettings = privacyMode === 'noise'
         ? { amountNoise: 15, timingNoise: 4 }
-        : privacyMode === 'zk'
-        ? { useZkPool: true }
         : {};
 
       const subscription = addSubscription({
@@ -234,16 +252,20 @@ export default function CreateSubscription() {
             {PRIVACY_MODES.map((mode) => (
               <button
                 key={mode.id}
-                onClick={() => setPrivacyMode(mode.id)}
+                onClick={() => !mode.disabled && setPrivacyMode(mode.id)}
+                disabled={mode.disabled}
+                title={mode.disabled ? mode.disabledReason : undefined}
                 className={cn(
                   'w-full p-4 rounded-xl border text-left transition-all',
-                  privacyMode === mode.id
+                  mode.disabled
+                    ? 'bg-p01-surface/50 border-p01-border/50 opacity-60 cursor-not-allowed'
+                    : privacyMode === mode.id
                     ? 'border-opacity-50'
                     : 'bg-p01-surface border-p01-border hover:border-opacity-30',
                 )}
                 style={{
-                  borderColor: privacyMode === mode.id ? mode.color : undefined,
-                  background: privacyMode === mode.id ? `${mode.color}08` : undefined,
+                  borderColor: !mode.disabled && privacyMode === mode.id ? mode.color : undefined,
+                  background: !mode.disabled && privacyMode === mode.id ? `${mode.color}08` : undefined,
                 }}
               >
                 <div className="flex items-start gap-3">
@@ -255,9 +277,16 @@ export default function CreateSubscription() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="text-white font-medium text-sm">{mode.name}</p>
-                      {privacyMode === mode.id && (
+                      <p className={cn('font-medium text-sm', mode.disabled ? 'text-p01-chrome/60' : 'text-white')}>
+                        {mode.name}
+                      </p>
+                      {!mode.disabled && privacyMode === mode.id && (
                         <Check className="w-3.5 h-3.5" style={{ color: mode.color }} />
+                      )}
+                      {mode.disabled && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-p01-border text-p01-chrome/60">
+                          Mobile only
+                        </span>
                       )}
                     </div>
                     <p className="text-p01-chrome text-[11px] mt-0.5">{mode.desc}</p>
@@ -277,12 +306,12 @@ export default function CreateSubscription() {
               </button>
             ))}
 
-            {/* ZK balance warning */}
+            {/* ZK mode unavailability notice */}
             {privacyMode === 'zk' && (
-              <div className="p-3 rounded-lg bg-[#00ffe5]/5 border border-[#00ffe5]/20 flex items-center gap-2">
-                <Lock className="w-4 h-4 text-[#00ffe5] shrink-0" />
-                <p className="text-[#00ffe5] text-[10px] font-mono">
-                  Shielded balance: {shieldedBalance.toFixed(4)} SOL — each payment consumes a shielded note
+              <div className="p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/20 flex items-center gap-2">
+                <Lock className="w-4 h-4 text-yellow-500 shrink-0" />
+                <p className="text-yellow-500 text-[10px] font-mono">
+                  ZK Private is only available in the mobile app. Switch to Standard or Noise mode to continue here.
                 </p>
               </div>
             )}
@@ -300,7 +329,7 @@ export default function CreateSubscription() {
         {step === 'confirm' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
             {/* Summary card */}
-            <div className="p-4 rounded-xl bg-gradient-to-br from-p01-surface to-p01-dark border border-p01-cyan/20">
+            <div className="p-4 rounded-2xl bg-p01-gradient-card border border-p01-cyan/20">
               <p className="text-p01-chrome text-[10px] font-mono tracking-wider mb-3">SUBSCRIPTION SUMMARY</p>
 
               <div className="space-y-3">

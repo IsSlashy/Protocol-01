@@ -2,6 +2,7 @@
  * Subscription Vault Store
  *
  * Zustand store with Chrome storage persistence for subscription vaults.
+ * Wires real on-chain Anchor ix calls for normal and private (ZK) vault operations.
  */
 
 import { create } from 'zustand';
@@ -25,6 +26,9 @@ import {
 } from '../services/subscriptionVault';
 import type { VaultInfo } from '../services/subscriptionVault.types';
 
+// Re-export for convenience so pages that import from the store get the type
+export type { VaultInfo };
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -32,7 +36,11 @@ import type { VaultInfo } from '../services/subscriptionVault.types';
 interface SubscriptionVaultState {
   /** List of vaults */
   vaults: VaultInfo[];
-  /** Encrypted subscriber secrets for private vaults (vaultAddress -> encrypted secret) */
+  /**
+   * Encrypted subscriber secrets for private vaults (vaultAddress -> encrypted secret).
+   * Secrets are stored as plaintext bigint strings here; for production,
+   * wrap with the wallet's session password via the crypto service.
+   */
   subscriberSecrets: Record<string, string>;
   /** Loading indicator */
   loading: boolean;
@@ -41,7 +49,10 @@ interface SubscriptionVaultState {
   /** Current Solana slot (for claimable calculations) */
   currentSlot: number;
 
+  // -------------------------------------------------------------------
   // Actions
+  // -------------------------------------------------------------------
+
   loadVaults: (walletPubkey: string) => Promise<void>;
   refreshVault: (vaultAddress: string) => Promise<void>;
   addVault: (vault: VaultInfo) => void;
@@ -50,11 +61,72 @@ interface SubscriptionVaultState {
   setCurrentSlot: (slot: number) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  saveSecret: (vaultAddress: string, encryptedSecret: string) => void;
+  saveSecret: (vaultAddress: string, secret: string) => void;
   getSecret: (vaultAddress: string) => string | null;
   reset: () => void;
 
+  // -------------------------------------------------------------------
+  // On-chain normal-mode actions
+  // -------------------------------------------------------------------
+
+  /** Subscribe to a service with wallet deposit (no ZK proof required). */
+  createNormalVault: (params: {
+    retailer: string;
+    tokenMint: string;
+    amount: number;
+    rate: number;
+    intervalSlots: number;
+    vkHashSubscriber?: Uint8Array;
+  }) => Promise<string>;
+
+  /** Pause a normal vault subscription. */
+  pauseNormalVault: (vaultAddress: string) => Promise<string>;
+
+  /** Resume a paused normal vault subscription. */
+  resumeNormalVault: (vaultAddress: string) => Promise<string>;
+
+  /** Cancel a normal vault and refund subscriber. */
+  cancelNormalVault: (vaultAddress: string) => Promise<string>;
+
+  /** Claim accrued periods (retailer only). */
+  claimVaultPeriod: (vaultAddress: string) => Promise<string>;
+
+  // -------------------------------------------------------------------
+  // On-chain private-mode actions
+  // -------------------------------------------------------------------
+
+  /**
+   * Subscribe with private ZK mode.
+   *
+   * BLOCKED: Extension has no denominated pool. Throws explicit error.
+   * See subscribePrivate in services/subscriptionVault.ts for full rationale.
+   */
+  createPrivateVault: (params: {
+    retailer: string;
+    poolAddress: string;
+    proof: { pi_a: Uint8Array; pi_b: Uint8Array; pi_c: Uint8Array };
+    nullifier: string;
+    merkleRoot: string;
+    minEpoch: number;
+    subscriberSecret: string;
+    rate: number;
+    intervalSlots: number;
+    vkHashSubscriber?: Uint8Array;
+  }) => Promise<string>;
+
+  /** Pause a private vault (generates circuit-0 STARK proof). */
+  pausePrivateVault: (vaultAddress: string, onProgress?: (step: string) => void) => Promise<string>;
+
+  /** Resume a private vault (generates circuit-0 STARK proof). */
+  resumePrivateVault: (vaultAddress: string, onProgress?: (step: string) => void) => Promise<string>;
+
+  /** Cancel a private vault (generates circuit-0 STARK proof, refund-via-relayer). */
+  cancelPrivateVault: (vaultAddress: string, onProgress?: (step: string) => void) => Promise<string>;
+
+  // -------------------------------------------------------------------
   // Computed helpers (use current slot from state)
+  // -------------------------------------------------------------------
+
   getClaimable: (vaultAddress: string) => number;
   getClaimableAmount: (vaultAddress: string) => number;
   getRefundable: (vaultAddress: string) => number;
@@ -112,7 +184,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // -------------------------------------------------------------------
-      // Add vault
+      // CRUD helpers
       // -------------------------------------------------------------------
       addVault: (vault: VaultInfo) => {
         set((state) => ({
@@ -120,18 +192,12 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }));
       },
 
-      // -------------------------------------------------------------------
-      // Remove vault
-      // -------------------------------------------------------------------
       removeVault: (vaultAddress: string) => {
         set((state) => ({
           vaults: state.vaults.filter((v) => v.address !== vaultAddress),
         }));
       },
 
-      // -------------------------------------------------------------------
-      // Update vault
-      // -------------------------------------------------------------------
       updateVault: (vaultAddress: string, updates: Partial<VaultInfo>) => {
         set((state) => ({
           vaults: state.vaults.map((v) =>
@@ -140,50 +206,23 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }));
       },
 
-      // -------------------------------------------------------------------
-      // Set current slot
-      // -------------------------------------------------------------------
-      setCurrentSlot: (slot: number) => {
-        set({ currentSlot: slot });
-      },
+      setCurrentSlot: (slot: number) => set({ currentSlot: slot }),
+      setLoading: (loading: boolean) => set({ loading }),
+      setError: (error: string | null) => set({ error }),
 
-      // -------------------------------------------------------------------
-      // Set loading
-      // -------------------------------------------------------------------
-      setLoading: (loading: boolean) => {
-        set({ loading });
-      },
-
-      // -------------------------------------------------------------------
-      // Set error
-      // -------------------------------------------------------------------
-      setError: (error: string | null) => {
-        set({ error });
-      },
-
-      // -------------------------------------------------------------------
-      // Save encrypted secret
-      // -------------------------------------------------------------------
-      saveSecret: (vaultAddress: string, encryptedSecret: string) => {
+      saveSecret: (vaultAddress: string, secret: string) => {
         set((state) => ({
           subscriberSecrets: {
             ...state.subscriberSecrets,
-            [vaultAddress]: encryptedSecret,
+            [vaultAddress]: secret,
           },
         }));
       },
 
-      // -------------------------------------------------------------------
-      // Get encrypted secret
-      // -------------------------------------------------------------------
       getSecret: (vaultAddress: string) => {
-        const state = get();
-        return state.subscriberSecrets[vaultAddress] || null;
+        return get().subscriberSecrets[vaultAddress] || null;
       },
 
-      // -------------------------------------------------------------------
-      // Reset
-      // -------------------------------------------------------------------
       reset: () => {
         set({
           vaults: [],
@@ -192,6 +231,167 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           error: null,
           currentSlot: 0,
         });
+      },
+
+      // -------------------------------------------------------------------
+      // Normal-mode on-chain actions
+      // -------------------------------------------------------------------
+
+      createNormalVault: async (params) => {
+        set({ loading: true, error: null });
+        try {
+          const sig = await subscribeNormal({
+            retailer: params.retailer,
+            tokenMint: params.tokenMint,
+            amount: params.amount,
+            rate: params.rate,
+            intervalSlots: params.intervalSlots,
+            vkHashSubscriber: params.vkHashSubscriber ?? new Uint8Array(32),
+          });
+          // Reload vaults from chain
+          const walletPk = (await import('../store/wallet')).useWalletStore.getState().publicKey;
+          if (walletPk) await get().loadVaults(walletPk);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      pauseNormalVault: async (vaultAddress: string) => {
+        set({ loading: true, error: null });
+        try {
+          const sig = await pauseNormal(vaultAddress);
+          await get().refreshVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      resumeNormalVault: async (vaultAddress: string) => {
+        set({ loading: true, error: null });
+        try {
+          const sig = await resumeNormal(vaultAddress);
+          await get().refreshVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      cancelNormalVault: async (vaultAddress: string) => {
+        set({ loading: true, error: null });
+        try {
+          const sig = await cancelNormal(vaultAddress);
+          // Remove from local state (vault is closed on-chain)
+          get().removeVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      claimVaultPeriod: async (vaultAddress: string) => {
+        set({ loading: true, error: null });
+        try {
+          const sig = await claimPeriod(vaultAddress);
+          await get().refreshVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      // -------------------------------------------------------------------
+      // Private-mode on-chain actions
+      // -------------------------------------------------------------------
+
+      createPrivateVault: async (params) => {
+        // BLOCKED — see subscribePrivate for full rationale
+        set({ loading: true, error: null });
+        try {
+          const sig = await subscribePrivate({
+            retailer: params.retailer,
+            poolAddress: params.poolAddress,
+            proof: params.proof,
+            nullifier: params.nullifier,
+            merkleRoot: params.merkleRoot,
+            minEpoch: params.minEpoch,
+            subscriberSecret: params.subscriberSecret,
+            rate: params.rate,
+            intervalSlots: params.intervalSlots,
+            vkHashSubscriber: params.vkHashSubscriber ?? new Uint8Array(32),
+          });
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      pausePrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
+        set({ loading: true, error: null });
+        const secret = get().getSecret(vaultAddress);
+        if (!secret) {
+          set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
+          throw new Error('Subscriber secret not found for vault ' + vaultAddress);
+        }
+        try {
+          const sig = await pausePrivate(vaultAddress, secret, onProgress);
+          await get().refreshVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      resumePrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
+        set({ loading: true, error: null });
+        const secret = get().getSecret(vaultAddress);
+        if (!secret) {
+          set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
+          throw new Error('Subscriber secret not found for vault ' + vaultAddress);
+        }
+        try {
+          const sig = await resumePrivate(vaultAddress, secret, onProgress);
+          await get().refreshVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      cancelPrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
+        set({ loading: true, error: null });
+        const secret = get().getSecret(vaultAddress);
+        if (!secret) {
+          set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
+          throw new Error('Subscriber secret not found for vault ' + vaultAddress);
+        }
+        try {
+          const sig = await cancelPrivate(vaultAddress, secret, onProgress);
+          get().removeVault(vaultAddress);
+          set({ loading: false });
+          return sig;
+        } catch (error) {
+          set({ loading: false, error: (error as Error).message });
+          throw error;
+        }
       },
 
       // -------------------------------------------------------------------
@@ -228,14 +428,14 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
     {
       name: 'p01-subscription-vault',
       storage: createJSONStorage(() => ({
-        getItem: async (name) => {
+        getItem: async (name: string) => {
           const result = await chrome.storage.local.get(name);
           return result[name] || null;
         },
-        setItem: async (name, value) => {
+        setItem: async (name: string, value: string) => {
           await chrome.storage.local.set({ [name]: value });
         },
-        removeItem: async (name) => {
+        removeItem: async (name: string) => {
           await chrome.storage.local.remove(name);
         },
       })),
