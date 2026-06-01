@@ -119,15 +119,25 @@ function intervalToSlots(interval: SubscriptionInterval): bigint {
  * always passes the on-chain EpochDelayNotMet check. ~54 min/epoch on devnet. */
 const SUBSCRIBE_MAX_DELAY_EPOCHS = 2;
 
+const SLOTS_PER_EPOCH_UI = 7200;
+const SLOT_MS = 450; // devnet ~0.4-0.5s per slot
+
 function noteMaturity(
   depositEpoch: bigint,
-  currentEpoch: number | null,
+  slotInfo: { slot: number; at: number } | null,
+  nowTs: number,
 ): { ready: boolean; label: string } {
-  if (currentEpoch === null) return { ready: true, label: '' }; // unknown → don't block
-  const matureAt = Number(depositEpoch) + SUBSCRIBE_MAX_DELAY_EPOCHS;
-  if (currentEpoch >= matureAt) return { ready: true, label: 'Ready' };
-  const mins = (matureAt - currentEpoch) * 54;
-  return { ready: false, label: mins >= 60 ? `Matures in ~${Math.ceil(mins / 60)}h` : `Matures in ~${mins}m` };
+  if (!slotInfo) return { ready: true, label: '' }; // unknown → don't block
+  // Estimate the live slot by extrapolating from the last fetch.
+  const estSlot = slotInfo.slot + (nowTs - slotInfo.at) / SLOT_MS;
+  const matureAtSlot = (Number(depositEpoch) + SUBSCRIBE_MAX_DELAY_EPOCHS) * SLOTS_PER_EPOCH_UI;
+  if (estSlot >= matureAtSlot) return { ready: true, label: 'Ready' };
+  const totalSec = Math.max(0, Math.floor(((matureAtSlot - estSlot) * SLOT_MS) / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const t = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+  return { ready: false, label: `Matures in ${t}` };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -165,19 +175,24 @@ export default function CreateSubscription() {
   // ZK note picker state — index into getNotes() array.
   const [selectedNoteIndex, setSelectedNoteIndex] = useState<number | null>(null);
 
-  // Current on-chain epoch — used to show each note's maturity. A note can only
-  // fund a private subscription once it has aged `dynamic_delay` epochs (max 2,
-  // per get_dynamic_delay). Anti-correlation: a fresh note can't subscribe.
-  const [currentEpoch, setCurrentEpoch] = useState<number | null>(null);
+  // Live slot tracking for the note-maturity countdown. A note can only fund a
+  // private subscription once it has aged up to `dynamic_delay` epochs (max 2,
+  // per get_dynamic_delay). We fetch the slot periodically and tick every second
+  // so the "Matures in …" label counts down in real time.
+  const [slotInfo, setSlotInfo] = useState<{ slot: number; at: number } | null>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const fetchSlot = async () => {
       try {
         const slot = await getConnection(network).getSlot('confirmed');
-        if (!cancelled) setCurrentEpoch(Math.floor(slot / 7200));
+        if (!cancelled) setSlotInfo({ slot, at: Date.now() });
       } catch { /* leave null — don't block the picker on RPC hiccups */ }
-    })();
-    return () => { cancelled = true; };
+    };
+    fetchSlot();
+    const refetch = setInterval(fetchSlot, 30_000);
+    const tick = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => { cancelled = true; clearInterval(refetch); clearInterval(tick); };
   }, [network]);
 
   const activeName = prefillName;
@@ -266,7 +281,7 @@ export default function CreateSubscription() {
       // Anti-correlation maturity gate: a note must age before it can fund a
       // private subscription (on-chain EpochDelayNotMet). Block early instead of
       // failing after a 60s proof generation.
-      const mat = noteMaturity(note.depositEpoch, currentEpoch);
+      const mat = noteMaturity(note.depositEpoch, slotInfo, nowTs);
       if (!mat.ready) {
         setError(
           `This note is too young — ${mat.label.toLowerCase()}. A shielded note must age ~2 epochs ` +
@@ -634,7 +649,7 @@ export default function CreateSubscription() {
                       // Short commitment display: last 8 hex chars of commitment bigint.
                       const commitHex = note.commitment.toString(16).padStart(16, '0');
                       const shortCommit = commitHex.slice(-8);
-                      const mat = noteMaturity(note.depositEpoch, currentEpoch);
+                      const mat = noteMaturity(note.depositEpoch, slotInfo, nowTs);
                       return (
                         <button
                           key={`${note.pool}-${note.leafIndex}`}
