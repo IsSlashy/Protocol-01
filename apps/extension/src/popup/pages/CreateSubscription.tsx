@@ -20,6 +20,36 @@ import { useSolanaWallets } from '@/shared/providers/PrivyProvider';
 import { useShieldedStore } from '@/shared/store/shielded';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { SubscriptionInterval, type PaymentSigner } from '@/shared/services/stream';
+import { getConnection, type NetworkType } from '@/shared/services/wallet';
+
+/**
+ * Resolve a service subscription's PAYMENT recipient: the merchant's on-chain
+ * `retailer` from the Protocol 01 service registry. Services in the picker carry
+ * only a branding id (e.g. "netflix"); the actual payee lives on-chain. Returns
+ * null if the service isn't attested on-chain (so we can fail honestly instead
+ * of paying a bogus address).
+ */
+async function resolveServiceRecipient(
+  svc: { serviceId?: string; serviceName?: string },
+  network: NetworkType,
+): Promise<string | null> {
+  try {
+    const { fetchAllServices } = await import('@protocol-01/specter-sdk');
+    const services = await fetchAllServices(getConnection(network), { activeOnly: true });
+    const key = (svc.serviceId || svc.serviceName || '').toLowerCase().trim();
+    if (!key) return null;
+    const base = key.split(/[\s-]/)[0]; // "netflix" from "netflix" / "Netflix Standard"
+    const match = services.find((s: { slug?: string; name?: string }) => {
+      const slug = (s.slug || '').toLowerCase();
+      const nm = (s.name || '').toLowerCase();
+      return slug.includes(base) || nm.includes(base);
+    });
+    return (match as { retailer?: { toBase58?: () => string } } | undefined)?.retailer?.toBase58?.() ?? null;
+  } catch (e) {
+    console.error('[Subscription] resolveServiceRecipient failed:', e);
+    return null;
+  }
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -65,7 +95,7 @@ export default function CreateSubscription() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { addSubscription, processPayment } = useSubscriptionsStore();
-  const { _keypair, network, isUnlocked, isPrivyWallet, publicKey } = useWalletStore();
+  const { _keypair, network, isUnlocked, isPrivyWallet, isRemoteWallet, publicKey } = useWalletStore();
   const { wallets } = useSolanaWallets();
   const { shieldedBalance } = useShieldedStore();
   const { getSpendableNote } = useDenominatedPoolStore();
@@ -127,8 +157,21 @@ export default function CreateSubscription() {
           publicKey: new PublicKey(publicKey),
           signTransaction: async (tx: Transaction) => (await fallback(tx)) as unknown as Transaction,
         };
+      } else if (isRemoteWallet) {
+        // Wallet linked from P01 Mobile via QR — only the address is here; the
+        // signing key is on the phone, so it cannot sign in the extension.
+        setError(
+          "This wallet is linked from P01 Mobile and can't sign in the extension yet. " +
+          'To subscribe here, import your seed phrase or sign in with email.',
+        );
+        return;
       } else {
-        setError('Privy wallet is still loading — wait a moment and try again.');
+        // No embedded Privy wallet found. Could be a phone-linked wallet (older
+        // link without the flag) or Privy still hydrating — give an actionable hint.
+        setError(
+          'No signer is available for this wallet. If it was linked from P01 Mobile (QR), ' +
+          'import your seed phrase or use email login to subscribe. Otherwise reopen the wallet and try again.',
+        );
         return;
       }
     } else {
@@ -156,22 +199,6 @@ export default function CreateSubscription() {
       return;
     }
 
-    // Validate the recipient BEFORE charging — a service id like "netflix"
-    // is not a wallet address and would throw deep in the payment path.
-    if (!activeRecipient) {
-      setError('This subscription has no payment address yet.');
-      return;
-    }
-    try {
-      new PublicKey(activeRecipient);
-    } catch {
-      setError(
-        svc
-          ? `${activeName || 'This service'} doesn't have a payment address configured yet.`
-          : 'Invalid recipient address.',
-      );
-      return;
-    }
     if (!(activeAmount > 0)) {
       setError('Amount must be greater than 0.');
       return;
@@ -180,13 +207,36 @@ export default function CreateSubscription() {
     setIsCreating(true);
 
     try {
+      // Resolve the payment recipient:
+      //  - service subscription -> the merchant's on-chain `retailer` (service registry)
+      //  - personal / dApp prefill -> the address that was provided
+      let recipient = activeRecipient;
+      if (svc) {
+        const resolved = await resolveServiceRecipient(svc, network);
+        if (!resolved) {
+          setError(`${activeName || 'This service'} isn't registered on-chain yet — there's no merchant address to pay.`);
+          setIsCreating(false);
+          return;
+        }
+        recipient = resolved;
+      }
+
+      // Recipient must be a real wallet address before we charge.
+      try {
+        new PublicKey(recipient);
+      } catch {
+        setError('Invalid recipient address.');
+        setIsCreating(false);
+        return;
+      }
+
       const noiseSettings = privacyMode === 'noise'
         ? { amountNoise: 15, timingNoise: 4 }
         : {};
 
       const subscription = addSubscription({
         name: activeName,
-        recipient: activeRecipient,
+        recipient,
         amount: activeAmount,
         interval: activeInterval,
         maxPayments: 0, // unlimited
