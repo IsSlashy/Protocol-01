@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -114,6 +114,22 @@ function intervalToSlots(interval: SubscriptionInterval): bigint {
   }
 }
 
+/** Max anti-correlation delay before a note can fund a private subscription
+ * (get_dynamic_delay caps at 2 epochs). Using the max is safe: a note this old
+ * always passes the on-chain EpochDelayNotMet check. ~54 min/epoch on devnet. */
+const SUBSCRIBE_MAX_DELAY_EPOCHS = 2;
+
+function noteMaturity(
+  depositEpoch: bigint,
+  currentEpoch: number | null,
+): { ready: boolean; label: string } {
+  if (currentEpoch === null) return { ready: true, label: '' }; // unknown → don't block
+  const matureAt = Number(depositEpoch) + SUBSCRIBE_MAX_DELAY_EPOCHS;
+  if (currentEpoch >= matureAt) return { ready: true, label: 'Ready' };
+  const mins = (matureAt - currentEpoch) * 54;
+  return { ready: false, label: mins >= 60 ? `Matures in ~${Math.ceil(mins / 60)}h` : `Matures in ~${mins}m` };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function CreateSubscription() {
@@ -148,6 +164,21 @@ export default function CreateSubscription() {
 
   // ZK note picker state — index into getNotes() array.
   const [selectedNoteIndex, setSelectedNoteIndex] = useState<number | null>(null);
+
+  // Current on-chain epoch — used to show each note's maturity. A note can only
+  // fund a private subscription once it has aged `dynamic_delay` epochs (max 2,
+  // per get_dynamic_delay). Anti-correlation: a fresh note can't subscribe.
+  const [currentEpoch, setCurrentEpoch] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const slot = await getConnection(network).getSlot('confirmed');
+        if (!cancelled) setCurrentEpoch(Math.floor(slot / 7200));
+      } catch { /* leave null — don't block the picker on RPC hiccups */ }
+    })();
+    return () => { cancelled = true; };
+  }, [network]);
 
   const activeName = prefillName;
   const activeRecipient = prefillRecipient;
@@ -229,6 +260,18 @@ export default function CreateSubscription() {
       const note = notes[selectedNoteIndex];
       if (!note) {
         setError('Selected note no longer exists. Please select another.');
+        return;
+      }
+
+      // Anti-correlation maturity gate: a note must age before it can fund a
+      // private subscription (on-chain EpochDelayNotMet). Block early instead of
+      // failing after a 60s proof generation.
+      const mat = noteMaturity(note.depositEpoch, currentEpoch);
+      if (!mat.ready) {
+        setError(
+          `This note is too young — ${mat.label.toLowerCase()}. A shielded note must age ~2 epochs ` +
+          'before it can fund a private subscription (anti-correlation). Pick an older note or wait.',
+        );
         return;
       }
 
@@ -591,23 +634,27 @@ export default function CreateSubscription() {
                       // Short commitment display: last 8 hex chars of commitment bigint.
                       const commitHex = note.commitment.toString(16).padStart(16, '0');
                       const shortCommit = commitHex.slice(-8);
+                      const mat = noteMaturity(note.depositEpoch, currentEpoch);
                       return (
                         <button
                           key={`${note.pool}-${note.leafIndex}`}
-                          onClick={() => setSelectedNoteIndex(idx)}
+                          onClick={() => mat.ready && setSelectedNoteIndex(idx)}
+                          disabled={!mat.ready}
                           className={cn(
                             'w-full p-3 rounded-xl border text-left transition-all',
-                            isSelected
+                            !mat.ready
+                              ? 'border-p01-border bg-p01-surface/50 opacity-50 cursor-not-allowed'
+                              : isSelected
                               ? 'border-p01-cyan bg-p01-cyan/8'
                               : 'border-p01-border bg-p01-surface hover:border-p01-cyan/40',
                           )}
-                          style={isSelected ? { borderColor: '#39c5bb', background: '#39c5bb0d' } : undefined}
+                          style={isSelected && mat.ready ? { borderColor: '#39c5bb', background: '#39c5bb0d' } : undefined}
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <Shield
                                 className="w-4 h-4 shrink-0"
-                                style={{ color: isSelected ? '#39c5bb' : '#6b7280' }}
+                                style={{ color: isSelected && mat.ready ? '#39c5bb' : '#6b7280' }}
                               />
                               <div>
                                 <p className="text-white text-xs font-mono font-semibold">
@@ -618,8 +665,17 @@ export default function CreateSubscription() {
                                 </p>
                               </div>
                             </div>
-                            {isSelected && (
-                              <Check className="w-4 h-4 text-p01-cyan shrink-0" />
+                            {mat.label && (
+                              <span
+                                className={cn(
+                                  'text-[9px] font-mono px-1.5 py-0.5 rounded-full',
+                                  mat.ready
+                                    ? 'bg-p01-cyan/15 text-p01-cyan'
+                                    : 'bg-p01-border text-p01-chrome/60',
+                                )}
+                              >
+                                {mat.ready && isSelected ? '✓ Ready' : mat.label}
+                              </span>
                             )}
                           </div>
                         </button>
