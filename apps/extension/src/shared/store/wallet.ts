@@ -32,7 +32,12 @@ import {
   PublicKey,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  TransactionInstruction,
 } from '@solana/web3.js';
+
+// SPL Memo program — carries the stealth ephemeral pubkey so the recipient can
+// detect the payment. Generic enough (NFT mints, votes) that it doesn't tag P01.
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 import { RpcConnectionManager } from '@protocol-01/rpc-config';
 import type { TransactionRecord } from '../types';
 
@@ -205,7 +210,7 @@ export interface WalletState {
   lock: () => void;
   reset: () => Promise<void>;
   refreshBalance: () => Promise<void>;
-  sendTransaction: (toAddress: string, amountSol: number) => Promise<string>;
+  sendTransaction: (toAddress: string, amountSol: number, memo?: string) => Promise<string>;
   requestFaucet: (amountSol?: number) => Promise<string>;
   setNetwork: (network: NetworkType) => void;
   toggleHideBalance: () => void;
@@ -526,7 +531,7 @@ export const useWalletStore = create<WalletState>()(
       },
 
       // Send SOL transaction
-      sendTransaction: async (toAddress: string, amountSol: number) => {
+      sendTransaction: async (toAddress: string, amountSol: number, memo?: string) => {
         const { _keypair, network, isPrivyWallet, publicKey } = get();
 
         if (!isValidSolanaAddress(toAddress)) {
@@ -562,6 +567,16 @@ export const useWalletStore = create<WalletState>()(
               })
             );
 
+            if (memo) {
+              transaction.add(
+                new TransactionInstruction({
+                  programId: MEMO_PROGRAM_ID,
+                  keys: [],
+                  data: Buffer.from(memo, 'utf8'),
+                })
+              );
+            }
+
             const { blockhash } = await connection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = new PublicKey(publicKey);
@@ -574,7 +589,7 @@ export const useWalletStore = create<WalletState>()(
             if (!_keypair) {
               throw new Error('Wallet not unlocked');
             }
-            signature = await sendSol(_keypair, toAddress, amountSol, network);
+            signature = await sendSol(_keypair, toAddress, amountSol, network, memo);
           }
 
           // Refresh balance and transactions after transaction

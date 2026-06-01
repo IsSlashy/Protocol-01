@@ -3,12 +3,13 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Check, Loader2, ExternalLink, AlertCircle } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
+import { createStealthMemo } from '@/shared/services/stealth';
 import { truncateAddress, cn } from '@/shared/utils';
 
 export default function SendConfirm() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { recipient, amount } = location.state || {};
+  const { recipient, amount, isStealthSend, ephemeralPubKey } = location.state || {};
 
   const { sendTransaction, isLoading, error, network, publicKey } = useWalletStore();
 
@@ -20,7 +21,17 @@ export default function SendConfirm() {
     setLocalError('');
 
     try {
-      const signature = await sendTransaction(recipient, amount);
+      // Stealth sends MUST publish the ephemeral pubkey via an on-chain memo,
+      // otherwise the recipient's scanner can never detect the payment.
+      let memo: string | undefined;
+      if (isStealthSend) {
+        if (!ephemeralPubKey) {
+          throw new Error('Stealth send is missing its ephemeral key — please retry the send');
+        }
+        memo = createStealthMemo(Uint8Array.from(ephemeralPubKey));
+      }
+
+      const signature = await sendTransaction(recipient, amount, memo);
       setTxSignature(signature);
       setIsSuccess(true);
     } catch (err) {
@@ -54,17 +65,17 @@ export default function SendConfirm() {
           {/* Transaction details */}
           <div className="w-full bg-p01-surface border border-p01-border p-4 space-y-3 mb-6">
             <div className="flex justify-between">
-              <span className="text-[10px] text-[#555560] font-mono">AMOUNT</span>
+              <span className="text-[10px] text-p01-text-dim font-mono">AMOUNT</span>
               <span className="text-xs text-white font-mono">{amount} SOL</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-[10px] text-[#555560] font-mono">TO</span>
+              <span className="text-[10px] text-p01-text-dim font-mono">TO</span>
               <span className="text-xs text-white font-mono">
                 {truncateAddress(recipient, 6)}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-[10px] text-[#555560] font-mono">SIGNATURE</span>
+              <span className="text-[10px] text-p01-text-dim font-mono">SIGNATURE</span>
               <span className="text-xs text-p01-cyan font-mono">
                 {truncateAddress(txSignature, 6)}
               </span>
@@ -119,7 +130,7 @@ export default function SendConfirm() {
 
         {/* Amount Display */}
         <div className="text-center py-6 bg-p01-surface border border-p01-border mb-4">
-          <p className="text-[10px] text-[#555560] font-mono tracking-wider mb-2">SENDING</p>
+          <p className="text-[10px] text-p01-text-dim font-mono tracking-wider mb-2">SENDING</p>
           <p className="text-3xl font-mono font-bold text-white">
             {amount} SOL
           </p>
@@ -128,21 +139,21 @@ export default function SendConfirm() {
         {/* Details */}
         <div className="bg-p01-surface border border-p01-border p-4 space-y-3">
           <div className="flex justify-between">
-            <span className="text-[10px] text-[#555560] font-mono tracking-wider">FROM</span>
+            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">FROM</span>
             <span className="text-xs font-mono text-white">
               {truncateAddress(publicKey || '', 6)}
             </span>
           </div>
 
           <div className="flex justify-between">
-            <span className="text-[10px] text-[#555560] font-mono tracking-wider">TO</span>
+            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">TO</span>
             <span className="text-xs font-mono text-white">
               {truncateAddress(recipient || '', 6)}
             </span>
           </div>
 
           <div className="flex justify-between">
-            <span className="text-[10px] text-[#555560] font-mono tracking-wider">NETWORK</span>
+            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">NETWORK</span>
             <span className="text-xs text-white font-mono uppercase">
               SOLANA {network}
             </span>
@@ -150,7 +161,7 @@ export default function SendConfirm() {
 
           <div className="border-t border-p01-border pt-3">
             <div className="flex justify-between">
-              <span className="text-[10px] text-[#555560] font-mono tracking-wider">
+              <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">
                 NETWORK FEE
               </span>
               <span className="text-xs text-white font-mono">~0.000005 SOL</span>
@@ -159,7 +170,7 @@ export default function SendConfirm() {
 
           <div className="border-t border-p01-border pt-3">
             <div className="flex justify-between">
-              <span className="text-[10px] text-[#555560] font-mono tracking-wider">
+              <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">
                 TOTAL
               </span>
               <span className="text-xs text-p01-cyan font-mono font-bold">

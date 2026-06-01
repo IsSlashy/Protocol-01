@@ -132,11 +132,17 @@ export async function getTokenBalances(
 /**
  * Send SOL transaction
  */
+// SPL Memo program — used to publish the ephemeral pubkey on stealth sends so
+// the recipient's scanner can detect the payment. Its presence is generic (NFT
+// mints, DAO votes, etc.) so it does not fingerprint P01.
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+
 export async function sendSol(
   fromKeypair: Keypair,
   toAddress: string,
   amountSol: number,
-  network: NetworkType
+  network: NetworkType,
+  memo?: string
 ): Promise<string> {
   const connection = getConnection(network);
   const toPubkey = new PublicKey(toAddress);
@@ -148,6 +154,16 @@ export async function sendSol(
       lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
     })
   );
+
+  if (memo) {
+    transaction.add(
+      new TransactionInstruction({
+        programId: MEMO_PROGRAM_ID,
+        keys: [],
+        data: Buffer.from(memo, 'utf8'),
+      })
+    );
+  }
 
   const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);
   return signature;
