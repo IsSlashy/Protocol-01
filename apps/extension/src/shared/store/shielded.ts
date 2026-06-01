@@ -1079,29 +1079,9 @@ export const useShieldedStore = create<ShieldedState>()(
 
           for (const payment of payments) {
             try {
-              // Check if we already have this payment in local state
-              const existing = get()._foundStealthPayments.find(p => p.signature === payment.signature);
-              if (existing) {
-                // Verify it still has balance (not already swept)
-                const { network: net } = getWalletData();
-                const c = getConnection(net);
-                const bal = await c.getBalance(new PublicKey(payment.stealthAddress));
-                if (bal === 0) {
-                  // Already swept — remove from local state
-                  set(state => ({
-                    _foundStealthPayments: state._foundStealthPayments.filter(p => p.signature !== payment.signature),
-                  }));
-                  continue;
-                }
-                foundPayments.push({
-                  stealthAddress: payment.stealthAddress,
-                  amount: bal / 1e9,
-                  signature: payment.signature,
-                });
-                continue;
-              }
-
-              // Try to scan this payment with our keys
+              // Always re-derive the private key via scanStealthPayment so that
+              // _foundStealthPayments is populated with keys even after a page
+              // reload (the store does not persist private keys).
               const result = await scanStealthPayment(
                 payment.ephemeralPublicKey,
                 viewingKey,
@@ -1109,34 +1089,48 @@ export const useShieldedStore = create<ShieldedState>()(
                 payment.viewTag
               );
 
-              if (result.found && result.stealthAddress === payment.stealthAddress && result.privateKey) {
-                // Check on-chain balance — skip if already swept
-                const { network } = getWalletData();
-                const conn = getConnection(network);
-                const onChainBalance = await conn.getBalance(new PublicKey(payment.stealthAddress));
-
-                if (onChainBalance === 0) {
-                  continue;
-                }
-
-                const actualAmount = onChainBalance / 1e9;
-                found++;
-                totalAmount += actualAmount;
-
-                foundPayments.push({
-                  stealthAddress: payment.stealthAddress,
-                  amount: actualAmount,
-                  signature: payment.signature,
-                });
-
-                newFoundPayments.push({
-                  stealthAddress: payment.stealthAddress,
-                  privateKey: result.privateKey,
-                  amount: actualAmount,
-                  signature: payment.signature,
-                  ephemeralPublicKey: payment.ephemeralPublicKey,
-                });
+              if (!result.found || result.stealthAddress !== payment.stealthAddress || !result.privateKey) {
+                continue;
               }
+
+              // Check on-chain balance — skip if already swept
+              const { network } = getWalletData();
+              const conn = getConnection(network);
+              const onChainBalance = await conn.getBalance(new PublicKey(payment.stealthAddress));
+
+              if (onChainBalance === 0) {
+                // Already swept — remove stale entry from local state
+                set(state => ({
+                  _foundStealthPayments: state._foundStealthPayments.filter(p => p.signature !== payment.signature),
+                }));
+                continue;
+              }
+
+              // Dust check: balance must cover tx fee (5000 lamports) with something
+              // left to send.  Rent-exempt threshold for a zero-data account is
+              // ~890_880 lamports; flag these as dust so the user knows.
+              const TX_FEE = 5000;
+              if (onChainBalance <= TX_FEE) {
+                continue;
+              }
+
+              const actualAmount = onChainBalance / 1e9;
+              found++;
+              totalAmount += actualAmount;
+
+              foundPayments.push({
+                stealthAddress: payment.stealthAddress,
+                amount: actualAmount,
+                signature: payment.signature,
+              });
+
+              newFoundPayments.push({
+                stealthAddress: payment.stealthAddress,
+                privateKey: result.privateKey,
+                amount: actualAmount,
+                signature: payment.signature,
+                ephemeralPublicKey: payment.ephemeralPublicKey,
+              });
             } catch (e) {
               // Not for us, skip
             }
@@ -1251,7 +1245,22 @@ export const useShieldedStore = create<ShieldedState>()(
           errors: [] as string[],
         };
 
+        // If no payments with private keys are in memory, run a scan first.
+        // This handles the case where the user calls sweep right after a page
+        // reload (private keys are not persisted).
+        if (get()._foundStealthPayments.length === 0) {
+          try {
+            await get().scanStealthPayments();
+          } catch {
+            // If scan fails, fall through — sweepStealthPayment will report errors
+          }
+        }
+
         const payments = [...get()._foundStealthPayments];
+
+        if (payments.length === 0) {
+          return results; // nothing to sweep, success:true, swept:0
+        }
 
         for (const payment of payments) {
           const result = await get().sweepStealthPayment(payment.stealthAddress, recipientAddress);
@@ -1261,11 +1270,16 @@ export const useShieldedStore = create<ShieldedState>()(
             results.totalAmount += payment.amount;
             results.signatures.push(result.signature);
           } else {
-            results.errors.push(`${payment.stealthAddress.slice(0, 16)}...: ${result.error}`);
+            // Collect per-payment errors but keep sweeping the rest
+            results.errors.push(`${payment.stealthAddress.slice(0, 16)}...: ${result.error ?? 'unknown error'}`);
           }
         }
 
-        if (results.errors.length > 0) {
+        // Partial success: swept some but not all — still mark success true so
+        // the UI shows what was recovered; errors list carries the failures.
+        if (results.swept > 0) {
+          results.success = true;
+        } else if (results.errors.length > 0) {
           results.success = false;
         }
 

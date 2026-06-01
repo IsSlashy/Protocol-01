@@ -225,16 +225,25 @@ export default function ShieldedWallet() {
     }
 
     setIsSweeping(true);
+    setError(null);
     try {
       const result = await sweepAllStealthPayments(publicKey);
 
-      if (result.success && result.swept > 0) {
-        alert(`Recovered ${result.totalAmount.toFixed(4)} SOL from ${result.swept} stealth payment(s)!`);
+      if (result.swept > 0) {
+        // Show partial or full success
+        const msg = result.errors.length > 0
+          ? `Recovered ${result.totalAmount.toFixed(4)} SOL from ${result.swept} payment(s). ${result.errors.length} payment(s) failed.`
+          : `Recovered ${result.totalAmount.toFixed(4)} SOL from ${result.swept} stealth payment(s)!`;
+        alert(msg);
         setFoundPayments([]);
         setShowRecoveryModal(false);
         await refreshBalance();
       } else if (result.errors.length > 0) {
         setError(result.errors.join('\n'));
+      } else {
+        // swept === 0 and no errors means nothing was found (already swept or dust)
+        setError(null);
+        alert('No sweepable payments found. Payments may have already been swept or are below the dust threshold.');
       }
     } catch (err) {
       console.error('[Recovery] Sweep error:', err);
@@ -306,7 +315,7 @@ export default function ShieldedWallet() {
         <motion.div
           initial={{ y: 10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="mx-4 mt-4 bg-gradient-to-br from-p01-surface to-p01-dark rounded-2xl p-5 border border-p01-cyan/20"
+          className="mx-4 mt-4 bg-p01-gradient-card rounded-2xl p-5 border border-p01-cyan/20"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -385,17 +394,17 @@ export default function ShieldedWallet() {
             <div role="status" aria-live="polite" className={cn(
               'mt-3 p-3 rounded-lg border',
               syncResult.success
-                ? 'bg-green-500/10 border-green-500/30'
-                : 'bg-yellow-500/10 border-yellow-500/30'
+                ? 'bg-p01-cyan/10 border-p01-cyan/30'
+                : 'bg-warning/10 border-warning/30'
             )}>
               <div className="flex items-start gap-2">
                 {syncResult.success ? (
-                  <Check className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                  <Check className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
                 ) : (
-                  <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
                 )}
                 <div className="flex-1">
-                  <p className={cn('text-xs', syncResult.success ? 'text-green-400' : 'text-yellow-400')}>
+                  <p className={cn('text-xs', syncResult.success ? 'text-p01-cyan' : 'text-warning')}>
                     {syncResult.message}
                   </p>
                   <button
@@ -562,7 +571,7 @@ export default function ShieldedWallet() {
           transition={{ delay: 0.4 }}
           className="mx-4 mt-4 mb-4"
         >
-          <div className="bg-gradient-to-r from-p01-cyan/10 to-p01-pink/10 rounded-xl p-4 border border-p01-cyan/20">
+          <div className="bg-p01-gradient-card rounded-2xl p-4 border border-p01-cyan/20">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center flex-shrink-0">
                 <ShieldCheck className="w-5 h-5 text-p01-cyan" />
@@ -642,9 +651,9 @@ export default function ShieldedWallet() {
 
             {/* Warning for first-time users */}
             {actionModal === 'shield' && notes.length === 0 && (
-              <div className="mb-4 p-3 bg-yellow-500/10 rounded-lg flex items-start gap-2">
-                <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-                <p className="text-yellow-200 text-xs">
+              <div className="mb-4 p-3 bg-warning/10 rounded-lg flex items-start gap-2">
+                <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+                <p className="text-p01-chrome text-xs">
                   Proof generation may take 30-60 seconds on first use while circuits are loaded.
                 </p>
               </div>
@@ -777,8 +786,8 @@ export default function ShieldedWallet() {
             className="w-full bg-p01-surface rounded-2xl p-5"
           >
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                <Scan className="w-6 h-6 text-emerald-400" />
+              <div className="w-12 h-12 rounded-full bg-p01-cyan/20 flex items-center justify-center">
+                <Scan className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
                 <h3 id="recovery-modal-title" className="text-lg font-display font-bold text-white">
@@ -792,22 +801,22 @@ export default function ShieldedWallet() {
 
             {/* Scanning Status */}
             {isScanning && (
-              <div className="mb-4 p-4 bg-emerald-500/10 rounded-xl flex items-center gap-3" aria-live="polite">
-                <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" aria-hidden="true" />
-                <span className="text-emerald-400 text-sm">Scanning for payments...</span>
+              <div className="mb-4 p-4 bg-p01-cyan/10 rounded-xl flex items-center gap-3" aria-live="polite">
+                <Loader2 className="w-5 h-5 text-p01-cyan animate-spin" aria-hidden="true" />
+                <span className="text-p01-cyan text-sm">Scanning for payments...</span>
               </div>
             )}
 
             {/* Found Payments */}
             {!isScanning && foundPayments.length > 0 && (
               <div className="mb-4 bg-p01-void rounded-xl p-4">
-                <p className="text-emerald-400 text-sm font-medium mb-3">
+                <p className="text-p01-cyan text-sm font-medium mb-3">
                   Found {foundPayments.length} payment(s)
                 </p>
                 <div className="space-y-2 max-h-32 overflow-y-auto">
                   {foundPayments.map((payment, index) => (
                     <div key={index} className="flex items-center gap-2 py-2 border-b border-p01-border/50 last:border-0">
-                      <Check className="w-4 h-4 text-emerald-400" />
+                      <Check className="w-4 h-4 text-p01-cyan" />
                       <div className="flex-1">
                         <p className="text-white text-sm font-medium">{payment.amount} SOL</p>
                         <p className="text-p01-chrome text-xs font-mono truncate">
@@ -818,7 +827,7 @@ export default function ShieldedWallet() {
                   ))}
                 </div>
                 <p className="text-p01-chrome/60 text-xs mt-3">
-                  Note: Full sweep requires mobile app. Extension shows detected payments.
+                  Your spending key is derived locally. Tap Sweep to recover funds directly to your wallet.
                 </p>
               </div>
             )}
@@ -857,7 +866,7 @@ export default function ShieldedWallet() {
                 <button
                   onClick={handleSweepAll}
                   disabled={isSweeping}
-                  className="flex-1 py-3 bg-emerald-500 text-white font-medium rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 py-3 bg-p01-cyan text-p01-void font-medium rounded-xl hover:bg-p01-cyan/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isSweeping ? (
                     <>
@@ -872,7 +881,7 @@ export default function ShieldedWallet() {
                 <button
                   onClick={handleScanStealth}
                   disabled={isScanning}
-                  className="flex-1 py-3 bg-emerald-500 text-white font-medium rounded-xl hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 py-3 bg-p01-cyan text-p01-void font-medium rounded-xl hover:bg-p01-cyan/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isScanning ? (
                     <>
@@ -913,7 +922,7 @@ function ActionButton({
     cyan: 'bg-p01-cyan text-p01-void',
     pink: 'bg-p01-pink text-white',
     violet: 'bg-p01-cyan text-white',
-    green: 'bg-emerald-500 text-white',
+    green: 'bg-p01-cyan text-p01-void',
   };
 
   return (
