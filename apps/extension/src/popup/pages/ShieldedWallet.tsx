@@ -451,8 +451,8 @@ export default function ShieldedWallet() {
             icon={<ArrowUp className="w-5 h-5" />}
             label="Unshield"
             color="pink"
-            onClick={() => setActionModal('unshield')}
-            disabled={shieldedBalance <= 0}
+            onClick={() => navigate('/denominated-unshield')}
+            disabled={shieldedBalance <= 0 && denomBalanceSol <= 0}
           />
           <ActionButton
             icon={<Zap className="w-5 h-5" />}

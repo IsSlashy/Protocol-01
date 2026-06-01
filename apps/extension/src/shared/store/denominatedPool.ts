@@ -15,9 +15,12 @@ import { PublicKey } from '@solana/web3.js';
 import {
   type ShieldReceipt,
   type PoolConfig,
+  type PrepareUnshieldResult,
   findPoolV3,
   prepareShieldInsert,
   shieldV3,
+  prepareUnshield,
+  unshieldDenominatedStarkV3,
 } from '../services/denominatedPool';
 
 import { useWalletStore, getPrivySigner } from './wallet';
@@ -111,8 +114,17 @@ interface DenominatedPoolState {
     denomination: number;
     onProgress?: (step: string) => void;
   }) => Promise<{ txSig: string; receipt: ShieldReceipt }>;
+  unshieldNote: (params: {
+    noteId: string; // commitment.toString() — uniquely identifies the note
+    recipient?: string; // Solana address; defaults to own wallet
+    emergency?: boolean; // true = bypass maturity (min_epoch = 0)
+    onProgress?: (step: string) => void;
+  }) => Promise<{ txSig: string }>;
   reset: () => void;
   setError: (error: string | null) => void;
+
+  /** Prepared unshield result cache — avoids re-generating proofs on retry. */
+  _preparedUnshield: PrepareUnshieldResult | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +191,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       counterByPool: {},
       loading: false,
       error: null,
+      _preparedUnshield: null,
 
       getNotes: () => get().serializedNotes.map(deserializeReceipt),
 
@@ -250,7 +263,69 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         }
       },
 
-      reset: () => set({ serializedNotes: [], counterByPool: {}, loading: false, error: null }),
+      unshieldNote: async ({ noteId, recipient, emergency = false, onProgress }) => {
+        const notes = get().getNotes();
+        const receipt = notes.find((n) => n.commitment.toString() === noteId);
+        if (!receipt) {
+          throw new Error(`Note ${noteId} not found in store`);
+        }
+
+        const { signer, connection } = createWalletSigner();
+
+        // Resolve recipient — default to own wallet pubkey.
+        let recipientPubkey: import('@solana/web3.js').PublicKey;
+        if (recipient) {
+          const { PublicKey } = await import('@solana/web3.js');
+          recipientPubkey = new PublicKey(recipient);
+        } else {
+          const { PublicKey } = await import('@solana/web3.js');
+          const walletState = useWalletStore.getState();
+          if (!walletState.publicKey) throw new Error('Wallet not unlocked');
+          recipientPubkey = new PublicKey(walletState.publicKey);
+        }
+
+        const poolConfig: PoolConfig | undefined = findPoolV3(receipt.token, receipt.denominationHuman);
+        if (!poolConfig) {
+          throw new Error(`Pool not found for note: ${receipt.token} ${receipt.denominationHuman}`);
+        }
+
+        set({ loading: true, error: null });
+        try {
+          // Prepare (fetch leaves, build path, root-preflight, C1+C3 proofs).
+          onProgress?.('Preparing unshield proofs...');
+          const prepared = await prepareUnshield(receipt, poolConfig, connection, onProgress);
+          set({ _preparedUnshield: prepared });
+
+          // Submit C1 + C3, send unshield ix.
+          const txSig = await unshieldDenominatedStarkV3(
+            receipt,
+            poolConfig,
+            recipientPubkey,
+            prepared,
+            signer,
+            connection,
+            onProgress,
+            emergency,
+          );
+
+          // Remove spent note from store.
+          set((state) => ({
+            serializedNotes: state.serializedNotes.filter(
+              (n) => n.commitment !== noteId,
+            ),
+            loading: false,
+            _preparedUnshield: null,
+          }));
+
+          return { txSig };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          set({ loading: false, error: msg });
+          throw err;
+        }
+      },
+
+      reset: () => set({ serializedNotes: [], counterByPool: {}, loading: false, error: null, _preparedUnshield: null }),
 
       setError: (error) => set({ error }),
     }),

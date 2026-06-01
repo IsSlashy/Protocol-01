@@ -35,6 +35,12 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
 
+// anchorEventDiscriminator — Anchor event disc is sha256("event:<Name>")[0..8]
+// (same as mobile line 439). Used by fetchPoolCommitments.
+function anchorEventDiscriminator(name: string): Uint8Array {
+  return sha256(utf8ToBytes(`event:${name}`)).slice(0, 8);
+}
+
 // Goldilocks Poseidon primitives — from the extension's own copy (already
 // parity-tested against the Rust reference).
 import {
@@ -49,6 +55,7 @@ import {
   closeStarkProofBuffer,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_POOL_COMMITMENT,
+  CIRCUIT_MERKLE_PATH,
   type GenericStarkProof,
   type WalletSigner,
 } from './stark';
@@ -57,9 +64,9 @@ import {
 import { starkProver } from './starkProver';
 
 // ---------------------------------------------------------------------------
-// Re-export CIRCUIT_POOL_COMMITMENT so consumers can import from here.
+// Re-export circuit IDs and signer type so consumers can import from here.
 // ---------------------------------------------------------------------------
-export { CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_UPDATE, type WalletSigner };
+export { CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH, CIRCUIT_MERKLE_UPDATE, type WalletSigner };
 
 // ---------------------------------------------------------------------------
 // Constants (mirror mobile lines 43-108)
@@ -878,4 +885,714 @@ function hexToBytes(hex: string): Uint8Array {
     bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   }
   return bytes;
+}
+
+// ===========================================================================
+// UNSHIELD — V3 Goldilocks denominated pool
+//
+// Ported from:
+//   apps/mobile/services/denominatedPool/index.ts
+//   - fetchPoolCommitments    (line 619)
+//   - fetchPoolLeavesByIndex  (line 897)
+//   - replayMerkleProofFromEvents (line 787) — the CORRECT rebuild for stale-subtrees on-chain
+//   - unshieldDenominatedStarkV3 (line 3206)
+//   - buildUnshieldDenominatedStarkV3Ix (line 2926)
+//
+// Extension adaptation: browser context, no Hermes/RN. DataView/Uint8Array
+// for byte decoding. No `Buffer.readBigUInt64LE` on plain Uint8Array — use
+// helper below. submitAndVerifyStarkProof (legacy) instead of Uniform pipeline.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// ZERO_VALUE — canonical empty leaf for Goldilocks Poseidon tree.
+// V3 pools use Goldilocks Poseidon, so the zero hash cascade starts from 0.
+// Mobile line 84 uses BN254 ZERO_VALUE. For V3 with Goldilocks, the empty
+// slot is 0n (computeZeroHashesV3 starts at 0n).
+// ---------------------------------------------------------------------------
+const ZERO_VALUE_V3 = 0n;
+
+// ---------------------------------------------------------------------------
+// LEAF_INSERTION_EVENTS — mirror mobile lines 456-527
+// Same discriminators / offsets, ported byte-for-byte.
+// ---------------------------------------------------------------------------
+const LEAF_INSERTION_EVENTS: ReadonlyArray<{
+  name: string;
+  disc: Uint8Array;
+  commitmentOffset: number;
+  leafIndexOffset: number;
+  minLength: number;
+}> = [
+  // V3 universal LeafInserted event (merkle_tree_v3.rs:209)
+  // Layout after 8-byte disc:
+  //   pool:      Pubkey (32) @ 8
+  //   leaf_index: u64   (8)  @ 40
+  //   leaf:      [u8;32](32) @ 48
+  //   new_root:  [u8;32](32) @ 80
+  //   old_root:  [u8;32](32) @ 112
+  // Total: 144 bytes.
+  {
+    name: 'LeafInserted',
+    disc: anchorEventDiscriminator('LeafInserted'),
+    commitmentOffset: 48,
+    leafIndexOffset: 40,
+    minLength: 144,
+  },
+  // V2: MerkleRootChanged — post-hardening universal event
+  {
+    name: 'MerkleRootChanged',
+    disc: anchorEventDiscriminator('MerkleRootChanged'),
+    commitmentOffset: 112, // `leaf: [u8; 32]`
+    leafIndexOffset: 104,
+    minLength: 144,
+  },
+  // ShieldDenominatedEvent V2 (with protocol_fee)
+  {
+    name: 'ShieldDenominatedEvent/V2',
+    disc: anchorEventDiscriminator('ShieldDenominatedEvent'),
+    commitmentOffset: 88,
+    leafIndexOffset: 120,
+    minLength: 128,
+  },
+  // ShieldDenominatedEvent V1 (pre-protocol_fee)
+  {
+    name: 'ShieldDenominatedEvent/V1',
+    disc: anchorEventDiscriminator('ShieldDenominatedEvent'),
+    commitmentOffset: 80,
+    leafIndexOffset: 112,
+    minLength: 120,
+  },
+  // ShieldStarkEvent — same shape as ShieldDenominated V1
+  {
+    name: 'ShieldStarkEvent',
+    disc: anchorEventDiscriminator('ShieldStarkEvent'),
+    commitmentOffset: 80,
+    leafIndexOffset: 112,
+    minLength: 120,
+  },
+  // TransferDenominatedStarkEvent
+  {
+    name: 'TransferDenominatedStarkEvent',
+    disc: anchorEventDiscriminator('TransferDenominatedStarkEvent'),
+    commitmentOffset: 72,
+    leafIndexOffset: 104,
+    minLength: 112,
+  },
+  // EscrowReleaseEvent
+  {
+    name: 'EscrowReleaseEvent',
+    disc: anchorEventDiscriminator('EscrowReleaseEvent'),
+    commitmentOffset: 105,
+    leafIndexOffset: 137,
+    minLength: 145,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Byte helpers (browser-safe — no Buffer.readBigUInt64LE on Uint8Array)
+// ---------------------------------------------------------------------------
+
+/** Read u64 little-endian from a Uint8Array at a given byte offset. */
+function readU64LE(buf: Uint8Array, offset: number): bigint {
+  let n = 0n;
+  for (let i = 7; i >= 0; i--) n = (n << 8n) | BigInt(buf[offset + i]);
+  return n;
+}
+
+/** Read a 32-byte little-endian bigint from a Uint8Array at a given offset. */
+function leBytes32ToBigint(buf: Uint8Array, offset: number): bigint {
+  let n = 0n;
+  for (let i = 31; i >= 0; i--) n = (n << 8n) | BigInt(buf[offset + i]);
+  return n;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// parsePoolV3Account — inline port of mobile parsePool.ts::parsePoolV3Account
+// (mobile line 117-135). Same byte layout as V2 DenominatedPool. We inline
+// it here to avoid a separate file.
+// ---------------------------------------------------------------------------
+
+interface ParsedPoolV3 {
+  currentRoot: Uint8Array;
+  historicalRoots: Uint8Array[];
+  nextLeafIndex: bigint;
+  noteCount: bigint;
+  isActive: boolean;
+}
+
+function parsePoolV3Account(data: Uint8Array): ParsedPoolV3 | null {
+  // Offsets from mobile parsePool.ts lines 50-63 (identical for V3):
+  // 0:8   disc | 8:40 authority | 40:72 tokenMint | 72:80 denomination
+  // 80:88 epochDelay | 88:120 merkle_root | 120 treeDepth | 121:129 nextLeafIdx
+  // 129:161 vkHash | 161:169 totalShielded | 169:177 noteCount | 177 isActive
+  // 178:182 histLen(u32) | 182: histData (N*32)
+  const MIN = 182;
+  if (data.length < MIN) return null;
+
+  const currentRoot = data.slice(88, 120);
+  const treeDepth = data[120]; void treeDepth;
+  const nextLeafIndex = readU64LE(data, 121);
+  const noteCount = readU64LE(data, 169);
+  const isActive = data[177] === 1;
+  const histLen = (data[178]) | (data[179] << 8) | (data[180] << 16) | (data[181] << 24);
+  if (histLen > 100) return null;
+  const histEnd = 182 + histLen * 32;
+  if (data.length < histEnd) return null;
+
+  const historicalRoots: Uint8Array[] = [];
+  for (let i = 0; i < histLen; i++) {
+    historicalRoots.push(data.slice(182 + i * 32, 182 + i * 32 + 32));
+  }
+
+  return { currentRoot, historicalRoots, nextLeafIndex, noteCount, isActive };
+}
+
+// ---------------------------------------------------------------------------
+// fetchPoolCommitments — port of mobile lines 619-699
+//
+// Walks pool transaction history, decodes every LeafInserted / flavored event,
+// and returns a Map commitment_str -> { commitment, leafIndex }.
+// Extension adaptation: uses DataView/Uint8Array (not Buffer.readBigUInt64LE).
+// ---------------------------------------------------------------------------
+
+export async function fetchPoolCommitments(
+  connection: Connection,
+  poolPDA: PublicKey,
+  options: {
+    maxSignatures?: number;
+    batchSize?: number;
+    onProgress?: (scanned: number, total: number) => void;
+  } = {},
+): Promise<Map<string, OnChainCommitment>> {
+  const maxSignatures = options.maxSignatures ?? 1000;
+  const batchSize = options.batchSize ?? 25;
+  const PAGE = 1000;
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+
+  const sigs: Array<{ signature: string }> = [];
+  let before: string | undefined;
+  while (sigs.length < maxSignatures) {
+    const remaining = maxSignatures - sigs.length;
+    const page = await connection.getSignaturesForAddress(poolPDA, {
+      limit: Math.min(PAGE, remaining),
+      before,
+    });
+    if (page.length === 0) break;
+    sigs.push(...page);
+    if (page.length < PAGE) break;
+    before = page[page.length - 1].signature;
+  }
+
+  const out = new Map<string, OnChainCommitment>();
+
+  for (let i = 0; i < sigs.length; i += batchSize) {
+    const batch = sigs.slice(i, i + batchSize);
+    const txs = await Promise.all(
+      batch.map((s) =>
+        connection
+          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+          .catch(() => null),
+      ),
+    );
+
+    for (const tx of txs) {
+      const logs = tx?.meta?.logMessages;
+      if (!logs) continue;
+      for (const log of logs) {
+        const m = log.match(/^Program data: (.+)$/);
+        if (!m) continue;
+        let data: Uint8Array;
+        try {
+          const b64 = m[1];
+          const binStr = atob(b64);
+          data = new Uint8Array(binStr.length);
+          for (let k = 0; k < binStr.length; k++) data[k] = binStr.charCodeAt(k);
+        } catch { continue; }
+        if (data.length < 8) continue;
+        const disc = data.subarray(0, 8);
+
+        let decoded: { commitment: bigint; leafIndex: number } | null = null;
+        for (const layout of LEAF_INSERTION_EVENTS) {
+          if (!bytesEqual(disc, layout.disc)) continue;
+          if (data.length < layout.minLength) continue;
+          const rawIdx = readU64LE(data, layout.leafIndexOffset);
+          if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+          const leafIndex = Number(rawIdx);
+          if (leafIndex < 0 || leafIndex >= MAX_LEAVES) continue;
+          const commitment = leBytes32ToBigint(data, layout.commitmentOffset);
+          decoded = { commitment, leafIndex };
+          break;
+        }
+        if (!decoded) continue;
+        out.set(decoded.commitment.toString(), decoded);
+      }
+    }
+
+    options.onProgress?.(Math.min(i + batchSize, sigs.length), sigs.length);
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// fetchPoolLeavesByIndex — port of mobile lines 897-937
+//
+// Calls fetchPoolCommitments then materializes a dense array indexed by
+// leafIndex. Gaps are filled with ZERO_VALUE_V3 (0n).
+// ---------------------------------------------------------------------------
+
+export async function fetchPoolLeavesByIndex(
+  connection: Connection,
+  poolPDA: PublicKey,
+  opts: {
+    maxSignatures?: number;
+    onProgress?: (scanned: number, total: number) => void;
+  } = {},
+): Promise<{ leavesByIndex: bigint[]; scannedLeafCount: number; missing: number[] }> {
+  const onChain = await fetchPoolCommitments(connection, poolPDA, {
+    maxSignatures: opts.maxSignatures ?? 1000,
+    onProgress: opts.onProgress,
+  });
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+
+  let skipped = 0;
+  let maxIdx = -1;
+  const valid: Array<{ commitment: bigint; leafIndex: number }> = [];
+  for (const e of onChain.values()) {
+    if (!Number.isInteger(e.leafIndex) || e.leafIndex < 0 || e.leafIndex >= MAX_LEAVES) {
+      skipped += 1;
+      continue;
+    }
+    valid.push(e);
+    if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
+  }
+  if (skipped > 0) {
+    console.warn(
+      `[DenomPool/ext] fetchPoolLeavesByIndex: skipped ${skipped} event(s) with invalid leaf_index`,
+    );
+  }
+
+  const leavesByIndex: bigint[] = maxIdx >= 0 ? new Array(maxIdx + 1).fill(ZERO_VALUE_V3) : [];
+  for (const e of valid) leavesByIndex[e.leafIndex] = e.commitment;
+  const missing: number[] = [];
+  for (let i = 0; i <= maxIdx; i++) if (leavesByIndex[i] === ZERO_VALUE_V3) missing.push(i);
+  return { leavesByIndex, scannedLeafCount: maxIdx + 1, missing };
+}
+
+// ---------------------------------------------------------------------------
+// buildMerkleProofFromLeavesV3 — port of mobile replayMerkleProofFromEvents (line 787)
+//
+// WHY replayMerkleProofFromEvents and NOT buildMerkleProofFromLeaves:
+//   On-chain `insert_with_root` (merkle_tree.rs:125) ONLY persists
+//   filled_subtrees[0] after each insertion — higher levels stay stale at
+//   their initial zero hashes. Every past shield client used the stale-subtrees
+//   path when computing its new_root. A "true" Merkle rebuild from all leaves
+//   produces a root NEVER in the on-chain historical ring → unshield fails.
+//   We must REPLAY each insertion using the same stale logic that was accepted
+//   on-chain (verified live: pool HkzArVjU, 2026-05-02).
+//
+// Ported from mobile lines 787-850 BYTE-FOR-BYTE. Uses V3 Goldilocks Poseidon.
+// ---------------------------------------------------------------------------
+
+export function buildMerkleProofFromLeavesV3(params: {
+  leavesByIndex: bigint[];
+  targetLeafIndex: number;
+}): {
+  root: bigint;
+  pathElements: bigint[];
+  pathIndices: number[];
+} {
+  const { leavesByIndex, targetLeafIndex } = params;
+  const zeros = computeZeroHashesV3();
+
+  // Pure level-by-level rebuild of the CURRENT tree. V3 maintains ALL subtree
+  // levels on-chain (insert_with_root_v3 writes filled_subtrees[1..] from the
+  // proof's new_subtrees), so a full rebuild's root equals the pool's LATEST
+  // known root — robust for a note of ANY age. (The v2 stale-subtrees replay
+  // only reproduced each leaf's insert-time root, which rotates out of the
+  // historical ring for older notes.) Mirrors mobile buildMerkleProofFromLeavesV3.
+  if (
+    leavesByIndex[targetLeafIndex] === undefined ||
+    leavesByIndex[targetLeafIndex] === ZERO_VALUE_V3
+  ) {
+    throw new Error(
+      `buildMerkleProofFromLeavesV3: target leafIndex ${targetLeafIndex} not found ` +
+      `among ${leavesByIndex.filter((l) => l !== undefined && l !== ZERO_VALUE_V3).length} non-empty leaves. ` +
+      `Try increasing maxSignatures or check that the note's leafIndex is correct.`,
+    );
+  }
+
+  let nodes: bigint[] = leavesByIndex.length > 0
+    ? leavesByIndex.map((l) => (l === undefined || l === ZERO_VALUE_V3 ? zeros[0] : l))
+    : [zeros[0]];
+  const pathElements: bigint[] = [];
+  const pathIndices: number[] = [];
+  let idx = targetLeafIndex;
+
+  for (let level = 0; level < MERKLE_DEPTH; level++) {
+    const siblingIdx = idx ^ 1;
+    const sibling = siblingIdx < nodes.length ? nodes[siblingIdx] : zeros[level];
+    pathElements.push(sibling);
+    pathIndices.push(idx & 1);
+
+    const next: bigint[] = [];
+    for (let i = 0; i < nodes.length; i += 2) {
+      const left = nodes[i];
+      const right = i + 1 < nodes.length ? nodes[i + 1] : zeros[level];
+      next.push(poseidonHash2(left, right));
+    }
+    nodes = next.length > 0 ? next : [zeros[level + 1]];
+    idx >>= 1;
+  }
+
+  return { root: nodes[0], pathElements, pathIndices };
+}
+
+// ---------------------------------------------------------------------------
+// buildUnshieldDenominatedStarkV3Ix — port of mobile lines 2926-2977
+//
+// Account order MUST match UnshieldDenominatedStarkV3 struct in
+// programs/zk_shielded/src/instructions/unshield_denominated_stark_v3.rs:
+//
+//   [0] payer (mut, signer)
+//   [1] denominated_pool (mut)
+//   [2] merkle_tree (readonly)
+//   [3] nullifier_record (mut, init)
+//   [4] c1_proof_buffer (readonly)
+//   [5] c3_proof_buffer (readonly)
+//   [6] system_program
+//   [7] token_program (Option)
+//   [8] pool_vault (Option, mut)
+//   [9] recipient_token_account (Option, mut)
+//  [10] fee_escrow (mut)
+// remaining_accounts[0]: recipient (anonymous AccountInfo, mut)
+//
+// Args: nullifier[32] | merkle_root[32] | min_epoch u64 | stark_commitment u64 | recipient[32]
+// ---------------------------------------------------------------------------
+
+function buildUnshieldDenominatedStarkV3Ix(
+  payer: PublicKey,
+  recipient: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  starkCommitment: bigint,
+  tokenProgram?: PublicKey,
+  poolVault?: PublicKey,
+  recipientTokenAccount?: PublicKey,
+): TransactionInstruction {
+  const disc = getDiscriminator('unshield_denominated_stark_v3');
+  // Args layout: nullifier[32] + merkle_root[32] + min_epoch u64 + stark_commitment u64 + recipient[32]
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+  // recipient as 32-byte arg (matches `recipient: [u8; 32]` in Rust)
+  Buffer.from(recipient.toBytes()).copy(data, offset);
+
+  const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
+
+  const keys = [
+    { pubkey: payer,                                    isSigner: true,  isWritable: true  },
+    { pubkey: poolPDA,                                  isSigner: false, isWritable: true  },
+    { pubkey: treePDA,                                  isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA,                             isSigner: false, isWritable: true  },
+    { pubkey: c1ProofBuffer,                            isSigner: false, isWritable: false },
+    { pubkey: c3ProofBuffer,                            isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId,                  isSigner: false, isWritable: false },
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID,   isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID,      isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    { pubkey: feeEscrowPDA,                             isSigner: false, isWritable: true  },
+    // remaining_accounts[0]: recipient — anonymous AccountInfo, NOT a named field.
+    // The Rust handler resolves it from ctx.remaining_accounts[0] and verifies
+    // it matches the `recipient: [u8; 32]` arg (unshield_denominated_stark_v3.rs:179-184).
+    { pubkey: recipient,                                isSigner: false, isWritable: true  },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+// ---------------------------------------------------------------------------
+// prepareUnshield — orchestration helper
+//
+// Fetches leaves, builds Merkle path (replay style), root-preflights against
+// the pool's known-roots ring, generates C1 + C3 STARK proofs.
+// Returns everything unshieldDenominatedStarkV3 needs.
+//
+// The root pre-flight (mobile lines 3288-3335): after building the path we
+// check that the resulting root is in the pool's current/historical ring.
+// If not → we retry with 2× maxSignatures. If still not → fail BEFORE
+// submitting proof rent (~2 SOL + 7 min of upload).
+// ---------------------------------------------------------------------------
+
+export interface PrepareUnshieldResult {
+  c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  merkleRoot: bigint;
+  nullifierGoldilocks: bigint;
+  starkCommitment: bigint;
+}
+
+export async function prepareUnshield(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  connection: Connection,
+  onProgress?: (step: string) => void,
+): Promise<PrepareUnshieldResult> {
+  // Import starkProver lazily to avoid circular module issues.
+  const { starkProver: prover } = await import('./starkProver');
+
+  onProgress?.('Fetching pool leaves from on-chain events...');
+  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
+    connection,
+    poolConfig.poolPDA,
+    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+  );
+
+  if (missing.length > 0) {
+    console.warn(`[DenomPool/ext] prepareUnshield: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+  }
+
+  onProgress?.('Building Merkle proof from leaf history...');
+  let merkleResult = buildMerkleProofFromLeavesV3({
+    leavesByIndex,
+    targetLeafIndex: receipt.leafIndex,
+  });
+
+  // --- Root pre-flight (mirrors mobile lines 3288-3335) ---
+  onProgress?.('Pre-flight root verification...');
+  const poolAcct = await connection.getAccountInfo(poolConfig.poolPDA, 'confirmed');
+  if (poolAcct) {
+    const parsed = parsePoolV3Account(new Uint8Array(poolAcct.data));
+    if (parsed) {
+      const rootBytes = new Uint8Array(goldilocksToLeBytes32(merkleResult.root));
+      const inCurrent = bytesEqual(rootBytes, parsed.currentRoot);
+      const inHist = parsed.historicalRoots.some((r) => bytesEqual(rootBytes, r));
+      if (!inCurrent && !inHist) {
+        // Retry with 3× maxSignatures — the first scan may have missed events
+        // (Helius 429 or slow RPC indexing for a just-shielded note).
+        onProgress?.('Root not in ring — retrying event scan with extended limit...');
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+          maxSignatures: 3000,
+        });
+        merkleResult = buildMerkleProofFromLeavesV3({
+          leavesByIndex: retry.leavesByIndex,
+          targetLeafIndex: receipt.leafIndex,
+        });
+        const retryRootBytes = new Uint8Array(goldilocksToLeBytes32(merkleResult.root));
+        const retryInCurrent = bytesEqual(retryRootBytes, parsed.currentRoot);
+        const retryInHist = parsed.historicalRoots.some((r) => bytesEqual(retryRootBytes, r));
+        if (!retryInCurrent && !retryInHist) {
+          const hex = (u: Uint8Array) => Array.from(u).map((b) => b.toString(16).padStart(2, '0')).join('');
+          throw new Error(
+            `PRE-FLIGHT FAIL: Rebuilt Merkle root 0x${hex(retryRootBytes).slice(0, 24)}… ` +
+            `is not in pool's known roots (current + ${parsed.historicalRoots.length} historical). ` +
+            `This would burn STARK proof rent (~2 SOL). Aborting. ` +
+            `Wait ~10s for RPC to index recent transactions, then retry.`,
+          );
+        }
+        console.log('[DenomPool/ext] PRE-FLIGHT OK (retry)');
+      } else {
+        console.log(`[DenomPool/ext] PRE-FLIGHT OK — root matches ${inCurrent ? 'currentRoot' : 'historicalRoots'}`);
+      }
+    } else {
+      console.warn('[DenomPool/ext] PRE-FLIGHT skip — pool account parse returned null (layout drift?)');
+    }
+  } else {
+    console.warn('[DenomPool/ext] PRE-FLIGHT skip — pool account not found');
+  }
+
+  // --- Generate C1 (pool_commitment) proof ---
+  // publicInputs layout: [nullifier_u64, commitment_u64]
+  // starkProver.generatePoolCommitmentProof(np, secret, epoch, mint)
+  onProgress?.('Generating C1 (pool_commitment) STARK proof (~60s)...');
+  await prover.start();
+  const c1Raw = await prover.generatePoolCommitmentProof(
+    receipt.nullifierPreimage.toString(),
+    receipt.secret.toString(),
+    receipt.depositEpoch.toString(),
+    receipt.tokenMint.toString(),
+  );
+
+  // --- Generate C3 (merkle_path) proof ---
+  // publicInputs layout: [leaf_u64, root_u64]
+  // starkProver.generateMerklePathProof(leaf, pathElements, pathIndices)
+  onProgress?.('Generating C3 (merkle_path) STARK proof (~60s)...');
+  const c3Raw = await prover.generateMerklePathProof(
+    receipt.commitment.toString(),
+    merkleResult.pathElements.map((e) => e.toString()),
+    merkleResult.pathIndices,
+  );
+
+  const c1ProofBytes = hexToBytes(c1Raw.proofHex);
+  const c1PublicInputs = c1Raw.publicInputs.map((s) => BigInt(s));
+  const c3ProofBytes = hexToBytes(c3Raw.proofHex);
+  const c3PublicInputs = c3Raw.publicInputs.map((s) => BigInt(s));
+
+  // nullifier and commitment come from C1 public inputs.
+  const nullifierGoldilocks = c1PublicInputs[0] ?? 0n;
+  const starkCommitment = c1PublicInputs[1] ?? 0n;
+  // root comes from C3 public inputs (layout [leaf, root]).
+  const merkleRoot = c3PublicInputs[1] ?? merkleResult.root;
+
+  return {
+    c1ProofResult: { proofBytes: c1ProofBytes, publicInputs: c1PublicInputs, proofSize: c1Raw.proofSize },
+    c3ProofResult: { proofBytes: c3ProofBytes, publicInputs: c3PublicInputs, proofSize: c3Raw.proofSize },
+    merkleRoot,
+    nullifierGoldilocks,
+    starkCommitment,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// unshieldDenominatedStarkV3 — port of mobile lines 3206-3396
+//
+// Orchestration:
+//   1. Submit + verify C1 (pool_commitment) proof   → c1ProofBuffer
+//   2. Submit + verify C3 (merkle_path) proof       → c3ProofBuffer
+//   3. Build + send unshield_denominated_stark_v3
+//   4. Close both buffers in finally (rent recovery)
+//
+// EXTENSION ADAPTATION: uses legacy submitAndVerifyStarkProof (non-uniform)
+// instead of submitAndVerifyStarkProofUniform. The on-chain handler reads the
+// verified buffer PDA regardless of upload path.
+//
+// REGULAR vs EMERGENCY (per lib.rs:156 + unshield_denominated_stark_v3.rs
+// handler comment lines 197-199):
+//   Regular:   minEpoch = receipt.depositEpoch  — respects maturity gate.
+//              The V3 handler does NOT enforce this on-chain (maturity is
+//              UX-only in V3 — see handler line 198: "UX/SDK concern").
+//              We pass it anyway to mirror the mobile behaviour.
+//   Emergency: minEpoch = 0n                   — explicit bypass signal.
+//              Per lib.rs:156, min_epoch==0 is the emergency bypass.
+//              The V3 handler ignores min_epoch in its logic (line 370:
+//              `let _ = (..., min_epoch, ...)`) — passing 0 is safe and
+//              matches what a guardian/emergency path would pass.
+// ---------------------------------------------------------------------------
+
+export async function unshieldDenominatedStarkV3(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  preparedResult: PrepareUnshieldResult,
+  signer: WalletSigner,
+  connection: Connection,
+  onProgress?: (step: string) => void,
+  emergency = false,
+): Promise<string> {
+  const { c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment } = preparedResult;
+
+  const createdBuffers: PublicKey[] = [];
+  let c1ProofBuffer: PublicKey | undefined;
+  let c3ProofBuffer: PublicKey | undefined;
+
+  try {
+    // Step 1: C1 (pool_commitment)
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    const c1Proof: GenericStarkProof = {
+      proofBytes: c1ProofResult.proofBytes,
+      circuitId: CIRCUIT_POOL_COMMITMENT,
+      publicInputs: c1ProofResult.publicInputs,
+      proofSize: c1ProofResult.proofSize,
+    };
+    const c1Result = await submitAndVerifyStarkProof(c1Proof, signer, connection, onProgress);
+    c1ProofBuffer = c1Result.proofBuffer;
+    createdBuffers.push(c1ProofBuffer);
+
+    // Step 2: C3 (merkle_path)
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    const c3Proof: GenericStarkProof = {
+      proofBytes: c3ProofResult.proofBytes,
+      circuitId: CIRCUIT_MERKLE_PATH,
+      publicInputs: c3ProofResult.publicInputs,
+      proofSize: c3ProofResult.proofSize,
+    };
+    const c3Result = await submitAndVerifyStarkProof(c3Proof, signer, connection, onProgress);
+    c3ProofBuffer = c3Result.proofBuffer;
+    createdBuffers.push(c3ProofBuffer);
+
+    // Step 3: Build + send unshield_denominated_stark_v3
+    onProgress?.('Building V3 unshield transaction...');
+
+    const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
+    const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
+
+    // minEpoch: regular = depositEpoch, emergency = 0.
+    // V3 handler accepts both (maturity is UX-only on-chain in V3).
+    const minEpoch = emergency ? 0n : receipt.depositEpoch;
+
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const isNativeSOL = poolConfig.tokenMint.equals(SystemProgram.programId);
+    let tokenProgram: PublicKey | undefined;
+    let recipientTokenAccount: PublicKey | undefined;
+    let poolVault: PublicKey | undefined;
+
+    if (!isNativeSOL) {
+      tokenProgram = TOKEN_PROGRAM_ID;
+      recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+      poolVault = poolConfig.vaultATA
+        ?? await getAssociatedTokenAddress(poolConfig.tokenMint, poolConfig.poolPDA, true);
+    }
+
+    const ix = buildUnshieldDenominatedStarkV3Ix(
+      signer.publicKey,
+      recipient,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c1ProofBuffer,
+      c3ProofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      starkCommitment,
+      tokenProgram,
+      poolVault,
+      recipientTokenAccount,
+    );
+
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    if (!isNativeSOL && recipientTokenAccount) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          signer.publicKey, recipientTokenAccount, recipient, poolConfig.tokenMint,
+        ),
+      );
+    }
+    tx.add(ix);
+
+    onProgress?.('Sending V3 unshield transaction...');
+    const sig = await signSendConfirmTx(connection, tx, signer);
+    onProgress?.('V3 unshield confirmed!');
+    return sig;
+  } finally {
+    // Close all created buffers — rent recovery regardless of success/failure.
+    for (const buf of createdBuffers) {
+      try {
+        onProgress?.('Closing proof buffer (rent recovery)...');
+        await closeStarkProofBuffer(buf, signer, connection);
+      } catch (closeErr: unknown) {
+        console.warn(
+          '[DenomPool/ext] closeStarkProofBuffer (unshield) failed:',
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+        );
+      }
+    }
+  }
 }

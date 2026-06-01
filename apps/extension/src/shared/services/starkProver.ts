@@ -273,6 +273,28 @@ class StarkProverService {
       durationMs: msg.durationMs!,
     };
   }
+
+  /** Circuit 3 (merkle_path) — proves `leaf` is at the position given by
+   * pathElements/pathIndices, yielding the tree root. Used by unshield/transfer.
+   * publicInputs layout: [leaf, root]. */
+  async generateMerklePathProof(
+    leaf: string,
+    pathElements: string[], pathIndices: number[],
+  ): Promise<GenericStarkProofResult> {
+    const msg = await this.sendRequest((id, worker) => {
+      worker.postMessage({
+        type: 'generateMerklePathProof', id,
+        leaf, pathElements, pathIndices,
+      });
+    });
+    return {
+      circuitId: msg.circuitId ?? 3,
+      publicInputs: msg.publicInputs ?? [],
+      proofHex: msg.proofHex!,
+      proofSize: msg.proofSize!,
+      durationMs: msg.durationMs!,
+    };
+  }
 }
 
 export const starkProver = new StarkProverService();
