@@ -28,6 +28,7 @@ export * from './registration';
 export * from './payments';
 export * from './vaults';
 export * from './access-token';
+export * from './license';
 
 // Re-export the lower-level registry helpers so merchants only need one dep.
 export {

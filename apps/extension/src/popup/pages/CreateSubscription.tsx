@@ -7,10 +7,11 @@ import {
   Loader2,
   EyeOff,
   Lock,
-  Shuffle,
   Zap,
   Check,
   PlusCircle,
+  Copy,
+  KeyRound,
 } from 'lucide-react';
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { cn } from '@/shared/utils';
@@ -30,6 +31,8 @@ import {
 } from '@/shared/services/denominatedPool';
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
+import { buildLicenseKey, ephemeralAccountId } from '@/shared/services/license';
+import { useLicenseStore, type LicenseEntry } from '@/shared/store/license';
 
 /**
  * Resolve a service subscription's PAYMENT recipient: the merchant's on-chain
@@ -62,13 +65,13 @@ async function resolveServiceRecipient(
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type PrivacyMode = 'standard' | 'noise' | 'zk';
+type PrivacyMode = 'standard' | 'zk';
 
 const PRIVACY_MODES = [
   {
     id: 'standard' as PrivacyMode,
     name: 'Standard',
-    desc: 'Direct payment, visible on-chain',
+    desc: 'Direct payment, fully visible on-chain (0% privacy)',
     icon: Zap,
     color: '#39c5bb',
     features: ['Fast execution', 'Lowest fees'],
@@ -76,19 +79,9 @@ const PRIVACY_MODES = [
     disabledReason: undefined,
   },
   {
-    id: 'noise' as PrivacyMode,
-    name: 'Noise + Timing',
-    desc: 'Randomized amounts & timing',
-    icon: Shuffle,
-    color: '#ff77a8',
-    features: ['±15% amount noise', '±4h timing jitter', 'Pattern-resistant'],
-    disabled: false,
-    disabledReason: undefined,
-  },
-  {
     id: 'zk' as PrivacyMode,
     name: 'ZK Private',
-    desc: 'Pay from a shielded denominated note, no wallet link',
+    desc: 'Pay from a shielded denominated note, no wallet link (100% privacy)',
     icon: Shield,
     color: '#39c5bb',
     features: ['STARK proof (C1)', 'No wallet link', 'Goldilocks pool'],
@@ -189,6 +182,7 @@ export default function CreateSubscription() {
   const { shieldedBalance } = useShieldedStore();
   const { getSpendableNote, getNotes, removeNote } = useDenominatedPoolStore();
   const { createPrivateVault, saveSecret } = useSubscriptionVaultStore();
+  const { saveLicense } = useLicenseStore();
 
   // The recipient is already determined by how the user arrived here:
   //   - picked a service in Subscriptions  -> service data in location.state
@@ -209,10 +203,13 @@ export default function CreateSubscription() {
   const isPersonal = !svc;
 
   const [step, setStep] = useState<'mode' | 'confirm'>('mode');
-  const [privacyMode, setPrivacyMode] = useState<PrivacyMode>('noise');
+  const [privacyMode, setPrivacyMode] = useState<PrivacyMode>('standard');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
+  // Set when a subscription succeeds — drives the license-key success panel.
+  const [createdLicense, setCreatedLicense] = useState<LicenseEntry | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // ── Personal-stream form fields (prefilled from query params if a dApp
   // handed them in; otherwise blank for a from-scratch payment stream). ──
@@ -295,6 +292,34 @@ export default function CreateSubscription() {
   const activeName = isPersonal ? personalName : prefillName;
   const activeRecipient = isPersonal ? personalRecipient : prefillRecipient;
   const activeAmount = isPersonal ? personalPerPayment : (parseFloat(prefillAmount) || 0);
+
+  /**
+   * Mint + persist the merchant license key for a completed subscription, and
+   * surface the success panel. `subscriberId` is the on-chain subscription
+   * identity: the ZK `subscriber_commitment` (anonymous) or the wallet pubkey
+   * (Standard). The merchant verifies it on-chain and provisions a no-PII
+   * ephemeral account keyed by `ephemeralAccountId`.
+   */
+  const mintLicense = (recipient: string, subscriberId: Uint8Array, mode: 'standard' | 'zk') => {
+    try {
+      const licenseKey = buildLicenseKey({ retailer: recipient, subscriberId, mode });
+      const entry: LicenseEntry = {
+        licenseKey,
+        retailer: recipient,
+        mode,
+        serviceName: activeName || undefined,
+        ephemeralAccountId: ephemeralAccountId(licenseKey),
+        createdAt: Date.now(),
+      };
+      saveLicense(entry);
+      setCreatedLicense(entry);
+    } catch (e) {
+      // Non-fatal: the subscription already succeeded on-chain. Just skip the
+      // license panel and fall back to navigating away.
+      console.warn('[Subscription] license mint failed:', e);
+      navigate('/subscriptions', { replace: true });
+    }
+  };
 
   const handleCreate = async () => {
     setError(null);
@@ -532,7 +557,9 @@ export default function CreateSubscription() {
         // nullifier record on-chain).
         removeNote(note.commitment.toString());
 
-        navigate('/subscriptions', { replace: true });
+        // Mint the anonymous license key. subscriberId = the on-chain
+        // subscriber_commitment (not linkable to the wallet).
+        mintLicense(recipient, subscriberCommitmentBytes, 'zk');
       } catch (err) {
         console.error('[Subscription/ZK] Create error:', err);
         // If the note was already spent on-chain (stale local picker entry),
@@ -583,10 +610,6 @@ export default function CreateSubscription() {
       // Standard = no privacy features (explicitly zero — createSubscription
       // otherwise auto-applies random noise, which would falsely inflate the
       // privacy score for a fully on-chain-visible subscription).
-      const noiseSettings = privacyMode === 'noise'
-        ? { amountNoise: 15, timingNoise: 4 }
-        : { amountNoise: 0, timingNoise: 0 };
-
       const subscription = addSubscription({
         name: activeName || `Payment to ${recipient.slice(0, 8)}…`,
         recipient,
@@ -595,13 +618,16 @@ export default function CreateSubscription() {
         // Personal stream: cap at the chosen duration's period count.
         // Merchant subscription: unlimited.
         maxPayments: isPersonal ? personalPeriods : 0,
-        ...noiseSettings,
+        amountNoise: 0,
+        timingNoise: 0,
       });
 
       // Execute first payment (local keypair or Privy embedded wallet).
       await processPayment(subscription.id, signer, network);
 
-      navigate('/subscriptions', { replace: true });
+      // Mint the license key. Standard is 0% privacy, so subscriberId = the
+      // subscriber wallet pubkey (matches the on-chain vault's subscriber_pubkey).
+      mintLicense(recipient, signer.publicKey.toBytes(), 'standard');
     } catch (err) {
       console.error('[Subscription] Create error:', err);
       setError((err as Error)?.message || 'Failed to start subscription.');
@@ -637,8 +663,67 @@ export default function CreateSubscription() {
 
       <div className="flex-1 overflow-y-auto p-4">
 
+        {/* ═══ SUCCESS: License key ═══ */}
+        {createdLicense && (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <div className="flex flex-col items-center text-center pt-2">
+              <div className="w-12 h-12 rounded-full bg-p01-cyan/15 flex items-center justify-center mb-3">
+                <Check className="w-6 h-6 text-p01-cyan" />
+              </div>
+              <h2 className="text-white font-display font-bold text-base">Subscription active</h2>
+              <p className="text-p01-chrome text-[11px] font-mono mt-1">
+                {createdLicense.mode === 'zk'
+                  ? 'Paid privately from your shielded note.'
+                  : 'First payment sent.'}
+              </p>
+            </div>
+
+            {/* License key */}
+            <div className="p-4 rounded-2xl bg-p01-gradient-card border border-p01-cyan/20">
+              <div className="flex items-center gap-2 mb-2">
+                <KeyRound className="w-3.5 h-3.5 text-p01-cyan" />
+                <p className="text-p01-chrome text-[10px] font-mono tracking-wider">MERCHANT LICENSE KEY</p>
+              </div>
+              <p className="text-white text-[10px] font-mono break-all bg-p01-void/60 border border-p01-border rounded-lg p-2.5 leading-relaxed">
+                {createdLicense.licenseKey}
+              </p>
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(createdLicense.licenseKey);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-p01-cyan/10 border border-p01-cyan/30 text-p01-cyan text-[11px] font-mono hover:bg-p01-cyan/15 transition-colors"
+              >
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Copied' : 'Copy license key'}
+              </button>
+            </div>
+
+            {/* What it is */}
+            <div className="p-3 rounded-lg bg-p01-dark border border-p01-border space-y-2">
+              <div className="flex justify-between">
+                <span className="text-p01-chrome text-[10px] font-mono">Account handle</span>
+                <span className="text-white text-[10px] font-mono">{createdLicense.ephemeralAccountId}</span>
+              </div>
+              <p className="text-p01-chrome/70 text-[10px] font-mono leading-relaxed">
+                Paste this key into {createdLicense.serviceName || 'the merchant'} to activate. They verify it
+                on-chain and create an account keyed only by the handle above
+                {createdLicense.mode === 'zk' ? ' — no wallet, no email, no trace.' : '.'}
+              </p>
+            </div>
+
+            <button
+              onClick={() => navigate('/subscriptions', { replace: true })}
+              className="w-full py-3 rounded-xl bg-p01-cyan text-p01-void font-bold font-display text-sm tracking-wider hover:bg-p01-cyan/90 transition-colors"
+            >
+              Done
+            </button>
+          </motion.div>
+        )}
+
         {/* ═══ STEP 1: Privacy Mode ═══ */}
-        {step === 'mode' && (
+        {!createdLicense && step === 'mode' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-3">
             <p className="text-p01-chrome text-xs font-mono mb-4 text-center">
               How should payments be made?
@@ -722,7 +807,7 @@ export default function CreateSubscription() {
         )}
 
         {/* ═══ STEP 2: Confirm ═══ */}
-        {step === 'confirm' && (
+        {!createdLicense && step === 'confirm' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
             {/* ── Personal stream: full info-completion form (mobile parity) ── */}
             {isPersonal ? (
@@ -992,8 +1077,6 @@ export default function CreateSubscription() {
               <p className="text-p01-chrome text-[10px] font-mono">
                 {privacyMode === 'standard'
                   ? 'Payments visible on-chain. Fast and minimal fees.'
-                  : privacyMode === 'noise'
-                  ? 'Amounts ±15%, timing ±4h. Pattern analysis resistant.'
                   : 'Fully untraceable. Each payment from shielded pool with ZK proof.'}
               </p>
             </div>
