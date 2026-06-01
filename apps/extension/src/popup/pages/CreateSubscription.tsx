@@ -119,6 +119,38 @@ function intervalToSlots(interval: SubscriptionInterval): bigint {
   }
 }
 
+// ── Personal-stream form options (mirror mobile CreateStreamForm) ────────────
+const DURATION_OPTIONS: { label: string; days: number }[] = [
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+  { label: 'Custom', days: -1 },
+];
+
+const FREQUENCY_OPTIONS: { label: string; value: SubscriptionInterval }[] = [
+  { label: 'Daily', value: 'daily' },
+  { label: 'Weekly', value: 'weekly' },
+  { label: 'Monthly', value: 'monthly' },
+  { label: 'Yearly', value: 'yearly' },
+];
+
+/** Calendar days in one billing interval (matches INTERVAL_SECONDS in stream.ts). */
+function intervalDays(interval: SubscriptionInterval): number {
+  switch (interval) {
+    case 'daily':   return 1;
+    case 'weekly':  return 7;
+    case 'monthly': return 30;
+    case 'yearly':  return 365;
+    default:        return 30;
+  }
+}
+
+/** Number of billing periods covered by `durationDays` at `interval` (min 1). */
+function periodsForDuration(durationDays: number, interval: SubscriptionInterval): number {
+  if (!(durationDays > 0)) return 1;
+  return Math.max(1, Math.ceil(durationDays / intervalDays(interval)));
+}
+
 /** Max anti-correlation delay before a note can fund a private subscription
  * (get_dynamic_delay caps at 2 epochs). Using the max is safe: a note this old
  * always passes the on-chain EpochDelayNotMet check. ~54 min/epoch on devnet. */
@@ -171,11 +203,25 @@ export default function CreateSubscription() {
   const prefillRecipient = svc?.serviceId || searchParams.get('recipient') || '';
   const prefillAmount = svc?.price != null ? String(svc.price) : (searchParams.get('amount') || '');
 
+  // Personal stream = no merchant service. Then we render the full
+  // info-completion form (recipient / name / amount / duration / frequency),
+  // matching the mobile CreateStreamForm, instead of a fixed merchant summary.
+  const isPersonal = !svc;
+
   const [step, setStep] = useState<'mode' | 'confirm'>('mode');
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>('noise');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
+
+  // ── Personal-stream form fields (prefilled from query params if a dApp
+  // handed them in; otherwise blank for a from-scratch payment stream). ──
+  const [personalRecipient, setPersonalRecipient] = useState(prefillRecipient);
+  const [personalName, setPersonalName] = useState(prefillName);
+  const [personalAmount, setPersonalAmount] = useState(prefillAmount);
+  const [selectedDurationDays, setSelectedDurationDays] = useState<number>(30);
+  const [customDuration, setCustomDuration] = useState('');
+  const [frequency, setFrequency] = useState<SubscriptionInterval>('monthly');
 
   // ZK note picker state — index into getNotes() array.
   const [selectedNoteIndex, setSelectedNoteIndex] = useState<number | null>(null);
@@ -233,10 +279,22 @@ export default function CreateSubscription() {
     return () => { cancelled = true; };
   }, [network]);
 
-  const activeName = prefillName;
-  const activeRecipient = prefillRecipient;
-  const activeAmount = parseFloat(prefillAmount) || 0;
-  const activeInterval: SubscriptionInterval = svc?.frequency || 'monthly';
+  // Resolved duration (days) — custom box overrides the chips.
+  const durationDays = selectedDurationDays === -1 ? (Number(customDuration) || 0) : selectedDurationDays;
+
+  const activeInterval: SubscriptionInterval = isPersonal ? frequency : (svc?.frequency || 'monthly');
+
+  // For a personal stream the user enters a TOTAL amount over `durationDays`;
+  // the recurring per-payment rate is total ÷ number of billing periods (matches
+  // mobile CreateStreamForm's "Per payment" preview). `maxPayments` caps the
+  // stream at that period count. A merchant service keeps its fixed price.
+  const personalPeriods = periodsForDuration(durationDays, activeInterval);
+  const personalTotal = parseFloat(personalAmount) || 0;
+  const personalPerPayment = personalPeriods > 0 ? personalTotal / personalPeriods : 0;
+
+  const activeName = isPersonal ? personalName : prefillName;
+  const activeRecipient = isPersonal ? personalRecipient : prefillRecipient;
+  const activeAmount = isPersonal ? personalPerPayment : (parseFloat(prefillAmount) || 0);
 
   const handleCreate = async () => {
     setError(null);
@@ -244,6 +302,28 @@ export default function CreateSubscription() {
     if (!isUnlocked) {
       setError('Please unlock your wallet first.');
       return;
+    }
+
+    // Personal-stream field validation (the merchant flow has these prefilled).
+    if (isPersonal) {
+      if (!personalRecipient.trim()) {
+        setError('Enter a recipient wallet address.');
+        return;
+      }
+      try {
+        new PublicKey(personalRecipient.trim());
+      } catch {
+        setError('Recipient is not a valid Solana address.');
+        return;
+      }
+      if (durationDays <= 0) {
+        setError('Choose a duration (or enter a custom number of days).');
+        return;
+      }
+      if (!(personalTotal > 0)) {
+        setError('Enter a total amount greater than 0.');
+        return;
+      }
     }
 
     // Build a wallet-agnostic signer: local keypair OR Privy embedded wallet.
@@ -508,11 +588,13 @@ export default function CreateSubscription() {
         : { amountNoise: 0, timingNoise: 0 };
 
       const subscription = addSubscription({
-        name: activeName,
+        name: activeName || `Payment to ${recipient.slice(0, 8)}…`,
         recipient,
         amount: activeAmount,
         interval: activeInterval,
-        maxPayments: 0, // unlimited
+        // Personal stream: cap at the chosen duration's period count.
+        // Merchant subscription: unlimited.
+        maxPayments: isPersonal ? personalPeriods : 0,
         ...noiseSettings,
       });
 
@@ -544,7 +626,7 @@ export default function CreateSubscription() {
         </button>
         <div className="flex-1 text-center">
           <h1 className="text-white font-display font-bold tracking-wide text-sm">
-            {step === 'mode' ? 'NEW SUBSCRIPTION' : 'CONFIRM'}
+            {step === 'mode' ? (isPersonal ? 'PAYMENT STREAM' : 'NEW SUBSCRIPTION') : 'CONFIRM'}
           </h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
             STREAM SECURE
@@ -642,35 +724,180 @@ export default function CreateSubscription() {
         {/* ═══ STEP 2: Confirm ═══ */}
         {step === 'confirm' && (
           <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-            {/* Summary card */}
-            <div className="p-4 rounded-2xl bg-p01-gradient-card border border-p01-cyan/20">
-              <p className="text-p01-chrome text-[10px] font-mono tracking-wider mb-3">SUBSCRIPTION SUMMARY</p>
-
-              <div className="space-y-3">
-                {activeName && (
-                  <div className="flex justify-between">
-                    <span className="text-p01-chrome text-xs">Name</span>
-                    <span className="text-white text-xs font-mono">{activeName}</span>
-                  </div>
-                )}
-                {activeAmount > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-p01-chrome text-xs">Amount</span>
-                    <span className="text-p01-cyan text-xs font-mono font-bold">{activeAmount} SOL / {activeInterval}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-p01-chrome text-xs">Privacy</span>
-                  <span className="text-xs font-mono" style={{ color: PRIVACY_MODES.find(m => m.id === privacyMode)?.color }}>
-                    {PRIVACY_MODES.find(m => m.id === privacyMode)?.name}
-                  </span>
+            {/* ── Personal stream: full info-completion form (mobile parity) ── */}
+            {isPersonal ? (
+              <div className="space-y-4">
+                {/* Recipient */}
+                <div>
+                  <label className="text-[10px] text-p01-chrome mb-1.5 block font-mono tracking-wider">
+                    RECIPIENT ADDRESS
+                  </label>
+                  <input
+                    type="text"
+                    value={personalRecipient}
+                    onChange={(e) => { setPersonalRecipient(e.target.value); setError(null); }}
+                    placeholder="Enter a Solana wallet address"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="w-full bg-p01-surface border border-p01-border focus:border-p01-cyan px-3 py-2.5 text-xs font-mono text-white placeholder-p01-text-dim focus:outline-none transition-colors rounded-lg"
+                  />
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-p01-chrome text-xs">Duration</span>
-                  <span className="text-white text-xs font-mono">Unlimited</span>
+
+                {/* Name (optional) */}
+                <div>
+                  <label className="text-[10px] text-p01-chrome mb-1.5 block font-mono tracking-wider">
+                    PAYMENT NAME <span className="text-p01-chrome/50">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={personalName}
+                    onChange={(e) => setPersonalName(e.target.value)}
+                    placeholder="Salary, allowance, rent…"
+                    className="w-full bg-p01-surface border border-p01-border focus:border-p01-cyan px-3 py-2.5 text-xs font-mono text-white placeholder-p01-text-dim focus:outline-none transition-colors rounded-lg"
+                  />
+                </div>
+
+                {/* Total amount */}
+                <div>
+                  <label className="text-[10px] text-p01-chrome mb-1.5 block font-mono tracking-wider">
+                    TOTAL AMOUNT (SOL)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={personalAmount}
+                    onChange={(e) => { setPersonalAmount(e.target.value); setError(null); }}
+                    placeholder="0.00"
+                    step="0.0001"
+                    min="0"
+                    className="w-full bg-p01-surface border border-p01-border focus:border-p01-cyan px-3 py-2.5 text-sm font-mono font-bold text-white placeholder-p01-text-dim focus:outline-none transition-colors rounded-lg"
+                  />
+                </div>
+
+                {/* Duration */}
+                <div>
+                  <label className="text-[10px] text-p01-chrome mb-1.5 block font-mono tracking-wider">
+                    DURATION
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {DURATION_OPTIONS.map((d) => {
+                      const sel = selectedDurationDays === d.days;
+                      return (
+                        <button
+                          key={d.label}
+                          onClick={() => setSelectedDurationDays(d.days)}
+                          className={cn(
+                            'py-2 rounded-lg border text-[11px] font-mono font-semibold transition-all',
+                            sel
+                              ? 'border-p01-cyan bg-p01-cyan/10 text-p01-cyan'
+                              : 'border-p01-border bg-p01-surface text-p01-chrome hover:border-p01-cyan/40',
+                          )}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedDurationDays === -1 && (
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={customDuration}
+                      onChange={(e) => setCustomDuration(e.target.value)}
+                      placeholder="Number of days"
+                      min="1"
+                      className="mt-2 w-full bg-p01-surface border border-p01-border focus:border-p01-cyan px-3 py-2.5 text-xs font-mono text-white placeholder-p01-text-dim focus:outline-none transition-colors rounded-lg"
+                    />
+                  )}
+                </div>
+
+                {/* Frequency */}
+                <div>
+                  <label className="text-[10px] text-p01-chrome mb-1.5 block font-mono tracking-wider">
+                    PAYMENT FREQUENCY
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {FREQUENCY_OPTIONS.map((f) => {
+                      const sel = frequency === f.value;
+                      return (
+                        <button
+                          key={f.value}
+                          onClick={() => setFrequency(f.value)}
+                          className={cn(
+                            'py-2 rounded-lg border text-[11px] font-mono font-semibold transition-all',
+                            sel
+                              ? 'border-p01-cyan bg-p01-cyan/10 text-p01-cyan'
+                              : 'border-p01-border bg-p01-surface text-p01-chrome hover:border-p01-cyan/40',
+                          )}
+                        >
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Live preview */}
+                {personalTotal > 0 && durationDays > 0 && (
+                  <div className="p-4 rounded-2xl bg-p01-gradient-card border border-p01-cyan/20">
+                    <p className="text-p01-chrome text-[10px] font-mono tracking-wider mb-3">STREAM SUMMARY</p>
+                    <div className="space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-p01-chrome text-xs">Per payment</span>
+                        <span className="text-p01-cyan text-xs font-mono font-bold">
+                          {personalPerPayment.toFixed(4)} SOL / {activeInterval}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-p01-chrome text-xs">Payments</span>
+                        <span className="text-white text-xs font-mono">{personalPeriods} over {durationDays}d</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-p01-chrome text-xs">Privacy</span>
+                        <span className="text-xs font-mono" style={{ color: PRIVACY_MODES.find(m => m.id === privacyMode)?.color }}>
+                          {PRIVACY_MODES.find(m => m.id === privacyMode)?.name}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-p01-chrome text-xs">Start</span>
+                        <span className="text-white text-xs font-mono">Immediately</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Merchant service summary (recipient + price are fixed). */
+              <div className="p-4 rounded-2xl bg-p01-gradient-card border border-p01-cyan/20">
+                <p className="text-p01-chrome text-[10px] font-mono tracking-wider mb-3">SUBSCRIPTION SUMMARY</p>
+
+                <div className="space-y-3">
+                  {activeName && (
+                    <div className="flex justify-between">
+                      <span className="text-p01-chrome text-xs">Name</span>
+                      <span className="text-white text-xs font-mono">{activeName}</span>
+                    </div>
+                  )}
+                  {activeAmount > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-p01-chrome text-xs">Amount</span>
+                      <span className="text-p01-cyan text-xs font-mono font-bold">{activeAmount} SOL / {activeInterval}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-p01-chrome text-xs">Privacy</span>
+                    <span className="text-xs font-mono" style={{ color: PRIVACY_MODES.find(m => m.id === privacyMode)?.color }}>
+                      {PRIVACY_MODES.find(m => m.id === privacyMode)?.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-p01-chrome text-xs">Duration</span>
+                    <span className="text-white text-xs font-mono">Unlimited</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* ── ZK Note Picker ─────────────────────────────────────────── */}
             {privacyMode === 'zk' && (
@@ -805,7 +1032,7 @@ export default function CreateSubscription() {
               ) : (
                 <>
                   <Zap className="w-4 h-4" />
-                  Start Subscription
+                  {isPersonal ? 'Create Stream' : 'Start Subscription'}
                 </>
               )}
             </button>
