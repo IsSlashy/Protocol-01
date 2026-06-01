@@ -463,7 +463,11 @@ export function computeNewRootFromSubtreesV3(
   pathIndices: number[];
 } {
   const zeros = computeZeroHashesV3();
-  const subtrees = [...filledSubtrees];
+  // Normalize to EXACTLY MERKLE_DEPTH entries. The on-chain filled_subtrees Vec
+  // is depth+1 (16) but shield_denominated_v3 requires new_subtrees.len() ==
+  // tree_depth (15) — passing 16 fails with InvalidMerkleRoot (merkle_tree_v3.rs
+  // :164). Pad short arrays with the canonical zero for that level.
+  const subtrees = Array.from({ length: MERKLE_DEPTH }, (_, i) => filledSubtrees[i] ?? zeros[i]);
   const pathElements: bigint[] = [];
   const pathIndices: number[] = [];
 

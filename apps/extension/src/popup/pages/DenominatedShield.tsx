@@ -30,7 +30,13 @@ export default function DenominatedShield() {
   const [done, setDone] = useState(false);
   const [txSig, setTxSig] = useState<string | null>(null);
 
-  const pools = getPoolsForTokenV3(token);
+  // Fixed denominations only (like the mobile app) — never free-form amounts.
+  // SOL: 0.1 / 1 / 10 / 100 / 1000 (the 500 pool exists on-chain but is hidden
+  // to keep the standard ladder).
+  const ALLOWED_SOL = [0.1, 1, 10, 100, 1000];
+  const pools = getPoolsForTokenV3(token).filter(
+    (p) => token !== 'SOL' || ALLOWED_SOL.includes(p.denomination),
+  );
 
   const handleCreate = async () => {
     if (denomination === null) return;
@@ -62,10 +68,10 @@ export default function DenominatedShield() {
         </button>
         <div className="flex-1 text-center">
           <h1 className="text-white font-display font-bold tracking-wide text-sm">
-            PRIVATE NOTE
+            SHIELD
           </h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            ZK DENOMINATED SHIELD
+            PRIVATE DENOMINATED POOL
           </p>
         </div>
         <div className="w-9" />
@@ -83,7 +89,8 @@ export default function DenominatedShield() {
               Note created!
             </p>
             <p className="text-p01-chrome text-xs text-center">
-              Your {denomination} {token} note is shielded and ready for private subscribe.
+              {denomination} {token} shielded into a private Goldilocks pool. No link
+              between your wallet and the note on-chain.
             </p>
             {txSig && (
               <p className="text-p01-chrome/50 text-[9px] font-mono break-all text-center">
@@ -151,8 +158,8 @@ export default function DenominatedShield() {
                   </p>
                   <p className="text-p01-chrome text-[10px]">
                     Shields exactly {denomination ?? '?'} {token} into a Goldilocks
-                    Poseidon pool. Proof generation takes 30-60s. The note can then
-                    be used for a private subscription (no wallet link on-chain).
+                    Poseidon pool — fixed denominations only, so deposits are
+                    indistinguishable. Proof generation takes 30-60s.
                   </p>
                 </div>
               </div>
@@ -167,8 +174,8 @@ export default function DenominatedShield() {
             )}
 
             {error && (
-              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
-                <p className="text-red-400 text-[10px] font-mono break-all">{error}</p>
+              <div className="p-3 rounded-lg bg-p01-red/10 border border-p01-red/30">
+                <p className="text-p01-red text-[10px] font-mono break-all">{error}</p>
               </div>
             )}
 

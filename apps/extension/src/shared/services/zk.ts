@@ -271,8 +271,13 @@ class MerkleTree {
   }
 
   private getZeroValue(level: number): bigint {
-    if (!this._zeroValues) {
-      this._zeroValues = computeGoldilocksZeroCascade(this.depth);
+    // The on-chain pool depth can exceed this.depth — e.g. a depth-20 pool while
+    // MERKLE_TREE_DEPTH defaults to 15. computeNewRootFromSubtrees loops to the
+    // ON-CHAIN depth, so the zero cascade must cover that level or it returns
+    // undefined into Goldilocks hashing ("Cannot mix BigInt and other types").
+    // Build/extend the cascade on demand to cover the requested level.
+    if (!this._zeroValues || this._zeroValues.length <= level) {
+      this._zeroValues = computeGoldilocksZeroCascade(Math.max(level, this.depth));
     }
     return this._zeroValues[level];
   }

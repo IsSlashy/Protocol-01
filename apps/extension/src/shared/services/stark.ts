@@ -43,6 +43,7 @@ const CIRCUIT_MERKLE_UPDATE = 6;
 const MAX_CHUNK_SIZE = 1000;
 const PROOF_DATA_OFFSET = 83;
 const MAX_INIT_SIZE = 10_240;
+const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per realloc
 
 // Instruction discriminators (from Anchor IDL — must match mobile byte-for-byte)
 const DISCRIMINATORS = {
@@ -257,7 +258,7 @@ async function signSendConfirm(
   signer: WalletSigner,
   opts?: { skipPreflight?: boolean },
 ): Promise<string> {
-  const { blockhash } = await conn.getLatestBlockhash('confirmed');
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
   tx.recentBlockhash = blockhash;
   tx.feePayer = signer.publicKey;
   const signed = await signer.signTransaction(tx);
@@ -265,11 +266,68 @@ async function signSendConfirm(
   const sig = await conn.sendRawTransaction(signed.serialize(), {
     skipPreflight: opts?.skipPreflight ?? false,
   });
-  const result = await conn.confirmTransaction(sig, 'confirmed');
-  if (result.value.err) {
-    throw new Error(`Transaction failed: ${JSON.stringify(result.value.err)}`);
+
+  try {
+    // Blockhash-based confirmation waits until the blockhash actually expires
+    // (~60-90s) rather than the deprecated fixed 30s timeout.
+    const result = await conn.confirmTransaction(
+      { signature: sig, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    if (result.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(result.value.err)}`);
+    }
+    return sig;
+  } catch (e) {
+    // Slow / rate-limited devnet can throw a timeout even when the tx actually
+    // landed. Re-check the on-chain status (history-searching) before failing.
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const { value } = await conn.getSignatureStatus(sig, { searchTransactionHistory: true });
+      if (value) {
+        if (value.err) throw new Error(`Transaction failed: ${JSON.stringify(value.err)}`);
+        if (value.confirmationStatus === 'confirmed' || value.confirmationStatus === 'finalized') {
+          return sig;
+        }
+      }
+    }
+    throw e;
   }
-  return sig;
+}
+
+/**
+ * Confirm many signatures tolerantly: batch-poll getSignatureStatuses over a
+ * long window (handles slow / rate-limited devnet far better than per-signature
+ * confirmTransaction with its fixed 30s timeout).
+ */
+async function confirmSignatures(
+  conn: Connection,
+  sigs: string[],
+  timeoutMs = 90_000,
+): Promise<void> {
+  const pending = new Set(sigs);
+  const deadline = Date.now() + timeoutMs;
+  while (pending.size > 0 && Date.now() < deadline) {
+    const arr = [...pending];
+    for (let i = 0; i < arr.length; i += 256) {
+      const slice = arr.slice(i, i + 256);
+      const { value } = await conn.getSignatureStatuses(slice, { searchTransactionHistory: true });
+      slice.forEach((sig, k) => {
+        const st = value[k];
+        if (st) {
+          if (st.err) throw new Error(`Chunk upload failed: ${JSON.stringify(st.err)}`);
+          if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized') {
+            pending.delete(sig);
+          }
+        }
+      });
+    }
+    if (pending.size === 0) return;
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  if (pending.size > 0) {
+    throw new Error(`Chunk upload timed out: ${pending.size} chunk(s) unconfirmed`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,10 +360,18 @@ export async function submitStarkProof(
   );
   await signSendConfirm(connection, initTx, signer);
 
-  if (proof.proofSize + PROOF_DATA_OFFSET > MAX_INIT_SIZE) {
-    onProgress?.('Resizing proof buffer...');
-    const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
-    await signSendConfirm(connection, resizeTx, signer);
+  // Grow the buffer to the FULL proof size. Anchor realloc grows by at most
+  // MAX_REALLOC_STEP (10KB) per call, so large proofs (e.g. circuit 6) need
+  // several resize txs — a single resize leaves the buffer too small and a
+  // later chunk write aborts with ProgramFailedToComplete.
+  const resizeTarget = proof.proofSize + PROOF_DATA_OFFSET;
+  if (resizeTarget > MAX_INIT_SIZE) {
+    const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
+    for (let r = 0; r < resizesNeeded; r++) {
+      onProgress?.(`Resizing proof buffer (${r + 1}/${resizesNeeded})...`);
+      const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
+      await signSendConfirm(connection, resizeTx, signer);
+    }
   }
 
   const { blockhash: chunkBlockhash } = await connection.getLatestBlockhash('confirmed');
@@ -323,20 +389,12 @@ export async function submitStarkProof(
     chunkTx.feePayer = authority;
     const signed = await signer.signTransaction(chunkTx);
 
-    if (i > 0) await new Promise((r) => setTimeout(r, 500));
     const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
     chunkSigs.push(sig);
   }
 
   onProgress?.('Confirming chunk uploads...');
-  await Promise.all(
-    chunkSigs.map(async (sig) => {
-      const result = await connection.confirmTransaction(sig, 'confirmed');
-      if (result.value.err) {
-        throw new Error(`Chunk upload failed: ${JSON.stringify(result.value.err)}`);
-      }
-    }),
-  );
+  await confirmSignatures(connection, chunkSigs);
 
   onProgress?.('Verifying STARK proof on-chain...');
   const verifyTx = new Transaction()
@@ -438,10 +496,18 @@ export async function submitAndVerifyStarkProof(
   );
   await signSendConfirm(connection, initTx, signer);
 
-  if (proof.proofSize + PROOF_DATA_OFFSET > MAX_INIT_SIZE) {
-    onProgress?.('Resizing proof buffer...');
-    const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
-    await signSendConfirm(connection, resizeTx, signer);
+  // Grow the buffer to the FULL proof size. Anchor realloc grows by at most
+  // MAX_REALLOC_STEP (10KB) per call, so large proofs (e.g. circuit 6) need
+  // several resize txs — a single resize leaves the buffer too small and a
+  // later chunk write aborts with ProgramFailedToComplete.
+  const resizeTarget = proof.proofSize + PROOF_DATA_OFFSET;
+  if (resizeTarget > MAX_INIT_SIZE) {
+    const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
+    for (let r = 0; r < resizesNeeded; r++) {
+      onProgress?.(`Resizing proof buffer (${r + 1}/${resizesNeeded})...`);
+      const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
+      await signSendConfirm(connection, resizeTx, signer);
+    }
   }
 
   const { blockhash: chunkBlockhash } = await connection.getLatestBlockhash('confirmed');
@@ -459,20 +525,12 @@ export async function submitAndVerifyStarkProof(
     chunkTx.feePayer = authority;
     const signed = await signer.signTransaction(chunkTx);
 
-    if (i > 0) await new Promise((r) => setTimeout(r, 500));
     const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
     chunkSigs.push(sig);
   }
 
   onProgress?.('Confirming chunk uploads...');
-  await Promise.all(
-    chunkSigs.map(async (sig) => {
-      const result = await connection.confirmTransaction(sig, 'confirmed');
-      if (result.value.err) {
-        throw new Error(`Chunk upload failed: ${JSON.stringify(result.value.err)}`);
-      }
-    }),
-  );
+  await confirmSignatures(connection, chunkSigs);
 
   onProgress?.('Verifying STARK proof phase 1...');
   const verifyTx = new Transaction()

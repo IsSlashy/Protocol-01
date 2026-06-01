@@ -6,11 +6,11 @@ import { cn } from '@/shared/utils';
 const navItems = [
   { path: '/', icon: Wallet, label: 'Wallet' },
   { path: '/subscriptions', icon: Repeat, label: 'Streams' },
-  // Route to `/shielded` (the working shielded-wallet flow). The `/denominated`
-  // pages are on a stale Groth16 path that no longer matches mobile (fake
-  // shield, throwing unshield, seed v1 vs mobile v4); they still resolve for
-  // direct navigation but are not the default landing surface.
-  { path: '/shielded', icon: Shield, label: 'Shield' },
+  // Shield = denominated V3 Goldilocks pools (fixed 0.1/1/10/100/1000), matching
+  // the mobile app. The legacy continuous `/shielded` pool used an incompatible
+  // 256-bit (BN254-era) root and never verified; the denominated pools are real
+  // Goldilocks (u64 root) and produce matching proofs.
+  { path: '/denominated-shield', icon: Shield, label: 'Shield' },
   { path: '/agent', icon: Sparkles, label: 'Agent' },
 ];
 

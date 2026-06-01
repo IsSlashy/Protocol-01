@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
+import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { useConfidentialStore } from '@/shared/store/confidential';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 
@@ -48,6 +49,25 @@ export default function ShieldedWallet() {
     scanStealthPayments,
     sweepAllStealthPayments,
   } = useShieldedStore();
+
+  // Denominated V3 notes are the real shielded funds (the working Goldilocks
+  // path). Surface them in the balance + funds list alongside any legacy notes.
+  const denomNotes = useDenominatedPoolStore((s) => s.serializedNotes);
+  const denomBalanceSol = denomNotes
+    .filter((n) => n.token === 'SOL')
+    .reduce((sum, n) => sum + n.denominationHuman, 0);
+  const displayNotes = [
+    ...denomNotes.map((n) => ({
+      label: `${n.denominationHuman} ${n.token}`,
+      index: n.leafIndex as number | undefined,
+      tag: String(n.commitment ?? '').slice(0, 8),
+    })),
+    ...notes.map((n) => ({
+      label: `${(Number(n.amount) / 1e9).toFixed(4)} SOL`,
+      index: n.leafIndex as number | undefined,
+      tag: String(n.commitment ?? '').slice(0, 8),
+    })),
+  ];
 
   // Confidential (zkSPL) store
   const {
@@ -255,7 +275,7 @@ export default function ShieldedWallet() {
 
   const formatShieldedBalance = () => {
     if (!showBalance) return '****';
-    return `${shieldedBalance.toFixed(4)} SOL`;
+    return `${(shieldedBalance + denomBalanceSol).toFixed(4)} SOL`;
   };
 
   return (
@@ -519,10 +539,10 @@ export default function ShieldedWallet() {
           className="mx-4 mt-4"
         >
           <p className="text-p01-chrome/60 text-xs font-medium mb-2 tracking-wider px-1">
-            SHIELDED FUNDS ({notes.length})
+            SHIELDED FUNDS ({displayNotes.length})
           </p>
           <div className="bg-p01-surface rounded-xl overflow-hidden">
-            {notes.length === 0 ? (
+            {displayNotes.length === 0 ? (
               <div className="p-6 text-center">
                 <Shield className="w-10 h-10 text-p01-chrome/30 mx-auto mb-2" />
                 <p className="text-p01-chrome text-sm">No shielded funds yet</p>
@@ -532,7 +552,7 @@ export default function ShieldedWallet() {
               </div>
             ) : (
               <div className="divide-y divide-p01-border/50">
-                {notes.slice(0, 5).map((note, index) => (
+                {displayNotes.slice(0, 5).map((note, index) => (
                   <div key={index} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
@@ -540,23 +560,23 @@ export default function ShieldedWallet() {
                       </div>
                       <div>
                         <p className="text-white font-medium font-mono">
-                          {showBalance ? `${(Number(note.amount) / 1e9).toFixed(4)} SOL` : '****'}
+                          {showBalance ? note.label : '****'}
                         </p>
                         <p className="text-p01-chrome text-xs">
-                          Index: {note.leafIndex ?? 'pending'}
+                          Index: {note.index ?? 'pending'}
                         </p>
                       </div>
                     </div>
                     <div className="text-right">
                       <p className="text-p01-chrome/60 text-xs font-mono">
-                        {truncateAddress(note.commitment ?? '', 4)}
+                        {note.tag}
                       </p>
                     </div>
                   </div>
                 ))}
-                {notes.length > 5 && (
+                {displayNotes.length > 5 && (
                   <button className="w-full p-3 text-center text-p01-cyan text-sm hover:bg-p01-void/50 transition-colors">
-                    View all {notes.length} entries
+                    View all {displayNotes.length} entries
                   </button>
                 )}
               </div>
