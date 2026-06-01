@@ -25,6 +25,7 @@ import {
   nextClaimableSlot,
 } from '../services/subscriptionVault';
 import type { VaultInfo } from '../services/subscriptionVault.types';
+import type { ShieldReceipt } from '../services/denominatedPool';
 
 // Re-export for convenience so pages that import from the store get the type
 export type { VaultInfo };
@@ -96,22 +97,25 @@ interface SubscriptionVaultState {
   // -------------------------------------------------------------------
 
   /**
-   * Subscribe with private ZK mode.
+   * Subscribe with private ZK mode (Phase 1, C3-free).
    *
-   * BLOCKED: Extension has no denominated pool. Throws explicit error.
-   * See subscribePrivate in services/subscriptionVault.ts for full rationale.
+   * Consumes a shielded denominated note (ShieldReceipt from the denominated
+   * pool store) and generates a circuit 1 (pool_commitment) STARK proof to
+   * call subscribe_private_stark on-chain.
+   *
+   * subscriberOwnershipCommitment is the bigint stored from the subscriber's
+   * STARK circuit-0 proof (used for pause/resume/cancel authentication).
    */
   createPrivateVault: (params: {
+    receipt: ShieldReceipt;
+    poolPDA: string;
+    treePDA: string;
     retailer: string;
-    poolAddress: string;
-    proof: { pi_a: Uint8Array; pi_b: Uint8Array; pi_c: Uint8Array };
-    nullifier: string;
-    merkleRoot: string;
-    minEpoch: number;
-    subscriberSecret: string;
-    rate: number;
-    intervalSlots: number;
+    rate: bigint;
+    intervalSlots: bigint;
+    subscriberOwnershipCommitment: bigint;
     vkHashSubscriber?: Uint8Array;
+    onProgress?: (step: string) => void;
   }) => Promise<string>;
 
   /** Pause a private vault (generates circuit-0 STARK proof). */
@@ -317,21 +321,22 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       // -------------------------------------------------------------------
 
       createPrivateVault: async (params) => {
-        // BLOCKED — see subscribePrivate for full rationale
         set({ loading: true, error: null });
         try {
           const sig = await subscribePrivate({
+            receipt: params.receipt,
+            poolPDA: params.poolPDA,
+            treePDA: params.treePDA,
             retailer: params.retailer,
-            poolAddress: params.poolAddress,
-            proof: params.proof,
-            nullifier: params.nullifier,
-            merkleRoot: params.merkleRoot,
-            minEpoch: params.minEpoch,
-            subscriberSecret: params.subscriberSecret,
             rate: params.rate,
             intervalSlots: params.intervalSlots,
+            subscriberOwnershipCommitment: params.subscriberOwnershipCommitment,
             vkHashSubscriber: params.vkHashSubscriber ?? new Uint8Array(32),
+            onProgress: params.onProgress,
           });
+          // Reload vaults after successful subscription.
+          const walletPk = (await import('../store/wallet')).useWalletStore.getState().publicKey;
+          if (walletPk) await get().loadVaults(walletPk);
           set({ loading: false });
           return sig;
         } catch (error) {

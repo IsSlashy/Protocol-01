@@ -33,6 +33,7 @@ import ApproveSubscription from './pages/ApproveSubscription';
 import ConnectedSites from './pages/ConnectedSites';
 import SubscriptionVaults from './pages/SubscriptionVaults';
 import MugenExchange from './pages/MugenExchange';
+import DenominatedShield from './pages/DenominatedShield';
 
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
@@ -212,6 +213,7 @@ function App() {
           <Route path="/confidential" element={<ConfidentialWallet />} />
           <Route path="/subscription-vaults" element={<SubscriptionVaults />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />
+          <Route path="/denominated-shield" element={<DenominatedShield />} />
         </Route>
 
         {/* Popup request routes (from dApps) */}

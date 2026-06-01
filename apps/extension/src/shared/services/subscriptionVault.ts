@@ -10,18 +10,21 @@
  *   circuit 1 = pool_commitment for subscribe).
  *
  * ARCHITECTURE NOTE — private-subscribe note source:
- *   The extension's denominated pool was deleted (BN254 trap). The extension only
- *   has continuous Goldilocks shielded notes (circuits 5/6). However, circuit 1
- *   (pool_commitment) requires a denominated-pool note as input (nullifier_preimage,
- *   secret, epoch, mint from a fixed-denomination Tornado-style pool). The extension
- *   WASM does expose generate_pool_commitment_stark_proof but the inputs it expects
- *   are denominated-pool-specific and there is no denominated pool to source them
- *   from in the extension. Therefore subscribePrivateStark is BLOCKED and throws
- *   an explicit error documenting this. See BLOCKED_PRIVATE_SUBSCRIBE below.
+ *   Private subscribe consumes a Goldilocks DENOMINATED pool note (the extension's
+ *   `services/denominatedPool.ts`, re-added 2026-06-01). Circuit 1 (pool_commitment)
+ *   takes that note's (nullifier_preimage, secret, epoch, mint) as input; the note is
+ *   created by shielding into a fixed-denomination V3 pool (circuit 6) first. This is
+ *   the C3-free path — `subscribe_private_stark` validates the merkle root via the
+ *   pool's valid-root ring, not a circuit-3 merkle-path proof.
  *
- *   Circuit 0 (subscriber_ownership) IS available via starkProver.generateProof(secret).
- *   So pausePrivateStark / resumePrivateStark / cancelPrivateStark CAN be implemented
- *   — the secret is just a Goldilocks bigint stored at vault creation time.
+ *   `subscribePrivate` (below) generates the C1 proof via
+ *   starkProver.generatePoolCommitmentProof and submits subscribe_private_stark.
+ *   Circuit 0 (subscriber_ownership) drives pause/resume/cancel — the subscriber
+ *   secret is a Goldilocks bigint stored at vault creation time.
+ *
+ *   NOT YET NATIVE: denominated unshield/transfer (circuit 3) — the deployed C3
+ *   verifier is mismatched (InvalidProof 6003 for non-trivial paths), so those
+ *   spend paths stay unimplemented here. Subscribe does not touch C3.
  */
 
 import {
@@ -41,8 +44,14 @@ import {
   submitAndVerifyStarkProof,
   closeStarkProofBuffer,
   CIRCUIT_SUBSCRIBER_OWNERSHIP,
+  CIRCUIT_POOL_COMMITMENT,
+  type GenericStarkProof,
 } from './stark';
 import { starkProver } from './starkProver';
+import {
+  deriveNullifierPDA,
+  bigintToLeBytes32,
+} from './denominatedPool';
 
 // Re-export types
 export type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData };
@@ -679,42 +688,223 @@ export async function claimPeriod(vaultAddress: string): Promise<string> {
 // Service functions — Private ZK flows
 // ---------------------------------------------------------------------------
 
-// BLOCKED_PRIVATE_SUBSCRIBE: subscribePrivate cannot be implemented in the
-// extension because:
-//   1. Circuit 1 (pool_commitment) requires (nullifier_preimage, secret, epoch, mint)
-//      from a denominated Tornado-style pool note.
-//   2. The extension's denominated pool was deleted — only Goldilocks continuous
-//      shielded notes (circuits 5/6) exist.
-//   3. The extension WASM does have generate_pool_commitment_stark_proof but
-//      the inputs it needs are denominated-pool-specific and no such notes are
-//      available in the extension.
-//   Resolution: private subscription must be initiated from mobile (which has
-//   the denominated pool), or the extension needs a denominated pool added.
+// ---------------------------------------------------------------------------
+// Private subscribe helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build subscribe_private_stark instruction.
+ * Mirrors mobile buildSubscribePrivateStarkIx lines 828-901.
+ *
+ * Args: nullifier[32], merkle_root[32], min_epoch u64,
+ *       subscriber_commitment[32], rate u64, interval_slots u64,
+ *       vk_hash_subscriber[32], stark_commitment u64,
+ *       client_stealth_meta Option<[u8;64]>.
+ *
+ * Account order mirrors subscribe_private_stark.rs + mobile lines 877-898.
+ */
+function buildSubscribePrivateStarkIx(
+  payer: PublicKey,
+  retailer: PublicKey,
+  vaultPDA: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  starkProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  subscriberCommitmentBytes: number[],
+  rate: bigint,
+  intervalSlots: bigint,
+  vkHashSubscriber: Uint8Array,
+  starkCommitment: bigint,
+  clientStealthMeta?: Uint8Array,
+): TransactionInstruction {
+  const disc = getDiscriminator('subscribe_private_stark');
+
+  const hasMeta = !!clientStealthMeta && clientStealthMeta.length === 64;
+  const optionSize = 1 + (hasMeta ? 64 : 0);
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + optionSize);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  Buffer.from(subscriberCommitmentBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(rate, offset); offset += 8;
+  data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
+  Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+  if (hasMeta) {
+    data.writeUInt8(1, offset); offset += 1;
+    Buffer.from(clientStealthMeta!).copy(data, offset);
+  } else {
+    data.writeUInt8(0, offset);
+  }
+
+  const keys = [
+    { pubkey: payer, isSigner: true, isWritable: true },
+    { pubkey: retailer, isSigner: false, isWritable: false },
+    { pubkey: vaultPDA, isSigner: false, isWritable: true },
+    { pubkey: poolPDA, isSigner: false, isWritable: true },
+    { pubkey: treePDA, isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA, isSigner: false, isWritable: true },
+    // stark_proof_buffer is mut (handler invalidates it post-use). Must pass
+    // isWritable: true or Anchor throws ConstraintMut (0x7d0). Mirrors mobile
+    // lines 885-888.
+    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // Optional SPL-token accounts — use program ID as Anchor None sentinel.
+    // Without these, ix fails with AccountNotEnoughKeys (3005). Mirrors mobile
+    // lines 893-898.
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
 
 /**
  * Create a private (ZK-based) subscription vault.
  *
- * BLOCKED: The extension has no denominated pool notes. Circuit 1
- * (pool_commitment) requires a denominated-pool note as input. See
- * BLOCKED_PRIVATE_SUBSCRIBE comment above for full rationale.
+ * Phase 1: C3-free. Shield receipt must come from the denominated pool store
+ * (shielded via circuit 6). This function generates the circuit 1
+ * (pool_commitment) STARK proof from the receipt's secret material, submits
+ * it on-chain, then calls subscribe_private_stark.
+ *
+ * Mirrors mobile subscribePrivateStark lines 557-701.
+ *
+ * Adaptation: uses extension's legacy submitAndVerifyStarkProof (non-uniform).
  */
-export async function subscribePrivate(_params: {
+export async function subscribePrivate(params: {
+  receipt: {
+    secret: bigint;
+    nullifierPreimage: bigint;
+    depositEpoch: bigint;
+    tokenMint: bigint;
+    commitment: bigint;
+    pool: string;
+    merkleRoot?: bigint;
+  };
+  poolPDA: string;
+  treePDA: string;
   retailer: string;
-  poolAddress: string;
-  proof: ProofData;
-  nullifier: string;
-  merkleRoot: string;
-  minEpoch: number;
-  subscriberSecret: string;
-  rate: number;
-  intervalSlots: number;
+  rate: bigint;
+  intervalSlots: bigint;
+  subscriberOwnershipCommitment: bigint;
   vkHashSubscriber: Uint8Array;
+  onProgress?: (step: string) => void;
 }): Promise<string> {
-  throw new Error(
-    'BLOCKED: subscribePrivate requires a denominated pool note (circuit 1 / pool_commitment). ' +
-    'The extension has no denominated pool — it was deleted as a BN254 trap. ' +
-    'Initiate private subscriptions from the mobile app, or add a denominated pool to the extension.',
+  const {
+    receipt,
+    poolPDA: poolPDAStr,
+    treePDA: treePDAStr,
+    retailer,
+    rate,
+    intervalSlots,
+    subscriberOwnershipCommitment,
+    vkHashSubscriber,
+    onProgress,
+  } = params;
+
+  const { signer, connection } = createWalletSigner();
+
+  const retailerPubkey = new PublicKey(retailer);
+  const poolPDA = new PublicKey(poolPDAStr);
+  const treePDA = new PublicKey(treePDAStr);
+
+  onProgress?.('Encoding subscriber commitment...');
+  const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);
+
+  onProgress?.('Deriving vault PDA...');
+  const [vaultPDA] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('subscription_vault'),
+      retailerPubkey.toBuffer(),
+      Buffer.from(subscriberCommitmentBytes),
+      SystemProgram.programId.toBuffer(), // SOL mint — Phase 1 SOL only
+    ],
+    ZK_SHIELDED_PROGRAM_ID,
   );
+
+  if (!receipt.merkleRoot) {
+    throw new Error('subscribePrivate: receipt missing merkleRoot. Rescan receipt before subscribing.');
+  }
+
+  // C1 proof inputs: nullifier_preimage, secret, epoch, tokenMint.
+  onProgress?.('Generating C1 (pool_commitment) STARK proof (30-60s)...');
+  await starkProver.start();
+  const c1Result = await starkProver.generatePoolCommitmentProof(
+    receipt.nullifierPreimage.toString(),
+    receipt.secret.toString(),
+    receipt.depositEpoch.toString(),
+    receipt.tokenMint.toString(),
+  );
+
+  const proofBytes = hexToBytes(c1Result.proofHex);
+  const publicInputs = c1Result.publicInputs.map(s => BigInt(s));
+
+  // C1 publicInputs: [nullifier_u64, commitment_u64] (matches mobile line 614)
+  const goldilocksNullifier = publicInputs[0] ?? 0n;
+  const starkCommitment = publicInputs[1] ?? 0n;
+
+  const nullifierBytes = Array.from(goldilocksU64To32(goldilocksNullifier));
+  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
+  const minEpoch = receipt.depositEpoch;
+
+  // Step 1: Submit + verify C1 proof on-chain.
+  onProgress?.('Submitting C1 proof on-chain...');
+  const proof: GenericStarkProof = {
+    proofBytes,
+    circuitId: CIRCUIT_POOL_COMMITMENT,
+    publicInputs,
+    proofSize: c1Result.proofSize,
+  };
+  let proofBufferPubkey: PublicKey;
+  try {
+    const { proofBuffer } = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
+    proofBufferPubkey = proofBuffer;
+  } catch (err) {
+    throw err;
+  }
+
+  // Step 2: Build + send subscribe_private_stark.
+  onProgress?.('Building subscription transaction...');
+  const [nullifierPDA] = deriveNullifierPDA(poolPDA, Buffer.from(nullifierBytes));
+
+  const ix = buildSubscribePrivateStarkIx(
+    signer.publicKey,
+    retailerPubkey,
+    vaultPDA,
+    poolPDA,
+    treePDA,
+    nullifierPDA,
+    proofBufferPubkey,
+    nullifierBytes,
+    Array.from(merkleRootBytes),
+    minEpoch,
+    Array.from(subscriberCommitmentBytes),
+    rate,
+    intervalSlots,
+    vkHashSubscriber,
+    starkCommitment,
+    // clientStealthMeta: omit (None) for Phase 1.
+  );
+
+  onProgress?.('Sending subscription transaction...');
+  const tx = new Transaction();
+  tx.add(...buildComputeBudgetIxs(300_000));
+  tx.add(ix);
+  const sig = await signSendConfirmTx(connection, tx, signer);
+
+  // Step 3: Close C1 proof buffer.
+  onProgress?.('Closing proof buffer...');
+  await closeStarkProofBuffer(proofBufferPubkey, signer, connection);
+
+  onProgress?.('Done!');
+  return sig;
 }
 
 /**
