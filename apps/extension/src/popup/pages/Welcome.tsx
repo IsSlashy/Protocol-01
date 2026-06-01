@@ -80,9 +80,11 @@ export default function Welcome() {
           setQrPolling(false);
           setQrConnected(true);
 
-          // Initialize wallet with the received address
+          // Initialize wallet with the received address. This is a REMOTE
+          // (phone-linked) wallet — only the address is imported; the signing
+          // key stays on the phone, so it cannot sign in the extension.
           const { initializeWithPrivy } = useWalletStore.getState();
-          initializeWithPrivy(data.walletAddress);
+          initializeWithPrivy(data.walletAddress, { remote: true });
 
           // Wait for Zustand persist to flush to chrome.storage, then notify background
           setTimeout(() => {

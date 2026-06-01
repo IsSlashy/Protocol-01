@@ -196,6 +196,10 @@ export interface WalletState {
 
   // Privy wallet flag
   isPrivyWallet: boolean;
+  /** True when the wallet was linked from P01 Mobile via QR — it holds only an
+   * address, the signing key lives on the phone, so it CANNOT sign in the
+   * extension. (isPrivyWallet is overloaded to mean "no local keypair".) */
+  isRemoteWallet: boolean;
 
   // In-memory only (never persisted)
   _keypair: Keypair | null;
@@ -203,7 +207,7 @@ export interface WalletState {
   // Actions
   createWallet: (password: string) => Promise<string[]>;
   importWallet: (seedPhrase: string[], password: string) => Promise<void>;
-  initializeWithPrivy: (address: string) => void;
+  initializeWithPrivy: (address: string, opts?: { remote?: boolean }) => void;
   logout: () => Promise<void>;
   unlock: (password: string) => Promise<boolean>;
   tryAutoUnlock: () => Promise<boolean>;
@@ -237,6 +241,7 @@ export const useWalletStore = create<WalletState>()(
       network: 'devnet',
       hideBalance: false,
       isPrivyWallet: false,
+      isRemoteWallet: false,
       _keypair: null,
 
       // Create a new wallet
@@ -326,12 +331,13 @@ export const useWalletStore = create<WalletState>()(
       },
 
       // Initialize with Privy wallet (no seed phrase, no password)
-      initializeWithPrivy: (address: string) => {
+      initializeWithPrivy: (address: string, opts?: { remote?: boolean }) => {
         set({
           isInitialized: true,
           isUnlocked: true,
           publicKey: address,
           isPrivyWallet: true,
+          isRemoteWallet: !!opts?.remote,
           isLoading: false,
           error: null,
         });
@@ -363,6 +369,7 @@ export const useWalletStore = create<WalletState>()(
           transactions: [],
           _keypair: null,
           isPrivyWallet: false,
+          isRemoteWallet: false,
         });
       },
 
@@ -504,6 +511,7 @@ export const useWalletStore = create<WalletState>()(
           transactions: [],
           _keypair: null,
           isPrivyWallet: false,
+          isRemoteWallet: false,
         });
       },
 
@@ -679,6 +687,7 @@ export const useWalletStore = create<WalletState>()(
         network: state.network,
         hideBalance: state.hideBalance,
         isPrivyWallet: state.isPrivyWallet,
+        isRemoteWallet: state.isRemoteWallet,
       }),
       // TODO: Remove this migrate block after first successful reset
       // Forces a clean slate by clearing old wallet data
