@@ -15,7 +15,6 @@ export interface LicenseEntry {
   retailer: string; // base58
   mode: LicenseMode;
   serviceName?: string;
-  ephemeralAccountId: string;
   createdAt: number;
 }
 

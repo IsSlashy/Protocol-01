@@ -40,7 +40,8 @@
     "activeTab",
     "notifications",
     "tabs",
-    "alarms"
+    "alarms",
+    "offscreen"
   ],
   "host_permissions": [
     "https://*.solana.com/*",

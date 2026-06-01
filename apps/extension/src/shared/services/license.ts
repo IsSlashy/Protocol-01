@@ -1,112 +1,86 @@
 /**
- * Protocol 01 subscription license keys.
+ * License key derivation — EXACT mirror of the mobile app
+ * (`apps/mobile/services/license/derive.ts`). The extension MUST produce the
+ * same key scheme as mobile so merchant verification is unified and a user sees
+ * a consistent credential whatever client they used.
  *
- * A license key is the anonymous, copy-pasteable credential a user hands to a
- * merchant after subscribing (Standard or ZK). It encodes only what the merchant
- * needs to VERIFY the subscription on-chain — never the user's wallet or any PII:
+ * Format: "P01-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" — 24 Crockford base32 chars from a
+ * domain-separated BLAKE3(15) hash of (domain || identity || serviceId).
  *
- *   packed = [version:1][mode:1][retailer:32][subscriberId:32]   (66 bytes)
- *   key    = "p01lic_" + base64url(packed)
+ * `identity` is a 32-byte opaque value:
+ *   - Private (vault-backed) subscription → the SubscriptionVault PDA bytes.
+ *   - Classic subscription → deriveClassicIdentity(walletPubkey, streamId).
+ *     (Never the raw wallet — pre-hashed so the key can't be reversed to it,
+ *     and two of a user's classic subs across services stay unlinkable.)
  *
- * `subscriberId` is the on-chain subscription identity:
- *   - ZK Private  → the vault's `subscriber_commitment` (a Goldilocks hash of a
- *                   secret only the user holds — NOT linkable to their wallet).
- *   - Standard    → the subscriber wallet pubkey (Standard is 0% privacy by design).
- *
- * The merchant (via @protocol-01/merchant-sdk `verifyLicenseKey`) looks up the
- * matching `SubscriptionVault`, confirms `retailer == self` and `is_active`,
- * then provisions an EPHEMERAL account keyed by `ephemeralAccountId(key)` —
- * a one-way hash of the subscriber id. No email, no wallet, no trace: the
- * merchant only ever sees an opaque, payment-backed handle.
- *
- * Note: the key carries on-chain-public data, so it is an IDENTIFIER, not a
- * secret. Its privacy guarantee is that for a ZK subscription the identifier
- * (a commitment) cannot be tied back to the paying wallet. Bearer-grade secrecy
- * (so a leaked key can't be replayed by a third party) is a future upgrade —
- * see [[stealth-view-spend-coupling]] for the same view/spend trade-off.
+ * The merchant re-derives the key from the on-chain vault state + serviceId and
+ * matches — no off-chain identity database. See @protocol-01/merchant-sdk.
  */
 
-import { PublicKey } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha2.js';
-
-const PREFIX = 'p01lic_';
-const VERSION = 1;
-const PACKED_LEN = 66;
+import { blake3 } from '@noble/hashes/blake3.js';
 
 export type LicenseMode = 'standard' | 'zk';
 
-// ---------------------------------------------------------------------------
-// base64url (browser-safe; the merchant SDK mirrors this with Buffer)
-// ---------------------------------------------------------------------------
+const KEY_BYTES = 15;
+const KEY_DOMAIN = 'p01-license-v1';
+const CLASSIC_IDENTITY_DOMAIN = 'p01-license-classic-id-v1';
 
-function bytesToBase64Url(bytes: Uint8Array): string {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-function base64UrlToBytes(s: string): Uint8Array {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
-  const bin = atob(b64 + pad);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+function encodeCrockford(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += CROCKFORD[(value >>> bits) & 0x1f];
+    }
+  }
+  if (bits > 0) {
+    out += CROCKFORD[(value << (5 - bits)) & 0x1f];
+  }
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Codec
-// ---------------------------------------------------------------------------
-
-export interface ParsedLicense {
-  version: number;
-  mode: LicenseMode;
-  retailer: PublicKey;
-  subscriberId: Uint8Array; // 32 bytes
+export interface LicenseKeyArgs {
+  /** Service identifier (registry slug, e.g. 'spotify'). For custom recipients
+   *  without a registered service, pass the stream id / a stable tag. */
+  serviceId: string;
+  /** 32-byte opaque identity (vault PDA bytes, or deriveClassicIdentity). */
+  identity: Uint8Array;
 }
 
-/** Encode a license key from the on-chain subscription identity. */
-export function buildLicenseKey(params: {
-  retailer: PublicKey | string;
-  subscriberId: Uint8Array;
-  mode: LicenseMode;
-}): string {
-  const retailer =
-    typeof params.retailer === 'string' ? new PublicKey(params.retailer) : params.retailer;
-  if (params.subscriberId.length !== 32) {
-    throw new Error('subscriberId must be exactly 32 bytes');
-  }
-  const packed = new Uint8Array(PACKED_LEN);
-  packed[0] = VERSION;
-  packed[1] = params.mode === 'zk' ? 1 : 0;
-  packed.set(retailer.toBytes(), 2);
-  packed.set(params.subscriberId, 34);
-  return PREFIX + bytesToBase64Url(packed);
+/** Derive the deterministic, human-readable license key. Mirrors mobile. */
+export function deriveLicenseKey(args: LicenseKeyArgs): string {
+  const enc = new TextEncoder();
+  const domain = enc.encode(KEY_DOMAIN);
+  const svc = enc.encode(args.serviceId);
+  const buf = new Uint8Array(domain.length + args.identity.length + svc.length);
+  let off = 0;
+  buf.set(domain, off); off += domain.length;
+  buf.set(args.identity, off); off += args.identity.length;
+  buf.set(svc, off);
+  const digest = blake3(buf, { dkLen: KEY_BYTES });
+  const encoded = encodeCrockford(digest);
+  const groups = encoded.match(/.{4}/g) ?? [];
+  return 'P01-' + groups.join('-');
 }
 
-/** Decode + validate a license key. Throws on malformed input. */
-export function parseLicenseKey(key: string): ParsedLicense {
-  const trimmed = key.trim();
-  if (!trimmed.startsWith(PREFIX)) throw new Error('not a Protocol 01 license key');
-  const packed = base64UrlToBytes(trimmed.slice(PREFIX.length));
-  if (packed.length !== PACKED_LEN) throw new Error('malformed license key');
-  return {
-    version: packed[0],
-    mode: packed[1] === 1 ? 'zk' : 'standard',
-    retailer: new PublicKey(packed.slice(2, 34)),
-    subscriberId: packed.slice(34, 66),
-  };
-}
-
-/**
- * Deterministic, PII-free account handle the merchant keys its ephemeral
- * account on. One-way (sha256) so the merchant cannot recover the subscriber
- * id, and stable so the same license always maps to the same account.
- */
-export function ephemeralAccountId(key: string): string {
-  const { subscriberId } = parseLicenseKey(key);
-  const h = sha256(subscriberId);
-  return Array.from(h.slice(0, 12))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+/** Build the 32-byte opaque identity for a classic (no-vault) subscription. */
+export function deriveClassicIdentity(
+  walletPubkey: Uint8Array,
+  streamId: string,
+): Uint8Array {
+  const enc = new TextEncoder();
+  const domain = enc.encode(CLASSIC_IDENTITY_DOMAIN);
+  const sid = enc.encode(streamId);
+  const buf = new Uint8Array(domain.length + walletPubkey.length + sid.length);
+  let off = 0;
+  buf.set(domain, off); off += domain.length;
+  buf.set(walletPubkey, off); off += walletPubkey.length;
+  buf.set(sid, off);
+  return blake3(buf, { dkLen: 32 });
 }

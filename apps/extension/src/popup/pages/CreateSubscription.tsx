@@ -31,7 +31,7 @@ import {
 } from '@/shared/services/denominatedPool';
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
-import { buildLicenseKey, ephemeralAccountId } from '@/shared/services/license';
+import { deriveLicenseKey, deriveClassicIdentity } from '@/shared/services/license';
 import { useLicenseStore, type LicenseEntry } from '@/shared/store/license';
 
 /**
@@ -181,7 +181,7 @@ export default function CreateSubscription() {
   const { wallets } = useSolanaWallets();
   const { shieldedBalance } = useShieldedStore();
   const { getSpendableNote, getNotes, removeNote } = useDenominatedPoolStore();
-  const { createPrivateVault, saveSecret } = useSubscriptionVaultStore();
+  const { createPrivateVault, saveSecret, addVault } = useSubscriptionVaultStore();
   const { saveLicense } = useLicenseStore();
 
   // The recipient is already determined by how the user arrived here:
@@ -294,21 +294,26 @@ export default function CreateSubscription() {
   const activeAmount = isPersonal ? personalPerPayment : (parseFloat(prefillAmount) || 0);
 
   /**
-   * Mint + persist the merchant license key for a completed subscription, and
-   * surface the success panel. `subscriberId` is the on-chain subscription
-   * identity: the ZK `subscriber_commitment` (anonymous) or the wallet pubkey
-   * (Standard). The merchant verifies it on-chain and provisions a no-PII
-   * ephemeral account keyed by `ephemeralAccountId`.
+   * Mint + persist the license key for a completed subscription, and surface
+   * the success panel. Mirrors the mobile scheme (P01-XXXX-… BLAKE3/Crockford):
+   *   - identity = the SubscriptionVault PDA bytes (ZK) or
+   *     deriveClassicIdentity(wallet, streamId) (classic) — never the raw wallet.
+   *   - serviceId = the registry slug (or a stable per-subscription tag).
+   * The merchant re-derives this from the on-chain vault + serviceId and matches.
    */
-  const mintLicense = (recipient: string, subscriberId: Uint8Array, mode: 'standard' | 'zk') => {
+  const mintLicense = (params: {
+    serviceId: string;
+    identity: Uint8Array;
+    retailer: string;
+    mode: 'standard' | 'zk';
+  }) => {
     try {
-      const licenseKey = buildLicenseKey({ retailer: recipient, subscriberId, mode });
+      const licenseKey = deriveLicenseKey({ serviceId: params.serviceId, identity: params.identity });
       const entry: LicenseEntry = {
         licenseKey,
-        retailer: recipient,
-        mode,
+        retailer: params.retailer,
+        mode: params.mode,
         serviceName: activeName || undefined,
-        ephemeralAccountId: ephemeralAccountId(licenseKey),
         createdAt: Date.now(),
       };
       saveLicense(entry);
@@ -552,14 +557,33 @@ export default function CreateSubscription() {
         );
         saveSecret(vaultPDA.toBase58(), subscriberSecret.toString());
 
+        // Record the ZK vault LOCALLY (mirrors mobile subscriptionVaultStore).
+        // A private vault is keyed on-chain by an anonymous commitment, so it is
+        // NOT discoverable by scanning the chain with our wallet — the creating
+        // client must keep its own record. fetchVault reads the known PDA
+        // directly (the chain still validates state: balance, claimed periods,
+        // active/paused). Without this the subscription is invisible in the UI.
+        try {
+          const { fetchVault } = await import('@/shared/services/subscriptionVault');
+          const vaultInfo = await fetchVault(vaultPDA.toBase58());
+          if (vaultInfo) addVault(vaultInfo);
+        } catch (e) {
+          console.warn('[Subscription/ZK] addVault after subscribe failed (non-fatal):', e);
+        }
+
         // Note is now spent (one note funds exactly one subscription). Drop it
         // from the local picker so it can't be re-selected (would collide on the
         // nullifier record on-chain).
         removeNote(note.commitment.toString());
 
-        // Mint the anonymous license key. subscriberId = the on-chain
-        // subscriber_commitment (not linkable to the wallet).
-        mintLicense(recipient, subscriberCommitmentBytes, 'zk');
+        // Mint the license key (mobile scheme): identity = the vault PDA bytes,
+        // serviceId = registry slug (or retailer as a stable tag for personal).
+        mintLicense({
+          serviceId: svc?.serviceId || recipient,
+          identity: vaultPDA.toBytes(),
+          retailer: recipient,
+          mode: 'zk',
+        });
       } catch (err) {
         console.error('[Subscription/ZK] Create error:', err);
         // If the note was already spent on-chain (stale local picker entry),
@@ -625,9 +649,14 @@ export default function CreateSubscription() {
       // Execute first payment (local keypair or Privy embedded wallet).
       await processPayment(subscription.id, signer, network);
 
-      // Mint the license key. Standard is 0% privacy, so subscriberId = the
-      // subscriber wallet pubkey (matches the on-chain vault's subscriber_pubkey).
-      mintLicense(recipient, signer.publicKey.toBytes(), 'standard');
+      // Mint the license key (mobile scheme). Classic identity = BLAKE3(wallet,
+      // streamId) — never the raw wallet — so the key can't be reversed to it.
+      mintLicense({
+        serviceId: svc?.serviceId || subscription.id,
+        identity: deriveClassicIdentity(signer.publicKey.toBytes(), subscription.id),
+        retailer: recipient,
+        mode: 'standard',
+      });
     } catch (err) {
       console.error('[Subscription] Create error:', err);
       setError((err as Error)?.message || 'Failed to start subscription.');
@@ -701,14 +730,10 @@ export default function CreateSubscription() {
             </div>
 
             {/* What it is */}
-            <div className="p-3 rounded-lg bg-p01-dark border border-p01-border space-y-2">
-              <div className="flex justify-between">
-                <span className="text-p01-chrome text-[10px] font-mono">Account handle</span>
-                <span className="text-white text-[10px] font-mono">{createdLicense.ephemeralAccountId}</span>
-              </div>
+            <div className="p-3 rounded-lg bg-p01-dark border border-p01-border">
               <p className="text-p01-chrome/70 text-[10px] font-mono leading-relaxed">
-                Paste this key into {createdLicense.serviceName || 'the merchant'} to activate. They verify it
-                on-chain and create an account keyed only by the handle above
+                Paste this key into {createdLicense.serviceName || 'the merchant'} to activate. They re-derive it
+                from your on-chain subscription and grant access
                 {createdLicense.mode === 'zk' ? ' — no wallet, no email, no trace.' : '.'}
               </p>
             </div>
