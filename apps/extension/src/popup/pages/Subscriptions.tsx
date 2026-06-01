@@ -125,15 +125,24 @@ export default function Subscriptions() {
     !SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
 
-  // Calculate privacy score (how many have privacy features enabled)
-  const activeCount = subscriptions.filter(s => s.status === 'active').length;
+  // Graded privacy score per subscription, averaged over active ones.
+  //  - Standard (classic, fully visible on-chain): 0%
+  //  - amount noise / timing noise: partial (25% each)
+  //  - stealth address: +50%
+  //  - ZK shielded pool: full privacy = 100%
+  // A classic subscription therefore scores 0%, never 100%.
+  const subPrivacyScore = (s: typeof subscriptions[number]): number => {
+    if (s.useZkPool) return 100;
+    let v = 0;
+    if (s.useStealthAddress) v += 50;
+    if (s.amountNoise > 0) v += 25;
+    if (s.timingNoise > 0) v += 25;
+    return Math.min(v, 100);
+  };
+  const activeSubs = subscriptions.filter(s => s.status === 'active');
+  const activeCount = activeSubs.length;
   const privacyScore = activeCount > 0
-    ? Math.round(
-        (subscriptions.filter(s =>
-          s.status === 'active' &&
-          (s.amountNoise > 0 || s.timingNoise > 0 || s.useStealthAddress)
-        ).length / activeCount) * 100
-      )
+    ? Math.round(activeSubs.reduce((sum, s) => sum + subPrivacyScore(s), 0) / activeCount)
     : 0;
 
   // Next payment

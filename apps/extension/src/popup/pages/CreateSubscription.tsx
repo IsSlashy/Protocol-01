@@ -230,9 +230,12 @@ export default function CreateSubscription() {
         return;
       }
 
+      // Standard = no privacy features (explicitly zero — createSubscription
+      // otherwise auto-applies random noise, which would falsely inflate the
+      // privacy score for a fully on-chain-visible subscription).
       const noiseSettings = privacyMode === 'noise'
         ? { amountNoise: 15, timingNoise: 4 }
-        : {};
+        : { amountNoise: 0, timingNoise: 0 };
 
       const subscription = addSubscription({
         name: activeName,
