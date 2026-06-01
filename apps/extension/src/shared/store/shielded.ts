@@ -835,11 +835,12 @@ export const useShieldedStore = create<ShieldedState>()(
           const { relayTransaction } = await import('../services/relay');
           try {
             const serializedTx = new Uint8Array(Buffer.from(transferResult.signature, 'base64'));
+            // Ported full relay client resolves the connection internally
+            // (network-scoped getConnection shim); 4th arg is now options.
             const relaySig = await relayTransaction(
               serializedTx,
               walletPublicKey,
               signTransaction,
-              connection,
             );
 
             const newBalance = Number(_zkService.getShieldedBalance()) / 1e9;

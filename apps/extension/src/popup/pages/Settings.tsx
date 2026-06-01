@@ -37,8 +37,10 @@ export default function Settings() {
   const {
     shieldedWalletEnabled,
     confidentialBalanceEnabled,
+    relayerEnabled,
     setShieldedWalletEnabled,
     setConfidentialBalanceEnabled,
+    setRelayerEnabled,
     initialize: initSettings,
   } = useSettingsStore();
   const { shieldedBalance } = useShieldedStore();
@@ -495,6 +497,39 @@ export default function Settings() {
                   className={cn(
                     'absolute top-1 w-5 h-5 rounded-full bg-white shadow-md',
                     confidentialBalanceEnabled ? 'left-6' : 'left-1'
+                  )}
+                />
+              </button>
+            </div>
+
+            {/* Privacy Relayer Toggle */}
+            <div className="flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-p01-chrome/10 flex items-center justify-center">
+                  <Wifi className="w-5 h-5 text-p01-chrome/60" />
+                </div>
+                <div>
+                  <p className="text-white font-medium text-sm">Privacy Relayer</p>
+                  <p className="text-p01-chrome/60 text-xs">
+                    Route withdrawals via a relayer to hide your IP. Falls back to direct if unavailable.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRelayerEnabled(!relayerEnabled)}
+                role="switch"
+                aria-checked={relayerEnabled}
+                aria-label="Privacy relayer"
+                className={cn(
+                  'w-12 h-7 rounded-full transition-colors relative shrink-0',
+                  relayerEnabled ? 'bg-p01-cyan' : 'bg-p01-border'
+                )}
+              >
+                <motion.span
+                  layout
+                  className={cn(
+                    'absolute top-1 w-5 h-5 rounded-full bg-white shadow-md',
+                    relayerEnabled ? 'left-6' : 'left-1'
                   )}
                 />
               </button>

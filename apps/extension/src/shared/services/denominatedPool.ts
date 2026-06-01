@@ -628,6 +628,44 @@ async function signSendConfirmTx(
   return sig;
 }
 
+/**
+ * V3 submit that routes through the p01_relayer when the `relayerEnabled`
+ * setting is on (hides the user's submission IP + the outer fee-payer), and
+ * falls back to direct submission on ANY relayer error — mirrors mobile's
+ * `signAndSendV3`. NOTE: the inner tx is still signed by the user, so the
+ * inner unshield signer remains visible on-chain; relaying closes the IP (L19)
+ * + outer-fee-payer (L17) leaks only. Full inner-signer anonymity is a separate
+ * phase (A.5/B/D), unbuilt on mobile too.
+ */
+async function signSendV3(
+  connection: Connection,
+  tx: Transaction,
+  signer: WalletSigner,
+  onProgress?: (step: string) => void,
+): Promise<string> {
+  let enabled = true;
+  try {
+    const { useSettingsStore } = await import('../store/settings');
+    enabled = useSettingsStore.getState().relayerEnabled;
+  } catch { /* settings unavailable → default to relayer-on */ }
+
+  if (!enabled) return signSendConfirmTx(connection, tx, signer);
+
+  try {
+    onProgress?.('Routing through privacy relayer…');
+    const { signAndSendViaRelayer } = await import('./relayerWrapper');
+    return await signAndSendViaRelayer(connection, tx, null, signer);
+  } catch (e) {
+    // Availability > privacy: a relayer hiccup must not break the withdrawal.
+    console.warn(
+      '[DenomPool/ext] relayer failed, falling back to direct submit (IP/fee-payer leak this time):',
+      (e as Error)?.message ?? String(e),
+    );
+    onProgress?.('Relayer unavailable — submitting directly…');
+    return signSendConfirmTx(connection, tx, signer);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // shield_denominated_v3 instruction builder
 // Mirrors mobile buildShieldDenominatedV3Ix lines 2866-2908
@@ -1638,7 +1676,7 @@ export async function unshieldDenominatedStarkV3(
     tx.add(ix);
 
     onProgress?.('Sending V3 unshield transaction...');
-    const sig = await signSendConfirmTx(connection, tx, signer);
+    const sig = await signSendV3(connection, tx, signer, onProgress);
     onProgress?.('V3 unshield confirmed!');
     return sig;
   } finally {
