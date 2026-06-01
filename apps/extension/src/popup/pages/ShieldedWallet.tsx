@@ -445,7 +445,7 @@ export default function ShieldedWallet() {
             icon={<ArrowDown className="w-5 h-5" />}
             label="Shield"
             color="cyan"
-            onClick={() => setActionModal('shield')}
+            onClick={() => navigate('/denominated-shield')}
           />
           <ActionButton
             icon={<ArrowUp className="w-5 h-5" />}
