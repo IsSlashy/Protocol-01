@@ -316,11 +316,17 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.xl,
     overflow: 'hidden',
     marginBottom: Spacing.lg,
+    // Distinct hero frame: subtle cyan accent border to set it apart from the
+    // secondary panels (assets / activity) below.
+    borderWidth: 1,
+    borderColor: 'rgba(57, 197, 187, 0.20)',
   },
   balanceCard: {
     padding: Spacing.xl,
     paddingTop: 20,
-    backgroundColor: Colors.surfaceSecondary,
+    // Elevated surface (#1a1a1f) so the card lifts clearly off the void
+    // background — surfaceSecondary (#0f0f12) was nearly the same as the void.
+    backgroundColor: Colors.surfaceTertiary,
   },
   addressChip: {
     flexDirection: 'row',
