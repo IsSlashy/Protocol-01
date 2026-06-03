@@ -36,6 +36,7 @@ import DenominatedShield from './pages/DenominatedShield';
 import DenominatedUnshield from './pages/DenominatedUnshield';
 import DenominatedTransfer from './pages/DenominatedTransfer';
 import DenominatedImport from './pages/DenominatedImport';
+import LinkPhone from './pages/LinkPhone';
 
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
@@ -197,6 +198,7 @@ function App() {
           <Route path="/subscriptions/:id" element={<SubscriptionDetails />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/link-phone" element={<LinkPhone />} />
           <Route path="/buy" element={<Buy />} />
           <Route path="/mugen-exchange" element={<MugenExchange />} />
           <Route path="/agent" element={<Agent />} />

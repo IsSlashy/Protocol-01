@@ -21,6 +21,7 @@ export default function AuthLayout() {
         <Stack.Screen name="login" />
         <Stack.Screen name="import" />
         <Stack.Screen name="lock" />
+        <Stack.Screen name="scan-connect" />
       </Stack>
     </>
   );

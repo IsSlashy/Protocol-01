@@ -116,6 +116,16 @@ export default function ImportWalletScreen() {
             <Text style={styles.subtitle}>
               {t('auth.enterRecoveryPhraseDesc')}
             </Text>
+            <TouchableOpacity
+              onPress={() => router.push('/(auth)/scan-connect')}
+              activeOpacity={0.7}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 14 }}
+            >
+              <Ionicons name="qr-code-outline" size={15} color="#39c5bb" />
+              <Text style={{ color: '#39c5bb', fontSize: 14, fontWeight: '500' }}>
+                {t('onboarding.scanToConnect')}
+              </Text>
+            </TouchableOpacity>
           </Animated.View>
 
           {/* Input */}

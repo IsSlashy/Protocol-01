@@ -26,7 +26,7 @@ import { useSettingsStore } from '@/shared/store/settings';
 import { useShieldedStore } from '@/shared/store/shielded';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 import { decrypt, encrypt, verifyPassword, hashPassword } from '@/shared/services/crypto';
-import { Shield, BarChart3 } from 'lucide-react';
+import { Shield, BarChart3, Smartphone } from 'lucide-react';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -532,6 +532,23 @@ export default function Settings() {
                 <div className="text-left">
                   <p className="text-white font-medium">Backup Seed Phrase</p>
                   <p className="text-p01-chrome/60 text-xs">View your recovery phrase</p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
+            </button>
+
+            {/* Link a phone */}
+            <button
+              onClick={() => navigate('/link-phone')}
+              className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-p01-cyan/20 flex items-center justify-center">
+                  <Smartphone className="w-5 h-5 text-p01-cyan" />
+                </div>
+                <div className="text-left">
+                  <p className="text-white font-medium">Link a phone</p>
+                  <p className="text-p01-chrome/60 text-xs">Import this wallet to the P01 app by QR</p>
                 </div>
               </div>
               <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
