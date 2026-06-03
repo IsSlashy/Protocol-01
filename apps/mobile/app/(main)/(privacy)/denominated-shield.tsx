@@ -30,6 +30,8 @@ import {
   USDC_POOLS_V3,
   parseFilledSubtrees,
   computeNewRootFromSubtreesV3,
+  ZERO_VALUE_V3,
+  MERKLE_DEPTH,
   createCommitmentV3,
   goldilocksToLeBytes32,
   deriveNoteMaterial,
@@ -155,6 +157,10 @@ export default function DenominatedShieldScreen() {
           if (!treeAcct) throw new Error('V3 merkle tree not initialized');
           const { leafCount, subtrees } = parseFilledSubtrees(treeAcct.data);
 
+          // Current on-chain root (low 8 bytes LE of MerkleTreeStateV3.root @ offset 8+32).
+          let onChainRoot = 0n;
+          for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(treeAcct.data[8 + 32 + b]);
+
           // 2. Derive deterministic note material from wallet seed.
           // Use the same `deterministic` mechanic as v2 so V3 notes are
           // recoverable from seed via rescanPool.
@@ -189,8 +195,36 @@ export default function DenominatedShieldScreen() {
 
           // 3. Compute commitment + new merkle state via Goldilocks helpers.
           const commitment = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMintField);
-          const { newRoot, updatedSubtrees, pathElements: _pathElements, pathIndices: _pathIndices } =
-            computeNewRootFromSubtreesV3(commitment, leafCount, subtrees);
+
+          // filled_subtrees-layout chooser (ports the extension's proven fix).
+          // insert_with_root_v3 stores filled_subtrees[0] = the last leaf and
+          // [i+1] = the level-i sibling (merkle_tree_v3.rs:176-184); past clients
+          // also wrote it shifted, so the canonical layout can't be assumed.
+          // Reconstruct old_root BOTH ways and use whichever reproduces the live
+          // on-chain root. Without this, the C6 proof bakes a WRONG old_root →
+          // public_inputs_hash mismatch → InvalidProof(6000) at
+          // shield_denominated_v3.rs:105 on every pool with ≥2 leaves (root-caused
+          // + live-verified on devnet 2026-06-03; mobile had no guard, the
+          // extension did). Abort before the ~2-min proof if neither matches so we
+          // never burn STARK rent on a guaranteed on-chain reject.
+          const direct = computeNewRootFromSubtreesV3(commitment, leafCount, subtrees);
+          const sliced = computeNewRootFromSubtreesV3(commitment, leafCount, subtrees.slice(1));
+          const oldRootDirect = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees).newRoot;
+          const oldRootSliced = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees.slice(1)).newRoot;
+          let chosen: typeof direct;
+          if (oldRootDirect === onChainRoot) {
+            chosen = direct;
+          } else if (oldRootSliced === onChainRoot) {
+            chosen = sliced;
+          } else {
+            throw new Error(
+              `Shield pre-flight failed: cannot reconstruct the on-chain Merkle root (${onChainRoot}) ` +
+              `from the pool's filled_subtrees for leaf #${leafCount}. Neither layout matched ` +
+              `(direct=${oldRootDirect}, shifted=${oldRootSliced}). The tree state has diverged from ` +
+              `this client — not generating a proof that would be rejected. Retry shortly.`,
+            );
+          }
+          const { newRoot, updatedSubtrees, pathElements: _pathElements, pathIndices: _pathIndices } = chosen;
 
           // 4. Generate C6 (merkle_update) STARK proof.
           // C6 public inputs (per stark/src/air/merkle_update.rs):
@@ -213,6 +247,20 @@ export default function DenominatedShieldScreen() {
           const c6ProofBytes = Buffer.from(c6Result.proofHex, 'hex');
           const c6PublicInputs = c6Result.publicInputs.map((s: string) => BigInt(s));
 
+          // Defensive invariant: the prover's public inputs MUST match what the
+          // on-chain handler binds — old_root = merkle_tree.root (shield_v3.rs
+          // :92-94 low 8 LE), new_root = the `newRoot` arg. The chooser already
+          // guarantees this (it picks the layout whose fold reproduces
+          // onChainRoot), so this only fires if the prover's fold ever diverges
+          // from computeNewRootFromSubtreesV3 — in which case abort before
+          // burning ~0.04 SOL of relay/proof rent on a guaranteed InvalidProof.
+          if (c6PublicInputs[2] !== onChainRoot || c6PublicInputs[3] !== (newRoot & ((1n << 64n) - 1n))) {
+            throw new Error(
+              `Shield aborted: prover/chain public-input mismatch (old_root ` +
+              `prover=${c6PublicInputs[2]} chain=${onChainRoot}). Tree state diverged — retry shortly.`,
+            );
+          }
+
           // 5. Hand off to the store action which orchestrates submit+verify
           //    of the C6 buffer and the shield_denominated_v3 ix.
           await shieldNoteV3(
@@ -220,11 +268,17 @@ export default function DenominatedShieldScreen() {
             {
               commitment,
               newRoot,
-              // On-chain `insert_with_root_v3` requires exactly `tree_depth`
-              // (=15) entries representing levels 1..=depth. computeNewRootFromSubtreesV3
-              // returns depth+1 entries (levels 0..=depth) where index 0 is the
-              // leaf itself — drop it.
-              newSubtrees: updatedSubtrees.slice(1),
+              // On-chain `insert_with_root_v3` requires EXACTLY `tree_depth`
+              // (=MERKLE_DEPTH=15) entries (merkle_tree_v3.rs:164-167, reusing
+              // the InvalidMerkleRoot code for the length guard). The on-chain
+              // filled_subtrees Vec is depth+1 (=16) long, so the chooser's
+              // `updatedSubtrees` is 16 on the DIRECT path but only 15 on the
+              // SLICED path (its input was subtrees.slice(1)). The old
+              // `.slice(1)` worked for DIRECT (16→15) but produced 14 on SLICED
+              // → InvalidMerkleRoot(6002). `.slice(0, MERKLE_DEPTH)` yields the
+              // canonical 15 (levels 0..=14) for BOTH layouts; a future shield's
+              // sliced-read reconstructs the root from exactly these values.
+              newSubtrees: updatedSubtrees.slice(0, MERKLE_DEPTH),
               secret,
               nullifierPreimage,
               depositEpoch,

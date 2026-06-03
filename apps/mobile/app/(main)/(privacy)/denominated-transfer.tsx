@@ -24,6 +24,8 @@ import {
   buildMerkleProofFromLeavesV3,
   computeNewRootFromSubtreesV3,
   parseFilledSubtrees,
+  ZERO_VALUE_V3,
+  MERKLE_DEPTH,
   createCommitmentV3,
   pubkeyToField,
   slotToEpoch,
@@ -134,6 +136,10 @@ function TransferScreenContent() {
         const treeAccount = await conn.getAccountInfo(pool.treePDA);
         if (!treeAccount) throw new Error('V3 merkle tree account not found');
         const { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
+
+        // Current on-chain root (low 8 bytes LE of MerkleTreeStateV3.root @ offset 8+32).
+        let onChainRoot = 0n;
+        for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(treeAccount.data[8 + 32 + b]);
         const { leavesByIndex } = await fetchPoolLeavesByIndex(conn, pool.poolPDA);
 
         // 3. C3 — proves OLD commitment is at the current on-chain root.
@@ -165,12 +171,29 @@ function TransferScreenContent() {
           newNullifierPreimage, newSecret, newDepositEpoch, tokenMintField,
         );
 
-        // 5. Compute C6 witness (current_root → newRoot via newCommitment at
-        //    leafCount). `updatedSubtrees` is depth+1 entries (level 0 is
-        //    the leaf itself); on-chain `insert_with_root_v3` needs
-        //    levels 1..=depth so we slice(1) at the call site.
-        const { newRoot, updatedSubtrees, pathElements: c6Path, pathIndices: c6Indices } =
-          computeNewRootFromSubtreesV3(newCommitment, leafCount, subtrees);
+        // 5. Compute C6 witness via the filled_subtrees-layout chooser (same fix
+        //    as the shield path). insert_with_root_v3 stores filled_subtrees
+        //    shifted by one (merkle_tree_v3.rs:176-184), so reconstruct old_root
+        //    BOTH ways and use whichever reproduces the live on-chain root —
+        //    otherwise the C6 proof bakes a wrong old_root → InvalidProof(6000)
+        //    at shield_denominated_v3-style verification on any pool with ≥2 leaves.
+        const t_direct = computeNewRootFromSubtreesV3(newCommitment, leafCount, subtrees);
+        const t_sliced = computeNewRootFromSubtreesV3(newCommitment, leafCount, subtrees.slice(1));
+        const t_oldDirect = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees).newRoot;
+        const t_oldSliced = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees.slice(1)).newRoot;
+        let t_chosen: typeof t_direct;
+        if (t_oldDirect === onChainRoot) {
+          t_chosen = t_direct;
+        } else if (t_oldSliced === onChainRoot) {
+          t_chosen = t_sliced;
+        } else {
+          throw new Error(
+            `Transfer pre-flight failed: cannot reconstruct the on-chain Merkle root (${onChainRoot}) ` +
+            `from the pool's filled_subtrees for leaf #${leafCount} (direct=${t_oldDirect}, shifted=${t_oldSliced}). ` +
+            `Tree state diverged — not generating a proof that would be rejected.`,
+          );
+        }
+        const { newRoot, updatedSubtrees, pathElements: c6Path, pathIndices: c6Indices } = t_chosen;
 
         const c6Result = await generateMerkleUpdateProof(
           '0',
@@ -194,7 +217,12 @@ function TransferScreenContent() {
           {
             newCommitment,
             newRoot,
-            newSubtrees: updatedSubtrees.slice(1),
+            // EXACTLY tree_depth (=MERKLE_DEPTH=15) entries required on-chain
+            // (insert_with_root_v3 length guard). updatedSubtrees is 16 on the
+            // DIRECT layout, 15 on SLICED — slice(0, MERKLE_DEPTH) yields the
+            // canonical 15 for both. (Was .slice(1) → 14 on SLICED →
+            // InvalidMerkleRoot(6002). Same fix as denominated-shield.tsx.)
+            newSubtrees: updatedSubtrees.slice(0, MERKLE_DEPTH),
             newSecret,
             newNullifierPreimage,
             newDepositEpoch,
