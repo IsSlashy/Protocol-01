@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Plus, Download } from 'lucide-react';
+import { Plus, Download, Usb } from 'lucide-react';
 import GlitchLogo from '../components/GlitchLogo';
 
 // NOTE (Privy removal — Phase 2): the email/OTP login and the "Connect with P01
@@ -66,6 +66,22 @@ export default function Welcome() {
           >
             <Download className="w-4 h-4" />
             IMPORT SEED PHRASE
+          </motion.button>
+
+          {/* Connect Ledger — opens a dedicated tab (WebHID needs a tab, not the
+              popup; see docs/pairing-ledger-spec.md §1B). */}
+          <motion.button
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ delay: 0.6 }}
+            onClick={() => {
+              const url = chrome.runtime.getURL('popup.html') + '#/connect-ledger';
+              chrome.tabs.create({ url });
+            }}
+            className="w-full py-4 bg-p01-surface text-p01-chrome font-display font-medium text-sm tracking-wider border border-p01-border flex items-center justify-center gap-2 hover:text-white hover:border-p01-cyan/30 transition-colors"
+          >
+            <Usb className="w-4 h-4" />
+            CONNECT LEDGER
           </motion.button>
 
           {/* Version */}

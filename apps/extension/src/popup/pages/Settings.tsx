@@ -20,6 +20,8 @@ import {
   X,
   AlertCircle,
   Loader2,
+  Smartphone,
+  Usb,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useSettingsStore } from '@/shared/store/settings';
@@ -114,6 +116,21 @@ export default function Settings() {
   const handleLock = async () => {
     lock();
     navigate('/unlock');
+  };
+
+  // Open device pairing in a DEDICATED TAB (popup.html#/pair-device). A toolbar
+  // popup dies on focus loss; the tab survives and gives the QR/SAS room.
+  const handleLinkDevice = () => {
+    const url = chrome.runtime.getURL('popup.html') + '#/pair-device';
+    chrome.tabs.create({ url });
+  };
+
+  // Open the Ledger connect flow in a DEDICATED TAB (popup.html#/connect-ledger).
+  // WebHID requestDevice() needs a tab — it dies in the popup and cannot run in
+  // the service worker / offscreen (docs/pairing-ledger-spec.md §1B).
+  const handleConnectLedger = () => {
+    const url = chrome.runtime.getURL('popup.html') + '#/connect-ledger';
+    chrome.tabs.create({ url });
   };
 
   const handleReset = async () => {
@@ -549,6 +566,40 @@ export default function Settings() {
                 <div className="text-left">
                   <p className="text-white font-medium">Change Password</p>
                   <p className="text-p01-chrome/60 text-xs">Update your password</p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
+            </button>
+
+            {/* Link Another Device */}
+            <button
+              onClick={handleLinkDevice}
+              className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-p01-cyan/20 flex items-center justify-center">
+                  <Smartphone className="w-5 h-5 text-p01-cyan" />
+                </div>
+                <div className="text-left">
+                  <p className="text-white font-medium">Link Another Device</p>
+                  <p className="text-p01-chrome/60 text-xs">Copy this wallet to your phone or another browser</p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
+            </button>
+
+            {/* Connect Ledger */}
+            <button
+              onClick={handleConnectLedger}
+              className="w-full flex items-center justify-between p-4 border-b border-p01-border/50 hover:bg-p01-void/50 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-p01-cyan/20 flex items-center justify-center">
+                  <Usb className="w-5 h-5 text-p01-cyan" />
+                </div>
+                <div className="text-left">
+                  <p className="text-white font-medium">Connect Ledger</p>
+                  <p className="text-p01-chrome/60 text-xs">Use a hardware wallet to co-sign transactions</p>
                 </div>
               </div>
               <ChevronRight className="w-5 h-5 text-p01-chrome/40" />

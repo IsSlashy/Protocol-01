@@ -145,6 +145,16 @@ export interface Token {
   icon?: string;
 }
 
+/**
+ * What KIND of signing key backs the active wallet.
+ *   - 'local-seed' : a BIP39 mnemonic / local Keypair held (in-memory) by this
+ *     store. The ONLY kind pre-Ledger; the default for any migrated wallet.
+ *   - 'hardware'   : a Ledger that co-signs on-chain. There is NO local Keypair
+ *     (`_keypair === null`); `publicKey` + `ledgerPath` identify it, and the ZK
+ *     identity comes from a separate device-encrypted spending seed (§0).
+ */
+export type WalletKind = 'local-seed' | 'hardware';
+
 export interface WalletState {
   // Auth state
   isInitialized: boolean;
@@ -156,6 +166,12 @@ export interface WalletState {
   publicKey: string | null;
   encryptedSeedPhrase: EncryptedData | null;
   passwordHash: string | null;
+
+  // What kind of key backs this wallet + (hardware-only) its BIP44 path.
+  // Persisted. 'local-seed' for every seed/mnemonic wallet (the migration
+  // default); 'hardware' for a Ledger, which has NO local seed phrase.
+  walletKind: WalletKind;
+  ledgerPath: string | null;
 
   // Balances (not persisted - fetched from chain)
   solBalance: number;
@@ -176,6 +192,13 @@ export interface WalletState {
   // Actions
   createWallet: (password: string) => Promise<string[]>;
   importWallet: (seedPhrase: string[], password: string) => Promise<void>;
+  /**
+   * Record a connected Ledger as the active wallet. Sets walletKind='hardware'
+   * with NO local keypair (`_keypair` stays null) — the device co-signs on-chain
+   * and the ZK identity lives in a separate device-encrypted spending seed (§0).
+   * The seed itself is provisioned by the ConnectLedger flow, not here.
+   */
+  connectLedger: (params: { publicKey: string; ledgerPath: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   unlock: (password: string) => Promise<boolean>;
   tryAutoUnlock: () => Promise<boolean>;
@@ -201,6 +224,8 @@ export const useWalletStore = create<WalletState>()(
       publicKey: null,
       encryptedSeedPhrase: null,
       passwordHash: null,
+      walletKind: 'local-seed',
+      ledgerPath: null,
       solBalance: 0,
       tokens: [],
       isRefreshing: false,
@@ -235,6 +260,8 @@ export const useWalletStore = create<WalletState>()(
             publicKey,
             encryptedSeedPhrase,
             passwordHash,
+            walletKind: 'local-seed',
+            ledgerPath: null,
             _keypair: keypair,
             isLoading: false,
           });
@@ -280,6 +307,8 @@ export const useWalletStore = create<WalletState>()(
             publicKey,
             encryptedSeedPhrase,
             passwordHash,
+            walletKind: 'local-seed',
+            ledgerPath: null,
             _keypair: keypair,
             isLoading: false,
           });
@@ -288,6 +317,43 @@ export const useWalletStore = create<WalletState>()(
           await saveSession(keypair.secretKey, password);
 
           // Fetch initial balance and transactions for imported wallet
+          get().refreshBalance();
+          get().fetchTransactions();
+        } catch (error) {
+          set({ isLoading: false, error: (error as Error).message });
+          throw error;
+        }
+      },
+
+      // Connect a Ledger as the active wallet (hardware kind, no local keypair).
+      // The ConnectLedger flow has already (a) read the device public key, (b)
+      // provisioned + encrypted the separate ZK spending seed (services/ledger/
+      // spendingSeed.ts) under this password. Here we just record the wallet
+      // identity. There is NO seed phrase and NO `_keypair` — `isUnlocked` is
+      // true because the device is connected and the spending seed is decryptable
+      // with the cached password.
+      connectLedger: async ({ publicKey, ledgerPath, password }) => {
+        set({ isLoading: true, error: null });
+        try {
+          const passwordHash = await hashPassword(password);
+          // Cache password for session encryption (used to decrypt the spending
+          // seed for proving, same as the seed-wallet session password).
+          setSessionPassword(password);
+
+          set({
+            isInitialized: true,
+            isUnlocked: true,
+            publicKey,
+            // Hardware wallets have NO seed phrase — the signing key is on-device
+            // and the ZK identity is the separately-encrypted spending seed.
+            encryptedSeedPhrase: null,
+            passwordHash,
+            walletKind: 'hardware',
+            ledgerPath,
+            _keypair: null,
+            isLoading: false,
+          });
+
           get().refreshBalance();
           get().fetchTransactions();
         } catch (error) {
@@ -314,6 +380,8 @@ export const useWalletStore = create<WalletState>()(
           publicKey: null,
           encryptedSeedPhrase: null,
           passwordHash: null,
+          walletKind: 'local-seed',
+          ledgerPath: null,
           solBalance: 0,
           tokens: [],
           transactions: [],
@@ -323,9 +391,14 @@ export const useWalletStore = create<WalletState>()(
 
       // Unlock wallet with password
       unlock: async (password: string) => {
-        const { encryptedSeedPhrase, passwordHash } = get();
+        const { encryptedSeedPhrase, passwordHash, walletKind } = get();
 
-        if (!encryptedSeedPhrase || !passwordHash) {
+        // Hardware wallets have NO seed phrase to decrypt; only `passwordHash`
+        // is required. Verifying the password re-arms the session password used
+        // to decrypt the separate ZK spending seed for proving.
+        const isHardware = walletKind === 'hardware';
+
+        if (!passwordHash || (!isHardware && !encryptedSeedPhrase)) {
           set({ error: 'Wallet not initialized' });
           return false;
         }
@@ -352,8 +425,19 @@ export const useWalletStore = create<WalletState>()(
           // Password correct — reset brute-force counter
           await resetUnlockAttempts();
 
+          // Hardware path: no keypair to derive, no session secret-key to save.
+          // Re-cache the password (for spending-seed decryption) and mark
+          // unlocked. The device must be reconnected separately for signing.
+          if (isHardware) {
+            setSessionPassword(password);
+            set({ isUnlocked: true, _keypair: null, isLoading: false });
+            get().refreshBalance();
+            get().fetchTransactions();
+            return true;
+          }
+
           // Decrypt seed phrase
-          const mnemonic = await decrypt(encryptedSeedPhrase, password);
+          const mnemonic = await decrypt(encryptedSeedPhrase!, password);
 
           // Derive keypair
           const keypair = await deriveKeypairFromMnemonic(mnemonic);
@@ -454,6 +538,8 @@ export const useWalletStore = create<WalletState>()(
           publicKey: null,
           encryptedSeedPhrase: null,
           passwordHash: null,
+          walletKind: 'local-seed',
+          ledgerPath: null,
           solBalance: 0,
           tokens: [],
           transactions: [],
@@ -585,6 +671,10 @@ export const useWalletStore = create<WalletState>()(
         publicKey: state.publicKey,
         encryptedSeedPhrase: state.encryptedSeedPhrase,
         passwordHash: state.passwordHash,
+        // Hardware-wallet identity — persisted so a Ledger wallet survives popup
+        // close without a seed phrase (Finding #14). `_keypair` is NEVER persisted.
+        walletKind: state.walletKind,
+        ledgerPath: state.ledgerPath,
         network: state.network,
         hideBalance: state.hideBalance,
       }),
@@ -600,7 +690,12 @@ export const useWalletStore = create<WalletState>()(
       // import. Shielded / zkSPL notes that were keyed to a Privy-derived seed
       // are ORPHANED (accept-loss, see Phase 2 spec). TODO(Phase5-UI): surface
       // a one-time user-facing data-loss notice for affected wallets.
-      version: 2,
+      //
+      // Version 3 — Ledger hardware support (Finding #14). Adds persisted
+      // `walletKind` / `ledgerPath`. Every pre-v3 wallet is a local-seed wallet
+      // (Ledger did not exist yet), so the migration defaults them to
+      // 'local-seed' with no ledgerPath — no data loss, no re-onboard.
+      version: 3,
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
           // Old data — nuke it
@@ -610,6 +705,8 @@ export const useWalletStore = create<WalletState>()(
             publicKey: null,
             encryptedSeedPhrase: null,
             passwordHash: null,
+            walletKind: 'local-seed',
+            ledgerPath: null,
             network: 'devnet',
             hideBalance: false,
           };
@@ -634,8 +731,17 @@ export const useWalletStore = create<WalletState>()(
               publicKey: null,
               encryptedSeedPhrase: null,
               passwordHash: null,
+              walletKind: 'local-seed',
+              ledgerPath: null,
             };
           }
+        }
+
+        // v2 -> v3: every pre-Ledger wallet is a local-seed wallet. Default the
+        // new fields so the partialize whitelist + init gate behave correctly.
+        if (persistedState && typeof persistedState === 'object') {
+          if (persistedState.walletKind === undefined) persistedState.walletKind = 'local-seed';
+          if (persistedState.ledgerPath === undefined) persistedState.ledgerPath = null;
         }
         return persistedState;
       },

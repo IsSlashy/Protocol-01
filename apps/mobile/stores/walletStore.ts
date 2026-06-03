@@ -7,7 +7,12 @@ import {
   deleteWallet,
   getMnemonic,
   formatPublicKey,
+  getWalletKind,
+  getHardwarePublicKey,
+  setHardwareWallet,
+  type WalletKind,
 } from '../services/solana/wallet';
+import type { WalletSigner } from '../services/denominatedPool';
 import {
   getWalletBalance,
   getCachedBalance,
@@ -35,6 +40,13 @@ let _wsAccountChangeCleanup: (() => void) | null = null;
 // Track the autonomous runner start timer so we can cancel it on logout
 let _autonomousRunnerTimer: ReturnType<typeof setTimeout> | null = null;
 
+// ─── Ledger session (NON-persisted; in-memory for the app lifetime) ──────────
+// A BLE transport cannot survive an app relaunch. After a cold start a hardware
+// wallet is in the "needs reconnect" state until connectLedger() runs again.
+// These module-level handles are intentionally NOT in the store snapshot.
+let _ledgerTransport: import('@ledgerhq/hw-transport').default | null = null;
+let _ledgerSigner: WalletSigner | null = null;
+
 interface WalletState {
   // State
   initialized: boolean;
@@ -46,6 +58,14 @@ interface WalletState {
   refreshing: boolean;
   error: string | null;
 
+  // ── Wallet kind / hardware (Phase 4) ──
+  /** 'seed' = local mnemonic keypair; 'hardware' = Ledger. Persisted in SecureStore. */
+  walletKind: WalletKind;
+  /** Persisted BIP44 path for the Ledger wallet (v1 fixed 44'/501'/0'/0'). */
+  ledgerPath: string;
+  /** True while a Ledger BLE transport is live this session (NOT persisted). */
+  ledgerConnected: boolean;
+
   // Computed
   formattedPublicKey: string;
   formattedSolBalance: string;
@@ -55,6 +75,21 @@ interface WalletState {
   initialize: () => Promise<void>;
   createNewWallet: () => Promise<{ mnemonic: string }>;
   importExistingWallet: (mnemonic: string) => Promise<void>;
+  /**
+   * Connect a Ledger: opens a BLE transport to `deviceId`, confirms the device
+   * pubkey at `path`, builds the WalletSigner, and persists the hardware wallet.
+   * Returns the resolved base58 pubkey.
+   */
+  connectLedger: (deviceId: string, path?: string) => Promise<string>;
+  /** Drop the in-memory Ledger transport/signer (relaunch or BLE loss). */
+  disconnectLedger: () => Promise<void>;
+  /**
+   * Resolve the active wallet's signer for note/STARK flows. Returns the Ledger
+   * WalletSigner for a hardware wallet (throws if not currently connected →
+   * caller routes the user to reconnect), or undefined for a seed wallet (those
+   * paths sign with the local keypair directly).
+   */
+  getActiveWalletSigner: () => WalletSigner | undefined;
   logout: () => Promise<void>;
   refreshBalance: () => Promise<void>;
   refreshTransactions: () => Promise<void>;
@@ -74,6 +109,9 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   transactions: [],
   refreshing: false,
   error: null,
+  walletKind: 'seed',
+  ledgerPath: "44'/501'/0'/0'",
+  ledgerConnected: false,
 
   // Computed values (getters)
   get formattedPublicKey() {
@@ -104,6 +142,12 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       const exists = await walletExists();
       if (exists) {
         const publicKey = await getPublicKey();
+
+        // Resolve the persisted wallet kind. A 'hardware' (Ledger) wallet boots
+        // into the "needs reconnect" state — its BLE transport cannot survive an
+        // app relaunch, so ledgerConnected starts false until connectLedger().
+        const walletKind = await getWalletKind();
+        set({ walletKind, ledgerConnected: false });
 
         // INSTANT: Load cached data immediately (like Phantom)
         let cachedBalance = null;
@@ -313,6 +357,100 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     }
   },
 
+  // Connect a Ledger (hardware) wallet over BLE.
+  connectLedger: async (deviceId: string, path?: string) => {
+    set({ loading: true, error: null });
+    try {
+      const ledgerPath = path ?? get().ledgerPath;
+      const { openTransport } = await import('../services/ledger/transport');
+      const { getLedgerAddress } = await import('../services/ledger/solanaApp');
+      const { makeLedgerWalletSigner } = await import('../services/ledger/signer');
+
+      // Close any prior in-memory transport before opening a new one.
+      if (_ledgerTransport) {
+        const { closeTransport } = await import('../services/ledger/transport');
+        await closeTransport(_ledgerTransport);
+        _ledgerTransport = null;
+        _ledgerSigner = null;
+      }
+
+      const transport = await openTransport(deviceId);
+      // Confirm the address on-device (display=true) so the user verifies it.
+      const pubkey = await getLedgerAddress(transport, ledgerPath, true);
+      const pubkeyB58 = pubkey.toBase58();
+
+      // Build the signer; pre-warm the hardware spending seed so the first note
+      // op doesn't stall (createOrFetch is idempotent).
+      _ledgerTransport = transport;
+      _ledgerSigner = makeLedgerWalletSigner({ transport, publicKey: pubkey, path: ledgerPath });
+      const { getOrCreateHardwareSpendingSeed } = await import('../services/ledger/spendingSeed');
+      await getOrCreateHardwareSpendingSeed(pubkeyB58);
+
+      // If this is a NEW hardware identity (different pubkey), archive any prior
+      // wallet's notes and reset privacy stores so identities don't bleed.
+      const oldPublicKey = get().publicKey;
+      if (oldPublicKey && oldPublicKey !== pubkeyB58) {
+        await resetAllPrivacyStores(oldPublicKey);
+      }
+
+      // Persist hardware wallet metadata (kind='hardware', pubkey, exists).
+      await setHardwareWallet(pubkeyB58);
+
+      set({
+        hasWallet: true,
+        publicKey: pubkeyB58,
+        walletKind: 'hardware',
+        ledgerPath,
+        ledgerConnected: true,
+        balance: { sol: 0, tokens: [], totalUsd: 0 },
+        transactions: [],
+        loading: false,
+        error: null,
+      });
+
+      // Restore any previously archived notes for this hardware identity.
+      await restorePrivacyStoresForWallet(pubkeyB58);
+
+      get().refreshBalance();
+      get().refreshTransactions();
+      return pubkeyB58;
+    } catch (error: any) {
+      // Clean up a half-open transport on failure.
+      if (_ledgerTransport) {
+        try {
+          const { closeTransport } = await import('../services/ledger/transport');
+          await closeTransport(_ledgerTransport);
+        } catch {}
+        _ledgerTransport = null;
+        _ledgerSigner = null;
+      }
+      set({ error: error.message || 'Failed to connect Ledger', loading: false, ledgerConnected: false });
+      throw error;
+    }
+  },
+
+  // Drop the in-memory Ledger transport/signer.
+  disconnectLedger: async () => {
+    if (_ledgerTransport) {
+      try {
+        const { closeTransport } = await import('../services/ledger/transport');
+        await closeTransport(_ledgerTransport);
+      } catch {}
+    }
+    _ledgerTransport = null;
+    _ledgerSigner = null;
+    set({ ledgerConnected: false });
+  },
+
+  // Resolve the active signer for note/STARK flows.
+  getActiveWalletSigner: () => {
+    if (get().walletKind !== 'hardware') return undefined;
+    if (!_ledgerSigner) {
+      throw new Error('Ledger not connected — reconnect your device to continue.');
+    }
+    return _ledgerSigner;
+  },
+
   // Logout / delete wallet
   logout: async () => {
     try {
@@ -342,6 +480,16 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         await ws.disconnect();
       } catch {}
 
+      // Drop any live Ledger transport before wiping wallet metadata.
+      if (_ledgerTransport) {
+        try {
+          const { closeTransport } = await import('../services/ledger/transport');
+          await closeTransport(_ledgerTransport);
+        } catch {}
+        _ledgerTransport = null;
+        _ledgerSigner = null;
+      }
+
       const outgoingAddress = get().publicKey;
       await deleteWallet();
       // Archive notes for outgoing wallet, then reset stores
@@ -352,6 +500,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         balance: null,
         transactions: [],
         loading: false,
+        walletKind: 'seed',
+        ledgerConnected: false,
       });
     } catch (error: any) {
       set({

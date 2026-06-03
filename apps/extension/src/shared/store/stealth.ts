@@ -22,6 +22,7 @@ import {
   deriveSpendingKey,
 } from '../services/stealth';
 import bs58 from 'bs58';
+import { useWalletStore } from './wallet';
 import { getConnection, NetworkType } from '../services/wallet';
 import {
   SystemProgram,
@@ -115,8 +116,22 @@ export const useStealthStore = create<StealthState>()(
       /**
        * Initialise les clés stealth à partir du mnemonic
        * Doit être appelé après la création/import du wallet
+       *
+       * WALLET-KIND SEAM (docs/pairing-ledger-spec.md §3 S4 / Finding #8): stealth
+       * keys are derived from the BIP39 MNEMONIC. A HARDWARE (Ledger) wallet has
+       * NO mnemonic in the extension, so stealth cannot be initialized for it —
+       * we refuse rather than seed `generateStealthKeys` with an empty/placeholder
+       * mnemonic (which would produce keys nobody can reproduce or recover). The
+       * claim path itself signs with a stealth-derived keypair, independent of the
+       * wallet keypair, so once initialized it is walletKind-agnostic.
        */
       initializeStealth: async (mnemonic: string, password: string) => {
+        if (useWalletStore.getState().walletKind === 'hardware') {
+          throw new Error(
+            'Stealth addresses require a seed-phrase wallet and are not available ' +
+              'for hardware (Ledger) wallets in this version.',
+          );
+        }
         set({ isLoading: true, error: null });
 
         try {

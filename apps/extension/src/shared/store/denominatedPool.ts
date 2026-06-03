@@ -10,7 +10,6 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { PublicKey } from '@solana/web3.js';
 
 import {
   type ShieldReceipt,
@@ -37,6 +36,7 @@ import { noteMaturity } from '../services/maturity';
 import { useWalletStore } from './wallet';
 import { getConnection } from '../services/wallet';
 import type { WalletSigner } from '../services/stark';
+import { getActiveSigner, getWalletSeed as getActiveWalletSeed } from '../services/signer';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -166,51 +166,47 @@ interface DenominatedPoolState {
 }
 
 // ---------------------------------------------------------------------------
-// WalletSigner factory (same pattern as subscriptionVault)
+// WalletSigner factory — delegates to the centralized signer seam so the
+// local-seed vs hardware (Ledger) branch lives in ONE place (services/signer.ts,
+// docs/pairing-ledger-spec.md §3 S4 / Finding #8). For hardware, the returned
+// signer co-signs on the connected device; the proof → assemble → fresh-blockhash
+// → device-sign ordering is enforced because the SERVICE calls signTransaction
+// last (after proving), exactly as for a local keypair.
 // ---------------------------------------------------------------------------
 
 function createWalletSigner(): { signer: WalletSigner; connection: ReturnType<typeof getConnection> } {
-  const walletState = useWalletStore.getState();
-
-  if (!walletState.publicKey) {
-    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
-  }
-
-  const walletPublicKey = new PublicKey(walletState.publicKey);
-  const connection = getConnection(walletState.network);
-  const keypair = walletState._keypair;
-
-  if (!keypair) {
-    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
-  }
-
-  const signer: WalletSigner = {
-    publicKey: walletPublicKey,
-    signTransaction: async (tx) => {
-      const { blockhash } = await connection.getLatestBlockhash('confirmed');
-      if (!tx.recentBlockhash) tx.recentBlockhash = blockhash;
-      if (!tx.feePayer) tx.feePayer = walletPublicKey;
-      tx.sign(keypair);
-      return tx;
-    },
-  };
-
-  return { signer, connection };
+  return getActiveSigner();
 }
 
 /**
- * Derive walletSeed from the current wallet store.
- * Uses _keypair.secretKey.slice(0,32) (mirrors mobile
- * denominatedPoolStore.ts:841). The local keypair is the only key source post
- * Privy-removal — throws if the wallet is locked.
+ * Derive the RAW 32-byte note seed for the ACTIVE wallet (§0). Async because the
+ * hardware path decrypts a separate at-rest spending seed; the local-seed path
+ * returns `keypair.secretKey.slice(0,32)` (mirrors mobile
+ * denominatedPoolStore.ts:841). Throws if locked.
  */
-function getWalletSeed(): Uint8Array {
+async function getWalletSeed(): Promise<Uint8Array> {
+  return getActiveWalletSeed();
+}
+
+/**
+ * SYNC note-seed accessor for the local-only note-encryption helpers
+ * (`peekNote`, `getMyNoteAddress`) that cannot be made async without changing
+ * out-of-scope UI call sites. Works for local-seed wallets; for HARDWARE it
+ * throws — the encrypted spending seed can only be obtained asynchronously.
+ * TODO(S4-followup): make peekNote/getMyNoteAddress async so hardware wallets can
+ * also preview/receive denominated notes (touches DenominatedImport / ShieldedWallet).
+ */
+function getWalletSeedSync(): Uint8Array {
   const walletState = useWalletStore.getState();
+  if (walletState.walletKind === 'hardware') {
+    throw new Error(
+      'Previewing / receiving denominated notes is not yet available for hardware ' +
+        'wallets. Use unshield/transfer, or import on a seed wallet.',
+    );
+  }
   const keypair = walletState._keypair;
   if (!keypair) {
-    throw new Error(
-      'Cannot derive wallet seed: wallet is locked. Unlock and try again.',
-    );
+    throw new Error('Cannot derive wallet seed: wallet is locked. Unlock and try again.');
   }
   return keypair.secretKey.slice(0, 32);
 }
@@ -262,7 +258,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         try {
           const { signer, connection } = createWalletSigner();
-          const walletSeed = getWalletSeed();
+          const walletSeed = await getWalletSeed();
 
           const poolAddr = pool.poolPDA.toBase58();
           const counter = get().counterByPool[poolAddr] ?? 0;
@@ -446,21 +442,21 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       peekNote: (encoded) => {
         const trimmed = encoded.trim();
         if (isEncryptedNoteBlob(trimmed)) {
-          const plaintext = decryptNote(getWalletSeed(), trimmed);
+          const plaintext = decryptNote(getWalletSeedSync(), trimmed);
           return JSON.parse(new TextDecoder().decode(plaintext)) as ShareableNote;
         }
         // Plaintext fallback (legacy / cross-client).
         return JSON.parse(atob(trimmed)) as ShareableNote;
       },
 
-      getMyNoteAddress: () => createNoteEncryptionAddress(getWalletSeed()),
+      getMyNoteAddress: () => createNoteEncryptionAddress(getWalletSeedSync()),
 
       importNoteAction: async ({ encoded, source = 'received' }) => {
         const trimmed = encoded.trim();
         let receipt: ShieldReceipt;
         if (isEncryptedNoteBlob(trimmed)) {
           // Decrypt with this wallet's seed, then validate + reconstruct.
-          const plaintext = decryptNote(getWalletSeed(), trimmed);
+          const plaintext = decryptNote(await getWalletSeed(), trimmed);
           const note = JSON.parse(new TextDecoder().decode(plaintext)) as ShareableNote;
           receipt = shareableNoteToReceipt(note);
         } else {
