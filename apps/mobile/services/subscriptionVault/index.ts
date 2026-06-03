@@ -207,27 +207,37 @@ function buildSubscribeNormalIx(
   vkHashSubscriber: Uint8Array,
   tokenProgram?: PublicKey,
   subscriberTokenAccount?: PublicKey,
+  vaultTokenAccount?: PublicKey,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_normal');
 
-  // Args: amount: u64, rate: u64, interval_slots: u64, vk_hash_subscriber: [u8;32]
-  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32);
+  // On-chain arg order (subscribe_normal.rs:57-64):
+  //   rate | interval_slots | amount | token_mint(Pubkey/32) | vk_hash_subscriber([u8;32])
+  // token_mint is an ARGUMENT (native SOL ⇒ SystemProgram.programId), NOT an
+  // account. The previous builder serialized amount|rate|interval (wrong order),
+  // omitted token_mint entirely, and passed token_mint as a phantom account —
+  // every subscribe_normal tx failed before reaching the handler.
+  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
-  data.writeBigUInt64LE(amount, offset); offset += 8;
   data.writeBigUInt64LE(rate, offset); offset += 8;
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
+  data.writeBigUInt64LE(amount, offset); offset += 8;
+  tokenMint.toBuffer().copy(data, offset); offset += 32;
   Buffer.from(vkHashSubscriber).copy(data, offset);
 
+  // Account order == SubscribeNormal struct field order (subscribe_normal.rs:19-40).
+  // No token_mint account. Optional token accounts (token_program,
+  // subscriber_token_account, vault_token_account) use the executing program ID
+  // as Anchor 0.32's `None` sentinel — same pattern as subscribe_private_stark.
   const keys = [
     { pubkey: subscriber, isSigner: true, isWritable: true },
     { pubkey: retailer, isSigner: false, isWritable: false },
-    { pubkey: tokenMint, isSigner: false, isWritable: false },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // Optional accounts
     { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: subscriberTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!subscriberTokenAccount },
+    { pubkey: vaultTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!vaultTokenAccount },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });

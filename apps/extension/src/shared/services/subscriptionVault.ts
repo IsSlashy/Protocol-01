@@ -358,8 +358,11 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
 
 /**
  * Build subscribe_normal instruction.
- * Args: amount: u64, rate: u64, interval_slots: u64, vk_hash_subscriber: [u8;32]
- * Accounts mirror mobile buildSubscribeNormalIx lines 199-233.
+ * On-chain arg order (subscribe_normal.rs:57-64):
+ *   rate | interval_slots | amount | token_mint(Pubkey/32) | vk_hash_subscriber([u8;32])
+ * token_mint is an ARGUMENT (native SOL ⇒ SystemProgram.programId), NOT an account.
+ * Accounts == SubscribeNormal struct field order; optional token accounts use the
+ * program ID as Anchor 0.32's None sentinel. (Mirrors mobile buildSubscribeNormalIx.)
  */
 function buildSubscribeNormalIx(
   subscriber: PublicKey,
@@ -370,25 +373,29 @@ function buildSubscribeNormalIx(
   rate: bigint,
   intervalSlots: bigint,
   vkHashSubscriber: Uint8Array,
+  tokenProgram?: PublicKey,
+  subscriberTokenAccount?: PublicKey,
+  vaultTokenAccount?: PublicKey,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_normal');
-  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32);
+  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
-  data.writeBigUInt64LE(amount, offset); offset += 8;
   data.writeBigUInt64LE(rate, offset); offset += 8;
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
+  data.writeBigUInt64LE(amount, offset); offset += 8;
+  tokenMint.toBuffer().copy(data, offset); offset += 32;
   Buffer.from(vkHashSubscriber).copy(data, offset);
 
   const keys = [
     { pubkey: subscriber, isSigner: true, isWritable: true },
     { pubkey: retailer, isSigner: false, isWritable: false },
-    { pubkey: tokenMint, isSigner: false, isWritable: false },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // Optional token accounts — use program ID as Anchor None sentinel
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    // Optional token accounts — program ID == Anchor None sentinel
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: subscriberTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!subscriberTokenAccount },
+    { pubkey: vaultTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!vaultTokenAccount },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
