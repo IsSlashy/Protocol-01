@@ -4,10 +4,35 @@ export { PrivacySDK } from './client';
 // ─── Identity (spending-key helpers) ──────────────────────────────────────────
 export {
   asSpendingKey,
+  asViewingKey,
   deriveSpendingKeyFromSignature,
   SPENDING_KEY_DOMAIN,
   type SpendingKey,
+  type ViewingKey,
 } from './identity/spendingKey';
+
+// ─── Identity (tiered HKDF derivation — Privy removal 2026-06-03) ──────────────
+export {
+  deriveP01Identity,
+  deriveP01IdentityFromSeed,
+  clearP01Identity,
+  clearAllP01Identities,
+  type P01Identity,
+} from './identity/deriveIdentity';
+export {
+  isKeypair,
+  classifySigner,
+  toUnifiedSigner,
+  type SignerKind,
+  type UnifiedSigner,
+} from './identity/signer';
+export {
+  IDENTITY_DOMAIN,
+  HKDF_SALT,
+  SPEND_INFO,
+  VIEW_INFO,
+  IDENTITY_KEY_LENGTH,
+} from './identity/constants';
 
 // ─── Modules ──────────────────────────────────────────────────────────────────
 export { ShieldModule } from './modules/shield';

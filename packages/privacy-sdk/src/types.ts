@@ -12,6 +12,12 @@ export interface WalletAdapter {
   publicKey: PublicKey;
   signTransaction: (tx: any) => Promise<any>;
   signAllTransactions?: (txs: any[]) => Promise<any[]>;
+  /**
+   * Off-chain message signer. Present on software wallets (Phantom, Solflare,
+   * Android MWA); absent on hardware (Ledger). Used by `deriveP01Identity` to
+   * obtain deterministic input keying material. See identity/deriveIdentity.ts.
+   */
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
 }
 
 /** A signer is either a Solana Keypair (for scripts/backends) or a WalletAdapter (for frontends). */

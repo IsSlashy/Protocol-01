@@ -27,6 +27,17 @@ import { PrivacyError, PrivacyErrorCode } from '../errors';
  */
 export type SpendingKey = Uint8Array & { readonly __brand: 'SpendingKey' };
 
+/**
+ * Branded 32-byte viewing key (watch-only). Derived alongside the spending key
+ * by `deriveP01Identity`; lets a holder detect/decrypt notes without the
+ * ability to spend. Construct with {@link asViewingKey}.
+ *
+ * NOTE (R-01): the spend/view separation is real in these 32-byte values but
+ * does NOT survive to the circuit — only the low 8 bytes reach the Goldilocks
+ * owner. See identity/deriveIdentity.ts and docs/privy-removal-spec.md §1.4.
+ */
+export type ViewingKey = Uint8Array & { readonly __brand: 'ViewingKey' };
+
 /** Canonical SDK domain string for the signed-message ceremony. */
 export const SPENDING_KEY_DOMAIN = 'protocol01:spending_key:v1' as const;
 
@@ -49,6 +60,22 @@ export function asSpendingKey(bytes: Uint8Array): SpendingKey {
     );
   }
   return bytes as SpendingKey;
+}
+
+/**
+ * Wrap a 32-byte buffer as a {@link ViewingKey}. Throws if the length is wrong;
+ * the result shares memory with the input.
+ */
+export function asViewingKey(bytes: Uint8Array): ViewingKey {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
+    throw new PrivacyError(
+      PrivacyErrorCode.INVALID_CONFIG,
+      `viewingKey must be exactly 32 bytes (received ${
+        bytes instanceof Uint8Array ? bytes.length : typeof bytes
+      }).`,
+    );
+  }
+  return bytes as ViewingKey;
 }
 
 /**
