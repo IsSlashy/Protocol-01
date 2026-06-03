@@ -1,14 +1,14 @@
 import { Stack } from 'expo-router';
-import { Colors } from '@/constants/theme';
 
 export default function PrivacyLayout() {
   return (
     <Stack
       screenOptions={{
         headerShown: false,
-        // Opaque background on purpose: covering the shared ambient-glow gradient
-        // avoids overdraw on this content-heavy stack (kept flat for performance).
-        contentStyle: { backgroundColor: Colors.background },
+        // Transparent so the shared ambient-glow gradient from (main)/_layout shows
+        // through, matching the other tabs. User preference — accepts the small
+        // mount cost over an opaque fill. See feedback-privacy-tab-opaque-bg-perf.
+        contentStyle: { backgroundColor: 'transparent' },
       }}
     >
       <Stack.Screen name="index" />
