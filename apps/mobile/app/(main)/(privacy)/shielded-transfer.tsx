@@ -19,9 +19,7 @@ import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useShieldedStore } from '@/stores/shieldedStore';
-import { useWalletStore } from '@/stores/walletStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
 import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_TRANSFER } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
@@ -39,8 +37,6 @@ export default function ShieldedTransferScreen() {
     getLastSentNote,
   } = useShieldedStore();
 
-  const { publicKey, isPrivyWallet } = useWalletStore();
-  const { solanaWallet: privyWallet } = usePrivyAuth();
   const {
     isReady: starkReady,
     generateTransferProof: generateStarkTransferProof,
@@ -98,18 +94,11 @@ export default function ShieldedTransferScreen() {
 
     let progressInterval: ReturnType<typeof setInterval> | undefined;
     try {
-      let walletPubkey: PublicKey;
-      let signTransaction: (tx: Transaction) => Promise<Transaction>;
-
-      if (isPrivyWallet && privyWallet) {
-        walletPubkey = new PublicKey(privyWallet.address);
-        signTransaction = privyWallet.signTransaction;
-      } else {
-        const keypair = await getKeypair();
-        if (!keypair) throw new Error('Could not get wallet keypair');
-        walletPubkey = keypair.publicKey;
-        signTransaction = async (tx: Transaction): Promise<Transaction> => { tx.sign(keypair); return tx; };
-      }
+      // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
+      const keypair = await getKeypair();
+      if (!keypair) throw new Error('Could not get wallet keypair');
+      const walletPubkey: PublicKey = keypair.publicKey;
+      const signTransaction = async (tx: Transaction): Promise<Transaction> => { tx.sign(keypair); return tx; };
 
       // STARK path: generate and verify STARK transfer proof before Groth16 transfer
       if (starkReady) {

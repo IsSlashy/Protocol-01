@@ -18,7 +18,6 @@ import { VersionedTransaction } from '@solana/web3.js';
 
 import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 import { useWalletStore } from '@/stores/walletStore';
-import { useAuth } from '@/providers/PrivyProvider';
 import { getConnection, isDevnet } from '@/services/solana/connection';
 import { getKeypair } from '@/services/solana/wallet';
 import {
@@ -63,7 +62,6 @@ import TokenSelector from '@/components/ui/TokenSelector';
 export default function SwapScreen() {
   const router = useRouter();
   const { publicKey, balance } = useWalletStore();
-  const { walletAddress, signTransaction: privySignTransaction } = useAuth();
   const { authenticateForSend } = useSecuritySettings();
 
   // Token state
@@ -207,7 +205,7 @@ export default function SwapScreen() {
       // Get swap transaction from Jupiter
       const swapResponse = await getSwapTransaction({
         quoteResponse: quote,
-        userPublicKey: walletAddress || publicKey,
+        userPublicKey: publicKey,
       });
 
       if (swapResponse.simulationError) {
@@ -216,19 +214,14 @@ export default function SwapScreen() {
 
       setStatus('swapping');
 
-      // Sign and send
-      let signFn: (tx: VersionedTransaction) => Promise<VersionedTransaction>;
-
-      if (privySignTransaction) {
-        signFn = privySignTransaction as any;
-      } else {
-        const keypair = await getKeypair();
-        if (!keypair) throw new Error('No wallet keypair found');
-        signFn = async (tx: VersionedTransaction) => {
+      // Sign and send (local keypair only — Privy removed, spec §3 Phase 1).
+      const keypair = await getKeypair();
+      if (!keypair) throw new Error('No wallet keypair found');
+      const signFn: (tx: VersionedTransaction) => Promise<VersionedTransaction> =
+        async (tx: VersionedTransaction) => {
           tx.sign([keypair]);
           return tx;
         };
-      }
 
       const signature = await executeSwap({
         connection,

@@ -9,24 +9,25 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Logo } from '../../components/onboarding';
-import { useAuth } from '@/providers/PrivyProvider';
+import { useWalletStore } from '@/stores/walletStore';
 import { useT } from '@/i18n';
 
 export default function WelcomeScreen() {
   const t = useT();
   const router = useRouter();
-  const { isReady, isAuthenticated, hasWallet } = useAuth();
+  // Local wallet only (Privy removed — spec §3 Phase 1).
+  const { initialized, hasWallet } = useWalletStore();
 
-  // Redirect if already authenticated with wallet
+  // Redirect if a local wallet already exists.
   useEffect(() => {
-    if (isReady && isAuthenticated && hasWallet) {
+    if (initialized && hasWallet) {
       try {
         router.replace('/(main)/(wallet)');
       } catch (err) {
         console.error('[Onboarding] Navigation error:', err);
       }
     }
-  }, [isReady, isAuthenticated, hasWallet, router]);
+  }, [initialized, hasWallet, router]);
 
   const handleGetStarted = () => {
     router.replace('/(auth)/login');

@@ -51,7 +51,6 @@ vi.mock('../services/solana/transactions', () => {
     getCachedTransactions: vi.fn().mockResolvedValue([]),
     clearTransactionCache: vi.fn().mockResolvedValue(undefined),
     sendSol: vi.fn().mockResolvedValue({ signature: 'mock-sig-123', explorerUrl: 'https://solscan.io/tx/123', success: true }),
-    sendSolWithSigner: vi.fn().mockResolvedValue({ signature: 'mock-signer-sig', explorerUrl: 'https://solscan.io/tx/456', success: true }),
   };
   return transactionMocks;
 });
@@ -96,7 +95,6 @@ function reapplyMockDefaults() {
   transactionMocks.getCachedTransactions.mockResolvedValue([]);
   transactionMocks.clearTransactionCache.mockResolvedValue(undefined);
   transactionMocks.sendSol.mockResolvedValue({ signature: 'mock-sig-123', explorerUrl: 'https://solscan.io/tx/123', success: true });
-  transactionMocks.sendSolWithSigner.mockResolvedValue({ signature: 'mock-signer-sig', explorerUrl: 'https://solscan.io/tx/456', success: true });
 
   connectionMocks.requestAirdrop.mockResolvedValue('airdrop-sig-789');
   connectionMocks.isDevnet.mockReturnValue(true);
@@ -119,7 +117,6 @@ describe('Wallet Store -- Core Wallet Management', () => {
       transactions: [],
       refreshing: false,
       error: null,
-      isPrivyWallet: false,
     });
     resetSecureStore();
     AsyncStorage.__reset();
@@ -147,11 +144,6 @@ describe('Wallet Store -- Core Wallet Management', () => {
       const state = useWalletStore.getState();
       expect(state.loading).toBe(false);
       expect(state.refreshing).toBe(false);
-    });
-
-    it('should default to non-Privy wallet mode', () => {
-      const state = useWalletStore.getState();
-      expect(state.isPrivyWallet).toBe(false);
     });
   });
 
@@ -310,34 +302,6 @@ describe('Wallet Store -- Core Wallet Management', () => {
   });
 
   // ===================================================================
-  // Section 5: Privy Wallet Integration
-  // ===================================================================
-
-  describe('Privy Wallet Integration', () => {
-    it('should initialize with a Privy wallet address', async () => {
-      const address = 'PrivyWalletAddress1234567890abcdef';
-      await useWalletStore.getState().initializeWithPrivy(address);
-
-      const state = useWalletStore.getState();
-      expect(state.hasWallet).toBe(true);
-      expect(state.publicKey).toBe(address);
-      expect(state.isPrivyWallet).toBe(true);
-      expect(state.initialized).toBe(true);
-    });
-
-    it('should handle Privy initialization failure', async () => {
-      const { initializeConnection } = await import('../services/solana/connection');
-      (initializeConnection as any).mockRejectedValueOnce(new Error('Privy init failed'));
-
-      await useWalletStore.getState().initializeWithPrivy('addr');
-
-      const state = useWalletStore.getState();
-      expect(state.error).toBe('Privy init failed');
-      expect(state.initialized).toBe(true);
-    });
-  });
-
-  // ===================================================================
   // Section 6: Balance Refresh
   // ===================================================================
 
@@ -379,9 +343,9 @@ describe('Wallet Store -- Core Wallet Management', () => {
   // ===================================================================
 
   describe('Send Transaction', () => {
-    it('should send SOL using local keypair for non-Privy wallets', async () => {
+    it('should send SOL using the local keypair', async () => {
       const { sendSol } = await import('../services/solana/transactions');
-      useWalletStore.setState({ publicKey: 'SenderPK', isPrivyWallet: false });
+      useWalletStore.setState({ publicKey: 'SenderPK' });
 
       const result = await useWalletStore.getState().sendTransaction('RecipientPK', 1.5);
 

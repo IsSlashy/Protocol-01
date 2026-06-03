@@ -26,7 +26,6 @@ import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { resetAllPrivacyStores } from '../../../stores/resetStores';
 import { lockVault } from '../../../utils/crypto/noteVault';
 import { getCluster } from '../../../services/solana/connection';
-import { useAuth } from '../../../providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { RELEASE_CODENAME } from '@/constants/release';
 import { useT, LANGUAGES, useLangStore } from '@/i18n';
@@ -69,8 +68,8 @@ const GlassDivider: React.FC = () => (
 export default function SettingsScreen() {
   const t = useT();
   const router = useRouter();
-  const { publicKey: localPublicKey, logout: walletLogout, hasWallet: hasLocalWallet, balance } = useWalletStore();
-  const { logout: privyLogout, walletAddress: privyWalletAddress } = useAuth();
+  // Local wallet only (Privy removed — spec §3 Phase 1).
+  const { publicKey, logout: walletLogout, hasWallet: hasLocalWallet, balance } = useWalletStore();
   const {
     currency,
     setCurrency,
@@ -100,8 +99,6 @@ export default function SettingsScreen() {
     initSettings();
   }, []);
 
-  // Use Privy wallet if available, fallback to local
-  const publicKey = privyWalletAddress || localPublicKey;
   const walletAddress = publicKey || '';
   const truncatedAddress = walletAddress
     ? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
@@ -137,14 +134,9 @@ export default function SettingsScreen() {
           text: t('settings.disconnect'),
           onPress: async () => {
             // Archive notes before disconnecting so they persist across sessions
-            const currentAddress = privyWalletAddress || localPublicKey;
+            const currentAddress = publicKey;
             if (currentAddress) {
               await resetAllPrivacyStores(currentAddress);
-            }
-            try {
-              await privyLogout();
-            } catch (e) {
-              console.warn('[Settings] Privy logout error:', e);
             }
             lockVault(); // Wipe vault key from memory
             await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -212,7 +204,6 @@ export default function SettingsScreen() {
                   style: 'destructive',
                   onPress: async () => {
                     try {
-                      await privyLogout();
                       await walletLogout();
                       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                       router.replace('/');

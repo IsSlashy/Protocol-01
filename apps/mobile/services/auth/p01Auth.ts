@@ -229,19 +229,22 @@ export async function requestBiometricAuth(
 }
 
 /**
- * Sign the auth challenge.
- * For native wallets: Ed25519 signature with keypair.
- * For Privy wallets: HMAC-based proof (no local secret key available).
+ * Sign the auth challenge with the local wallet's Ed25519 keypair.
+ *
+ * NOTE(Privy-removal, spec §3 Phase 1, R-15): the former HMAC/SHA-512 fallback
+ * (used when a Privy embedded wallet had no local secret key) has been REMOVED.
+ * Every wallet is a local keypair now, so a real Ed25519 signature is always
+ * available. If no keypair is present we fail loudly rather than returning a
+ * non-signature proof.
  */
 export async function signAuthChallenge(
   payload: AuthQRPayload,
-  walletAddressOverride?: string
+  _walletAddressOverride?: string
 ): Promise<{ signature: string; publicKey: string; timestamp: number } | null> {
   const timestamp = Date.now();
   const message = `P01-AUTH:${payload.service}:${payload.session}:${payload.challenge}:${timestamp}`;
   const messageBytes = new TextEncoder().encode(message);
 
-  // Try native keypair first (non-Privy wallets)
   try {
     const keypair = await getKeypair();
     if (keypair && keypair.secretKey) {
@@ -252,28 +255,11 @@ export async function signAuthChallenge(
         timestamp,
       };
     }
-  } catch {
-    // No keypair — normal for Privy wallets
+  } catch (error) {
+    console.error('[P01Auth] Keypair signing error:', error);
   }
 
-  // Fallback: use wallet address + nacl.hash (SHA-512, always available)
-  const walletAddress = walletAddressOverride || (await getPublicKey());
-  if (walletAddress) {
-    try {
-      const dataToHash = new TextEncoder().encode(`${message}:${walletAddress}`);
-      const hash = nacl.hash(dataToHash); // 64 bytes
-      const signature = hash.slice(0, 32); // first 32 bytes
-      return {
-        signature: bs58.encode(signature),
-        publicKey: walletAddress,
-        timestamp,
-      };
-    } catch (error) {
-      console.error('[P01Auth] Hash signing error:', error);
-    }
-  }
-
-  console.error('[P01Auth] No signing method available — no keypair and no wallet address');
+  console.error('[P01Auth] No signing method available — no local keypair.');
   return null;
 }
 

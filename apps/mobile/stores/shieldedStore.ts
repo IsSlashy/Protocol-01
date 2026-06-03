@@ -5,13 +5,14 @@ import { PublicKey, Transaction } from '@solana/web3.js';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import { getZkService, ZkService, ZkAddress, Note } from '../services/zk';
-import { generateMnemonic, mnemonicToSeed, validateMnemonic } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
+import { mnemonicToSeed, validateMnemonic } from '@scure/bip39';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
+import { PRIVY_DATA_LOSS_MESSAGE } from '../services/privacy/privyDataLoss';
 
 const MNEMONIC_KEY = 'p01_mnemonic';
-const ZK_SEED_KEY = 'p01_zk_seed'; // Separate seed for ZK features (Privy users)
+// Privy removal (R-12): the former `p01_zk_seed` random-mnemonic fallback is gone;
+// the ZK identity is derived only from the wallet's own mnemonic (see initialize()).
 
 // Must match wallet.ts SecureStore options for reading mnemonic
 const SECURE_OPTIONS = {
@@ -267,24 +268,22 @@ export const useShieldedStore = create<ShieldedState>()(
         set({ isLoading: true });
 
         try {
-          // If no seed phrase provided, try to get it from SecureStore
+          // If no seed phrase provided, derive it from the wallet's own mnemonic.
           let phrase = seedPhrase;
           if (!phrase) {
-            // First try the main wallet mnemonic
             phrase = await SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTIONS) || undefined;
+          }
 
-            if (!phrase) {
-              // Try the ZK-specific seed (for Privy users who don't have local mnemonic)
-              phrase = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS) || undefined;
-
-              if (phrase) {
-              } else {
-                // Generate a new ZK seed for Privy users
-                phrase = generateMnemonic(wordlist, 128); // 12 words
-                await SecureStore.setItemAsync(ZK_SEED_KEY, phrase, SECURE_OPTIONS);
-              }
-            } else {
-            }
+          if (!phrase) {
+            // Privy removal (R-12): the old `p01_zk_seed` random-mnemonic fallback
+            // is GONE — minting a fresh random ZK seed silently created
+            // unrecoverable notes that diverged from the gold-path wallet seed.
+            // With no wallet seed we fail loudly instead of orphaning funds.
+            set({ isLoading: false });
+            throw new Error(
+              'Shielded wallet unavailable: no wallet seed phrase found. ' +
+                PRIVY_DATA_LOSS_MESSAGE,
+            );
           }
 
           // Get or create ZK service instance

@@ -22,7 +22,6 @@ import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 
 import { useDenominatedPoolStore, findSafeShieldCounter } from '@/stores/denominatedPoolStore';
 import { useWalletStore } from '@/stores/walletStore';
-import { useAuth } from '@/providers/PrivyProvider';
 import {
   type PoolConfig,
   SOL_POOLS,
@@ -34,7 +33,6 @@ import {
   createCommitmentV3,
   goldilocksToLeBytes32,
   deriveNoteMaterial,
-  deriveSeedFromSigner,
   slotToEpoch,
   pubkeyToField,
 } from '@/services/denominatedPool';
@@ -81,16 +79,9 @@ export default function DenominatedShieldScreen() {
   // the 30-day deprecation window — the per-note routing uses
   // note.poolVersion to pick the correct path. New shields are V3 only.
   const pools = tokenTab === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
-  const { publicKey: storePublicKey, initializeWithPrivy } = useWalletStore();
-  const { walletAddress: privyWalletAddress } = useAuth();
-  const walletPublicKey = privyWalletAddress || storePublicKey;
+  // Local wallet only (Privy removed — spec §3 Phase 1).
+  const { publicKey: walletPublicKey } = useWalletStore();
   const { isReady: starkReady, generateMerkleUpdateProof } = useStarkProver();
-
-  useEffect(() => {
-    if (privyWalletAddress && !storePublicKey) {
-      initializeWithPrivy(privyWalletAddress);
-    }
-  }, [privyWalletAddress, storePublicKey]);
 
   const fetchBalance = useCallback(async () => {
     setLoadingBalance(true);
@@ -167,27 +158,9 @@ export default function DenominatedShieldScreen() {
           // 2. Derive deterministic note material from wallet seed.
           // Use the same `deterministic` mechanic as v2 so V3 notes are
           // recoverable from seed via rescanPool.
+          // Local keypair is the only seed source (Privy removed — spec §3 Phase 1).
           const localKp = await getKeypair().catch(() => null);
-          let walletSeed: Uint8Array | null = null;
-          if (localKp) {
-            walletSeed = localKp.secretKey.slice(0, 32);
-          } else {
-            // Privy: ask for a one-per-session signature
-            const { isPrivyWallet } = useWalletStore.getState();
-            if (isPrivyWallet) {
-              const { getPrivySigner, getPrivyMessageSigner } = await import('@/stores/walletStore');
-              const signer = getPrivySigner();
-              const messageSigner = getPrivyMessageSigner();
-              if (signer && messageSigner && walletPublicKey) {
-                const walletSigner = {
-                  publicKey: new PublicKey(walletPublicKey),
-                  signTransaction: signer,
-                  signMessage: messageSigner,
-                };
-                walletSeed = await deriveSeedFromSigner(walletSigner);
-              }
-            }
-          }
+          const walletSeed: Uint8Array | null = localKp ? localKp.secretKey.slice(0, 32) : null;
           if (!walletSeed) throw new Error('No wallet seed available — cannot derive V3 note');
 
           // V3 uses the SAME shieldCounters store entry as v2 — the derived

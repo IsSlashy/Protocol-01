@@ -50,7 +50,7 @@ vi.mock('./wallet', () => ({
 }));
 
 vi.mock('../../stores/walletStore', () => ({
-  getPrivySigner: vi.fn(() => null),
+  // Privy removed (spec §3 Phase 1) — streams.ts no longer reads any signer here.
   useWalletStore: {
     getState: vi.fn(() => ({
       publicKey: 'MockSenderPubkey11111111111111111111111111',

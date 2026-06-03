@@ -16,7 +16,6 @@ import * as Linking from 'expo-linking';
 import { isP01AuthRequest, parseAuthQR } from '../services/auth/p01Auth';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { P01PrivyProvider } from '../providers/PrivyProvider';
 import React from 'react';
 import { StarkProverProvider } from '../providers/StarkProverProvider';
 import { AlertProvider } from '../providers/AlertProvider';
@@ -87,29 +86,28 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#050505' }}>
       <SafeAreaProvider>
-        <P01PrivyProvider>
-          <StarkProverProvider>
-            <ArciumProvider>
-              <AlertProvider>
-                <View style={{ flex: 1, backgroundColor: '#050505' }}>
-                  <StatusBar style="light" />
-                  <Stack
-                    screenOptions={{
-                      headerShown: false,
-                      contentStyle: { backgroundColor: '#050505' },
-                      animation: 'fade',
-                    }}
-                  >
-                    <Stack.Screen name="index" />
-                    <Stack.Screen name="(onboarding)" />
-                    <Stack.Screen name="(auth)" />
-                    <Stack.Screen name="(main)" />
-                  </Stack>
-                </View>
-              </AlertProvider>
-            </ArciumProvider>
-          </StarkProverProvider>
-        </P01PrivyProvider>
+        {/* P01PrivyProvider removed — Privy is gone (spec §3 Phase 1). */}
+        <StarkProverProvider>
+          <ArciumProvider>
+            <AlertProvider>
+              <View style={{ flex: 1, backgroundColor: '#050505' }}>
+                <StatusBar style="light" />
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: '#050505' },
+                    animation: 'fade',
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="(onboarding)" />
+                  <Stack.Screen name="(auth)" />
+                  <Stack.Screen name="(main)" />
+                </Stack>
+              </View>
+            </AlertProvider>
+          </ArciumProvider>
+        </StarkProverProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

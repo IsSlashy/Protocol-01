@@ -1,45 +1,34 @@
 /**
  * Wallet signer abstraction for the quantum wallet stack.
  *
- * Unifies the two mobile signing paths (local Ed25519 Keypair vs Privy embedded
- * wallet) behind a single interface. All quantum-wallet services (initWallet,
- * autoDeposit, withdraw) accept a `WalletSigner` instead of a raw `Keypair`, so
- * they work transparently across both wallet types.
+ * Wraps the local Ed25519 Keypair signing path behind a single interface. All
+ * quantum-wallet services (initWallet, autoDeposit, withdraw) accept a
+ * `WalletSigner` instead of a raw `Keypair`.
  *
- * Privy returns a `signTransaction(tx)` async fn; local keypair uses
- * `tx.partialSign(kp)`. Both end up with the same Transaction object signed
+ * Local keypair uses `tx.partialSign(kp)` to produce a Transaction object signed
  * for the user's pubkey, ready to send via `sendRawTransaction`.
+ *
+ * NOTE: the former Privy embedded-wallet signing branch has been removed (Privy
+ * removal, spec §3 Phase 1). `signMessage?` is reserved for the Phase 3 external
+ * (software-wallet) signing path.
  */
 
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
-import { useWalletStore, getPrivySigner } from '../../stores/walletStore';
 import { getKeypair } from '../solana/wallet';
 
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction(tx: Transaction): Promise<Transaction>;
+  /** Phase 3 (external/software wallets): off-chain message signing for HKDF
+   *  identity derivation. Undefined for the local-keypair path today. */
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
 }
 
-/** Resolve the current wallet signer, transparently handling Privy or local
- *  keypair. Throws if neither path can produce a signer (e.g. wallet not
- *  hydrated yet). */
+/** Resolve the current wallet signer from the local keypair. Throws if no local
+ *  keypair is available (e.g. wallet not hydrated yet). */
 export async function getCurrentWalletSigner(): Promise<WalletSigner> {
-  const walletStore = useWalletStore.getState();
-
-  if (walletStore.isPrivyWallet) {
-    const signFn = getPrivySigner();
-    const pubB58 = walletStore.publicKey;
-    if (!signFn) throw new Error('Privy signer not available (provider not mounted or wallet not connected)');
-    if (!pubB58) throw new Error('Privy wallet pubkey not yet hydrated');
-    return {
-      publicKey: new PublicKey(pubB58),
-      signTransaction: signFn,
-    };
-  }
-
-  // Local keypair fallback.
   const kp = await getKeypair();
-  if (!kp) throw new Error('No wallet available — neither Privy nor local keypair.');
+  if (!kp) throw new Error('No wallet available — local keypair missing.');
   return keypairToSigner(kp);
 }
 

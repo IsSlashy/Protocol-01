@@ -20,7 +20,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useWalletStore } from '@/stores/walletStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { usePrivyAuth } from '@/providers/PrivyProvider';
 import { getKeypair } from '@/services/solana/wallet';
 import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_CONFIDENTIAL_BALANCE } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
@@ -57,8 +56,7 @@ const SHIELDED_INFO_SECTIONS = [
 
 export default function ShieldedWalletScreen() {
   const router = useRouter();
-  const { balance, publicKey, isPrivyWallet } = useWalletStore();
-  const { solanaWallet: privyWallet } = usePrivyAuth();
+  const { balance, publicKey } = useWalletStore();
   const {
     isInitialized,
     isLoading,
@@ -130,23 +128,15 @@ export default function ShieldedWalletScreen() {
     }
   };
 
-  // Wallet signer helper
+  // Wallet signer helper (local keypair only — Privy removed, spec §3 Phase 1).
   const getWalletSigner = async () => {
-    let walletPubkey: PublicKey;
-    let signTransaction: (tx: Transaction) => Promise<Transaction>;
-
-    if (isPrivyWallet && privyWallet) {
-      walletPubkey = new PublicKey(privyWallet.address);
-      signTransaction = privyWallet.signTransaction;
-    } else {
-      const keypair = await getKeypair();
-      if (!keypair) throw new Error('Could not get wallet keypair');
-      walletPubkey = keypair.publicKey;
-      signTransaction = async (tx: Transaction): Promise<Transaction> => {
-        tx.sign(keypair);
-        return tx;
-      };
-    }
+    const keypair = await getKeypair();
+    if (!keypair) throw new Error('Could not get wallet keypair');
+    const walletPubkey: PublicKey = keypair.publicKey;
+    const signTransaction = async (tx: Transaction): Promise<Transaction> => {
+      tx.sign(keypair);
+      return tx;
+    };
     return { walletPubkey, signTransaction };
   };
 

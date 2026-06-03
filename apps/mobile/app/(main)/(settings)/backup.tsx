@@ -65,7 +65,7 @@ export default function BackupRecoveryScreen() {
   const t = useT();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { getBackupMnemonic, publicKey, isPrivyWallet } = useWalletStore();
+  const { getBackupMnemonic, publicKey } = useWalletStore();
   const { getActiveNotes, exportAllNotes, importNote } = useDenominatedPoolStore();
 
   // Backup status (persisted)
@@ -120,14 +120,7 @@ export default function BackupRecoveryScreen() {
   // ── Seed Phrase ──
 
   const handleShowSeedPhrase = async () => {
-    if (isPrivyWallet) {
-      p01Alert(
-        t('common.warning'),
-        'Your wallet is managed by Privy. The private key is secured by Privy\'s infrastructure and cannot be exported as a seed phrase.\n\nUse the Encrypted Backup feature below to back up your privacy pool notes.',
-        [{ text: t('common.ok') }],
-      );
-      return;
-    }
+    // Every wallet is a local seed-phrase keypair now (Privy removed — spec §3 Phase 1).
     try {
       // M8: Always require authentication — fall back to device PIN when biometrics unavailable
       const result = await LocalAuthentication.authenticateAsync({

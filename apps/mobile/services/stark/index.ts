@@ -404,7 +404,7 @@ function buildCloseProofBufferIx(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Transaction signing helper (supports Keypair and Privy WalletSigner)
+// Transaction signing helper (supports a raw Keypair or a WalletSigner)
 // ---------------------------------------------------------------------------
 
 async function signSendConfirm(
@@ -708,8 +708,8 @@ async function uploadChunksParallel(
  * 3. Call verify_stark_proof with commitment (~900K CU)
  * 4. Close buffer and recover rent
  *
- * Supports both local Keypair and Privy WalletSigner.
- * If neither is provided, reads keypair from SecureStore.
+ * Supports a raw local Keypair or a WalletSigner.
+ * If neither is provided, reads the keypair from SecureStore.
  */
 export async function submitStarkProof(
   proof: CompactStarkProof,

@@ -1401,133 +1401,39 @@ export function deriveNullifierPDA(poolKey: PublicKey, nullifierBytes: Uint8Arra
 }
 
 // ---------------------------------------------------------------------------
-// Wallet signer abstraction (local keypair OR Privy signer)
+// Wallet signer abstraction (local keypair only)
 // ---------------------------------------------------------------------------
 
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
-  /**
-   * Sign an arbitrary message — used by {@link deriveSeedFromSigner} to derive
-   * a deterministic 32-byte note seed for Privy-wallet users (who have no
-   * local mnemonic to seed-derive from).
-   */
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+  // NOTE(Phase3-External): `signMessage?` was removed with the Privy
+  // note-seed ceremony below. The external/software-wallet identity path
+  // (which re-introduces off-chain message signing for HKDF derivation)
+  // returns in Phase 3 via the SDK `deriveP01Identity`, not here.
 }
 
-// ---------------------------------------------------------------------------
-// Note seed derivation for Privy wallets (P11.D-style ceremony)
-// ---------------------------------------------------------------------------
-
-/** Canonical message signed once per session to derive the note seed. */
-export const NOTE_SEED_DOMAIN = 'protocol01:note-seed:v1' as const;
-
-const noteSeedCache = new Map<string, Uint8Array>();
-
-// The derived note seed is deterministic (Ed25519 signatures over a fixed
-// message are RFC-8032 deterministic → same wallet always yields the same
-// seed). We persist it in the secure enclave keyed by pubkey so recovery on
-// reboot works OFFLINE — without it, a Privy wallet must re-hit the remote
-// embedded-wallet WebView on every boot, and a degraded network makes that
-// signMessage hang, breaking RecoveryBootModal. Persisting is no more
-// sensitive than the local keypair we already store the same way.
-const NOTE_SEED_KEY_PREFIX = 'p01_note_seed_v1_';
-const NOTE_SEED_SECURE_OPTIONS = {
-  keychainService: 'protocol-01',
-  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-} as const;
-
-function noteSeedStoreKey(pubkeyBase58: string): string {
-  // SecureStore keys are alphanumeric + ._- only; base58 is safe but guard anyway.
-  return NOTE_SEED_KEY_PREFIX + pubkeyBase58.replace(/[^A-Za-z0-9._-]/g, '');
-}
-
-async function persistNoteSeed(pubkeyBase58: string, seed: Uint8Array): Promise<void> {
-  try {
-    const hex = Array.from(seed, b => b.toString(16).padStart(2, '0')).join('');
-    await SecureStore.setItemAsync(noteSeedStoreKey(pubkeyBase58), hex, NOTE_SEED_SECURE_OPTIONS);
-  } catch {
-    // Persistence is best-effort — derivation still succeeds in-memory.
-  }
-}
-
-/**
- * Read a previously-persisted note seed directly from the secure enclave,
- * WITHOUT any signMessage prompt or Privy round-trip. Used by boot recovery
- * so a returning Privy wallet can rescan offline (no network dependency).
- * Returns null if the wallet has never derived a seed on this install.
- */
-export async function getPersistedNoteSeed(pubkeyBase58: string): Promise<Uint8Array | null> {
-  const inMem = noteSeedCache.get(pubkeyBase58);
-  if (inMem) return inMem;
-  try {
-    const hex = await SecureStore.getItemAsync(noteSeedStoreKey(pubkeyBase58), NOTE_SEED_SECURE_OPTIONS);
-    if (!hex || hex.length !== 64) return null;
-    const seed = new Uint8Array(32);
-    for (let i = 0; i < 32; i++) seed[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    noteSeedCache.set(pubkeyBase58, seed);
-    return seed;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Derive a 32-byte note seed from a wallet that exposes signMessage. The
- * signature over a fixed, domain-separated message is hashed to produce a
- * deterministic seed: any device holding the same wallet can reproduce it,
- * so notes shielded under that seed are recoverable on reinstall.
- *
- * Resolution order: in-memory cache → persisted secure-store seed (offline) →
- * signMessage (network). The signature prompt only fires the first time per
- * install; thereafter the seed is read back from the enclave with no Privy
- * round-trip. Cleared on logout via {@link clearNoteSeedCache}.
- */
-export async function deriveSeedFromSigner(signer: WalletSigner): Promise<Uint8Array> {
-  const cacheKey = signer.publicKey.toBase58();
-  const cached = noteSeedCache.get(cacheKey);
-  if (cached) return cached;
-
-  // Offline fast path — a prior session already derived + persisted the seed.
-  const persisted = await getPersistedNoteSeed(cacheKey);
-  if (persisted) return persisted;
-
-  if (typeof signer.signMessage !== 'function') {
-    throw new Error('Wallet signer does not expose signMessage — cannot derive note seed');
-  }
-  const message = utf8ToBytes(NOTE_SEED_DOMAIN);
-  const signature = await signer.signMessage(message);
-  if (!(signature instanceof Uint8Array) || signature.length === 0) {
-    throw new Error('Wallet signMessage returned an invalid signature');
-  }
-  const seed = sha256(signature);
-  noteSeedCache.set(cacheKey, seed);
-  await persistNoteSeed(cacheKey, seed);
-  return seed;
-}
-
-/**
- * Clear the in-memory note-seed cache AND wipe persisted seeds for every
- * pubkey seen this session (call on logout). Reinstall wipes SecureStore
- * anyway; this covers same-session logout.
- */
-export function clearNoteSeedCache(): void {
-  const seenPubkeys = Array.from(noteSeedCache.keys());
-  noteSeedCache.clear();
-  for (const pk of seenPubkeys) {
-    SecureStore.deleteItemAsync(noteSeedStoreKey(pk), NOTE_SEED_SECURE_OPTIONS).catch(() => {});
-  }
-}
-
-/**
- * Read a cached note seed without triggering the signMessage prompt. Used by
- * background flows (e.g. auto-shield) that must NOT pop a signature dialog —
- * if the cache is cold, the caller should accept a non-recoverable note for
- * this run and let the next interactive shield warm the cache.
- */
-export function getCachedNoteSeed(pubkey: PublicKey): Uint8Array | null {
-  return noteSeedCache.get(pubkey.toBase58()) ?? null;
-}
+// ───────────────────────────────────────────────────────────────────────────
+// DATA-LOSS NOTICE — Privy removal (spec §3 Phase 1, R-09 / R-12)
+// ───────────────────────────────────────────────────────────────────────────
+// The Privy-wallet "note seed" derivation+persistence machinery that lived here
+// (NOTE_SEED_DOMAIN, noteSeedCache, persistNoteSeed, getPersistedNoteSeed,
+// deriveSeedFromSigner, getCachedNoteSeed, clearNoteSeedCache, and the
+// `p01_note_seed_v1_*` SecureStore keys) HAS BEEN DELETED.
+//
+// This ORPHANS one of the four accepted seed classes from the spec:
+//   (a) mobile `p01_note_seed_v1_*`   ← THIS ONE
+//   (b) mobile `p01_zk_seed`          (see services/zkspl + services/stark)
+//   (c) extension `p01_privy_zk_seed`
+//   (d) extension `p01_zkspl_privy_seed_*`
+//
+// Any denominated-pool notes that were shielded by a former Privy wallet under a
+// signMessage-derived seed are NO LONGER RECOVERABLE on this build (the local
+// keypair gold path uses `secretKey.slice(0,32)`, a different seed). This is an
+// ACCEPTED, surfaced data loss — NOT a silent drop. The user-facing one-time
+// warning is wired via the shared data-loss flag in
+// `services/privacy/privyDataLoss.ts` (hasAcknowledgedPrivyDataLoss / ack).
+// TODO(Phase5-UI): surface a full in-app data-loss / re-onboard screen.
 
 /**
  * Derive output-note secrets for a split, transitively recoverable from the

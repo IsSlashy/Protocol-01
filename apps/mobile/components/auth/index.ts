@@ -1,9 +1,8 @@
 /**
  * P-01 Auth Components
  *
- * Custom authentication UI components with P-01 cyberpunk design.
+ * Local-wallet connect / onboarding UI. The Privy login button + email/OTP form
+ * were removed with Privy (spec §3 Phase 1).
  */
 
-export { PrivyLoginButton, AuthDivider, SocialLoginGrid } from './PrivyLoginButton';
-export { EmailLoginForm } from './EmailLoginForm';
 export { AuthScreen } from './AuthScreen';

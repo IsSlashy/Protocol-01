@@ -48,12 +48,12 @@ export default function AuthConfirmScreen() {
   const requiresSubscription = params.requiresSubscription === '1';
   const isExpired = params.isExpired === '1';
 
-  // Get wallet address from store (works for both native and Privy wallets)
+  // Get wallet address from the local wallet store.
   const storePublicKey = useWalletStore((s) => s.publicKey);
 
   const loadData = async () => {
     try {
-      // Get wallet address — try store first (Privy), then SecureStore (native)
+      // Get wallet address — try store first, then SecureStore.
       const wallet = storePublicKey || (await getPublicKey());
       setWalletAddress(wallet);
 
@@ -71,7 +71,7 @@ export default function AuthConfirmScreen() {
     }
   };
 
-  // Re-run loadData when storePublicKey becomes available (Privy wallet hydration)
+  // Re-run loadData when storePublicKey becomes available (wallet hydration)
   useEffect(() => {
     loadData();
   }, [storePublicKey]);

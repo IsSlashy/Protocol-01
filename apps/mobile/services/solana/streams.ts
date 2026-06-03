@@ -831,15 +831,13 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
     } else if (stream.useStealthAddress) {
       // Privacy Shield: stealth recipient + ephemeral feePayer via relay
       const { getKeypair } = await import('./wallet');
-      const { getPrivySigner } = await import('../../stores/walletStore');
       const { deriveStealthAddressSimple } = await import('../../utils/crypto/stealth');
       const { sendSolPrivate } = await import('./transactions');
 
       const keypair = await getKeypair();
-      const privySigner = getPrivySigner();
 
       // Get sender secret for stealth derivation
-      // Use stealth spending seed (available for all wallet types including Privy)
+      // Use the stealth spending seed (derived from the local wallet).
       const { getOrCreateStealthKeys } = await import('../../services/stealth/keys');
       const stealthKeys = await getOrCreateStealthKeys();
       const senderSecret = stealthKeys.spendingKey.secretKey.slice(0, 32);
@@ -859,12 +857,6 @@ async function _processStreamPaymentInner(streamId: string): Promise<StreamPayme
       if (keypair) {
         walletPubkey = keypair.publicKey;
         signTx = async (tx: Transaction) => { tx.sign(keypair); return tx; };
-      } else if (privySigner) {
-        const { useWalletStore } = await import('../../stores/walletStore');
-        const pk = useWalletStore.getState().publicKey;
-        if (!pk) throw new Error('No wallet public key');
-        walletPubkey = new PublicKey(pk);
-        signTx = privySigner;
       } else {
         throw new Error('No wallet signer available for private stream payment');
       }

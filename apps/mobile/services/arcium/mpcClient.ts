@@ -14,7 +14,6 @@
 import { Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
-import { useWalletStore, getPrivySigner } from '../../stores/walletStore';
 
 // Inline to avoid circular dependency with ./index
 const P01_ARCIUM_PROGRAM_ID = new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT');
@@ -41,23 +40,10 @@ function createWalletAdapter(pubkey: PublicKey, signer: (tx: Transaction) => Pro
 }
 
 /**
- * Get wallet public key + signer (Privy first, then local keypair fallback)
+ * Get wallet public key + signer from the local keypair.
+ * (Privy embedded-wallet path removed — spec §3 Phase 1.)
  */
 async function getWalletInfo(): Promise<{ pubkey: PublicKey; signer: (tx: Transaction) => Promise<Transaction> } | null> {
-  // Try Privy wallet first
-  const { isPrivyWallet, publicKey } = useWalletStore.getState();
-  if (isPrivyWallet && publicKey) {
-    const privySigner = getPrivySigner();
-    if (privySigner) {
-      if (__DEV__) console.log('[MPC] Using Privy wallet:', publicKey.slice(0, 8) + '...');
-      return {
-        pubkey: new PublicKey(publicKey),
-        signer: privySigner,
-      };
-    }
-  }
-
-  // Fallback to local keypair
   const keypair = await getKeypair();
   if (keypair) {
     if (__DEV__) console.log('[MPC] Using local keypair:', keypair.publicKey.toBase58().slice(0, 8) + '...');

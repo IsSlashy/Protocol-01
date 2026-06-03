@@ -50,7 +50,7 @@ export default function SendSplitScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ recipient?: string; amount?: string }>();
 
-  const { balance, isPrivyWallet } = useWalletStore();
+  const { balance } = useWalletStore();
   const {
     config,
     setConfig,
@@ -87,17 +87,8 @@ export default function SendSplitScreen() {
   };
 
   const validateInputs = (): boolean => {
-    // Split transactions require local keypair (secret key) access
-    // Privy wallets don't expose secret keys for security reasons
-    if (isPrivyWallet) {
-      p01Alert(
-        'Feature Not Available',
-        'Split transactions are not available with Privy wallets. This feature requires direct key access for creating temporary wallets.\n\nUse the Shielded Wallet for private transactions instead.',
-        [{ text: 'OK' }]
-      );
-      return false;
-    }
-
+    // Split transactions require local keypair (secret key) access for creating
+    // temporary wallets — always available now (local keypair only, Privy removed).
     if (!recipient.trim()) {
       p01Alert('Missing Recipient', 'Please enter a wallet address.');
       return false;

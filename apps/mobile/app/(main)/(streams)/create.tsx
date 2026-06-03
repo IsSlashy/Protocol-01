@@ -7,11 +7,9 @@ import * as Haptics from 'expo-haptics';
 import { PublicKey, Transaction, SystemProgram, TransactionInstruction, sendAndConfirmTransaction } from '@solana/web3.js';
 import { CreateStreamForm, StreamFormData } from '../../../components/streams';
 import { useStreamStore } from '../../../stores/streamStore';
-import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
 import { StreamFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
 import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
-import { sendSolWithSigner } from '../../../services/solana/transactions';
 import { p01Alert } from '@/stores/alertStore';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
@@ -145,41 +143,17 @@ export default function CreatePersonalStreamScreen() {
       };
       const recoveryMemo = `P01_SUB_V1:${JSON.stringify(subMemoPayload)}`;
 
-      // 1. Send first payment on-chain (Privy or local keypair fallback).
-      // Memo is added to the same tx for local keypair, or a follow-up
-      // memo-only tx for Privy (since sendSolWithSigner doesn't expose a
-      // memo hook).
-      const walletPub = useWalletStore.getState().publicKey;
-      const isPrivy = useWalletStore.getState().isPrivyWallet;
-      const privySigner = isPrivy ? getPrivySigner() : null;
+      // 1. Send first payment on-chain (local keypair only — Privy removed,
+      // spec §3 Phase 1). The recovery memo rides in the same tx.
       let sig: string;
-      if (privySigner && walletPub) {
-        const r = await sendSolWithSigner(data.recipient, amountPerPayment, new PublicKey(walletPub), privySigner);
-        if (!r.success || !r.signature) throw new Error(r.error || 'First payment failed');
-        sig = r.signature;
-        // Follow-up memo-only tx so the recovery scanner can find this stream.
-        try {
-          const conn = getConnection();
-          const memoTx = new Transaction().add(buildMemoIx(recoveryMemo));
-          memoTx.feePayer = new PublicKey(walletPub);
-          const { blockhash } = await conn.getLatestBlockhash('confirmed');
-          memoTx.recentBlockhash = blockhash;
-          const signed = await privySigner(memoTx);
-          await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-        } catch (memoErr) {
-          // Non-fatal: the SOL transfer happened, we just lose recovery for this stream.
-          console.warn('[create.tsx] follow-up memo tx failed (recovery may not work):', memoErr);
-        }
-      } else {
-        const kp = await getKeypair();
-        if (!kp) throw new Error('Wallet not available');
-        const conn = getConnection();
-        const tx = new Transaction().add(
-          SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: recipientPk, lamports }),
-          buildMemoIx(recoveryMemo),
-        );
-        sig = await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
-      }
+      const kp = await getKeypair();
+      if (!kp) throw new Error('Wallet not available');
+      const conn = getConnection();
+      const tx = new Transaction().add(
+        SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: recipientPk, lamports }),
+        buildMemoIx(recoveryMemo),
+      );
+      sig = await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
 
       // 2. Create stream record (local) AFTER tx confirms — no orphan if tx fails.
       // Pass the pre-generated streamId so it matches the on-chain memo.

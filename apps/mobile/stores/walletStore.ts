@@ -22,36 +22,18 @@ import {
   clearTransactionCache,
   TransactionHistory,
   sendSol,
-  sendSolWithSigner,
   TransactionResult,
 } from '../services/solana/transactions';
-import { PublicKey, Transaction } from '@solana/web3.js';
 import { getSolanaWebSocket } from '../services/solana/websocket';
 import { resetAllPrivacyStores, restorePrivacyStoresForWallet } from './resetStores';
 import { scheduleLocalNotification } from '../services/notifications';
 import { requestAirdrop, isDevnet, initializeConnection } from '../services/solana/connection';
-
-// Store Privy signer for transactions
-let privySigner: ((tx: Transaction) => Promise<Transaction>) | null = null;
-let privyMessageSigner: ((message: Uint8Array) => Promise<Uint8Array>) | null = null;
 
 // Track WS listener cleanup so we can remove it on logout/re-init
 let _wsAccountChangeCleanup: (() => void) | null = null;
 
 // Track the autonomous runner start timer so we can cancel it on logout
 let _autonomousRunnerTimer: ReturnType<typeof setTimeout> | null = null;
-export function setPrivySigner(signer: ((tx: Transaction) => Promise<Transaction>) | null) {
-  privySigner = signer;
-}
-export function getPrivySigner(): ((tx: Transaction) => Promise<Transaction>) | null {
-  return privySigner;
-}
-export function setPrivyMessageSigner(signer: ((message: Uint8Array) => Promise<Uint8Array>) | null) {
-  privyMessageSigner = signer;
-}
-export function getPrivyMessageSigner(): ((message: Uint8Array) => Promise<Uint8Array>) | null {
-  return privyMessageSigner;
-}
 
 interface WalletState {
   // State
@@ -63,7 +45,6 @@ interface WalletState {
   transactions: TransactionHistory[];
   refreshing: boolean;
   error: string | null;
-  isPrivyWallet: boolean; // Track if using Privy embedded wallet
 
   // Computed
   formattedPublicKey: string;
@@ -72,7 +53,6 @@ interface WalletState {
 
   // Actions
   initialize: () => Promise<void>;
-  initializeWithPrivy: (address: string) => Promise<void>; // Initialize with Privy wallet
   createNewWallet: () => Promise<{ mnemonic: string }>;
   importExistingWallet: (mnemonic: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -94,7 +74,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   transactions: [],
   refreshing: false,
   error: null,
-  isPrivyWallet: false,
 
   // Computed values (getters)
   get formattedPublicKey() {
@@ -238,99 +217,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     }
   },
 
-  // Initialize with Privy embedded wallet
-  initializeWithPrivy: async (address: string) => {
-    try {
-      set({ loading: true, error: null });
-
-      // Initialize connection
-      await initializeConnection();
-
-      // If the incoming Privy address differs from the currently-loaded wallet,
-      // archive outgoing notes + reset privacy stores before restoring for the new one.
-      // Prevents stale notes from a previous session/identity leaking across wallets.
-      const oldPublicKey = get().publicKey;
-      if (oldPublicKey !== address) {
-        await resetAllPrivacyStores(oldPublicKey ?? undefined);
-      }
-
-      // Load cached data for this address
-      const [cachedBalance, cachedTransactions] = await Promise.all([
-        getCachedBalance(address),
-        getCachedTransactions(address),
-      ]);
-
-      // Pre-stamp the recovery-scan flag for this Privy address BEFORE we
-      // publish it to the store. Without this, every Privy login on a new
-      // device fires the boot recovery modal — which is meaningless for
-      // brand-new accounts and noisy for normal cross-device login (the
-      // archived-notes path on line below already restores anything we had
-      // for this address). Users who want a fresh on-chain rescan can
-      // trigger it manually from the privacy settings.
-      try {
-        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        await AsyncStorage.setItem(`p01_auto_recovery_v1_${address}`, Date.now().toString());
-      } catch {
-        // Non-fatal — modal will fire once and self-silence on empty result.
-      }
-
-      set({
-        hasWallet: true,
-        publicKey: address,
-        isPrivyWallet: true,
-        balance: cachedBalance || { sol: 0, tokens: [], totalUsd: 0 },
-        transactions: cachedTransactions,
-        initialized: true,
-        loading: false,
-      });
-
-      // Restore any previously archived notes for this Privy wallet
-      await restorePrivacyStoresForWallet(address);
-
-      // Background refresh balance
-      setTimeout(async () => {
-        try {
-          const balance = await getWalletBalance(address);
-          set({ balance });
-        } catch (err: any) {
-          // Failed to fetch Privy wallet balance — will retry on next refresh
-        }
-      }, 500);
-
-      // Background refresh transactions
-      setTimeout(async () => {
-        try {
-          const transactions = await getTransactionHistory(address);
-          set({ transactions });
-        } catch (err: any) {
-          // Failed to fetch Privy wallet transactions — will retry on next refresh
-        }
-      }, 2000);
-
-      // Start autonomous privacy router (non-blocking, cancellable on logout)
-      if (_autonomousRunnerTimer) clearTimeout(_autonomousRunnerTimer);
-      _autonomousRunnerTimer = setTimeout(async () => {
-        _autonomousRunnerTimer = null;
-        // Guard: don't start if wallet was logged out before timer fired
-        if (!get().hasWallet || !get().publicKey) return;
-        try {
-          const { startAutonomousRunner } = await import('../services/privacyRouter/autonomousRunner');
-          await startAutonomousRunner();
-        } catch (err: any) {
-          console.warn('[WalletStore] Privacy router auto-start failed:', err.message);
-        }
-      }, 5000);
-
-    } catch (error: any) {
-      console.error('[WalletStore] Failed to initialize Privy wallet:', error);
-      set({
-        error: error.message || 'Failed to initialize Privy wallet',
-        loading: false,
-        initialized: true,
-      });
-    }
-  },
-
   // Create new wallet
   createNewWallet: async () => {
     try {
@@ -364,7 +250,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
       set({
         hasWallet: true,
         publicKey: wallet.publicKey,
-        isPrivyWallet: false,
         balance: { sol: 0, tokens: [], totalUsd: 0 },
         transactions: [],
         loading: false,
@@ -467,7 +352,6 @@ export const useWalletStore = create<WalletState>((set, get) => ({
         balance: null,
         transactions: [],
         loading: false,
-        isPrivyWallet: false,
       });
     } catch (error: any) {
       set({
@@ -521,16 +405,8 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     const formattedAmount = formatBalance(amount);
 
     try {
-      let result: TransactionResult;
-
-      // Use Privy signer if available (for Privy wallets)
-      if (get().isPrivyWallet && privySigner && get().publicKey) {
-        const fromPubkey = new PublicKey(get().publicKey!);
-        result = await sendSolWithSigner(to, amount, fromPubkey, privySigner);
-      } else {
-        // Fallback to local keypair
-        result = await sendSol(to, amount);
-      }
+      // Local keypair is the only signing path (Privy removed, spec §3 Phase 1).
+      const result: TransactionResult = await sendSol(to, amount);
 
       if (result.success) {
         // Refresh balance after successful transaction

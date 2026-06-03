@@ -118,7 +118,8 @@ function findInNodeModules(subpath, nodeModulesPaths, originModulePath) {
   return null;
 }
 
-// Custom resolver for Privy SDK dependencies
+// Custom resolver for native/Node shims (snarkjs etc.).
+// (The former @privy-io zod resolver was removed with Privy — spec §3 Phase 1.)
 const originalResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   // Shim snarkjs and its Node.js dependencies for React Native.
@@ -232,16 +233,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
           type: 'sourceFile',
         };
       }
-    }
-  }
-
-  // Force @privy-io packages to use their own bundled zod (v3), not root zod (v4)
-  if (moduleName === 'zod' && context.originModulePath && context.originModulePath.includes('@privy-io')) {
-    const privyZodPath = findInNodeModules('zod/index.js', [
-      path.join(path.dirname(context.originModulePath).split('@privy-io')[0], '@privy-io', context.originModulePath.split('@privy-io')[1].split(/[\\\/]/)[1], 'node_modules'),
-    ], context.originModulePath);
-    if (privyZodPath) {
-      return { filePath: privyZodPath, type: 'sourceFile' };
     }
   }
 

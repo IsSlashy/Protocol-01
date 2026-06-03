@@ -9,7 +9,6 @@ import { useConfidentialStore } from './confidentialStore';
 import { useStreamStore } from './streamStore';
 import { useSubscriptionVaultStore, archiveVaultsForWallet, restoreVaultsForWallet } from './subscriptionVaultStore';
 import { useSharingStore } from './sharingStore';
-import { clearNoteSeedCache } from '../services/denominatedPool';
 
 /**
  * Archive notes for the current wallet, then reset all privacy stores.
@@ -40,9 +39,6 @@ export async function resetAllPrivacyStores(outgoingWalletAddress?: string): Pro
 
   // Cancel any active sharing session
   try { useSharingStore.getState().cancelSession(); } catch {}
-
-  // Drop the in-memory Privy note seed so the next wallet must re-derive
-  try { clearNoteSeedCache(); } catch {}
 }
 
 /**

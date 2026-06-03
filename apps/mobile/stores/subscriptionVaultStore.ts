@@ -43,7 +43,7 @@ import {
   parseFilledSubtrees,
   pubkeyToField,
 } from '../services/denominatedPool';
-import { useWalletStore, getPrivySigner } from './walletStore';
+import { useWalletStore } from './walletStore';
 import { useDenominatedPoolStore } from './denominatedPoolStore';
 import { vaultDecrypt } from '../utils/crypto/noteVault';
 import { scheduleLocalNotification } from '../services/notifications';
@@ -230,14 +230,10 @@ function notifySubscriptionEvent(title: string, body: string, extra?: Record<str
   }).catch(() => {});
 }
 
-/** Build a WalletSigner for Privy wallets, or undefined for local keypair wallets. */
-function getWalletSignerIfPrivy(): WalletSigner | undefined {
-  const { isPrivyWallet, publicKey } = useWalletStore.getState();
-  if (!isPrivyWallet || !publicKey) return undefined;
-  const signer = getPrivySigner();
-  if (!signer) return undefined;
-  return { publicKey: new PublicKey(publicKey), signTransaction: signer };
-}
+// NOTE(Privy-removal, spec §3 Phase 1): `getWalletSignerIfPrivy()` is gone. Every
+// wallet is a local Ed25519 keypair, so the service helpers below fall back to
+// `getKeypair()` internally whenever the optional `WalletSigner` arg is undefined.
+// The external (software-wallet) signer path returns in Phase 3.
 
 // ---------------------------------------------------------------------------
 // Store
@@ -297,7 +293,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         set({ isLoading: true, error: null, progress: 'Preparing...' });
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await subscribeNormal(
             config,
             vkHashSubscriber,
@@ -395,7 +391,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await subscribePrivateStark(
             receipt,
             poolConfig,
@@ -517,7 +513,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
         try {
           const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await claimPeriod(
             vaultPDA,
             (step) => {
@@ -553,7 +549,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
         try {
           const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await pauseNormal(
             vaultPDA,
             (step) => {
@@ -587,7 +583,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
         try {
           const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await pausePrivateStark(
             vaultPDA,
             starkProofData,
@@ -622,7 +618,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
         try {
           const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await resumeNormal(
             vaultPDA,
             (step) => {
@@ -656,7 +652,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
         try {
           const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await resumePrivateStark(
             vaultPDA,
             starkProofData,
@@ -736,7 +732,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
             // No commitments / new roots — the keeper computes those once it
             // picks up the RefundJob. Caller only ships the cancel ix.
-            const walletSigner = getWalletSignerIfPrivy();
+            const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
             const sig = await cancelPrivateStark(
               vaultPDA,
               new PublicKey(vault.retailer),
@@ -822,7 +818,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           }
 
           // 6. Call on-chain cancel (STARK verify → cancel → close buffer)
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await cancelPrivateStark(
             vaultPDA,
             new PublicKey(vault.retailer),
@@ -872,7 +868,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         try {
           const vaultPDA = new PublicKey(vaultAddress);
           const retailerKey = new PublicKey(retailer);
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const sig = await cancelNormal(
             vaultPDA,
             retailerKey,

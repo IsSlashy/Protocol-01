@@ -284,6 +284,63 @@ export async function getKeypair(): Promise<Keypair | null> {
 }
 
 /**
+ * The resolved local note-seed material for the active wallet.
+ *
+ * `noteSeed` is the GOLD-PATH shielded-identity seed: the first 32 bytes of the
+ * Ed25519 secret key, identical to the historical `secretKey.slice(0, 32)` used
+ * everywhere in the ZK stack. This is intentionally NOT the SDK `deriveP01Identity`
+ * HKDF output — it is the app-local, byte-for-byte legacy seed (see spec R-15;
+ * renamed to `deriveLocalNoteSeed` precisely so it can never be confused with /
+ * swapped for the NON-INTERCHANGEABLE SDK HKDF identity).
+ */
+export interface LocalNoteSeed {
+  keypair: Keypair;
+  publicKey: PublicKey;
+  noteSeed: Uint8Array; // secretKey[0..32) — the gold-path shielded seed
+}
+
+/**
+ * Resolve the active local wallet's note seed (gold path).
+ *
+ * Collapses every former Privy/random-seed derivation branch to the single local
+ * keypair path. `noteSeed = secretKey.slice(0, 32)` is kept byte-for-byte so
+ * existing shielded notes remain spendable.
+ *
+ * NOTE(Phase4-Hardware): a Ledger / hardware wallet does NOT expose a raw secret
+ * key, so this path cannot produce a `noteSeed` for it. Hardware support will use
+ * `getSpendingSeed()` (a random, encrypted-at-rest local seed) instead — wired in
+ * Phase 4. Until then, a hardware-kind wallet has no local keypair and this throws.
+ */
+export async function deriveLocalNoteSeed(): Promise<LocalNoteSeed> {
+  const keypair = await getKeypair();
+  if (!keypair) {
+    // No local keypair available. Phase 4 will route hardware wallets to
+    // getSpendingSeed(); for now this is an unrecoverable state for callers.
+    throw new Error('No local wallet keypair available — cannot derive note seed.');
+  }
+  return {
+    keypair,
+    publicKey: keypair.publicKey,
+    noteSeed: keypair.secretKey.slice(0, 32),
+  };
+}
+
+/**
+ * Phase 4 seam: returns the spending seed for the active wallet.
+ *
+ * For local/seed wallets this is the gold-path `noteSeed` (`secretKey[0..32)`).
+ * For hardware (Ledger) wallets — wired in Phase 4 — this will return a random,
+ * CSPRNG-generated seed encrypted at rest in SecureStore (never signature-derived;
+ * see spec §1.2 / R-02 / R-04). Today it always resolves the local keypair path.
+ */
+export async function getSpendingSeed(): Promise<Uint8Array> {
+  // TODO(Phase4-Hardware): branch on persisted walletKind; for 'hardware' decrypt
+  // and return the random local spending seed instead of the keypair-derived one.
+  const { noteSeed } = await deriveLocalNoteSeed();
+  return noteSeed;
+}
+
+/**
  * Get mnemonic from secure storage (for backup display)
  */
 export async function getMnemonic(): Promise<string | null> {

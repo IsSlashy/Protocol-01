@@ -11,13 +11,13 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { PublicKey, Transaction, SystemProgram, TransactionInstruction, sendAndConfirmTransaction } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { useStreamStore } from '../../../stores/streamStore';
-import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
+import { useWalletStore } from '../../../stores/walletStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
 import { StreamFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
 import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
-import { sendSolWithSigner, sendSolPrivate } from '../../../services/solana/transactions';
+import { sendSolPrivate } from '../../../services/solana/transactions';
 import { deriveStealthAddressSimple } from '../../../utils/crypto/stealth';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
 import { withKeepAwake } from '../../../utils/keepAwakeDuring';
@@ -80,7 +80,7 @@ function SubscribeContent() {
   }>();
 
   const { createNewStream, refresh } = useStreamStore();
-  const { publicKey, isPrivyWallet, balance: walletBalanceObj } = useWalletStore();
+  const { publicKey, balance: walletBalanceObj } = useWalletStore();
   const walletSol = walletBalanceObj?.sol ?? 0;
   const { notes: denomNotes, unshieldNoteStarkV3 } = useDenominatedPoolStore();
   const {
@@ -525,27 +525,20 @@ function SubscribeContent() {
         // ───────── Wallet + Privacy Shield (stealth + ephemeral) ─────────
         setProgress('Sending private transaction');
         setStepInfo(null);
-        const privySigner = getPrivySigner();
         const kp = await getKeypair();
 
         // Derive stealth address for initial payment (nonce=0)
-        // Use stealth spending seed (available for all wallet types including Privy)
+        // Stealth spending seed is derived from the local wallet.
         const { getOrCreateStealthKeys } = await import('../../../services/stealth/keys');
         const stealthKeys = await getOrCreateStealthKeys();
         const senderSecret = stealthKeys.spendingKey.secretKey.slice(0, 32);
         const { stealthAddress } = deriveStealthAddressSimple(retailerAddr, senderSecret, 0);
 
-        let walletPub: PublicKey;
-        let signTx: (tx: Transaction) => Promise<Transaction>;
-        if (kp) {
-          walletPub = kp.publicKey;
-          signTx = async (tx: Transaction) => { tx.sign(kp); return tx; };
-        } else if (isPrivyWallet && privySigner && publicKey) {
-          walletPub = new PublicKey(publicKey);
-          signTx = privySigner;
-        } else {
-          throw new Error('No wallet signer available');
-        }
+        // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
+        if (!kp) throw new Error('No wallet signer available');
+        const walletPub: PublicKey = kp.publicKey;
+        const signTx: (tx: Transaction) => Promise<Transaction> =
+          async (tx: Transaction) => { tx.sign(kp); return tx; };
 
         const r = await sendSolPrivate(stealthAddress, chargeNow, walletPub, signTx);
         if (!r.success || !r.signature) throw new Error(r.error || 'Private transaction failed');
@@ -554,28 +547,20 @@ function SubscribeContent() {
         // ───────── Plain wallet transfer (+ invoice memo) ─────────
         setProgress('Sending transaction');
         setStepInfo(null);
-        const privySigner = getPrivySigner();
         const conn = getConnection();
         const lamports = Math.round(chargeNow * 1e9);
-        if (isPrivyWallet && privySigner && publicKey) {
-          // sendSolWithSigner doesn't expose a memo hook; add a follow-up
-          // memo-only TX so the merchant still sees the invoice tag.
-          const r = await sendSolWithSigner(retailerAddr, chargeNow, new PublicKey(publicKey), privySigner);
-          if (!r.success || !r.signature) throw new Error(r.error || 'Transaction failed');
-          sig = r.signature;
-        } else {
-          const kp = await getKeypair();
-          if (!kp) throw new Error('Wallet keypair not found');
-          const tx = new Transaction().add(
-            SystemProgram.transfer({
-              fromPubkey: kp.publicKey,
-              toPubkey: retailerPubkey,
-              lamports,
-            }),
-            buildMemoIx(invoiceMemo),
-          );
-          sig = await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
-        }
+        // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
+        const kp = await getKeypair();
+        if (!kp) throw new Error('Wallet keypair not found');
+        const tx = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: kp.publicKey,
+            toPubkey: retailerPubkey,
+            lamports,
+          }),
+          buildMemoIx(invoiceMemo),
+        );
+        sig = await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
       }
 
       setProgress('Recording subscription…');

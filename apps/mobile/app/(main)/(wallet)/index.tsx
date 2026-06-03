@@ -28,7 +28,6 @@ import { useShieldedStore } from '@/stores/shieldedStore';
 import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
-import { useAuth } from '@/providers/PrivyProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { isDevnet } from '@/services/solana/connection';
 import { formatBalance } from '@/services/solana/balance';
@@ -48,35 +47,23 @@ export default function WalletHomeScreen() {
   // Start hidden until security settings load — prevents flash of visible balance
   const [balanceHidden, setBalanceHidden] = useState(true);
 
-  const { isAuthenticated, walletAddress: privyWalletAddress } = useAuth();
-
+  // Local wallet only (Privy removed — spec §3 Phase 1).
   const {
     initialized,
     loading,
-    hasWallet: hasLocalWallet,
-    publicKey: localPublicKey,
+    hasWallet,
+    publicKey,
     balance,
     transactions,
     refreshing,
     refreshBalance,
     refreshTransactions,
     requestDevnetAirdrop,
-    initializeWithPrivy,
   } = useWalletStore();
 
-  const hasWallet = Boolean(privyWalletAddress || hasLocalWallet);
-  const publicKey = privyWalletAddress || localPublicKey;
   const formattedPublicKey = publicKey
     ? `${publicKey.slice(0, 4)}...${publicKey.slice(-4)}`
     : '';
-
-  const lastSyncedRef = React.useRef<string | null>(null);
-  useEffect(() => {
-    if (privyWalletAddress && !hasLocalWallet && lastSyncedRef.current !== privyWalletAddress) {
-      lastSyncedRef.current = privyWalletAddress;
-      initializeWithPrivy(privyWalletAddress);
-    }
-  }, [privyWalletAddress, hasLocalWallet]);
 
   const formattedSolBalance = balance ? formatBalance(balance.sol) : '0';
 

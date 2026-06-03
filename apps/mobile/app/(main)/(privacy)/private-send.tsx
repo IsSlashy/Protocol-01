@@ -143,13 +143,14 @@ export default function PrivateSendScreen() {
       const lamports = Math.round(pool.denomination * 1e9) + Math.round(pool.denomination * 1e9 * 0.003) + 10_000_000;
 
       const transferTx = new Transaction().add(SystemProgram.transfer({ fromPubkey: new PubKey(publicKey), toPubkey: stealthKp.publicKey, lamports }));
-      const { getPrivySigner } = require('@/stores/walletStore');
-      const signTx = getPrivySigner();
-      if (!signTx) throw new Error('No wallet signer available');
+      // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
+      const { getKeypair } = require('@/services/solana/wallet');
+      const kp = await getKeypair();
+      if (!kp) throw new Error('No wallet signer available');
       const { blockhash } = await connection.getLatestBlockhash();
       transferTx.recentBlockhash = blockhash; transferTx.feePayer = new PubKey(publicKey);
-      const signed = await signTx(transferTx);
-      const txSig = await connection.sendRawTransaction(signed.serialize());
+      transferTx.sign(kp);
+      const txSig = await connection.sendRawTransaction(transferTx.serialize());
       await connection.confirmTransaction(txSig, 'confirmed');
 
       const noteId = await shieldNote(pool);

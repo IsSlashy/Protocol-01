@@ -11,7 +11,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../utils/crypto/noteVault';
 import { getConnection, getCluster } from '../services/solana/connection';
-import { getKeypair } from '../services/solana/wallet';
+import { getKeypair, deriveLocalNoteSeed } from '../services/solana/wallet';
 import {
   type PoolConfig,
   type ShieldReceipt,
@@ -42,8 +42,8 @@ import {
   bigintToLeBytes32,
   deriveNullifierPDA,
 } from '../services/denominatedPool';
-import { useWalletStore, getPrivySigner, getPrivyMessageSigner } from './walletStore';
-import { deriveSeedFromSigner, getPersistedNoteSeed, rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
+import { useWalletStore } from './walletStore';
+import { rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
 
 /**
  * Walk the counter forward until we find one whose derived nullifier PDAs
@@ -432,19 +432,11 @@ export async function restoreNotesForWallet(walletAddress: string): Promise<void
 
 const POOL_CACHE_TTL = 30_000; // 30s
 
-/** Build a WalletSigner for Privy wallets, or undefined for local keypair wallets. */
-function getWalletSignerIfPrivy(): WalletSigner | undefined {
-  const { isPrivyWallet, publicKey } = useWalletStore.getState();
-  if (!isPrivyWallet || !publicKey) return undefined;
-  const signer = getPrivySigner();
-  if (!signer) return undefined;
-  const messageSigner = getPrivyMessageSigner() ?? undefined;
-  return {
-    publicKey: new PublicKey(publicKey),
-    signTransaction: signer,
-    signMessage: messageSigner,
-  };
-}
+// NOTE(Privy-removal, spec §3 Phase 1): `getWalletSignerIfPrivy()` is gone. There
+// is no external/Privy signer path anymore — every wallet is a local Ed25519
+// keypair. Former call sites now resolve `walletSigner` to `undefined`, so each
+// `walletSigner ? <privy> : <keypair>` ternary deterministically takes the local
+// keypair branch. The external (software-wallet) signer path returns in Phase 3.
 
 function noteIdFromReceipt(receipt: ShieldReceipt): string {
   return receipt.commitment.toString(16).slice(0, 16);
@@ -773,11 +765,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, error: null, progress: 'Preparing...' });
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletPubkey = walletSigner
             ? walletSigner.publicKey
             : (await getKeypair())?.publicKey;
-          console.log('[DenomStore] walletSigner:', walletSigner ? `Privy(${walletSigner.publicKey.toBase58().slice(0,8)})` : 'local keypair');
+          console.log('[DenomStore] walletSigner:', walletSigner ? `external(${walletSigner.publicKey.toBase58().slice(0,8)})` : 'local keypair');
 
           // ── Stealth intermediary: break wallet→pool on-chain link ──
           // Transfer SOL to an ephemeral stealth address first, then shield from there.
@@ -839,9 +831,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             let walletSeed: Uint8Array | null = null;
             if (localKp) {
               walletSeed = localKp.secretKey.slice(0, 32);
-            } else if (walletSigner?.signMessage) {
-              set({ progress: 'Authorizing note recovery key...' });
-              walletSeed = await deriveSeedFromSigner(walletSigner);
             }
             // If the counter was wiped (AsyncStorage decrypt failure, wallet
             // switch, fresh install) it could collide with a previously-spent
@@ -891,9 +880,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             let walletSeed: Uint8Array | null = null;
             if (directKp) {
               walletSeed = directKp.secretKey.slice(0, 32);
-            } else if (walletSigner?.signMessage) {
-              set({ progress: 'Authorizing note recovery key...' });
-              walletSeed = await deriveSeedFromSigner(walletSigner);
             }
             let counter = storedCounter;
             if (walletSeed) {
@@ -999,7 +985,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V3 shield...' });
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletPubkey = walletSigner
             ? walletSigner.publicKey
             : (await getKeypair())?.publicKey;
@@ -1143,7 +1129,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const PK = PublicKey;
 
           // Full stealth unshield: BOTH signer AND recipient are ephemeral.
@@ -1446,7 +1432,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const PK = PublicKey;
 
           // Derive ECDH stealth recipient from user's meta-address
@@ -1702,7 +1688,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletAddr = walletSigner?.publicKey.toBase58()
             || useWalletStore.getState().publicKey || '';
 
@@ -1781,9 +1767,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           console.error('[DenomPool] STARK transfer error:', err);
 
           // Crash-sweep — same rationale as the unshield path.
-          const walletAddrForSweep =
-            getWalletSignerIfPrivy()?.publicKey.toBase58()
-            || useWalletStore.getState().publicKey;
+          const walletAddrForSweep = useWalletStore.getState().publicKey; // Privy removed — local keypair only
           if (stealthKp && walletAddrForSweep) {
             try {
               const connection = getConnection();
@@ -1847,7 +1831,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletAddr = walletSigner?.publicKey.toBase58()
             || useWalletStore.getState().publicKey || '';
 
@@ -1939,9 +1923,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           console.error('[DenomPool/V3] STARK transfer error:', err);
 
           // Crash-sweep stranded stealth balance back to the user wallet.
-          const walletAddrForSweep =
-            getWalletSignerIfPrivy()?.publicKey.toBase58()
-            || useWalletStore.getState().publicKey;
+          const walletAddrForSweep = useWalletStore.getState().publicKey; // Privy removed — local keypair only
           if (stealthKp && walletAddrForSweep) {
             try {
               const connection = getConnection();
@@ -2005,7 +1987,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK split...' });
 
         try {
-          const walletSigner = getWalletSignerIfPrivy();
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const { txSignature, outputCommitments, outputNullifierPreimages } = await serviceSplitNoteStark(
             sourcePool,
             targetPool,
@@ -2187,28 +2169,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           throw new Error('No pool to rescan');
         }
 
-        // Resolve seed, cheapest/most-reliable source first:
-        //   1. local keypair (offline)
-        //   2. persisted note seed for this pubkey (offline — survives reboot,
-        //      so a returning Privy wallet recovers WITHOUT a network round-trip)
-        //   3. Privy signMessage (network — only the first time per install;
-        //      hangs if the embedded-wallet WebView can't load, so it's last)
-        const localKp = await getKeypair().catch(() => null);
+        // Resolve seed from the local keypair (offline, gold path). The former
+        // Privy fallbacks (persisted note seed + signMessage derivation) were
+        // removed with Privy (spec §3 Phase 1) — every wallet is a local keypair.
         let walletSeed: Uint8Array | null = null;
-        if (localKp) {
-          walletSeed = localKp.secretKey.slice(0, 32);
-        } else {
-          const privyPubkey = useWalletStore.getState().publicKey;
-          if (privyPubkey) {
-            walletSeed = await getPersistedNoteSeed(privyPubkey).catch(() => null);
-          }
-          if (!walletSeed) {
-            const signer = getWalletSignerIfPrivy();
-            if (signer?.signMessage) {
-              set({ progress: 'Authorizing note recovery key...' });
-              walletSeed = await deriveSeedFromSigner(signer);
-            }
-          }
+        try {
+          ({ noteSeed: walletSeed } = await deriveLocalNoteSeed());
+        } catch {
+          walletSeed = null;
         }
         if (!walletSeed) {
           throw new Error('No wallet seed available — cannot rescan');

@@ -214,25 +214,14 @@ export const useAutoShieldStore = create<AutoShieldState>((set, get) => ({
           console.log(`[AutoShield] Shielding ${bestDenom} SOL from ${addr.address.slice(0, 8)}... to pool`);
 
           try {
-            const { shield, getCachedNoteSeed } = await import('../services/denominatedPool');
+            const { shield } = await import('../services/denominatedPool');
             const { getKeypair } = await import('../services/solana/wallet');
-            const { useWalletStore } = await import('./walletStore');
 
-            // Note seed must come from the USER's main wallet so the receipt is
-            // recoverable on a fresh install. Background flow — never prompt
-            // signMessage; for Privy users we rely on a seed already cached by
-            // a prior manual shield this session.
+            // Note seed must come from the USER's main wallet (local keypair) so
+            // the receipt is recoverable on a fresh install. The former Privy
+            // cached-seed fallback was removed (spec §3 Phase 1).
             const mainKp = await getKeypair().catch(() => null);
-            const mainPubkey = mainKp
-              ? mainKp.publicKey
-              : (useWalletStore.getState().publicKey
-                  ? new PublicKey(useWalletStore.getState().publicKey!)
-                  : null);
-            const walletSeed = mainKp
-              ? mainKp.secretKey.slice(0, 32)
-              : mainPubkey
-                ? getCachedNoteSeed(mainPubkey)
-                : null;
+            const walletSeed = mainKp ? mainKp.secretKey.slice(0, 32) : null;
             if (!walletSeed) {
               console.warn('[AutoShield] No seed available — auto-shielded note will NOT be seed-recoverable');
             }

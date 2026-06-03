@@ -15,8 +15,6 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConf
 import type { Wallet } from '@coral-xyz/anchor';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import { generateMnemonic } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
 import { getConnection } from '../solana/connection';
 import { getKeypair, deriveKeypairFromMnemonic } from '../solana/wallet';
 import { getZkService } from '../zk';
@@ -24,7 +22,9 @@ import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../../utils/crypto/
 
 // SecureStore keys — must match wallet.ts and shieldedStore.ts
 const MNEMONIC_KEY = 'p01_mnemonic';
-const ZK_SEED_KEY = 'p01_zk_seed';
+// NOTE(Privy-removal, R-12): the `p01_zk_seed` random-mnemonic fallback is gone.
+// That key is now one of the four accepted orphaned seed classes — see
+// services/privacy/privyDataLoss.ts.
 const SECURE_OPTIONS = {
   keychainService: 'protocol-01',
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -648,9 +648,9 @@ export class ZkSplService {
       // ZkService needs to be initialized with the mnemonic/seed.
       // It should already be initialized by the shielded store if the user
       // has used shielded features before. If not, we need to init it.
-      const mnemonic = await SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTIONS);
-      const zkSeed = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS);
-      const seed = mnemonic || zkSeed;
+      // Privy `p01_zk_seed` fallback removed (spec §3 Phase 1, R-12) — local
+      // wallet mnemonic is the only seed source now.
+      const seed = await SecureStore.getItemAsync(MNEMONIC_KEY, SECURE_OPTIONS);
       if (!seed) {
         throw new Error('No seed available to initialize ZK service for private sweep');
       }
@@ -695,13 +695,17 @@ let _service: ZkSplService | null = null;
  * Resolve a Keypair for the ZkSPL service.
  *
  * Tries, in order:
- *   1. getKeypair()       — reads p01_private_key from SecureStore (fast path)
- *   2. p01_mnemonic       — derive keypair from the wallet mnemonic
- *   3. p01_zk_seed        — derive from the ZK-specific seed (Privy users)
- *   4. generate new seed  — create + persist a new ZK seed (first-time Privy)
+ *   1. getKeypair()  — reads p01_private_key from SecureStore (fast path)
+ *   2. p01_mnemonic  — derive keypair from the wallet mnemonic
  *
- * This mirrors the shielded store initialisation pattern so it works for
- * all wallet types (local mnemonic, imported, Privy social login).
+ * NOTE(Privy-removal, spec §3 Phase 1, R-12): the former steps 3 + 4 — derive
+ * from / GENERATE a random `p01_zk_seed` mnemonic for keyless (Privy) wallets —
+ * have been REMOVED. The random-mnemonic fallback was a footgun: it minted a
+ * fresh, non-deterministic ZK identity that no other device could reproduce,
+ * silently orphaning any zkSPL balances created under it. `p01_zk_seed` is one
+ * of the four accepted orphaned seed classes (see services/privacy/privyDataLoss
+ * and the denominatedPool data-loss notice). If neither a private key nor a
+ * mnemonic is present, the ZkSPL service is simply unavailable (returns null).
  */
 async function resolveKeypair(): Promise<Keypair | null> {
   // 1. Fast path — private key already in SecureStore
@@ -718,18 +722,8 @@ async function resolveKeypair(): Promise<Keypair | null> {
     return deriveKeypairFromMnemonic(mnemonic);
   }
 
-  // 3. Derive from existing ZK seed (Privy users who already initialised shielded)
-  let zkSeed = await SecureStore.getItemAsync(ZK_SEED_KEY, SECURE_OPTIONS);
-  if (zkSeed) {
-    if (__DEV__) console.log('[ZkSPL] Deriving keypair from ZK seed');
-    return deriveKeypairFromMnemonic(zkSeed);
-  }
-
-  // 4. Generate a brand-new ZK seed (first-time Privy user)
-  if (__DEV__) console.log('[ZkSPL] Generating new ZK seed for Privy user');
-  zkSeed = generateMnemonic(wordlist, 128);
-  await SecureStore.setItemAsync(ZK_SEED_KEY, zkSeed, SECURE_OPTIONS);
-  return deriveKeypairFromMnemonic(zkSeed);
+  // No local keypair material — ZkSPL unavailable (Privy fallback removed).
+  return null;
 }
 
 /**

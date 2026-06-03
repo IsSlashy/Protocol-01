@@ -16,8 +16,7 @@ import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { Stream, StreamPayment, formatFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
 import { getExplorerUrl, getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
-import { useWalletStore, getPrivySigner } from '../../../stores/walletStore';
-import { sendSolWithSigner } from '../../../services/solana/transactions';
+import { useWalletStore } from '../../../stores/walletStore';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
 import {
   receiptFromJSON,
@@ -69,7 +68,7 @@ function DetailContent() {
     resumePrivateStarkAction,
     cancelPrivateStarkAction,
   } = useSubscriptionVaultStore();
-  const { publicKey, isPrivyWallet } = useWalletStore();
+  const { publicKey } = useWalletStore();
 
   const [stream, setStream] = useState<Stream | null>(null);
   const [copied, setCopied] = useState(false);
@@ -237,22 +236,11 @@ function DetailContent() {
               data: Buffer.from(memoData, 'utf-8'),
             });
             const conn = getConnection();
-            const walletPub = useWalletStore.getState().publicKey;
-            const isPrivy = useWalletStore.getState().isPrivyWallet;
-            const privySigner = isPrivy ? getPrivySigner() : null;
-            if (privySigner && walletPub) {
-              const memoTx = new Transaction().add(memoIx);
-              memoTx.feePayer = new PublicKey(walletPub);
-              const { blockhash } = await conn.getLatestBlockhash('confirmed');
-              memoTx.recentBlockhash = blockhash;
-              const signed = await privySigner(memoTx);
-              await conn.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-            } else {
-              const kp = await getKeypair();
-              if (kp) {
-                const tx = new Transaction().add(memoIx);
-                await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
-              }
+            // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
+            const kp = await getKeypair();
+            if (kp) {
+              const tx = new Transaction().add(memoIx);
+              await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
             }
           } catch (e) {
             console.warn('[Streams] cancel publish memo failed (non-fatal):', (e as Error).message);
@@ -494,19 +482,13 @@ function DetailContent() {
           paid = note.denomination;
         } else {
           setPayProgress(t('shieldUnshield.sendingTransaction'));
-          const signer = getPrivySigner();
-          if (isPrivyWallet && signer && publicKey) {
-            const r = await sendSolWithSigner(stream.recipientAddress, stream.amountPerPayment, new PublicKey(publicKey), signer);
-            if (!r.success || !r.signature) throw new Error(r.error || 'Failed');
-            sig = r.signature;
-          } else {
-            const kp = await getKeypair(); if (!kp) throw new Error('Wallet not found');
-            const tx = new Transaction().add(SystemProgram.transfer({
-              fromPubkey: kp.publicKey, toPubkey: new PublicKey(stream.recipientAddress),
-              lamports: Math.round(stream.amountPerPayment * 1e9),
-            }));
-            sig = await sendAndConfirmTransaction(getConnection(), tx, [kp], { commitment: 'confirmed' });
-          }
+          // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
+          const kp = await getKeypair(); if (!kp) throw new Error('Wallet not found');
+          const tx = new Transaction().add(SystemProgram.transfer({
+            fromPubkey: kp.publicKey, toPubkey: new PublicKey(stream.recipientAddress),
+            lamports: Math.round(stream.amountPerPayment * 1e9),
+          }));
+          sig = await sendAndConfirmTransaction(getConnection(), tx, [kp], { commitment: 'confirmed' });
         }
 
         const now = Date.now();
