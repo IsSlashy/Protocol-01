@@ -52,9 +52,9 @@ function SiteHeader() {
         <div className="flex items-center justify-between h-16">
           {/* Logo (links home) */}
           <a href="/" className="flex items-center gap-2.5 shrink-0">
-            <img src="/icon.png" alt="Protocol 01" className="w-7 h-7 rounded-md" />
+            <img src="/icon.png" alt="Prox" className="w-7 h-7 rounded-md" />
             <span className="text-sm font-bold text-white tracking-wider hidden sm:inline">
-              PROTOCOL 01
+              PROX
             </span>
           </a>
 

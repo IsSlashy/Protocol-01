@@ -4,7 +4,7 @@ import SiteHeader from "@/components/SiteHeader";
 import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | PROTOCOL-01",
+  title: "Privacy Policy | Prox (by Protocol 01)",
   description:
     "Privacy Policy for Protocol 01 — how we handle your data with zero-knowledge principles.",
 };

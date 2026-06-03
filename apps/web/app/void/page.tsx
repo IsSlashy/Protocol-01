@@ -207,7 +207,7 @@ export default function VoidPage() {
       document.body.style.overflow = '';
       document.body.style.background = '';
       document.body.style.cursor = '';
-      document.title = 'Protocol 01';
+      document.title = 'Prox';
     };
   }, []);
 

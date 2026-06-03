@@ -23,8 +23,8 @@ describe('PhoneMockup -- Mobile wallet app preview', () => {
       expect(screen.getByText('01')).toBeInTheDocument();
     });
 
-    it('displays "PROTOCOL 01" as the app name', () => {
-      expect(screen.getByText('PROTOCOL 01')).toBeInTheDocument();
+    it('displays "PROX" as the app name', () => {
+      expect(screen.getByText('PROX')).toBeInTheDocument();
     });
 
     it('shows the "DEVNET" network badge', () => {

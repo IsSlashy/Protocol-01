@@ -21,9 +21,9 @@ describe('Homepage -- Protocol 01 main landing page', () => {
       expect(badges.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('displays the "PROTOCOL 01" brand name in the navigation', () => {
-      // Multiple PROTOCOL 01 texts (nav + footer), get the first one
-      const brandTexts = screen.getAllByText('PROTOCOL 01');
+    it('displays the "PROX" brand name in the navigation', () => {
+      // Multiple PROX texts (nav + footer), get the first one
+      const brandTexts = screen.getAllByText('PROX');
       expect(brandTexts.length).toBeGreaterThanOrEqual(1);
     });
 

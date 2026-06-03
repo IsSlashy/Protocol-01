@@ -20,7 +20,7 @@ describe('CTA -- Download section and conversion funnel', () => {
     });
 
     it('displays the subtitle about taking back financial privacy', () => {
-      expect(screen.getByText(/Download Protocol 01 and take back control/)).toBeInTheDocument();
+      expect(screen.getByText(/Download Prox and take back control/)).toBeInTheDocument();
     });
 
     it('emphasizes the product is free, self-custody, and built for everyone', () => {

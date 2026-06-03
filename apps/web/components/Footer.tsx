@@ -141,9 +141,9 @@ export default function Footer() {
           <div className="col-span-2">
             <div className="flex items-center gap-3 mb-6">
               {/* Industrial square logo */}
-              <img src="/icon.png" alt="Protocol 01" className="w-10 h-10 rounded-lg" />
+              <img src="/icon.png" alt="Prox" className="w-10 h-10 rounded-lg" />
               <span className="text-xl font-bold font-display text-white tracking-wider">
-                PROTOCOL 01
+                PROX
               </span>
             </div>
             <div className="text-p01-text-muted text-sm mb-6 max-w-xs space-y-1">
@@ -235,7 +235,7 @@ export default function Footer() {
           className="font-display font-bold tracking-tighter text-white/[0.035] leading-none whitespace-nowrap overflow-hidden"
           style={{ fontSize: "clamp(3rem, 13vw, 11rem)" }}
         >
-          PROTOCOL 01
+          PROX
         </div>
       </div>
 
@@ -244,7 +244,7 @@ export default function Footer() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-3 text-xs text-p01-text-dim font-mono">
             <span className="text-[10px] font-mono uppercase tracking-[0.2em] px-2 py-0.5 border border-p01-cyan/30 text-p01-cyan rounded">Beta</span>
-            <span>&copy; {new Date().getFullYear()} PROTOCOL 01 · {t('footer.copyright')}</span>
+            <span>&copy; {new Date().getFullYear()} PROX · by Protocol 01 · {t('footer.copyright')}</span>
           </div>
           <div className="flex items-center gap-5 text-xs font-mono text-p01-text-dim">
             <a href="/privacy" className="hover:text-p01-cyan transition-colors">{t('footer.privacy')}</a>
