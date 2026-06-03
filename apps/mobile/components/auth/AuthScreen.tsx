@@ -1,17 +1,19 @@
 /**
  * P-01 Auth Screen Component
  *
- * Local-wallet connect / onboarding screen. Privy (email / OTP / social /
- * embedded wallet) has been removed — spec §3 Phase 1. The only two actions are
- * "Create a new wallet" (mints a local seed-phrase keypair) and "Import wallet"
- * (restore from an existing seed phrase).
+ * Local seed-phrase wallet connect / onboarding screen. Privy (email / OTP /
+ * social / embedded wallet) has been removed — spec §3 Phase 1. The only two
+ * actions are "Create a new wallet" (mints a local seed-phrase keypair) and
+ * "Import wallet" (restore from an existing seed phrase).
+ *
+ * Hero layout: a centered logo + wordmark, one primary "create" CTA, and a
+ * quiet secondary "import" link. Smooth gradient background, no decorative grid.
  */
 
 import React from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
@@ -20,11 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeInUp,
-} from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { Logo } from '../onboarding/Logo';
 import { useT } from '@/i18n';
@@ -63,106 +61,89 @@ export function AuthScreen({
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Background Effects */}
+      {/* Smooth gradient background (no grid) */}
       <LinearGradient
-        colors={['rgba(57,197,187,0.03)', 'transparent', 'rgba(255,45,122,0.02)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+        colors={['rgba(57,197,187,0.06)', 'transparent', 'rgba(255,45,122,0.04)']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
         style={StyleSheet.absoluteFill}
       />
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      {/* Hero: logo + wordmark, centered in the available space */}
+      <Animated.View
+        entering={FadeInDown.delay(120).duration(650)}
+        style={styles.hero}
       >
-        <Animated.View entering={FadeIn.duration(400)} style={styles.mainContent}>
-          {/* Logo Section */}
-          <Animated.View
-            entering={FadeInDown.delay(100).duration(600)}
-            style={styles.logoSection}
-          >
-            <View accessibilityLabel="Protocol 01 logo" accessibilityRole="image">
-              <Logo size={100} showText={false} animated />
-            </View>
+        <View accessibilityLabel="Protocol 01 logo" accessibilityRole="image">
+          <Logo size={112} showText={false} animated />
+        </View>
+        <Text style={styles.brand} accessibilityRole="header">
+          PROTOCOL 01
+        </Text>
+        <View style={styles.statusIndicator}>
+          <View style={styles.statusDot} />
+          <Text style={styles.statusText}>{t('auth.secureChannel')}</Text>
+        </View>
+      </Animated.View>
 
-            <View style={styles.titleContainer}>
-              <Text style={styles.systemLabel}>{t('auth.authentication')}</Text>
-              <Text style={styles.title} accessibilityRole="header">{t('auth.connect')}</Text>
-              <View style={styles.statusIndicator}>
-                <View style={styles.statusDot} />
-                <Text style={styles.statusText}>{t('auth.secureChannel')}</Text>
-              </View>
-            </View>
-          </Animated.View>
-
-          {/* Wallet actions */}
-          <Animated.View
-            entering={FadeInUp.delay(300).duration(600)}
-            style={styles.loginOptions}
-          >
-            {/* Create a new local wallet */}
-            <TouchableOpacity
-              onPress={onCreateWallet}
-              activeOpacity={0.85}
-              disabled={loading}
-              style={[styles.primaryButton, loading && styles.buttonDisabled]}
-              accessibilityRole="button"
-              accessibilityLabel={t('onboarding.getStarted')}
-            >
-              {loading ? (
-                <ActivityIndicator color={P01.void} />
-              ) : (
-                <>
-                  <Ionicons name="add-circle-outline" size={20} color={P01.void} />
-                  <Text style={styles.primaryButtonLabel}>
-                    {t('onboarding.getStarted').toUpperCase()}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            {/* Import an existing wallet */}
-            <TouchableOpacity
-              onPress={onImportWallet}
-              activeOpacity={0.85}
-              disabled={loading}
-              style={[styles.outlineButton, loading && styles.buttonDisabled]}
-              accessibilityRole="button"
-              accessibilityLabel={t('auth.importWalletLabel')}
-            >
-              <Ionicons name="key-outline" size={20} color={P01.cyan} />
-              <Text style={styles.outlineButtonLabel}>
-                {t('auth.import').toUpperCase()}
+      {/* Actions: one primary CTA + a quiet import link */}
+      <Animated.View
+        entering={FadeInUp.delay(320).duration(650)}
+        style={styles.actions}
+      >
+        <TouchableOpacity
+          onPress={onCreateWallet}
+          activeOpacity={0.85}
+          disabled={loading}
+          style={[styles.primaryButton, loading && styles.buttonDisabled]}
+          accessibilityRole="button"
+          accessibilityLabel={t('onboarding.getStarted')}
+        >
+          {loading ? (
+            <ActivityIndicator color={P01.void} />
+          ) : (
+            <>
+              <Ionicons name="add-circle-outline" size={20} color={P01.void} />
+              <Text style={styles.primaryButtonLabel}>
+                {t('onboarding.getStarted').toUpperCase()}
               </Text>
-            </TouchableOpacity>
-          </Animated.View>
+            </>
+          )}
+        </TouchableOpacity>
 
-          {/* Bottom helper copy */}
-          <Animated.View
-            entering={FadeInUp.delay(500).duration(600)}
-            style={styles.bottomActions}
-          >
-            <Text style={styles.helperText} accessibilityRole="text">
-              {t('auth.haveSeedPhrase')}
-            </Text>
-          </Animated.View>
+        <TouchableOpacity
+          onPress={onImportWallet}
+          activeOpacity={0.7}
+          disabled={loading}
+          style={styles.importLink}
+          accessibilityRole="button"
+          accessibilityLabel={t('auth.importWalletLabel')}
+        >
+          <Text style={styles.importLinkText}>{t('auth.import')}</Text>
+          <Ionicons name="arrow-forward" size={15} color={P01.cyan} />
+        </TouchableOpacity>
+      </Animated.View>
 
-          {/* Terms */}
-          <Text style={styles.terms} accessibilityRole="text">
-            {t('auth.termsAgreement')}{' '}
-            <Text style={styles.termsLink} accessibilityRole="link">{t('auth.termsOfService')}</Text>
-            {' '}{t('auth.and')}{' '}
-            <Text style={styles.termsLink} accessibilityRole="link">{t('auth.privacyPolicy')}</Text>
+      {/* Footer: terms + security badge */}
+      <View style={styles.footer}>
+        <Text style={styles.terms} accessibilityRole="text">
+          {t('auth.termsAgreement')}{' '}
+          <Text style={styles.termsLink} accessibilityRole="link">
+            {t('auth.termsOfService')}
           </Text>
-        </Animated.View>
-      </ScrollView>
-
-      {/* Security Badge */}
-      <View style={styles.securityBadge} accessibilityRole="text" accessibilityLabel={t('auth.endToEndEncrypted')}>
-        <Ionicons name="shield-checkmark" size={14} color={P01.cyan} />
-        <Text style={styles.securityText}>{t('auth.endToEndEncrypted')}</Text>
+          {' '}{t('auth.and')}{' '}
+          <Text style={styles.termsLink} accessibilityRole="link">
+            {t('auth.privacyPolicy')}
+          </Text>
+        </Text>
+        <View
+          style={styles.securityBadge}
+          accessibilityRole="text"
+          accessibilityLabel={t('auth.endToEndEncrypted')}
+        >
+          <Ionicons name="shield-checkmark" size={14} color={P01.cyan} />
+          <Text style={styles.securityText}>{t('auth.endToEndEncrypted')}</Text>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -172,48 +153,29 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: P01.void,
+    paddingHorizontal: 28,
   },
-  scrollView: {
+  hero: {
     flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 40,
-  },
-  mainContent: {
-    flex: 1,
-  },
-  logoSection: {
     alignItems: 'center',
-    marginBottom: 40,
+    justifyContent: 'center',
   },
-  titleContainer: {
-    alignItems: 'center',
-    marginTop: 24,
-  },
-  systemLabel: {
-    color: P01.pink,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 4,
-    marginBottom: 8,
-  },
-  title: {
+  brand: {
     color: P01.textPrimary,
-    fontSize: 32,
+    fontSize: 26,
     fontWeight: '900',
-    letterSpacing: 4,
+    letterSpacing: 6,
+    marginTop: 28,
   },
   statusIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 14,
   },
   statusDot: {
     width: 6,
     height: 6,
+    borderRadius: 3,
     backgroundColor: P01.cyan,
     marginRight: 8,
   },
@@ -224,9 +186,9 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  loginOptions: {
-    marginBottom: 24,
-    gap: 16,
+  actions: {
+    gap: 18,
+    marginBottom: 28,
   },
   primaryButton: {
     flexDirection: 'row',
@@ -234,8 +196,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
     backgroundColor: P01.cyan,
-    paddingVertical: 16,
-    borderRadius: 12,
+    paddingVertical: 17,
+    borderRadius: 14,
   },
   primaryButtonLabel: {
     color: P01.void,
@@ -243,41 +205,31 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1,
   },
-  outlineButton: {
+  importLink: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: P01.cyan,
-    paddingVertical: 16,
-    borderRadius: 12,
+    gap: 6,
+    paddingVertical: 4,
   },
-  outlineButtonLabel: {
+  importLinkText: {
     color: P01.cyan,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 1,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
-  bottomActions: {
+  footer: {
     alignItems: 'center',
-    marginTop: 8,
-    gap: 12,
-  },
-  helperText: {
-    color: P01.textSecondary,
-    fontSize: 14,
-    textAlign: 'center',
+    paddingBottom: 16,
+    gap: 14,
   },
   terms: {
     color: P01.textTertiary,
     fontSize: 12,
     textAlign: 'center',
-    marginTop: 24,
     lineHeight: 18,
   },
   termsLink: {
@@ -288,7 +240,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
     gap: 6,
   },
   securityText: {
