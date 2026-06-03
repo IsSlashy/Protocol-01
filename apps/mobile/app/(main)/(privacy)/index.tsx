@@ -8,6 +8,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { RelayerHealthDot } from '@/components/RelayerHealthDot';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -106,14 +107,17 @@ export default function PrivacyDashboard() {
       {/* ─── Header ──────────────────────────────────────── */}
       <View style={s.header}>
         <Text style={s.headerTitle} accessibilityRole="header">{t('privacy.title')}</Text>
-        <TouchableOpacity
-          style={s.headerBtn}
-          onPress={() => router.push('/(main)/(settings)')}
-          accessibilityRole="button"
-          accessibilityLabel="Settings"
-        >
-          <Ionicons name="settings-outline" size={20} color={Colors.text} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <RelayerHealthDot />
+          <TouchableOpacity
+            style={s.headerBtn}
+            onPress={() => router.push('/(main)/(settings)')}
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+          >
+            <Ionicons name="settings-outline" size={20} color={Colors.text} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {isLoading && progress && (
