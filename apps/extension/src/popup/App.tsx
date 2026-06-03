@@ -9,6 +9,7 @@ import MainLayout from './layouts/MainLayout';
 import Welcome from './pages/Welcome';
 import CreateWallet from './pages/CreateWallet';
 import ImportWallet from './pages/ImportWallet';
+import ConnectPhone from './pages/ConnectPhone';
 import Unlock from './pages/Unlock';
 import Home from './pages/Home';
 import Send from './pages/Send';
@@ -180,6 +181,7 @@ function App() {
         <Route path="/welcome" element={<Welcome />} />
         <Route path="/create-wallet" element={<CreateWallet />} />
         <Route path="/import-wallet" element={<ImportWallet />} />
+        <Route path="/connect-phone" element={<ConnectPhone />} />
         <Route path="/unlock" element={<Unlock />} />
 
         {/* Main app routes - protected, require unlock */}

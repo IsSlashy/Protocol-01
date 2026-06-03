@@ -333,6 +333,12 @@ export default function SettingsScreen() {
             leftIcon="key-outline"
             onPress={() => router.push('/(main)/(settings)/backup')}
           />
+          <GlassDivider />
+          <SettingsRow
+            label="Connect to extension"
+            leftIcon="desktop-outline"
+            onPress={() => router.push('/(main)/(settings)/connect-extension')}
+          />
         </GlassCard>
 
         {/* PRIVACY */}
