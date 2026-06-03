@@ -1,14 +1,14 @@
 import { Stack } from 'expo-router';
+import { Colors } from '@/constants/theme';
 
 export default function PrivacyLayout() {
   return (
     <Stack
       screenOptions={{
         headerShown: false,
-        // Transparent so the shared ambient glow from (main)/_layout shows through,
-        // matching the wallet tab. The glow is a single STATIC LinearGradient (no
-        // animation) → uniform look with zero added perf cost.
-        contentStyle: { backgroundColor: 'transparent' },
+        // Opaque background on purpose: covering the shared ambient-glow gradient
+        // avoids overdraw on this content-heavy stack (kept flat for performance).
+        contentStyle: { backgroundColor: Colors.background },
       }}
     >
       <Stack.Screen name="index" />
