@@ -280,7 +280,6 @@ if (!globalThis.crypto?.randomUUID) {
 if (!(import.meta as any).env) {
   (import.meta as any).env = {};
 }
-(import.meta as any).env.VITE_PRIVY_APP_ID = '';
 
 // ---------------------------------------------------------------------------
 // Suppress console noise during tests

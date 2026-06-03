@@ -45,7 +45,6 @@ vi.mock('@/shared/store/wallet', () => ({
     error: null,
     clearError: mockClearError,
     reset: mockReset,
-    isPrivyWallet: false,
   }),
 }));
 

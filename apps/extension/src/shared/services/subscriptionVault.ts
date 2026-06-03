@@ -22,9 +22,10 @@
  *   Circuit 0 (subscriber_ownership) drives pause/resume/cancel — the subscriber
  *   secret is a Goldilocks bigint stored at vault creation time.
  *
- *   NOT YET NATIVE: denominated unshield/transfer (circuit 3) — the deployed C3
- *   verifier is mismatched (InvalidProof 6003 for non-trivial paths), so those
- *   spend paths stay unimplemented here. Subscribe does not touch C3.
+ *   Denominated unshield (C1+C3) and note-to-note transfer (C1+C3+C6) live in
+ *   denominatedPool.ts and verify on-chain — the C3 verifier was realigned +
+ *   redeployed 2026-05-29. Subscribe itself stays on the C3-free valid-root path
+ *   above (it never needs a merkle-path proof).
  */
 
 import {
@@ -36,7 +37,7 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { useWalletStore, getPrivySigner } from '../store/wallet';
+import { useWalletStore } from '../store/wallet';
 import { getConnection } from './wallet';
 import type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData } from './subscriptionVault.types';
 import type { WalletSigner } from './stark';
@@ -98,7 +99,6 @@ const NATIVE_SOL_MINT = SystemProgram.programId;
 
 function createWalletSigner(): { signer: WalletSigner; connection: Connection } {
   const walletState = useWalletStore.getState();
-  const privySigner = getPrivySigner();
 
   if (!walletState.publicKey) {
     throw new Error('Wallet not unlocked. Please unlock your wallet first.');
@@ -108,19 +108,18 @@ function createWalletSigner(): { signer: WalletSigner; connection: Connection } 
   const connection = getConnection(walletState.network);
   const keypair = walletState._keypair;
 
+  if (!keypair) {
+    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
+  }
+
   const signer: WalletSigner = {
     publicKey: walletPublicKey,
     signTransaction: async (tx: Transaction): Promise<Transaction> => {
-      if (walletState.isPrivyWallet && privySigner) {
-        return (await privySigner(tx)) as unknown as Transaction;
-      } else if (keypair) {
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
-        if (!tx.recentBlockhash) tx.recentBlockhash = blockhash;
-        if (!tx.feePayer) tx.feePayer = walletPublicKey;
-        tx.sign(keypair);
-        return tx;
-      }
-      throw new Error('No signing method available');
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      if (!tx.recentBlockhash) tx.recentBlockhash = blockhash;
+      if (!tx.feePayer) tx.feePayer = walletPublicKey;
+      tx.sign(keypair);
+      return tx;
     },
   };
 

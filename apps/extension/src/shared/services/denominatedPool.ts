@@ -1,10 +1,11 @@
 /**
- * Denominated Pool Service — Extension (Phase 1, C3-free)
+ * Denominated Pool Service — Extension
  *
  * Goldilocks V3 denominated pool support for the extension. Implements
- * shield (circuit 6) and the note material needed for private subscribe
- * (circuit 1). Does NOT implement unshield or transfer (circuit 3 is
- * broken on-chain).
+ * shield (circuit 6), unshield (circuits 1 + 3), and note-to-note private
+ * transfer (circuits 1 + 3 + 6), plus the note material needed for private
+ * subscribe (circuit 1). C3 (merkle_path) was realigned + redeployed on-chain
+ * 2026-05-29 (slot 465731409), so unshield and transfer both verify.
  *
  * All math is ported BYTE-FOR-BYTE from
  * apps/mobile/services/denominatedPool/index.ts. Do NOT invent or improve
@@ -62,6 +63,20 @@ import {
 
 // STARK WASM prover singleton.
 import { starkProver } from './starkProver';
+
+// Post-quantum note encryption (hybrid X25519 + ML-KEM-768) for transfers.
+import { encryptNote, isNoteEncryptionAddress } from './noteCrypto';
+
+// Deterministic ephemeral derivation + crash-recovery breadcrumbs. Phase 1 of
+// the sender-anonymity design: the transfer is authored by a per-transfer
+// ephemeral so the user's wallet never signs the transfer itself.
+import {
+  deriveEphemeralForRelay,
+  addPendingRelay,
+  removePendingRelay,
+  markPendingRelayErrored,
+  jobIdToHex,
+} from './relayEphemeralRecovery';
 
 // ---------------------------------------------------------------------------
 // Re-export circuit IDs and signer type so consumers can import from here.
@@ -284,6 +299,8 @@ export interface ShieldReceipt {
   merklePathElements?: bigint[];
   merklePathIndices?: number[];
   merkleRoot?: bigint;
+  /** Provenance: a self-shielded note vs one received via a private transfer. */
+  source?: 'shielded' | 'received';
 }
 
 export interface OnChainCommitment {
@@ -1693,4 +1710,500 @@ export async function unshieldDenominatedStarkV3(
       }
     }
   }
+}
+
+// ===========================================================================
+// DENOMINATED NOTE-TO-NOTE TRANSFER (C1 + C3 + C6)
+//
+// Port of mobile transferDenominatedStarkV3. Spends a mature OLD note (C1
+// ownership + C3 membership) and inserts a brand-new note (C6) owned only by
+// fresh RANDOM secrets, which are handed to the recipient as an encoded
+// "shareable note". Funds never leave the pool — no recipient/vault accounts,
+// no fee_escrow. Mirrors transfer_denominated_stark_v3.rs exactly.
+// ===========================================================================
+
+/**
+ * Cross-client shareable note. MUST round-trip with mobile
+ * (apps/mobile/services/denominatedPool/index.ts ShareableNote): `version` is
+ * the literal number 1; every bigint field is a DECIMAL string; `token_mint`
+ * is the BN254-reduced field element (pubkeyToField), NOT base58; `pool` is the
+ * pool PDA base58.
+ */
+export interface ShareableNote {
+  version: 1;
+  pool: string;
+  secret: string;
+  nullifier_preimage: string;
+  deposit_epoch: string;
+  token_mint: string;
+  commitment: string;
+  leafIndex: number;
+  token: 'SOL' | 'USDC';
+  denominationHuman: number;
+  shieldedAt?: number;
+  merkle_root?: string;
+  merkle_path_elements?: string[];
+  merkle_path_indices?: number[];
+}
+
+/** btoa(JSON) — matches mobile encodeShareableNote. */
+export function encodeShareableNote(note: ShareableNote): string {
+  return btoa(JSON.stringify(note));
+}
+
+/** JSON(atob) — matches mobile decodeShareableNote. Throws on bad version. */
+export function decodeShareableNote(encoded: string): ShareableNote {
+  const note = JSON.parse(atob(encoded.trim()));
+  if (note?.version !== 1) {
+    throw new Error(`Unsupported note version: ${note?.version}`);
+  }
+  return note as ShareableNote;
+}
+
+/**
+ * Cryptographically-random u64 (8 bytes, little-endian). Used for the FRESH
+ * recipient-note secrets in a transfer. These are NOT seed-derived — if the
+ * recipient loses the encoded note the funds are permanently unrecoverable
+ * (surfaced in the transfer UI). Mirrors mobile denominated-transfer.tsx.
+ */
+export function secureRandomU64(): bigint {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let v = 0n;
+  for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i]);
+  return v;
+}
+
+/**
+ * Build `transfer_denominated_stark_v3` instruction.
+ *
+ * Matches transfer_denominated_stark_v3.rs exactly:
+ *   Args : nullifier[32] | merkle_root[32] | min_epoch u64 | stark_commitment u64
+ *          | new_commitment[32] | new_root[32] | Vec<[u8;32]> new_subtrees
+ *   (data length = 8+32+32+8+8+32+32+4 + 32*N = 636 for N=15)
+ *   Accounts (8, order critical): payer(signer,mut), denominated_pool(mut),
+ *   merkle_tree(MUT — a leaf is inserted), nullifier_record(init,mut),
+ *   c1_proof_buffer(ro), c3_proof_buffer(ro), c6_proof_buffer(ro), system_program.
+ *   NO fee_escrow, NO token/vault/recipient — funds stay in the pool.
+ */
+export function buildTransferDenominatedStarkV3Ix(
+  payer: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
+  c6ProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  minEpoch: bigint,
+  starkCommitment: bigint,
+  newCommitmentBytes: number[],
+  newRootBytes: number[],
+  newSubtreesBytes: number[][],
+): TransactionInstruction {
+  const disc = getDiscriminator('transfer_denominated_stark_v3');
+  const subtreesBytesLen = 4 + newSubtreesBytes.length * 32;
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32 + 32 + subtreesBytesLen);
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+  Buffer.from(newCommitmentBytes).copy(data, offset); offset += 32;
+  Buffer.from(newRootBytes).copy(data, offset); offset += 32;
+  data.writeUInt32LE(newSubtreesBytes.length, offset); offset += 4;
+  for (const st of newSubtreesBytes) {
+    Buffer.from(st).copy(data, offset);
+    offset += 32;
+  }
+
+  const keys = [
+    { pubkey: payer,                   isSigner: true,  isWritable: true  },
+    { pubkey: poolPDA,                 isSigner: false, isWritable: true  },
+    { pubkey: treePDA,                 isSigner: false, isWritable: true  },
+    { pubkey: nullifierPDA,            isSigner: false, isWritable: true  },
+    { pubkey: c1ProofBuffer,           isSigner: false, isWritable: false },
+    { pubkey: c3ProofBuffer,           isSigner: false, isWritable: false },
+    { pubkey: c6ProofBuffer,           isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+export interface PrepareTransferResult {
+  c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
+  insertParams: {
+    newCommitment: bigint;
+    newRoot: bigint;
+    newSubtrees: bigint[];
+    newSecret: bigint;
+    newNullifierPreimage: bigint;
+    newDepositEpoch: bigint;
+    newLeafIndex: number;
+  };
+  merkleRoot: bigint;
+  nullifierGoldilocks: bigint;
+  starkCommitment: bigint;
+}
+
+/**
+ * Prepare a transfer: C1 + C3 over the OLD note (reuses prepareUnshield), then
+ * a FRESH-secret C6 insertion proof for the recipient's new note.
+ *
+ * Sequencing matters: C1/C3 are generated first (via prepareUnshield), THEN the
+ * tree is re-read for C6 so its old_root binds the LATEST on-chain root (C3 may
+ * legitimately target an older historical root, but C6 must match
+ * merkle_tree.root at execution).
+ */
+export async function prepareTransfer(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  connection: Connection,
+  onProgress?: (step: string) => void,
+): Promise<PrepareTransferResult> {
+  // 1. C1 + C3 over the OLD note (fetch leaves, build path, root pre-flight).
+  const prep = await prepareUnshield(receipt, poolConfig, connection, onProgress);
+
+  // 2. Fresh RANDOM secrets for the recipient note (no owner pubkey is baked
+  //    into a V3 commitment, so a transfer = mint a brand-new note).
+  const newSecret = secureRandomU64();
+  const newNullifierPreimage = secureRandomU64();
+
+  // 3. Re-read tree AFTER C1/C3 → latest leafCount + filled_subtrees + root.
+  onProgress?.('Reading on-chain tree state for insertion...');
+  const treeInfo = await connection.getAccountInfo(poolConfig.treePDA);
+  if (!treeInfo) throw new Error(`Tree account not found: ${poolConfig.treePDA.toBase58()}`);
+  const treeBuf = Buffer.from(treeInfo.data);
+  const { leafCount, subtrees } = parseFilledSubtrees(treeBuf);
+
+  let onChainRoot = 0n;
+  for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(treeBuf[8 + 32 + b]);
+
+  const slot = await connection.getSlot('confirmed');
+  const newDepositEpoch = slotToEpoch(slot);
+  const tokenMintField = pubkeyToField(poolConfig.tokenMint);
+  const newCommitment = createCommitmentV3(newNullifierPreimage, newSecret, newDepositEpoch, tokenMintField);
+  const newLeaf = newCommitment;
+
+  // 4. Direct-vs-sliced old_root pre-flight (identical to prepareShieldInsert):
+  //    pick the filled_subtrees layout that reproduces the on-chain root before
+  //    burning the ~2-min C6 proof.
+  onProgress?.('Computing Merkle insertion path...');
+  const direct = computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees);
+  const sliced = computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees.slice(1));
+  const oldRootDirect = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees).newRoot;
+  const oldRootSliced = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees.slice(1)).newRoot;
+
+  let chosen: typeof direct;
+  if (oldRootDirect === onChainRoot) {
+    chosen = direct;
+  } else if (oldRootSliced === onChainRoot) {
+    chosen = sliced;
+  } else {
+    throw new Error(
+      `Transfer pre-flight failed: cannot reconstruct the on-chain Merkle root ` +
+      `(${onChainRoot}) from the pool's filled_subtrees for leaf #${leafCount} ` +
+      `(direct=${oldRootDirect}, shifted=${oldRootSliced}). Refusing to burn C6 ` +
+      `proof rent on a guaranteed InvalidProof — retry shortly.`,
+    );
+  }
+  const { newRoot, updatedSubtrees, pathElements, pathIndices } = chosen;
+
+  // 5. Generate C6 (merkle_update) proof for the new leaf.
+  onProgress?.('Generating C6 (merkle_update) STARK proof (~60s)...');
+  await starkProver.start();
+  const c6Raw = await starkProver.generateMerkleUpdateProof(
+    '0',
+    newLeaf.toString(),
+    pathElements.map((e) => e.toString()),
+    pathIndices,
+  );
+
+  return {
+    c1ProofResult: prep.c1ProofResult,
+    c3ProofResult: prep.c3ProofResult,
+    c6ProofResult: {
+      proofBytes: hexToBytes(c6Raw.proofHex),
+      publicInputs: c6Raw.publicInputs.map((s) => BigInt(s)),
+      proofSize: c6Raw.proofSize,
+      circuitId: CIRCUIT_MERKLE_UPDATE,
+    },
+    insertParams: {
+      newCommitment,
+      newRoot,
+      newSubtrees: updatedSubtrees,
+      newSecret,
+      newNullifierPreimage,
+      newDepositEpoch,
+      newLeafIndex: leafCount,
+    },
+    merkleRoot: prep.merkleRoot,
+    nullifierGoldilocks: prep.nullifierGoldilocks,
+    starkCommitment: prep.starkCommitment,
+  };
+}
+
+/**
+ * Orchestrate a denominated note-to-note transfer:
+ *   1. Submit + verify C1 (pool_commitment), C3 (merkle_path), C6 (merkle_update)
+ *      — distinct buffer PDAs (keyed by circuit_id), all DEEP-ALI verified.
+ *   2. Build + send transfer_denominated_stark_v3 (atomically spends old note
+ *      via nullifier + inserts the new leaf).
+ *   3. Close all 3 buffers in finally (rent recovery).
+ *
+ * Returns the tx signature + the recipient's shareable note. min_epoch =
+ * receipt.depositEpoch — the on-chain handler ENFORCES maturity for transfer
+ * (current_epoch >= min_epoch + dynamic_delay), unlike unshield. An immature
+ * note fails with EpochDelayNotMet (buffers still close → rent recovered).
+ */
+export async function transferDenominatedStarkV3(
+  receipt: ShieldReceipt,
+  poolConfig: PoolConfig,
+  prepared: PrepareTransferResult,
+  signer: WalletSigner,
+  connection: Connection,
+  recipientAddress: string,
+  onProgress?: (step: string) => void,
+): Promise<{ txSig: string; encryptedNote: string }> {
+  // Validate the recipient address up-front (before any proving/upload) so we
+  // never spend rent on a transfer whose output we can't hand off securely.
+  if (!isNoteEncryptionAddress(recipientAddress)) {
+    throw new Error('Invalid recipient address. Expected a p01pq:… post-quantum note address.');
+  }
+  const {
+    c1ProofResult, c3ProofResult, c6ProofResult,
+    insertParams, merkleRoot, nullifierGoldilocks, starkCommitment,
+  } = prepared;
+
+  const createdBuffers: PublicKey[] = [];
+
+  // Pre-flight balance: a transfer holds THREE STARK proof buffers (C1+C3+C6)
+  // open simultaneously — the handler reads all three in one tx — so the peak
+  // temporary rent is the sum of all three buffers (fully recovered when they
+  // close). Compute it from the ACTUAL proof sizes (no hard-coded worst case).
+  // The USER funds this float onto the ephemeral below; it is swept back after.
+  onProgress?.('Checking wallet balance...');
+  const [r1, r3, r6, balance] = await Promise.all([
+    connection.getMinimumBalanceForRentExemption(83 + c1ProofResult.proofSize),
+    connection.getMinimumBalanceForRentExemption(83 + c3ProofResult.proofSize),
+    connection.getMinimumBalanceForRentExemption(83 + c6ProofResult.proofSize),
+    connection.getBalance(signer.publicKey),
+  ]);
+  const nullifierRent = 2_000_000; // NullifierRecord init (~0.0009 SOL) + margin
+  const txFees = 8_000_000;        // ~390 buffer txs + inner + fund + sweep + priority headroom
+  const required = r1 + r3 + r6 + nullifierRent + txFees;
+  if (balance < required) {
+    throw new Error(
+      `Insufficient SOL for transfer. It needs ~${(required / 1e9).toFixed(2)} SOL of ` +
+      `temporary proof-buffer rent (3 STARK proofs held open at once — fully recovered ` +
+      `after the transaction confirms), but the wallet has ${(balance / 1e9).toFixed(3)} SOL. ` +
+      `Fund the wallet (devnet: request an airdrop) and try again.`,
+    );
+  }
+
+  // ── Phase 1 sender-anonymity ──────────────────────────────────────────────
+  // A fresh, deterministic ephemeral E is the proof-buffer AUTHORITY and the
+  // inner-tx PAYER, so the USER's wallet signs NOTHING on the transfer itself —
+  // only the pre-fund tx below. E is re-derivable (deriveEphemeralForRelay) and
+  // a recovery breadcrumb is recorded before funding, so the float is never
+  // stranded. E's SOL is swept back to the user at the end.
+  // (Phase 2 will source E's float from inside the pool + relay the buffer txs
+  // to also break the user→E funding link and hide the originating IP.)
+  const jobId = crypto.getRandomValues(new Uint8Array(16));
+  const jobHex = jobIdToHex(jobId);
+  const ephemeral = await deriveEphemeralForRelay(jobId);
+  const eSigner: WalletSigner = {
+    publicKey: ephemeral.publicKey,
+    signTransaction: async (t: Transaction) => {
+      if (!t.recentBlockhash) {
+        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        t.recentBlockhash = blockhash;
+      }
+      if (!t.feePayer) t.feePayer = ephemeral.publicKey;
+      t.sign(ephemeral);
+      return t;
+    },
+  };
+
+  let result: { txSig: string; encryptedNote: string } | undefined;
+  try {
+    // Breadcrumb BEFORE funding (so a mid-flight crash is sweepable), then fund
+    // E from the user wallet — the ONLY user signature in the whole transfer.
+    await addPendingRelay({
+      jobId: jobHex,
+      ephemeralPubkey: ephemeral.publicKey.toBase58(),
+      expectedLamports: required,
+      createdAt: new Date().toISOString(),
+      reason: 'transfer-ephemeral-authority',
+    });
+    onProgress?.('Funding the transfer signer...');
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: ephemeral.publicKey, lamports: required }),
+    );
+    await signSendConfirmTx(connection, fundTx, signer);
+
+    // Steps 1-3: upload + verify C1, C3, C6 — ALL signed by E (authority = E),
+    // so the proof buffers + their PDAs are keyed on E, not the user.
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    const c1Result = await submitAndVerifyStarkProof(
+      { proofBytes: c1ProofResult.proofBytes, circuitId: CIRCUIT_POOL_COMMITMENT, publicInputs: c1ProofResult.publicInputs, proofSize: c1ProofResult.proofSize },
+      eSigner, connection, onProgress,
+    );
+    createdBuffers.push(c1Result.proofBuffer);
+
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    const c3Result = await submitAndVerifyStarkProof(
+      { proofBytes: c3ProofResult.proofBytes, circuitId: CIRCUIT_MERKLE_PATH, publicInputs: c3ProofResult.publicInputs, proofSize: c3ProofResult.proofSize },
+      eSigner, connection, onProgress,
+    );
+    createdBuffers.push(c3Result.proofBuffer);
+
+    onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
+    const c6Result = await submitAndVerifyStarkProof(
+      { proofBytes: c6ProofResult.proofBytes, circuitId: CIRCUIT_MERKLE_UPDATE, publicInputs: c6ProofResult.publicInputs, proofSize: c6ProofResult.proofSize },
+      eSigner, connection, onProgress,
+    );
+    createdBuffers.push(c6Result.proofBuffer);
+
+    // Step 4: build + send transfer_denominated_stark_v3 — payer = E, signed by E.
+    onProgress?.('Building V3 transfer transaction...');
+    const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
+    const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
+    const newCommitmentBytes = goldilocksToLeBytes32(insertParams.newCommitment);
+    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
+    const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
+    const minEpoch = receipt.depositEpoch;
+
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const ix = buildTransferDenominatedStarkV3Ix(
+      ephemeral.publicKey,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c1Result.proofBuffer,
+      c3Result.proofBuffer,
+      c6Result.proofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      starkCommitment,
+      newCommitmentBytes,
+      newRootBytes,
+      newSubtreesBytes,
+    );
+
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    tx.add(ix);
+
+    onProgress?.('Sending V3 transfer transaction...');
+    // Phase 1: E signs + submits the transfer directly. (Phase 2b will route
+    // E's buffer + inner txs through the relayer to also hide the user's IP.)
+    const txSig = await signSendConfirmTx(connection, tx, eSigner);
+    onProgress?.('V3 transfer confirmed!');
+
+    const recipientNote: ShareableNote = {
+      version: 1,
+      pool: poolConfig.poolPDA.toBase58(),
+      secret: insertParams.newSecret.toString(),
+      nullifier_preimage: insertParams.newNullifierPreimage.toString(),
+      deposit_epoch: insertParams.newDepositEpoch.toString(),
+      token_mint: pubkeyToField(poolConfig.tokenMint).toString(),
+      commitment: insertParams.newCommitment.toString(),
+      leafIndex: insertParams.newLeafIndex,
+      token: poolConfig.token,
+      denominationHuman: poolConfig.denomination,
+      shieldedAt: Date.now(),
+    };
+
+    // Encrypt the note TO the recipient's p01pq address (hybrid X25519 +
+    // ML-KEM-768 → XSalsa20-Poly1305). The blob is safe to intercept: only the
+    // recipient's wallet seed can decrypt it.
+    const encryptedNote = encryptNote(recipientAddress, utf8ToBytes(JSON.stringify(recipientNote)));
+    result = { txSig, encryptedNote };
+  } finally {
+    // Close E's proof buffers (rent → E), then sweep E's residual back to the
+    // user — recovers the pre-funded float whether the transfer succeeded or
+    // threw. If the sweep itself fails, the breadcrumb keeps the funds
+    // recoverable from the Recover screen.
+    for (const buf of createdBuffers) {
+      try {
+        onProgress?.('Closing proof buffer (rent recovery)...');
+        await closeStarkProofBuffer(buf, eSigner, connection);
+      } catch (closeErr: unknown) {
+        console.warn(
+          '[DenomPool/ext] closeStarkProofBuffer (transfer) failed:',
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+        );
+      }
+    }
+    try {
+      const eBal = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+      const sweepable = eBal - 5000; // leave the sweep tx fee
+      if (sweepable > 0) {
+        onProgress?.('Returning recovered rent to your wallet...');
+        const sweepTx = new Transaction().add(
+          SystemProgram.transfer({ fromPubkey: ephemeral.publicKey, toPubkey: signer.publicKey, lamports: sweepable }),
+        );
+        await signSendConfirmTx(connection, sweepTx, eSigner);
+      }
+      await removePendingRelay(jobHex);
+    } catch (sweepErr: unknown) {
+      const msg = sweepErr instanceof Error ? sweepErr.message : String(sweepErr);
+      console.warn('[DenomPool/ext] ephemeral sweep failed; funds recoverable via breadcrumb:', msg);
+      try { await markPendingRelayErrored(jobHex, 'sweep failed: ' + msg); } catch { /* ignore */ }
+    }
+  }
+  return result!;
+}
+
+/**
+ * Decode + validate a received shareable note into a ShieldReceipt the store
+ * can persist + later unshield. Recomputes the commitment from the secrets and
+ * asserts it matches — guards against a corrupted/mismatched note string.
+ */
+export function importNote(encoded: string): ShieldReceipt {
+  return shareableNoteToReceipt(decodeShareableNote(encoded));
+}
+
+/**
+ * Validate a decoded ShareableNote (recompute the commitment from its secrets
+ * and assert it matches) and reconstruct a ShieldReceipt. Used by both the
+ * plaintext importNote path and the decrypted-blob path.
+ */
+export function shareableNoteToReceipt(note: ShareableNote): ShieldReceipt {
+  if (note?.version !== 1) throw new Error(`Unsupported note version: ${note?.version}`);
+  const pool = ALL_POOLS_V3.find((p) => p.poolPDA.toBase58() === note.pool);
+  if (!pool) throw new Error(`Unknown pool in note: ${note.pool}`);
+
+  const secret = BigInt(note.secret);
+  const nullifierPreimage = BigInt(note.nullifier_preimage);
+  const depositEpoch = BigInt(note.deposit_epoch);
+  const tokenMint = BigInt(note.token_mint);
+  const commitment = BigInt(note.commitment);
+
+  const recomputed = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMint);
+  if (recomputed !== commitment) {
+    throw new Error('Invalid note: commitment does not match its secrets.');
+  }
+
+  return {
+    secret,
+    nullifierPreimage,
+    depositEpoch,
+    tokenMint,
+    commitment,
+    leafIndex: note.leafIndex,
+    denomination: pool.denominationAtomic,
+    pool: note.pool,
+    token: note.token,
+    denominationHuman: note.denominationHuman,
+    shieldedAt: note.shieldedAt ?? Date.now(),
+    merkleRoot: note.merkle_root !== undefined ? BigInt(note.merkle_root) : undefined,
+  };
 }

@@ -33,7 +33,6 @@ const mockSetNetwork = vi.fn();
 const mockToggleHideBalance = vi.fn();
 const mockLock = vi.fn();
 const mockReset = vi.fn();
-const mockWalletLogout = vi.fn();
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -52,18 +51,8 @@ vi.mock('@/shared/store/wallet', () => ({
     toggleHideBalance: mockToggleHideBalance,
     lock: mockLock,
     reset: mockReset,
-    logout: mockWalletLogout,
     encryptedSeedPhrase: { encrypted: 'data' },
     passwordHash: 'hashedpassword',
-    isPrivyWallet: false,
-  }),
-}));
-
-vi.mock('@/shared/providers/PrivyProvider', () => ({
-  usePrivy: () => ({
-    logout: vi.fn(() => Promise.resolve()),
-    authenticated: true,
-    ready: true,
   }),
 }));
 

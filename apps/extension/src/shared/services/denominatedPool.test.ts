@@ -16,7 +16,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, Keypair, SystemProgram } from '@solana/web3.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   createCommitmentV3,
   createNullifierV3,
@@ -28,6 +30,14 @@ import {
   computeNewRootFromSubtreesV3,
   pubkeyToField,
   MERKLE_DEPTH,
+  buildTransferDenominatedStarkV3Ix,
+  encodeShareableNote,
+  decodeShareableNote,
+  importNote,
+  secureRandomU64,
+  SOL_POOLS_V3,
+  ZK_SHIELDED_PROGRAM_ID,
+  type ShareableNote,
 } from './denominatedPool';
 import { GOLDILOCKS_MODULUS } from './goldilocks-poseidon';
 
@@ -328,5 +338,165 @@ describe('mintField mismatch guard', () => {
     const cSol  = createCommitmentV3(FIXED_NULLIFIER_PREIMAGE, FIXED_SECRET, FIXED_DEPOSIT_EPOCH, solField);
     const cUsdc = createCommitmentV3(FIXED_NULLIFIER_PREIMAGE, FIXED_SECRET, FIXED_DEPOSIT_EPOCH, usdcField);
     expect(cSol).not.toBe(cUsdc);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// transfer_denominated_stark_v3 instruction (byte-exact on-chain contract)
+// ---------------------------------------------------------------------------
+
+describe('buildTransferDenominatedStarkV3Ix', () => {
+  const nullifierBytes = new Array(32).fill(0x11);
+  const merkleRootBytes = new Array(32).fill(0x22);
+  const newCommitmentBytes = new Array(32).fill(0x33);
+  const newRootBytes = new Array(32).fill(0x44);
+  const subtrees = Array.from({ length: MERKLE_DEPTH }, () => new Array(32).fill(0x55));
+
+  const payer = Keypair.generate().publicKey;
+  const pool = Keypair.generate().publicKey;
+  const tree = Keypair.generate().publicKey;
+  const nullifierPDA = Keypair.generate().publicKey;
+  const c1 = Keypair.generate().publicKey;
+  const c3 = Keypair.generate().publicKey;
+  const c6 = Keypair.generate().publicKey;
+
+  const ix = buildTransferDenominatedStarkV3Ix(
+    payer, pool, tree, nullifierPDA, c1, c3, c6,
+    nullifierBytes, merkleRootBytes, 5n, 7n,
+    newCommitmentBytes, newRootBytes, subtrees,
+  );
+
+  it('targets the zk_shielded program', () => {
+    expect(ix.programId.equals(ZK_SHIELDED_PROGRAM_ID)).toBe(true);
+  });
+
+  it('uses the correct anchor discriminator', () => {
+    const expected = Buffer.from(sha256(utf8ToBytes('global:transfer_denominated_stark_v3')).slice(0, 8));
+    expect(Buffer.from(ix.data.subarray(0, 8)).equals(expected)).toBe(true);
+    // Locked value from the deployed handler.
+    expect(Array.from(ix.data.subarray(0, 8))).toEqual([196, 150, 11, 141, 91, 208, 60, 22]);
+  });
+
+  it('has the exact data length (8+32+32+8+8+32+32+4 + 15*32 = 636)', () => {
+    expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32 + 32 + 4 + MERKLE_DEPTH * 32);
+    expect(ix.data.length).toBe(636);
+  });
+
+  it('lays out args at the correct offsets', () => {
+    const d = ix.data;
+    expect(Array.from(d.subarray(8, 40))).toEqual(nullifierBytes);
+    expect(Array.from(d.subarray(40, 72))).toEqual(merkleRootBytes);
+    expect(d.readBigUInt64LE(72)).toBe(5n); // min_epoch
+    expect(d.readBigUInt64LE(80)).toBe(7n); // stark_commitment
+    expect(Array.from(d.subarray(88, 120))).toEqual(newCommitmentBytes);
+    expect(Array.from(d.subarray(120, 152))).toEqual(newRootBytes);
+    expect(d.readUInt32LE(152)).toBe(MERKLE_DEPTH); // Vec length prefix
+  });
+
+  it('has 8 accounts in the exact handler order with correct flags', () => {
+    const expectOrder = [
+      { pk: payer,        signer: true,  writable: true  },
+      { pk: pool,         signer: false, writable: true  },
+      { pk: tree,         signer: false, writable: true  }, // merkle_tree MUST be writable
+      { pk: nullifierPDA, signer: false, writable: true  },
+      { pk: c1,           signer: false, writable: false },
+      { pk: c3,           signer: false, writable: false },
+      { pk: c6,           signer: false, writable: false },
+      { pk: SystemProgram.programId, signer: false, writable: false },
+    ];
+    expect(ix.keys.length).toBe(8);
+    expectOrder.forEach((exp, i) => {
+      expect(ix.keys[i].pubkey.equals(exp.pk)).toBe(true);
+      expect(ix.keys[i].isSigner).toBe(exp.signer);
+      expect(ix.keys[i].isWritable).toBe(exp.writable);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shareable note encode/decode + importNote integrity
+// ---------------------------------------------------------------------------
+
+describe('shareable note encode/decode', () => {
+  const note: ShareableNote = {
+    version: 1,
+    pool: SOL_POOLS_V3[0].poolPDA.toBase58(),
+    secret: '123456789',
+    nullifier_preimage: '987654321',
+    deposit_epoch: '42',
+    token_mint: pubkeyToField(SystemProgram.programId).toString(),
+    commitment: '11111111',
+    leafIndex: 7,
+    token: 'SOL',
+    denominationHuman: 0.1,
+    shieldedAt: 1700000000000,
+  };
+
+  it('round-trips identically', () => {
+    expect(decodeShareableNote(encodeShareableNote(note))).toEqual(note);
+  });
+
+  it('tolerates surrounding whitespace', () => {
+    expect(decodeShareableNote(`  ${encodeShareableNote(note)}\n`)).toEqual(note);
+  });
+
+  it('rejects an unsupported version', () => {
+    const bad = btoa(JSON.stringify({ ...note, version: 2 }));
+    expect(() => decodeShareableNote(bad)).toThrow(/version/i);
+  });
+});
+
+describe('importNote integrity', () => {
+  const pool = SOL_POOLS_V3[0];
+  const secret = secureRandomU64();
+  const nullifierPreimage = secureRandomU64();
+  const depositEpoch = 100n;
+  const tokenMintField = pubkeyToField(pool.tokenMint);
+  const commitment = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMintField);
+
+  function makeNote(overrides: Partial<ShareableNote> = {}): string {
+    const note: ShareableNote = {
+      version: 1,
+      pool: pool.poolPDA.toBase58(),
+      secret: secret.toString(),
+      nullifier_preimage: nullifierPreimage.toString(),
+      deposit_epoch: depositEpoch.toString(),
+      token_mint: tokenMintField.toString(),
+      commitment: commitment.toString(),
+      leafIndex: 3,
+      token: 'SOL',
+      denominationHuman: pool.denomination,
+      ...overrides,
+    };
+    return encodeShareableNote(note);
+  }
+
+  it('secureRandomU64 stays within u64 range', () => {
+    for (let i = 0; i < 50; i++) {
+      const v = secureRandomU64();
+      expect(v >= 0n).toBe(true);
+      expect(v <= U64_MASK_V3).toBe(true);
+    }
+  });
+
+  it('imports a valid note and reconstructs the receipt', () => {
+    const receipt = importNote(makeNote());
+    expect(receipt.commitment).toBe(commitment);
+    expect(receipt.secret).toBe(secret);
+    expect(receipt.nullifierPreimage).toBe(nullifierPreimage);
+    expect(receipt.depositEpoch).toBe(depositEpoch);
+    expect(receipt.tokenMint).toBe(tokenMintField);
+    expect(receipt.pool).toBe(pool.poolPDA.toBase58());
+    expect(receipt.denomination).toBe(pool.denominationAtomic);
+    expect(receipt.token).toBe('SOL');
+  });
+
+  it('rejects a note whose commitment does not match its secrets', () => {
+    expect(() => importNote(makeNote({ commitment: (commitment + 1n).toString() }))).toThrow(/commitment/i);
+  });
+
+  it('rejects a note from an unknown pool', () => {
+    const fakePool = Keypair.generate().publicKey.toBase58();
+    expect(() => importNote(makeNote({ pool: fakePool }))).toThrow(/unknown pool/i);
   });
 });

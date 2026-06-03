@@ -19,7 +19,6 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
-    "@privy-io/react-auth": "^2.25.0",
     "@protocol-01/rpc-config": "workspace:*",
     "@protocol-01/specter-sdk": "workspace:*",
     "@protocol-01/zkspl-sdk": "workspace:*",

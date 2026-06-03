@@ -111,8 +111,8 @@ export async function signAndSendViaRelayer(
 
   // Phase A.2 — for keypair signers, build V0 versioned tx with the V3 static
   // LUT to compress static account keys (saves ~150-200B). Closes the v0.9.11
-  // shield V3 oversize gap (~947B legacy → ~750-800B versioned). WalletSigner
-  // path (Privy etc) keeps legacy until those wallets support v0 sign.
+  // shield V3 oversize gap (~947B legacy → ~750-800B versioned). A non-keypair
+  // WalletSigner path keeps legacy until that signer supports v0 sign.
   const useVersioned = keypair !== null;
   let innerBytes: Uint8Array;
 

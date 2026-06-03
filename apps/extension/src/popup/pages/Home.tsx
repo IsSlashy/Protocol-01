@@ -42,7 +42,6 @@ export default function Home() {
     network,
     isRefreshing,
     isUnlocked,
-    isPrivyWallet,
     refreshBalance,
     requestFaucet,
     transactions,
@@ -64,12 +63,12 @@ export default function Home() {
   const [faucetError, setFaucetError] = useState<string | null>(null);
   const [solPrice, setSolPrice] = useState<number>(0);
 
-  // Redirect to unlock if wallet is locked (skip for Privy wallets — no password)
+  // Redirect to unlock if wallet is locked.
   useEffect(() => {
-    if (!isUnlocked && !isPrivyWallet) {
+    if (!isUnlocked) {
       navigate('/unlock');
     }
-  }, [isUnlocked, isPrivyWallet, navigate]);
+  }, [isUnlocked, navigate]);
 
   // Fetch SOL price
   useEffect(() => {

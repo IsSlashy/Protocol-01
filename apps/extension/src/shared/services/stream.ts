@@ -362,9 +362,9 @@ export function calculateNextPayment(
 }
 
 /**
- * Wallet-agnostic signer for subscription payments. Local-keypair wallets
- * provide `keypair` (which also enables stealth-address derivation); Privy
- * wallets provide only `publicKey` + `signTransaction`.
+ * Signer for subscription payments. The local keypair (which also enables
+ * stealth-address derivation) is the only signing path; `keypair` is optional
+ * only to keep the shape forward-compatible with future external signers.
  */
 export interface PaymentSigner {
   publicKey: PublicKey;
@@ -392,7 +392,7 @@ export async function executeSubscriptionPayment(
   }
 
   // Calculate payment with noise. Stealth-address derivation needs a raw
-  // keypair; Privy wallets (no keypair) fall back to the plain recipient.
+  // keypair; without one it falls back to the plain recipient.
   const calculatedPayment = calculateNextPayment(sub, signer.keypair);
 
   // Get connection
@@ -401,9 +401,9 @@ export async function executeSubscriptionPayment(
   let signature: string;
 
   if (sub.tokenMint) {
-    // SPL token payment — keypair-only for now.
+    // SPL token payment — keypair-only.
     if (!signer.keypair) {
-      throw new Error('SPL-token subscriptions need a local-keypair wallet (Privy SPL support coming).');
+      throw new Error('SPL-token subscriptions need a local-keypair wallet.');
     }
     signature = await sendSplToken(
       signer.keypair,
@@ -426,7 +426,7 @@ export async function executeSubscriptionPayment(
       })
     );
 
-    // Sign (local keypair or Privy embedded wallet) and send.
+    // Sign with the local keypair and send.
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = signer.publicKey;

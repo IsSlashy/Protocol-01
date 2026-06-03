@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useWalletStore } from '@/shared/store/wallet';
-import { usePrivy } from '@/shared/providers/PrivyProvider';
 
 // Layouts
 import MainLayout from './layouts/MainLayout';
@@ -35,12 +34,13 @@ import SubscriptionVaults from './pages/SubscriptionVaults';
 import MugenExchange from './pages/MugenExchange';
 import DenominatedShield from './pages/DenominatedShield';
 import DenominatedUnshield from './pages/DenominatedUnshield';
+import DenominatedTransfer from './pages/DenominatedTransfer';
+import DenominatedImport from './pages/DenominatedImport';
 
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const { isInitialized, isUnlocked, isPrivyWallet, encryptedSeedPhrase, reset, tryAutoUnlock } = useWalletStore();
-  const { ready: privyReady, authenticated: privyAuthenticated } = usePrivy();
+  const { isInitialized, isUnlocked, encryptedSeedPhrase, reset, tryAutoUnlock } = useWalletStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -110,19 +110,19 @@ function App() {
         const storedData = result[STORE_KEY];
         const parsed = storedData ? JSON.parse(storedData) : null;
         const hasEncryptedSeed = parsed?.state?.encryptedSeedPhrase;
-        const storedIsPrivy = parsed?.state?.isPrivyWallet;
         const storedIsInit = parsed?.state?.isInitialized;
 
         console.log('[Popup] Storage check:', {
           hasData: !!storedData,
           isInit: storedIsInit,
           hasSeed: !!hasEncryptedSeed,
-          isPrivy: storedIsPrivy,
         });
 
-        // Only reset if wallet claims initialized but has NO seed phrase AND is NOT a Privy wallet
-        // This catches genuinely corrupted state without nuking valid wallets
-        if (storedIsInit && !hasEncryptedSeed && !storedIsPrivy) {
+        // Reset if wallet claims initialized but has NO seed phrase. Post
+        // Privy-removal the seed phrase is the only signing material, so this
+        // catches genuinely corrupted (or orphaned ex-Privy) state without
+        // nuking valid local wallets.
+        if (storedIsInit && !hasEncryptedSeed) {
           console.log('[Popup] Reset: Corrupted state — initialized without seed');
           await reset();
         }
@@ -133,22 +133,16 @@ function App() {
       // Re-check after potential reset
       const currentState = useWalletStore.getState();
 
-      // Privy wallets don't have a password — auto-unlock on hydration
-      if (currentState.isInitialized && !currentState.isUnlocked && currentState.isPrivyWallet) {
-        useWalletStore.setState({ isUnlocked: true });
-      }
-
-      // Try auto-unlock from session (10 minute timeout) — legacy wallets only
-      if (currentState.isInitialized && !currentState.isUnlocked && !currentState.isPrivyWallet) {
+      // Try auto-unlock from saved session (10 minute timeout).
+      if (currentState.isInitialized && !currentState.isUnlocked) {
         await tryAutoUnlock();
       }
 
       setIsHydrated(true);
     };
 
-    // Start verification — proceed even if Privy isn't ready
     verifyAndHydrate();
-  }, [privyReady]);
+  }, []);
 
   // Show loading state while hydrating (max 3s then force show)
   useEffect(() => {
@@ -190,9 +184,7 @@ function App() {
         {/* Main app routes - protected, require unlock */}
         <Route element={<MainLayout />}>
           <Route path="/" element={
-            !isInitialized && !privyAuthenticated ? <Navigate to="/welcome" replace /> :
-            isPrivyWallet || privyAuthenticated ? <Home /> :
-            !encryptedSeedPhrase ? <Navigate to="/welcome" replace /> :
+            !isInitialized || !encryptedSeedPhrase ? <Navigate to="/welcome" replace /> :
             !isUnlocked ? <Navigate to="/unlock" replace /> :
             <Home />
           } />
@@ -216,6 +208,8 @@ function App() {
           <Route path="/connected-sites" element={<ConnectedSites />} />
           <Route path="/denominated-shield" element={<DenominatedShield />} />
           <Route path="/denominated-unshield" element={<DenominatedUnshield />} />
+          <Route path="/denominated-transfer" element={<DenominatedTransfer />} />
+          <Route path="/denominated-import" element={<DenominatedImport />} />
         </Route>
 
         {/* Popup request routes (from dApps) */}
@@ -225,7 +219,6 @@ function App() {
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to={
-          isPrivyWallet || privyAuthenticated ? "/" :
           !isInitialized || !encryptedSeedPhrase ? "/welcome" :
           isUnlocked ? "/" : "/unlock"
         } replace />} />

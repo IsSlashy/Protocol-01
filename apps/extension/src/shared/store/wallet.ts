@@ -26,19 +26,7 @@ import {
 // Re-export TokenBalance for use in components
 export type { TokenBalance };
 import { getRecentTransactions } from '../services/transactions';
-import {
-  Keypair,
-  Transaction,
-  PublicKey,
-  SystemProgram,
-  LAMPORTS_PER_SOL,
-  TransactionInstruction,
-} from '@solana/web3.js';
-
-// SPL Memo program — carries the stealth ephemeral pubkey so the recipient can
-// detect the payment. Generic enough (NFT mints, votes) that it doesn't tag P01.
-const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
-import { RpcConnectionManager } from '@protocol-01/rpc-config';
+import { Keypair } from '@solana/web3.js';
 import type { TransactionRecord } from '../types';
 
 // Session timeout in milliseconds (10 minutes)
@@ -147,18 +135,6 @@ async function tryRestoreSession(): Promise<Keypair | null> {
   }
 }
 
-// --- Privy wallet support ---
-type PrivySignTransaction = (transaction: Transaction) => Promise<Transaction>;
-let privySigner: PrivySignTransaction | null = null;
-
-export function setPrivySigner(signer: PrivySignTransaction | null): void {
-  privySigner = signer;
-}
-
-export function getPrivySigner(): PrivySignTransaction | null {
-  return privySigner;
-}
-
 export interface Token {
   mint: string;
   symbol: string;
@@ -194,20 +170,12 @@ export interface WalletState {
   network: NetworkType;
   hideBalance: boolean;
 
-  // Privy wallet flag
-  isPrivyWallet: boolean;
-  /** True when the wallet was linked from P01 Mobile via QR — it holds only an
-   * address, the signing key lives on the phone, so it CANNOT sign in the
-   * extension. (isPrivyWallet is overloaded to mean "no local keypair".) */
-  isRemoteWallet: boolean;
-
   // In-memory only (never persisted)
   _keypair: Keypair | null;
 
   // Actions
   createWallet: (password: string) => Promise<string[]>;
   importWallet: (seedPhrase: string[], password: string) => Promise<void>;
-  initializeWithPrivy: (address: string, opts?: { remote?: boolean }) => void;
   logout: () => Promise<void>;
   unlock: (password: string) => Promise<boolean>;
   tryAutoUnlock: () => Promise<boolean>;
@@ -240,8 +208,6 @@ export const useWalletStore = create<WalletState>()(
       isLoadingTransactions: false,
       network: 'devnet',
       hideBalance: false,
-      isPrivyWallet: false,
-      isRemoteWallet: false,
       _keypair: null,
 
       // Create a new wallet
@@ -330,23 +296,7 @@ export const useWalletStore = create<WalletState>()(
         }
       },
 
-      // Initialize with Privy wallet (no seed phrase, no password)
-      initializeWithPrivy: (address: string, opts?: { remote?: boolean }) => {
-        set({
-          isInitialized: true,
-          isUnlocked: true,
-          publicKey: address,
-          isPrivyWallet: true,
-          isRemoteWallet: !!opts?.remote,
-          isLoading: false,
-          error: null,
-        });
-        // Fetch balance and transactions
-        get().refreshBalance();
-        get().fetchTransactions();
-      },
-
-      // Logout (for Privy users — full reset)
+      // Logout — full reset of persisted wallet state
       logout: async () => {
         clearSession();
         clearSessionPassword();
@@ -368,8 +318,6 @@ export const useWalletStore = create<WalletState>()(
           tokens: [],
           transactions: [],
           _keypair: null,
-          isPrivyWallet: false,
-          isRemoteWallet: false,
         });
       },
 
@@ -510,8 +458,6 @@ export const useWalletStore = create<WalletState>()(
           tokens: [],
           transactions: [],
           _keypair: null,
-          isPrivyWallet: false,
-          isRemoteWallet: false,
         });
       },
 
@@ -540,7 +486,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Send SOL transaction
       sendTransaction: async (toAddress: string, amountSol: number, memo?: string) => {
-        const { _keypair, network, isPrivyWallet, publicKey } = get();
+        const { _keypair, network } = get();
 
         if (!isValidSolanaAddress(toAddress)) {
           throw new Error('Invalid recipient address');
@@ -549,56 +495,11 @@ export const useWalletStore = create<WalletState>()(
         set({ isLoading: true, error: null });
 
         try {
-          let signature: string;
-
-          if (isPrivyWallet) {
-            // Privy wallet path — use privySigner (no raw keypair available)
-            if (!privySigner || !publicKey) {
-              throw new Error('Privy wallet not ready');
-            }
-
-            const heliusApiKey = typeof import.meta !== 'undefined'
-              ? (import.meta as any).env?.VITE_HELIUS_API_KEY
-              : undefined;
-            const rpcManager = new RpcConnectionManager({
-              cluster: network,
-              commitment: 'confirmed',
-              heliusApiKey,
-            });
-            const connection = rpcManager.getConnection();
-
-            const transaction = new Transaction().add(
-              SystemProgram.transfer({
-                fromPubkey: new PublicKey(publicKey),
-                toPubkey: new PublicKey(toAddress),
-                lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
-              })
-            );
-
-            if (memo) {
-              transaction.add(
-                new TransactionInstruction({
-                  programId: MEMO_PROGRAM_ID,
-                  keys: [],
-                  data: Buffer.from(memo, 'utf8'),
-                })
-              );
-            }
-
-            const { blockhash } = await connection.getLatestBlockhash();
-            transaction.recentBlockhash = blockhash;
-            transaction.feePayer = new PublicKey(publicKey);
-
-            const signedTx = await privySigner(transaction);
-            signature = await connection.sendRawTransaction(signedTx.serialize());
-            await connection.confirmTransaction(signature);
-          } else {
-            // Legacy path — use raw keypair
-            if (!_keypair) {
-              throw new Error('Wallet not unlocked');
-            }
-            signature = await sendSol(_keypair, toAddress, amountSol, network, memo);
+          // Local keypair is the only signing path.
+          if (!_keypair) {
+            throw new Error('Wallet not unlocked');
           }
+          const signature = await sendSol(_keypair, toAddress, amountSol, network, memo);
 
           // Refresh balance and transactions after transaction
           await get().refreshBalance();
@@ -686,12 +587,20 @@ export const useWalletStore = create<WalletState>()(
         passwordHash: state.passwordHash,
         network: state.network,
         hideBalance: state.hideBalance,
-        isPrivyWallet: state.isPrivyWallet,
-        isRemoteWallet: state.isRemoteWallet,
       }),
-      // TODO: Remove this migrate block after first successful reset
-      // Forces a clean slate by clearing old wallet data
-      version: 1,
+      // Version 2 — Privy removal. Strips legacy isPrivyWallet/isRemoteWallet
+      // flags and forces a clean re-onboard for any wallet that was a Privy /
+      // remote (QR) wallet, because those have NO local seed phrase and can no
+      // longer sign anything in the extension.
+      //
+      // NOTE (DATA-LOSS): A wallet that was `isPrivyWallet` without an
+      // `encryptedSeedPhrase` is now unrecoverable in the extension — its
+      // signing key only ever lived inside Privy (embedded) or on the phone
+      // (QR remote). We reset such state to force re-onboarding via seed
+      // import. Shielded / zkSPL notes that were keyed to a Privy-derived seed
+      // are ORPHANED (accept-loss, see Phase 2 spec). TODO(Phase5-UI): surface
+      // a one-time user-facing data-loss notice for affected wallets.
+      version: 2,
       migrate: (persistedState: any, version: number) => {
         if (version === 0) {
           // Old data — nuke it
@@ -703,11 +612,42 @@ export const useWalletStore = create<WalletState>()(
             passwordHash: null,
             network: 'devnet',
             hideBalance: false,
-            isPrivyWallet: false,
           };
+        }
+
+        // v1 -> v2: drop the legacy Privy flags. If the wallet claimed to be a
+        // Privy / remote wallet but has no local seed phrase, it cannot sign
+        // anymore — force a clean re-onboard (closes the keyless-"initialized"
+        // bug). Local-seed wallets pass through untouched.
+        if (persistedState && typeof persistedState === 'object') {
+          const wasPrivy = !!persistedState.isPrivyWallet;
+          const hasSeed = !!persistedState.encryptedSeedPhrase;
+          // Strip the now-removed flags regardless.
+          delete persistedState.isPrivyWallet;
+          delete persistedState.isRemoteWallet;
+
+          if (wasPrivy && !hasSeed) {
+            return {
+              ...persistedState,
+              isInitialized: false,
+              isUnlocked: false,
+              publicKey: null,
+              encryptedSeedPhrase: null,
+              passwordHash: null,
+            };
+          }
         }
         return persistedState;
       },
     }
   )
 );
+
+/**
+ * Get the active signing keypair for the current wallet, or null if the wallet
+ * is locked / not unlocked. The local keypair is the ONLY signing path post
+ * Privy-removal.
+ */
+export function getActiveKeypair(): Keypair | null {
+  return useWalletStore.getState()._keypair;
+}

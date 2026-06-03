@@ -16,8 +16,7 @@ import {
 import { PublicKey, Transaction } from '@solana/web3.js';
 import { cn } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
-import { useWalletStore, getPrivySigner } from '@/shared/store/wallet';
-import { useSolanaWallets } from '@/shared/providers/PrivyProvider';
+import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { useSubscriptionVaultStore } from '@/shared/store/subscriptionVault';
@@ -32,6 +31,7 @@ import {
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
 import { deriveLicenseKey, deriveClassicIdentity } from '@/shared/services/license';
+import { noteMaturity } from '@/shared/services/maturity';
 import { useLicenseStore, type LicenseEntry } from '@/shared/store/license';
 
 /**
@@ -144,31 +144,8 @@ function periodsForDuration(durationDays: number, interval: SubscriptionInterval
   return Math.max(1, Math.ceil(durationDays / intervalDays(interval)));
 }
 
-/** Max anti-correlation delay before a note can fund a private subscription
- * (get_dynamic_delay caps at 2 epochs). Using the max is safe: a note this old
- * always passes the on-chain EpochDelayNotMet check. ~54 min/epoch on devnet. */
-const SUBSCRIBE_MAX_DELAY_EPOCHS = 2;
-
-const SLOTS_PER_EPOCH_UI = 7200;
-const SLOT_MS = 450; // devnet ~0.4-0.5s per slot
-
-function noteMaturity(
-  depositEpoch: bigint,
-  slotInfo: { slot: number; at: number } | null,
-  nowTs: number,
-): { ready: boolean; label: string } {
-  if (!slotInfo) return { ready: true, label: '' }; // unknown → don't block
-  // Estimate the live slot by extrapolating from the last fetch.
-  const estSlot = slotInfo.slot + (nowTs - slotInfo.at) / SLOT_MS;
-  const matureAtSlot = (Number(depositEpoch) + SUBSCRIBE_MAX_DELAY_EPOCHS) * SLOTS_PER_EPOCH_UI;
-  if (estSlot >= matureAtSlot) return { ready: true, label: 'Ready' };
-  const totalSec = Math.max(0, Math.floor(((matureAtSlot - estSlot) * SLOT_MS) / 1000));
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  const t = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
-  return { ready: false, label: `Matures in ${t}` };
-}
+// Note-maturity countdown is shared with the shielded-wallet funds list.
+// See shared/services/maturity.ts (noteMaturity + constants).
 
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -177,8 +154,7 @@ export default function CreateSubscription() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const { addSubscription, processPayment } = useSubscriptionsStore();
-  const { _keypair, network, isUnlocked, isPrivyWallet, isRemoteWallet, publicKey } = useWalletStore();
-  const { wallets } = useSolanaWallets();
+  const { _keypair, network, isUnlocked } = useWalletStore();
   const { shieldedBalance } = useShieldedStore();
   const { getSpendableNote, getNotes, removeNote } = useDenominatedPoolStore();
   const { createPrivateVault, saveSecret, addVault } = useSubscriptionVaultStore();
@@ -356,7 +332,7 @@ export default function CreateSubscription() {
       }
     }
 
-    // Build a wallet-agnostic signer: local keypair OR Privy embedded wallet.
+    // Build the payment signer from the local keypair (the only signing path).
     let signer: PaymentSigner;
     if (_keypair) {
       const kp = _keypair;
@@ -365,40 +341,6 @@ export default function CreateSubscription() {
         keypair: kp,
         signTransaction: async (tx: Transaction) => { tx.sign(kp); return tx; },
       };
-    } else if (isPrivyWallet) {
-      // Read the embedded wallet live from the Privy hook. The module-level
-      // privySigner is set by PrivyBridge but can be transiently null while the
-      // popup re-hydrates, so the hook is the reliable source at click time.
-      const wallet = wallets.find((w) => w.walletClientType === 'privy') || wallets[0];
-      const fallback = getPrivySigner();
-      if (wallet) {
-        signer = {
-          publicKey: new PublicKey(wallet.address),
-          signTransaction: async (tx: Transaction) =>
-            (await wallet.signTransaction(tx)) as unknown as Transaction,
-        };
-      } else if (fallback && publicKey) {
-        signer = {
-          publicKey: new PublicKey(publicKey),
-          signTransaction: async (tx: Transaction) => (await fallback(tx)) as unknown as Transaction,
-        };
-      } else if (isRemoteWallet) {
-        // Wallet linked from P01 Mobile via QR — only the address is here; the
-        // signing key is on the phone, so it cannot sign in the extension.
-        setError(
-          "This wallet is linked from P01 Mobile and can't sign in the extension yet. " +
-          'To subscribe here, import your seed phrase or sign in with email.',
-        );
-        return;
-      } else {
-        // No embedded Privy wallet found. Could be a phone-linked wallet (older
-        // link without the flag) or Privy still hydrating — give an actionable hint.
-        setError(
-          'No signer is available for this wallet. If it was linked from P01 Mobile (QR), ' +
-          'import your seed phrase or use email login to subscribe. Otherwise reopen the wallet and try again.',
-        );
-        return;
-      }
     } else {
       setError('Wallet not ready — unlock and try again.');
       return;

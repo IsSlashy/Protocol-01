@@ -3,13 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { PublicKey, Transaction, Keypair, SystemProgram } from '@solana/web3.js';
 import { getZkServiceExtension, ZkServiceExtension, ZkAddress, RecipientNoteData } from '../services/zk';
 import { getConnection } from '../services/wallet';
-import { useWalletStore, getPrivySigner } from './wallet';
-import {
-  encryptForSession,
-  decryptFromSession,
-  isEncryptedBlob,
-  getSessionPassword,
-} from '../services/sessionCrypto';
+import { useWalletStore } from './wallet';
 import nacl from 'tweetnacl';
 
 // ============= SPECTER SDK STEALTH IMPORTS =============
@@ -396,138 +390,66 @@ interface ShieldedState {
 }
 
 /**
- * Helper to get wallet data from wallet store
- * Supports both legacy (keypair) and Privy (signer) wallets
+ * Helper to get wallet data from the wallet store.
+ * The local keypair is the ONLY signing path post Privy-removal.
  */
 function getWalletData() {
   const walletState = useWalletStore.getState();
-  const privySigner = getPrivySigner();
 
   if (!walletState.publicKey) {
     throw new Error('Wallet not unlocked. Please unlock your wallet first.');
   }
 
-  // For Privy wallets, we need privySigner; for legacy wallets, we need _keypair
-  if (walletState.isPrivyWallet) {
-    if (!privySigner) {
-      throw new Error('Privy signer not available. Please reconnect your wallet.');
-    }
-  } else {
-    if (!walletState._keypair) {
-      throw new Error('Wallet not unlocked. Please unlock your wallet first.');
-    }
+  const keypair = walletState._keypair;
+  if (!keypair) {
+    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
   }
 
   const walletPublicKey = new PublicKey(walletState.publicKey);
-  const keypair = walletState._keypair; // May be null for Privy wallets
   const network = walletState.network;
   const connection = getConnection(network);
 
-  // Sign transaction function - use Privy signer or keypair
+  // Sign transaction function — local keypair only.
   const signTransaction = async (tx: Transaction): Promise<Transaction> => {
-    if (walletState.isPrivyWallet && privySigner) {
-      return await privySigner(tx);
-    } else if (keypair) {
-      tx.sign(keypair);
-      return tx;
-    }
-    throw new Error('No signing method available');
+    tx.sign(keypair);
+    return tx;
   };
 
   return { walletPublicKey, keypair, connection, signTransaction, network };
 }
 
-// Storage key for Privy users' ZK seed
-const PRIVY_ZK_SEED_KEY = 'p01_privy_zk_seed';
+// ---------------------------------------------------------------------------
+// DATA-LOSS NOTICE (Privy removal — Phase 2)
+// ---------------------------------------------------------------------------
+// The former `getOrCreatePrivyZkSeed` helper derived the shielded ZK seed for
+// Privy wallets from a separate value stored under `p01_privy_zk_seed_<addr>`
+// (deterministic-from-address). With Privy removed, the extension never holds a
+// Privy wallet address, so any shielded notes that were keyed to that ZK seed
+// are ORPHANED and UNRECOVERABLE (accept-loss, see docs/privy-removal-spec.md
+// R-12 / R-14, orphaning class (c) `p01_privy_zk_seed`). The local-keypair path
+// below is deterministic from the seed phrase, so a re-imported local wallet
+// reproduces the same ZK address every time.
+// TODO(Phase5-UI): surface a one-time user-facing warning for any wallet that
+// still has a `p01_privy_zk_seed_*` entry in chrome.storage.local.
 
 /**
- * Helper to get or generate ZK seed for Privy wallets.
- * The seed is encrypted at rest with the user's session password via
- * AES-256-GCM so it never sits in chrome.storage.local as plaintext.
+ * Helper to get the ZK seed from the wallet store.
+ * Derives deterministically from the local keypair's secret key so the ZK
+ * address is consistent across sessions and re-imports.
  *
- * Backward compatibility: if a legacy plaintext hex seed is found, it is
- * transparently migrated to the encrypted format on first access.
- */
-async function getOrCreatePrivyZkSeed(walletAddress: string): Promise<string> {
-  const storageKey = `${PRIVY_ZK_SEED_KEY}_${walletAddress}`;
-  const password = getSessionPassword();
-
-  try {
-    // Try to retrieve existing seed
-    const result = await chrome.storage.local.get(storageKey);
-    const stored = result[storageKey];
-
-    if (stored) {
-      if (isEncryptedBlob(stored)) {
-        // New encrypted format
-        if (!password) {
-          throw new Error('Wallet must be unlocked to access ZK seed');
-        }
-        return await decryptFromSession(stored, password);
-      }
-
-      // Legacy plaintext hex -- migrate to encrypted
-      if (typeof stored === 'string') {
-        console.warn('[Shielded] Migrating legacy plaintext Privy ZK seed to encrypted');
-        if (password) {
-          const encryptedBlob = await encryptForSession(stored, password);
-          await chrome.storage.local.set({ [storageKey]: encryptedBlob });
-          console.log('[Shielded] Privy ZK seed migration complete');
-        }
-        return stored;
-      }
-    }
-
-    // Generate deterministic seed from wallet address so it's always the same
-    // for the same Privy wallet (no randomness = reproducible ZK keys)
-    const encoder = new TextEncoder();
-    const seedData = encoder.encode(`p01:privy:zk:${walletAddress}:spending_key_v1`);
-    const seedHash = await crypto.subtle.digest('SHA-256', seedData);
-    const seedHex = Array.from(new Uint8Array(seedHash))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-
-    // Store encrypted if we have a password, otherwise store plaintext
-    // (deterministic seed = no secret beyond the wallet address itself)
-    if (password) {
-      const encryptedBlob = await encryptForSession(seedHex, password);
-      await chrome.storage.local.set({ [storageKey]: encryptedBlob });
-    } else {
-      // Store as plaintext — the seed is deterministically derived from the
-      // wallet address anyway, so it's not a secret beyond the address itself
-      await chrome.storage.local.set({ [storageKey]: seedHex });
-      console.log('[Shielded] Privy ZK seed stored (deterministic derivation)');
-    }
-
-    return seedHex;
-  } catch (e) {
-    console.error('[Shielded] Failed to get/create Privy ZK seed:', e);
-    throw new Error('Failed to initialize ZK keys for Privy wallet');
-  }
-}
-
-/**
- * Helper to get seed phrase from wallet store (requires decryption)
- * For Privy wallets, generates/retrieves a separate ZK seed
+ * NOTE: the cleartext-seed fallback that previously persisted a derived seed to
+ * chrome.storage.local (Privy path) has been REMOVED (R-10). The seed is only
+ * ever derived in-memory from the unlocked keypair.
  */
 async function getSeedPhrase(): Promise<string> {
   const walletState = useWalletStore.getState();
 
-  // For Privy wallets, use a separate stored ZK seed
-  if (walletState.isPrivyWallet) {
-    if (!walletState.publicKey) {
-      throw new Error('Privy wallet not initialized');
-    }
-    return await getOrCreatePrivyZkSeed(walletState.publicKey);
-  }
-
-  // Legacy wallet - derive from keypair
   if (!walletState._keypair) {
     throw new Error('Wallet not unlocked');
   }
 
-  // Use the keypair's secret key as seed for ZK derivation
-  // This ensures consistent ZK addresses across sessions
+  // Use the keypair's secret key as seed for ZK derivation.
+  // This ensures consistent ZK addresses across sessions.
   const secretKey = walletState._keypair.secretKey;
   const seedHex = Array.from(secretKey.slice(0, 32))
     .map(b => b.toString(16).padStart(2, '0'))

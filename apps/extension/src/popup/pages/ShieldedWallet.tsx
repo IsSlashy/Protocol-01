@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -29,16 +29,16 @@ import { useShieldedStore } from '@/shared/store/shielded';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { useConfidentialStore } from '@/shared/store/confidential';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
+import { noteMaturity, type SlotInfo } from '@/shared/services/maturity';
 
 export default function ShieldedWallet() {
   const navigate = useNavigate();
-  const { publicKey, solBalance } = useWalletStore();
+  const { publicKey, solBalance, network } = useWalletStore();
   const {
     isInitialized,
     isLoading,
     shieldedBalance,
     notes,
-    zkAddress,
     pendingTransactions,
     initialize,
     refreshBalance,
@@ -52,6 +52,8 @@ export default function ShieldedWallet() {
 
   // Denominated V3 notes are the real shielded funds (the working Goldilocks
   // path). Surface them in the balance + funds list alongside any legacy notes.
+  // The Transfer button routes denom notes to /denominated-transfer (encoded-note
+  // handoff, C1+C3+C6); legacy zk: notes still use /shielded/transfer (circuit 5).
   const denomNotes = useDenominatedPoolStore((s) => s.serializedNotes);
   const denomBalanceSol = denomNotes
     .filter((n) => n.token === 'SOL')
@@ -61,13 +63,47 @@ export default function ShieldedWallet() {
       label: `${n.denominationHuman} ${n.token}`,
       index: n.leafIndex as number | undefined,
       tag: String(n.commitment ?? '').slice(0, 8),
+      depositEpoch: n.depositEpoch ? BigInt(n.depositEpoch) : undefined,
     })),
     ...notes.map((n) => ({
       label: `${(Number(n.amount) / 1e9).toFixed(4)} SOL`,
       index: n.leafIndex as number | undefined,
       tag: String(n.commitment ?? '').slice(0, 8),
+      depositEpoch: undefined as bigint | undefined,
     })),
   ];
+
+  // Live, ticking maturity countdown — same logic as the subscribe picker
+  // (shared/services/maturity.ts): fetch the slot once, extrapolate by
+  // wall-clock, and tick every second so the "Matures in …" label counts down.
+  const [slotInfo, setSlotInfo] = useState<SlotInfo | null>(null);
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { getConnection } = await import('@/shared/services/wallet');
+        const slot = await getConnection(network).getSlot('confirmed');
+        if (alive) setSlotInfo({ slot, at: Date.now() });
+      } catch { /* leave null → countdown hidden */ }
+    })();
+    return () => { alive = false; };
+  }, [network]);
+  useEffect(() => {
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // This wallet's post-quantum receive address (X25519 + ML-KEM-768), derived
+  // from the local seed. Safe to share; senders encrypt notes to it.
+  const myPqAddress = useMemo(() => {
+    if (!publicKey) return null;
+    try {
+      return useDenominatedPoolStore.getState().getMyNoteAddress();
+    } catch {
+      return null;
+    }
+  }, [publicKey]);
 
   // Confidential (zkSPL) store
   const {
@@ -118,8 +154,8 @@ export default function ShieldedWallet() {
   }, [publicKey]);
 
   const handleCopyAddress = async () => {
-    if (zkAddress) {
-      await copyToClipboard(zkAddress);
+    if (myPqAddress) {
+      await copyToClipboard(myPqAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -368,24 +404,38 @@ export default function ShieldedWallet() {
             </p>
           </div>
 
-          {/* ZK Address */}
+          {/* Post-quantum receive address (share to receive private notes) */}
           <div className="bg-p01-void/50 rounded-lg p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-p01-chrome text-xs">ZK Address</span>
+                <Lock className="w-3 h-3 text-p01-cyan" />
+                <span className="text-p01-chrome text-xs">Receive Address (PQ)</span>
               </div>
               <button
                 onClick={handleCopyAddress}
-                className="flex items-center gap-1 text-p01-cyan text-xs hover:text-p01-cyan/80 transition-colors"
-                aria-label={copied ? 'ZK address copied' : 'Copy ZK address'}
+                disabled={!myPqAddress}
+                className="flex items-center gap-1 text-p01-cyan text-xs hover:text-p01-cyan/80 transition-colors disabled:opacity-40"
+                aria-label={copied ? 'Receive address copied' : 'Copy receive address'}
               >
                 {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
             <p className="text-white text-xs font-mono mt-1 truncate">
-              {zkAddress || (isLoading ? 'Initializing...' : 'Not initialized')}
+              {myPqAddress || (isLoading ? 'Initializing...' : 'Unavailable (local key needed)')}
             </p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-p01-chrome/40 text-[9px] pr-2">
+                X25519 + ML-KEM-768 public keys. Safe to share; only your wallet can open notes sent to it.
+              </p>
+              <button
+                onClick={() => navigate('/denominated-import')}
+                className="text-p01-cyan/80 text-[9px] font-mono whitespace-nowrap hover:text-p01-cyan transition-colors"
+                aria-label="Paste a received note"
+              >
+                Paste a note →
+              </button>
+            </div>
           </div>
 
           {/* Init Error */}
@@ -440,7 +490,7 @@ export default function ShieldedWallet() {
         </motion.div>
 
         {/* Action Buttons */}
-        <div className="flex justify-center gap-4 py-6">
+        <div className="flex flex-wrap justify-center gap-x-4 gap-y-3 py-6">
           <ActionButton
             icon={<ArrowDown className="w-5 h-5" />}
             label="Shield"
@@ -458,8 +508,8 @@ export default function ShieldedWallet() {
             icon={<Zap className="w-5 h-5" />}
             label="Transfer"
             color="violet"
-            onClick={() => navigate('/shielded/transfer')}
-            disabled={shieldedBalance <= 0}
+            onClick={() => navigate(denomNotes.length > 0 ? '/denominated-transfer' : '/shielded/transfer')}
+            disabled={shieldedBalance <= 0 && denomNotes.length === 0}
           />
           <ActionButton
             icon={<Scan className="w-5 h-5" />}
@@ -552,7 +602,11 @@ export default function ShieldedWallet() {
               </div>
             ) : (
               <div className="divide-y divide-p01-border/50">
-                {displayNotes.slice(0, 5).map((note, index) => (
+                {displayNotes.slice(0, 5).map((note, index) => {
+                  const mat = note.depositEpoch !== undefined
+                    ? noteMaturity(note.depositEpoch, slotInfo, nowTs)
+                    : null;
+                  return (
                   <div key={index} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
@@ -571,9 +625,18 @@ export default function ShieldedWallet() {
                       <p className="text-p01-chrome/60 text-xs font-mono">
                         {note.tag}
                       </p>
+                      {mat && mat.label && (
+                        <p className={cn(
+                          'text-[10px] font-mono mt-0.5',
+                          mat.ready ? 'text-p01-cyan' : 'text-yellow-400',
+                        )}>
+                          {mat.ready ? '✓ Mature' : `🔒 ${mat.label}`}
+                        </p>
+                      )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
                 {displayNotes.length > 5 && (
                   <button className="w-full p-3 text-center text-p01-cyan text-sm hover:bg-p01-void/50 transition-colors">
                     View all {displayNotes.length} entries

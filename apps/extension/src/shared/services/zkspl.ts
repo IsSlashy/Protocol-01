@@ -24,14 +24,8 @@ import {
   poseidonHash,
   ZKSPL_PROGRAM_ID,
 } from '@protocol-01/zkspl-sdk';
-import { useWalletStore, getPrivySigner } from '../store/wallet';
+import { useWalletStore } from '../store/wallet';
 import { getConnection } from './wallet';
-import {
-  encryptForSession,
-  decryptFromSession,
-  isEncryptedBlob,
-  getSessionPassword,
-} from './sessionCrypto';
 
 // ---------------------------------------------------------------------------
 // Token constants
@@ -116,62 +110,20 @@ function deriveSpendingKeyFromSecret(secretKey: Uint8Array): FieldElement {
   return poseidonHash([seedField]);
 }
 
-/**
- * Derive spending key for Privy wallets using a stored random seed.
- * The seed is encrypted at rest via AES-256-GCM with the user's session
- * password. Legacy plaintext seeds are transparently migrated on access.
- */
-async function deriveSpendingKeyForPrivy(walletAddress: string): Promise<FieldElement> {
-  const storageKey = `p01_zkspl_privy_seed_${walletAddress}`;
-  const result = await chrome.storage.local.get(storageKey);
-  const stored = result[storageKey];
-  const password = getSessionPassword();
-
-  let seedHex: string;
-
-  if (stored) {
-    if (isEncryptedBlob(stored)) {
-      // New encrypted format
-      if (!password) {
-        throw new Error('Wallet must be unlocked to access zkSPL spending key');
-      }
-      seedHex = await decryptFromSession(stored, password);
-    } else if (typeof stored === 'string') {
-      // Legacy plaintext -- migrate
-      console.warn('[zkSPL] Migrating legacy plaintext Privy seed to encrypted');
-      seedHex = stored;
-      if (password) {
-        const encryptedBlob = await encryptForSession(seedHex, password);
-        await chrome.storage.local.set({ [storageKey]: encryptedBlob });
-        console.log('[zkSPL] Privy seed migration complete');
-      }
-    } else {
-      throw new Error('Corrupted zkSPL seed data');
-    }
-  } else {
-    // Generate new seed
-    const randomBytes = new Uint8Array(32);
-    crypto.getRandomValues(randomBytes);
-    seedHex = Array.from(randomBytes)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-
-    // Store encrypted — require session password to protect ZK seed at rest
-    if (password) {
-      const encryptedBlob = await encryptForSession(seedHex, password);
-      await chrome.storage.local.set({ [storageKey]: encryptedBlob });
-    } else {
-      // No session password — do NOT persist plaintext seed to disk
-      console.warn('[ZkSPL] No session password — ZK seed stored in memory only');
-    }
-  }
-
-  const seedBytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    seedBytes[i] = parseInt(seedHex.substr(i * 2, 2), 16);
-  }
-  return deriveSpendingKeyFromSecret(seedBytes.slice(0, 32));
-}
+// ---------------------------------------------------------------------------
+// DATA-LOSS NOTICE (Privy removal — Phase 2)
+// ---------------------------------------------------------------------------
+// The former `deriveSpendingKeyForPrivy` helper derived the zkSPL spending key
+// from a RANDOM per-wallet seed stored under `p01_zkspl_privy_seed_<address>`.
+// With Privy removed there is no path that produces or restores that random
+// seed, so any confidential (zkSPL) balance that was keyed to it is ORPHANED
+// and UNRECOVERABLE (accept-loss decision, see docs/privy-removal-spec.md R-12 /
+// R-14, orphaning class (d) `p01_zkspl_privy_seed_*`).
+//
+// The local-keypair path below is deterministic from the seed phrase, so a
+// re-imported local wallet always reproduces the same zkSPL spending key.
+// TODO(Phase5-UI): surface a one-time user-facing warning for any wallet that
+// still has a `p01_zkspl_privy_seed_*` entry in chrome.storage.local.
 
 // ---------------------------------------------------------------------------
 // Wallet adapter (matches Anchor Wallet interface)
@@ -183,7 +135,6 @@ function createWalletAdapter(): {
   spendingKeyPromise: Promise<FieldElement>;
 } {
   const walletState = useWalletStore.getState();
-  const privySigner = getPrivySigner();
 
   if (!walletState.publicKey) {
     throw new Error('Wallet not unlocked. Please unlock your wallet first.');
@@ -193,20 +144,19 @@ function createWalletAdapter(): {
   const connection = getConnection(walletState.network);
   const keypair = walletState._keypair;
 
-  // Build Anchor-compatible wallet
+  if (!keypair) {
+    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
+  }
+
+  // Build Anchor-compatible wallet — local keypair is the only signing path.
   const wallet: Wallet = {
     publicKey: walletPublicKey,
     signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
       if (!(tx instanceof Transaction)) {
         throw new Error('VersionedTransaction signing not supported in this path');
       }
-      if (walletState.isPrivyWallet && privySigner) {
-        return (await privySigner(tx)) as unknown as T;
-      } else if (keypair) {
-        tx.sign(keypair);
-        return tx as unknown as T;
-      }
-      throw new Error('No signing method available');
+      tx.sign(keypair);
+      return tx as unknown as T;
     },
     signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]> => {
       const signed: T[] = [];
@@ -214,28 +164,15 @@ function createWalletAdapter(): {
         if (!(tx instanceof Transaction)) {
           throw new Error('VersionedTransaction signing not supported in this path');
         }
-        if (walletState.isPrivyWallet && privySigner) {
-          signed.push((await privySigner(tx)) as unknown as T);
-        } else if (keypair) {
-          tx.sign(keypair);
-          signed.push(tx as unknown as T);
-        } else {
-          throw new Error('No signing method available');
-        }
+        tx.sign(keypair);
+        signed.push(tx as unknown as T);
       }
       return signed;
     },
   };
 
-  // Derive spending key
-  let spendingKeyPromise: Promise<FieldElement>;
-  if (walletState.isPrivyWallet) {
-    spendingKeyPromise = deriveSpendingKeyForPrivy(walletState.publicKey);
-  } else if (keypair) {
-    spendingKeyPromise = Promise.resolve(deriveSpendingKeyFromSecret(keypair.secretKey));
-  } else {
-    throw new Error('No key material available for spending key derivation');
-  }
+  // Derive spending key deterministically from the local keypair.
+  const spendingKeyPromise = Promise.resolve(deriveSpendingKeyFromSecret(keypair.secretKey));
 
   return { wallet, connection, spendingKeyPromise };
 }

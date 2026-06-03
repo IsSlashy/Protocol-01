@@ -426,14 +426,15 @@ async function handleConnect(
   const origin = payload._origin || payload.origin || '';
   const tabId = sender.tab?.id;
 
-  // Check if wallet is initialized (native OR Privy)
+  // Check if wallet is initialized. The encrypted seed phrase is the only
+  // signing material post Privy-removal — a wallet without it cannot sign, so
+  // it does not count as initialized (closes the keyless-connect bug).
   const walletResult = await chrome.storage.local.get('p01-wallet');
   const walletState = walletResult['p01-wallet']
     ? JSON.parse(walletResult['p01-wallet'])
     : null;
 
-  const isWalletInitialized = !!walletState?.state?.encryptedSeedPhrase ||
-    (!!walletState?.state?.isPrivyWallet && !!walletState?.state?.publicKey);
+  const isWalletInitialized = !!walletState?.state?.encryptedSeedPhrase;
 
   if (!isWalletInitialized) {
     // Don't error immediately — wait for wallet setup via popup

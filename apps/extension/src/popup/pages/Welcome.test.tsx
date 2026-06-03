@@ -1,12 +1,11 @@
 /**
  * Tests for Welcome page
  *
- * The Welcome page is the entry point for new users. It presents:
+ * The Welcome page is the entry point for new users. Post Privy-removal it
+ * presents only the two local-wallet onboarding paths:
  * - Protocol 01 branding with the GlitchLogo
- * - "Continue with Email" (Privy) flow
- * - "Create New Wallet" (legacy seed-based)
+ * - "Create New Wallet" (local seed-based)
  * - "Import Seed Phrase"
- * - An "ADVANCED" toggle to reveal legacy options when Privy is enabled
  *
  * Validates:
  * - Renders the logo and tagline
@@ -38,19 +37,6 @@ vi.mock('../components/GlitchLogo', () => ({
   default: ({ showText }: { showText: boolean; size: number; animated: boolean }) => (
     <div data-testid="glitch-logo">{showText && 'PROTOCOL'}</div>
   ),
-}));
-
-// Mock Privy provider - PRIVY_ENABLED depends on env var
-vi.mock('../../shared/providers/PrivyProvider', () => ({
-  usePrivy: () => ({
-    authenticated: false,
-    ready: true,
-  }),
-  useLoginWithEmail: () => ({
-    sendCode: vi.fn(),
-    loginWithCode: vi.fn(),
-    state: { status: 'initial' },
-  }),
 }));
 
 describe('Welcome', () => {
@@ -85,12 +71,6 @@ describe('Welcome', () => {
       </MemoryRouter>,
     );
 
-    // When Privy is enabled, the legacy buttons are behind the ADVANCED toggle
-    const advancedBtn = screen.queryByText('ADVANCED');
-    if (advancedBtn) {
-      fireEvent.click(advancedBtn);
-    }
-
     expect(screen.getByText('CREATE NEW WALLET')).toBeInTheDocument();
   });
 
@@ -101,12 +81,6 @@ describe('Welcome', () => {
       </MemoryRouter>,
     );
 
-    // When Privy is enabled, the legacy buttons are behind the ADVANCED toggle
-    const advancedBtn = screen.queryByText('ADVANCED');
-    if (advancedBtn) {
-      fireEvent.click(advancedBtn);
-    }
-
     expect(screen.getByText('IMPORT SEED PHRASE')).toBeInTheDocument();
   });
 
@@ -116,12 +90,6 @@ describe('Welcome', () => {
         <Welcome />
       </MemoryRouter>,
     );
-
-    // When Privy is enabled, expand ADVANCED first
-    const advancedBtn = screen.queryByText('ADVANCED');
-    if (advancedBtn) {
-      fireEvent.click(advancedBtn);
-    }
 
     fireEvent.click(screen.getByText('CREATE NEW WALLET'));
 
@@ -134,12 +102,6 @@ describe('Welcome', () => {
         <Welcome />
       </MemoryRouter>,
     );
-
-    // When Privy is enabled, expand ADVANCED first
-    const advancedBtn = screen.queryByText('ADVANCED');
-    if (advancedBtn) {
-      fireEvent.click(advancedBtn);
-    }
 
     fireEvent.click(screen.getByText('IMPORT SEED PHRASE'));
 

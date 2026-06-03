@@ -9,14 +9,7 @@ import { cn } from '@/shared/utils';
 
 export default function Unlock() {
   const navigate = useNavigate();
-  const { unlock, isLoading, error, clearError, reset, isPrivyWallet } = useWalletStore();
-
-  // Privy users should never see the unlock page — redirect to home
-  useEffect(() => {
-    if (isPrivyWallet) {
-      navigate('/', { replace: true });
-    }
-  }, [isPrivyWallet, navigate]);
+  const { unlock, isLoading, error, clearError, reset } = useWalletStore();
 
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
